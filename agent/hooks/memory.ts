@@ -1,6 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
+import { resolveMode } from "../access/request.js";
 import { ensurePartition, readPartition, writePartition, storeRoot } from "../memory/store.js";
 import { syncIntoSandbox, readFromSandbox } from "../memory/sandbox-sync.js";
 
@@ -14,6 +15,10 @@ function log(msg: string): void {
 }
 
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
+  if (resolveMode(ctx) === "mpim") {
+    log(`mpim is execution-only — skipping memory persistence on session.${outcome}`);
+    return;
+  }
   const p = resolvePartition(ctx);
   const sessionId = ctx.session.id;
   const when = new Date().toISOString();
@@ -46,6 +51,10 @@ export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
       try {
+        if (resolveMode(ctx) === "mpim") {
+          log("mpim is execution-only — skipping memory sync-in (no learning)");
+          return;
+        }
         const p = resolvePartition(ctx);
         const files = await ensurePartition(p);
         const sandbox = await ctx.getSandbox();

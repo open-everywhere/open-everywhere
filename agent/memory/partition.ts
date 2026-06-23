@@ -1,6 +1,3 @@
-import type { HookContext } from "eve/hooks";
-import type { ToolContext } from "eve/tools";
-
 export interface Partition {
   readonly platform: string;
   readonly workspace: string;
@@ -9,7 +6,16 @@ export interface Partition {
   readonly relDir: string;
 }
 
-type Resolvable = (HookContext | ToolContext) & {
+interface AuthLike {
+  readonly attributes?: Readonly<Record<string, string | readonly string[]>>;
+}
+type Resolvable = {
+  readonly session?: {
+    readonly auth?: {
+      readonly current?: AuthLike | null;
+      readonly initiator?: AuthLike | null;
+    } | null;
+  };
   readonly channel?: { readonly kind?: string; readonly continuationToken?: string };
 };
 
