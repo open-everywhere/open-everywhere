@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf } from "../access/request.js";
+import { bindFrom } from "../identity/binding.js";
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { describeTrigger, type Routine, type RoutineTrigger } from "../routines/routine.js";
@@ -63,9 +64,12 @@ export default defineTool({
       throw new Error("That schedule never fires — check the cron expression.");
     }
 
+    const target = bindFrom(ctx).target;
+
     const routine: Routine = {
       id: newRoutineId(),
       surfaceKey: p.surfaceKey,
+      target,
       trigger: t,
       prompt: input.prompt.trim(),
       createdBy: principalIdOf(ctx),

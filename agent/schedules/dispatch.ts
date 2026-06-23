@@ -1,4 +1,5 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
+import slack from "../channels/slack.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, type Routine } from "../routines/routine.js";
@@ -8,10 +9,17 @@ function log(msg: string): void {
 }
 
 interface DispatchTarget {
-  readonly channel: unknown;
-  readonly target: Record<string, unknown>;
+  readonly channel: typeof slack;
+  readonly target: { channelId: string; threadTs?: string };
 }
-function resolveTarget(_routine: Routine): DispatchTarget | null {
+function resolveTarget(routine: Routine): DispatchTarget | null {
+  const platform = routine.surfaceKey.split("/")[0];
+  if (platform === "slack") {
+    const channelId = routine.target?.["channelId"];
+    if (typeof channelId === "string" && channelId.length > 0) {
+      return { channel: slack, target: { channelId } };
+    }
+  }
   return null;
 }
 
@@ -50,9 +58,9 @@ export default defineSchedule({
           consecutiveFailures: 0,
         });
         waitUntil(
-          receive(dest.channel as never, {
+          receive(dest.channel, {
             message: r.prompt,
-            target: dest.target as never,
+            target: dest.target,
             auth: appAuth,
           }),
         );
