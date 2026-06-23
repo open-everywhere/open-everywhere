@@ -4,7 +4,14 @@ import type { MemoryFiles, Tier } from "./store.js";
 const BASE = "memory";
 
 export function tierSandboxDir(tier: Tier): string {
-  return `${BASE}/${tier}`;
+  switch (tier.kind) {
+    case "workspace":
+      return `${BASE}/workspace`;
+    case "domain":
+      return `${BASE}/domains/${tier.name}`;
+    case "surface":
+      return `${BASE}/surface`;
+  }
 }
 
 export async function syncTierIntoSandbox(
