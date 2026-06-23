@@ -1,9 +1,9 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
-import { resolveMode } from "../access/request.js";
+import { resolveMode, resolveVisibility } from "../access/request.js";
 import { ensureTier, readTier, writeTier, storeRoot, tierId } from "../memory/store.js";
-import { resolveTiers } from "../memory/tiers.js";
+import { readTiers, writeTiers } from "../memory/tiers.js";
 import { syncTierIntoSandbox, readTierFromSandbox } from "../memory/sandbox-sync.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
@@ -18,7 +18,7 @@ function log(msg: string): void {
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
   const mode = resolveMode(ctx);
   const p = resolvePartition(ctx);
-  const tiers = resolveTiers(p, mode);
+  const tiers = writeTiers(p, mode, resolveVisibility(ctx));
   if (tiers.length === 0) {
     log(`${mode} is execution-only — skipping memory persistence on session.${outcome}`);
     return;
@@ -61,7 +61,7 @@ export default defineHook({
       try {
         const mode = resolveMode(ctx);
         const p = resolvePartition(ctx);
-        const tiers = resolveTiers(p, mode);
+        const tiers = readTiers(p, mode);
         if (tiers.length === 0) {
           log(`${mode} is execution-only — skipping memory sync-in (no learning)`);
           return;

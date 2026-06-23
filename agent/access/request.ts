@@ -23,6 +23,14 @@ export function resolveMode(ctx: CtxLike): SessionMode {
   return "channel";
 }
 
+export type Visibility = "public" | "private";
+
+export function resolveVisibility(ctx: CtxLike): Visibility {
+  const fromMeta = ctx.channel?.metadata?.["visibility"];
+  if (fromMeta === "private" || fromMeta === "public") return fromMeta;
+  return process.env.OE_VISIBILITY === "private" ? "private" : "public";
+}
+
 export function principalIdOf(ctx: CtxLike): string | undefined {
   return ctx.session?.auth?.current?.principalId ?? process.env.OE_PRINCIPAL ?? undefined;
 }
