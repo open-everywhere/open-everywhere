@@ -5,18 +5,32 @@ import { dirname, join, posix, relative, sep } from "node:path";
 import type { Partition } from "./partition.js";
 
 export type MemoryFiles = Record<string, string>;
+export type Tier = "workspace" | "surface";
+
+export const ALL_TIERS: readonly Tier[] = ["workspace", "surface"];
 
 const ROOT = process.env.OE_MEMORY_DIR
   ? process.env.OE_MEMORY_DIR
   : join(process.cwd(), ".open-everywhere-memory");
 
-function seedFiles(p: Partition): MemoryFiles {
-  return {
-    "MEMORY.md": `# Channel memory — index (${p.key})
+function tierRelDir(p: Partition, tier: Tier): string {
+  return tier === "workspace"
+    ? `${p.workspaceKey}/@workspace`
+    : `${p.workspaceKey}/@surfaces/${p.surface}`;
+}
 
-This file is loaded at the start of a task. Keep it a short, curated index of
-what matters for this channel. Detail goes in the topic files alongside it and
-is read on demand.
+function tierAbsDir(p: Partition, tier: Tier): string {
+  return join(ROOT, ...tierRelDir(p, tier).split("/"));
+}
+
+function seedFor(p: Partition, tier: Tier): MemoryFiles {
+  if (tier === "workspace") {
+    return {
+      "MEMORY.md": `# Workspace memory — index (${p.workspaceKey})
+
+Shared across **every surface** (channel/DM) in this workspace. Put facts here
+when they're true org-wide — deploy process, who owns what, standing decisions —
+so a new or similar surface inherits them instead of starting blank.
 
 ## Standing instructions
 <!-- e.g. "Changes go to acme/data-pipeline, never acme/website." -->
@@ -30,94 +44,103 @@ is read on demand.
 <!-- e.g. "2026-06-23: reports go out as tables, not prose." -->
 (none yet)
 `,
+    };
+  }
+  return {
+    "MEMORY.md": `# Surface memory — index (${p.surfaceKey})
+
+Specific to **this surface only**. Put facts here when they matter here but not
+workspace-wide. If something generalises, save it to workspace memory instead.
+
+## Standing instructions
+(none yet)
+
+## People / ownership
+(none yet)
+
+## Decisions
+(none yet)
+`,
   };
 }
 
-function partitionDir(p: Partition): string {
-  return join(ROOT, ...p.relDir.split("/"));
-}
-
-function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
+function git(args: string[], cwd: string): { ok: boolean; stdout: string } {
   try {
     const r = spawnSync("git", args, { cwd, encoding: "utf-8" });
-    if (r.error) return { ok: false, stdout: "", stderr: String(r.error) };
-    return { ok: r.status === 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-  } catch (err) {
-    return { ok: false, stdout: "", stderr: String(err) };
+    if (r.error) return { ok: false, stdout: "" };
+    return { ok: r.status === 0, stdout: r.stdout ?? "" };
+  } catch {
+    return { ok: false, stdout: "" };
   }
 }
 
 function ensureRepo(): void {
   if (existsSync(join(ROOT, ".git"))) return;
-  const init = git(["init", "--quiet"], ROOT);
-  if (!init.ok) return;
+  if (!git(["init", "--quiet"], ROOT).ok) return;
   git(["config", "user.email", "open-everywhere@local"], ROOT);
   git(["config", "user.name", "Open Everywhere"], ROOT);
 }
 
-export async function readPartition(p: Partition): Promise<MemoryFiles> {
-  const dir = partitionDir(p);
+async function readDir(dir: string): Promise<MemoryFiles> {
   if (!existsSync(dir)) return {};
   const out: MemoryFiles = {};
   async function walk(abs: string): Promise<void> {
     for (const entry of await readdir(abs, { withFileTypes: true })) {
       if (entry.name === ".git") continue;
       const child = join(abs, entry.name);
-      if (entry.isDirectory()) {
-        await walk(child);
-      } else if (entry.isFile()) {
-        const rel = relative(dir, child).split(sep).join(posix.sep);
-        out[rel] = await readFile(child, "utf-8");
-      }
+      if (entry.isDirectory()) await walk(child);
+      else if (entry.isFile()) out[relative(dir, child).split(sep).join(posix.sep)] = await readFile(child, "utf-8");
     }
   }
   await walk(dir);
   return out;
 }
 
-export async function ensurePartition(p: Partition): Promise<MemoryFiles> {
+function commit(relDir: string, message: string): string | null {
+  if (!git(["add", "-A", "--", relDir], ROOT).ok) return null;
+  const status = git(["status", "--porcelain", "--", relDir], ROOT);
+  if (status.ok && status.stdout.trim() === "") return null;
+  if (!git(["commit", "--quiet", "-m", message], ROOT).ok) return null;
+  const sha = git(["rev-parse", "--short", "HEAD"], ROOT);
+  return sha.ok ? sha.stdout.trim() : null;
+}
+
+export async function readTier(p: Partition, tier: Tier): Promise<MemoryFiles> {
+  return readDir(tierAbsDir(p, tier));
+}
+
+export async function ensureTier(p: Partition, tier: Tier): Promise<MemoryFiles> {
   await mkdir(ROOT, { recursive: true });
   ensureRepo();
-  const dir = partitionDir(p);
-  const existing = await readPartition(p);
+  const existing = await readTier(p, tier);
   if (Object.keys(existing).length > 0) return existing;
 
-  const seed = seedFiles(p);
-  await mkdir(dir, { recursive: true });
+  const dir = tierAbsDir(p, tier);
+  const seed = seedFor(p, tier);
   for (const [rel, content] of Object.entries(seed)) {
     const abs = join(dir, ...rel.split("/"));
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf-8");
   }
-  commit(p, `seed memory for ${p.key}`);
+  commit(tierRelDir(p, tier), `seed ${tier} memory for ${tierRelDir(p, tier)}`);
   return seed;
 }
 
-export async function writePartition(
+export async function writeTier(
   p: Partition,
+  tier: Tier,
   files: MemoryFiles,
   message: string,
 ): Promise<string | null> {
   await mkdir(ROOT, { recursive: true });
   ensureRepo();
-  const dir = partitionDir(p);
+  const dir = tierAbsDir(p, tier);
   for (const [rel, content] of Object.entries(files)) {
     const abs = join(dir, ...rel.split("/"));
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf-8");
   }
-  return commit(p, message);
-}
-
-function commit(p: Partition, message: string): string | null {
-  const add = git(["add", "-A", "--", p.relDir], ROOT);
-  if (!add.ok) return null;
-  const status = git(["status", "--porcelain", "--", p.relDir], ROOT);
-  if (status.ok && status.stdout.trim() === "") return null;
-  const done = git(["commit", "--quiet", "-m", message], ROOT);
-  if (!done.ok) return null;
-  const sha = git(["rev-parse", "--short", "HEAD"], ROOT);
-  return sha.ok ? sha.stdout.trim() : null;
+  return commit(tierRelDir(p, tier), message);
 }
 
 export function storeRoot(): string {

@@ -1,9 +1,10 @@
 export interface Partition {
   readonly platform: string;
   readonly workspace: string;
-  readonly channel: string;
+  readonly surface: string;
+  readonly workspaceKey: string;
+  readonly surfaceKey: string;
   readonly key: string;
-  readonly relDir: string;
 }
 
 interface AuthLike {
@@ -39,16 +40,11 @@ function workspaceFromAuth(ctx: Resolvable): string | undefined {
 }
 
 export function resolvePartition(ctx: Resolvable): Partition {
-  const platform = seg(
-    ctx.channel?.kind ?? process.env.OE_PLATFORM,
-    "local",
-  );
-  const workspace = seg(
-    workspaceFromAuth(ctx) ?? process.env.OE_WORKSPACE,
-    "dev",
-  );
-  const channel = seg(process.env.OE_CHANNEL, "default");
+  const platform = seg(ctx.channel?.kind ?? process.env.OE_PLATFORM, "local");
+  const workspace = seg(workspaceFromAuth(ctx) ?? process.env.OE_WORKSPACE, "dev");
+  const surface = seg(process.env.OE_SURFACE ?? process.env.OE_CHANNEL, "default");
 
-  const relDir = `${platform}/${workspace}/${channel}`;
-  return { platform, workspace, channel, key: relDir, relDir };
+  const workspaceKey = `${platform}/${workspace}`;
+  const surfaceKey = `${workspaceKey}/${surface}`;
+  return { platform, workspace, surface, workspaceKey, surfaceKey, key: surfaceKey };
 }

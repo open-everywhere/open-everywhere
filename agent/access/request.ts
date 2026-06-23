@@ -33,7 +33,7 @@ export function buildResolveRequest(ctx: CtxLike & Parameters<typeof resolvePart
     mode: resolveMode(ctx),
     platform: p.platform,
     workspace: p.workspace,
-    channel: p.channel,
+    channel: p.surface,
     principalId: principalIdOf(ctx),
   };
 }

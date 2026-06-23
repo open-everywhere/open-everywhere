@@ -1,20 +1,30 @@
 import type { SandboxSession } from "eve/sandbox";
-import type { MemoryFiles } from "./store.js";
+import type { MemoryFiles, Tier } from "./store.js";
 
-export const MEMORY_DIR = "memory";
+const BASE = "memory";
 
-export async function syncIntoSandbox(
+export function tierSandboxDir(tier: Tier): string {
+  return `${BASE}/${tier}`;
+}
+
+export async function syncTierIntoSandbox(
   sandbox: SandboxSession,
+  tier: Tier,
   files: MemoryFiles,
 ): Promise<void> {
+  const dir = tierSandboxDir(tier);
   for (const [rel, content] of Object.entries(files)) {
-    await sandbox.writeTextFile({ path: `${MEMORY_DIR}/${rel}`, content });
+    await sandbox.writeTextFile({ path: `${dir}/${rel}`, content });
   }
 }
 
-export async function readFromSandbox(sandbox: SandboxSession): Promise<MemoryFiles> {
+export async function readTierFromSandbox(
+  sandbox: SandboxSession,
+  tier: Tier,
+): Promise<MemoryFiles> {
+  const dir = tierSandboxDir(tier);
   const listing = await sandbox.run({
-    command: `cd ${MEMORY_DIR} 2>/dev/null && find . -type f | sed 's|^\\./||' || true`,
+    command: `cd ${dir} 2>/dev/null && find . -type f | sed 's|^\\./||' || true`,
   });
   const out: MemoryFiles = {};
   const rels = listing.stdout
@@ -22,20 +32,25 @@ export async function readFromSandbox(sandbox: SandboxSession): Promise<MemoryFi
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && l !== ".git" && !l.startsWith(".git/"));
   for (const rel of rels) {
-    const content = await sandbox.readTextFile({ path: `${MEMORY_DIR}/${rel}` });
+    const content = await sandbox.readTextFile({ path: `${dir}/${rel}` });
     if (content !== null) out[rel] = content;
   }
   return out;
 }
 
-export async function appendToSandboxFile(
+export async function readTierFile(
   sandbox: SandboxSession,
-  relPath: string,
-  block: string,
-): Promise<string> {
-  const existing = (await sandbox.readTextFile({ path: `${MEMORY_DIR}/${relPath}` })) ?? "";
-  const sep = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  const next = `${existing}${sep}${block.endsWith("\n") ? block : block + "\n"}`;
-  await sandbox.writeTextFile({ path: `${MEMORY_DIR}/${relPath}`, content: next });
-  return next;
+  tier: Tier,
+  rel: string,
+): Promise<string | null> {
+  return sandbox.readTextFile({ path: `${tierSandboxDir(tier)}/${rel}` });
+}
+
+export async function writeTierFile(
+  sandbox: SandboxSession,
+  tier: Tier,
+  rel: string,
+  content: string,
+): Promise<void> {
+  await sandbox.writeTextFile({ path: `${tierSandboxDir(tier)}/${rel}`, content });
 }
