@@ -1,5 +1,6 @@
 import type { Partition } from "./partition.js";
 import { sqliteProvider } from "./sqlite.js";
+import { makePostgresProvider, type PgClient } from "./postgres.js";
 import {
   deleteTier as gitDeleteTier,
   ensureTier as gitEnsureTier,
@@ -38,6 +39,12 @@ const REGISTRY: Record<string, MemoryProvider> = {
   sqlite: sqliteProvider,
 };
 
+export function registerPostgres(client: PgClient): MemoryProvider {
+  const provider = makePostgresProvider(client);
+  registerProvider(provider);
+  return provider;
+}
+
 let active: MemoryProvider | null = null;
 
 export function getProvider(): MemoryProvider {
@@ -45,6 +52,12 @@ export function getProvider(): MemoryProvider {
   const id = process.env.OE_MEMORY_PROVIDER ?? "git";
   const provider = REGISTRY[id];
   if (!provider) {
+    if (id === "postgres") {
+      throw new Error(
+        'OE_MEMORY_PROVIDER="postgres" but no client is registered — call ' +
+          "registerPostgres(client) at startup (see docs/setup.md).",
+      );
+    }
     throw new Error(
       `unknown OE_MEMORY_PROVIDER "${id}" (have: ${Object.keys(REGISTRY).join(", ")})`,
     );
