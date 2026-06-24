@@ -2,7 +2,7 @@ import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import slack from "../channels/slack.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
-import { isClockScheduled, type Routine } from "../routines/routine.js";
+import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
@@ -53,15 +53,21 @@ export default defineSchedule({
       try {
         await updateRoutine(r.surfaceKey, r.id, {
           lastRunAt: now.toISOString(),
-          lastOutcome: "ok",
           nextRunAt: next ? next.toISOString() : null,
-          consecutiveFailures: 0,
         });
+        const markedAuth = {
+          ...appAuth,
+          attributes: {
+            ...appAuth.attributes,
+            [ROUTINE_MARKER.id]: r.id,
+            [ROUTINE_MARKER.surface]: r.surfaceKey,
+          },
+        };
         waitUntil(
           receive(dest.channel, {
             message: r.prompt,
             target: dest.target,
-            auth: appAuth,
+            auth: markedAuth,
           }),
         );
         fired++;

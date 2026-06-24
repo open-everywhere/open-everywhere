@@ -16,7 +16,7 @@ import {
   gcOrphaned,
   MAX_CONSECUTIVE_FAILURES,
 } from "../agent/routines/lifecycle.js";
-import type { Routine } from "../agent/routines/routine.js";
+import { routineMarker, ROUTINE_MARKER, type Routine } from "../agent/routines/routine.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -101,6 +101,12 @@ const gc = gcOrphaned(rs, new Set(["local/dev/alpha"]));
 ok(gc.kept.length === 1 && gc.kept[0].id === "a" && gc.removed[0].id === "b", "gc drops routines on surfaces the agent left");
 ok(gcOrphaned(rs, null).removed.length === 0, "gc with unknown membership keeps everything");
 
+const mk = routineMarker({ [ROUTINE_MARKER.id]: "r-9", [ROUTINE_MARKER.surface]: "slack/T1/C9" });
+ok(mk?.id === "r-9" && mk.surfaceKey === "slack/T1/C9", "routineMarker reads id + surfaceKey from attributes");
+ok(routineMarker({ other: "x" }) === null, "routineMarker is null on a non-routine session");
+ok(routineMarker(undefined) === null, "routineMarker is null when no attributes");
+ok(routineMarker({ [ROUTINE_MARKER.id]: ["r-9"], [ROUTINE_MARKER.surface]: ["s"] })?.id === "r-9", "routineMarker collapses string[] attributes");
+
 const dir = join(tmpdir(), `open-everywhere-routines-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_ROUTINES_DIR = dir;
@@ -121,6 +127,8 @@ ok((await store.updateRoutine(p.surfaceKey, "nope", {})) === null, "store: updat
 await store.addRoutine(p2 as never, { ...base, id: store.newRoutineId(), surfaceKey: p2.surfaceKey });
 ok((await store.listAllRoutines()).length === 2, "store: listAll walks every surface");
 
+ok((await store.getRoutine(p.surfaceKey, made.id))?.id === made.id, "store: getRoutine fetches by surfaceKey + id");
+ok((await store.getRoutine(p.surfaceKey, "nope")) === null, "store: getRoutine returns null for missing id");
 ok((await store.removeRoutine(p as never, made.id)) === true, "store: remove returns true");
 ok((await store.listRoutines(p as never)).length === 0, "store: routine is gone after remove");
 ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing twice returns false");

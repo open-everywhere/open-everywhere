@@ -33,6 +33,24 @@ export function isClockScheduled(t: RoutineTrigger): boolean {
   return t.kind === "cron" || t.kind === "interval" || t.kind === "watch";
 }
 
+export const ROUTINE_MARKER = {
+  id: "oe_routine_id",
+  surface: "oe_routine_surface",
+} as const;
+
+type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
+function oneOf(v: string | readonly string[] | undefined): string | undefined {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  return undefined;
+}
+
+export function routineMarker(attributes: Attrs): { id: string; surfaceKey: string } | null {
+  const id = oneOf(attributes?.[ROUTINE_MARKER.id]);
+  const surfaceKey = oneOf(attributes?.[ROUTINE_MARKER.surface]);
+  return id && surfaceKey ? { id, surfaceKey } : null;
+}
+
 export function describeTrigger(t: RoutineTrigger): string {
   switch (t.kind) {
     case "cron":

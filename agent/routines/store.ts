@@ -74,6 +74,10 @@ export function listRoutines(p: Partition): Promise<Routine[]> {
   return readFileList(p.surfaceKey);
 }
 
+export async function getRoutine(surfaceKey: string, id: string): Promise<Routine | null> {
+  return (await readFileList(surfaceKey)).find((r) => r.id === id) ?? null;
+}
+
 export async function addRoutine(p: Partition, routine: Routine): Promise<Routine> {
   const list = await readFileList(p.surfaceKey);
   list.push(routine);
