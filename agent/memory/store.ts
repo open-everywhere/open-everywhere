@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import type { Partition } from "./partition.js";
 
@@ -160,6 +160,14 @@ export async function writeTier(
     await writeFile(abs, content, "utf-8");
   }
   return commit(tierRelDir(p, tier), message);
+}
+
+export async function deleteTier(p: Partition, tier: Tier): Promise<void> {
+  const dir = tierAbsDir(p, tier);
+  if (!existsSync(dir)) return;
+  await rm(dir, { recursive: true, force: true });
+  ensureRepo();
+  commit(tierRelDir(p, tier), `delete ${tierId(tier)} memory for ${tierRelDir(p, tier)}`);
 }
 
 export function storeRoot(): string {
