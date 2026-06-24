@@ -1,0 +1,64 @@
+
+import { appendFile, writeFile } from "node:fs/promises";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-audit-"));
+process.env.OE_AUDIT_DIR = tmp;
+
+const { appendAudit, readAudit, auditRoot } = await import("../agent/audit/audit.js");
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    rmSync(tmp, { recursive: true, force: true });
+    process.exit(1);
+  }
+  passed++;
+}
+
+ok(auditRoot() === tmp, "auditRoot reflects OE_AUDIT_DIR");
+
+await appendAudit({ ts: "2026-06-24T10:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U1", action: "memory.write", detail: { tier: "surface", files: 2 } });
+await appendAudit({ ts: "2026-06-24T11:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U2", action: "egress.policy", detail: { hosts: 3, enforced: false } });
+await appendAudit({ ts: "2026-06-24T12:00:00Z", org: "acme", platform: "slack", workspace: "T2", surface: "C9", principalId: "U1", action: "memory.write", detail: { tier: "workspace", files: 1 } });
+await appendAudit({ ts: "2026-06-24T09:00:00Z", org: "globex", platform: "linear", workspace: "ORG1", surface: "ISS9", principalId: "L3", action: "memory.write", detail: { tier: "surface" } });
+
+const acme = await readAudit({ org: "acme" });
+ok(acme.length === 3, "org scan returns only that org's entries");
+ok(acme.every((e) => e.org === "acme"), "no cross-org bleed");
+const globex = await readAudit({ org: "globex" });
+ok(globex.length === 1 && globex[0].principalId === "L3", "second org isolated");
+
+ok(acme[0].ts === "2026-06-24T12:00:00Z" && acme[2].ts === "2026-06-24T10:00:00Z", "results are newest-first");
+
+ok((await readAudit({ org: "acme", action: "memory.write" })).length === 2, "filter by action");
+ok((await readAudit({ org: "acme", principalId: "U1" })).length === 2, "filter by principalId (who asked)");
+ok((await readAudit({ org: "acme", workspace: "T2" })).length === 1, "filter by workspace");
+ok((await readAudit({ org: "acme", surface: "C1" })).length === 2, "filter by surface");
+ok((await readAudit({ org: "acme", since: "2026-06-24T11:00:00Z" })).length === 2, "filter by since (inclusive lower bound)");
+ok((await readAudit({ org: "acme", limit: 1 })).length === 1, "limit caps the result");
+ok((await readAudit({ org: "acme", limit: 1 }))[0].ts === "2026-06-24T12:00:00Z", "limit keeps the newest");
+
+ok((await readAudit()).length === 4, "no-org read scans all orgs");
+
+await appendAudit({ org: "acme", platform: "slack", workspace: "T3", action: "action.test" });
+const stamped = await readAudit({ org: "acme", workspace: "T3" });
+ok(stamped.length === 1 && typeof stamped[0].ts === "string" && stamped[0].ts.length >= 20, "ts is auto-stamped when omitted");
+
+const before = (await readAudit({ org: "acme", workspace: "T1" })).length;
+await appendAudit({ ts: "2026-06-24T13:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", action: "memory.write" });
+const after = (await readAudit({ org: "acme", workspace: "T1" })).length;
+ok(after === before + 1, "append-only: an append adds a line, never overwrites prior ones");
+ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API exists (audit is outside the erasure path)");
+
+await appendFile(join(tmp, "acme", "slack", "T1.jsonl"), "this is not json\n", "utf-8");
+ok((await readAudit({ org: "acme", workspace: "T1" })).length === after, "a corrupt trailing line is skipped, not fatal");
+
+await writeFile(join(tmp, "acme", "slack", "EMPTY.jsonl"), "", "utf-8");
+ok((await readAudit({ org: "acme" })).length >= 4, "empty jsonl file doesn't break the scan");
+
+rmSync(tmp, { recursive: true, force: true });
+console.log(`✓ audit: ${passed} assertions passed`);

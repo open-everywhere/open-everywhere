@@ -1,10 +1,12 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
+import { bindFrom } from "../identity/binding.js";
 import { resolveMode, resolveVisibility } from "../access/request.js";
 import { ensureTier, readTier, writeTier, storeRoot, tierId } from "../memory/store.js";
 import { readTiers, writeTiers } from "../memory/tiers.js";
 import { syncTierIntoSandbox, readTierFromSandbox } from "../memory/sandbox-sync.js";
+import { appendAudit } from "../audit/audit.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
   "open-everywhere.memory.sessionLog",
@@ -26,6 +28,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   const sessionId = ctx.session.id;
   const when = new Date().toISOString();
   const firstMessage = sessionLog.get().firstMessage?.trim();
+  const principalId = bindFrom(ctx).principalId;
 
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   try {
@@ -51,6 +54,17 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
     const sha = await writeTier(p, tier, files, `session ${sessionId} (${outcome}) [${tierId(tier)}]`);
     persisted += Object.keys(files).length;
     log(`persisted ${tierId(tier)}: ${Object.keys(files).length} file(s)${sha ? ` @ ${sha}` : ""}`);
+    if (sha) {
+      await appendAudit({
+        org: p.org,
+        platform: p.platform,
+        workspace: p.workspace,
+        surface: p.surface,
+        principalId,
+        action: "memory.write",
+        detail: { tier: tierId(tier), files: Object.keys(files).length, version: sha, outcome, sessionId },
+      });
+    }
   }
   log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} -> ${storeRoot()}`);
 }
