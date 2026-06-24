@@ -35,6 +35,18 @@ export function assembleAccessInstructions(access: EffectiveAccess): string | nu
     );
   }
 
+  if (caps.length > 0 || access.connectors.length > 0) {
+    const granted = access.connectors;
+    const list = granted.length > 0 ? granted.map((c) => `\`${c}\``).join(", ") : "(none)";
+    parts.push(
+      `### Connections you may use\n\n` +
+        `- Allowed connections for this channel: ${list}\n\n` +
+        `Use **only** the connections listed above. \`connection_search\` may surface other ` +
+        `connections that exist on this deployment — you are **not** authorized to use them here. ` +
+        `If a task needs a connection you haven't been granted, say so plainly; do not invoke it.`,
+    );
+  }
+
   if (parts.length === 0) return null;
   return `## Channel scope: \`${access.scopeKey}\` (mode: ${access.mode})\n\n${parts.join("\n\n")}`;
 }
