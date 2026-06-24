@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Partition } from "../memory/partition.js";
+import { safeName } from "../memory/layout.js";
 import { addUsage, emptyWindow, windowTokens, type SurfaceLedger, type Usage } from "./spend.js";
 
 const ROOT = process.env.OE_SPEND_DIR ? process.env.OE_SPEND_DIR : join(process.cwd(), ".open-everywhere-spend");
@@ -11,8 +12,8 @@ export function spendRoot(): string {
   return ROOT;
 }
 
-function surfaceFile(surfaceKey: string): string {
-  return join(ROOT, ...surfaceKey.split("/"), "spend.json");
+function surfaceFile(org: string, surfaceKey: string): string {
+  return join(ROOT, safeName(org), ...surfaceKey.split("/"), "spend.json");
 }
 
 function git(args: string[]): boolean {
@@ -30,8 +31,8 @@ function ensureRepo(): void {
   git(["config", "user.name", "Open Everywhere"]);
 }
 
-async function readLedger(surfaceKey: string): Promise<SurfaceLedger> {
-  const file = surfaceFile(surfaceKey);
+async function readLedger(org: string, surfaceKey: string): Promise<SurfaceLedger> {
+  const file = surfaceFile(org, surfaceKey);
   if (!existsSync(file)) return { windows: {} };
   try {
     const parsed = JSON.parse(await readFile(file, "utf-8"));
@@ -44,31 +45,33 @@ async function readLedger(surfaceKey: string): Promise<SurfaceLedger> {
 export async function recordUsage(p: Partition, period: string, usage: Usage): Promise<void> {
   await mkdir(ROOT, { recursive: true });
   ensureRepo();
-  const ledger = await readLedger(p.surfaceKey);
+  const ledger = await readLedger(p.org, p.surfaceKey);
   ledger.windows[period] = addUsage(ledger.windows[period] ?? emptyWindow(), usage);
-  const file = surfaceFile(p.surfaceKey);
+  const file = surfaceFile(p.org, p.surfaceKey);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(ledger, null, 2) + "\n", "utf-8");
   if (git(["add", "-A"]) && git(["diff", "--cached", "--quiet"]) === false) {
-    git(["commit", "--quiet", "-m", `spend ${p.surfaceKey} ${period}`]);
+    git(["commit", "--quiet", "-m", `spend ${p.org}/${p.surfaceKey} ${period}`]);
   }
 }
 
-export async function surfaceTokens(surfaceKey: string, period: string): Promise<number> {
-  return windowTokens((await readLedger(surfaceKey)).windows[period]);
+export async function surfaceTokens(org: string, surfaceKey: string, period: string): Promise<number> {
+  return windowTokens((await readLedger(org, surfaceKey)).windows[period]);
 }
 
-export async function workspaceTokens(workspaceKey: string, period: string): Promise<number> {
+export async function workspaceTokens(org: string, workspaceKey: string, period: string): Promise<number> {
   let total = 0;
-  for (const { surfaceKey, ledger } of await allLedgers()) {
-    if (surfaceKey.startsWith(workspaceKey + "/")) total += windowTokens(ledger.windows[period]);
+  for (const l of await allLedgers()) {
+    if (l.org === org && l.surfaceKey.startsWith(workspaceKey + "/")) {
+      total += windowTokens(l.ledger.windows[period]);
+    }
   }
   return total;
 }
 
-export async function allLedgers(): Promise<{ surfaceKey: string; ledger: SurfaceLedger }[]> {
+export async function allLedgers(): Promise<{ org: string; surfaceKey: string; ledger: SurfaceLedger }[]> {
   if (!existsSync(ROOT)) return [];
-  const out: { surfaceKey: string; ledger: SurfaceLedger }[] = [];
+  const out: { org: string; surfaceKey: string; ledger: SurfaceLedger }[] = [];
   async function walk(dir: string, parts: string[]): Promise<void> {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (entry.name === ".git") continue;
@@ -77,7 +80,10 @@ export async function allLedgers(): Promise<{ surfaceKey: string; ledger: Surfac
       else if (entry.name === "spend.json") {
         try {
           const parsed = JSON.parse(await readFile(child, "utf-8"));
-          if (parsed?.windows) out.push({ surfaceKey: parts.join("/"), ledger: parsed as SurfaceLedger });
+          if (parsed?.windows && parts.length >= 2) {
+            const [org, ...rest] = parts;
+            out.push({ org, surfaceKey: rest.join("/"), ledger: parsed as SurfaceLedger });
+          }
         } catch {
         }
       }

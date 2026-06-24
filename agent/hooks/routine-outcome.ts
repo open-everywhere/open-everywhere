@@ -14,10 +14,10 @@ async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void>
   if (!marker) return;
 
   try {
-    const routine = await getRoutine(marker.surfaceKey, marker.id);
+    const routine = await getRoutine(marker.org, marker.surfaceKey, marker.id);
     if (!routine) return;
     const updated = applyOutcome(routine, outcome, new Date());
-    await updateRoutine(marker.surfaceKey, marker.id, {
+    await updateRoutine(marker.org, marker.surfaceKey, marker.id, {
       lastRunAt: updated.lastRunAt,
       lastOutcome: updated.lastOutcome,
       consecutiveFailures: updated.consecutiveFailures,

@@ -74,7 +74,7 @@ ok(!isDue(null, from), "null nextRunAt is never due");
 ok(!isDue(undefined, from), "undefined nextRunAt is never due");
 
 const base: Routine = {
-  id: "r-test", surfaceKey: "local/dev/alpha", trigger: { kind: "interval", everyMinutes: 5 },
+  id: "r-test", org: "default", surfaceKey: "local/dev/alpha", trigger: { kind: "interval", everyMinutes: 5 },
   prompt: "do x", createdAt: from.toISOString(), status: "active", consecutiveFailures: 0,
 };
 let r = base;
@@ -101,8 +101,9 @@ const gc = gcOrphaned(rs, new Set(["local/dev/alpha"]));
 ok(gc.kept.length === 1 && gc.kept[0].id === "a" && gc.removed[0].id === "b", "gc drops routines on surfaces the agent left");
 ok(gcOrphaned(rs, null).removed.length === 0, "gc with unknown membership keeps everything");
 
-const mk = routineMarker({ [ROUTINE_MARKER.id]: "r-9", [ROUTINE_MARKER.surface]: "slack/T1/C9" });
-ok(mk?.id === "r-9" && mk.surfaceKey === "slack/T1/C9", "routineMarker reads id + surfaceKey from attributes");
+const mk = routineMarker({ [ROUTINE_MARKER.id]: "r-9", [ROUTINE_MARKER.surface]: "slack/T1/C9", [ROUTINE_MARKER.org]: "acme" });
+ok(mk?.id === "r-9" && mk.surfaceKey === "slack/T1/C9" && mk.org === "acme", "routineMarker reads id + surfaceKey + org from attributes");
+ok(routineMarker({ [ROUTINE_MARKER.id]: "r-9", [ROUTINE_MARKER.surface]: "slack/T1/C9" })?.org === "default", "routineMarker defaults org to 'default' (back-compat with pre-org markers)");
 ok(routineMarker({ other: "x" }) === null, "routineMarker is null on a non-routine session");
 ok(routineMarker(undefined) === null, "routineMarker is null when no attributes");
 ok(routineMarker({ [ROUTINE_MARKER.id]: ["r-9"], [ROUTINE_MARKER.surface]: ["s"] })?.id === "r-9", "routineMarker collapses string[] attributes");
@@ -115,20 +116,27 @@ const store = await import("../agent/routines/store.js");
 const p = { org: "default", platform: "local", workspace: "dev", surface: "alpha", workspaceKey: "local/dev", surfaceKey: "local/dev/alpha", key: "local/dev/alpha" };
 const p2 = { ...p, surface: "beta", surfaceKey: "local/dev/beta", key: "local/dev/beta" };
 
-const made: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey };
+const made: Routine = { ...base, id: store.newRoutineId(), org: p.org, surfaceKey: p.surfaceKey };
 await store.addRoutine(p as never, made);
 ok((await store.listRoutines(p as never)).length === 1, "store: routine persisted to its surface");
 ok((await store.listRoutines(p2 as never)).length === 0, "store: another surface doesn't see it (isolation)");
 
-const upd = await store.updateRoutine(p.surfaceKey, made.id, { status: "disabled", disabledReason: "manual" });
+const upd = await store.updateRoutine(p.org, p.surfaceKey, made.id, { status: "disabled", disabledReason: "manual" });
 ok(upd?.status === "disabled", "store: update mutates the routine");
-ok((await store.updateRoutine(p.surfaceKey, "nope", {})) === null, "store: update of missing id returns null");
+ok((await store.updateRoutine(p.org, p.surfaceKey, "nope", {})) === null, "store: update of missing id returns null");
 
-await store.addRoutine(p2 as never, { ...base, id: store.newRoutineId(), surfaceKey: p2.surfaceKey });
+await store.addRoutine(p2 as never, { ...base, id: store.newRoutineId(), org: p2.org, surfaceKey: p2.surfaceKey });
 ok((await store.listAllRoutines()).length === 2, "store: listAll walks every surface");
 
-ok((await store.getRoutine(p.surfaceKey, made.id))?.id === made.id, "store: getRoutine fetches by surfaceKey + id");
-ok((await store.getRoutine(p.surfaceKey, "nope")) === null, "store: getRoutine returns null for missing id");
+ok((await store.getRoutine(p.org, p.surfaceKey, made.id))?.id === made.id, "store: getRoutine fetches by org + surfaceKey + id");
+ok((await store.getRoutine(p.org, p.surfaceKey, "nope")) === null, "store: getRoutine returns null for missing id");
+
+const pOrg2 = { ...p, org: "acme" };
+await store.addRoutine(pOrg2 as never, { ...base, id: store.newRoutineId(), org: "acme", surfaceKey: p.surfaceKey });
+ok((await store.listRoutines(p as never)).length === 1, "store: another org's routine for the same surfaceKey is invisible to this org");
+ok((await store.listRoutines(pOrg2 as never)).length === 1, "store: the other org has its own isolated surface file");
+ok((await store.getRoutine(p.org, p.surfaceKey, made.id))?.org === "default", "store: getRoutine stays within the requested org");
+
 ok((await store.removeRoutine(p as never, made.id)) === true, "store: remove returns true");
 ok((await store.listRoutines(p as never)).length === 0, "store: routine is gone after remove");
 ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing twice returns false");

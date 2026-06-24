@@ -19,6 +19,7 @@ function ok(cond: boolean, label: string): void {
 function eventRoutine(match?: Record<string, string>): Routine {
   return {
     id: "r-ev",
+    org: "default",
     surfaceKey: "slack/T1/C9",
     target: { channelId: "C9" },
     trigger: { kind: "event", source: "github", match },

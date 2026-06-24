@@ -8,6 +8,9 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
   const caps = resolveCaps(p.workspaceKey, p.surfaceKey);
   if (caps.surfaceMonthlyTokens == null && caps.workspaceMonthlyTokens == null) return { over: false };
   const period = periodOf(nowISO);
-  const [st, wt] = await Promise.all([surfaceTokens(p.surfaceKey, period), workspaceTokens(p.workspaceKey, period)]);
+  const [st, wt] = await Promise.all([
+    surfaceTokens(p.org, p.surfaceKey, period),
+    workspaceTokens(p.org, p.workspaceKey, period),
+  ]);
   return checkCap({ mode, surfaceTokens: st, workspaceTokens: wt, caps });
 }

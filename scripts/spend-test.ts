@@ -43,10 +43,15 @@ await store.recordUsage(pA as never, "2026-06", { inputTokens: 0, outputTokens: 
 await store.recordUsage(pB as never, "2026-06", { inputTokens: 200, outputTokens: 0 });
 await store.recordUsage(pOther as never, "2026-06", { inputTokens: 5000, outputTokens: 0 });
 
-ok((await store.surfaceTokens("slack/T1/C1", "2026-06")) === 250, "store: surface tokens accumulate across calls");
-ok((await store.surfaceTokens("slack/T1/C1", "2026-07")) === 0, "store: other period is empty");
-ok((await store.workspaceTokens("slack/T1", "2026-06")) === 450, "store: workspace tokens = sum of its surfaces (not other workspaces)");
-ok((await store.workspaceTokens("slack/T2", "2026-06")) === 5000, "store: workspace isolation in the rollup");
+ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: surface tokens accumulate across calls");
+ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-07")) === 0, "store: other period is empty");
+ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "store: workspace tokens = sum of its surfaces (not other workspaces)");
+ok((await store.workspaceTokens("default", "slack/T2", "2026-06")) === 5000, "store: workspace isolation in the rollup");
+const pOrg2 = { ...pA, org: "acme" };
+await store.recordUsage(pOrg2 as never, "2026-06", { inputTokens: 777, outputTokens: 0 });
+ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: other org's usage does not bleed into this org's surface total");
+ok((await store.surfaceTokens("acme", "slack/T1/C1", "2026-06")) === 777, "store: the other org has its own isolated ledger");
+ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "store: workspace rollup stays within one org");
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ spend: ${passed} assertions passed`);

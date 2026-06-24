@@ -51,7 +51,7 @@ export default defineSchedule({
       }
       const next = computeNextRun(r.trigger, now);
       try {
-        await updateRoutine(r.surfaceKey, r.id, {
+        await updateRoutine(r.org, r.surfaceKey, r.id, {
           lastRunAt: now.toISOString(),
           nextRunAt: next ? next.toISOString() : null,
         });
@@ -61,6 +61,7 @@ export default defineSchedule({
             ...appAuth.attributes,
             [ROUTINE_MARKER.id]: r.id,
             [ROUTINE_MARKER.surface]: r.surfaceKey,
+            [ROUTINE_MARKER.org]: r.org,
           },
         };
         waitUntil(

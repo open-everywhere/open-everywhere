@@ -24,7 +24,7 @@ async function fanOut(ev: NormalizedEvent, receive: RouteHandlerArgs["receive"])
       authenticator: "github",
       principalType: "service",
       principalId: "github:webhook",
-      attributes: { [ROUTINE_MARKER.id]: r.id, [ROUTINE_MARKER.surface]: r.surfaceKey },
+      attributes: { [ROUTINE_MARKER.id]: r.id, [ROUTINE_MARKER.surface]: r.surfaceKey, [ROUTINE_MARKER.org]: r.org },
     };
     await receive(slack, { message: eventPrompt(r, ev), target: { channelId }, auth });
     fired++;

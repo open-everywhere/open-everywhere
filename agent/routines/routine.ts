@@ -13,6 +13,7 @@ export type RunOutcome = "ok" | "failed" | "skipped";
 
 export interface Routine {
   readonly id: string;
+  readonly org: string;
   readonly surfaceKey: string;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly trigger: RoutineTrigger;
@@ -36,6 +37,7 @@ export function isClockScheduled(t: RoutineTrigger): boolean {
 export const ROUTINE_MARKER = {
   id: "oe_routine_id",
   surface: "oe_routine_surface",
+  org: "oe_routine_org",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -45,10 +47,11 @@ function oneOf(v: string | readonly string[] | undefined): string | undefined {
   return undefined;
 }
 
-export function routineMarker(attributes: Attrs): { id: string; surfaceKey: string } | null {
+export function routineMarker(attributes: Attrs): { id: string; surfaceKey: string; org: string } | null {
   const id = oneOf(attributes?.[ROUTINE_MARKER.id]);
   const surfaceKey = oneOf(attributes?.[ROUTINE_MARKER.surface]);
-  return id && surfaceKey ? { id, surfaceKey } : null;
+  const org = oneOf(attributes?.[ROUTINE_MARKER.org]) ?? "default";
+  return id && surfaceKey ? { id, surfaceKey, org } : null;
 }
 
 export function describeTrigger(t: RoutineTrigger): string {

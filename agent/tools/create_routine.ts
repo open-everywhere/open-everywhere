@@ -68,6 +68,7 @@ export default defineTool({
 
     const routine: Routine = {
       id: newRoutineId(),
+      org: p.org,
       surfaceKey: p.surfaceKey,
       target,
       trigger: t,

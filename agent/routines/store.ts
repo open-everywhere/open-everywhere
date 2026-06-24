@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Partition } from "../memory/partition.js";
+import { safeName } from "../memory/layout.js";
 import type { Routine } from "./routine.js";
 
 const ROOT = process.env.OE_ROUTINES_DIR
@@ -18,11 +19,11 @@ export function newRoutineId(): string {
   return `r-${randomUUID().slice(0, 8)}`;
 }
 
-function surfaceDir(surfaceKey: string): string {
-  return join(ROOT, ...surfaceKey.split("/"));
+function surfaceDir(org: string, surfaceKey: string): string {
+  return join(ROOT, safeName(org), ...surfaceKey.split("/"));
 }
-function surfaceFile(surfaceKey: string): string {
-  return join(surfaceDir(surfaceKey), "routines.json");
+function surfaceFile(org: string, surfaceKey: string): string {
+  return join(surfaceDir(org, surfaceKey), "routines.json");
 }
 
 function git(args: string[]): { ok: boolean; stdout: string } {
@@ -50,8 +51,8 @@ function commit(message: string): string | null {
   return sha.ok ? sha.stdout.trim() : null;
 }
 
-async function readFileList(surfaceKey: string): Promise<Routine[]> {
-  const file = surfaceFile(surfaceKey);
+async function readFileList(org: string, surfaceKey: string): Promise<Routine[]> {
+  const file = surfaceFile(org, surfaceKey);
   if (!existsSync(file)) return [];
   try {
     const parsed = JSON.parse(await readFile(file, "utf-8"));
@@ -61,49 +62,50 @@ async function readFileList(surfaceKey: string): Promise<Routine[]> {
   }
 }
 
-async function writeFileList(surfaceKey: string, routines: Routine[], message: string): Promise<string | null> {
+async function writeFileList(org: string, surfaceKey: string, routines: Routine[], message: string): Promise<string | null> {
   await mkdir(ROOT, { recursive: true });
   ensureRepo();
-  const file = surfaceFile(surfaceKey);
+  const file = surfaceFile(org, surfaceKey);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, JSON.stringify(routines, null, 2) + "\n", "utf-8");
   return commit(message);
 }
 
 export function listRoutines(p: Partition): Promise<Routine[]> {
-  return readFileList(p.surfaceKey);
+  return readFileList(p.org, p.surfaceKey);
 }
 
-export async function getRoutine(surfaceKey: string, id: string): Promise<Routine | null> {
-  return (await readFileList(surfaceKey)).find((r) => r.id === id) ?? null;
+export async function getRoutine(org: string, surfaceKey: string, id: string): Promise<Routine | null> {
+  return (await readFileList(org, surfaceKey)).find((r) => r.id === id) ?? null;
 }
 
 export async function addRoutine(p: Partition, routine: Routine): Promise<Routine> {
-  const list = await readFileList(p.surfaceKey);
+  const list = await readFileList(p.org, p.surfaceKey);
   list.push(routine);
-  await writeFileList(p.surfaceKey, list, `routine add ${routine.id} [${p.surfaceKey}]`);
+  await writeFileList(p.org, p.surfaceKey, list, `routine add ${routine.id} [${p.org}/${p.surfaceKey}]`);
   return routine;
 }
 
 export async function updateRoutine(
+  org: string,
   surfaceKey: string,
   id: string,
   patch: Partial<Routine>,
 ): Promise<Routine | null> {
-  const list = await readFileList(surfaceKey);
+  const list = await readFileList(org, surfaceKey);
   const i = list.findIndex((r) => r.id === id);
   if (i < 0) return null;
-  const updated = { ...list[i], ...patch, id: list[i].id, surfaceKey: list[i].surfaceKey };
+  const updated = { ...list[i], ...patch, id: list[i].id, org: list[i].org, surfaceKey: list[i].surfaceKey };
   list[i] = updated;
-  await writeFileList(surfaceKey, list, `routine update ${id} [${surfaceKey}]`);
+  await writeFileList(org, surfaceKey, list, `routine update ${id} [${org}/${surfaceKey}]`);
   return updated;
 }
 
 export async function removeRoutine(p: Partition, id: string): Promise<boolean> {
-  const list = await readFileList(p.surfaceKey);
+  const list = await readFileList(p.org, p.surfaceKey);
   const next = list.filter((r) => r.id !== id);
   if (next.length === list.length) return false;
-  await writeFileList(p.surfaceKey, next, `routine remove ${id} [${p.surfaceKey}]`);
+  await writeFileList(p.org, p.surfaceKey, next, `routine remove ${id} [${p.org}/${p.surfaceKey}]`);
   return true;
 }
 
