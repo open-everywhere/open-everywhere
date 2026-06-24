@@ -1,5 +1,6 @@
 import { defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
+import { assertConnectorGranted } from "../access/connector-scope.js";
 
 const NOTION_MCP_URL = "https://mcp.notion.com/sse";
 
@@ -12,6 +13,8 @@ export default defineMcpClientConnection({
   auth: {
     principalType: "app",
     async getToken() {
+      await assertConnectorGranted("notion");
+
       const token = process.env.NOTION_API_KEY;
       if (!token) {
         throw new Error(

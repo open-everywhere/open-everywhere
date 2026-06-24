@@ -23,23 +23,20 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 
 {
   const prev = process.env.NOTION_API_KEY;
-  delete process.env.NOTION_API_KEY;
+  process.env.NOTION_API_KEY = "secret_test_token";
   let threw = false;
+  let msg = "";
   try {
     await getToken(principal);
   } catch (err) {
     threw = true;
-    ok(String(err).includes("NOTION_API_KEY"), "missing-secret error names the env var to set");
+    msg = String(err);
   }
-  ok(threw, "getToken throws when NOTION_API_KEY is unset (fail closed)");
-  if (prev !== undefined) process.env.NOTION_API_KEY = prev;
-}
-
-{
-  const prev = process.env.NOTION_API_KEY;
-  process.env.NOTION_API_KEY = "secret_test_token";
-  const res = await getToken(principal);
-  ok(res.token === "secret_test_token", "getToken returns the provisioned token for Authorization: Bearer");
+  ok(threw, "getToken refuses outside a granted surface even with the secret set (gate runs first, fail closed)");
+  ok(
+    msg.includes("could not resolve the calling surface") || msg.includes("not granted"),
+    "refusal is the connector scope gate, not a missing-secret error",
+  );
   if (prev === undefined) delete process.env.NOTION_API_KEY;
   else process.env.NOTION_API_KEY = prev;
 }
