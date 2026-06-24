@@ -1,11 +1,11 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
-import { loadBundles } from "../access/bundles.js";
+import { loadBindings, loadBundles } from "../access/bundles.js";
 import { resolveAccess } from "../access/resolver.js";
 import { buildResolveRequest } from "../access/request.js";
 import { assembleAccessInstructions } from "../access/instructions.js";
 
 function resolve(ctx: Parameters<typeof buildResolveRequest>[0]) {
-  const access = resolveAccess(buildResolveRequest(ctx), loadBundles());
+  const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const markdown = assembleAccessInstructions(access);
   return defineInstructions({ markdown: markdown ?? "" });

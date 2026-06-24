@@ -1,5 +1,5 @@
 import { defineHook } from "eve/hooks";
-import { loadBundles } from "../access/bundles.js";
+import { loadBindings, loadBundles } from "../access/bundles.js";
 import { resolveAccess } from "../access/resolver.js";
 import { buildResolveRequest } from "../access/request.js";
 import { compileNetworkPolicy } from "../access/egress.js";
@@ -13,7 +13,7 @@ export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
       try {
-        const access = resolveAccess(buildResolveRequest(ctx), loadBundles());
+        const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
         const policy = await compileNetworkPolicy(access, resolveHeaders);
         const hostCount =
           typeof policy === "string" ? 0 : Object.keys(policy.allow ?? {}).length;

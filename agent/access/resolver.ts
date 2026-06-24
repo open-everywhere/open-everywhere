@@ -1,4 +1,4 @@
-import type { Bundle, Connection, HttpMethod, Plugin, Scope } from "./bundle.js";
+import type { Binding, Bundle, Connection, HttpMethod, Plugin, Scope } from "./bundle.js";
 
 export type SessionMode = "channel" | "dm" | "mpim";
 
@@ -7,6 +7,7 @@ export interface ResolveRequest {
   readonly platform: string;
   readonly workspace: string;
   readonly channel: string;
+  readonly domains?: readonly string[];
   readonly principalId?: string;
 }
 
@@ -33,11 +34,12 @@ export interface EffectiveAccess {
   readonly warnings: readonly string[];
 }
 
-const SPECIFICITY: Record<Scope["level"], number> = { org: 0, workspace: 1, channel: 2 };
+const SPECIFICITY: Record<Scope["level"], number> = { org: 0, workspace: 1, domain: 2, channel: 3 };
 
 function scopeLabel(s: Scope): string {
   if (s.level === "org") return "org";
   if (s.level === "workspace") return `workspace:${s.workspace}`;
+  if (s.level === "domain") return `domain:${s.workspace}/${s.domain}`;
   return `channel:${s.workspace}/${s.channel}`;
 }
 
@@ -47,6 +49,8 @@ function scopeMatches(s: Scope, req: ResolveRequest): boolean {
       return true;
     case "workspace":
       return s.workspace === req.workspace;
+    case "domain":
+      return s.workspace === req.workspace && (req.domains?.includes(s.domain!) ?? false);
     case "channel":
       return s.workspace === req.workspace && s.channel === req.channel;
   }
@@ -56,44 +60,56 @@ function normHost(h: string): string {
   return h.trim().toLowerCase();
 }
 
-export function resolveAccess(req: ResolveRequest, bundles: readonly Bundle[]): EffectiveAccess {
+export function resolveAccess(
+  req: ResolveRequest,
+  bundles: readonly Bundle[],
+  bindings: readonly Binding[],
+): EffectiveAccess {
   const warnings: string[] = [];
+  const byName = new Map(bundles.map((b) => [b.name, b]));
 
   const principalWorkspace = req.principalId ? `dm:${req.principalId}` : undefined;
-  const applicable = bundles.filter((b) => {
-    if (req.mode === "dm") {
-      return principalWorkspace !== undefined && b.scope.workspace === principalWorkspace;
-    }
-    return scopeMatches(b.scope, req);
-  });
 
-  const ordered = [...applicable].sort(
+  const applied: { scope: Scope; bundle: Bundle }[] = [];
+  for (const binding of bindings) {
+    const inScope =
+      req.mode === "dm"
+        ? principalWorkspace !== undefined && binding.scope.workspace === principalWorkspace
+        : scopeMatches(binding.scope, req);
+    if (!inScope) continue;
+    const bundle = byName.get(binding.bundle);
+    if (!bundle) {
+      warnings.push(`binding references unknown bundle "${binding.bundle}" — ignored`);
+      continue;
+    }
+    applied.push({ scope: binding.scope, bundle });
+  }
+
+  const ordered = [...applied].sort(
     (a, b) => SPECIFICITY[a.scope.level] - SPECIFICITY[b.scope.level],
   );
 
   const connById = new Map<string, Connection>();
-  const connScopeLevel = new Map<string, number>();
-  for (const b of ordered) {
+  for (const { bundle } of ordered) {
     const seenHostsThisBundle = new Map<string, string>();
-    for (const c of b.connections ?? []) {
+    for (const c of bundle.connections ?? []) {
       for (const h of c.allowedWebsites) {
         const key = normHost(h);
         const prior = seenHostsThisBundle.get(key);
         if (prior && prior !== c.id) {
           warnings.push(
-            `bundle "${b.name}" has two connections (${prior}, ${c.id}) claiming host ${h}; resolution order within a scope is undefined`,
+            `bundle "${bundle.name}" has two connections (${prior}, ${c.id}) claiming host ${h}; resolution order within a scope is undefined`,
           );
         }
         seenHostsThisBundle.set(key, c.id);
       }
       connById.set(c.id, c);
-      connScopeLevel.set(c.id, SPECIFICITY[b.scope.level]);
     }
   }
   const connections = [...connById.values()];
 
   const hostMap = new Map<string, ReachableHost>();
-  for (const d of ordered.flatMap((b) => b.domains ?? [])) {
+  for (const d of ordered.flatMap(({ bundle }) => bundle.domains ?? [])) {
     const key = normHost(d);
     if (!hostMap.has(key)) hostMap.set(key, { host: key, viaConnection: null });
   }
@@ -109,14 +125,30 @@ export function resolveAccess(req: ResolveRequest, bundles: readonly Bundle[]): 
   }
   const reachableHosts = [...hostMap.values()].sort((a, b) => a.host.localeCompare(b.host));
 
-  const repos = [...new Set(ordered.flatMap((b) => b.repos ?? []))].sort();
+  const repos = [...new Set(ordered.flatMap(({ bundle }) => bundle.repos ?? []))].sort();
   const pluginById = new Map<string, Plugin>();
-  for (const p of ordered.flatMap((b) => b.plugins ?? [])) pluginById.set(p.id, p);
+  for (const p of ordered.flatMap(({ bundle }) => bundle.plugins ?? [])) pluginById.set(p.id, p);
   const plugins = [...pluginById.values()];
 
   const instructionStack: InstructionLayer[] = ordered
-    .filter((b) => b.instructions && b.instructions.trim().length > 0)
-    .map((b) => ({ source: scopeLabel(b.scope), text: b.instructions!.trim() }));
+    .filter(({ bundle }) => bundle.instructions && bundle.instructions.trim().length > 0)
+    .map(({ scope, bundle }) => ({ source: scopeLabel(scope), text: bundle.instructions!.trim() }));
+
+  for (const { scope, bundle } of ordered) {
+    if (scope.level === "channel" || scope.level === "domain") continue;
+    if (scope.workspace?.startsWith("dm:")) continue;
+    const where = scopeLabel(scope);
+    if ((bundle.repos?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" grants ${bundle.repos!.length} repo(s) at ${where} scope — every channel under it inherits them (incl. future/public channels). Bind repo grants to a domain or specific channel instead.`,
+      );
+    }
+    if ((bundle.connections?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" binds ${bundle.connections!.length} credential(s) at ${where} scope — their credentials are reachable from every channel under it. Bind sensitive credentials to a domain or specific channel instead.`,
+      );
+    }
+  }
 
   const scopeKey =
     req.mode === "dm" && req.principalId

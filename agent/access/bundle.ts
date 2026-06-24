@@ -1,8 +1,9 @@
-export type ScopeLevel = "org" | "workspace" | "channel";
+export type ScopeLevel = "org" | "workspace" | "domain" | "channel";
 
 export interface Scope {
   readonly level: ScopeLevel;
   readonly workspace?: string;
+  readonly domain?: string;
   readonly channel?: string;
 }
 
@@ -39,7 +40,6 @@ export interface Plugin {
 
 export interface Bundle {
   readonly name: string;
-  readonly scope: Scope;
   readonly connections?: readonly Connection[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
@@ -47,6 +47,15 @@ export interface Bundle {
   readonly instructions?: string;
 }
 
+export interface Binding {
+  readonly bundle: string;
+  readonly scope: Scope;
+}
+
 export function defineBundle(bundle: Bundle): Bundle {
   return bundle;
+}
+
+export function defineBinding(binding: Binding): Binding {
+  return binding;
 }

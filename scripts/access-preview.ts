@@ -1,4 +1,5 @@
-import { loadBundles } from "../agent/access/bundles.js";
+import { loadBindings, loadBundles } from "../agent/access/bundles.js";
+import { domainsForSurface } from "../agent/memory/domains.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../agent/access/resolver.js";
 import { compileNetworkPolicy } from "../agent/access/egress.js";
 import { resolveHeaders } from "../agent/access/credentials.js";
@@ -8,15 +9,20 @@ function arg(name: string, fallback?: string): string | undefined {
   return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : fallback;
 }
 
+const platform = arg("platform", "local")!;
+const workspace = arg("workspace", "dev")!;
+const channel = arg("channel", "default")!;
+
 const req: ResolveRequest = {
   mode: (arg("mode", "channel") as SessionMode),
-  platform: arg("platform", "local")!,
-  workspace: arg("workspace", "dev")!,
-  channel: arg("channel", "default")!,
+  platform,
+  workspace,
+  channel,
+  domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
   principalId: arg("principal"),
 };
 
-const access = resolveAccess(req, loadBundles());
+const access = resolveAccess(req, loadBundles(), loadBindings());
 
 console.log(`\nScope: ${access.scopeKey}  (mode: ${access.mode})`);
 console.log("─".repeat(60));
