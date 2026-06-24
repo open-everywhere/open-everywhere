@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { removeRoutine } from "../routines/store.js";
+import { auditToolAction } from "../audit/tool-action.js";
 
 export default defineTool({
   description:
@@ -21,6 +22,7 @@ export default defineTool({
     if (!cancelled) {
       throw new Error(`No routine '${input.id}' on this surface — check the id with list_routines.`);
     }
+    await auditToolAction(ctx, "routine.cancel", { id: input.id });
     return { cancelled, id: input.id };
   },
 });

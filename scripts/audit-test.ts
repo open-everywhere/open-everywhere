@@ -60,5 +60,25 @@ ok((await readAudit({ org: "acme", workspace: "T1" })).length === after, "a corr
 await writeFile(join(tmp, "acme", "slack", "EMPTY.jsonl"), "", "utf-8");
 ok((await readAudit({ org: "acme" })).length >= 4, "empty jsonl file doesn't break the scan");
 
+{
+  const { auditToolAction } = await import("../agent/audit/tool-action.js");
+  process.env.OE_ORG = "toolorg";
+  process.env.OE_PLATFORM = "slack";
+  process.env.OE_WORKSPACE = "TW";
+  process.env.OE_SURFACE = "CW";
+  process.env.OE_PRINCIPAL = "U_actor";
+  process.env.OE_MODE = "channel";
+
+  await auditToolAction({}, "pr.open", { repo: "acme/web", number: 7 });
+  await auditToolAction({}, "routine.create", { id: "r-xyz" });
+
+  const rows = await readAudit({ org: "toolorg" });
+  ok(rows.length === 2, "auditToolAction wrote both tool-action entries under the resolved org");
+  ok(rows.some((e) => e.action === "pr.open" && (e.detail as { number?: number })?.number === 7), "pr.open recorded with its detail");
+  ok(rows.every((e) => e.principalId === "U_actor"), "tool action stamps WHO from the ctx binding");
+  ok(rows.every((e) => e.platform === "slack" && e.workspace === "TW" && e.surface === "CW"), "tool action stamps WHERE from the ctx binding");
+  for (const k of ["OE_ORG", "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ audit: ${passed} assertions passed`);

@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
+import { auditToolAction } from "../audit/tool-action.js";
 
 export default defineTool({
   description:
@@ -13,7 +14,7 @@ export default defineTool({
     body: z.string().describe("PR description (markdown)."),
   }),
   needsApproval: always(),
-  async execute(input) {
+  async execute(input, ctx) {
     const token = process.env.GITHUB_TOKEN;
     if (!token) throw new Error("GITHUB_TOKEN is not set.");
 
@@ -40,6 +41,15 @@ export default defineTool({
     }
 
     const pr = (await res.json()) as { html_url: string; number: number };
+
+    await auditToolAction(ctx, "pr.open", {
+      repo: input.repo,
+      head: input.head,
+      base: input.base,
+      number: pr.number,
+      url: pr.html_url,
+    });
+
     return { url: pr.html_url, number: pr.number };
   },
 });

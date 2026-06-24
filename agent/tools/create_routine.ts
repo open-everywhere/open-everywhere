@@ -5,6 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { addRoutine, newRoutineId } from "../routines/store.js";
+import { auditToolAction } from "../audit/tool-action.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { describeTrigger, type Routine, type RoutineTrigger } from "../routines/routine.js";
 
@@ -80,6 +81,12 @@ export default defineTool({
       consecutiveFailures: 0,
     };
     await addRoutine(p, routine);
+
+    await auditToolAction(ctx, "routine.create", {
+      id: routine.id,
+      trigger: describeTrigger(t),
+      nextRunAt: routine.nextRunAt ?? null,
+    });
 
     return {
       created: true,
