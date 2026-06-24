@@ -1,4 +1,5 @@
 import type { Partition } from "./partition.js";
+import { sqliteProvider } from "./sqlite.js";
 import {
   deleteTier as gitDeleteTier,
   ensureTier as gitEnsureTier,
@@ -34,6 +35,7 @@ export const gitProvider: MemoryProvider = {
 
 const REGISTRY: Record<string, MemoryProvider> = {
   git: gitProvider,
+  sqlite: sqliteProvider,
 };
 
 let active: MemoryProvider | null = null;
