@@ -12,8 +12,10 @@ import {
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
-import { resolvePartition } from "../memory/partition.js";
+import { resolvePartition, type Partition } from "../memory/partition.js";
 import { readTier, SURFACE } from "../memory/store.js";
+import { slackMode } from "../identity/binding.js";
+import { scopeOverBudget } from "../spend/check.js";
 import {
   STATUS_REACTION,
   renderPinned,
@@ -79,14 +81,15 @@ async function enrichVisibility(ctx: SlackContext, channelId: string, base: Chan
   }
 }
 
-async function deriveAuth(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<OpenEverywhereSlackAuth | null> {
+async function resolveFacts(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<ChannelFacts> {
+  return isDm
+    ? { channelType: "im", isPrivate: true }
+    : enrichVisibility(ctx, message.channelId, channelFactsFromRaw(message.raw));
+}
+
+function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhereSlackAuth | null {
   const author = message.author;
   if (!author) return null;
-
-  const facts: ChannelFacts = isDm
-    ? { channelType: "im", isPrivate: true }
-    : await enrichVisibility(ctx, message.channelId, channelFactsFromRaw(message.raw));
-
   return buildSlackAuth({
     userId: author.userId,
     teamId: message.teamId,
@@ -97,13 +100,47 @@ async function deriveAuth(ctx: SlackContext, message: SlackMessage, isDm: boolea
   });
 }
 
+function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partition {
+  return resolvePartition({
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            team_id: message.teamId ?? "",
+            channel_id: message.channelId,
+            channel_type: facts.channelType ?? "",
+          },
+          principalId: message.author?.userId ?? "",
+          principalType: "slack-user",
+        },
+      },
+    },
+  });
+}
+
 async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<{ auth: OpenEverywhereSlackAuth | null }> {
+  const facts = await resolveFacts(ctx, message, isDm);
+  const mode = slackMode(facts.channelType, message.channelId);
+
+  try {
+    const verdict = await scopeOverBudget(partitionForMessage(message, facts), mode, new Date().toISOString());
+    if (verdict.over) {
+      try {
+        await ctx.thread.post(`:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise the budget in the spend config.`);
+      } catch {
+      }
+      return { auth: null };
+    }
+  } catch {
+  }
+
   try {
     await ctx.thread.startTyping("Thinking…");
   } catch {
   }
   await setStatusReaction(ctx.slack, "working");
-  return { auth: await deriveAuth(ctx, message, isDm) };
+  return { auth: authFromFacts(message, facts) };
 }
 
 export default slackChannel({
