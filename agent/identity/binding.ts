@@ -101,6 +101,28 @@ const bindSlack: Mapper = (ctx) => {
   };
 };
 
+export function linearVisibility(isPrivate: string | undefined): Visibility {
+  if (isPrivate === "false") return "public";
+  return "private";
+}
+
+const bindLinear: Mapper = (ctx) => {
+  const a = authOf(ctx)?.attributes;
+  const surface =
+    attr(a, ["issue_id", "issueId"]) ??
+    attr(a, ["issue_identifier", "issueIdentifier"]) ??
+    attr(a, ["agent_session_id", "agentSessionId"]);
+  const agentSessionId = attr(a, ["agent_session_id", "agentSessionId"]);
+  return {
+    workspace: attr(a, ["organization_id", "organizationId"]),
+    surface,
+    mode: "channel",
+    visibility: linearVisibility(attr(a, ["is_private", "isPrivate"])),
+    principalId: authPrincipalId(ctx) ?? attr(a, ["creator_id", "creatorId", "user_id", "userId"]),
+    target: agentSessionId ? { agentSessionId } : undefined,
+  };
+};
+
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -118,6 +140,7 @@ const bindLocal: Mapper = (ctx) => {
 
 const MAPPERS: Readonly<Record<string, Mapper>> = {
   slack: bindSlack,
+  linear: bindLinear,
 };
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {

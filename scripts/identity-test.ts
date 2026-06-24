@@ -1,10 +1,11 @@
-import { bindFrom, slackMode, slackVisibility, type BindableContext } from "../agent/identity/binding.js";
+import { bindFrom, slackMode, slackVisibility, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import {
   buildSlackAuth,
   channelFactsFromInfo,
   channelFactsFromRaw,
 } from "../agent/channels/slack-identity.js";
+import { buildLinearAuth } from "../agent/channels/linear-identity.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -96,5 +97,38 @@ ok(channelFactsFromInfo({ channel: { is_private: true, is_group: true } }).isPri
 ok(channelFactsFromInfo({ channel: { is_im: true } }).channelType === "im", "channelFactsFromInfo: is_im -> im");
 ok(channelFactsFromInfo({ channel: { is_channel: true, is_private: false } }).channelType === "channel", "channelFactsFromInfo: is_channel -> channel");
 ok(JSON.stringify(channelFactsFromInfo(null)) === "{}", "channelFactsFromInfo: defensive on junk");
+
+function linearCtx(attributes: Record<string, string>, principalId?: string): BindableContext {
+  return {
+    channel: { kind: "linear" },
+    session: { auth: { current: { attributes, principalId: principalId ?? "", principalType: "linear-user" } } },
+  };
+}
+
+ok(linearVisibility("false") === "public", "linear: is_private=false -> public");
+ok(linearVisibility("true") === "private", "linear: is_private=true -> private");
+ok(linearVisibility(undefined) === "private", "linear: FAIL-CLOSED unknown privacy -> private");
+
+const lin = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", issue_identifier: "ENG-9", agent_session_id: "AS1", creator_id: "LU3" }));
+ok(lin.platform === "linear" && lin.workspace === "ORG1" && lin.surface === "ISS9", "linear: workspace=org, surface=issue from attributes");
+ok(lin.mode === "channel", "linear: agent sessions are channel-mode (no DM analog)");
+ok(lin.visibility === "private", "linear: no privacy signal -> fail-closed private");
+ok(lin.principalId === "LU3", "linear: principalId from creator_id");
+ok(JSON.stringify(lin.target) === JSON.stringify({ agentSessionId: "AS1" }), "linear: post-back target is the agent session");
+
+const linNoIssue = bindFrom(linearCtx({ organization_id: "ORG1", agent_session_id: "AS2" }));
+ok(linNoIssue.surface === "AS2", "linear: surface falls back to agent session id when no issue");
+
+const linPub = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", is_private: "false", agent_session_id: "AS1" }));
+ok(linPub.visibility === "public", "linear: explicit team-visible issue -> public");
+
+const linPart = resolvePartition(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", agent_session_id: "AS1" }));
+ok(linPart.surfaceKey === "linear/ORG1/ISS9", "linear: partition surfaceKey = platform/org/issue");
+
+const la = buildLinearAuth({ agentSessionId: "AS1", organizationId: "ORG1", issueId: "ISS9", issueIdentifier: "ENG-9", principalId: "LU3", isPrivate: false });
+ok(la.authenticator === "linear" && la.principalId === "LU3" && la.principalType === "linear-user", "buildLinearAuth: principal fields");
+ok(la.attributes.organization_id === "ORG1" && la.attributes.issue_id === "ISS9" && la.attributes.is_private === "false", "buildLinearAuth: facts captured as strings");
+const laSparse = buildLinearAuth({ agentSessionId: "AS2" });
+ok(laSparse.attributes.organization_id === undefined && laSparse.attributes.is_private === undefined && laSparse.principalId === "", "buildLinearAuth: omits unknown facts (no false claims)");
 
 console.log(`✓ identity: ${passed} assertions passed`);
