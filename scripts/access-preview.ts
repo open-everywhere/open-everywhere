@@ -43,6 +43,7 @@ for (const c of access.connections) {
 
 console.log(`\nRepos: ${access.repos.length ? access.repos.join(", ") : "(none)"}`);
 console.log(`Plugins: ${access.plugins.length ? access.plugins.map((p) => `${p.id}(${p.kind})`).join(", ") : "(none)"}`);
+console.log(`Connectors (host-side, agent/connections/*): ${access.connectors.length ? access.connectors.join(", ") : "(none)"}`);
 
 console.log("\nInstruction precedence stack (org → workspace → channel):");
 if (access.instructionStack.length === 0) console.log("  (none)");

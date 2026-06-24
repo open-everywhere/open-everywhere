@@ -155,4 +155,43 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "channel", workspace: "T1", channel: "C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "channel scope -> NO broad-grant warning");
 }
 
+{
+  const bundles: Bundle[] = [
+    { name: "base", connectors: ["notion"] },
+    { name: "pay", connectors: ["linear-mcp", "notion"] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "base", scope: { level: "org" } },
+    { bundle: "pay", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+  ];
+  const a = resolveAccess(chan("T1", "C1"), bundles, bindings);
+  ok(a.connectors.length === 2 && a.connectors.includes("notion") && a.connectors.includes("linear-mcp"), "connectors union across org + channel (deduped)");
+  const b = resolveAccess(chan("T1", "C2"), bundles, bindings);
+  ok(b.connectors.length === 1 && b.connectors[0] === "notion", "sibling channel gets only the org baseline connector (default-deny on channel grants)");
+  ok(resolveAccess(chan("T1", "C3"), [{ name: "empty" }], [{ bundle: "empty", scope: { level: "org" } }]).connectors.length === 0, "no connectors granted -> empty array (fail-closed)");
+}
+
+{
+  const bundles: Bundle[] = [
+    { name: "svc", connectors: ["notion"] },
+    { name: "mine", connectors: ["my-gmail"] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "svc", scope: { level: "org" } },
+    { bundle: "mine", scope: { level: "channel", workspace: "dm:U_me", channel: "U_me" } },
+  ];
+  const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U_me" };
+  const a = resolveAccess(dm, bundles, bindings);
+  ok(!a.connectors.includes("notion"), "DM does not inherit the service-scoped connector (two connector universes)");
+  ok(a.connectors.includes("my-gmail"), "DM resolves the caller's own personal connector grant");
+}
+
+{
+  const bundles: Bundle[] = [{ name: "Conn", connectors: ["notion"] }];
+  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "org" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at org scope raise a broad-grant warning");
+  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "workspace", workspace: "T1" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at workspace scope raise a broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Conn", scope: { level: "domain", workspace: "T1", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at domain scope -> NO broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "channel", workspace: "T1", channel: "C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at channel scope -> NO broad-grant warning");
+}
+
 console.log(`✓ resolver: ${passed} assertions passed`);

@@ -33,14 +33,25 @@ export default defineHook({
         }
 
         const p = resolvePartition(ctx);
+        const principalId = bindFrom(ctx).principalId;
         await appendAudit({
           org: p.org,
           platform: p.platform,
           workspace: p.workspace,
           surface: p.surface,
-          principalId: bindFrom(ctx).principalId,
+          principalId,
           action: "egress.policy",
           detail: { hosts: hostCount, enforced, scopeKey: access.scopeKey, summary },
+        });
+
+        await appendAudit({
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          principalId,
+          action: "connector.grant",
+          detail: { connectors: access.connectors, scopeKey: access.scopeKey },
         });
       } catch (err) {
         log(`skipped: ${String(err)}`);

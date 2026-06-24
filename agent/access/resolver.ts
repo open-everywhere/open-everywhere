@@ -30,6 +30,7 @@ export interface EffectiveAccess {
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
   readonly plugins: readonly Plugin[];
+  readonly connectors: readonly string[];
   readonly instructionStack: readonly InstructionLayer[];
   readonly warnings: readonly string[];
 }
@@ -129,6 +130,9 @@ export function resolveAccess(
   const pluginById = new Map<string, Plugin>();
   for (const p of ordered.flatMap(({ bundle }) => bundle.plugins ?? [])) pluginById.set(p.id, p);
   const plugins = [...pluginById.values()];
+  const connectors = [
+    ...new Set(ordered.flatMap(({ bundle }) => bundle.connectors ?? [])),
+  ].sort();
 
   const instructionStack: InstructionLayer[] = ordered
     .filter(({ bundle }) => bundle.instructions && bundle.instructions.trim().length > 0)
@@ -148,6 +152,11 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" binds ${bundle.connections!.length} credential(s) at ${where} scope — their credentials are reachable from every channel under it. Bind sensitive credentials to a domain or specific channel instead.`,
       );
     }
+    if ((bundle.connectors?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every channel under it may invoke those host-side connections. Bind connector grants to a domain or specific channel instead.`,
+      );
+    }
   }
 
   const scopeKey =
@@ -162,6 +171,7 @@ export function resolveAccess(
     reachableHosts,
     repos,
     plugins,
+    connectors,
     instructionStack,
     warnings,
   };

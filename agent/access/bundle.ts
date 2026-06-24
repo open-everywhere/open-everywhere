@@ -7,17 +7,7 @@ export interface Scope {
   readonly channel?: string;
 }
 
-export type CredentialType =
-  | "bearer"
-  | "basic"
-  | "body-parameter"
-  | "aws-sigv4"
-  | "gcp-access-token"
-  | "gcp-iap"
-  | "oauth2-jwt-bearer"
-  | "oauth2-client-credentials"
-  | "oauth2-authorization-code"
-  | "github-app";
+export type CredentialType = "bearer" | "basic" | "github-app";
 
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -41,6 +31,7 @@ export interface Plugin {
 export interface Bundle {
   readonly name: string;
   readonly connections?: readonly Connection[];
+  readonly connectors?: readonly string[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly Plugin[];
