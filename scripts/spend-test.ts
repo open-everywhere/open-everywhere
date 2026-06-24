@@ -34,9 +34,9 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SPEND_DIR = dir;
 const store = await import("../agent/spend/store.js");
 
-const pA = { platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" };
+const pA = { org: "default", platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" };
 const pB = { ...pA, surface: "C2", surfaceKey: "slack/T1/C2", key: "slack/T1/C2" };
-const pOther = { platform: "slack", workspace: "T2", surface: "C9", workspaceKey: "slack/T2", surfaceKey: "slack/T2/C9", key: "slack/T2/C9" };
+const pOther = { org: "default", platform: "slack", workspace: "T2", surface: "C9", workspaceKey: "slack/T2", surfaceKey: "slack/T2/C9", key: "slack/T2/C9" };
 
 await store.recordUsage(pA as never, "2026-06", { inputTokens: 100, outputTokens: 100 });
 await store.recordUsage(pA as never, "2026-06", { inputTokens: 0, outputTokens: 50 });

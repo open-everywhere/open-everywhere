@@ -12,10 +12,6 @@ function dbPath(): string {
   return join(root, "open-everywhere.sqlite3");
 }
 
-function orgId(): string {
-  return process.env.OE_ORG?.trim() || "default";
-}
-
 let db: DatabaseSync | null = null;
 let openedPath: string | null = null;
 
@@ -60,20 +56,20 @@ function readRows(p: Partition, tier: Tier): MemoryFiles {
   const path = tierRelDir(p, tier);
   const rows = getDb()
     .prepare("SELECT rel_path, content FROM memory_file WHERE org_id = ? AND tier_path = ?")
-    .all(orgId(), path) as { rel_path: string; content: string }[];
+    .all(p.org, path) as { rel_path: string; content: string }[];
   const out: MemoryFiles = {};
   for (const r of rows) out[r.rel_path] = r.content;
   return out;
 }
 
-function bumpVersion(path: string): string {
+function bumpVersion(org: string, path: string): string {
   const row = getDb()
     .prepare(
       `INSERT INTO memory_tier (org_id, tier_path, version) VALUES (?, ?, 1)
        ON CONFLICT(org_id, tier_path) DO UPDATE SET version = version + 1
        RETURNING version`,
     )
-    .get(orgId(), path) as { version: number };
+    .get(org, path) as { version: number };
   return String(row.version);
 }
 
@@ -99,8 +95,8 @@ export const sqliteProvider: MemoryProvider = {
     );
     handle.exec("BEGIN");
     try {
-      for (const [rel, content] of Object.entries(seed)) insert.run(orgId(), path, rel, content, now);
-      bumpVersion(path);
+      for (const [rel, content] of Object.entries(seed)) insert.run(p.org, path, rel, content, now);
+      bumpVersion(p.org, path);
       handle.exec("COMMIT");
     } catch (e) {
       handle.exec("ROLLBACK");
@@ -124,8 +120,8 @@ export const sqliteProvider: MemoryProvider = {
     );
     handle.exec("BEGIN");
     try {
-      for (const [rel, content] of changed) insert.run(orgId(), path, rel, content, now);
-      const version = bumpVersion(path);
+      for (const [rel, content] of changed) insert.run(p.org, path, rel, content, now);
+      const version = bumpVersion(p.org, path);
       handle.exec("COMMIT");
       return version;
     } catch (e) {
@@ -139,8 +135,8 @@ export const sqliteProvider: MemoryProvider = {
     const handle = getDb();
     handle.exec("BEGIN");
     try {
-      handle.prepare("DELETE FROM memory_file WHERE org_id = ? AND tier_path = ?").run(orgId(), path);
-      handle.prepare("DELETE FROM memory_tier WHERE org_id = ? AND tier_path = ?").run(orgId(), path);
+      handle.prepare("DELETE FROM memory_file WHERE org_id = ? AND tier_path = ?").run(p.org, path);
+      handle.prepare("DELETE FROM memory_tier WHERE org_id = ? AND tier_path = ?").run(p.org, path);
       handle.exec("COMMIT");
     } catch (e) {
       handle.exec("ROLLBACK");

@@ -5,7 +5,6 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-provider-"));
 process.env.OE_MEMORY_DIR = join(tmp, "git");
 process.env.OE_SQLITE_PATH = join(tmp, "mem.sqlite3");
-process.env.OE_ORG = "default";
 
 const { gitProvider } = await import("../agent/memory/provider.js");
 const { sqliteProvider, _resetDbForTest } = await import("../agent/memory/sqlite.js");
@@ -23,10 +22,10 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-function partition(workspace: string, surface: string): Partition {
+function partition(workspace: string, surface: string, org = "default"): Partition {
   const workspaceKey = `slack/${workspace}`;
   const surfaceKey = `${workspaceKey}/${surface}`;
-  return { platform: "slack", workspace, surface, workspaceKey, surfaceKey, key: surfaceKey };
+  return { org, platform: "slack", workspace, surface, workspaceKey, surfaceKey, key: surfaceKey };
 }
 
 async function runContract(provider: MemoryProvider): Promise<void> {
@@ -71,27 +70,23 @@ async function runContract(provider: MemoryProvider): Promise<void> {
 await runContract(gitProvider);
 await runContract(sqliteProvider);
 
-{
-  const p = partition("acme", "general");
+for (const provider of [gitProvider, sqliteProvider]) {
+  const id = provider.id;
+  const a = partition("acme", "general", `${id}-org-a`);
+  const b = partition("acme", "general", `${id}-org-b`);
 
-  process.env.OE_ORG = "org-a";
-  await sqliteProvider.ensureTier(p, WORKSPACE);
-  await sqliteProvider.writeTier(p, WORKSPACE, { "MEMORY.md": "A's secret\n" }, "a");
+  await provider.ensureTier(a, WORKSPACE);
+  await provider.writeTier(a, WORKSPACE, { "MEMORY.md": "A's secret\n" }, "a");
 
-  process.env.OE_ORG = "org-b";
-  ok(Object.keys(await sqliteProvider.readTier(p, WORKSPACE)).length === 0, "org-b cannot see org-a's tier (same partition, different org)");
-  await sqliteProvider.ensureTier(p, WORKSPACE);
-  await sqliteProvider.writeTier(p, WORKSPACE, { "MEMORY.md": "B's secret\n" }, "b");
-  ok((await sqliteProvider.readTier(p, WORKSPACE))["MEMORY.md"] === "B's secret\n", "org-b sees only its own content");
+  ok(Object.keys(await provider.readTier(b, WORKSPACE)).length === 0, `${id}: org-b cannot see org-a's tier (same workspace/surface, different org)`);
+  await provider.ensureTier(b, WORKSPACE);
+  await provider.writeTier(b, WORKSPACE, { "MEMORY.md": "B's secret\n" }, "b");
+  ok((await provider.readTier(b, WORKSPACE))["MEMORY.md"] === "B's secret\n", `${id}: org-b sees only its own content`);
+  ok((await provider.readTier(a, WORKSPACE))["MEMORY.md"] === "A's secret\n", `${id}: org-a unaffected by org-b's write`);
 
-  process.env.OE_ORG = "org-a";
-  ok((await sqliteProvider.readTier(p, WORKSPACE))["MEMORY.md"] === "A's secret\n", "org-a still sees its own content after org-b wrote");
-
-  await sqliteProvider.deleteTier(p, WORKSPACE);
-  ok(Object.keys(await sqliteProvider.readTier(p, WORKSPACE)).length === 0, "org-a erased");
-  process.env.OE_ORG = "org-b";
-  ok((await sqliteProvider.readTier(p, WORKSPACE))["MEMORY.md"] === "B's secret\n", "org-b survives org-a's erasure");
-  process.env.OE_ORG = "default";
+  await provider.deleteTier(a, WORKSPACE);
+  ok(Object.keys(await provider.readTier(a, WORKSPACE)).length === 0, `${id}: org-a erased`);
+  ok((await provider.readTier(b, WORKSPACE))["MEMORY.md"] === "B's secret\n", `${id}: org-b survives org-a's erasure`);
 }
 
 {

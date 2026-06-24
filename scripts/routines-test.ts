@@ -112,7 +112,7 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_ROUTINES_DIR = dir;
 
 const store = await import("../agent/routines/store.js");
-const p = { platform: "local", workspace: "dev", surface: "alpha", workspaceKey: "local/dev", surfaceKey: "local/dev/alpha", key: "local/dev/alpha" };
+const p = { org: "default", platform: "local", workspace: "dev", surface: "alpha", workspaceKey: "local/dev", surfaceKey: "local/dev/alpha", key: "local/dev/alpha" };
 const p2 = { ...p, surface: "beta", surfaceKey: "local/dev/beta", key: "local/dev/beta" };
 
 const made: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey };

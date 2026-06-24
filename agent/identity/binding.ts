@@ -3,6 +3,7 @@ import type { SessionMode } from "../access/resolver.js";
 export type Visibility = "public" | "private";
 
 export interface SurfaceBinding {
+  readonly org: string;
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string;
@@ -124,6 +125,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   const local = bindLocal(ctx);
   return {
+    org: seg(process.env.OE_ORG, "default"),
     platform,
     workspace: seg(raw.workspace ?? local.workspace, "dev"),
     surface: seg(raw.surface ?? local.surface, "default"),

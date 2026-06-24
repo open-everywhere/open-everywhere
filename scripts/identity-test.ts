@@ -62,6 +62,15 @@ ok(unknown.mode === "channel" && unknown.visibility === "private", "slack unknow
 const part = resolvePartition(slackCtx({ team_id: "T1", channel_id: "C9", channel_type: "channel", is_private: "false", user_id: "U7" }));
 ok(part.surfaceKey === "slack/T1/C9", "partition surfaceKey derives from slack binding");
 
+const orgCtx = slackCtx({ team_id: "T1", channel_id: "C9", channel_type: "channel", is_private: "false" });
+delete process.env.OE_ORG;
+ok(resolvePartition(orgCtx).org === "default", "partition.org defaults to 'default' when OE_ORG unset");
+process.env.OE_ORG = "acme-inc";
+const orgPart = resolvePartition(orgCtx);
+ok(orgPart.org === "acme-inc", "partition.org threads from OE_ORG");
+ok(orgPart.surfaceKey === "slack/T1/C9", "org is kept out of surfaceKey (org-portable tier keys)");
+delete process.env.OE_ORG;
+
 process.env.OE_WORKSPACE = "acme";
 process.env.OE_SURFACE = "alpha";
 process.env.OE_MODE = "dm";

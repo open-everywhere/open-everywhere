@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, posix, relative, sep } from "node:path";
 import type { Partition } from "./partition.js";
-import { seedFor, tierRelDir } from "./layout.js";
+import { safeName, seedFor, tierRelDir } from "./layout.js";
 
 export type MemoryFiles = Record<string, string>;
 
@@ -24,8 +24,12 @@ const ROOT = process.env.OE_MEMORY_DIR
   ? process.env.OE_MEMORY_DIR
   : join(process.cwd(), ".open-everywhere-memory");
 
+function storeRelDir(p: Partition, tier: Tier): string {
+  return `${safeName(p.org)}/${tierRelDir(p, tier)}`;
+}
+
 function tierAbsDir(p: Partition, tier: Tier): string {
-  return join(ROOT, ...tierRelDir(p, tier).split("/"));
+  return join(ROOT, ...storeRelDir(p, tier).split("/"));
 }
 
 function git(args: string[], cwd: string): { ok: boolean; stdout: string } {
@@ -86,7 +90,7 @@ export async function ensureTier(p: Partition, tier: Tier): Promise<MemoryFiles>
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf-8");
   }
-  commit(tierRelDir(p, tier), `seed ${tier} memory for ${tierRelDir(p, tier)}`);
+  commit(storeRelDir(p, tier), `seed ${tier} memory for ${storeRelDir(p, tier)}`);
   return seed;
 }
 
@@ -104,7 +108,7 @@ export async function writeTier(
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, content, "utf-8");
   }
-  return commit(tierRelDir(p, tier), message);
+  return commit(storeRelDir(p, tier), message);
 }
 
 export async function deleteTier(p: Partition, tier: Tier): Promise<void> {
@@ -112,7 +116,7 @@ export async function deleteTier(p: Partition, tier: Tier): Promise<void> {
   if (!existsSync(dir)) return;
   await rm(dir, { recursive: true, force: true });
   ensureRepo();
-  commit(tierRelDir(p, tier), `delete ${tierId(tier)} memory for ${tierRelDir(p, tier)}`);
+  commit(storeRelDir(p, tier), `delete ${tierId(tier)} memory for ${storeRelDir(p, tier)}`);
 }
 
 export function storeRoot(): string {
