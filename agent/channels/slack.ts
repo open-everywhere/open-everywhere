@@ -13,9 +13,11 @@ import {
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
-import { readTier, SURFACE } from "../memory/store.js";
+import { readTier, ensureTier, writeTier, SURFACE } from "../memory/store.js";
+import { upsertUnderSection } from "../memory/markdown.js";
 import { slackMode } from "../identity/binding.js";
 import { scopeOverBudget } from "../spend/check.js";
+import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_MARKER } from "../onboarding/onboarding.js";
 import {
   STATUS_REACTION,
   renderPinned,
@@ -100,6 +102,33 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
   });
 }
 
+async function maybeOnboard(ctx: SlackContext, p: Partition): Promise<void> {
+  try {
+    const files = await ensureTier(p, SURFACE);
+    if (files[ONBOARDED_MARKER] !== undefined) return;
+
+    let adopted = false;
+    try {
+      const pins = await ctx.slack.request("pins.list", { channel: ctx.slack.channelId });
+      const instructions = extractPinnedInstructions(pins);
+      if (instructions) {
+        const date = new Date().toISOString().slice(0, 10);
+        files["MEMORY.md"] = upsertUnderSection(files["MEMORY.md"] ?? "", "Standing instructions", instructionBullet(instructions, date));
+        adopted = true;
+      }
+    } catch {
+    }
+
+    files[ONBOARDED_MARKER] = new Date().toISOString();
+    await writeTier(p, SURFACE, files, `onboarding ${p.surfaceKey}`);
+    try {
+      await ctx.thread.post(introMessage(adopted));
+    } catch {
+    }
+  } catch {
+  }
+}
+
 function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partition {
   return resolvePartition({
     channel: { kind: "slack" },
@@ -133,6 +162,10 @@ async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean
       return { auth: null };
     }
   } catch {
+  }
+
+  if (mode === "channel") {
+    await maybeOnboard(ctx, partitionForMessage(message, facts));
   }
 
   try {
