@@ -18,7 +18,7 @@ async function resolvePrToken(repo: string): Promise<string> {
 }
 export default defineTool({
   description:
-    "Open a GitHub pull request. This is a consequential write and will pause for human approval before it runs.",
+    "Open a GitHub pull request. Write a clear body: what changed, why, how you verified it, and link the request that prompted it; open it as a draft if the repo's checks aren't passing. This is a consequential write and will pause for human approval before it runs.",
   inputSchema: z.object({
     repo: z.string().describe("Target repository as 'owner/repo'."),
     head: z.string().describe("The branch containing the changes."),
