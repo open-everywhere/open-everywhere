@@ -1,4 +1,7 @@
 import type { SessionMode } from "../access/resolver.js";
+import { teamsMode, teamsVisibility } from "../channels/teams-identity.js";
+import { discordMode, discordVisibility } from "../channels/discord-identity.js";
+import { telegramMode, telegramVisibility } from "../channels/telegram-identity.js";
 
 export type Visibility = "public" | "private";
 
@@ -123,6 +126,61 @@ const bindLinear: Mapper = (ctx) => {
   };
 };
 
+const bindTeams: Mapper = (ctx) => {
+  const a = authOf(ctx)?.attributes;
+  const scope = attr(a, ["scope"]);
+  const membershipType = attr(a, ["membership_type", "membershipType"]);
+  const mode = teamsMode(scope);
+  const conversationId = attr(a, ["conversation_id", "conversationId"]);
+  const serviceUrl = attr(a, ["service_url", "serviceUrl"]);
+  const tenantId = attr(a, ["tenant_id", "tenantId"]);
+  return {
+    workspace: tenantId,
+    surface: conversationId,
+    mode,
+    visibility: teamsVisibility(scope, membershipType, mode),
+    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
+    target:
+      conversationId && serviceUrl
+        ? { serviceUrl, conversationId, tenantId, channelId: attr(a, ["channel_id", "channelId"]), teamId: attr(a, ["team_id", "teamId"]) }
+        : undefined,
+  };
+};
+
+const bindDiscord: Mapper = (ctx) => {
+  const a = authOf(ctx)?.attributes;
+  const channelId = attr(a, ["channel_id", "channelId"]);
+  const guildId = attr(a, ["guild_id", "guildId"]);
+  const channelType = attr(a, ["channel_type", "channelType"]);
+  const everyoneCanView = attr(a, ["everyone_can_view", "everyoneCanView"]);
+  const userId = attr(a, ["user_id", "userId"]);
+  const mode = discordMode(channelType, guildId);
+  return {
+    workspace: guildId ?? userId,
+    surface: channelId,
+    mode,
+    visibility: discordVisibility(everyoneCanView, mode),
+    principalId: authPrincipalId(ctx) ?? userId,
+    target: channelId ? { channelId } : undefined,
+  };
+};
+
+const bindTelegram: Mapper = (ctx) => {
+  const a = authOf(ctx)?.attributes;
+  const chatId = attr(a, ["chat_id", "chatId"]);
+  const chatType = attr(a, ["chat_type", "chatType"]);
+  const mode = telegramMode(chatType);
+  const chatKey = chatId !== undefined && chatId.startsWith("-") ? `g${chatId.slice(1)}` : chatId;
+  return {
+    workspace: chatKey,
+    surface: chatKey,
+    mode,
+    visibility: telegramVisibility(chatType, mode),
+    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
+    target: chatId ? { chatId } : undefined,
+  };
+};
+
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -141,6 +199,9 @@ const bindLocal: Mapper = (ctx) => {
 const MAPPERS: Readonly<Record<string, Mapper>> = {
   slack: bindSlack,
   linear: bindLinear,
+  teams: bindTeams,
+  discord: bindDiscord,
+  telegram: bindTelegram,
 };
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
