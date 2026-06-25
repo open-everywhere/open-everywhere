@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildControlServer } from "./server.js";
+import type { AdminIdentity } from "./auth.js";
 
 export interface AdminHttpOptions {
-  readonly authorize?: (req: IncomingMessage) => boolean | Promise<boolean>;
+  readonly authenticate?: (req: IncomingMessage) => Promise<AdminIdentity | null>;
+  readonly requiredRole?: string;
   readonly allowUnauthenticated?: boolean;
 }
 
@@ -26,12 +28,20 @@ export async function handleControlRequest(
   opts: AdminHttpOptions = {},
   parsedBody?: unknown,
 ): Promise<void> {
-  const allowed = opts.authorize
-    ? await opts.authorize(req)
-    : opts.allowUnauthenticated === true;
-  if (!allowed) {
-    deny(res, 401, "unauthorized: the remote control plane requires OAuth (RFC 9728) — no authorizer configured");
-    return;
+  if (opts.allowUnauthenticated !== true) {
+    if (!opts.authenticate) {
+      deny(res, 401, "unauthorized: the remote control plane requires OAuth (RFC 9728) — no authenticator configured");
+      return;
+    }
+    const identity = await opts.authenticate(req).catch(() => null);
+    if (!identity) {
+      deny(res, 401, "unauthorized: missing or invalid bearer token");
+      return;
+    }
+    if (opts.requiredRole && !identity.roles.includes(opts.requiredRole)) {
+      deny(res, 403, `forbidden: role "${opts.requiredRole}" required`);
+      return;
+    }
   }
 
   let body = parsedBody;
