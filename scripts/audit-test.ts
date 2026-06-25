@@ -1,11 +1,11 @@
 
-import { appendFile, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-audit-"));
-process.env.OE_AUDIT_DIR = tmp;
+const dbFile = join(tmp, "ops.sqlite3");
+process.env.OE_SQLITE_PATH = dbFile;
 
 const { appendAudit, readAudit, auditRoot } = await import("../agent/audit/audit.js");
 
@@ -19,7 +19,7 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-ok(auditRoot() === tmp, "auditRoot reflects OE_AUDIT_DIR");
+ok(auditRoot() === dbFile, "auditRoot reflects the SQLite backing path");
 
 await appendAudit({ ts: "2026-06-24T10:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U1", action: "memory.write", detail: { tier: "surface", files: 2 } });
 await appendAudit({ ts: "2026-06-24T11:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U2", action: "egress.policy", detail: { hosts: 3, enforced: false } });
@@ -53,12 +53,6 @@ await appendAudit({ ts: "2026-06-24T13:00:00Z", org: "acme", platform: "slack", 
 const after = (await readAudit({ org: "acme", workspace: "T1" })).length;
 ok(after === before + 1, "append-only: an append adds a line, never overwrites prior ones");
 ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API exists (audit is outside the erasure path)");
-
-await appendFile(join(tmp, "acme", "slack", "T1.jsonl"), "this is not json\n", "utf-8");
-ok((await readAudit({ org: "acme", workspace: "T1" })).length === after, "a corrupt trailing line is skipped, not fatal");
-
-await writeFile(join(tmp, "acme", "slack", "EMPTY.jsonl"), "", "utf-8");
-ok((await readAudit({ org: "acme" })).length >= 4, "empty jsonl file doesn't break the scan");
 
 {
   const { auditToolAction } = await import("../agent/audit/tool-action.js");

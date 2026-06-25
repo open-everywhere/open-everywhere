@@ -110,7 +110,7 @@ ok(routineMarker({ [ROUTINE_MARKER.id]: ["r-9"], [ROUTINE_MARKER.surface]: ["s"]
 
 const dir = join(tmpdir(), `open-everywhere-routines-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
-process.env.OE_ROUTINES_DIR = dir;
+process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
 const store = await import("../agent/routines/store.js");
 const p = { org: "default", platform: "local", workspace: "dev", surface: "alpha", workspaceKey: "local/dev", surfaceKey: "local/dev/alpha", key: "local/dev/alpha" };

@@ -31,7 +31,7 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
 
 const dir = join(tmpdir(), `open-everywhere-spend-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
-process.env.OE_SPEND_DIR = dir;
+process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 const store = await import("../agent/spend/store.js");
 
 const pA = { org: "default", platform: "slack", workspace: "T1", surface: "C1", workspaceKey: "slack/T1", surfaceKey: "slack/T1/C1", key: "slack/T1/C1" };
