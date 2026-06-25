@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
 import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK } from "../agent/scm/git.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES } from "../agent/scm/git.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import { repoAllowed } from "../agent/scm/provider.js";
@@ -152,6 +152,24 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
+  const probe = conventionProbe("repo");
+  ok(probe.includes("AGENTS.md") && probe.includes("CLAUDE.md"), "probe checks both AGENTS.md and CLAUDE.md");
+  ok(probe.indexOf("AGENTS.md") < probe.indexOf("CLAUDE.md"), "probe prefers AGENTS.md (listed first; shell breaks on first match)");
+  ok(probe.includes("'repo'/"), "probe scopes to the checkout dir");
+  ok(CONVENTION_FILES[0] === "AGENTS.md" && CONVENTION_FILES[1] === "CLAUDE.md", "AGENTS.md is the priority convention file");
+
+  const cmd = checkoutCommand("acme/web", "ghs_x", "repo", { name: "open-everywhere[bot]", email: "1+open-everywhere[bot]@users.noreply.github.com" });
+  ok(cmd.includes(CONV_MARKER), "checkoutCommand includes the convention probe");
+  ok(cmd.indexOf(CONV_MARKER) < cmd.indexOf(CHECKOUT_OK), "probe runs before the OK sentinel");
+
+  const found = parseConventionProbe(`some clone noise\n${CONV_MARKER} AGENTS.md 42 1337\n${CHECKOUT_OK}`);
+  ok(found?.file === "AGENTS.md" && found.lines === 42 && found.bytes === 1337, "parseConventionProbe reads file/lines/bytes");
+  ok(parseConventionProbe(`${CONV_MARKER} CLAUDE.md 5 90`)?.file === "CLAUDE.md", "parseConventionProbe handles the CLAUDE.md fallback");
+  ok(parseConventionProbe(`${CHECKOUT_OK}`) === null, "parseConventionProbe returns null when no convention file");
+  ok(parseConventionProbe(`${CONV_MARKER} AGENTS.md notanumber 5`) === null, "parseConventionProbe ignores a malformed line");
+}
+
+{
   const base = (repos: string[]): EffectiveAccess => ({
     mode: "channel", scopeKey: "x", connections: [], reachableHosts: [], repos, plugins: [], connectors: [], instructionStack: [], warnings: [],
   });
@@ -162,4 +180,4 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, guards, egress)\n`);
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, guards, egress)\n`);

@@ -5,11 +5,11 @@ import { resolveAccess } from "../access/resolver.js";
 import { buildResolveRequest } from "../access/request.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
-import { checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK } from "../scm/git.js";
+import { checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe } from "../scm/git.js";
 
 export default defineTool({
   description:
-    "Clone one of the allowed repositories (see list_repos) into your workspace so you can read and change its code. Only granted repos can be cloned. After it returns, work in the given directory with bash — branch, edit, commit, push — then call open_pull_request.",
+    "Clone one of the allowed repositories (see list_repos) into your workspace so you can read and change its code. Only granted repos can be cloned. After it returns, work in the given directory with bash — branch, edit, commit, push — then call open_pull_request. If the result flags a convention file (AGENTS.md or CLAUDE.md), READ it before changing code — it carries the repo's own rules.",
   inputSchema: z.object({
     repo: z.string().describe("owner/repo, exactly as shown by list_repos."),
     dir: z.string().optional().describe("workspace-relative checkout directory (default: the repo name)."),
@@ -18,6 +18,9 @@ export default defineTool({
     ok: z.boolean(),
     dir: z.string(),
     message: z.string(),
+    conventions: z
+      .object({ file: z.string(), lines: z.number(), bytes: z.number() })
+      .optional(),
   }),
   needsApproval: never(),
   async execute(input, ctx) {
@@ -55,10 +58,18 @@ export default defineTool({
       throw new Error(`clone failed for "${input.repo}": ${redactSecret(result.stderr || result.stdout || "unknown error", token).slice(0, 500)}`);
     }
 
+    const conventions = parseConventionProbe(result.stdout) ?? undefined;
+    const conventionNote = conventions
+      ? ` This repo has a ${conventions.file} (${conventions.lines} lines) at ${dir}/${conventions.file} — read it before changing code; it holds the repo's own rules.`
+      : "";
+
     return {
       ok: true,
       dir,
-      message: `Cloned ${input.repo} into ${dir}/ (authored commits will be ${app.committer().name}). Branch, commit, push there, then open_pull_request.`,
+      conventions,
+      message:
+        `Cloned ${input.repo} into ${dir}/ (authored commits will be ${app.committer().name}). ` +
+        `Branch, commit, push there, then open_pull_request.${conventionNote}`,
     };
   },
 });

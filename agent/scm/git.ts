@@ -44,11 +44,39 @@ export function checkoutCommand(
     `git -C '${dir}' config http.extraheader '${header}'`,
     `git -C '${dir}' config user.name '${identity.name}'`,
     `git -C '${dir}' config user.email '${identity.email}'`,
+    conventionProbe(dir),
     "echo __SCM_CHECKOUT_OK__",
   ].join("\n");
 }
 
 export const CHECKOUT_OK = "__SCM_CHECKOUT_OK__";
+
+export const CONVENTION_FILES = ["AGENTS.md", "CLAUDE.md"] as const;
+
+export const CONV_MARKER = "__OE_CONV__";
+
+export interface RepoConvention {
+  file: string;
+  lines: number;
+  bytes: number;
+}
+
+export function conventionProbe(dir: string): string {
+  return (
+    `for f in ${CONVENTION_FILES.join(" ")}; do ` +
+    `if [ -f '${dir}'/"$f" ]; then ` +
+    `echo "${CONV_MARKER} $f $(wc -l < '${dir}'/"$f") $(wc -c < '${dir}'/"$f")"; break; fi; done`
+  );
+}
+
+export function parseConventionProbe(stdout: string): RepoConvention | null {
+  const re = new RegExp(`^${CONV_MARKER}\\s+(\\S+)\\s+(\\d+)\\s+(\\d+)$`);
+  for (const line of stdout.split("\n")) {
+    const m = line.trim().match(re);
+    if (m) return { file: m[1], lines: Number(m[2]), bytes: Number(m[3]) };
+  }
+  return null;
+}
 
 export function redactSecret(text: string, ...secrets: string[]): string {
   let out = text;
