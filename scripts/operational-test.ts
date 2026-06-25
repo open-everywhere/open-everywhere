@@ -87,6 +87,25 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", 1000);
+  await store.setSpendLimit("default", "slack/T1", "workspace", 50000);
+  await store.setSpendLimit("acme", "slack/T1/C1", "surface", 7);
+  const def = await store.spendLimits("default");
+  ok(def.length === 2, "spend limits persist per org");
+  ok((await store.spendLimits("acme")).every((l) => l.monthlyTokens === 7), "spend limit is org-isolated");
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", 2000);
+  ok((await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1")?.monthlyTokens === 2000, "setSpendLimit upserts");
+  ok((await store.clearSpendLimit("default", "slack/T1/C1", "surface")) === true && (await store.spendLimits("default")).length === 1, "clearSpendLimit removes one");
+
+  await store.setConnectorOverride("default", "slack/T1/C1", "notion", true);
+  await store.setConnectorOverride("default", "slack/T1/C1", "linear", false);
+  const ov = await store.connectorOverrides("default", "slack/T1/C1");
+  ok(ov.find((o) => o.connector === "notion")?.granted === true && ov.find((o) => o.connector === "linear")?.granted === false, "connector overrides persist grant + revoke");
+  ok((await store.connectorOverrides("default", "slack/T1/C9")).length === 0, "connector overrides are scope-isolated");
+  ok((await store.clearConnectorOverride("default", "slack/T1/C1", "linear")) === true && (await store.connectorOverrides("default", "slack/T1/C1")).length === 1, "clearConnectorOverride reverts to config");
+}
+
+{
   await db.exec(`CREATE ROLE oe_app NOSUPERUSER;
                  GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry TO oe_app;`);
   try {

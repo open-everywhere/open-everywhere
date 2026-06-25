@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { spendView, routinesView, auditView, accessView } from "./views.js";
+import { registerControlWriteTools } from "./writes.js";
 
 const SESSION_MODE = z.enum(["channel", "dm", "mpim"]);
 
@@ -20,7 +21,12 @@ function jsonTool<T>(run: () => Promise<T>) {
 
 export const CONTROL_TOOL_NAMES = ["spend_report", "routines_list", "audit_query", "access_preview"] as const;
 
-export function buildControlServer(): McpServer {
+export interface ControlServerOptions {
+  readonly includeWrites?: boolean;
+  readonly actor?: string;
+}
+
+export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
   const server = new McpServer({ name: "open-everywhere-control", version: "0.1.0" });
 
   server.registerTool(
@@ -76,6 +82,8 @@ export function buildControlServer(): McpServer {
     },
     (args) => jsonTool(() => accessView(args))(),
   );
+
+  if (opts.includeWrites) registerControlWriteTools(server, opts.actor ?? "unknown");
 
   return server;
 }

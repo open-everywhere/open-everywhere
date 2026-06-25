@@ -1,4 +1,6 @@
 import type { Caps } from "./spend.js";
+import type { SpendLimitRow } from "../operational/store.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 interface CapConfig {
   readonly default?: Caps;
@@ -10,4 +12,24 @@ const CONFIG: CapConfig = {};
 
 export function resolveCaps(workspaceKey: string, surfaceKey: string): Caps {
   return CONFIG.perSurface?.[surfaceKey] ?? CONFIG.perWorkspace?.[workspaceKey] ?? CONFIG.default ?? {};
+}
+
+export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[], workspaceKey: string, surfaceKey: string): Caps {
+  let surfaceMonthlyTokens = config.surfaceMonthlyTokens;
+  let workspaceMonthlyTokens = config.workspaceMonthlyTokens;
+  for (const l of limits) {
+    if (l.level === "surface" && l.scopeKey === surfaceKey) surfaceMonthlyTokens = l.monthlyTokens;
+    else if (l.level === "workspace" && l.scopeKey === workspaceKey) workspaceMonthlyTokens = l.monthlyTokens;
+  }
+  return { surfaceMonthlyTokens, workspaceMonthlyTokens };
+}
+
+export async function effectiveCaps(org: string, workspaceKey: string, surfaceKey: string): Promise<Caps> {
+  const config = resolveCaps(workspaceKey, surfaceKey);
+  try {
+    const limits = await getOperationalStore().spendLimits(org);
+    return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;
+  } catch {
+    return config;
+  }
 }

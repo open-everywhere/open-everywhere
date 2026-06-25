@@ -6,6 +6,7 @@ import type { AdminIdentity } from "./auth.js";
 export interface AdminHttpOptions {
   readonly authenticate?: (req: IncomingMessage) => Promise<AdminIdentity | null>;
   readonly requiredRole?: string;
+  readonly includeWrites?: boolean;
   readonly allowUnauthenticated?: boolean;
 }
 
@@ -28,6 +29,7 @@ export async function handleControlRequest(
   opts: AdminHttpOptions = {},
   parsedBody?: unknown,
 ): Promise<void> {
+  let actor = "local-operator";
   if (opts.allowUnauthenticated !== true) {
     if (!opts.authenticate) {
       deny(res, 401, "unauthorized: the remote control plane requires OAuth (RFC 9728) — no authenticator configured");
@@ -42,6 +44,7 @@ export async function handleControlRequest(
       deny(res, 403, `forbidden: role "${opts.requiredRole}" required`);
       return;
     }
+    actor = `${identity.issuer}#${identity.subject}`;
   }
 
   let body = parsedBody;
@@ -54,7 +57,7 @@ export async function handleControlRequest(
     }
   }
 
-  const server = buildControlServer();
+  const server = buildControlServer({ includeWrites: opts.includeWrites, actor });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     void transport.close();

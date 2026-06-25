@@ -35,13 +35,31 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      detail       text
    )`,
   `CREATE INDEX IF NOT EXISTS audit_org_ts ON audit_entry (org_id, ts)`,
+  `CREATE TABLE IF NOT EXISTS spend_limit (
+     org_id         text   NOT NULL,
+     scope_key      text   NOT NULL,
+     level          text   NOT NULL,
+     monthly_tokens bigint NOT NULL,
+     PRIMARY KEY (org_id, scope_key, level)
+   )`,
+  `CREATE TABLE IF NOT EXISTS connector_override (
+     org_id    text    NOT NULL,
+     scope_key text    NOT NULL,
+     connector text    NOT NULL,
+     granted   boolean NOT NULL,
+     PRIMARY KEY (org_id, scope_key, connector)
+   )`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE spend_limit ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
   `DROP POLICY IF EXISTS audit_insert ON audit_entry`,
+  `DROP POLICY IF EXISTS spend_limit_org_isolation ON spend_limit`,
+  `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -51,6 +69,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY audit_select ON audit_entry FOR SELECT
      USING (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY audit_insert ON audit_entry FOR INSERT
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY spend_limit_org_isolation ON spend_limit
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY connector_override_org_isolation ON connector_override
+     USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
 ];
 
@@ -216,6 +240,47 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         action: r.action,
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
+    },
+
+    async setSpendLimit(org, scopeKey, level, monthlyTokens) {
+      await client.query(
+        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, scope_key, level) DO UPDATE SET monthly_tokens = excluded.monthly_tokens`,
+        [org, scopeKey, level, monthlyTokens],
+      );
+    },
+
+    async clearSpendLimit(org, scopeKey, level) {
+      const { rows } = await client.query("DELETE FROM spend_limit WHERE org_id = $1 AND scope_key = $2 AND level = $3 RETURNING scope_key", [org, scopeKey, level]);
+      return rows.length > 0;
+    },
+
+    async spendLimits(org) {
+      const { rows } = await client.query("SELECT scope_key, level, monthly_tokens FROM spend_limit WHERE org_id = $1", [org]);
+      return (rows as { scope_key: string; level: string; monthly_tokens: number }[]).map((r) => ({
+        org,
+        scopeKey: r.scope_key,
+        level: r.level as "surface" | "workspace",
+        monthlyTokens: Number(r.monthly_tokens),
+      }));
+    },
+
+    async setConnectorOverride(org, scopeKey, connector, granted) {
+      await client.query(
+        `INSERT INTO connector_override (org_id, scope_key, connector, granted) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, scope_key, connector) DO UPDATE SET granted = excluded.granted`,
+        [org, scopeKey, connector, granted],
+      );
+    },
+
+    async clearConnectorOverride(org, scopeKey, connector) {
+      const { rows } = await client.query("DELETE FROM connector_override WHERE org_id = $1 AND scope_key = $2 AND connector = $3 RETURNING connector", [org, scopeKey, connector]);
+      return rows.length > 0;
+    },
+
+    async connectorOverrides(org, scopeKey) {
+      const { rows } = await client.query("SELECT connector, granted FROM connector_override WHERE org_id = $1 AND scope_key = $2", [org, scopeKey]);
+      return (rows as { connector: string; granted: boolean }[]).map((r) => ({ connector: r.connector, granted: r.granted }));
     },
   };
 }

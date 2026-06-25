@@ -31,6 +31,19 @@ export interface OrgSurfaceLedger {
   readonly ledger: SurfaceLedger;
 }
 
+export type CapLevel = "surface" | "workspace";
+export interface SpendLimitRow {
+  readonly org: string;
+  readonly scopeKey: string;
+  readonly level: CapLevel;
+  readonly monthlyTokens: number;
+}
+
+export interface ConnectorOverrideRow {
+  readonly connector: string;
+  readonly granted: boolean;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -48,4 +61,12 @@ export interface OperationalStore {
 
   appendAudit(entry: AuditEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditEntry[]>;
+
+  setSpendLimit(org: string, scopeKey: string, level: CapLevel, monthlyTokens: number): Promise<void>;
+  clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;
+  spendLimits(org: string): Promise<SpendLimitRow[]>;
+
+  setConnectorOverride(org: string, scopeKey: string, connector: string, granted: boolean): Promise<void>;
+  clearConnectorOverride(org: string, scopeKey: string, connector: string): Promise<boolean>;
+  connectorOverrides(org: string, scopeKey: string): Promise<ConnectorOverrideRow[]>;
 }

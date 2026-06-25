@@ -5,6 +5,8 @@ import type { BindableContext } from "../identity/binding.js";
 import { buildResolveRequest } from "./request.js";
 import { resolveAccess } from "./resolver.js";
 import { loadBindings, loadBundles } from "./bundles.js";
+import { resolvePartition } from "../memory/partition.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 export class ConnectorScopeError extends Error {}
 
@@ -61,12 +63,31 @@ async function readSurfaceContext(): Promise<BindableContext | null> {
   } as BindableContext;
 }
 
+export function applyConnectorOverrides(
+  base: readonly string[],
+  overrides: readonly { connector: string; granted: boolean }[],
+): string[] {
+  const set = new Set(base);
+  for (const o of overrides) {
+    if (o.granted) set.add(o.connector);
+    else set.delete(o.connector);
+  }
+  return [...set].sort();
+}
+
 export async function grantedConnectors(): Promise<readonly string[] | null> {
   const ctx = await readSurfaceContext();
   if (!ctx) return null;
   try {
-    const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
-    return access.connectors;
+    const base = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings()).connectors;
+    try {
+      const p = resolvePartition(ctx);
+      const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);
+      return overrides.length ? applyConnectorOverrides(base, overrides) : base;
+    } catch (err) {
+      console.warn(`[open-everywhere:connector-scope] override lookup failed; using config grants only: ${String(err)}`);
+      return base;
+    }
   } catch {
     return null;
   }
