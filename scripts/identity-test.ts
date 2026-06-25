@@ -109,15 +109,21 @@ ok(linearVisibility("false") === "public", "linear: is_private=false -> public")
 ok(linearVisibility("true") === "private", "linear: is_private=true -> private");
 ok(linearVisibility(undefined) === "private", "linear: FAIL-CLOSED unknown privacy -> private");
 
-const lin = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", issue_identifier: "ENG-9", agent_session_id: "AS1", creator_id: "LU3" }));
-ok(lin.platform === "linear" && lin.workspace === "ORG1" && lin.surface === "ISS9", "linear: workspace=org, surface=issue from attributes");
+const lin = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", issue_identifier: "ENG-9", agent_session_id: "AS1", creator_id: "LU3" }));
+ok(lin.platform === "linear" && lin.workspace === "ORG1" && lin.surface === "TEAM5", "linear: workspace=org, surface=TEAM (issue is too granular a silo)");
 ok(lin.mode === "channel", "linear: agent sessions are channel-mode (no DM analog)");
 ok(lin.visibility === "private", "linear: no privacy signal -> fail-closed private");
 ok(lin.principalId === "LU3", "linear: principalId from creator_id");
-ok(JSON.stringify(lin.target) === JSON.stringify({ agentSessionId: "AS1" }), "linear: post-back target is the agent session");
+ok(JSON.stringify(lin.target) === JSON.stringify({ agentSessionId: "AS1" }), "linear: post-back target is the agent session (NOT the surface key)");
 
-const linNoIssue = bindFrom(linearCtx({ organization_id: "ORG1", agent_session_id: "AS2" }));
-ok(linNoIssue.surface === "AS2", "linear: surface falls back to agent session id when no issue");
+const linIssA = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS_A", agent_session_id: "AS_A" }));
+const linIssB = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS_B", agent_session_id: "AS_B" }));
+ok(linIssA.surface === linIssB.surface && linIssA.surface === "TEAM5", "linear: distinct issues in one team share the team surface silo");
+
+const linNoTeam = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", agent_session_id: "AS2" }));
+ok(linNoTeam.surface === "ISS9", "linear: surface falls back to issue when team_id absent");
+const linNoIssue = bindFrom(linearCtx({ organization_id: "ORG1", agent_session_id: "AS3" }));
+ok(linNoIssue.surface === "AS3", "linear: surface falls back to agent session id when neither team nor issue");
 
 const linPub = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", is_private: "false", agent_session_id: "AS1" }));
 ok(linPub.visibility === "public", "linear: explicit team-visible issue -> public");
@@ -125,10 +131,10 @@ ok(linPub.visibility === "public", "linear: explicit team-visible issue -> publi
 const linPart = resolvePartition(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", agent_session_id: "AS1" }));
 ok(linPart.surfaceKey === "linear/ORG1/ISS9", "linear: partition surfaceKey = platform/org/issue");
 
-const la = buildLinearAuth({ agentSessionId: "AS1", organizationId: "ORG1", issueId: "ISS9", issueIdentifier: "ENG-9", principalId: "LU3", isPrivate: false });
+const la = buildLinearAuth({ agentSessionId: "AS1", organizationId: "ORG1", teamId: "TEAM5", issueId: "ISS9", issueIdentifier: "ENG-9", principalId: "LU3", isPrivate: false });
 ok(la.authenticator === "linear" && la.principalId === "LU3" && la.principalType === "linear-user", "buildLinearAuth: principal fields");
-ok(la.attributes.organization_id === "ORG1" && la.attributes.issue_id === "ISS9" && la.attributes.is_private === "false", "buildLinearAuth: facts captured as strings");
+ok(la.attributes.organization_id === "ORG1" && la.attributes.team_id === "TEAM5" && la.attributes.issue_id === "ISS9" && la.attributes.is_private === "false", "buildLinearAuth: facts captured as strings (incl. team_id)");
 const laSparse = buildLinearAuth({ agentSessionId: "AS2" });
-ok(laSparse.attributes.organization_id === undefined && laSparse.attributes.is_private === undefined && laSparse.principalId === "", "buildLinearAuth: omits unknown facts (no false claims)");
+ok(laSparse.attributes.organization_id === undefined && laSparse.attributes.team_id === undefined && laSparse.attributes.is_private === undefined && laSparse.principalId === "", "buildLinearAuth: omits unknown facts (no false claims)");
 
 console.log(`✓ identity: ${passed} assertions passed`);

@@ -46,7 +46,7 @@ function ensureRepo(): void {
   if (existsSync(join(ROOT, ".git"))) return;
   if (!git(["init", "--quiet"], ROOT).ok) return;
   git(["config", "user.email", "open-everywhere@local"], ROOT);
-  git(["config", "user.name", "Open Everywhere"], ROOT);
+  git(["config", "user.name", "OpenEverywhere"], ROOT);
 }
 
 async function readDir(dir: string): Promise<MemoryFiles> {

@@ -74,7 +74,7 @@ export function quickstartPlan(goal: Goal, env: NodeJS.ProcessEnv = process.env)
     id: "model",
     title: "Model credentials",
     status: set(env.AI_GATEWAY_API_KEY) ? "done" : "todo",
-    detail: "Open Everywhere runs GLM-5.2 via the Vercel AI Gateway.",
+    detail: "OpenEverywhere runs GLM-5.2 via the Vercel AI Gateway.",
     command: set(env.AI_GATEWAY_API_KEY) ? undefined : "set AI_GATEWAY_API_KEY in .env.local (or `eve link`)",
   });
 

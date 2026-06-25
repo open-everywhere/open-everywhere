@@ -18,7 +18,7 @@ export function extractPinnedInstructions(pinsList: unknown): string | null {
 
 export function introMessage(adoptedInstructions: boolean): string {
   const base =
-    "👋 Hi, I'm **Open Everywhere** — an autonomous engineering teammate. Tag me with a task (investigate a bug, draft a PR, watch something on a schedule) and I'll work it through and report back. Consequential actions pause for your approval.";
+    "👋 Hi, I'm **OpenEverywhere** — an autonomous engineering teammate. Tag me with a task (investigate a bug, draft a PR, watch something on a schedule) and I'll work it through and report back. Consequential actions pause for your approval.";
   return adoptedInstructions
     ? `${base}\n\nI've read this channel's pinned message and will treat it as my standing instructions here.`
     : base;

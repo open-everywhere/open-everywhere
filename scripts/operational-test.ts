@@ -106,10 +106,10 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  await db.exec(`CREATE ROLE oe_app NOSUPERUSER;
-                 GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry TO oe_app;`);
+  await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry TO open_everywhere_app;`);
   try {
-    await db.exec("SET ROLE oe_app");
+    await db.exec("SET ROLE open_everywhere_app");
     await setOrgContext(client, "acme");
 
     const spendOrgs = ((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id);

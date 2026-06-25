@@ -21,14 +21,14 @@ const pins = {
 const instr = extractPinnedInstructions(pins);
 ok(instr !== null && instr.includes("payments service"), "extracts a pinned instruction");
 ok(instr!.includes("develop branch"), "joins multiple pinned instructions");
-ok(!instr!.includes(PINNED_HEADER), "skips Open Everywhere's own pinned status message");
+ok(!instr!.includes(PINNED_HEADER), "skips OpenEverywhere's own pinned status message");
 
 ok(extractPinnedInstructions({ ok: true, items: [] }) === null, "no pins -> null");
 ok(extractPinnedInstructions({ ok: true, items: [{ message: { text: PINNED_HEADER + "\nx" } }] }) === null, "only-our-status-pin -> null");
 ok(extractPinnedInstructions(null) === null, "defensive on junk");
 ok(extractPinnedInstructions({ items: "nope" }) === null, "defensive on non-array items");
 
-ok(introMessage(false).includes("Open Everywhere") && !introMessage(false).includes("standing instructions"), "intro without adopted instructions");
+ok(introMessage(false).includes("OpenEverywhere") && !introMessage(false).includes("standing instructions"), "intro without adopted instructions");
 ok(introMessage(true).includes("standing instructions"), "intro notes adopted pinned instructions");
 
 const bullet = instructionBullet("Focus on\n  the   payments   service", "2026-06-24");

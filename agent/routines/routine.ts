@@ -35,9 +35,9 @@ export function isClockScheduled(t: RoutineTrigger): boolean {
 }
 
 export const ROUTINE_MARKER = {
-  id: "oe_routine_id",
-  surface: "oe_routine_surface",
-  org: "oe_routine_org",
+  id: "open_everywhere_routine_id",
+  surface: "open_everywhere_routine_surface",
+  org: "open_everywhere_routine_org",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;

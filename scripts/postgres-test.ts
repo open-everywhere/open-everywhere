@@ -89,10 +89,10 @@ const provider = makePostgresProvider(client);
   await provider.ensureTier(b, WORKSPACE);
   await provider.writeTier(b, WORKSPACE, { "MEMORY.md": "B under rls\n" }, "b");
 
-  await db.exec(`CREATE ROLE oe_app NOSUPERUSER;
-                 GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO oe_app;`);
+  await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO open_everywhere_app;`);
   try {
-    await db.exec("SET ROLE oe_app");
+    await db.exec("SET ROLE open_everywhere_app");
     await setOrgContext(client, "rls-org-a");
     const all = await client.query("SELECT DISTINCT org_id FROM memory_file");
     const orgs = (all.rows as { org_id: string }[]).map((r) => r.org_id);

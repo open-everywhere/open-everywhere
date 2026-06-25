@@ -112,6 +112,7 @@ export function linearVisibility(isPrivate: string | undefined): Visibility {
 const bindLinear: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const surface =
+    attr(a, ["team_id", "teamId"]) ??
     attr(a, ["issue_id", "issueId"]) ??
     attr(a, ["issue_identifier", "issueIdentifier"]) ??
     attr(a, ["agent_session_id", "agentSessionId"]);
@@ -169,15 +170,17 @@ const bindTelegram: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const chatId = attr(a, ["chat_id", "chatId"]);
   const chatType = attr(a, ["chat_type", "chatType"]);
+  const threadId = attr(a, ["message_thread_id", "messageThreadId"]);
   const mode = telegramMode(chatType);
   const chatKey = chatId !== undefined && chatId.startsWith("-") ? `g${chatId.slice(1)}` : chatId;
+  const surface = threadId ? `${chatKey}.t${threadId}` : chatKey;
   return {
     workspace: chatKey,
-    surface: chatKey,
+    surface,
     mode,
     visibility: telegramVisibility(chatType, mode),
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
-    target: chatId ? { chatId } : undefined,
+    target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}) } : undefined,
   };
 };
 

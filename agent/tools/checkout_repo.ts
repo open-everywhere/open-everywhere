@@ -46,7 +46,7 @@ export default defineTool({
     if (ungranted.length) {
       throw new Error(
         `repo "${input.repo}": its owner has no linked GitHub App installation. ` +
-          `Install the Open Everywhere GitHub App on that org (see docs/source-control-plane.md).`,
+          `Install the OpenEverywhere GitHub App on that org (see docs/source-control-plane.md).`,
       );
     }
     const owner = input.repo.slice(0, input.repo.indexOf("/"));
