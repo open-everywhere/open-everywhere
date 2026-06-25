@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
-import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs } from "../agent/scm/git.js";
+import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK } from "../agent/scm/git.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
+import { repoAllowed } from "../agent/scm/provider.js";
+import { compileNetworkPolicy } from "../agent/access/egress.js";
+import type { EffectiveAccess } from "../agent/access/resolver.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -116,4 +119,47 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(app.committer().email === "12345+open-everywhere[bot]@users.noreply.github.com", "orchestrator exposes the bot committer");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT sign/verify, token down-scoping, git-arg safety, bot identity, config, orchestrator)\n`);
+{
+  const escaped = pkcs1.replace(/\n/g, "\\n");
+  ok(escaped.includes("\\n") && !escaped.includes("\n"), "fixture builds an escaped-newline PEM");
+  ok(normalizePrivateKeyPem(escaped).includes("\n"), "normalizePrivateKeyPem restores newlines");
+  ok(!!parsePrivateKey(escaped), "parsePrivateKey accepts an escaped-newline PEM (via normalize)");
+  ok(normalizePrivateKeyPem(pkcs1) === pkcs1, "normalize is a no-op on a real-newline PEM");
+}
+
+{
+  ok(repoAllowed("acme/web", ["acme/web", "acme/api"]), "repoAllowed accepts a granted repo");
+  ok(!repoAllowed("acme/secret", ["acme/web"]), "repoAllowed rejects an ungranted repo");
+}
+
+{
+  const cmd = checkoutCommand("acme/web", "ghs_secret", "repo", { name: "open-everywhere[bot]", email: "1+open-everywhere[bot]@users.noreply.github.com" });
+  ok(cmd.includes("clone -- 'https://github.com/acme/web.git' 'repo'"), "checkout clones the clean https url");
+  ok(!cmd.includes("ghs_secret@"), "token is NOT in the clone URL");
+  ok(cmd.includes("http.extraheader=AUTHORIZATION: basic"), "token rides in http.extraheader");
+  ok(cmd.includes("git -C 'repo' config http.extraheader"), "header is persisted to the clone so later push/fetch are authed");
+  ok(cmd.includes("config user.name 'open-everywhere[bot]'"), "bot identity is configured");
+  ok(cmd.includes(CHECKOUT_OK), "command prints the success sentinel");
+  ok(isSafeCheckoutDir("svc/web") && !isSafeCheckoutDir("../etc"), "checkout dir guard blocks traversal");
+  ok(!isSafeCheckoutDir("a'; rm -rf /"), "checkout dir guard blocks shell metacharacters");
+}
+
+{
+  const tok = "ghs_secret";
+  const b64 = Buffer.from(`x-access-token:${tok}`, "utf-8").toString("base64");
+  const out = redactSecret(`fatal: ${tok} bad; header ${b64}`, tok);
+  ok(!out.includes(tok) && !out.includes(b64) && out.includes("[REDACTED]"), "redactSecret scrubs token + base64 form");
+}
+
+{
+  const base = (repos: string[]): EffectiveAccess => ({
+    mode: "channel", scopeKey: "x", connections: [], reachableHosts: [], repos, plugins: [], connectors: [], instructionStack: [], warnings: [],
+  });
+  const withRepos = await compileNetworkPolicy(base(["acme/web"]), async () => ({}));
+  const allow = (typeof withRepos === "object" ? withRepos.allow : undefined) as Record<string, unknown[]> | undefined;
+  ok(!!allow && "github.com" in allow, "granted repos add a github.com egress allow");
+  ok(!!allow && allow["github.com"].length === 0, "github.com is a BARE allow (option-1: no firewall header)");
+  ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
+}
+
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, guards, egress)\n`);

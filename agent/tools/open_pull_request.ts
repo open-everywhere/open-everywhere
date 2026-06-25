@@ -2,7 +2,20 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { auditToolAction } from "../audit/tool-action.js";
+import { getGitHubApp } from "../scm/provider.js";
 
+async function resolvePrToken(repo: string): Promise<string> {
+  const app = getGitHubApp();
+  if (app) {
+    const { tokens, ungranted } = await app.tokensForRepos([repo]);
+    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
+  }
+  const pat = process.env.GITHUB_TOKEN;
+  if (!pat) {
+    throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
+  }
+  return pat;
+}
 export default defineTool({
   description:
     "Open a GitHub pull request. This is a consequential write and will pause for human approval before it runs.",
@@ -15,8 +28,7 @@ export default defineTool({
   }),
   needsApproval: always(),
   async execute(input, ctx) {
-    const token = process.env.GITHUB_TOKEN;
-    if (!token) throw new Error("GITHUB_TOKEN is not set.");
+    const token = await resolvePrToken(input.repo);
 
     const res = await fetch(
       `https://api.github.com/repos/${input.repo}/pulls`,

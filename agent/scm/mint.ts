@@ -8,8 +8,12 @@ export const DEFAULT_PERMISSIONS: MintPermissions = {
   metadata: "read",
 };
 
+export function normalizePrivateKeyPem(pem: string): string {
+  return pem.includes("\\n") && !pem.includes("\n") ? pem.replace(/\\n/g, "\n") : pem;
+}
+
 export function parsePrivateKey(pem: string): KeyObject {
-  return createPrivateKey(pem);
+  return createPrivateKey(normalizePrivateKeyPem(pem));
 }
 
 export async function signAppJwt(key: KeyObject, issuer: string, nowSeconds: number): Promise<string> {

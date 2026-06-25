@@ -30,8 +30,6 @@ export async function compileNetworkPolicy(
   access: EffectiveAccess,
   resolveHeaders: ResolveHeaders,
 ): Promise<SandboxNetworkPolicy> {
-  if (access.reachableHosts.length === 0) return "deny-all";
-
   const byId = new Map(access.connections.map((c) => [c.id, c]));
   const allow: Record<string, EgressRule[]> = {};
 
@@ -44,5 +42,8 @@ export async function compileNetworkPolicy(
     allow[host.host] = ruleForHost(host, headers);
   }
 
+  if (access.repos.length > 0 && !allow["github.com"]) allow["github.com"] = [];
+
+  if (Object.keys(allow).length === 0) return "deny-all";
   return { allow };
 }
