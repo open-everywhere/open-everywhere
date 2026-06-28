@@ -76,3 +76,11 @@ export interface ExtractionPlan {
   readonly files: OutputFile[];
   readonly report: ExtractionReport;
 }
+
+export interface PluginManifestEntry {
+  readonly connectors?: readonly string[];
+  readonly skills?: readonly string[];
+  readonly subagents?: readonly string[];
+}
+
+export type PluginRegistry = Record<string, PluginManifestEntry>;

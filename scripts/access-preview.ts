@@ -1,3 +1,4 @@
+import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { domainsForSurface } from "../agent/memory/domains.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../agent/access/resolver.js";

@@ -1,14 +1,14 @@
 import { defineDynamic, defineSkill } from "eve/skills";
-import { loadBindings, loadBundles } from "../access/bundles.js";
-import { resolveAccess } from "../access/resolver.js";
-import { buildResolveRequest } from "../access/request.js";
-import { SKILL_CONTENT } from "../plugins/skill-content.js";
+import { resolveAccessFor } from "../access/request.js";
+import { getConfig } from "../access/config.js";
+import type { BindableContext } from "../identity/binding.js";
 
-function granted(ctx: Parameters<typeof buildResolveRequest>[0]) {
-  const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
+function granted(ctx: BindableContext) {
+  const access = resolveAccessFor(ctx);
+  const skillContent = getConfig().skillContent;
   const out: Record<string, ReturnType<typeof defineSkill>> = {};
   for (const name of access.skills) {
-    const content = SKILL_CONTENT[name];
+    const content = skillContent[name];
     if (content) out[name] = defineSkill(content);
   }
   return out;

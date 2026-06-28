@@ -1,9 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { resolveAccess } from "../access/resolver.js";
-import { buildResolveRequest } from "../access/request.js";
-import { loadBundles, loadBindings } from "../access/bundles.js";
+import { resolveAccessFor } from "../access/request.js";
 import { getGitHubApp } from "../scm/provider.js";
 
 export default defineTool({
@@ -16,7 +14,7 @@ export default defineTool({
   }),
   needsApproval: never(),
   async execute(_input, ctx) {
-    const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
+    const access = resolveAccessFor(ctx);
     return { repos: [...access.repos], sourceControlConfigured: getGitHubApp() !== null };
   },
 });

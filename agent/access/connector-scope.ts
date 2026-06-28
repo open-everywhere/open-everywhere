@@ -2,9 +2,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BindableContext } from "../identity/binding.js";
-import { buildResolveRequest } from "./request.js";
-import { resolveAccess } from "./resolver.js";
-import { loadBindings, loadBundles } from "./bundles.js";
+import { resolveAccessFor } from "./request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 
@@ -78,7 +76,7 @@ export async function grantedConnectors(): Promise<readonly string[] | null> {
   const ctx = await readSurfaceContext();
   if (!ctx) return null;
   try {
-    const base = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings()).connectors;
+    const base = resolveAccessFor(ctx).connectors;
     try {
       const p = resolvePartition(ctx);
       const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);

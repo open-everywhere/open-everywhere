@@ -1,9 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { resolveAccess } from "../access/resolver.js";
-import { buildResolveRequest } from "../access/request.js";
-import { loadBundles, loadBindings } from "../access/bundles.js";
+import { resolveAccessFor } from "../access/request.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe } from "../scm/git.js";
 
@@ -24,7 +22,7 @@ export default defineTool({
   }),
   needsApproval: never(),
   async execute(input, ctx) {
-    const access = resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings());
+    const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
       throw new Error(
         `repo "${input.repo}" is not granted to this channel. Allowed: ${access.repos.length ? access.repos.join(", ") : "(none)"}. ` +

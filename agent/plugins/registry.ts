@@ -1,9 +1,5 @@
-export interface PluginManifestEntry {
-  readonly connectors?: readonly string[];
-  readonly skills?: readonly string[];
-  readonly subagents?: readonly string[];
-}
+import type { PluginRegistry } from "./types.js";
 
-export type PluginRegistry = Record<string, PluginManifestEntry>;
+export type { PluginRegistry, PluginManifestEntry } from "./types.js";
 
 export const PLUGIN_REGISTRY: PluginRegistry = {};

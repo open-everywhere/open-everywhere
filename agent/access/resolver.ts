@@ -1,5 +1,5 @@
 import type { Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
-import { PLUGIN_REGISTRY, type PluginRegistry } from "../plugins/registry.js";
+import type { PluginRegistry } from "../plugins/types.js";
 
 export type SessionMode = "channel" | "dm" | "mpim";
 
@@ -68,7 +68,7 @@ export function resolveAccess(
   req: ResolveRequest,
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
-  registry: PluginRegistry = PLUGIN_REGISTRY,
+  registry: PluginRegistry = {},
 ): EffectiveAccess {
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));

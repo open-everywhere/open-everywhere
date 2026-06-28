@@ -1,7 +1,7 @@
 import { resolvePartition } from "../memory/partition.js";
-import { domainsForSurface } from "../memory/domains.js";
 import { bindFrom, type BindableContext, type Visibility } from "../identity/binding.js";
-import type { ResolveRequest, SessionMode } from "./resolver.js";
+import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionMode } from "./resolver.js";
+import { getConfig } from "./config.js";
 
 export type { Visibility } from "../identity/binding.js";
 
@@ -25,7 +25,12 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     platform: p.platform,
     workspace: p.workspace,
     channel: p.surface,
-    domains: domainsForSurface({ workspaceKey: p.workspaceKey, surface: p.surface }),
+    domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: p.surface }),
     principalId: b.principalId,
   };
+}
+
+export function resolveAccessFor(ctx: BindableContext): EffectiveAccess {
+  const cfg = getConfig();
+  return resolveAccess(buildResolveRequest(ctx), cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
 }

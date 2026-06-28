@@ -5,8 +5,7 @@ import { listAllRoutines, routinesRoot } from "../routines/store.js";
 import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
-import { loadBindings, loadBundles } from "../access/bundles.js";
-import { domainsForSurface } from "../memory/domains.js";
+import { getConfig } from "../access/config.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 
 const currentPeriod = (): string => new Date().toISOString().slice(0, 7);
@@ -115,6 +114,7 @@ export interface AccessQuery {
 }
 
 export async function accessView(q: AccessQuery = {}) {
+  const cfg = getConfig();
   const platform = q.platform ?? "local";
   const workspace = q.workspace ?? "dev";
   const channel = q.channel ?? "default";
@@ -123,10 +123,10 @@ export async function accessView(q: AccessQuery = {}) {
     platform,
     workspace,
     channel,
-    domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
+    domains: cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
     principalId: q.principalId,
   };
-  const access = resolveAccess(req, loadBundles(), loadBindings());
+  const access = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
   return {
     scopeKey: access.scopeKey,
     mode: access.mode,

@@ -1,3 +1,4 @@
+import "../agent/lib/register-config.js";
 import {
   buildSlackAuth,
   channelFactsFromRaw,
