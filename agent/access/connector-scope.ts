@@ -69,8 +69,7 @@ export function applyConnectorOverrides(
 ): string[] {
   const set = new Set(base);
   for (const o of overrides) {
-    if (o.granted) set.add(o.connector);
-    else set.delete(o.connector);
+    if (!o.granted) set.delete(o.connector);
   }
   return [...set].sort();
 }

@@ -25,7 +25,10 @@ export function assembleAccessInstructions(access: EffectiveAccess): string | nu
     caps.push(`- Repositories granted: ${access.repos.map((r) => `\`${r}\``).join(", ")}`);
   }
   if (access.plugins.length > 0) {
-    caps.push(`- Plugins available: ${access.plugins.map((p) => `\`${p.id}\``).join(", ")}`);
+    caps.push(`- Plugins granted: ${access.plugins.map((p) => `\`${p}\``).join(", ")}`);
+  }
+  if (access.skills.length > 0) {
+    caps.push(`- Skills available: ${access.skills.map((s) => `\`${s}\``).join(", ")}`);
   }
   if (caps.length > 0) {
     parts.push(

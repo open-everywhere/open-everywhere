@@ -60,15 +60,26 @@ await client.connect(clientT);
 }
 
 {
-  await callJson(client, "grant_connector", { org: "default", surfaceKey: "slack/T1/C1", connector: "notion" });
-  let ov = await getOperationalStore().connectorOverrides("default", "slack/T1/C1");
-  ok("grant_connector persists a granted override", ov.some((o) => o.connector === "notion" && o.granted === true));
-  ok("overlay adds the granted connector to the base set", applyConnectorOverrides([], ov).includes("notion"));
-
   await callJson(client, "revoke_connector", { org: "default", surfaceKey: "slack/T1/C1", connector: "notion" });
-  ov = await getOperationalStore().connectorOverrides("default", "slack/T1/C1");
-  ok("revoke flips the override to denied", ov.some((o) => o.connector === "notion" && o.granted === false));
+  let ov = await getOperationalStore().connectorOverrides("default", "slack/T1/C1");
+  ok("revoke_connector persists a denied override", ov.some((o) => o.connector === "notion" && o.granted === false));
   ok("overlay removes a revoked connector even if config granted it", !applyConnectorOverrides(["notion"], ov).includes("notion"));
+
+  ok(
+    "overlay never widens: a granted=true override does not add an un-configured connector",
+    !applyConnectorOverrides([], [{ connector: "notion", granted: true }]).includes("notion"),
+  );
+  ok(
+    "overlay never widens: granted=true is inert even alongside the base",
+    JSON.stringify(applyConnectorOverrides(["linear"], [{ connector: "notion", granted: true }])) === JSON.stringify(["linear"]),
+  );
+
+  const r = await callJson(client, "clear_connector_override", { org: "default", surfaceKey: "slack/T1/C1", connector: "notion" });
+  ok("clear_connector_override reports cleared", r.cleared === true);
+  ov = await getOperationalStore().connectorOverrides("default", "slack/T1/C1");
+  ok("clear removes the override row (reverts to config)", !ov.some((o) => o.connector === "notion"));
+  const again = await callJson(client, "clear_connector_override", { org: "default", surfaceKey: "slack/T1/C1", connector: "notion" });
+  ok("clearing a missing override reports cleared=false", again.cleared === false);
 }
 
 {
@@ -83,7 +94,7 @@ await client.connect(clientT);
 {
   const audit = await readAudit({ org: "default" });
   const actions = audit.map((e) => e.action);
-  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.grant", "admin.connector.revoke", "admin.routine.cancel"]) {
+  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel"]) {
     ok(`audited: ${a}`, actions.includes(a));
   }
   ok("write actions carry the acting principal", audit.filter((e) => e.action.startsWith("admin.")).every((e) => e.principalId === "admin@example.com"));

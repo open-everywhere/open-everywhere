@@ -6,8 +6,8 @@ import { appendAudit } from "../audit/audit.js";
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
   "clear_spend_limit",
-  "grant_connector",
   "revoke_connector",
+  "clear_connector_override",
   "cancel_routine",
 ] as const;
 
@@ -69,28 +69,10 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
   );
 
   server.registerTool(
-    "grant_connector",
-    {
-      title: "Grant connector to a surface",
-      description: "Grant an Eve connector (by name, e.g. 'notion') to a surface at runtime, overlaying the bundle grants. The connector's hard gate honours this immediately. surfaceKey is 'platform/workspace/surface'.",
-      inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1) },
-    },
-    async (a) => {
-      try {
-        await store().setConnectorOverride(a.org, a.surfaceKey, a.connector, true);
-        await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.grant", detail: { connector: a.connector } });
-        return jsonResult({ ok: true, granted: a.connector, org: a.org, surfaceKey: a.surfaceKey });
-      } catch (e) {
-        return errorResult(`grant_connector failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    },
-  );
-
-  server.registerTool(
     "revoke_connector",
     {
-      title: "Revoke connector from a surface",
-      description: "Revoke an Eve connector from a surface at runtime (overlays the bundle grants; the hard gate blocks it immediately). Use clear via grant if you want to revert to config.",
+      title: "Revoke connector from a surface (break-glass)",
+      description: "Break-glass: revoke an Eve connector (by name, e.g. 'notion') from a surface at runtime — the hard gate blocks it immediately, no redeploy. Use for incidents (leaked token, abuse). To revert to the config grant afterwards, use clear_connector_override. surfaceKey is 'platform/workspace/surface'. (There is no runtime *grant* — access widens only through a reviewed PR to bundles.ts.)",
       inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1) },
     },
     async (a) => {
@@ -100,6 +82,24 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
         return jsonResult({ ok: true, revoked: a.connector, org: a.org, surfaceKey: a.surfaceKey });
       } catch (e) {
         return errorResult(`revoke_connector failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "clear_connector_override",
+    {
+      title: "Clear a connector override",
+      description: "Remove a connector override for a surface, reverting it to the config-as-code bundle grants — i.e. undo a break-glass revoke_connector. Returns cleared=false if there was no override. surfaceKey is 'platform/workspace/surface'.",
+      inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1) },
+    },
+    async (a) => {
+      try {
+        const cleared = await store().clearConnectorOverride(a.org, a.surfaceKey, a.connector);
+        await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.clear_override", detail: { connector: a.connector, cleared } });
+        return jsonResult({ ok: true, cleared, org: a.org, surfaceKey: a.surfaceKey, connector: a.connector });
+      } catch (e) {
+        return errorResult(`clear_connector_override failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

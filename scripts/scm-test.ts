@@ -171,7 +171,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 
 {
   const base = (repos: string[]): EffectiveAccess => ({
-    mode: "channel", scopeKey: "x", connections: [], reachableHosts: [], repos, plugins: [], connectors: [], instructionStack: [], warnings: [],
+    mode: "channel", scopeKey: "x", connections: [], reachableHosts: [], repos, plugins: [], skills: [], subagents: [], connectors: [], instructionStack: [], warnings: [],
   });
   const withRepos = await compileNetworkPolicy(base(["acme/web"]), async () => ({}));
   const allow = (typeof withRepos === "object" ? withRepos.allow : undefined) as Record<string, unknown[]> | undefined;

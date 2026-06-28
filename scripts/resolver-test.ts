@@ -1,5 +1,6 @@
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import type { Binding, Bundle } from "../agent/access/bundle.js";
+import type { PluginRegistry } from "../agent/plugins/registry.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -192,6 +193,90 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "workspace", workspace: "T1" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at workspace scope raise a broad-grant warning");
   ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Conn", scope: { level: "domain", workspace: "T1", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at domain scope -> NO broad-grant warning");
   ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "channel", workspace: "T1", channel: "C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at channel scope -> NO broad-grant warning");
+}
+
+{
+  const registry: PluginRegistry = {
+    acme: { connectors: ["acme__api"], skills: ["acme__lint"], subagents: ["acme__worker"] },
+    bare: { skills: ["bare__fmt"] },
+  };
+  const bundles: Bundle[] = [
+    { name: "base", plugins: ["bare"], connectors: ["notion"] },
+    { name: "team", plugins: ["acme"] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "base", scope: { level: "org" } },
+    { bundle: "team", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+  ];
+  const a = resolveAccess(chan("T1", "C1"), bundles, bindings, registry);
+  ok(
+    a.plugins.length === 2 && a.plugins.includes("acme") && a.plugins.includes("bare"),
+    "plugin grants union across scopes (names)",
+  );
+  ok(
+    a.skills.includes("acme__lint") && a.skills.includes("bare__fmt"),
+    "plugin skills expand + union across scopes",
+  );
+  ok(a.subagents.includes("acme__worker"), "plugin subagents expand");
+  ok(
+    a.connectors.includes("acme__api") && a.connectors.includes("notion"),
+    "plugin connectors fold into the connector grant (alongside direct connectors)",
+  );
+
+  const b = resolveAccess(chan("T1", "C2"), bundles, bindings, registry);
+  ok(
+    b.plugins.length === 1 && b.plugins[0] === "bare",
+    "sibling channel gets only the org-baseline plugin",
+  );
+  ok(
+    !b.skills.includes("acme__lint") && b.skills.includes("bare__fmt"),
+    "sibling channel sees only the baseline plugin's skills (scoped, default-deny)",
+  );
+  ok(
+    !b.connectors.includes("acme__api"),
+    "sibling channel does not get the channel-scoped plugin's connector",
+  );
+
+  const u = resolveAccess(
+    chan("T1", "C1"),
+    [{ name: "x", plugins: ["ghost"] }],
+    [{ bundle: "x", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+    registry,
+  );
+  ok(
+    u.skills.length === 0 && u.warnings.some((w) => w.includes('unknown plugin "ghost"')),
+    "unknown plugin contributes nothing and warns",
+  );
+
+  const e = resolveAccess(
+    chan("T1", "C1"),
+    [{ name: "x", plugins: ["acme"] }],
+    [{ bundle: "x", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+  );
+  ok(
+    e.skills.length === 0 && e.warnings.some((w) => w.includes("unknown plugin")),
+    "default empty registry: plugin grants expand to nothing (fail-closed)",
+  );
+}
+
+{
+  const registry: PluginRegistry = { acme: { skills: ["acme__lint"] } };
+  const bundles: Bundle[] = [{ name: "P", plugins: ["acme"] }];
+  ok(
+    resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "P", scope: { level: "org" } }], registry).warnings.some(
+      (w) => w.startsWith("broad grant") && w.includes("plugin"),
+    ),
+    "plugins at org scope raise a broad-grant warning",
+  );
+  ok(
+    !resolveAccess(
+      chan("T1", "C1"),
+      bundles,
+      [{ bundle: "P", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+      registry,
+    ).warnings.some((w) => w.startsWith("broad grant")),
+    "plugins at channel scope -> NO broad-grant warning",
+  );
 }
 
 console.log(`✓ resolver: ${passed} assertions passed`);

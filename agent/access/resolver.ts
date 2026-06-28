@@ -1,4 +1,5 @@
-import type { Binding, Bundle, Connection, HttpMethod, Plugin, Scope } from "./bundle.js";
+import type { Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import { PLUGIN_REGISTRY, type PluginRegistry } from "../plugins/registry.js";
 
 export type SessionMode = "channel" | "dm" | "mpim";
 
@@ -29,7 +30,9 @@ export interface EffectiveAccess {
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
-  readonly plugins: readonly Plugin[];
+  readonly plugins: readonly string[];
+  readonly skills: readonly string[];
+  readonly subagents: readonly string[];
   readonly connectors: readonly string[];
   readonly instructionStack: readonly InstructionLayer[];
   readonly warnings: readonly string[];
@@ -65,6 +68,7 @@ export function resolveAccess(
   req: ResolveRequest,
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
+  registry: PluginRegistry = PLUGIN_REGISTRY,
 ): EffectiveAccess {
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));
@@ -127,11 +131,30 @@ export function resolveAccess(
   const reachableHosts = [...hostMap.values()].sort((a, b) => a.host.localeCompare(b.host));
 
   const repos = [...new Set(ordered.flatMap(({ bundle }) => bundle.repos ?? []))].sort();
-  const pluginById = new Map<string, Plugin>();
-  for (const p of ordered.flatMap(({ bundle }) => bundle.plugins ?? [])) pluginById.set(p.id, p);
-  const plugins = [...pluginById.values()];
+
+  const plugins = [...new Set(ordered.flatMap(({ bundle }) => bundle.plugins ?? []))].sort();
+  const pluginConnectors = new Set<string>();
+  const skillSet = new Set<string>();
+  const subagentSet = new Set<string>();
+  for (const name of plugins) {
+    const entry = registry[name];
+    if (!entry) {
+      warnings.push(
+        `bundle grants unknown plugin "${name}" — not in the plugin registry; contributes nothing`,
+      );
+      continue;
+    }
+    for (const c of entry.connectors ?? []) pluginConnectors.add(c);
+    for (const s of entry.skills ?? []) skillSet.add(s);
+    for (const a of entry.subagents ?? []) subagentSet.add(a);
+  }
+  const skills = [...skillSet].sort();
+  const subagents = [...subagentSet].sort();
   const connectors = [
-    ...new Set(ordered.flatMap(({ bundle }) => bundle.connectors ?? [])),
+    ...new Set([
+      ...ordered.flatMap(({ bundle }) => bundle.connectors ?? []),
+      ...pluginConnectors,
+    ]),
   ].sort();
 
   const instructionStack: InstructionLayer[] = ordered
@@ -157,6 +180,11 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every channel under it may invoke those host-side connections. Bind connector grants to a domain or specific channel instead.`,
       );
     }
+    if ((bundle.plugins?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every channel under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific channel instead.`,
+      );
+    }
   }
 
   const scopeKey =
@@ -171,6 +199,8 @@ export function resolveAccess(
     reachableHosts,
     repos,
     plugins,
+    skills,
+    subagents,
     connectors,
     instructionStack,
     warnings,

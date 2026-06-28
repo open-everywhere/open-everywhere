@@ -41,4 +41,64 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
   else process.env.NOTION_API_KEY = prev;
 }
 
+{
+  const { resolveHeaders, selectBroker } = await import("../agent/access/credentials.js");
+  const { CredentialError } = await import("../agent/access/credentials.js");
+
+  const savedBroker = process.env.OE_CREDENTIAL_BROKER;
+  const savedVercel = process.env.VERCEL;
+
+  process.env.OE_CREDENTIAL_BROKER = "env";
+  ok(typeof selectBroker().getSecret === "function", "OE_CREDENTIAL_BROKER=env selects a broker");
+  delete process.env.OE_CREDENTIAL_BROKER;
+  delete process.env.VERCEL;
+  const autoLocal = selectBroker();
+  process.env.VERCEL = "1";
+  const autoVercel = selectBroker();
+  ok(autoLocal !== autoVercel, "auto-select differs: env (self-host) vs vercel-connect (on Vercel)");
+  if (savedVercel === undefined) delete process.env.VERCEL;
+  else process.env.VERCEL = savedVercel;
+
+  process.env.OE_CREDENTIAL_BROKER = "env";
+
+  process.env.DD_API_KEY = "api123";
+  process.env.DD_APP_KEY = "app456";
+  const h = await resolveHeaders({
+    id: "datadog",
+    credentialType: "bearer",
+    secretRef: "DD_API_KEY",
+    allowedWebsites: ["api.datadoghq.com"],
+    customHeaders: [
+      { name: "DD-API-KEY", secretRef: "DD_API_KEY" },
+      { name: "DD-APPLICATION-KEY", prefix: "", secretRef: "DD_APP_KEY" },
+    ],
+  });
+  ok(h.authorization === "Bearer api123", "bearer stamps Authorization from secretRef via the broker");
+  ok(h["DD-API-KEY"] === "api123" && h["DD-APPLICATION-KEY"] === "app456", "secret-valued custom headers resolve from their secretRefs");
+
+  process.env.OKTA_TOKEN = "tok";
+  const hp = await resolveHeaders({
+    id: "okta",
+    credentialType: "bearer",
+    secretRef: "OKTA_TOKEN",
+    allowedWebsites: ["x.okta.com"],
+    customHeaders: [{ name: "Authorization", prefix: "SSWS ", secretRef: "OKTA_TOKEN" }],
+  });
+  ok(hp["Authorization"] === "SSWS tok", "custom-header prefix is applied literally before the secret");
+
+  let threw = false;
+  try {
+    await resolveHeaders({ id: "x", credentialType: "bearer", secretRef: "MISSING_KEY", allowedWebsites: ["x"] });
+  } catch (e) {
+    threw = e instanceof CredentialError;
+  }
+  ok(threw, "missing secret throws CredentialError (fail closed)");
+
+  delete process.env.DD_API_KEY;
+  delete process.env.DD_APP_KEY;
+  delete process.env.OKTA_TOKEN;
+  if (savedBroker === undefined) delete process.env.OE_CREDENTIAL_BROKER;
+  else process.env.OE_CREDENTIAL_BROKER = savedBroker;
+}
+
 console.log(`✓ connections: ${passed} assertions passed`);

@@ -11,21 +11,20 @@ export type CredentialType = "bearer" | "basic" | "github-app";
 
 export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
 
+export interface CustomHeader {
+  readonly name: string;
+  readonly prefix?: string;
+  readonly secretRef: string;
+}
+
 export interface Connection {
   readonly id: string;
   readonly credentialType: CredentialType;
   readonly secretRef: string;
   readonly allowedWebsites: readonly string[];
   readonly pathPrefixes?: readonly string[];
-  readonly customHeaders?: Readonly<Record<string, string>>;
+  readonly customHeaders?: readonly CustomHeader[];
   readonly methods?: readonly HttpMethod[];
-}
-
-export interface Plugin {
-  readonly id: string;
-  readonly kind: "mcp" | "openapi";
-  readonly ref: string;
-  readonly connectionId?: string;
 }
 
 export interface Bundle {
@@ -34,7 +33,7 @@ export interface Bundle {
   readonly connectors?: readonly string[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
-  readonly plugins?: readonly Plugin[];
+  readonly plugins?: readonly string[];
   readonly instructions?: string;
 }
 

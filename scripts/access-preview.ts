@@ -42,7 +42,9 @@ for (const c of access.connections) {
 }
 
 console.log(`\nRepos: ${access.repos.length ? access.repos.join(", ") : "(none)"}`);
-console.log(`Plugins: ${access.plugins.length ? access.plugins.map((p) => `${p.id}(${p.kind})`).join(", ") : "(none)"}`);
+console.log(`Plugins: ${access.plugins.length ? access.plugins.join(", ") : "(none)"}`);
+console.log(`Skills (granted, scoped): ${access.skills.length ? access.skills.join(", ") : "(none)"}`);
+console.log(`Subagents: ${access.subagents.length ? access.subagents.join(", ") : "(none)"}`);
 console.log(`Connectors (host-side, agent/connections/*): ${access.connectors.length ? access.connectors.join(", ") : "(none)"}`);
 
 console.log("\nInstruction precedence stack (org → workspace → channel):");

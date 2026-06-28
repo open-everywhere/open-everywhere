@@ -139,6 +139,8 @@ export async function accessView(q: AccessQuery = {}) {
     })),
     repos: access.repos,
     plugins: access.plugins,
+    skills: access.skills,
+    subagents: access.subagents,
     connectors: access.connectors,
     instructionStack: access.instructionStack,
     warnings: access.warnings,

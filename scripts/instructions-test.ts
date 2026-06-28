@@ -17,6 +17,8 @@ const base: EffectiveAccess = {
   reachableHosts: [],
   repos: [],
   plugins: [],
+  skills: [],
+  subagents: [],
   connectors: [],
   instructionStack: [],
   warnings: [],
@@ -51,11 +53,13 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
     ...base,
     reachableHosts: [{ host: "api.github.com", viaConnection: "gh" }],
     repos: ["acme/web"],
-    plugins: [{ id: "notion", kind: "mcp", ref: "https://mcp.notion.com/sse" }],
+    plugins: ["notion-tools"],
+    skills: ["notion-tools__search"],
   });
   ok(md!.includes("api.github.com") && md!.includes("(authenticated)"), "reachable hosts (and auth marker) are listed");
   ok(md!.includes("acme/web"), "granted repos are listed");
-  ok(md!.includes("`notion`"), "available plugins are listed");
+  ok(md!.includes("`notion-tools`"), "granted plugins are listed");
+  ok(md!.includes("`notion-tools__search`"), "granted skills are listed");
 }
 
 console.log(`✓ instructions: ${passed} assertions passed`);
