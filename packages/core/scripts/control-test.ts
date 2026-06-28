@@ -1,4 +1,4 @@
-import "../agent/lib/register-config.js";
+import "./_register-test-config.js";
 import assert from "node:assert/strict";
 import { spendView, routinesView, auditView, accessView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";

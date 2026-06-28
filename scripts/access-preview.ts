@@ -1,9 +1,9 @@
 import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { domainsForSurface } from "../agent/memory/domains.js";
-import { resolveAccess, type ResolveRequest, type SessionMode } from "../agent/access/resolver.js";
-import { compileNetworkPolicy } from "../agent/access/egress.js";
-import { resolveHeaders } from "../agent/access/credentials.js";
+import { resolveAccess, type ResolveRequest, type SessionMode } from "@open-everywhere/core/agent/access/resolver.js";
+import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
+import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);

@@ -1,6 +1,6 @@
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import type { Binding, Bundle } from "../agent/access/bundle.js";
-import type { PluginRegistry } from "../agent/plugins/registry.js";
+import type { PluginRegistry } from "../agent/plugins/types.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

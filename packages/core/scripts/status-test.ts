@@ -21,7 +21,7 @@ function ok(cond: boolean, label: string): void {
 ok(STATUS_REACTION.working === "hourglass_flowing_sand" && STATUS_REACTION.blocked === "octagonal_sign", "reaction names map the four states");
 ok(ALL_STATUS_REACTIONS.length === 4 && new Set(ALL_STATUS_REACTIONS).size === 4, "four distinct status reactions");
 
-const line = statusItemLine("sess-1", "working", "Investigating  the   flaky test", "2026-06-24");
+const line = statusItemLine("sess-1", "working", "Investigating  the   flaky test", "2026-06-24 09:30Z");
 ok(line.startsWith("- ⏳ ") && line.includes("`sess-1`"), "item line carries icon + id key");
 ok(line.includes("Investigating the flaky test"), "item line collapses whitespace");
 

@@ -1,5 +1,5 @@
 import type { Bundle, Binding } from "./bundle.js";
-import type { PluginRegistry } from "../plugins/registry.js";
+import type { PluginRegistry } from "../plugins/types.js";
 import type { SkillPackageDefinition } from "eve/skills";
 
 export interface AppConfig {

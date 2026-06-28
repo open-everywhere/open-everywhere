@@ -1,4 +1,4 @@
-import "../agent/lib/register-config.js";
+import "./_register-test-config.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";

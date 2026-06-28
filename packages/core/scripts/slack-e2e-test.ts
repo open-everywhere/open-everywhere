@@ -1,4 +1,4 @@
-import "../agent/lib/register-config.js";
+import "./_register-test-config.js";
 import {
   buildSlackAuth,
   channelFactsFromRaw,
@@ -8,9 +8,8 @@ import {
 } from "../agent/channels/slack-identity.js";
 import { bindFrom, slackMode, type BindableContext } from "../agent/identity/binding.js";
 import { resolvePartition } from "../agent/memory/partition.js";
-import { buildResolveRequest } from "../agent/access/request.js";
+import { resolveAccessFor } from "../agent/access/request.js";
 import { resolveAccess, type EffectiveAccess } from "../agent/access/resolver.js";
-import { loadBundles, loadBindings } from "../agent/access/bundles.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -59,7 +58,7 @@ function dispatch(input: {
   return {
     binding: bindFrom(ctx),
     partition: resolvePartition(ctx),
-    access: resolveAccess(buildResolveRequest(ctx), loadBundles(), loadBindings()),
+    access: resolveAccessFor(ctx),
   };
 }
 

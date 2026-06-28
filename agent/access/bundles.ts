@@ -1,4 +1,4 @@
-import { defineBinding, defineBundle, type Binding, type Bundle } from "./bundle.js";
+import { defineBinding, defineBundle, type Binding, type Bundle } from "@open-everywhere/core/agent/access/bundle.js";
 
 const bundles: Bundle[] = [
   defineBundle({
