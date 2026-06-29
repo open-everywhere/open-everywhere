@@ -14,24 +14,30 @@ const envBroker: CredentialBroker = {
   },
 };
 
-let warnedConnectFallback = false;
-const vercelConnectBroker: CredentialBroker = {
-  async getSecret(ref) {
-    if (!warnedConnectFallback) {
-      console.warn(
-        `[open-everywhere:credentials] OE_CREDENTIAL_BROKER=vercel-connect but no live Connect binding — falling back to env. Wire @vercel/connect to enable.`,
-      );
-      warnedConnectFallback = true;
-    }
-    return envBroker.getSecret(ref);
-  },
-};
+const BROKERS: Record<string, CredentialBroker> = { env: envBroker };
+
+export function registerBroker(name: string, broker: CredentialBroker): void {
+  BROKERS[name] = broker;
+}
+
+export function resetBrokers(): void {
+  for (const k of Object.keys(BROKERS)) if (k !== "env") delete BROKERS[k];
+}
+
+let warnedMissingBroker = false;
 
 export function selectBroker(): CredentialBroker {
-  const choice = process.env.OE_CREDENTIAL_BROKER;
-  if (choice === "env") return envBroker;
-  if (choice === "vercel-connect") return vercelConnectBroker;
-  return process.env.VERCEL ? vercelConnectBroker : envBroker;
+  const choice = process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : "env");
+  const broker = BROKERS[choice];
+  if (broker) return broker;
+  if (!warnedMissingBroker) {
+    console.warn(
+      `[open-everywhere:credentials] credential broker "${choice}" not registered — falling back to env. ` +
+        `Register it at startup (see @open-everywhere/adapters).`,
+    );
+    warnedMissingBroker = true;
+  }
+  return envBroker;
 }
 
 function getSecret(ref: string): Promise<string> {

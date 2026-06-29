@@ -42,7 +42,9 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 }
 
 {
-  const { resolveHeaders, selectBroker } = await import("../agent/access/credentials.js");
+  const { resolveHeaders, selectBroker, registerBroker, resetBrokers } = await import(
+    "../agent/access/credentials.js"
+  );
   const { CredentialError } = await import("../agent/access/credentials.js");
 
   const savedBroker = process.env.OE_CREDENTIAL_BROKER;
@@ -50,12 +52,20 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 
   process.env.OE_CREDENTIAL_BROKER = "env";
   ok(typeof selectBroker().getSecret === "function", "OE_CREDENTIAL_BROKER=env selects a broker");
+
+  resetBrokers();
   delete process.env.OE_CREDENTIAL_BROKER;
   delete process.env.VERCEL;
   const autoLocal = selectBroker();
   process.env.VERCEL = "1";
-  const autoVercel = selectBroker();
-  ok(autoLocal !== autoVercel, "auto-select differs: env (self-host) vs vercel-connect (on Vercel)");
+  ok(selectBroker() === autoLocal, "unregistered vercel-connect falls back to env, doesn't throw");
+
+  const sentinel = { async getSecret() { return "sentinel"; } };
+  registerBroker("vercel-connect", sentinel);
+  ok(selectBroker() === sentinel, "auto-on-Vercel selects the registered vercel-connect broker");
+  delete process.env.VERCEL;
+  ok(selectBroker() === autoLocal, "auto-off-Vercel still selects env even with vercel-connect registered");
+  resetBrokers();
   if (savedVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = savedVercel;
 
