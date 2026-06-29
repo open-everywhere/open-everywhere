@@ -11,6 +11,8 @@ export function tierSandboxDir(tier: Tier): string {
       return `${BASE}/domains/${tier.name}`;
     case "surface":
       return `${BASE}/surface`;
+    case "org-default":
+      return `${BASE}/org`;
   }
 }
 

@@ -13,5 +13,8 @@ registerConfig({
   loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
   pluginRegistry: {},
   skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  orgDefault: undefined,
   domainsForSurface: () => [],
 });

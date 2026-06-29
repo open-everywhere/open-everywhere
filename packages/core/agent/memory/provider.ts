@@ -70,6 +70,23 @@ export function registerProvider(provider: MemoryProvider): void {
   REGISTRY[provider.id] = provider;
 }
 
+export function providerById(id: string): MemoryProvider {
+  const provider = REGISTRY[id];
+  if (!provider) {
+    throw new Error(
+      `unknown memory provider "${id}" — a silo references it but it isn't registered ` +
+        `(have: ${Object.keys(REGISTRY).join(", ")}). For "postgres" call registerPostgres(); ` +
+        `for "github"/"notion" wire the adapter (docs/memory-model.md).`,
+    );
+  }
+  return provider;
+}
+
+export function dbProviderId(): string {
+  if (process.env.OE_MEMORY_PROVIDER === "postgres" && REGISTRY["postgres"]) return "postgres";
+  return "sqlite";
+}
+
 export function resetProvider(): void {
   active = null;
 }

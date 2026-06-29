@@ -10,10 +10,12 @@ export type MemoryFiles = Record<string, string>;
 export type Tier =
   | { readonly kind: "workspace" }
   | { readonly kind: "domain"; readonly name: string }
-  | { readonly kind: "surface" };
+  | { readonly kind: "surface" }
+  | { readonly kind: "org-default" };
 
 export const WORKSPACE: Tier = { kind: "workspace" };
 export const SURFACE: Tier = { kind: "surface" };
+export const ORG_DEFAULT: Tier = { kind: "org-default" };
 export const domainTier = (name: string): Tier => ({ kind: "domain", name });
 
 export function tierId(t: Tier): string {

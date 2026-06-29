@@ -11,9 +11,11 @@ export function tierRelDir(p: Partition, tier: Tier): string {
     case "workspace":
       return `${p.workspaceKey}/@workspace`;
     case "domain":
-      return `${p.workspaceKey}/@domains/${safeName(tier.name)}`;
+      return `@domains/${safeName(tier.name)}`;
     case "surface":
       return `${p.workspaceKey}/@surfaces/${p.surface}`;
+    case "org-default":
+      return `@org-default`;
   }
 }
 
@@ -40,19 +42,28 @@ ${body}`,
       };
     case "domain":
       return {
-        "MEMORY.md": `# Domain memory — "${tier.name}" (${p.workspaceKey})
+        "MEMORY.md": `# Domain memory — "${tier.name}"
 
-Shared across the surfaces grouped into the **${tier.name}** domain. Put facts
-here when they're true for this area/domain but not the whole workspace — a
-sibling surface in the same domain inherits them, so it isn't context-stranded.
+The shared brain of the **${tier.name}** domain — every channel grouped into this
+domain reads and writes here. Put facts here that are true for this team/area, so a
+sibling channel in the same domain isn't context-stranded.
 ${body}`,
       };
     case "surface":
       return {
-        "MEMORY.md": `# Surface memory — index (${p.surfaceKey})
+        "MEMORY.md": `# Personal memory — index (${p.surfaceKey})
 
-Specific to **this surface only**. Put facts here when they matter here but not
-workspace- or domain-wide. If something generalises, save it to the wider tier.
+Specific to **this DM only** — your private universe with this person. Nothing here
+leaks to shared (domain/org) memory.
+${body}`,
+      };
+    case "org-default":
+      return {
+        "MEMORY.md": `# Org baseline — index
+
+The curated, **read-only** baseline every unassigned channel inherits — how the org
+works, who owns what, standing decisions. Edited by humans (config/PR), not written
+to by the agent. Channels that should accumulate their own memory get a domain.
 ${body}`,
       };
   }
