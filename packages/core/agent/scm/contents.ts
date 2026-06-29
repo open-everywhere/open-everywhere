@@ -46,7 +46,7 @@ export class GitHubContents {
     return `${this.apiBase}/repos/${repo}/contents/${encoded}`;
   }
 
-  async listFiles(repo: string, dir: string, branch: string, token: string): Promise<Record<string, string>> {
+  async listFiles(repo: string, dir: string, branch: string, token: string, recursive = true): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
     const walk = async (path: string): Promise<void> => {
       const res = await this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, {
@@ -58,8 +58,9 @@ export class GitHubContents {
       const body = (await res.json()) as ContentEntry[] | ContentEntry;
       const entries = Array.isArray(body) ? body : [body];
       for (const e of entries) {
-        if (e.type === "dir") await walk(e.path);
-        else if (e.type === "file") out[e.path.slice(dir.length + 1)] = e.sha;
+        if (e.type === "dir") {
+          if (recursive) await walk(e.path);
+        } else if (e.type === "file") out[e.path.slice(dir.length + 1)] = e.sha;
       }
     };
     await walk(dir);

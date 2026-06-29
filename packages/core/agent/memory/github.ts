@@ -35,7 +35,7 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
     const repo = silo.container!;
     const dir = repoPath(silo, p, tier);
     const token = await deps.mintToken(repo);
-    const shas = await deps.contents.listFiles(repo, dir, branch, token);
+    const shas = await deps.contents.listFiles(repo, dir, branch, token, silo.recursive !== false);
     const out: MemoryFiles = {};
     for (const rel of Object.keys(shas)) {
       const file = await deps.contents.getFile(repo, `${dir}/${rel}`, branch, token);
@@ -79,7 +79,7 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       const dir = repoPath(silo, p, tier);
       const token = await deps.mintToken(repo);
       const committer = deps.committer();
-      const shas = await deps.contents.listFiles(repo, dir, branch, token);
+      const shas = await deps.contents.listFiles(repo, dir, branch, token, silo.recursive !== false);
       for (const [rel, sha] of Object.entries(shas)) {
         await deps.contents.deleteFile(repo, `${dir}/${rel}`, sha, `delete ${tier.kind} memory`, branch, token, committer);
       }

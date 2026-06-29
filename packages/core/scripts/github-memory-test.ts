@@ -114,6 +114,14 @@ await provider.writeTier(p, tier, { "people.md": "@ana owns deploys\n" }, "add",
 const both = await provider.readTier(p, tier, silo);
 ok(both["MEMORY.md"] === "# changed\n" && both["people.md"] === "@ana owns deploys\n", "writes union (never drop)");
 
+await provider.writeTier(p, tier, { "MEMORY.md": "# changed\n", "sub/notes.md": "nested\n" }, "nest", silo);
+const flat = await provider.readTier(p, tier, { ...silo, recursive: false });
+ok("MEMORY.md" in flat && !("sub/notes.md" in flat), "recursive:false → top-level files only (sub-folders skipped)");
+const deep = await provider.readTier(p, tier, silo);
+ok("sub/notes.md" in deep, "default recursive → nested file included");
+await provider.deleteTier(p, tier, silo);
+await provider.writeTier(p, tier, { "MEMORY.md": "# changed\n", "people.md": "@ana owns deploys\n" }, "restore", silo);
+
 const other = partition("org-b");
 ok(Object.keys(await provider.readTier(other, tier, silo)).length === 0, "org-b can't see org-a's tier");
 
