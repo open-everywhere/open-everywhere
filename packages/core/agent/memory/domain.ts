@@ -1,8 +1,13 @@
 export interface Domain {
   readonly name: string;
   readonly channels: readonly string[];
-  readonly memory?: string;
+  readonly memory?: string | readonly string[];
   readonly bundle?: string;
+}
+
+export function memoryRefs(domain: Domain): string[] {
+  if (!domain.memory) return [];
+  return Array.isArray(domain.memory) ? [...domain.memory] : [domain.memory as string];
 }
 
 export function defineDomain(domain: Domain): Domain {

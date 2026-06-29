@@ -4,7 +4,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
-import { tierId, storeRoot } from "../memory/store.js";
+import { tierId, storeRoot, type MemoryFiles } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox } from "../memory/sandbox-sync.js";
 import { appendAudit } from "../audit/audit.js";
@@ -63,11 +63,20 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}`);
 }
 
-async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMemory) {
+const RO_BANNER =
+  "<!-- read-only baseline: edits here are NOT saved. Use the `remember` tool (it writes to this channel's writable memory) instead. -->\n\n";
+
+function withReadOnlyBanner(files: MemoryFiles): MemoryFiles {
+  const md = files["MEMORY.md"];
+  if (md && !md.startsWith("<!-- read-only")) return { ...files, "MEMORY.md": RO_BANNER + md };
+  return files;
+}
+
+async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMemory): Promise<MemoryFiles> {
   const provider = providerById(rm.silo.provider);
   if (rm.readOnly) {
     const files = await provider.readTier(p, rm.tier, rm.silo);
-    return Object.keys(files).length > 0 ? files : seedFor(p, rm.tier);
+    return withReadOnlyBanner(Object.keys(files).length > 0 ? files : seedFor(p, rm.tier));
   }
   return provider.ensureTier(p, rm.tier, rm.silo);
 }

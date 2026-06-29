@@ -42,6 +42,8 @@ const cfg: MemoryResolveConfig = {
     defineDomain({ name: "transactions", channels: ["slack/T/C_TXN"], memory: "txn", bundle: "txn-tools" }),
     defineDomain({ name: "watercooler", channels: ["slack/T/C_CHAT"] }),
     defineDomain({ name: "readonly-dom", channels: ["slack/T/C_RO"], memory: "baseline" }),
+    defineDomain({ name: "multi", channels: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),
+    defineDomain({ name: "multi2", channels: ["slack/T/C_MULTI2"], memory: ["baseline"] }),
   ],
   silos: [txnSilo, baselineSilo],
   orgDefault: undefined,
@@ -61,8 +63,17 @@ ok(ext.reason.includes("trust gate"), "external → reason names the trust gate"
 
 const txn = resolveMemoryPlan(binding("channel", "internal"), partition("C_TXN"), cfg);
 ok(txn.reads.length === 1 && txn.writes.length === 1, "domain channel → reads + writes its silo");
-ok(txn.reads[0].silo.name === "txn" && txn.reads[0].tier.kind === "domain", "domain channel → the domain's silo + domain tier");
-ok(txn.reads[0].tier.kind === "domain" && txn.reads[0].tier.name === "transactions", "domain tier keyed by domain name");
+ok(txn.reads[0].silo.name === "txn" && txn.reads[0].tier.kind === "silo", "domain channel → the domain's silo + silo tier");
+ok(txn.reads[0].tier.kind === "silo" && txn.reads[0].tier.name === "txn", "silo tier keyed by SILO name (not domain)");
+
+const multi = resolveMemoryPlan(binding("channel", "internal"), partition("C_MULTI"), cfg);
+ok(multi.reads.length === 2, "multi-source domain → reads BOTH silos");
+ok(multi.writes.length === 1 && multi.writes[0].silo.name === "txn", "multi-source → writes only the writable silo");
+ok(multi.reads.some((r) => r.silo.name === "baseline" && r.readOnly), "multi-source → baseline included read-only");
+const multi2 = resolveMemoryPlan(binding("channel", "internal"), partition("C_MULTI2"), cfg);
+const baseTierA = multi.reads.find((r) => r.silo.name === "baseline")!.tier;
+const baseTierB = multi2.reads[0].tier;
+ok(baseTierA.kind === "silo" && baseTierB.kind === "silo" && baseTierA.name === baseTierB.name, "shared silo → SAME bucket across domains");
 
 const ro = resolveMemoryPlan(binding("channel", "internal"), partition("C_RO"), cfg);
 ok(ro.reads.length === 1 && ro.writes.length === 0, "read-only silo → reads, never writes");
@@ -80,7 +91,7 @@ const withDefault: MemoryResolveConfig = {
 };
 const od = resolveMemoryPlan(binding("channel", "internal"), partition("C_RANDOM"), withDefault);
 ok(od.reads.length === 1 && od.writes.length === 0, "unassigned + org default on → reads baseline, no writes");
-ok(od.reads[0].tier.kind === "org-default" && od.reads[0].readOnly === true, "org default → org-default tier, read-only");
+ok(od.reads[0].tier.kind === "silo" && od.reads[0].readOnly === true, "org default → silo tier (the baseline silo), read-only");
 
 const odExt = resolveMemoryPlan(binding("channel", "external"), partition("C_RANDOM"), withDefault);
 ok(odExt.reads.length === 0, "external unassigned + org default on → still NO memory (gate first)");

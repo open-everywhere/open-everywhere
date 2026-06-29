@@ -1,7 +1,8 @@
 import { renderBlocks, pageTitle, type BlockNode } from "../agent/notion/blocks.js";
 import { NotionClient, makeNotionProvider, type HttpFetch } from "../agent/notion/memory.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
-import { ORG_DEFAULT } from "@open-everywhere/core/agent/memory/store.js";
+import { siloTier } from "@open-everywhere/core/agent/memory/store.js";
+const TIER = siloTier("baseline");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -59,7 +60,7 @@ const provider = makeNotionProvider({ client: () => new NotionClient("tok", fake
 const p: Partition = { org: "default", platform: "slack", workspace: "T", surface: "C", workspaceKey: "slack/T", surfaceKey: "slack/T/C", key: "slack/T/C" };
 const silo = { name: "baseline", provider: "notion", container: "root", readOnly: true };
 
-const files = await provider.readTier(p, ORG_DEFAULT, silo);
+const files = await provider.readTier(p, TIER, silo);
 
 ok("MEMORY.md" in files, "root page → MEMORY.md");
 ok(files["MEMORY.md"].includes("# Handbook") && files["MEMORY.md"].includes("Welcome"), "root content rendered");
@@ -69,20 +70,20 @@ ok("Onboarding.md" in files && files["Onboarding.md"].includes("Step one"), "chi
 ok("Onboarding/Deep-Dive.md" in files && files["Onboarding/Deep-Dive.md"].includes("deepest"), "grandchild page → nested path keyed by sanitized title");
 
 const single = makeNotionProvider({ client: () => new NotionClient("tok", fakeFetch) });
-const singleFiles = await single.readTier(p, ORG_DEFAULT, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
+const singleFiles = await single.readTier(p, TIER, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
 ok("MEMORY.md" in singleFiles && singleFiles["MEMORY.md"].includes("# Handbook"), "recursive:false → root page pulled");
 ok(!("Onboarding.md" in singleFiles) && !("Onboarding/Deep-Dive.md" in singleFiles), "recursive:false → child pages NOT pulled");
 
-ok((await provider.writeTier(p, ORG_DEFAULT, { "MEMORY.md": "x" }, "nope", silo)) === null, "writeTier is a no-op (read-only)");
-await provider.deleteTier(p, ORG_DEFAULT, silo);
+ok((await provider.writeTier(p, TIER, { "MEMORY.md": "x" }, "nope", silo)) === null, "writeTier is a no-op (read-only)");
+await provider.deleteTier(p, TIER, silo);
 ok(true, "deleteTier is a no-op (read-only)");
 
 const callsAfterFirst = calls;
-await provider.readTier(p, ORG_DEFAULT, silo);
+await provider.readTier(p, TIER, silo);
 ok(calls === callsAfterFirst, "second read is served from cache (no extra API calls)");
 
 try {
-  await provider.readTier(p, ORG_DEFAULT, { name: "x", provider: "notion" });
+  await provider.readTier(p, TIER, { name: "x", provider: "notion" });
   ok(false, "missing container should throw");
 } catch {
   ok(true, "missing container → throws");

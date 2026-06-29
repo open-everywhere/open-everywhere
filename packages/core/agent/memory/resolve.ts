@@ -3,8 +3,8 @@ import type { Partition } from "./partition.js";
 import type { Domain } from "./domain.js";
 import type { MemorySilo } from "./silo.js";
 import type { OrgDefault } from "../access/config.js";
-import { SURFACE, ORG_DEFAULT, domainTier, type Tier } from "./store.js";
-import { domainForChannel } from "./domain.js";
+import { SURFACE, siloTier, type Tier } from "./store.js";
+import { domainForChannel, memoryRefs } from "./domain.js";
 import { dbProviderId } from "./provider.js";
 import { getConfig } from "../access/config.js";
 
@@ -60,17 +60,23 @@ export function resolveMemoryPlan(
   }
 
   const domain = domainForChannel(partition.surfaceKey, cfg.domains);
-  if (domain?.memory) {
-    const silo = findSilo(cfg.silos, domain.memory, `domain "${domain.name}"`);
-    const readOnly = silo.readOnly === true;
-    const rm: ResolvedMemory = { silo, tier: domainTier(domain.name), readOnly };
-    return { reads: [rm], writes: readOnly ? [] : [rm], reason: `domain "${domain.name}"` };
+  const refs = domain ? memoryRefs(domain) : [];
+  if (refs.length > 0) {
+    const reads = refs.map((name) => {
+      const silo = findSilo(cfg.silos, name, `domain "${domain!.name}"`);
+      return { silo, tier: siloTier(silo.name), readOnly: silo.readOnly === true } satisfies ResolvedMemory;
+    });
+    return {
+      reads,
+      writes: reads.filter((r) => !r.readOnly),
+      reason: `domain "${domain!.name}" (${refs.length === 1 ? refs[0] : `${refs.length} silos: ${refs.join(", ")}`})`,
+    };
   }
 
   const od = cfg.orgDefault;
   if (od?.enabled && od.memory) {
     const base = findSilo(cfg.silos, od.memory, "org default");
-    const rm: ResolvedMemory = { silo: { ...base, readOnly: true }, tier: ORG_DEFAULT, readOnly: true };
+    const rm: ResolvedMemory = { silo: { ...base, readOnly: true }, tier: siloTier(base.name), readOnly: true };
     return { reads: [rm], writes: [], reason: "org default (read-only)" };
   }
 

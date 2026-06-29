@@ -9,17 +9,15 @@ export type MemoryFiles = Record<string, string>;
 
 export type Tier =
   | { readonly kind: "workspace" }
-  | { readonly kind: "domain"; readonly name: string }
-  | { readonly kind: "surface" }
-  | { readonly kind: "org-default" };
+  | { readonly kind: "silo"; readonly name: string }
+  | { readonly kind: "surface" };
 
 export const WORKSPACE: Tier = { kind: "workspace" };
 export const SURFACE: Tier = { kind: "surface" };
-export const ORG_DEFAULT: Tier = { kind: "org-default" };
-export const domainTier = (name: string): Tier => ({ kind: "domain", name });
+export const siloTier = (name: string): Tier => ({ kind: "silo", name });
 
 export function tierId(t: Tier): string {
-  return t.kind === "domain" ? `domain:${t.name}` : t.kind;
+  return t.kind === "silo" ? `silo:${t.name}` : t.kind;
 }
 
 const ROOT = process.env.OE_MEMORY_DIR

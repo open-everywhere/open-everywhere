@@ -1,7 +1,7 @@
 
 import { PGlite } from "@electric-sql/pglite";
 import { initPostgresSchema, makePostgresProvider, setOrgContext, type PgClient } from "../agent/memory/postgres.js";
-import { WORKSPACE, SURFACE, domainTier } from "../agent/memory/store.js";
+import { WORKSPACE, SURFACE, siloTier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";
 
 let passed = 0;
@@ -45,10 +45,10 @@ const provider = makePostgresProvider(client);
 
   await provider.ensureTier(p, SURFACE);
   await provider.writeTier(p, SURFACE, { "MEMORY.md": "surface-only\n" }, "s");
-  await provider.ensureTier(p, domainTier("payments"));
+  await provider.ensureTier(p, siloTier("payments"));
   ok((await provider.readTier(p, WORKSPACE))["MEMORY.md"] === "# changed\n", "surface/domain writes don't touch workspace");
   ok((await provider.readTier(p, SURFACE))["MEMORY.md"] === "surface-only\n", "surface tier isolated");
-  ok((await provider.readTier(p, domainTier("payments")))["MEMORY.md"].includes('"payments"'), "domain tier seeded under its name");
+  ok((await provider.readTier(p, siloTier("payments")))["MEMORY.md"].includes('"payments"'), "silo tier seeded under its name");
 
   await provider.deleteTier(p, WORKSPACE);
   ok(Object.keys(await provider.readTier(p, WORKSPACE)).length === 0, "deleteTier erases the tier");

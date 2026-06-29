@@ -1,6 +1,6 @@
 import { GitHubContents, type HttpFetch } from "../agent/scm/contents.js";
 import { makeGitHubProvider } from "../agent/memory/github.js";
-import { domainTier } from "../agent/memory/store.js";
+import { siloTier } from "../agent/memory/store.js";
 import type { Partition } from "../agent/memory/partition.js";
 import type { MemorySilo } from "../agent/memory/silo.js";
 
@@ -91,15 +91,15 @@ function partition(org: string): Partition {
   return { org, platform: "slack", workspace: "T", surface: "C", workspaceKey: "slack/T", surfaceKey: "slack/T/C", key: "slack/T/C" };
 }
 const silo: MemorySilo = { name: "txn", provider: "github", container: "acme/brain", path: "memory" };
-const tier = domainTier("transactions");
+const tier = siloTier("txn");
 const p = partition("default");
 
 ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "fresh tier reads empty");
 
 const seeded = await provider.ensureTier(p, tier, silo);
-ok("MEMORY.md" in seeded && seeded["MEMORY.md"].includes('"transactions"'), "ensureTier seeds the domain MEMORY.md");
+ok("MEMORY.md" in seeded && seeded["MEMORY.md"].includes('"txn"'), "ensureTier seeds the silo MEMORY.md");
 
-ok(repoFiles("acme/brain").has("memory/default/@domains/transactions/MEMORY.md"), "file keyed by silo.path + org + tier path");
+ok(repoFiles("acme/brain").has("memory/default/@silos/txn/MEMORY.md"), "file keyed by silo.path + org + tier path");
 
 const reseed = await provider.ensureTier(p, tier, silo);
 ok(reseed["MEMORY.md"] === seeded["MEMORY.md"], "ensureTier idempotent");
@@ -119,7 +119,7 @@ ok(Object.keys(await provider.readTier(other, tier, silo)).length === 0, "org-b 
 
 await provider.deleteTier(p, tier, silo);
 ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "deleteTier erases the tier");
-ok(!repoFiles("acme/brain").has("memory/default/@domains/transactions/MEMORY.md"), "delete removed the repo files");
+ok(!repoFiles("acme/brain").has("memory/default/@silos/txn/MEMORY.md"), "delete removed the repo files");
 
 try {
   await provider.readTier(p, tier, { name: "x", provider: "github" });

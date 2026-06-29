@@ -1,5 +1,6 @@
 import type { SandboxSession } from "eve/sandbox";
 import type { MemoryFiles, Tier } from "./store.js";
+import { safeName } from "./layout.js";
 
 const BASE = "memory";
 
@@ -7,12 +8,10 @@ export function tierSandboxDir(tier: Tier): string {
   switch (tier.kind) {
     case "workspace":
       return `${BASE}/workspace`;
-    case "domain":
-      return `${BASE}/domains/${tier.name}`;
+    case "silo":
+      return `${BASE}/${safeName(tier.name)}`;
     case "surface":
       return `${BASE}/surface`;
-    case "org-default":
-      return `${BASE}/org`;
   }
 }
 

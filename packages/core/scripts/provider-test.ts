@@ -8,7 +8,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "mem.sqlite3");
 
 const { gitProvider } = await import("../agent/memory/provider.js");
 const { sqliteProvider, _resetDbForTest } = await import("../agent/memory/sqlite.js");
-const { WORKSPACE, SURFACE, domainTier } = await import("../agent/memory/store.js");
+const { WORKSPACE, SURFACE, siloTier } = await import("../agent/memory/store.js");
 import type { Partition } from "../agent/memory/partition.js";
 import type { MemoryProvider } from "../agent/memory/provider.js";
 
@@ -55,10 +55,10 @@ async function runContract(provider: MemoryProvider): Promise<void> {
 
   await provider.ensureTier(p, SURFACE);
   await provider.writeTier(p, SURFACE, { "MEMORY.md": "surface-only\n" }, "s");
-  await provider.ensureTier(p, domainTier("payments"));
+  await provider.ensureTier(p, siloTier("payments"));
   ok((await provider.readTier(p, WORKSPACE))["MEMORY.md"] === "# changed\n", `${id}: surface/domain writes don't touch workspace`);
   ok((await provider.readTier(p, SURFACE))["MEMORY.md"] === "surface-only\n", `${id}: surface tier isolated`);
-  ok((await provider.readTier(p, domainTier("payments")))["MEMORY.md"].includes('"payments"'), `${id}: domain tier seeded under its name`);
+  ok((await provider.readTier(p, siloTier("payments")))["MEMORY.md"].includes('"payments"'), `${id}: silo tier seeded under its name`);
 
   await provider.deleteTier(p, WORKSPACE);
   ok(Object.keys(await provider.readTier(p, WORKSPACE)).length === 0, `${id}: deleteTier erases the tier`);
