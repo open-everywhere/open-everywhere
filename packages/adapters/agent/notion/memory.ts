@@ -4,7 +4,8 @@ import { safeName } from "@open-everywhere/core/agent/memory/layout.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
 import type { Tier, MemoryFiles } from "@open-everywhere/core/agent/memory/store.js";
-import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode } from "./blocks.js";
+import { posix } from "node:path";
+import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
 
 const API = "https://api.notion.com";
 const NOTION_VERSION = "2022-06-28";
@@ -70,7 +71,22 @@ async function loadBlockTree(client: NotionClient, blockId: string, depth: numbe
   return blocks;
 }
 
-async function pullPage(client: NotionClient, pageId: string, segs: string[], files: MemoryFiles, stats: PullStats, recursive: boolean): Promise<void> {
+interface CollectedPage {
+  readonly key: string;
+  readonly id: string;
+  readonly title: string;
+  readonly blocks: BlockNode[];
+}
+
+async function collect(
+  client: NotionClient,
+  pageId: string,
+  title: string,
+  segs: string[],
+  stats: PullStats,
+  out: CollectedPage[],
+  recursive: boolean,
+): Promise<void> {
   if (stats.pages >= MAX_PAGES || segs.length > MAX_PAGE_DEPTH) {
     stats.capped = true;
     return;
@@ -78,13 +94,31 @@ async function pullPage(client: NotionClient, pageId: string, segs: string[], fi
   stats.pages++;
   const blocks = await loadBlockTree(client, pageId, 0);
   const key = segs.length === 0 ? "MEMORY.md" : `${segs.join("/")}.md`;
-  files[key] = renderBlocks(blocks);
+  out.push({ key, id: pageId, title, blocks });
   if (!recursive) return;
   for (const b of blocks) {
     if (PAGE_BLOCK_TYPES.has(b.type) && b.id) {
-      await pullPage(client, b.id, [...segs, safeName(pageTitle(b))], files, stats, recursive);
+      await collect(client, b.id, pageTitle(b), [...segs, safeName(pageTitle(b))], stats, out, recursive);
     }
   }
+}
+
+function renderCollected(pages: readonly CollectedPage[]): MemoryFiles {
+  const byId = new Map<string, LinkTarget>();
+  for (const pg of pages) byId.set(pg.id, { path: pg.key, title: pg.title });
+
+  const files: MemoryFiles = {};
+  for (const pg of pages) {
+    const fromDir = posix.dirname(pg.key);
+    const resolve: LinkResolver = (id) => {
+      const t = byId.get(id);
+      if (!t) return undefined;
+      const rel = posix.relative(fromDir, t.path);
+      return { path: rel.length > 0 ? rel : t.path, title: t.title };
+    };
+    files[pg.key] = renderBlocks(pg.blocks, resolve);
+  }
+  return files;
 }
 
 export interface NotionMemoryDeps {
@@ -107,13 +141,14 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
     const hit = cache.get(root);
     if (hit && Date.now() - hit.atMs < TTL_MS) return hit.files;
 
-    const files: MemoryFiles = {};
+    const pages: CollectedPage[] = [];
     const stats: PullStats = { pages: 0, capped: false };
     const recursive = silo.recursive !== false;
-    await pullPage(deps.client(silo), root, [], files, stats, recursive);
+    await collect(deps.client(silo), root, "index", [], stats, pages, recursive);
     if (stats.capped) {
       console.warn(`[open-everywhere:notion] page "${root}" pull hit the cap (${MAX_PAGES} pages / depth ${MAX_PAGE_DEPTH}); some pages omitted.`);
     }
+    const files = renderCollected(pages);
     cache.set(root, { files, atMs: Date.now() });
     return files;
   }

@@ -32,7 +32,12 @@ const tree: Record<string, BlockNode[]> = {
   ],
   b1: [{ type: "bulleted_list_item", id: "b2", bulleted_list_item: { rich_text: [{ plain_text: "nested" }] } }],
   sub1: [
-    { type: "paragraph", id: "sp", paragraph: { rich_text: [{ plain_text: "Step one" }] } },
+    {
+      type: "paragraph",
+      id: "sp",
+      paragraph: { rich_text: [{ plain_text: "Step one, see " }, { type: "mention", plain_text: "Deep Dive", mention: { type: "page", page: { id: "sub2" } } }] },
+    },
+    { type: "link_to_page", id: "ltp", link_to_page: { type: "page_id", page_id: "external-xyz" } },
     { type: "child_page", id: "sub2", child_page: { title: "Deep Dive" } },
   ],
   sub2: [{ type: "paragraph", id: "d", paragraph: { rich_text: [{ plain_text: "deepest" }] } }],
@@ -68,6 +73,9 @@ ok(files["MEMORY.md"].includes("- top") && files["MEMORY.md"].includes("  - nest
 ok(!files["MEMORY.md"].includes("Step one"), "child-page content NOT inlined into the parent");
 ok("Onboarding.md" in files && files["Onboarding.md"].includes("Step one"), "child page → Onboarding.md");
 ok("Onboarding/Deep-Dive.md" in files && files["Onboarding/Deep-Dive.md"].includes("deepest"), "grandchild page → nested path keyed by sanitized title");
+
+ok(files["Onboarding.md"].includes("[Deep Dive](Onboarding/Deep-Dive.md)"), "page mention → relative on-disk link");
+ok(files["Onboarding.md"].includes("(link to a page outside this memory)"), "out-of-subtree link → graceful placeholder");
 
 const single = makeNotionProvider({ client: () => new NotionClient("tok", fakeFetch) });
 const singleFiles = await single.readTier(p, TIER, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
