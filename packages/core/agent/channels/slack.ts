@@ -13,9 +13,11 @@ import {
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
-import { readTier, ensureTier, writeTier, SURFACE } from "../memory/store.js";
+import { readTier, ensureTier, writeTier, SURFACE, tierId } from "../memory/store.js";
 import { upsertUnderSection } from "../memory/markdown.js";
-import { slackMode } from "../identity/binding.js";
+import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
+import { planFor } from "../memory/resolve.js";
+import { providerById } from "../memory/provider.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_MARKER } from "../onboarding/onboarding.js";
 import {
@@ -104,25 +106,30 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
   });
 }
 
-async function maybeOnboard(ctx: SlackContext, p: Partition): Promise<void> {
+async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<void> {
   try {
-    const files = await ensureTier(p, SURFACE);
-    if (files[ONBOARDED_MARKER] !== undefined) return;
+    const p = resolvePartition(where);
+    const marker = await ensureTier(p, SURFACE);
+    if (marker[ONBOARDED_MARKER] !== undefined) return;
 
     let adopted = false;
     try {
       const pins = await ctx.slack.request("pins.list", { channel: ctx.slack.channelId });
       const instructions = extractPinnedInstructions(pins);
-      if (instructions) {
+      const target = instructions ? planFor(bindFrom(where), p).writes[0] : undefined;
+      if (instructions && target) {
+        const provider = providerById(target.silo.provider);
+        const mem = await provider.ensureTier(p, target.tier);
         const date = new Date().toISOString().slice(0, 10);
-        files["MEMORY.md"] = upsertUnderSection(files["MEMORY.md"] ?? "", "Standing instructions", instructionBullet(instructions, date));
+        mem["MEMORY.md"] = upsertUnderSection(mem["MEMORY.md"] ?? "", "Standing instructions", instructionBullet(instructions, date));
+        await provider.writeTier(p, target.tier, mem, `adopt pinned instructions [${tierId(target.tier)}]`);
         adopted = true;
       }
     } catch {
     }
 
-    files[ONBOARDED_MARKER] = new Date().toISOString();
-    await writeTier(p, SURFACE, files, `onboarding ${p.surfaceKey}`);
+    marker[ONBOARDED_MARKER] = new Date().toISOString();
+    await writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
     try {
       await ctx.thread.post(introMessage(adopted));
     } catch {
@@ -131,23 +138,22 @@ async function maybeOnboard(ctx: SlackContext, p: Partition): Promise<void> {
   }
 }
 
-function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partition {
-  return resolvePartition({
+function bindableForMessage(message: SlackMessage, facts: ChannelFacts): BindableContext {
+  const attributes: Record<string, string> = {
+    team_id: message.teamId ?? "",
+    channel_id: message.channelId,
+    channel_type: facts.channelType ?? "",
+  };
+  if (typeof facts.isExternal === "boolean") attributes.is_ext_shared = String(facts.isExternal);
+  if (typeof facts.trustChecked === "boolean") attributes.trust_checked = String(facts.trustChecked);
+  return {
     channel: { kind: "slack" },
-    session: {
-      auth: {
-        current: {
-          attributes: {
-            team_id: message.teamId ?? "",
-            channel_id: message.channelId,
-            channel_type: facts.channelType ?? "",
-          },
-          principalId: message.author?.userId ?? "",
-          principalType: "slack-user",
-        },
-      },
-    },
-  });
+    session: { auth: { current: { attributes, principalId: message.author?.userId ?? "", principalType: "slack-user" } } },
+  };
+}
+
+function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partition {
+  return resolvePartition(bindableForMessage(message, facts));
 }
 
 async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<{ auth: OpenEverywhereSlackAuth | null }> {
@@ -167,7 +173,7 @@ async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean
   }
 
   if (mode === "channel") {
-    await maybeOnboard(ctx, partitionForMessage(message, facts));
+    await maybeOnboard(ctx, bindableForMessage(message, facts));
   }
 
   try {

@@ -2,9 +2,10 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
-import { resolveMode, resolveVisibility } from "../access/request.js";
-import { ensureTier, readTier, writeTier, storeRoot, tierId } from "../memory/store.js";
-import { readTiers, writeTiers } from "../memory/tiers.js";
+import { planFor, type ResolvedMemory } from "../memory/resolve.js";
+import { providerById } from "../memory/provider.js";
+import { tierId, storeRoot } from "../memory/store.js";
+import { seedFor } from "../memory/layout.js";
 import { syncTierIntoSandbox, readTierFromSandbox } from "../memory/sandbox-sync.js";
 import { appendAudit } from "../audit/audit.js";
 
@@ -18,17 +19,16 @@ function log(msg: string): void {
 }
 
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
-  const mode = resolveMode(ctx);
+  const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
-  const tiers = writeTiers(p, mode, resolveVisibility(ctx));
-  if (tiers.length === 0) {
-    log(`${mode} is execution-only — skipping memory persistence on session.${outcome}`);
+  const plan = planFor(binding, p);
+  if (plan.writes.length === 0) {
+    log(`session.${outcome}: nothing to persist — ${plan.reason}`);
     return;
   }
   const sessionId = ctx.session.id;
-  const when = new Date().toISOString();
-  const firstMessage = sessionLog.get().firstMessage?.trim();
-  const principalId = bindFrom(ctx).principalId;
+  const principalId = binding.principalId;
+  const request = sessionLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 200);
 
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   try {
@@ -38,22 +38,16 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   }
 
   let persisted = 0;
-  for (const tier of tiers) {
-    let files = await readTier(p, tier);
+  for (const rm of plan.writes) {
+    const provider = providerById(rm.silo.provider);
+    let files = await provider.readTier(p, rm.tier);
     if (sandbox) {
-      const fromSandbox = await readTierFromSandbox(sandbox, tier);
+      const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
       if (Object.keys(fromSandbox).length > 0) files = fromSandbox;
     }
-    if (tier.kind === "surface") {
-      files[`sessions/${sessionId}.md`] =
-        `# Session ${sessionId}\n\n` +
-        `- when: ${when}\n` +
-        `- outcome: ${outcome}\n` +
-        `- request: ${firstMessage ? firstMessage.replace(/\n+/g, " ").slice(0, 500) : "(not captured)"}\n`;
-    }
-    const sha = await writeTier(p, tier, files, `session ${sessionId} (${outcome}) [${tierId(tier)}]`);
+    const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`);
     persisted += Object.keys(files).length;
-    log(`persisted ${tierId(tier)}: ${Object.keys(files).length} file(s)${sha ? ` @ ${sha}` : ""}`);
+    log(`persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)${sha ? ` @ ${sha}` : ""}`);
     if (sha) {
       await appendAudit({
         org: p.org,
@@ -62,32 +56,41 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
         surface: p.surface,
         principalId,
         action: "memory.write",
-        detail: { tier: tierId(tier), files: Object.keys(files).length, version: sha, outcome, sessionId },
+        detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request },
       });
     }
   }
-  log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} -> ${storeRoot()}`);
+  log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}`);
+}
+
+async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMemory) {
+  const provider = providerById(rm.silo.provider);
+  if (rm.readOnly) {
+    const files = await provider.readTier(p, rm.tier);
+    return Object.keys(files).length > 0 ? files : seedFor(p, rm.tier);
+  }
+  return provider.ensureTier(p, rm.tier);
 }
 
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
       try {
-        const mode = resolveMode(ctx);
+        const binding = bindFrom(ctx);
         const p = resolvePartition(ctx);
-        const tiers = readTiers(p, mode);
-        if (tiers.length === 0) {
-          log(`${mode} is execution-only — skipping memory sync-in (no learning)`);
+        const plan = planFor(binding, p);
+        if (plan.reads.length === 0) {
+          log(`session.started: no memory synced — ${plan.reason}`);
           return;
         }
         const sandbox = await ctx.getSandbox();
         let synced = 0;
-        for (const tier of tiers) {
-          const files = await ensureTier(p, tier);
-          await syncTierIntoSandbox(sandbox, tier, files);
+        for (const rm of plan.reads) {
+          const files = await loadSource(p, rm);
+          await syncTierIntoSandbox(sandbox, rm.tier, files);
           synced += Object.keys(files).length;
         }
-        log(`synced ${synced} file(s) across [${tiers.map(tierId).join(", ")}] for ${p.key}`);
+        log(`synced ${synced} file(s) across [${plan.reads.map((r) => tierId(r.tier)).join(", ")}] for ${p.key} (${plan.reason})`);
       } catch (err) {
         log(`session.started sync skipped: ${String(err)}`);
       }
