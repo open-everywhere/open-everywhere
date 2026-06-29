@@ -1,4 +1,5 @@
 import type { Partition } from "./partition.js";
+import type { MemorySilo } from "./silo.js";
 import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
 import {
@@ -14,13 +15,13 @@ import {
 export interface MemoryProvider {
   readonly id: string;
 
-  readTier(p: Partition, tier: Tier): Promise<MemoryFiles>;
+  readTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<MemoryFiles>;
 
-  ensureTier(p: Partition, tier: Tier): Promise<MemoryFiles>;
+  ensureTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<MemoryFiles>;
 
-  writeTier(p: Partition, tier: Tier, files: MemoryFiles, message: string): Promise<string | null>;
+  writeTier(p: Partition, tier: Tier, files: MemoryFiles, message: string, silo?: MemorySilo): Promise<string | null>;
 
-  deleteTier(p: Partition, tier: Tier): Promise<void>;
+  deleteTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<void>;
 
   root?(): string;
 }

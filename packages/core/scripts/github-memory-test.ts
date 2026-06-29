@@ -1,0 +1,131 @@
+import { GitHubContents, type HttpFetch } from "../agent/scm/contents.js";
+import { makeGitHubProvider } from "../agent/memory/github.js";
+import { domainTier } from "../agent/memory/store.js";
+import type { Partition } from "../agent/memory/partition.js";
+import type { MemorySilo } from "../agent/memory/silo.js";
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+const store = new Map<string, Map<string, { content: string; sha: string }>>();
+let shaSeq = 0;
+function repoFiles(repo: string): Map<string, { content: string; sha: string }> {
+  let m = store.get(repo);
+  if (!m) {
+    m = new Map();
+    store.set(repo, m);
+  }
+  return m;
+}
+function res(status: number, body: unknown) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify(body);
+    },
+    async json() {
+      return body;
+    },
+  };
+}
+
+const fakeFetch: HttpFetch = async (url, init) => {
+  const u = new URL(url);
+  const m = u.pathname.match(/^\/repos\/([^/]+\/[^/]+)\/contents\/(.*)$/);
+  if (!m) return res(404, { message: "not found" });
+  const repo = m[1];
+  const path = decodeURIComponent(m[2].split("/").map(decodeURIComponent).join("/"));
+  const files = repoFiles(repo);
+
+  if (init.method === "GET") {
+    if (files.has(path)) {
+      const f = files.get(path)!;
+      return res(200, { type: "file", path, name: path.split("/").pop(), sha: f.sha, encoding: "base64", content: Buffer.from(f.content, "utf-8").toString("base64") });
+    }
+    const prefix = `${path}/`;
+    const children = new Map<string, { type: string; path: string; name: string; sha: string }>();
+    for (const [fp, f] of files) {
+      if (!fp.startsWith(prefix)) continue;
+      const rest = fp.slice(prefix.length);
+      const slash = rest.indexOf("/");
+      if (slash === -1) children.set(fp, { type: "file", path: fp, name: rest, sha: f.sha });
+      else {
+        const dirName = rest.slice(0, slash);
+        const dirPath = `${path}/${dirName}`;
+        if (!children.has(dirPath)) children.set(dirPath, { type: "dir", path: dirPath, name: dirName, sha: `dir-${dirName}` });
+      }
+    }
+    if (children.size === 0) return res(404, { message: "not found" });
+    return res(200, [...children.values()]);
+  }
+
+  if (init.method === "PUT") {
+    const body = JSON.parse(init.body ?? "{}") as { content: string; sha?: string };
+    const sha = `sha${++shaSeq}`;
+    files.set(path, { content: Buffer.from(body.content, "base64").toString("utf-8"), sha });
+    return res(200, { commit: { sha: `commit${shaSeq}` }, content: { sha } });
+  }
+
+  if (init.method === "DELETE") {
+    files.delete(path);
+    return res(200, { commit: { sha: `del${++shaSeq}` } });
+  }
+  return res(405, { message: "method not allowed" });
+};
+
+const provider = makeGitHubProvider({
+  contents: new GitHubContents(fakeFetch, "https://api.github.com"),
+  mintToken: async () => "fake-token",
+  committer: () => ({ name: "open-everywhere[bot]", email: "bot@users.noreply.github.com" }),
+  branch: "main",
+});
+
+function partition(org: string): Partition {
+  return { org, platform: "slack", workspace: "T", surface: "C", workspaceKey: "slack/T", surfaceKey: "slack/T/C", key: "slack/T/C" };
+}
+const silo: MemorySilo = { name: "txn", provider: "github", container: "acme/brain", path: "memory" };
+const tier = domainTier("transactions");
+const p = partition("default");
+
+ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "fresh tier reads empty");
+
+const seeded = await provider.ensureTier(p, tier, silo);
+ok("MEMORY.md" in seeded && seeded["MEMORY.md"].includes('"transactions"'), "ensureTier seeds the domain MEMORY.md");
+
+ok(repoFiles("acme/brain").has("memory/default/@domains/transactions/MEMORY.md"), "file keyed by silo.path + org + tier path");
+
+const reseed = await provider.ensureTier(p, tier, silo);
+ok(reseed["MEMORY.md"] === seeded["MEMORY.md"], "ensureTier idempotent");
+
+ok((await provider.writeTier(p, tier, seeded, "noop", silo)) === null, "unchanged write returns null");
+
+const v = await provider.writeTier(p, tier, { "MEMORY.md": "# changed\n" }, "edit", silo);
+ok(typeof v === "string" && v!.length > 0, "changed write returns a token");
+ok((await provider.readTier(p, tier, silo))["MEMORY.md"] === "# changed\n", "write is durable");
+
+await provider.writeTier(p, tier, { "people.md": "@ana owns deploys\n" }, "add", silo);
+const both = await provider.readTier(p, tier, silo);
+ok(both["MEMORY.md"] === "# changed\n" && both["people.md"] === "@ana owns deploys\n", "writes union (never drop)");
+
+const other = partition("org-b");
+ok(Object.keys(await provider.readTier(other, tier, silo)).length === 0, "org-b can't see org-a's tier");
+
+await provider.deleteTier(p, tier, silo);
+ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "deleteTier erases the tier");
+ok(!repoFiles("acme/brain").has("memory/default/@domains/transactions/MEMORY.md"), "delete removed the repo files");
+
+try {
+  await provider.readTier(p, tier, { name: "x", provider: "github" });
+  ok(false, "missing container should throw");
+} catch {
+  ok(true, "missing container → throws");
+}
+
+console.log(`✓ github-memory: ${passed} assertions passed (Contents API client + github backing, offline fake)`);

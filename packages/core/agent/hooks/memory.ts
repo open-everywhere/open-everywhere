@@ -40,12 +40,12 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   let persisted = 0;
   for (const rm of plan.writes) {
     const provider = providerById(rm.silo.provider);
-    let files = await provider.readTier(p, rm.tier);
+    let files = await provider.readTier(p, rm.tier, rm.silo);
     if (sandbox) {
       const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
       if (Object.keys(fromSandbox).length > 0) files = fromSandbox;
     }
-    const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`);
+    const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
     persisted += Object.keys(files).length;
     log(`persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)${sha ? ` @ ${sha}` : ""}`);
     if (sha) {
@@ -66,10 +66,10 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
 async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMemory) {
   const provider = providerById(rm.silo.provider);
   if (rm.readOnly) {
-    const files = await provider.readTier(p, rm.tier);
+    const files = await provider.readTier(p, rm.tier, rm.silo);
     return Object.keys(files).length > 0 ? files : seedFor(p, rm.tier);
   }
-  return provider.ensureTier(p, rm.tier);
+  return provider.ensureTier(p, rm.tier, rm.silo);
 }
 
 export default defineHook({

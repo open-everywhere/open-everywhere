@@ -119,10 +119,10 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
       const target = instructions ? planFor(bindFrom(where), p).writes[0] : undefined;
       if (instructions && target) {
         const provider = providerById(target.silo.provider);
-        const mem = await provider.ensureTier(p, target.tier);
+        const mem = await provider.ensureTier(p, target.tier, target.silo);
         const date = new Date().toISOString().slice(0, 10);
         mem["MEMORY.md"] = upsertUnderSection(mem["MEMORY.md"] ?? "", "Standing instructions", instructionBullet(instructions, date));
-        await provider.writeTier(p, target.tier, mem, `adopt pinned instructions [${tierId(target.tier)}]`);
+        await provider.writeTier(p, target.tier, mem, `adopt pinned instructions [${tierId(target.tier)}]`, target.silo);
         adopted = true;
       }
     } catch {
