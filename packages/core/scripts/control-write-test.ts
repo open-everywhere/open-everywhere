@@ -92,6 +92,26 @@ await client.connect(clientT);
 }
 
 {
+  const r = await callJson(client, "set_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyTokens: 5000, ttlSeconds: 3600, reason: "blocked mid-task" });
+  ok("set_spend_limit with ttlSeconds returns a future expiresAt", typeof r.expiresAt === "number" && r.expiresAt > Date.now());
+  ok("a future-dated bridge is still applied", (await effectiveCaps("default", "slack/T1", "slack/T1/C1")).surfaceMonthlyTokens === 5000);
+  const row = (await getOperationalStore().spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1" && l.level === "surface");
+  ok("the spend override stores reason + setBy (the actor)", row?.reason === "blocked mid-task" && row?.setBy === "admin@example.com");
+
+  await callJson(client, "revoke_connector", { org: "default", surfaceKey: "slack/T1/C1", connector: "linear", reason: "leaked token" });
+
+  const drift = await callJson(client, "overrides_list", { org: "default" });
+  const sd = drift.spend.find((s: { scopeKey: string; level: string }) => s.scopeKey === "slack/T1/C1" && s.level === "surface");
+  ok("drift view lists the spend override with reason/setBy", sd?.reason === "blocked mid-task" && sd?.setBy === "admin@example.com");
+  ok("drift view flags the raised cap as diverging, not expired", sd?.divergesFromConfig === true && sd?.expired === false);
+  const cd = drift.connectors.find((c: { connector: string }) => c.connector === "linear");
+  ok("drift view lists the revoke as sticky with reason", cd?.sticky === true && cd?.granted === false && cd?.reason === "leaked token");
+
+  await callJson(client, "clear_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface" });
+  await callJson(client, "clear_connector_override", { org: "default", surfaceKey: "slack/T1/C1", connector: "linear" });
+}
+
+{
   const audit = await readAudit({ org: "default" });
   const actions = audit.map((e) => e.action);
   for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel"]) {

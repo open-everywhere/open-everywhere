@@ -40,6 +40,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      scope_key      text   NOT NULL,
      level          text   NOT NULL,
      monthly_tokens bigint NOT NULL,
+     expires_at     bigint,                  -- epoch ms; NULL = no auto-expiry
+     reason         text,
+     set_by         text,
      PRIMARY KEY (org_id, scope_key, level)
    )`,
   `CREATE TABLE IF NOT EXISTS connector_override (
@@ -47,8 +50,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      scope_key text    NOT NULL,
      connector text    NOT NULL,
      granted   boolean NOT NULL,
+     reason    text,                         -- no expires_at: auto-expiry would re-open access
+     set_by    text,
      PRIMARY KEY (org_id, scope_key, connector)
    )`,
+  `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
+  `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
+  `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
+  `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS reason text`,
+  `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS set_by text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -242,11 +252,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
-    async setSpendLimit(org, scopeKey, level, monthlyTokens) {
+    async setSpendLimit(org, scopeKey, level, monthlyTokens, meta) {
       await client.query(
-        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (org_id, scope_key, level) DO UPDATE SET monthly_tokens = excluded.monthly_tokens`,
-        [org, scopeKey, level, monthlyTokens],
+        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (org_id, scope_key, level) DO UPDATE SET
+           monthly_tokens = excluded.monthly_tokens,
+           expires_at     = excluded.expires_at,
+           reason         = excluded.reason,
+           set_by         = excluded.set_by`,
+        [org, scopeKey, level, monthlyTokens, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null],
       );
     },
 
@@ -256,20 +270,26 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async spendLimits(org) {
-      const { rows } = await client.query("SELECT scope_key, level, monthly_tokens FROM spend_limit WHERE org_id = $1", [org]);
-      return (rows as { scope_key: string; level: string; monthly_tokens: number }[]).map((r) => ({
+      const { rows } = await client.query("SELECT scope_key, level, monthly_tokens, expires_at, reason, set_by FROM spend_limit WHERE org_id = $1", [org]);
+      return (rows as { scope_key: string; level: string; monthly_tokens: number; expires_at: number | null; reason: string | null; set_by: string | null }[]).map((r) => ({
         org,
         scopeKey: r.scope_key,
         level: r.level as "surface" | "workspace",
         monthlyTokens: Number(r.monthly_tokens),
+        ...(r.expires_at != null ? { expiresAt: Number(r.expires_at) } : {}),
+        ...(r.reason ? { reason: r.reason } : {}),
+        ...(r.set_by ? { setBy: r.set_by } : {}),
       }));
     },
 
-    async setConnectorOverride(org, scopeKey, connector, granted) {
+    async setConnectorOverride(org, scopeKey, connector, granted, meta) {
       await client.query(
-        `INSERT INTO connector_override (org_id, scope_key, connector, granted) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (org_id, scope_key, connector) DO UPDATE SET granted = excluded.granted`,
-        [org, scopeKey, connector, granted],
+        `INSERT INTO connector_override (org_id, scope_key, connector, granted, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (org_id, scope_key, connector) DO UPDATE SET
+           granted = excluded.granted,
+           reason  = excluded.reason,
+           set_by  = excluded.set_by`,
+        [org, scopeKey, connector, granted, meta?.reason ?? null, meta?.setBy ?? null],
       );
     },
 
@@ -281,6 +301,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async connectorOverrides(org, scopeKey) {
       const { rows } = await client.query("SELECT connector, granted FROM connector_override WHERE org_id = $1 AND scope_key = $2", [org, scopeKey]);
       return (rows as { connector: string; granted: boolean }[]).map((r) => ({ connector: r.connector, granted: r.granted }));
+    },
+
+    async allConnectorOverrides(org) {
+      const { rows } = await client.query("SELECT scope_key, connector, granted, reason, set_by FROM connector_override WHERE org_id = $1", [org]);
+      return (rows as { scope_key: string; connector: string; granted: boolean; reason: string | null; set_by: string | null }[]).map((r) => ({ scopeKey: r.scope_key, connector: r.connector, granted: r.granted, ...(r.reason ? { reason: r.reason } : {}), ...(r.set_by ? { setBy: r.set_by } : {}) }));
     },
   };
 }

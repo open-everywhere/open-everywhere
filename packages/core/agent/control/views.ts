@@ -1,6 +1,7 @@
 import { allLedgers, spendRoot } from "../spend/store.js";
 import { windowTokens } from "../spend/spend.js";
 import { resolveCaps } from "../spend/caps.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { listAllRoutines, routinesRoot } from "../routines/store.js";
 import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
@@ -103,6 +104,70 @@ export async function auditView(filter: AuditFilter = {}): Promise<AuditView> {
   const f: AuditFilter = { ...filter, limit };
   const entries = await readAudit(f);
   return { root: auditRoot(), filter: f, capped: entries.length === limit, entries };
+}
+
+export interface SpendOverrideDriftRow {
+  readonly scopeKey: string;
+  readonly level: "surface" | "workspace";
+  readonly monthlyTokens: number;
+  readonly configCap: number | null;
+  readonly divergesFromConfig: boolean;
+  readonly expiresAt?: number;
+  readonly expired: boolean;
+  readonly reason?: string;
+  readonly setBy?: string;
+}
+export interface ConnectorOverrideDriftRow {
+  readonly scopeKey: string;
+  readonly connector: string;
+  readonly granted: boolean;
+  readonly sticky: true;
+  readonly reason?: string;
+  readonly setBy?: string;
+}
+export interface OverridesView {
+  readonly org: string;
+  readonly now: number;
+  readonly spend: readonly SpendOverrideDriftRow[];
+  readonly connectors: readonly ConnectorOverrideDriftRow[];
+  readonly note: string;
+}
+
+export async function overridesView(org: string, now: number = Date.now()): Promise<OverridesView> {
+  const store = getOperationalStore();
+  const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
+  const spend: SpendOverrideDriftRow[] = limits.map((l) => {
+    const configCap =
+      l.level === "surface"
+        ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey).surfaceMonthlyTokens ?? null
+        : resolveCaps(l.scopeKey, "").workspaceMonthlyTokens ?? null;
+    return {
+      scopeKey: l.scopeKey,
+      level: l.level,
+      monthlyTokens: l.monthlyTokens,
+      configCap,
+      divergesFromConfig: configCap !== l.monthlyTokens,
+      ...(l.expiresAt != null ? { expiresAt: l.expiresAt } : {}),
+      expired: l.expiresAt != null && l.expiresAt <= now,
+      ...(l.reason ? { reason: l.reason } : {}),
+      ...(l.setBy ? { setBy: l.setBy } : {}),
+    };
+  });
+  const connectorRows: ConnectorOverrideDriftRow[] = connectors.map((c) => ({
+    scopeKey: c.scopeKey,
+    connector: c.connector,
+    granted: c.granted,
+    sticky: true,
+    ...(c.reason ? { reason: c.reason } : {}),
+    ...(c.setBy ? { setBy: c.setBy } : {}),
+  }));
+  return {
+    org,
+    now,
+    spend,
+    connectors: connectorRows,
+    note: "Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a caps.ts PR (or clear_spend_limit); expired=true rows are no longer applied and should be cleared. Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.",
+  };
 }
 
 export interface AccessQuery {

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 
 const SESSION_MODE = z.enum(["channel", "dm", "mpim"]);
@@ -19,7 +19,7 @@ function jsonTool<T>(run: () => Promise<T>) {
   };
 }
 
-export const CONTROL_TOOL_NAMES = ["spend_report", "routines_list", "audit_query", "access_preview"] as const;
+export const CONTROL_TOOL_NAMES = ["spend_report", "routines_list", "audit_query", "access_preview", "overrides_list"] as const;
 
 export interface ControlServerOptions {
   readonly includeWrites?: boolean;
@@ -81,6 +81,16 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
       },
     },
     (args) => jsonTool(() => accessView(args))(),
+  );
+
+  server.registerTool(
+    "overrides_list",
+    {
+      title: "List runtime overrides (drift view)",
+      description: "The reconcile worklist: every live override overlaying config-as-code for an org — spend caps (with configCap, divergesFromConfig, expired) and connector revokes (sticky) — each with reason/setBy. Overrides are temporary bridges; this shows which need PR'ing into config or clearing. Read-only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    (args) => jsonTool(() => overridesView(args.org))(),
   );
 
   if (opts.includeWrites) registerControlWriteTools(server, opts.actor ?? "unknown");

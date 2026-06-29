@@ -31,19 +31,22 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
     "set_spend_limit",
     {
       title: "Set spend limit",
-      description: "Set a monthly token budget override for a scope (overlays the config caps). level=surface uses a surfaceKey 'platform/workspace/surface'; level=workspace uses 'platform/workspace'. Takes effect immediately, no redeploy.",
+      description: "Set a monthly token budget override for a scope (overlays the config caps). level=surface uses a surfaceKey 'platform/workspace/surface'; level=workspace uses 'platform/workspace'. Takes effect immediately, no redeploy. An override is a TEMPORARY BRIDGE: pass ttlSeconds so it auto-reverts to the config cap (recommended — a raised cap should land in caps.ts via PR; an un-reconciled override drifts from git). reason is surfaced in the drift view (list_overrides).",
       inputSchema: {
         org: z.string().min(1),
         scopeKey: z.string().min(1),
         level: z.enum(["surface", "workspace"]),
         monthlyTokens: z.number().int().positive(),
+        ttlSeconds: z.number().int().positive().optional(),
+        reason: z.string().optional(),
       },
     },
     async (a) => {
       try {
-        await store().setSpendLimit(a.org, a.scopeKey, a.level, a.monthlyTokens);
-        await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.set_limit", detail: { scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens } });
-        return jsonResult({ ok: true, org: a.org, scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens });
+        const expiresAt = a.ttlSeconds != null ? Date.now() + a.ttlSeconds * 1000 : undefined;
+        await store().setSpendLimit(a.org, a.scopeKey, a.level, a.monthlyTokens, { expiresAt, reason: a.reason, setBy: actor });
+        await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.set_limit", detail: { scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens, ...(expiresAt != null ? { expiresAt } : {}), ...(a.reason ? { reason: a.reason } : {}) } });
+        return jsonResult({ ok: true, org: a.org, scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens, ...(expiresAt != null ? { expiresAt } : {}) });
       } catch (e) {
         return errorResult(`set_spend_limit failed: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -72,13 +75,13 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
     "revoke_connector",
     {
       title: "Revoke connector from a surface (break-glass)",
-      description: "Break-glass: revoke an Eve connector (by name, e.g. 'notion') from a surface at runtime — the hard gate blocks it immediately, no redeploy. Use for incidents (leaked token, abuse). To revert to the config grant afterwards, use clear_connector_override. surfaceKey is 'platform/workspace/surface'. (There is no runtime *grant* — access widens only through a reviewed PR to bundles.ts.)",
-      inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1) },
+      description: "Break-glass: revoke an Eve connector (by name, e.g. 'notion') from a surface at runtime — the hard gate blocks it immediately, no redeploy. Use for incidents (leaked token, abuse). A revoke is STICKY (no auto-expiry — auto-clearing would re-open access); revert deliberately with clear_connector_override (or a PR removing the grant from bundles.ts). reason is surfaced in the drift view. surfaceKey is 'platform/workspace/surface'. (There is no runtime *grant* — access widens only through a reviewed PR.)",
+      inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1), reason: z.string().optional() },
     },
     async (a) => {
       try {
-        await store().setConnectorOverride(a.org, a.surfaceKey, a.connector, false);
-        await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.revoke", detail: { connector: a.connector } });
+        await store().setConnectorOverride(a.org, a.surfaceKey, a.connector, false, { reason: a.reason, setBy: actor });
+        await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.revoke", detail: { connector: a.connector, ...(a.reason ? { reason: a.reason } : {}) } });
         return jsonResult({ ok: true, revoked: a.connector, org: a.org, surfaceKey: a.surfaceKey });
       } catch (e) {
         return errorResult(`revoke_connector failed: ${e instanceof Error ? e.message : String(e)}`);

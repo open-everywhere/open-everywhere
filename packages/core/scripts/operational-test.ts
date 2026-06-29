@@ -106,6 +106,20 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", 3000, { expiresAt: 1234567890, reason: "blocked mid-task", setBy: "admin#1" });
+  const meta = (await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1" && l.level === "surface");
+  ok(meta?.expiresAt === 1234567890 && meta?.reason === "blocked mid-task" && meta?.setBy === "admin#1", "spend override persists bridge metadata");
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", 3000);
+  ok((await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1" && l.level === "surface")?.expiresAt === undefined, "re-set without meta clears expiresAt (no stale bridge)");
+
+  await store.setConnectorOverride("default", "slack/T1/C1", "notion", false, { reason: "leaked token", setBy: "admin#2" });
+  const all = await store.allConnectorOverrides("default");
+  const a = all.find((o) => o.connector === "notion");
+  ok(a?.scopeKey === "slack/T1/C1" && a?.reason === "leaked token" && a?.setBy === "admin#2", "allConnectorOverrides returns scope + reason/setBy (drift view)");
+  ok((await store.allConnectorOverrides("acme")).length === 0, "allConnectorOverrides is org-isolated");
+}
+
+{
   await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
                  GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry TO open_everywhere_app;`);
   try {

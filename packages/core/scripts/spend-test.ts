@@ -2,6 +2,8 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { periodOf, emptyWindow, addUsage, windowTokens, checkCap } from "../agent/spend/spend.js";
+import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
+import type { SpendLimitRow } from "../agent/operational/store.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -28,6 +30,17 @@ ok(!checkCap({ mode: "dm", surfaceTokens: 99999, workspaceTokens: 99999, caps })
 ok(!checkCap({ mode: "channel", surfaceTokens: 99999, workspaceTokens: 99999, caps: {} }).over, "no caps configured -> never over");
 const reason = checkCap({ mode: "channel", surfaceTokens: 1200, workspaceTokens: 0, caps }).reason;
 ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict carries a human reason");
+
+const NOW = 1_000_000;
+ok(isSpendLimitActive({ org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 1 }, NOW), "no expiresAt → always active");
+ok(isSpendLimitActive({ org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 1, expiresAt: NOW + 1 }, NOW), "future expiry → active");
+ok(!isSpendLimitActive({ org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 1, expiresAt: NOW }, NOW), "expiry at now → expired");
+const expired: SpendLimitRow = { org: "o", scopeKey: "p/w/s", level: "surface", monthlyTokens: 9, expiresAt: NOW - 1 };
+const sticky: SpendLimitRow = { org: "o", scopeKey: "p/w/s", level: "surface", monthlyTokens: 9 };
+ok(activeSpendLimits([expired, sticky], NOW).length === 1, "activeSpendLimits drops expired, keeps sticky");
+const baseline = { surfaceMonthlyTokens: 2 };
+ok(applyCapOverrides(baseline, activeSpendLimits([expired], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 2, "expired bridge reverts to the (tighter) config cap");
+ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 9, "active bridge overlays the config cap");
 
 const dir = join(tmpdir(), `open-everywhere-spend-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
