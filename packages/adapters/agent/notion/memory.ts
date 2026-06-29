@@ -70,7 +70,7 @@ async function loadBlockTree(client: NotionClient, blockId: string, depth: numbe
   return blocks;
 }
 
-async function pullPage(client: NotionClient, pageId: string, segs: string[], files: MemoryFiles, stats: PullStats): Promise<void> {
+async function pullPage(client: NotionClient, pageId: string, segs: string[], files: MemoryFiles, stats: PullStats, recursive: boolean): Promise<void> {
   if (stats.pages >= MAX_PAGES || segs.length > MAX_PAGE_DEPTH) {
     stats.capped = true;
     return;
@@ -79,9 +79,10 @@ async function pullPage(client: NotionClient, pageId: string, segs: string[], fi
   const blocks = await loadBlockTree(client, pageId, 0);
   const key = segs.length === 0 ? "MEMORY.md" : `${segs.join("/")}.md`;
   files[key] = renderBlocks(blocks);
+  if (!recursive) return;
   for (const b of blocks) {
     if (PAGE_BLOCK_TYPES.has(b.type) && b.id) {
-      await pullPage(client, b.id, [...segs, safeName(pageTitle(b))], files, stats);
+      await pullPage(client, b.id, [...segs, safeName(pageTitle(b))], files, stats, recursive);
     }
   }
 }
@@ -108,7 +109,8 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
 
     const files: MemoryFiles = {};
     const stats: PullStats = { pages: 0, capped: false };
-    await pullPage(deps.client(silo), root, [], files, stats);
+    const recursive = silo.recursive !== false;
+    await pullPage(deps.client(silo), root, [], files, stats, recursive);
     if (stats.capped) {
       console.warn(`[open-everywhere:notion] page "${root}" pull hit the cap (${MAX_PAGES} pages / depth ${MAX_PAGE_DEPTH}); some pages omitted.`);
     }

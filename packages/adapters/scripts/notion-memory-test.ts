@@ -68,6 +68,11 @@ ok(!files["MEMORY.md"].includes("Step one"), "child-page content NOT inlined int
 ok("Onboarding.md" in files && files["Onboarding.md"].includes("Step one"), "child page → Onboarding.md");
 ok("Onboarding/Deep-Dive.md" in files && files["Onboarding/Deep-Dive.md"].includes("deepest"), "grandchild page → nested path keyed by sanitized title");
 
+const single = makeNotionProvider({ client: () => new NotionClient("tok", fakeFetch) });
+const singleFiles = await single.readTier(p, ORG_DEFAULT, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
+ok("MEMORY.md" in singleFiles && singleFiles["MEMORY.md"].includes("# Handbook"), "recursive:false → root page pulled");
+ok(!("Onboarding.md" in singleFiles) && !("Onboarding/Deep-Dive.md" in singleFiles), "recursive:false → child pages NOT pulled");
+
 ok((await provider.writeTier(p, ORG_DEFAULT, { "MEMORY.md": "x" }, "nope", silo)) === null, "writeTier is a no-op (read-only)");
 await provider.deleteTier(p, ORG_DEFAULT, silo);
 ok(true, "deleteTier is a no-op (read-only)");
