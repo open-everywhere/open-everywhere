@@ -1,7 +1,7 @@
 import type { SurfaceBinding } from "../identity/binding.js";
 import type { Partition } from "./partition.js";
 import type { Domain } from "./domain.js";
-import type { MemorySilo } from "./silo.js";
+import { isPointer, type MemorySilo } from "./silo.js";
 import type { OrgDefault } from "../access/config.js";
 import { SURFACE, siloTier, type Tier } from "./store.js";
 import { domainForChannel, memoryRefs } from "./domain.js";
@@ -64,7 +64,8 @@ export function resolveMemoryPlan(
   if (refs.length > 0) {
     const reads = refs.map((name) => {
       const silo = findSilo(cfg.silos, name, `domain "${domain!.name}"`);
-      return { silo, tier: siloTier(silo.name), readOnly: silo.readOnly === true } satisfies ResolvedMemory;
+      const readOnly = isPointer(silo) || silo.readOnly === true;
+      return { silo, tier: siloTier(silo.name), readOnly } satisfies ResolvedMemory;
     });
     return {
       reads,

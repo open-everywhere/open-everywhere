@@ -1,6 +1,7 @@
 import { resolveMemoryPlan, type MemoryResolveConfig } from "../agent/memory/resolve.js";
 import { defineDomain, domainForChannel, assertChannelExclusivity } from "../agent/memory/domain.js";
-import { defineMemorySilo, type MemorySilo } from "../agent/memory/silo.js";
+import { defineMemorySilo, isPointer, assertSilosValid, type MemorySilo } from "../agent/memory/silo.js";
+import { renderMemoryIndex } from "../agent/memory/listing.js";
 import type { SurfaceBinding, Trust } from "../agent/identity/binding.js";
 import type { SessionMode } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
@@ -36,6 +37,7 @@ function partition(surface: string): Partition {
 
 const txnSilo: MemorySilo = defineMemorySilo({ name: "txn", provider: "sqlite" });
 const baselineSilo: MemorySilo = defineMemorySilo({ name: "baseline", provider: "sqlite", readOnly: true });
+const kbSilo: MemorySilo = defineMemorySilo({ name: "notion-kb", connector: "notion", skill: "notion", location: "https://notion.so/x", note: "Append under the heading." });
 
 const cfg: MemoryResolveConfig = {
   domains: [
@@ -44,8 +46,9 @@ const cfg: MemoryResolveConfig = {
     defineDomain({ name: "readonly-dom", channels: ["slack/T/C_RO"], memory: "baseline" }),
     defineDomain({ name: "multi", channels: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),
     defineDomain({ name: "multi2", channels: ["slack/T/C_MULTI2"], memory: ["baseline"] }),
+    defineDomain({ name: "withptr", channels: ["slack/T/C_PTR"], memory: ["txn", "notion-kb"] }),
   ],
-  silos: [txnSilo, baselineSilo],
+  silos: [txnSilo, baselineSilo, kbSilo],
   orgDefault: undefined,
 };
 
@@ -117,5 +120,24 @@ throws(
     ]),
   "exclusivity: a channel in two domains throws",
 );
+
+const ptr = resolveMemoryPlan(binding("channel", "internal"), partition("C_PTR"), cfg);
+ok(ptr.reads.length === 2, "pointer domain → reads both the materialized silo and the pointer");
+ok(ptr.writes.length === 1 && ptr.writes[0].silo.name === "txn", "pointer silo is NEVER a write target (writes only the materialized silo)");
+const ptrRead = ptr.reads.find((r) => r.silo.name === "notion-kb")!;
+ok(ptrRead.readOnly && isPointer(ptrRead.silo), "pointer silo → read-only + isPointer");
+
+const index = renderMemoryIndex(ptr.reads);
+ok(index.includes("# Memory index") && index.includes("not** in your context"), "index: header + not-in-context note");
+ok(index.includes("On disk") && index.includes("memory/txn/") && index.includes("`remember`"), "index: on-disk silo listed with its dir + remember hint");
+ok(index.includes("External knowledge bases") && index.includes("notion-kb") && index.includes("`notion` connector"), "index: pointer silo listed with its connector");
+ok(!index.includes("memory/notion-kb/"), "index: pointer silo is NOT listed as an on-disk dir");
+const emptyIndex = renderMemoryIndex([]);
+ok(emptyIndex.includes("No memory is configured"), "index: empty plan → 'no memory' note");
+
+assertSilosValid([txnSilo, baselineSilo, kbSilo]);
+ok(true, "validation: a valid silo set passes");
+throws(() => assertSilosValid([{ name: "bad", provider: "sqlite", connector: "notion" }]), "validation: provider AND connector throws");
+throws(() => assertSilosValid([{ name: "empty" }]), "validation: neither provider nor connector throws");
 
 console.log(`✓ memory-resolve: ${passed} assertions passed`);
