@@ -5,6 +5,9 @@ registerVercelConnect();
 
 registerGitHubMemory();
 
+const { registerNotionMemory } = await import("@open-everywhere/adapters/agent/notion/memory.js");
+registerNotionMemory();
+
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&
   process.env.DATABASE_URL
