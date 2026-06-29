@@ -61,4 +61,16 @@ export function teamsVisibility(
   return "private";
 }
 
+export function teamsTrust(
+  scope: string | undefined,
+  membershipType: string | undefined,
+  mode: SessionMode,
+): Trust {
+  if (mode === "dm" || mode === "mpim") return "internal";
+  if (scope === "personal" || scope === "groupChat") return "internal";
+  if (membershipType === "shared") return "external";
+  return "internal";
+}
+
 type Visibility = "public" | "private";
+type Trust = "internal" | "external";

@@ -99,6 +99,8 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
     threadTs: message.threadTs,
     channelType: facts.channelType,
     isPrivate: facts.isPrivate,
+    isExternal: facts.isExternal,
+    trustChecked: facts.trustChecked,
   });
 }
 

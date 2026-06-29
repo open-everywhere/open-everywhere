@@ -1,9 +1,11 @@
 import type { SessionMode } from "../access/resolver.js";
-import { teamsMode, teamsVisibility } from "../channels/teams-identity.js";
+import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { discordMode, discordVisibility } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility } from "../channels/telegram-identity.js";
 
 export type Visibility = "public" | "private";
+
+export type Trust = "internal" | "external";
 
 export interface SurfaceBinding {
   readonly org: string;
@@ -12,6 +14,7 @@ export interface SurfaceBinding {
   readonly surface: string;
   readonly mode: SessionMode;
   readonly visibility: Visibility;
+  readonly trust: Trust;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
 }
@@ -62,6 +65,7 @@ interface RawIdentity {
   readonly surface?: string;
   readonly mode?: SessionMode;
   readonly visibility?: Visibility;
+  readonly trust?: Trust;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
 }
@@ -88,6 +92,17 @@ export function slackVisibility(
   return "private";
 }
 
+export function slackTrust(
+  isExternal: string | undefined,
+  trustChecked: string | undefined,
+  mode: SessionMode,
+): Trust {
+  if (mode === "dm" || mode === "mpim") return "internal";
+  if (isExternal === "true") return "external";
+  if (trustChecked !== "true") return "external";
+  return "internal";
+}
+
 const bindSlack: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -99,6 +114,7 @@ const bindSlack: Mapper = (ctx) => {
     surface: channelId,
     mode,
     visibility: slackVisibility(channelType, isPrivate, mode),
+    trust: slackTrust(attr(a, ["is_ext_shared", "isExtShared"]), attr(a, ["trust_checked", "trustChecked"]), mode),
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: channelId ? { channelId } : undefined,
   };
@@ -122,6 +138,7 @@ const bindLinear: Mapper = (ctx) => {
     surface,
     mode: "channel",
     visibility: linearVisibility(attr(a, ["is_private", "isPrivate"])),
+    trust: "internal",
     principalId: authPrincipalId(ctx) ?? attr(a, ["creator_id", "creatorId", "user_id", "userId"]),
     target: agentSessionId ? { agentSessionId } : undefined,
   };
@@ -140,6 +157,7 @@ const bindTeams: Mapper = (ctx) => {
     surface: conversationId,
     mode,
     visibility: teamsVisibility(scope, membershipType, mode),
+    trust: teamsTrust(scope, membershipType, mode),
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target:
       conversationId && serviceUrl
@@ -161,6 +179,7 @@ const bindDiscord: Mapper = (ctx) => {
     surface: channelId,
     mode,
     visibility: discordVisibility(everyoneCanView, mode),
+    trust: "internal",
     principalId: authPrincipalId(ctx) ?? userId,
     target: channelId ? { channelId } : undefined,
   };
@@ -179,6 +198,7 @@ const bindTelegram: Mapper = (ctx) => {
     surface,
     mode,
     visibility: telegramVisibility(chatType, mode),
+    trust: "internal",
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}) } : undefined,
   };
@@ -189,11 +209,13 @@ const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 const bindLocal: Mapper = (ctx) => {
   const envMode = process.env.OE_MODE;
   const envVis = process.env.OE_VISIBILITY;
+  const envTrust = process.env.OE_TRUST;
   return {
     workspace: process.env.OE_WORKSPACE,
     surface: process.env.OE_SURFACE ?? process.env.OE_CHANNEL,
     mode: envMode && ENV_MODES.has(envMode) ? (envMode as SessionMode) : "channel",
     visibility: envVis === "private" ? "private" : "public",
+    trust: envTrust === "external" ? "external" : envTrust === "internal" ? "internal" : undefined,
     principalId: authPrincipalId(ctx) ?? process.env.OE_PRINCIPAL,
     target: undefined,
   };
@@ -218,6 +240,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     surface: seg(raw.surface ?? local.surface, "default"),
     mode: raw.mode ?? local.mode ?? "channel",
     visibility: raw.visibility ?? local.visibility ?? "public",
+    trust: raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external"),
     principalId: raw.principalId ?? local.principalId,
     target: raw.target,
   };
