@@ -1,0 +1,36 @@
+
+import { readOnlyBanner, hasReadOnlyBanner, isProjectedCache, lockCommand } from "../agent/memory/readonly.js";
+import type { MemorySilo } from "../agent/memory/silo.js";
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+const notion: MemorySilo = { name: "handbook", provider: "notion", container: "root", readOnly: true };
+const baseline: MemorySilo = { name: "org-baseline", provider: "sqlite", readOnly: true };
+
+ok(isProjectedCache(notion), "notion provider → projected cache");
+ok(!isProjectedCache(baseline), "sqlite baseline → not a projected cache");
+
+const nb = readOnlyBanner(notion);
+ok(nb.includes("READ-ONLY") && nb.includes("Notion tools"), "notion banner → redirects to the Notion tools");
+ok(nb.includes("NOT save") && nb.includes("BLOCKED"), "notion banner → states edits are blocked + not saved");
+ok(!nb.includes("`remember`"), "notion banner → does NOT point at `remember` (wrong route for a Notion cache)");
+
+const bb = readOnlyBanner(baseline);
+ok(bb.includes("READ-ONLY") && bb.includes("`remember`"), "baseline banner → redirects to `remember`");
+ok(!bb.includes("Notion tools"), "baseline banner → does NOT mention Notion tools");
+
+ok(hasReadOnlyBanner(nb) && hasReadOnlyBanner(bb), "hasReadOnlyBanner detects both variants");
+ok(!hasReadOnlyBanner("# Handbook\n\nplain content"), "hasReadOnlyBanner false for un-bannered content");
+ok(hasReadOnlyBanner(nb + "# Handbook"), "hasReadOnlyBanner true once a banner is present");
+
+ok(lockCommand("memory/handbook") === "chmod -R a-w 'memory/handbook'", "lock: recursive chmod a-w, single-quoted");
+ok(lockCommand("memory/MEMORY.md").startsWith("chmod -R a-w "), "lock: works on a single file path too");
+
+console.log(`✓ readonly: ${passed} assertions passed`);

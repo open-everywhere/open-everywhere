@@ -24,6 +24,24 @@ export interface BlockNode {
 
 export const PAGE_BLOCK_TYPES = new Set(["child_page", "child_database"]);
 
+export const PLACEHOLDER_BLOCK_TYPES = new Set([
+  "image", "video", "audio", "file", "pdf", "embed", "bookmark", "link_preview", "table", "unsupported",
+]);
+
+function placeholderHint(block: BlockNode): string {
+  const pl = block[block.type] as { caption?: RichText[]; url?: string } | undefined;
+  if (!pl) return "";
+  const cap = pl.caption && pl.caption.length > 0 ? renderRich(pl.caption) : "";
+  if (cap) return ` "${cap}"`;
+  if (typeof pl.url === "string" && pl.url.length > 0) return ` (${pl.url})`;
+  return "";
+}
+
+function placeholderLine(block: BlockNode, indent: string): string {
+  const id = typeof block.id === "string" && block.id.length > 0 ? ` id=${block.id}` : "";
+  return `${indent}> ⛏ [notion:${block.type}${id}]${placeholderHint(block)} — rich block not rendered; fetch by id via the Notion tools.`;
+}
+
 function renderRich(rich: readonly RichText[] | undefined, resolve?: LinkResolver): string {
   if (!rich) return "";
   return rich
@@ -47,9 +65,11 @@ function payload(block: BlockNode): { rich_text?: RichText[]; language?: string;
 }
 
 function renderBlock(block: BlockNode, depth: number, resolve?: LinkResolver): string[] {
+  const indent = "  ".repeat(depth);
+  if (PLACEHOLDER_BLOCK_TYPES.has(block.type)) return [placeholderLine(block, indent)];
+
   const p = payload(block);
   const rich = renderRich(p.rich_text, resolve);
-  const indent = "  ".repeat(depth);
   const lines: string[] = [];
 
   switch (block.type) {
@@ -88,6 +108,11 @@ function renderBlock(block: BlockNode, depth: number, resolve?: LinkResolver): s
     case "code":
       lines.push("```" + (p.language ?? ""), rich, "```");
       break;
+    case "equation": {
+      const expr = (block.equation as { expression?: string } | undefined)?.expression ?? rich;
+      lines.push(`${indent}$$ ${expr} $$`);
+      break;
+    }
     case "divider":
       lines.push("---");
       break;

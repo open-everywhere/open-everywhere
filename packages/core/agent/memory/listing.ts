@@ -1,5 +1,6 @@
 import type { ResolvedMemory } from "./resolve.js";
 import { isPointer } from "./silo.js";
+import { isProjectedCache } from "./readonly.js";
 import { tierSandboxDir } from "./sandbox-sync.js";
 
 const code = (s: string): string => "`" + s + "`";
@@ -20,9 +21,11 @@ export function renderMemoryIndex(reads: readonly ResolvedMemory[]): string {
     lines.push("## On disk — read with file tools");
     for (const r of onDisk) {
       const dir = tierSandboxDir(r.tier);
-      const how = r.readOnly
-        ? "(read-only)"
-        : "(writable — save durable facts here with the `remember` tool)";
+      const how = !r.readOnly
+        ? "(writable — save durable facts here with the `remember` tool)"
+        : isProjectedCache(r.silo)
+          ? "(read-only cache of Notion — edits are BLOCKED; to update, use the Notion tools/connector, never by editing these files)"
+          : "(read-only — edits are blocked; use `remember` for this channel's own memory)";
       lines.push(`- **${r.silo.name}** — ${code(dir + "/")} ${how}. Start with ${code(dir + "/MEMORY.md")}.`);
     }
     lines.push("");

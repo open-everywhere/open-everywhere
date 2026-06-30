@@ -21,7 +21,17 @@ ok(
 ok(renderBlocks([{ type: "to_do", to_do: { rich_text: [{ plain_text: "x" }], checked: true } }]).includes("- [x] x"), "codec: checked to-do");
 ok(renderBlocks([{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "bold", annotations: { bold: true } }] } }]).includes("**bold**"), "codec: bold annotation");
 ok(renderBlocks([{ type: "code", code: { rich_text: [{ plain_text: "x=1" }], language: "ts" } }]).includes("```ts"), "codec: code fence + language");
+ok(renderBlocks([{ type: "equation", id: "e1", equation: { expression: "E=mc^2" } }]).includes("$$ E=mc^2 $$"), "codec: equation rendered losslessly");
 ok(pageTitle({ type: "child_page", child_page: { title: "Onboarding" } }) === "Onboarding", "codec: child_page title");
+
+const img = renderBlocks([{ type: "image", id: "img-1", image: { caption: [{ plain_text: "a diagram" }], external: { url: "https://x/y.png" } } }]);
+ok(img.includes("[notion:image id=img-1]") && img.includes('"a diagram"'), "codec: image → placeholder w/ type+id+caption");
+const tbl = renderBlocks([{ type: "table", id: "tbl-1", has_children: true, table: {}, children: [{ type: "table_row", table_row: { cells: [] } }] }]);
+ok(tbl.includes("[notion:table id=tbl-1]"), "codec: table → placeholder (type+id)");
+ok(!tbl.includes("table_row"), "codec: table rows NOT rendered as junk (children skipped)");
+const bm = renderBlocks([{ type: "bookmark", id: "bm-1", bookmark: { url: "https://ref" } }]);
+ok(bm.includes("[notion:bookmark id=bm-1]") && bm.includes("(https://ref)"), "codec: bookmark → placeholder w/ url hint");
+ok(bm.includes("fetch by id via the Notion tools"), "codec: placeholder tells the agent how to fetch it");
 
 const tree: Record<string, BlockNode[]> = {
   root: [

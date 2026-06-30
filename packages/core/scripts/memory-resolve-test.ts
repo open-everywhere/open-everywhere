@@ -38,6 +38,7 @@ function partition(surface: string): Partition {
 const txnSilo: MemorySilo = defineMemorySilo({ name: "txn", provider: "sqlite" });
 const baselineSilo: MemorySilo = defineMemorySilo({ name: "baseline", provider: "sqlite", readOnly: true });
 const kbSilo: MemorySilo = defineMemorySilo({ name: "notion-kb", connector: "notion", skill: "notion", location: "https://notion.so/x", note: "Append under the heading." });
+const notionRoSilo: MemorySilo = defineMemorySilo({ name: "nkb", provider: "notion", container: "root", readOnly: true });
 
 const cfg: MemoryResolveConfig = {
   domains: [
@@ -47,8 +48,9 @@ const cfg: MemoryResolveConfig = {
     defineDomain({ name: "multi", channels: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),
     defineDomain({ name: "multi2", channels: ["slack/T/C_MULTI2"], memory: ["baseline"] }),
     defineDomain({ name: "withptr", channels: ["slack/T/C_PTR"], memory: ["txn", "notion-kb"] }),
+    defineDomain({ name: "nkb-dom", channels: ["slack/T/C_NKB"], memory: "nkb" }),
   ],
-  silos: [txnSilo, baselineSilo, kbSilo],
+  silos: [txnSilo, baselineSilo, kbSilo, notionRoSilo],
   orgDefault: undefined,
 };
 
@@ -134,6 +136,11 @@ ok(index.includes("External knowledge bases") && index.includes("notion-kb") && 
 ok(!index.includes("memory/notion-kb/"), "index: pointer silo is NOT listed as an on-disk dir");
 const emptyIndex = renderMemoryIndex([]);
 ok(emptyIndex.includes("No memory is configured"), "index: empty plan → 'no memory' note");
+
+const nkb = resolveMemoryPlan(binding("channel", "internal"), partition("C_NKB"), cfg);
+ok(nkb.reads.length === 1 && nkb.reads[0].readOnly && !nkb.writes.length, "notion hot-cache → read-only, on-disk, no writes");
+const nkbIndex = renderMemoryIndex(nkb.reads);
+ok(nkbIndex.includes("On disk") && nkbIndex.includes("cache of Notion") && nkbIndex.includes("Notion tools"), "index: read-only Notion silo → on-disk + 'use the Notion tools' update route");
 
 assertSilosValid([txnSilo, baselineSilo, kbSilo]);
 ok(true, "validation: a valid silo set passes");

@@ -8,7 +8,9 @@ import { isPointer } from "../memory/silo.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { tierId, storeRoot, type MemoryFiles } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
-import { syncTierIntoSandbox, readTierFromSandbox } from "../memory/sandbox-sync.js";
+import { syncTierIntoSandbox, readTierFromSandbox, tierSandboxDir } from "../memory/sandbox-sync.js";
+import { readOnlyBanner, hasReadOnlyBanner, lockCommand } from "../memory/readonly.js";
+import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
@@ -65,12 +67,9 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}`);
 }
 
-const RO_BANNER =
-  "<!-- read-only baseline: edits here are NOT saved. Use the `remember` tool (it writes to this channel's writable memory) instead. -->\n\n";
-
-function withReadOnlyBanner(files: MemoryFiles): MemoryFiles {
+function withReadOnlyBanner(files: MemoryFiles, silo: MemorySilo): MemoryFiles {
   const md = files["MEMORY.md"];
-  if (md && !md.startsWith("<!-- read-only")) return { ...files, "MEMORY.md": RO_BANNER + md };
+  if (md && !hasReadOnlyBanner(md)) return { ...files, "MEMORY.md": readOnlyBanner(silo) + md };
   return files;
 }
 
@@ -78,9 +77,17 @@ async function loadSource(p: ReturnType<typeof resolvePartition>, rm: ResolvedMe
   const provider = providerById(rm.silo.provider);
   if (rm.readOnly) {
     const files = await provider.readTier(p, rm.tier, rm.silo);
-    return withReadOnlyBanner(Object.keys(files).length > 0 ? files : seedFor(p, rm.tier));
+    return withReadOnlyBanner(Object.keys(files).length > 0 ? files : seedFor(p, rm.tier), rm.silo);
   }
   return provider.ensureTier(p, rm.tier, rm.silo);
+}
+
+async function lock(sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>, path: string): Promise<void> {
+  try {
+    await sandbox.run({ command: lockCommand(path) });
+  } catch (err) {
+    log(`read-only lock for ${path} failed (advisory banner still applies): ${String(err)}`);
+  }
 }
 
 export default defineHook({
@@ -101,8 +108,10 @@ export default defineHook({
           const files = await loadSource(p, rm);
           await syncTierIntoSandbox(sandbox, rm.tier, files);
           synced += Object.keys(files).length;
+          if (rm.readOnly) await lock(sandbox, tierSandboxDir(rm.tier));
         }
         await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(plan.reads) });
+        await lock(sandbox, "memory/MEMORY.md");
         log(`synced ${synced} file(s) across [${plan.reads.map((r) => tierId(r.tier)).join(", ")}] for ${p.key} (${plan.reason})`);
       } catch (err) {
         log(`session.started sync skipped: ${String(err)}`);
