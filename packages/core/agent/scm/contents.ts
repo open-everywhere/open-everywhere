@@ -1,3 +1,5 @@
+import type { Selector } from "../memory/selection.js";
+
 const API = "https://api.github.com";
 
 export type HttpFetch = (
@@ -46,9 +48,9 @@ export class GitHubContents {
     return `${this.apiBase}/repos/${repo}/contents/${encoded}`;
   }
 
-  async listFiles(repo: string, dir: string, branch: string, token: string, recursive = true): Promise<Record<string, string>> {
+  async listFiles(repo: string, dir: string, branch: string, token: string, selector: Selector): Promise<Record<string, string>> {
     const out: Record<string, string> = {};
-    const walk = async (path: string): Promise<void> => {
+    const walk = async (path: string, segs: string[]): Promise<void> => {
       const res = await this.fetchFn(`${this.url(repo, path)}?ref=${encodeURIComponent(branch)}`, {
         method: "GET",
         headers: this.headers(token),
@@ -59,11 +61,13 @@ export class GitHubContents {
       const entries = Array.isArray(body) ? body : [body];
       for (const e of entries) {
         if (e.type === "dir") {
-          if (recursive) await walk(e.path);
-        } else if (e.type === "file") out[e.path.slice(dir.length + 1)] = e.sha;
+          if (selector.descends([...segs, e.name])) await walk(e.path, [...segs, e.name]);
+        } else if (e.type === "file" && selector.includesLeaf(segs, e.name)) {
+          out[e.path.slice(dir.length + 1)] = e.sha;
+        }
       }
     };
-    await walk(dir);
+    await walk(dir, []);
     return out;
   }
 

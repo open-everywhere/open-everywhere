@@ -4,6 +4,7 @@ import type { MemoryProvider } from "./provider.js";
 import { registerProvider } from "./provider.js";
 import { type MemoryFiles, type Tier } from "./store.js";
 import { tierRelDir, safeName, seedFor } from "./layout.js";
+import { makeSelector, normalizeSelection } from "./selection.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { getGitHubApp } from "../scm/provider.js";
 
@@ -35,7 +36,7 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
     const repo = silo.container!;
     const dir = repoPath(silo, p, tier);
     const token = await deps.mintToken(repo);
-    const shas = await deps.contents.listFiles(repo, dir, branch, token, silo.recursive !== false);
+    const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
     const out: MemoryFiles = {};
     for (const rel of Object.keys(shas)) {
       const file = await deps.contents.getFile(repo, `${dir}/${rel}`, branch, token);
@@ -79,7 +80,7 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       const dir = repoPath(silo, p, tier);
       const token = await deps.mintToken(repo);
       const committer = deps.committer();
-      const shas = await deps.contents.listFiles(repo, dir, branch, token, silo.recursive !== false);
+      const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
       for (const [rel, sha] of Object.entries(shas)) {
         await deps.contents.deleteFile(repo, `${dir}/${rel}`, sha, `delete ${tier.kind} memory`, branch, token, committer);
       }

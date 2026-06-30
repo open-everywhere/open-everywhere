@@ -29,7 +29,9 @@ const tree: Record<string, BlockNode[]> = {
     { type: "paragraph", id: "p1", paragraph: { rich_text: [{ plain_text: "Welcome" }] } },
     { type: "bulleted_list_item", id: "b1", has_children: true, bulleted_list_item: { rich_text: [{ plain_text: "top" }] } },
     { type: "child_page", id: "sub1", has_children: true, child_page: { title: "Onboarding" } },
+    { type: "child_page", id: "sub3", has_children: true, child_page: { title: "Archive" } },
   ],
+  sub3: [{ type: "paragraph", id: "ar", paragraph: { rich_text: [{ plain_text: "old noise" }] } }],
   b1: [{ type: "bulleted_list_item", id: "b2", bulleted_list_item: { rich_text: [{ plain_text: "nested" }] } }],
   sub1: [
     {
@@ -81,6 +83,18 @@ const single = makeNotionProvider({ client: () => new NotionClient("tok", fakeFe
 const singleFiles = await single.readTier(p, TIER, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
 ok("MEMORY.md" in singleFiles && singleFiles["MEMORY.md"].includes("# Handbook"), "recursive:false → root page pulled");
 ok(!("Onboarding.md" in singleFiles) && !("Onboarding/Deep-Dive.md" in singleFiles), "recursive:false → child pages NOT pulled");
+
+const subsetProvider = makeNotionProvider({ client: () => new NotionClient("tok", fakeFetch) });
+const subsetFiles = await subsetProvider.readTier(p, TIER, {
+  name: "subset",
+  provider: "notion",
+  container: "root",
+  readOnly: true,
+  select: { default: "include", rules: [{ path: "Onboarding", mode: "recurse" }] },
+});
+ok("MEMORY.md" in subsetFiles, "select: root (A) included");
+ok("Onboarding.md" in subsetFiles && "Onboarding/Deep-Dive.md" in subsetFiles, "select: Onboarding subtree (B + D) included");
+ok(!("Archive.md" in subsetFiles), "select: Archive sibling (C) excluded");
 
 ok((await provider.writeTier(p, TIER, { "MEMORY.md": "x" }, "nope", silo)) === null, "writeTier is a no-op (read-only)");
 await provider.deleteTier(p, TIER, silo);

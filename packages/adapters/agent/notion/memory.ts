@@ -3,6 +3,7 @@ import { registerProvider } from "@open-everywhere/core/agent/memory/provider.js
 import { safeName } from "@open-everywhere/core/agent/memory/layout.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
+import { makeSelector, normalizeSelection, type Selector } from "@open-everywhere/core/agent/memory/selection.js";
 import type { Tier, MemoryFiles } from "@open-everywhere/core/agent/memory/store.js";
 import { posix } from "node:path";
 import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
@@ -85,7 +86,7 @@ async function collect(
   segs: string[],
   stats: PullStats,
   out: CollectedPage[],
-  recursive: boolean,
+  selector: Selector,
 ): Promise<void> {
   if (stats.pages >= MAX_PAGES || segs.length > MAX_PAGE_DEPTH) {
     stats.capped = true;
@@ -93,12 +94,14 @@ async function collect(
   }
   stats.pages++;
   const blocks = await loadBlockTree(client, pageId, 0);
-  const key = segs.length === 0 ? "MEMORY.md" : `${segs.join("/")}.md`;
-  out.push({ key, id: pageId, title, blocks });
-  if (!recursive) return;
+  if (selector.includes(segs, pageId)) {
+    const key = segs.length === 0 ? "MEMORY.md" : `${segs.join("/")}.md`;
+    out.push({ key, id: pageId, title, blocks });
+  }
+  if (!selector.descends(segs, pageId)) return;
   for (const b of blocks) {
     if (PAGE_BLOCK_TYPES.has(b.type) && b.id) {
-      await collect(client, b.id, pageTitle(b), [...segs, safeName(pageTitle(b))], stats, out, recursive);
+      await collect(client, b.id, pageTitle(b), [...segs, safeName(pageTitle(b))], stats, out, selector);
     }
   }
 }
@@ -143,8 +146,8 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
 
     const pages: CollectedPage[] = [];
     const stats: PullStats = { pages: 0, capped: false };
-    const recursive = silo.recursive !== false;
-    await collect(deps.client(silo), root, "index", [], stats, pages, recursive);
+    const selector = makeSelector(normalizeSelection(silo));
+    await collect(deps.client(silo), root, "index", [], stats, pages, selector);
     if (stats.capped) {
       console.warn(`[open-everywhere:notion] page "${root}" pull hit the cap (${MAX_PAGES} pages / depth ${MAX_PAGE_DEPTH}); some pages omitted.`);
     }

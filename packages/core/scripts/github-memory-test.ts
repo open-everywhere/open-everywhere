@@ -119,6 +119,22 @@ const flat = await provider.readTier(p, tier, { ...silo, recursive: false });
 ok("MEMORY.md" in flat && !("sub/notes.md" in flat), "recursive:false → top-level files only (sub-folders skipped)");
 const deep = await provider.readTier(p, tier, silo);
 ok("sub/notes.md" in deep, "default recursive → nested file included");
+
+await provider.writeTier(
+  p,
+  tier,
+  { "MEMORY.md": "# changed\n", "keep/notes.md": "wanted\n", "drop/junk.md": "noise\n" },
+  "subset-fixture",
+  silo,
+);
+const subset = await provider.readTier(p, tier, {
+  ...silo,
+  select: { default: "include", rules: [{ path: "keep", mode: "recurse" }] },
+});
+ok("MEMORY.md" in subset, "select: top-level file kept");
+ok("keep/notes.md" in subset, "select: ticked sub-folder included");
+ok(!("drop/junk.md" in subset), "select: unticked sub-folder excluded");
+
 await provider.deleteTier(p, tier, silo);
 await provider.writeTier(p, tier, { "MEMORY.md": "# changed\n", "people.md": "@ana owns deploys\n" }, "restore", silo);
 
