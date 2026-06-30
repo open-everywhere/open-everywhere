@@ -6,7 +6,7 @@ export interface CredentialBroker {
   getSecret(ref: string): Promise<string>;
 }
 
-const envBroker: CredentialBroker = {
+export const envBroker: CredentialBroker = {
   async getSecret(ref) {
     const v = process.env[ref];
     if (!v) throw new CredentialError(`secret not found for ref "${ref}" (set env ${ref})`);
@@ -14,30 +14,32 @@ const envBroker: CredentialBroker = {
   },
 };
 
-const BROKERS: Record<string, CredentialBroker> = { env: envBroker };
+export const DEFAULT_BROKER = "env";
+
+const BROKERS: Record<string, CredentialBroker> = {};
 
 export function registerBroker(name: string, broker: CredentialBroker): void {
   BROKERS[name] = broker;
 }
 
+registerBroker(DEFAULT_BROKER, envBroker);
+
 export function resetBrokers(): void {
-  for (const k of Object.keys(BROKERS)) if (k !== "env") delete BROKERS[k];
+  for (const k of Object.keys(BROKERS)) delete BROKERS[k];
+  registerBroker(DEFAULT_BROKER, envBroker);
 }
 
-let warnedMissingBroker = false;
-
 export function selectBroker(): CredentialBroker {
-  const choice = process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : "env");
+  const choice = process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : DEFAULT_BROKER);
   const broker = BROKERS[choice];
-  if (broker) return broker;
-  if (!warnedMissingBroker) {
-    console.warn(
-      `[open-everywhere:credentials] credential broker "${choice}" not registered — falling back to env. ` +
-        `Register it at startup (see @open-everywhere/adapters).`,
+  if (!broker) {
+    throw new CredentialError(
+      `credential broker "${choice}" is not registered — register it at startup ` +
+        `(see @open-everywhere/adapters) or set OE_CREDENTIAL_BROKER to a registered broker. ` +
+        `Refusing to fall back to another broker (fail closed).`,
     );
-    warnedMissingBroker = true;
   }
-  return envBroker;
+  return broker;
 }
 
 export function getSecret(ref: string): Promise<string> {

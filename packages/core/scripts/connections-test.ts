@@ -56,15 +56,23 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
   resetBrokers();
   delete process.env.OE_CREDENTIAL_BROKER;
   delete process.env.VERCEL;
-  const autoLocal = selectBroker();
+  const envSel = selectBroker();
+  ok(typeof envSel.getSecret === "function", "off Vercel, selectBroker picks the core env adapter");
+
   process.env.VERCEL = "1";
-  ok(selectBroker() === autoLocal, "unregistered vercel-connect falls back to env, doesn't throw");
+  let failedClosed = false;
+  try {
+    selectBroker();
+  } catch {
+    failedClosed = true;
+  }
+  ok(failedClosed, "auto-on-Vercel with vercel-connect unregistered fails closed (no env fallback)");
 
   const sentinel = { async getSecret() { return "sentinel"; } };
   registerBroker("vercel-connect", sentinel);
   ok(selectBroker() === sentinel, "auto-on-Vercel selects the registered vercel-connect broker");
   delete process.env.VERCEL;
-  ok(selectBroker() === autoLocal, "auto-off-Vercel still selects env even with vercel-connect registered");
+  ok(selectBroker() === envSel, "auto-off-Vercel still selects the env adapter even with vercel-connect registered");
   resetBrokers();
   if (savedVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = savedVercel;
