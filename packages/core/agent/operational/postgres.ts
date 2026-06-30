@@ -54,6 +54,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      set_by    text,
      PRIMARY KEY (org_id, scope_key, connector)
    )`,
+  `CREATE TABLE IF NOT EXISTS thread_engagement (
+     org_id       text NOT NULL,
+     surface_key  text NOT NULL,
+     thread_ts    text NOT NULL,
+     engaged_at   text NOT NULL,
+     last_turn_at text NOT NULL,
+     PRIMARY KEY (org_id, surface_key, thread_ts)
+   )`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -64,12 +72,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE spend_limit ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
   `DROP POLICY IF EXISTS audit_insert ON audit_entry`,
   `DROP POLICY IF EXISTS spend_limit_org_isolation ON spend_limit`,
   `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
+  `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -84,6 +94,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY connector_override_org_isolation ON connector_override
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY thread_engagement_org_isolation ON thread_engagement
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
 ];
@@ -306,6 +319,42 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async allConnectorOverrides(org) {
       const { rows } = await client.query("SELECT scope_key, connector, granted, reason, set_by FROM connector_override WHERE org_id = $1", [org]);
       return (rows as { scope_key: string; connector: string; granted: boolean; reason: string | null; set_by: string | null }[]).map((r) => ({ scopeKey: r.scope_key, connector: r.connector, granted: r.granted, ...(r.reason ? { reason: r.reason } : {}), ...(r.set_by ? { setBy: r.set_by } : {}) }));
+    },
+
+    async markEngaged(org, surfaceKey, threadTs, at) {
+      await client.query(
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, surface_key, thread_ts) DO UPDATE SET last_turn_at = excluded.last_turn_at`,
+        [org, surfaceKey, threadTs, at, at],
+      );
+    },
+
+    async getEngagement(org, surfaceKey, threadTs) {
+      const { rows } = await client.query(
+        "SELECT engaged_at, last_turn_at FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
+        [org, surfaceKey, threadTs],
+      );
+      const r = (rows as { engaged_at: string; last_turn_at: string }[])[0];
+      return r ? { org, surfaceKey, threadTs, engagedAt: r.engaged_at, lastTurnAt: r.last_turn_at } : null;
+    },
+
+    async disengage(org, surfaceKey, threadTs) {
+      const { rows } = await client.query(
+        "DELETE FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3 RETURNING thread_ts",
+        [org, surfaceKey, threadTs],
+      );
+      return rows.length > 0;
+    },
+
+    async listEngagements(org) {
+      const { rows } = await client.query("SELECT surface_key, thread_ts, engaged_at, last_turn_at FROM thread_engagement WHERE org_id = $1", [org]);
+      return (rows as { surface_key: string; thread_ts: string; engaged_at: string; last_turn_at: string }[]).map((r) => ({
+        org,
+        surfaceKey: r.surface_key,
+        threadTs: r.thread_ts,
+        engagedAt: r.engaged_at,
+        lastTurnAt: r.last_turn_at,
+      }));
     },
   };
 }

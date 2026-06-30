@@ -14,6 +14,8 @@ import {
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
+import { loadConversationContext } from "./slack-context.js";
+import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
 import { readTier, ensureTier, writeTier, SURFACE, tierId } from "../memory/store.js";
 import { upsertUnderSection } from "../memory/markdown.js";
 import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
@@ -177,7 +179,11 @@ function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partit
   return resolvePartition(bindableForMessage(message, facts));
 }
 
-async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<{ auth: OpenEverywhereSlackAuth | null }> {
+async function onInbound(
+  ctx: SlackContext,
+  message: SlackMessage,
+  isDm: boolean,
+): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 
@@ -202,7 +208,23 @@ async function onInbound(ctx: SlackContext, message: SlackMessage, isDm: boolean
   } catch {
   }
   await setStatusReaction(ctx.slack, "working");
-  return { auth: authFromFacts(message, facts) };
+
+  if (!isDm && message.author && isStopRequest(message.markdown)) {
+    await disengageThread(partitionForMessage(message, facts), message.threadTs);
+    try {
+      await ctx.thread.post("Standing down — I'll stop following this thread. @-mention me to pull me back in.");
+    } catch {
+    }
+    await setStatusReaction(ctx.slack, "done");
+    return { auth: null };
+  }
+
+  let context: readonly string[] | undefined;
+  if (!isDm) {
+    context = await loadConversationContext(ctx, message);
+    await markThreadEngaged(partitionForMessage(message, facts), message.threadTs, new Date().toISOString());
+  }
+  return { auth: authFromFacts(message, facts), context };
 }
 
 export default slackChannel({

@@ -141,5 +141,16 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.readAudit({ org: "acme" })).length === 2, "RLS: audit rows survived the blocked DELETE/UPDATE");
 }
 
+{
+  await store.markEngaged("acme", "slack/T/C1", "100.1", "2026-06-30T10:00:00Z");
+  await store.markEngaged("acme", "slack/T/C1", "100.1", "2026-06-30T11:00:00Z");
+  const row = await store.getEngagement("acme", "slack/T/C1", "100.1");
+  ok(row !== null && row.engagedAt === "2026-06-30T10:00:00Z" && row.lastTurnAt === "2026-06-30T11:00:00Z", "pg: engagedAt sticks, lastTurnAt advances");
+  await store.markEngaged("globex", "slack/T/C1", "100.1", "2026-06-30T10:00:00Z");
+  ok((await store.listEngagements("acme")).length === 1, "pg: engagement listing is org-isolated");
+  ok((await store.disengage("acme", "slack/T/C1", "100.1")) === true, "pg: disengage removes the row");
+  ok((await store.getEngagement("acme", "slack/T/C1", "100.1")) === null, "pg: gone after disengage");
+}
+
 await db.close();
 console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only)`);

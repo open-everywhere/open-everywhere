@@ -56,6 +56,14 @@ export interface ScopedConnectorOverrideRow extends ConnectorOverrideRow {
   readonly scopeKey: string;
 }
 
+export interface EngagementRow {
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly threadTs: string;
+  readonly engagedAt: string;
+  readonly lastTurnAt: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -82,4 +90,9 @@ export interface OperationalStore {
   clearConnectorOverride(org: string, scopeKey: string, connector: string): Promise<boolean>;
   connectorOverrides(org: string, scopeKey: string): Promise<ConnectorOverrideRow[]>;
   allConnectorOverrides(org: string): Promise<ScopedConnectorOverrideRow[]>;
+
+  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string): Promise<void>;
+  getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
+  disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
+  listEngagements(org: string): Promise<EngagementRow[]>;
 }
