@@ -40,7 +40,7 @@ export function selectBroker(): CredentialBroker {
   return envBroker;
 }
 
-function getSecret(ref: string): Promise<string> {
+export function getSecret(ref: string): Promise<string> {
   return selectBroker().getSecret(ref);
 }
 
