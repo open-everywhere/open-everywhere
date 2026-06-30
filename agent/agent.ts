@@ -13,4 +13,5 @@ export default defineAgent({
       },
     },
   },
+  experimental: { codeMode: true },
 });
