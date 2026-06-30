@@ -5,12 +5,6 @@ import type { SkillPackageDefinition } from "eve/skills";
 import type { Domain } from "../memory/domain.js";
 import type { MemorySilo } from "../memory/silo.js";
 
-export interface OrgDefault {
-  readonly enabled: boolean;
-  readonly memory?: string;
-  readonly bundle?: string;
-}
-
 export interface AppConfig {
   loadBundles(): readonly Bundle[];
   loadBindings(): readonly Binding[];
@@ -19,7 +13,6 @@ export interface AppConfig {
   readonly skillContent: Record<string, SkillPackageDefinition>;
   loadDomains(): readonly Domain[];
   loadSilos(): readonly MemorySilo[];
-  readonly orgDefault?: OrgDefault;
   domainsForSurface(arg: { workspaceKey: string; surface: string }): readonly string[];
 }
 

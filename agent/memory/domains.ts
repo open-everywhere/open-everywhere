@@ -2,10 +2,10 @@ import {
   defineDomain,
   domainForChannel,
   assertChannelExclusivity,
+  assertDomainsValid,
   type Domain,
 } from "@open-everywhere/core/agent/memory/domain.js";
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
-import type { OrgDefault } from "@open-everywhere/core/agent/access/config.js";
 
 const silos: MemorySilo[] = [
 ];
@@ -13,11 +13,8 @@ const silos: MemorySilo[] = [
 const domains: Domain[] = [
 ];
 
-const orgDefault: OrgDefault = {
-  enabled: false,
-};
-
 assertChannelExclusivity(domains);
+assertDomainsValid(domains);
 assertSilosValid(silos);
 
 export function loadDomains(): readonly Domain[] {
@@ -27,8 +24,6 @@ export function loadDomains(): readonly Domain[] {
 export function loadSilos(): readonly MemorySilo[] {
   return silos;
 }
-
-export const ORG_DEFAULT: OrgDefault = orgDefault;
 
 export function domainsForSurface(
   p: { workspaceKey: string; surface: string },

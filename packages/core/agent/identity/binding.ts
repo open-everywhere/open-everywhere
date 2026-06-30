@@ -233,14 +233,19 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const platform = seg(ctx.channel?.kind ?? process.env.OE_PLATFORM, "local");
   const raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   const local = bindLocal(ctx);
+  const mode = raw.mode ?? local.mode ?? "channel";
+  let trust = raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external");
+  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal") {
+    trust = "external";
+  }
   return {
     org: seg(process.env.OE_ORG, "default"),
     platform,
     workspace: seg(raw.workspace ?? local.workspace, "dev"),
     surface: seg(raw.surface ?? local.surface, "default"),
-    mode: raw.mode ?? local.mode ?? "channel",
+    mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
-    trust: raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external"),
+    trust,
     principalId: raw.principalId ?? local.principalId,
     target: raw.target,
   };

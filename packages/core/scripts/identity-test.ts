@@ -169,4 +169,13 @@ ok(bindFrom({}).trust === "external", "bindFrom: OE_TRUST=external forces extern
 delete process.env.OE_TRUST;
 ok(bindFrom({ channel: { kind: "myspace" } }).trust === "external", "bindFrom: unknown platform fails closed to external");
 
+const dmCtx = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "false", trust_checked: "true" });
+ok(bindFrom(dmCtx).trust === "external", "bindFrom: slack DM partner fails closed to external (unverifiable)");
+process.env.OE_TRUST = "internal";
+ok(bindFrom(dmCtx).trust === "internal", "bindFrom: OE_TRUST=internal vouches for a DM partner (dev/test)");
+delete process.env.OE_TRUST;
+process.env.OE_MODE = "dm";
+ok(bindFrom({}).trust === "internal", "bindFrom: local/dev DM stays internal (platform-exempt)");
+delete process.env.OE_MODE;
+
 console.log(`✓ identity: ${passed} assertions passed`);

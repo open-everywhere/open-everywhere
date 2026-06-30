@@ -15,6 +15,5 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [],
   loadSilos: () => [],
-  orgDefault: undefined,
   domainsForSurface: () => [],
 });
