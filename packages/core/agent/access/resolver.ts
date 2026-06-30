@@ -162,9 +162,9 @@ export function resolveAccess(
         dm: req.mode === "dm",
       });
       for (const w of gw) warnings.push(`bundle "${bundle.name}": ${w}`);
-      for (const rc of resolved) {
-        providerConnectors.add(rc.connection);
-        connectorCredentials[rc.connection] = rc;
+      if (resolved) {
+        providerConnectors.add(resolved.connection);
+        connectorCredentials[resolved.connection] = resolved;
       }
     }
   }

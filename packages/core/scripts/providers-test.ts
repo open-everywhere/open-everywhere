@@ -28,16 +28,13 @@ function throws(fn: () => void, label: string): void {
 
 const notion: Provider = defineProvider({
   name: "notion",
-  transports: [
-    { kind: "mcp", connection: "notion", allows: ["service-oauth", "user-oauth"] },
-    { kind: "rest", connection: "notion-rest", allows: ["api-key", "service-oauth"] },
-  ],
+  connection: "notion",
+  allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_TEAM" },
     { id: "team-oauth", type: "service-oauth", vercelConnector: "oauth/notion-app" },
     { id: "mine", type: "user-oauth", vercelConnector: "oauth/notion-user" },
   ],
-  defaultTransport: "rest",
 });
 
 ok(principalOf("api-key") === "app", "api-key is app principal");
@@ -48,56 +45,54 @@ assertProvidersValid([notion]);
 passed++;
 throws(() => assertProvidersValid([notion, notion]), "duplicate provider name throws");
 throws(
-  () => assertProvidersValid([{ name: "x", transports: [{ kind: "rest", connection: "c", allows: ["api-key"] }], credentials: [{ id: "k", type: "api-key" }] }]),
+  () => assertProvidersValid([{ name: "x", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key" }] }]),
   "api-key credential without secretRef throws",
 );
 throws(
-  () => assertProvidersValid([{ name: "x", transports: [{ kind: "mcp", connection: "c", allows: ["service-oauth"] }], credentials: [{ id: "o", type: "service-oauth" }] }]),
+  () => assertProvidersValid([{ name: "x", connection: "c", allows: ["service-oauth"], credentials: [{ id: "o", type: "service-oauth" }] }]),
   "service-oauth credential without vercelConnector throws",
 );
 throws(
-  () => assertProvidersValid([{ name: "x", transports: [{ kind: "rest", connection: "c", allows: ["api-key"] }], credentials: [], defaultTransport: "mcp" }]),
-  "defaultTransport with no matching transport throws",
+  () => assertProvidersValid([{ name: "x", connection: "", allows: ["api-key"], credentials: [] }]),
+  "provider with no connection slug throws",
 );
 throws(
-  () => assertProvidersValid([{ name: "x", transports: [], credentials: [] }]),
-  "provider with no transports throws",
+  () => assertProvidersValid([{ name: "x", connection: "c", allows: [], credentials: [] }]),
+  "provider with empty allowlist throws",
 );
 
 {
   const r = expandProviderGrant({ provider: "notion", credential: "nope" }, notion, { dm: false });
-  ok(r.resolved.length === 0 && r.warnings.some((w) => w.includes("unknown credential")), "unknown credential → warn, nothing");
+  ok(r.resolved === null && r.warnings.some((w) => w.includes("unknown credential")), "unknown credential → warn, nothing");
 }
 {
   const r = expandProviderGrant({ provider: "notion", credential: "x" }, undefined, { dm: false });
-  ok(r.resolved.length === 0 && r.warnings.some((w) => w.includes("unknown provider")), "unknown provider → warn, nothing");
-}
-{
-  const r = expandProviderGrant({ provider: "notion", credential: "team-key", transports: ["mcp"] }, notion, { dm: false });
-  ok(r.resolved.length === 0 && r.warnings.some((w) => w.includes("not allowed on the \"mcp\"")), "api-key on mcp is rejected (allowlist)");
+  ok(r.resolved === null && r.warnings.some((w) => w.includes("unknown provider")), "unknown provider → warn, nothing");
 }
 {
   const r = expandProviderGrant({ provider: "notion", credential: "team-key" }, notion, { dm: false });
-  ok(r.resolved.length === 1 && r.resolved[0].connection === "notion-rest", "api-key defaults to the rest transport");
-  ok(r.resolved[0].secretRef === "NOTION_TEAM" && r.resolved[0].type === "api-key", "rest binding carries the api-key secretRef");
+  ok(r.resolved?.connection === "notion" && r.resolved?.secretRef === "NOTION_TEAM", "api-key resolves to the connection with its secretRef");
+  ok(r.resolved?.principal === "app" && r.resolved?.type === "api-key", "binding is app principal, api-key type");
 }
 {
-  const r = expandProviderGrant({ provider: "notion", credential: "team-oauth", transports: ["mcp", "rest"] }, notion, { dm: false });
-  ok(r.resolved.length === 2, "service-oauth is valid on both transports");
-  ok(r.resolved.every((rc) => rc.principal === "app" && rc.vercelConnector === "oauth/notion-app"), "oauth bindings carry the connect connector, app principal");
+  const r = expandProviderGrant({ provider: "notion", credential: "team-oauth" }, notion, { dm: false });
+  ok(r.resolved?.vercelConnector === "oauth/notion-app" && r.resolved?.principal === "app", "service-oauth carries the connect connector");
+}
+{
+  const restrictive: Provider = { ...notion, allows: ["service-oauth"] };
+  const r = expandProviderGrant({ provider: "notion", credential: "team-key" }, restrictive, { dm: false });
+  ok(r.resolved === null && r.warnings.some((w) => w.includes("not in the connection's allowlist")), "credential type outside the allowlist is rejected");
 }
 {
   const r = expandProviderGrant({ provider: "notion", credential: "mine" }, notion, { dm: false });
-  ok(r.resolved.length === 0 && r.warnings.some((w) => w.includes("personal credentials resolve only in DMs")), "user-oauth on a channel is blocked (universe gate)");
+  ok(r.resolved === null && r.warnings.some((w) => w.includes("personal credentials resolve only in DMs")), "user-oauth on a channel is blocked (universe gate)");
 }
 {
-  const noDefault: Provider = { ...notion, defaultTransport: undefined };
-  const r = expandProviderGrant({ provider: "notion", credential: "team-oauth" }, noDefault, { dm: false });
-  ok(r.resolved.length === 2 && r.warnings.some((w) => w.includes("pins no transport")), "multi-transport with no default exposes all + warns");
+  const r = expandProviderGrant({ provider: "notion", credential: "mine" }, notion, { dm: true });
+  ok(r.resolved?.principal === "user", "user-oauth resolves in a DM, as a user principal");
 }
 
 {
-  const provs = [notion];
   const tightProvider: Provider = {
     ...notion,
     credentials: [...notion.credentials, { id: "payments-key", type: "api-key", secretRef: "NOTION_PAYMENTS" }],
@@ -112,11 +107,11 @@ throws(
   ];
   const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "slack/T", channel: "C", domains: ["payments"] };
   const eff = resolveAccess(req, bundles, bindings, {}, [tightProvider]);
-  ok(eff.connectors.includes("notion-rest"), "provider grant folds the transport slug into connectors");
-  ok(eff.connectorCredentials["notion-rest"]?.secretRef === "NOTION_PAYMENTS", "narrowest-wins: the domain's tight key overrides the org key");
+  ok(eff.connectors.includes("notion"), "provider grant folds the connection slug into connectors");
+  ok(eff.connectorCredentials["notion"]?.secretRef === "NOTION_PAYMENTS", "narrowest-wins: the domain's tight key overrides the org key");
 
   const other = resolveAccess({ ...req, domains: [] }, bundles, bindings, {}, [tightProvider]);
-  ok(other.connectorCredentials["notion-rest"]?.secretRef === "NOTION_TEAM", "a different surface keeps the org-wide key");
+  ok(other.connectorCredentials["notion"]?.secretRef === "NOTION_TEAM", "a different surface keeps the org-wide key");
 }
 
 {
