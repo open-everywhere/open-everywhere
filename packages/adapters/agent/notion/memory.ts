@@ -1,5 +1,6 @@
 import type { MemoryProvider } from "@open-everywhere/core/agent/memory/provider.js";
 import { registerProvider } from "@open-everywhere/core/agent/memory/provider.js";
+import { getSecret } from "@open-everywhere/core/agent/access/credentials.js";
 import { safeName } from "@open-everywhere/core/agent/memory/layout.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
@@ -125,7 +126,7 @@ function renderCollected(pages: readonly CollectedPage[]): MemoryFiles {
 }
 
 export interface NotionMemoryDeps {
-  client(silo: MemorySilo): NotionClient;
+  client(silo: MemorySilo): NotionClient | Promise<NotionClient>;
 }
 
 interface CacheEntry {
@@ -147,7 +148,7 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
     const pages: CollectedPage[] = [];
     const stats: PullStats = { pages: 0, capped: false };
     const selector = makeSelector(normalizeSelection(silo));
-    await collect(deps.client(silo), root, "index", [], stats, pages, selector);
+    await collect(await deps.client(silo), root, "index", [], stats, pages, selector);
     if (stats.capped) {
       console.warn(`[open-everywhere:notion] page "${root}" pull hit the cap (${MAX_PAGES} pages / depth ${MAX_PAGE_DEPTH}); some pages omitted.`);
     }
@@ -166,8 +167,6 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
   };
 }
 
-export function registerNotionMemory(token = process.env.NOTION_TOKEN): boolean {
-  if (!token) return false;
-  registerProvider(makeNotionProvider({ client: () => new NotionClient(token) }));
-  return true;
+export function registerNotionMemory(secretRef = process.env.OE_NOTION_SECRET_REF ?? "NOTION_TOKEN"): void {
+  registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecret(secretRef)) }));
 }

@@ -9,6 +9,7 @@ import {
   buildSlackAuth,
   channelFactsFromInfo,
   channelFactsFromRaw,
+  partnerFactsFromInfo,
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
@@ -85,9 +86,27 @@ async function enrichVisibility(ctx: SlackContext, channelId: string, base: Chan
   }
 }
 
+const DM_TRUST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
+const dmTrustCache = new Map<string, { trust: "internal" | "external"; at: number }>();
+
+async function enrichDmPartner(ctx: SlackContext, message: SlackMessage, base: ChannelFacts): Promise<ChannelFacts> {
+  const userId = message.author?.userId;
+  if (!userId) return base;
+  const hit = dmTrustCache.get(userId);
+  if (hit && Date.now() - hit.at < DM_TRUST_TTL) return { ...base, dmPartnerTrust: hit.trust };
+  try {
+    const info = await ctx.slack.request("users.info", { user: userId });
+    const { dmPartnerTrust } = partnerFactsFromInfo(info, message.teamId);
+    dmTrustCache.set(userId, { trust: dmPartnerTrust, at: Date.now() });
+    return { ...base, dmPartnerTrust };
+  } catch {
+    return base;
+  }
+}
+
 async function resolveFacts(ctx: SlackContext, message: SlackMessage, isDm: boolean): Promise<ChannelFacts> {
   return isDm
-    ? { channelType: "im", isPrivate: true }
+    ? enrichDmPartner(ctx, message, { channelType: "im", isPrivate: true })
     : enrichVisibility(ctx, message.channelId, channelFactsFromRaw(message.raw));
 }
 
@@ -103,6 +122,7 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
     isPrivate: facts.isPrivate,
     isExternal: facts.isExternal,
     trustChecked: facts.trustChecked,
+    dmPartnerTrust: facts.dmPartnerTrust,
   });
 }
 
@@ -146,6 +166,7 @@ function bindableForMessage(message: SlackMessage, facts: ChannelFacts): Bindabl
   };
   if (typeof facts.isExternal === "boolean") attributes.is_ext_shared = String(facts.isExternal);
   if (typeof facts.trustChecked === "boolean") attributes.trust_checked = String(facts.trustChecked);
+  if (facts.dmPartnerTrust) attributes.dm_partner_trust = facts.dmPartnerTrust;
   return {
     channel: { kind: "slack" },
     session: { auth: { current: { attributes, principalId: message.author?.userId ?? "", principalType: "slack-user" } } },

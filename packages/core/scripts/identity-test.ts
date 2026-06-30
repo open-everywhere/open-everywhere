@@ -5,6 +5,7 @@ import {
   buildSlackAuth,
   channelFactsFromInfo,
   channelFactsFromRaw,
+  partnerFactsFromInfo,
 } from "../agent/channels/slack-identity.js";
 import { buildLinearAuth } from "../agent/channels/linear-identity.js";
 
@@ -169,10 +170,25 @@ ok(bindFrom({}).trust === "external", "bindFrom: OE_TRUST=external forces extern
 delete process.env.OE_TRUST;
 ok(bindFrom({ channel: { kind: "myspace" } }).trust === "external", "bindFrom: unknown platform fails closed to external");
 
-const dmCtx = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "false", trust_checked: "true" });
-ok(bindFrom(dmCtx).trust === "external", "bindFrom: slack DM partner fails closed to external (unverifiable)");
+ok(partnerFactsFromInfo({ user: { team_id: "T", is_restricted: false } }, "T").dmPartnerTrust === "internal", "partnerFacts: full member of the workspace -> internal");
+ok(partnerFactsFromInfo({ user: { team_id: "T", is_restricted: true } }, "T").dmPartnerTrust === "external", "partnerFacts: multi-channel guest (restricted) -> external");
+ok(partnerFactsFromInfo({ user: { team_id: "T", is_ultra_restricted: true } }, "T").dmPartnerTrust === "external", "partnerFacts: single-channel guest (ultra_restricted) -> external");
+ok(partnerFactsFromInfo({ user: { team_id: "T", is_stranger: true } }, "T").dmPartnerTrust === "external", "partnerFacts: Connect stranger -> external");
+ok(partnerFactsFromInfo({ user: { team_id: "T2" } }, "T").dmPartnerTrust === "external", "partnerFacts: different workspace -> external");
+ok(partnerFactsFromInfo({ user: { team_id: "T", is_bot: true } }, "T").dmPartnerTrust === "external", "partnerFacts: bot account -> external");
+ok(partnerFactsFromInfo(null, "T").dmPartnerTrust === "external", "partnerFacts: failed/empty lookup -> external (fail closed)");
+
+ok(buildSlackAuth({ userId: "U", channelId: "D", channelType: "im", dmPartnerTrust: "internal" }).attributes.dm_partner_trust === "internal", "buildSlackAuth: dm_partner_trust stowed");
+ok(buildSlackAuth({ userId: "U", channelId: "D", channelType: "im" }).attributes.dm_partner_trust === undefined, "buildSlackAuth: no dm_partner_trust attribute when unverified");
+
+const dmVerifiedInt = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", dm_partner_trust: "internal" });
+ok(bindFrom(dmVerifiedInt).trust === "internal", "bindFrom: VERIFIED-internal Slack DM partner → internal (dm shared layer lit up)");
+const dmVerifiedExt = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", dm_partner_trust: "external" });
+ok(bindFrom(dmVerifiedExt).trust === "external", "bindFrom: VERIFIED-external Slack DM partner → external (routes to public)");
+const dmUnverified = slackCtx({ team_id: "T", channel_id: "Duser", channel_type: "im", is_ext_shared: "false", trust_checked: "true" });
+ok(bindFrom(dmUnverified).trust === "external", "bindFrom: UNVERIFIED Slack DM partner fails closed to external");
 process.env.OE_TRUST = "internal";
-ok(bindFrom(dmCtx).trust === "internal", "bindFrom: OE_TRUST=internal vouches for a DM partner (dev/test)");
+ok(bindFrom(dmUnverified).trust === "internal", "bindFrom: OE_TRUST=internal vouches for an unverified DM partner (dev/test)");
 delete process.env.OE_TRUST;
 process.env.OE_MODE = "dm";
 ok(bindFrom({}).trust === "internal", "bindFrom: local/dev DM stays internal (platform-exempt)");

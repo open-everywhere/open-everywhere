@@ -66,6 +66,7 @@ interface RawIdentity {
   readonly mode?: SessionMode;
   readonly visibility?: Visibility;
   readonly trust?: Trust;
+  readonly trustVerified?: boolean;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
 }
@@ -109,12 +110,15 @@ const bindSlack: Mapper = (ctx) => {
   const channelType = attr(a, ["channel_type", "channelType"]);
   const isPrivate = attr(a, ["is_private", "isPrivate"]);
   const mode = slackMode(channelType, channelId);
+  const dmRaw = attr(a, ["dm_partner_trust", "dmPartnerTrust"]);
+  const dmPartnerTrust: Trust | undefined = dmRaw === "internal" || dmRaw === "external" ? dmRaw : undefined;
   return {
     workspace: attr(a, ["team_id", "teamId"]),
     surface: channelId,
     mode,
     visibility: slackVisibility(channelType, isPrivate, mode),
-    trust: slackTrust(attr(a, ["is_ext_shared", "isExtShared"]), attr(a, ["trust_checked", "trustChecked"]), mode),
+    trust: mode === "dm" ? dmPartnerTrust : slackTrust(attr(a, ["is_ext_shared", "isExtShared"]), attr(a, ["trust_checked", "trustChecked"]), mode),
+    trustVerified: mode === "dm" ? dmPartnerTrust !== undefined : undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: channelId ? { channelId } : undefined,
   };
@@ -235,7 +239,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
   let trust = raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external");
-  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal") {
+  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal" && !raw.trustVerified) {
     trust = "external";
   }
   return {

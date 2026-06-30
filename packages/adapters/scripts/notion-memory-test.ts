@@ -89,6 +89,10 @@ ok("Onboarding/Deep-Dive.md" in files && files["Onboarding/Deep-Dive.md"].includ
 ok(files["Onboarding.md"].includes("[Deep Dive](Onboarding/Deep-Dive.md)"), "page mention → relative on-disk link");
 ok(files["Onboarding.md"].includes("(link to a page outside this memory)"), "out-of-subtree link → graceful placeholder");
 
+const asyncProvider = makeNotionProvider({ client: async () => new NotionClient("tok", fakeFetch) });
+const asyncFiles = await asyncProvider.readTier(p, TIER, silo);
+ok("MEMORY.md" in asyncFiles && asyncFiles["MEMORY.md"].includes("# Handbook"), "provider awaits an async (broker-resolved) client factory");
+
 const single = makeNotionProvider({ client: () => new NotionClient("tok", fakeFetch) });
 const singleFiles = await single.readTier(p, TIER, { name: "one", provider: "notion", container: "root", readOnly: true, recursive: false });
 ok("MEMORY.md" in singleFiles && singleFiles["MEMORY.md"].includes("# Handbook"), "recursive:false → root page pulled");
