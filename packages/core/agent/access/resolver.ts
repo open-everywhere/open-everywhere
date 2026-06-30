@@ -1,5 +1,6 @@
 import type { Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
 import type { PluginRegistry } from "../plugins/types.js";
+import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
 
 export type SessionMode = "channel" | "dm" | "mpim";
 
@@ -34,6 +35,7 @@ export interface EffectiveAccess {
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
   readonly connectors: readonly string[];
+  readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
   readonly warnings: readonly string[];
 }
@@ -69,6 +71,7 @@ export function resolveAccess(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
   registry: PluginRegistry = {},
+  providers: readonly Provider[] = [],
 ): EffectiveAccess {
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));
@@ -150,10 +153,27 @@ export function resolveAccess(
   }
   const skills = [...skillSet].sort();
   const subagents = [...subagentSet].sort();
+  const providerByName = new Map(providers.map((p) => [p.name, p]));
+  const connectorCredentials: Record<string, ResolvedConnectorCredential> = {};
+  const providerConnectors = new Set<string>();
+  for (const { bundle } of ordered) {
+    for (const grant of bundle.providers ?? []) {
+      const { resolved, warnings: gw } = expandProviderGrant(grant, providerByName.get(grant.provider), {
+        dm: req.mode === "dm",
+      });
+      for (const w of gw) warnings.push(`bundle "${bundle.name}": ${w}`);
+      for (const rc of resolved) {
+        providerConnectors.add(rc.connection);
+        connectorCredentials[rc.connection] = rc;
+      }
+    }
+  }
+
   const connectors = [
     ...new Set([
       ...ordered.flatMap(({ bundle }) => bundle.connectors ?? []),
       ...pluginConnectors,
+      ...providerConnectors,
     ]),
   ].sort();
 
@@ -180,6 +200,11 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every channel under it may invoke those host-side connections. Bind connector grants to a domain or specific channel instead.`,
       );
     }
+    if ((bundle.providers?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" grants ${bundle.providers!.length} provider credential(s) at ${where} scope — every channel under it authenticates to those providers with that credential. Bind provider grants to a domain or specific channel instead.`,
+      );
+    }
     if ((bundle.plugins?.length ?? 0) > 0) {
       warnings.push(
         `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every channel under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific channel instead.`,
@@ -202,6 +227,7 @@ export function resolveAccess(
     skills,
     subagents,
     connectors,
+    connectorCredentials,
     instructionStack,
     warnings,
   };

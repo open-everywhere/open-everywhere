@@ -1,4 +1,5 @@
 import type { Bundle, Binding } from "./bundle.js";
+import type { Provider } from "./providers.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import type { SkillPackageDefinition } from "eve/skills";
 import type { Domain } from "../memory/domain.js";
@@ -13,6 +14,7 @@ export interface OrgDefault {
 export interface AppConfig {
   loadBundles(): readonly Bundle[];
   loadBindings(): readonly Binding[];
+  loadProviders?(): readonly Provider[];
   readonly pluginRegistry: PluginRegistry;
   readonly skillContent: Record<string, SkillPackageDefinition>;
   loadDomains(): readonly Domain[];

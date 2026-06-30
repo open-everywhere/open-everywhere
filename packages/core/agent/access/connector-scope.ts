@@ -90,6 +90,18 @@ export async function grantedConnectors(): Promise<readonly string[] | null> {
   }
 }
 
+export async function boundConnectorCredential(
+  connection: string,
+): Promise<import("./providers.js").ResolvedConnectorCredential | null> {
+  const ctx = await readSurfaceContext();
+  if (!ctx) return null;
+  try {
+    return resolveAccessFor(ctx).connectorCredentials[connection] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function assertConnectorGranted(connectionName: string): Promise<void> {
   const granted = await grantedConnectors();
   if (granted === null) {

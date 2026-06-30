@@ -1,3 +1,5 @@
+import type { ProviderGrant } from "./providers.js";
+
 export type ScopeLevel = "org" | "workspace" | "domain" | "channel";
 
 export interface Scope {
@@ -31,6 +33,7 @@ export interface Bundle {
   readonly name: string;
   readonly connections?: readonly Connection[];
   readonly connectors?: readonly string[];
+  readonly providers?: readonly ProviderGrant[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];

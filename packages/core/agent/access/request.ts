@@ -36,5 +36,11 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
 
 export function resolveAccessFor(ctx: BindableContext): EffectiveAccess {
   const cfg = getConfig();
-  return resolveAccess(buildResolveRequest(ctx), cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
+  return resolveAccess(
+    buildResolveRequest(ctx),
+    cfg.loadBundles(),
+    cfg.loadBindings(),
+    cfg.pluginRegistry,
+    cfg.loadProviders?.() ?? [],
+  );
 }

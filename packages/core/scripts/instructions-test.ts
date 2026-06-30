@@ -14,6 +14,7 @@ const base: EffectiveAccess = {
   mode: "channel",
   scopeKey: "slack/T1/C1",
   connections: [],
+  connectorCredentials: {},
   reachableHosts: [],
   repos: [],
   plugins: [],
