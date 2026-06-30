@@ -21,13 +21,19 @@ export default defineHook({
         const summary =
           typeof policy === "string" ? policy : `allow ${hostCount} host(s), default-deny`;
 
-        const enforced = process.env.OE_EGRESS_ENFORCE === "1";
-        if (enforced) {
-          const sandbox = await ctx.getSandbox();
-          await sandbox.setNetworkPolicy(policy);
-          log(`enforced: ${summary} for ${access.scopeKey}`);
+        const wantEnforce = process.env.OE_EGRESS_ENFORCE !== "0";
+        let enforced = false;
+        if (wantEnforce) {
+          try {
+            const sandbox = await ctx.getSandbox();
+            await sandbox.setNetworkPolicy(policy);
+            enforced = true;
+            log(`enforced: ${summary} for ${access.scopeKey}`);
+          } catch (err) {
+            log(`enforce FAILED (backend rejected setNetworkPolicy) — running UNENFORCED: ${String(err)}`);
+          }
         } else {
-          log(`dry-run (set OE_EGRESS_ENFORCE=1 to apply): ${summary} for ${access.scopeKey}`);
+          log(`dry-run (OE_EGRESS_ENFORCE=0): ${summary} for ${access.scopeKey}`);
         }
 
         const p = resolvePartition(ctx);
