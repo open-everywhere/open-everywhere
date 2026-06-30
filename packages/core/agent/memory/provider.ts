@@ -73,10 +73,7 @@ export function registerProvider(provider: MemoryProvider): void {
 
 export function providerById(id: string | undefined): MemoryProvider {
   if (!id) {
-    throw new Error(
-      "memory provider requested for a silo with no provider — a connector-backed pointer " +
-        "silo isn't materialized (it's accessed live via its connector). This is a wiring bug.",
-    );
+    throw new Error("memory provider requested for a silo with no provider — malformed silo (wiring bug).");
   }
   const provider = REGISTRY[id];
   if (!provider) {

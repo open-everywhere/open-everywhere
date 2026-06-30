@@ -4,7 +4,6 @@ import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
-import { isPointer } from "../memory/silo.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { tierId, storeRoot, type MemoryFiles } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
@@ -104,7 +103,6 @@ export default defineHook({
         const sandbox = await ctx.getSandbox();
         let synced = 0;
         for (const rm of plan.reads) {
-          if (isPointer(rm.silo)) continue;
           const files = await loadSource(p, rm);
           await syncTierIntoSandbox(sandbox, rm.tier, files);
           synced += Object.keys(files).length;

@@ -6,9 +6,10 @@ export function isProjectedCache(silo: MemorySilo): boolean {
 
 export function readOnlyBanner(silo: MemorySilo): string {
   if (isProjectedCache(silo)) {
+    const via = silo.skill ? "the `" + silo.skill + "` skill" : "the Notion tools";
     return (
       "<!-- READ-ONLY cache of Notion — editing these files is BLOCKED and will NOT save. " +
-      "To update, use the Notion tools (they write to the source of truth); this cache then " +
+      "To update, use " + via + " (it writes to the source of truth); this cache then " +
       "refreshes from Notion. Do NOT edit these files. -->\n\n"
     );
   }
