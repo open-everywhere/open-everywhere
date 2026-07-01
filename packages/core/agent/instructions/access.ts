@@ -19,12 +19,17 @@ function renderChannelScope(ctx: BindableContext): string {
   );
 }
 
+function renderIdentity(): string {
+  const name = process.env.OE_AGENT_NAME?.trim() || "Open Everywhere";
+  return `Your name in this workspace is **${name}** — identify as that, not as any framework or model name.`;
+}
+
 function resolve(ctx: BindableContext) {
   const access = resolveAccessFor(ctx);
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const plan = planFor(bindFrom(ctx), resolvePartition(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads) : "";
-  const markdown = [assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
+  const markdown = [renderIdentity(), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
     .filter((s) => s.length > 0)
     .join("\n\n");
   return defineInstructions({ markdown });

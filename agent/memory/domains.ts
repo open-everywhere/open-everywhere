@@ -8,9 +8,15 @@ import {
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
 
 const silos: MemorySilo[] = [
+  defineMemorySilo({ name: "org-brain", provider: "postgres" }),
+
 ];
 
 const domains: Domain[] = [
+  defineDomain({ name: "org", match: "org", memory: "org-brain" }),
+
+  defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
+
 ];
 
 assertChannelExclusivity(domains);
