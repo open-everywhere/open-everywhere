@@ -49,6 +49,21 @@ ok(pub.mode === "channel" && pub.visibility === "public", "slack public channel 
 ok(pub.principalId === "U7", "slack: principalId from user_id attribute");
 ok(JSON.stringify(pub.target) === JSON.stringify({ channelId: "C9" }), "slack: post-back target is { channelId }");
 
+const nsPub = bindFrom({
+  channel: { kind: "channel:slack" },
+  session: {
+    auth: {
+      current: {
+        attributes: { team_id: "T1", channel_id: "C9", channel_type: "channel", is_private: "false", is_ext_shared: "false", trust_checked: "true", user_id: "U7" },
+        principalId: "",
+        principalType: "slack-user",
+      },
+    },
+  },
+});
+ok(nsPub.platform === "slack" && nsPub.workspace === "T1" && nsPub.surface === "C9", "slack namespaced kind 'channel:slack' -> Slack mapper still runs (platform/workspace/surface, not dev/default)");
+ok(nsPub.trust === "internal" && nsPub.visibility === "public", "slack namespaced kind: internal channel -> trust=internal (not fail-closed external)");
+
 const priv = bindFrom(slackCtx({ team_id: "T1", channel_id: "G2", channel_type: "group", is_private: "true", user_id: "U7" }));
 ok(priv.mode === "channel" && priv.visibility === "private", "slack private channel -> channel/private");
 

@@ -4,6 +4,7 @@ import "./lib/register-adapters.js";
 
 export default defineAgent({
   model: "zai/glm-5.2",
+  reasoning: "medium",
   modelOptions: {
     providerOptions: {
       gateway: {

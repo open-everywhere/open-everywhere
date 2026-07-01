@@ -231,6 +231,16 @@ export default slackChannel({
   onAppMention: (ctx, message) => onInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => onInbound(ctx, message, true),
   events: {
+    "reasoning.appended": async (_data, channel) => {
+      const now = Date.now();
+      const last = channel.state.lastReasoningTypingAtMs;
+      if (last != null && now - last >= 0 && now - last < 5000) return;
+      channel.state.lastReasoningTypingAtMs = now;
+      try {
+        await channel.thread.startTyping("Thinking…");
+      } catch {
+      }
+    },
     "session.completed": async (_data, channel) => {
       await setStatusReaction(channel.slack, "done");
       await syncPinnedStatus(channel);

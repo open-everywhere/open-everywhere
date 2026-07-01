@@ -234,7 +234,9 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
 };
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
-  const platform = seg(ctx.channel?.kind ?? process.env.OE_PLATFORM, "local");
+  const rawKind = ctx.channel?.kind ?? process.env.OE_PLATFORM;
+  const bareKind = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
+  const platform = seg(bareKind, "local");
   const raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
