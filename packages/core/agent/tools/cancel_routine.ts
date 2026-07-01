@@ -15,7 +15,7 @@ export default defineTool({
     cancelled: z.boolean(),
     id: z.string(),
   }),
-  needsApproval: never(),
+  approval: never(),
   async execute(input, ctx) {
     const p = resolvePartition(ctx);
     const cancelled = await removeRoutine(p, input.id);

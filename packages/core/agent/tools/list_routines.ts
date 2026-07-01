@@ -24,7 +24,7 @@ export default defineTool({
       }),
     ),
   }),
-  needsApproval: never(),
+  approval: never(),
   async execute(input, ctx) {
     const p = resolvePartition(ctx);
     const all = await listRoutines(p);

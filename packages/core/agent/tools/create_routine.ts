@@ -42,7 +42,7 @@ export default defineTool({
     trigger: z.string(),
     nextRunAt: z.string().nullable().describe("When it first fires (ISO, UTC), or null for event subscriptions."),
   }),
-  needsApproval: never(),
+  approval: never(),
   async execute(input, ctx) {
     const mode = resolveMode(ctx);
     if (mode === "mpim") {

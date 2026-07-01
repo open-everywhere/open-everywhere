@@ -26,7 +26,7 @@ export default defineTool({
     title: z.string().describe("PR title."),
     body: z.string().describe("PR description (markdown)."),
   }),
-  needsApproval: always(),
+  approval: always(),
   async execute(input, ctx) {
     const token = await resolvePrToken(input.repo);
 

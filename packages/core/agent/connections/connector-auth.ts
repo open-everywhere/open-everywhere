@@ -3,6 +3,7 @@ import {
   type ConnectionAuthDefinition,
   type InteractiveAuthorizationDefinition,
   type JsonValue,
+  type TokenResult,
 } from "eve/connections";
 import { assertConnectorGranted, boundConnectorCredential } from "../access/connector-scope.js";
 import { getSecret } from "../access/credentials.js";
@@ -50,9 +51,7 @@ export function appConnectToken(opts: {
     async getToken(o) {
       await assertConnectorGranted(opts.connector);
       const base = await connectAuthFor(opts.connector, opts.vercelConnector);
-      return (base as { getToken(o: unknown): unknown }).getToken(o) as ReturnType<
-        NonNullable<ConnectionAuthDefinition>["getToken"]
-      >;
+      return (base as { getToken(o: unknown): unknown }).getToken(o) as Promise<TokenResult>;
     },
   };
 }
@@ -81,9 +80,7 @@ export function appProviderToken(opts: {
         if (!cred.vercelConnector)
           throw new Error(`connection "${opts.connector}": service-oauth credential has no vercelConnector`);
         const base = await connectAuthFor(opts.connector, cred.vercelConnector);
-        return (base as { getToken(o: unknown): unknown }).getToken(o) as ReturnType<
-          NonNullable<ConnectionAuthDefinition>["getToken"]
-        >;
+        return (base as { getToken(o: unknown): unknown }).getToken(o) as Promise<TokenResult>;
       }
       throw new Error(
         `connection "${opts.connector}": credential type "${cred.type}" is not valid on an app connection ` +

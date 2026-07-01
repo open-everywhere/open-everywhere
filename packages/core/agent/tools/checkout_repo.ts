@@ -20,7 +20,7 @@ export default defineTool({
       .object({ file: z.string(), lines: z.number(), bytes: z.number() })
       .optional(),
   }),
-  needsApproval: never(),
+  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {

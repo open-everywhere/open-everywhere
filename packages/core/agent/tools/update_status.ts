@@ -16,7 +16,7 @@ export default defineTool({
     summary: z.string().min(1).describe("One short line: what you're doing / did / are blocked on."),
   }),
   outputSchema: z.object({ updated: z.boolean(), state: z.string() }),
-  needsApproval: never(),
+  approval: never(),
   async execute(input, ctx) {
     const p = resolvePartition(ctx);
     const sessionId = ctx.session.id;

@@ -12,7 +12,7 @@ export default defineTool({
     repos: z.array(z.string()),
     sourceControlConfigured: z.boolean().describe("false if no GitHub App is set up — cloning/PRs won't work until it is."),
   }),
-  needsApproval: never(),
+  approval: never(),
   async execute(_input, ctx) {
     const access = resolveAccessFor(ctx);
     return { repos: [...access.repos], sourceControlConfigured: getGitHubApp() !== null };

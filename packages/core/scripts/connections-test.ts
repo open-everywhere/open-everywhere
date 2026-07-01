@@ -14,7 +14,8 @@ ok(typeof notion.description === "string" && notion.description.length > 0, "not
 ok(typeof notion.approval === "function", "notion connection carries an approval gate (the live hard lever while per-surface scoping is an Eve gap)");
 
 const auth = notion.auth;
-ok(!!auth && (auth.principalType === "app" || auth.principalType === undefined), "auth is app-principal (defaults to app) — the service universe");
+const authPrincipal = (auth as { principalType?: unknown }).principalType;
+ok(!!auth && (authPrincipal === "app" || authPrincipal === undefined), "auth is app-principal (defaults to app) — the service universe");
 ok(!!auth && typeof (auth as { getToken?: unknown }).getToken === "function", "app-principal auth is the non-interactive getToken form");
 ok(!!auth && (auth as { startAuthorization?: unknown }).startAuthorization === undefined, "no interactive OAuth methods on the app-principal form (both-or-neither)");
 
