@@ -15,6 +15,7 @@ import {
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { loadConversationContext } from "./slack-context.js";
+import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
 import { readTier, ensureTier, writeTier, SURFACE, tierId } from "../memory/store.js";
 import { upsertUnderSection } from "../memory/markdown.js";
@@ -227,7 +228,8 @@ async function onInbound(
   return { auth: authFromFacts(message, facts), context };
 }
 
-export default slackChannel({
+const slackMentionChannel = slackChannel({
+  route: INTERNAL_SLACK_ROUTE,
   onAppMention: (ctx, message) => onInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => onInbound(ctx, message, true),
   events: {
@@ -258,3 +260,5 @@ export default slackChannel({
     },
   },
 });
+
+export default frontSlackChannel(slackMentionChannel);

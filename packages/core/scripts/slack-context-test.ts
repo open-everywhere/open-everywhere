@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { loadConversationContext } from "../agent/channels/slack-context.js";
+import { loadConversationContext, _resetBotIdentityCache } from "../agent/channels/slack-context.js";
 import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 
 let n = 0;
@@ -11,7 +11,8 @@ const ok = (cond: boolean, label: string) => {
 type ThreadMsg = { ts: string; threadTs: string; user?: string; botId?: string; text: string; markdown: string; isMe: boolean; raw: Record<string, unknown> };
 const tm = (ts: string, user: string, text: string, isMe = false): ThreadMsg => ({ ts, threadTs: "1.1", user, text, markdown: text, isMe, raw: {} });
 
-function fakeCtx(opts: { recent?: ThreadMsg[]; history?: Array<Record<string, unknown>> }) {
+function fakeCtx(opts: { recent?: ThreadMsg[]; history?: Array<Record<string, unknown>>; authTest?: Record<string, unknown> }) {
+  _resetBotIdentityCache();
   return {
     thread: {
       recentMessages: opts.recent ?? [],
@@ -23,6 +24,7 @@ function fakeCtx(opts: { recent?: ThreadMsg[]; history?: Array<Record<string, un
       teamId: "T_ENG",
       request: async (op: string) => {
         if (op === "conversations.history") return { ok: true, messages: opts.history ?? [] };
+        if (op === "auth.test") return opts.authTest ?? { ok: false, error: "unexpected_op" };
         return { ok: false, error: "unexpected_op" };
       },
     },
@@ -58,6 +60,28 @@ const msg = (ts: string, threadTs: string) => ({ ts, threadTs, channelId: "C_TXN
   ok(out.length === 1 && out[0].startsWith(UNTRUSTED_OPEN), "channel path returns one untrusted entry");
   ok(out[0].indexOf("oldest") < out[0].indexOf("middle") && out[0].indexOf("middle") < out[0].indexOf("newest"), "rendered oldest-first");
   ok(!out[0].includes("joined"), "system subtype messages are dropped");
+}
+
+{
+  const history = [
+    { type: "message", user: "UH", ts: "0.1", text: "human says hi" },
+    { type: "message", bot_id: "BOTHER", ts: "0.2", text: "another bot" },
+    { type: "message", user: "UME", ts: "0.3", text: "my post by user id" },
+    { type: "message", bot_id: "BME", ts: "0.4", text: "my post by bot id" },
+  ];
+  const out = await loadConversationContext(fakeCtx({ history, authTest: { ok: true, user_id: "UME", bot_id: "BME" } }), msg("0.5", "0.5"));
+  ok(out.length === 1, "attribution: one entry");
+  ok(out[0].includes("[sender_type=user sender_id=UH] human says hi"), "human → sender_type=user with id");
+  ok(out[0].includes("[sender_type=bot sender_id=BOTHER] another bot"), "other bot → sender_type=bot with id");
+  ok(out[0].includes("[sender_type=agent] my post by user id"), "own post (by user id) → sender_type=agent");
+  ok(out[0].includes("[sender_type=agent] my post by bot id"), "own post (by bot id) → sender_type=agent");
+  ok(!out[0].includes("sender_id=UME") && !out[0].includes("sender_id=BME"), "agent lines carry no sender_id (not flattened to a foreign speaker)");
+}
+
+{
+  const history = [{ type: "message", bot_id: "BME", ts: "0.1", text: "mine but unresolved" }];
+  const out = await loadConversationContext(fakeCtx({ history }), msg("0.5", "0.5"));
+  ok(out[0].includes("[sender_type=bot sender_id=BME] mine but unresolved"), "unresolved identity → own post attributed as bot (best-effort)");
 }
 
 {

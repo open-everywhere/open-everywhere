@@ -6,6 +6,8 @@ import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { isStopRequest, shouldDeliverReply } from "../agent/channels/engagement.js";
 import { parseMessageEvent, routeMessageEvent, type MessageRouteDeps } from "../agent/channels/slack-events.js";
+import { createHmac } from "node:crypto";
+import { classifyEnvelope, verifySlackSignature, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -135,4 +137,84 @@ registerConfig({
   ok(true, "unassigned channel can't reach into a domain (fail closed)");
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate)`);
+{
+  const JSON_CT = "application/json";
+  const body = (o: unknown) => JSON.stringify(o);
+  const ev = (event: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    body({ type: "event_callback", team_id: "T_ENG", event, ...extra });
+
+  ok(classifyEnvelope(body({ type: "url_verification", challenge: "x" }), JSON_CT).kind === "forward", "url_verification → forward");
+  ok(classifyEnvelope(ev({ type: "app_mention", channel: "C", ts: "1.1", text: "<@B> hi" }), JSON_CT).kind === "forward", "app_mention → forward");
+  ok(classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT).kind === "forward", "message.im (DM) → forward");
+  ok(classifyEnvelope("payload=%7B%7D", "application/x-www-form-urlencoded").kind === "forward", "urlencoded interaction → forward");
+  ok(classifyEnvelope("not json", JSON_CT).kind === "forward", "unparseable → forward (fail-safe)");
+  ok(classifyEnvelope(ev({ type: "reaction_added", channel: "C", ts: "1.1" }), JSON_CT).kind === "forward", "non-message event → forward");
+
+  for (const ct of ["channel", "group", "mpim"]) {
+    const d = classifyEnvelope(ev({ type: "message", channel: "C", ts: "1.1", thread_ts: "1.0", channel_type: ct, user: "U1", text: "more" }), JSON_CT);
+    ok(d.kind === "wake" && d.env !== undefined, `message.${ct} → wake (carries env)`);
+  }
+}
+
+{
+  const secret = "shhh";
+  const raw = JSON.stringify({ type: "event_callback" });
+  const nowMs = 1_700_000_000_000;
+  const ts = String(Math.floor(nowMs / 1000));
+  const sign = (t: string, b: string) => `v0=${createHmac("sha256", secret).update(`v0:${t}:${b}`).digest("hex")}`;
+  const hdr = (o: Record<string, string>) => new Headers(o);
+
+  ok(verifySlackSignature(raw, hdr({ "x-slack-request-timestamp": ts, "x-slack-signature": sign(ts, raw) }), secret, nowMs), "valid signature verifies");
+  ok(!verifySlackSignature(raw, hdr({ "x-slack-request-timestamp": ts, "x-slack-signature": "v0=deadbeef" }), secret, nowMs), "wrong signature rejected");
+  ok(!verifySlackSignature(raw, hdr({ "x-slack-request-timestamp": ts, "x-slack-signature": sign(ts, raw) }), undefined, nowMs), "no signing secret → rejected");
+  const staleTs = String(Math.floor(nowMs / 1000) - 60 * 10);
+  ok(!verifySlackSignature(raw, hdr({ "x-slack-request-timestamp": staleTs, "x-slack-signature": sign(staleTs, raw) }), secret, nowMs), "stale timestamp → rejected (replay window)");
+  ok(!verifySlackSignature(raw, hdr({ "x-slack-signature": sign(ts, raw) }), secret, nowMs), "missing timestamp header → rejected");
+}
+
+{
+  const d = new EventDedupe(1_000, 3);
+  ok(!d.seen("Ev1", 0), "unseen key → not seen");
+  d.mark("Ev1", 0);
+  ok(d.seen("Ev1", 100), "marked key within TTL → seen (a retry is squashed)");
+  ok(!d.seen("Ev1", 2_000), "key past TTL → not seen (expired)");
+  const d2 = new EventDedupe(10_000, 3);
+  d2.mark("a", 0); d2.mark("b", 1); d2.mark("c", 2); d2.mark("dd", 3);
+  ok(!d2.seen("a", 3) && d2.seen("dd", 3), "over-cap → oldest evicted, newest retained");
+}
+
+{
+  const fifo = new ThreadFifo();
+  const order: string[] = [];
+  const gate: Array<() => void> = [];
+  const mk = (label: string) => () =>
+    new Promise<void>((resolve) => {
+      order.push(`start:${label}`);
+      gate.push(() => {
+        order.push(`end:${label}`);
+        resolve();
+      });
+    });
+  const p1 = fifo.enqueue("T", mk("1"));
+  const p2 = fifo.enqueue("T", mk("2"));
+  const p3 = fifo.enqueue("T", mk("3"));
+  await Promise.resolve();
+  ok(order.join(",") === "start:1", "FIFO: only item 1 has started (2 and 3 wait for it to park)");
+  gate.shift()!(); await p1; await Promise.resolve();
+  ok(order.join(",") === "start:1,end:1,start:2", "FIFO: item 2 starts only after item 1 settles");
+  gate.shift()!(); await p2; await Promise.resolve();
+  gate.shift()!(); await p3;
+  ok(order.join(",") === "start:1,end:1,start:2,end:2,start:3,end:3", "FIFO: strict arrival order preserved across the burst");
+
+  const fifo2 = new ThreadFifo();
+  const started: string[] = [];
+  const hold = () => new Promise<void>((r) => setTimeout(r, 5));
+  const a = fifo2.enqueue("A", async () => { started.push("A"); await hold(); });
+  const b = fifo2.enqueue("B", async () => { started.push("B"); await hold(); });
+  await Promise.resolve();
+  ok(started.length === 2, "distinct threads start concurrently (not serialized against each other)");
+  await Promise.all([a, b]);
+  ok(fifo2.activeThreads === 0, "FIFO drops idle thread chains once settled");
+}
+
+console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO)`);
