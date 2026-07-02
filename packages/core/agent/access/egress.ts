@@ -15,14 +15,22 @@ function ruleForHost(
 ): EgressRule[] {
   if (host.viaConnection === null) return [];
 
-  const rule: EgressRule = {};
-  const match: NonNullable<EgressRule["match"]> = {};
-  if (host.methods && host.methods.length > 0) match.method = [...host.methods];
-  if (host.pathPrefixes && host.pathPrefixes.length === 1) {
-    match.path = { startsWith: host.pathPrefixes[0] };
+  const method = host.methods && host.methods.length > 0 ? [...host.methods] : undefined;
+  const transform = headers && Object.keys(headers).length > 0 ? [{ headers }] : undefined;
+
+  const prefixes = host.pathPrefixes ?? [];
+  if (prefixes.length > 0) {
+    return prefixes.map((prefix) => {
+      const rule: EgressRule = { match: { path: { startsWith: prefix } } };
+      if (method) rule.match!.method = method;
+      if (transform) rule.transform = transform;
+      return rule;
+    });
   }
-  if (Object.keys(match).length > 0) rule.match = match;
-  if (headers && Object.keys(headers).length > 0) rule.transform = [{ headers }];
+
+  const rule: EgressRule = {};
+  if (method) rule.match = { method };
+  if (transform) rule.transform = transform;
   return [rule];
 }
 

@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { compileNetworkPolicy } from "../agent/access/egress.js";
+import { computeEgressPolicy } from "../agent/hooks/egress.js";
+import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
+import type { Connection } from "../agent/access/bundle.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+const conn = (id: string): Connection =>
+  ({ id, credentialType: "api-key", secretRef: "ACME_KEY", allowedWebsites: ["api.acme.test"] }) as unknown as Connection;
+
+function access(hosts: ReachableHost[], connections: Connection[] = []): EffectiveAccess {
+  return {
+    mode: "channel",
+    scopeKey: "test/ws/surface",
+    connections,
+    connectorCredentials: {},
+    reachableHosts: hosts,
+    repos: [],
+    plugins: [],
+    skills: [],
+    subagents: [],
+    connectors: [],
+    instructionStack: [],
+    warnings: [],
+  } as unknown as EffectiveAccess;
+}
+
+type TestRule = { match?: { method?: string[]; path?: { startsWith?: string } }; transform?: unknown[] };
+const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: string): TestRule[] =>
+  typeof p === "string" ? [] : (((p as { allow?: Record<string, unknown[]> }).allow?.[host] ?? []) as TestRule[]);
+
+{
+  const headers = async () => ({ authorization: "Bearer x" });
+
+  const two = await compileNetworkPolicy(
+    access(
+      [{ host: "api.acme.test", viaConnection: "acme", methods: ["GET"], pathPrefixes: ["/v1/", "/v2/"] }],
+      [conn("acme")],
+    ),
+    headers,
+  );
+  const twoRules = rulesFor(two, "api.acme.test");
+  ok(twoRules.length === 2, "two pathPrefixes → two allow rules (not silently unrestricted)");
+  const prefixes = twoRules.map((r) => r.match?.path?.startsWith).sort();
+  ok(prefixes[0] === "/v1/" && prefixes[1] === "/v2/", "each rule carries its own path prefix");
+  ok(twoRules.every((r) => r.match?.method?.[0] === "GET"), "every path rule keeps the method match");
+  ok(twoRules.every((r) => !!r.transform), "every path rule keeps the credential-injection transform");
+
+  const one = await compileNetworkPolicy(
+    access([{ host: "api.acme.test", viaConnection: "acme", pathPrefixes: ["/only/"] }], [conn("acme")]),
+    headers,
+  );
+  const oneRules = rulesFor(one, "api.acme.test");
+  ok(oneRules.length === 1 && oneRules[0].match?.path?.startsWith === "/only/", "one prefix → one narrowed rule");
+
+  const zero = await compileNetworkPolicy(
+    access([{ host: "api.acme.test", viaConnection: "acme", methods: ["POST"] }], [conn("acme")]),
+    headers,
+  );
+  const zeroRules = rulesFor(zero, "api.acme.test");
+  ok(zeroRules.length === 1 && zeroRules[0].match?.path === undefined, "no prefixes → one rule, no path narrowing");
+}
+
+{
+  const goodAccess = access([{ host: "api.acme.test", viaConnection: null }]);
+
+  const okRes = await computeEgressPolicy(
+    () => goodAccess,
+    async () => ({ allow: { "api.acme.test": [] } }),
+  );
+  ok(okRes.compileError === undefined, "no error on the happy path");
+  ok(typeof okRes.policy === "object" && "allow" in okRes.policy, "happy path returns the compiled allow policy");
+  ok(okRes.scopeKey === "test/ws/surface", "happy path carries the scope key");
+
+  const resolveThrew = await computeEgressPolicy(
+    () => {
+      throw new Error("binding blew up");
+    },
+    async () => ({ allow: { "x": [] } }),
+  );
+  ok(resolveThrew.policy === "deny-all", "resolve failure → deny-all (fail closed, NOT allow-all)");
+  ok(!!resolveThrew.compileError && resolveThrew.compileError.includes("binding blew up"), "resolve failure records the error");
+
+  const compileThrew = await computeEgressPolicy(
+    () => goodAccess,
+    async () => {
+      throw new Error("secretRef ACME_KEY is not set");
+    },
+  );
+  ok(compileThrew.policy === "deny-all", "compile failure → deny-all (the missing-secretRef case)");
+  ok(!!compileThrew.compileError && compileThrew.compileError.includes("ACME_KEY"), "compile failure records the error");
+}
+
+console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver)\n`);

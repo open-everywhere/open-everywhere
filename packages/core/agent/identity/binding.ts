@@ -142,7 +142,7 @@ const bindLinear: Mapper = (ctx) => {
     surface,
     mode: "channel",
     visibility: linearVisibility(attr(a, ["is_private", "isPrivate"])),
-    trust: "internal",
+    trust: undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["creator_id", "creatorId", "user_id", "userId"]),
     target: agentSessionId ? { agentSessionId } : undefined,
   };
@@ -183,7 +183,7 @@ const bindDiscord: Mapper = (ctx) => {
     surface: channelId,
     mode,
     visibility: discordVisibility(everyoneCanView, mode),
-    trust: "internal",
+    trust: undefined,
     principalId: authPrincipalId(ctx) ?? userId,
     target: channelId ? { channelId } : undefined,
   };
@@ -202,7 +202,7 @@ const bindTelegram: Mapper = (ctx) => {
     surface,
     mode,
     visibility: telegramVisibility(chatType, mode),
-    trust: "internal",
+    trust: undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}) } : undefined,
   };

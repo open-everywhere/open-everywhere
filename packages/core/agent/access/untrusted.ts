@@ -10,11 +10,17 @@ export interface UntrustedOpts {
   source?: string;
 }
 
+function defangDelimiters(content: string): string {
+  return content
+    .replaceAll(UNTRUSTED_CLOSE, "‹/untrusted_external_data›")
+    .replaceAll(UNTRUSTED_OPEN, "‹untrusted_external_data");
+}
+
 export function wrapUntrusted(content: string, opts: UntrustedOpts = {}): string {
   const src = opts.source ? ` source=${JSON.stringify(opts.source)}` : "";
   return (
     `${UNTRUSTED_OPEN}${src}>\n` +
-    `${content}\n` +
+    `${defangDelimiters(content)}\n` +
     `${UNTRUSTED_CLOSE}\n` +
     NOTICE
   );

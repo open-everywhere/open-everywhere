@@ -2,7 +2,8 @@ import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
 import { auditToolAction } from "../audit/tool-action.js";
-import { getGitHubApp } from "../scm/provider.js";
+import { resolveAccessFor } from "../access/request.js";
+import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -28,6 +29,14 @@ export default defineTool({
   }),
   approval: always(),
   async execute(input, ctx) {
+    const access = resolveAccessFor(ctx);
+    if (!repoAllowed(input.repo, access.repos)) {
+      throw new Error(
+        `repo "${input.repo}" is not granted to this channel. Allowed: ${access.repos.length ? access.repos.join(", ") : "(none)"}. ` +
+          `Grant it via a bundle's repos (see agent/access/bundles.ts).`,
+      );
+    }
+
     const token = await resolvePrToken(input.repo);
 
     const res = await fetch(

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
@@ -17,8 +18,53 @@ const sessionLog = defineState<{ firstMessage?: string }>(
   () => ({}),
 );
 
+const writeBaseline = defineState<Record<string, Record<string, string>>>(
+  "open-everywhere.memory.writeBaseline",
+  () => ({}),
+);
+
 function log(msg: string): void {
   console.log(`[open-everywhere:memory] ${msg}`);
+}
+
+export function hashContent(s: string): string {
+  return createHash("sha1").update(s).digest("hex");
+}
+
+export function hashFiles(files: MemoryFiles): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [rel, content] of Object.entries(files)) out[rel] = hashContent(content);
+  return out;
+}
+
+export function conflictName(rel: string, sessionId: string): string {
+  const sid = sessionId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 8) || "session";
+  const dot = rel.lastIndexOf(".");
+  const slash = rel.lastIndexOf("/");
+  if (dot > slash && dot !== -1) return `${rel.slice(0, dot)}.conflict-${sid}${rel.slice(dot)}`;
+  return `${rel}.conflict-${sid}`;
+}
+
+export function mergePreservingConflicts(
+  hostCurrent: MemoryFiles,
+  fromSandbox: MemoryFiles,
+  baseline: Record<string, string>,
+  sessionId: string,
+): { files: MemoryFiles; conflicts: string[] } {
+  const merged: MemoryFiles = { ...hostCurrent, ...fromSandbox };
+  const conflicts: string[] = [];
+  for (const [rel, sandboxContent] of Object.entries(fromSandbox)) {
+    if (rel.includes(".conflict-")) continue;
+    const hostContent = hostCurrent[rel];
+    if (hostContent === undefined) continue;
+    const hostChangedSinceStart = hashContent(hostContent) !== baseline[rel];
+    const weChangedIt = sandboxContent !== hostContent;
+    if (hostChangedSinceStart && weChangedIt) {
+      merged[conflictName(rel, sessionId)] = hostContent;
+      conflicts.push(rel);
+    }
+  }
+  return { files: merged, conflicts };
 }
 
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
@@ -40,17 +86,25 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
     log(`sandbox unavailable at session.${outcome}; persisting host-store state only`);
   }
 
+  const baselines = writeBaseline.get();
   let persisted = 0;
   for (const rm of plan.writes) {
     const provider = providerById(rm.silo.provider);
     let files = await provider.readTier(p, rm.tier, rm.silo);
+    let conflicts: string[] = [];
     if (sandbox) {
       const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
-      if (Object.keys(fromSandbox).length > 0) files = fromSandbox;
+      if (Object.keys(fromSandbox).length > 0) {
+        const baseline = baselines[tierId(rm.tier)] ?? {};
+        ({ files, conflicts } = mergePreservingConflicts(files, fromSandbox, baseline, sessionId));
+      }
     }
     const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
     persisted += Object.keys(files).length;
-    log(`persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)${sha ? ` @ ${sha}` : ""}`);
+    log(
+      `persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)` +
+        `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}`,
+    );
     if (sha) {
       await appendAudit({
         org: p.org,
@@ -59,7 +113,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
         surface: p.surface,
         principalId,
         action: "memory.write",
-        detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request },
+        detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(conflicts.length ? { conflicts } : {}) },
       });
     }
   }
@@ -99,6 +153,14 @@ export default defineHook({
         if (plan.reads.length === 0) {
           log(`session.started: no memory synced — ${plan.reason}`);
           return;
+        }
+        if (plan.writes.length > 0) {
+          const baselines: Record<string, Record<string, string>> = {};
+          for (const rm of plan.writes) {
+            const provider = providerById(rm.silo.provider);
+            baselines[tierId(rm.tier)] = hashFiles(await provider.readTier(p, rm.tier, rm.silo));
+          }
+          writeBaseline.update(() => baselines);
         }
         const sandbox = await ctx.getSandbox();
         let synced = 0;
