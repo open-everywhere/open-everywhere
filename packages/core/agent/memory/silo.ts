@@ -37,7 +37,7 @@ export function assertSilosValid(silos: readonly MemorySilo[]): void {
   }
   if (bad.length > 0) {
     throw new Error(
-      "open-everywhere: invalid memory silo(s):\n" + bad.join("\n") + "\n(memory/silo.ts / docs/memory-model.md)",
+      "open-everywhere: invalid memory silo(s):\n" + bad.join("\n") + "\n(memory/silo.ts / docs/capabilities/memory.md)",
     );
   }
 }

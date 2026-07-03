@@ -92,7 +92,7 @@ export interface RouteOutcome extends ReplyDecision {
   readonly woke: boolean;
 }
 
-function bindableFor(ev: ParsedMessageEvent): BindableContext {
+export function bindableFor(ev: ParsedMessageEvent): BindableContext {
   return {
     channel: { kind: "slack" },
     session: {
@@ -150,12 +150,13 @@ export type WakeSend = (
   opts: { auth: unknown; continuationToken: string; state?: unknown },
 ) => Promise<unknown>;
 
-function wakeState(ev: ParsedMessageEvent, threadTs: string): unknown {
+function wakeState(ev: ParsedMessageEvent, threadTs: string, extra?: Record<string, unknown>): unknown {
   return {
     channelId: ev.channelId,
     threadTs,
     teamId: ev.teamId ?? null,
     triggeringUserId: ev.userId ?? null,
+    ...extra,
   };
 }
 
@@ -262,7 +263,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     threadTs: ev.ts,
     auth: authForEvent({ ...ev, threadTs: ev.ts }),
     message: renderNameDropMessage(ev, matched!),
-    state: wakeState(ev, ev.ts),
+    state: wakeState(ev, ev.ts, { oeUninvited: true }),
   });
   return { ...decision, woke: true };
 }

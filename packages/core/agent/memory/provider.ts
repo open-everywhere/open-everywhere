@@ -80,7 +80,7 @@ export function providerById(id: string | undefined): MemoryProvider {
     throw new Error(
       `unknown memory provider "${id}" — a silo references it but it isn't registered ` +
         `(have: ${Object.keys(REGISTRY).join(", ")}). For "postgres" call registerPostgres(); ` +
-        `for "github"/"notion" wire the adapter (docs/memory-model.md).`,
+        `for "github"/"notion" wire the adapter (docs/capabilities/memory.md).`,
     );
   }
   return provider;

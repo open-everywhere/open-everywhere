@@ -27,6 +27,9 @@ export function seedFor(p: Partition, tier: Tier): MemoryFiles {
 
 ## Decisions
 (none yet)
+
+## Notes
+(none yet)
 `;
   switch (tier.kind) {
     case "workspace":

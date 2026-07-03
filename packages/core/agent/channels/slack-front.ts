@@ -7,8 +7,12 @@ import {
   liveDeps,
   routeNameDropEvent,
   liveNameDropDeps,
+  bindableFor,
   type SlackEventEnvelope,
+  type RouteOutcome,
 } from "./slack-events.js";
+import { resolvePartition } from "../memory/partition.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -157,6 +161,7 @@ export interface FrontOptions {
   readonly fifo?: ThreadFifo;
   readonly getBotIdentity?: () => Promise<{ readonly userId?: string; readonly botId?: string }>;
   readonly now?: () => number;
+  readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
 }
 
 const OK = () => new Response("ok");
@@ -166,12 +171,35 @@ function wakeKey(env: SlackEventEnvelope, channelId: string, ts: string): string
   return eventId ?? `${channelId}:${ts}`;
 }
 
+const DEDUPE_TTL_MS = 10 * 60_000;
+let warnedDedupeStore = false;
+async function liveMarkEventSeen(org: string, key: string, atIso: string): Promise<boolean> {
+  try {
+    return await getOperationalStore().markEventSeen(org, key, atIso, DEDUPE_TTL_MS);
+  } catch (err) {
+    if (!warnedDedupeStore) {
+      warnedDedupeStore = true;
+      console.warn(`[open-everywhere:slack-front] durable dedupe unavailable — in-memory only: ${String(err)}`);
+    }
+    return true;
+  }
+}
+
+const logOutcome =
+  (path: string, channelId: string, ts: string) =>
+  (outcome: RouteOutcome): void => {
+    console.log(
+      `[open-everywhere:slack-front] ${path} ${channelId}/${ts}: ${outcome.woke ? "woke" : "no wake"} — ${outcome.reason}`,
+    );
+  };
+
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo();
   const getBotIdentity = opts.getBotIdentity ?? resolveBotIdentity;
   const now = opts.now ?? (() => Date.now());
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
+  const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     const rawBody = await req.text();
@@ -194,16 +222,23 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     const key = wakeKey(decision.env, ev.channelId, ev.ts);
     if (dedupe.seen(key, now())) return OK();
     dedupe.mark(key, now());
+    try {
+      const org = resolvePartition(bindableFor(ev)).org;
+      if (!(await markEventSeen(org, key, new Date(now()).toISOString()))) return OK();
+    } catch {
+    }
 
     const send = args.send as unknown as Parameters<typeof liveDeps>[0];
 
     if (!ev.threadTs) {
-      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(() => undefined));
+      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome("name-drop", ev.channelId, ev.ts)));
       return OK();
     }
 
     const threadKey = slackContinuationToken(ev.channelId, ev.threadTs);
-    args.waitUntil(fifo.enqueue(threadKey, () => routeMessageEvent(ev, liveDeps(send)).then(() => undefined)));
+    args.waitUntil(
+      fifo.enqueue(threadKey, () => routeMessageEvent(ev, liveDeps(send)).then(logOutcome("engaged-thread", ev.channelId, ev.threadTs!))),
+    );
     return OK();
   };
 }

@@ -35,7 +35,7 @@ function findSilo(silos: readonly MemorySilo[], name: string, referencedBy: stri
   if (!silo) {
     throw new Error(
       `memory silo "${name}" referenced by ${referencedBy} is not defined — add a ` +
-        `defineMemorySilo({ name: "${name}", … }) (memory/silo.ts / docs/memory-model.md).`,
+        `defineMemorySilo({ name: "${name}", … }) (memory/silo.ts / docs/capabilities/memory.md).`,
     );
   }
   return silo;

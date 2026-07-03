@@ -62,6 +62,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      last_turn_at text NOT NULL,
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
+  `CREATE TABLE IF NOT EXISTS event_dedupe (
+     org_id  text NOT NULL,
+     key     text NOT NULL,
+     seen_at text NOT NULL,
+     PRIMARY KEY (org_id, key)
+   )`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -73,6 +79,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE spend_limit ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -80,6 +87,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS spend_limit_org_isolation ON spend_limit`,
   `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
+  `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -97,6 +105,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY thread_engagement_org_isolation ON thread_engagement
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
 ];
@@ -355,6 +366,16 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         engagedAt: r.engaged_at,
         lastTurnAt: r.last_turn_at,
       }));
+    },
+
+    async markEventSeen(org, key, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM event_dedupe WHERE seen_at < $1", [cutoff]);
+      const { rows } = await client.query(
+        "INSERT INTO event_dedupe (org_id, key, seen_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",
+        [org, key, at],
+      );
+      return rows.length > 0;
     },
   };
 }

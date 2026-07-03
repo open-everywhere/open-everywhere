@@ -14,6 +14,7 @@ import {
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageAction } from "./slack-events.js";
@@ -31,6 +32,35 @@ import {
   PINNED_HEADER,
   type ReactionState,
 } from "../status/status.js";
+
+function isUninvited(state: unknown): boolean {
+  return (state as Record<string, unknown> | undefined)?.oeUninvited === true;
+}
+
+async function recordQuietFailure(
+  state: { channelId?: string | null; teamId?: string | null; threadTs?: string | null },
+  event: string,
+  message: string,
+): Promise<void> {
+  console.warn(`[open-everywhere:slack] ${event} on an uninvited turn — suppressed on-surface (${message})`);
+  try {
+    const p = resolvePartition({
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+    });
+    await getOperationalStore().appendAudit({
+      ts: new Date().toISOString(),
+      org: p.org,
+      platform: p.platform,
+      workspace: p.workspace,
+      surface: p.surface,
+      action: "surface.quiet_fail",
+      detail: { event, threadTs: state.threadTs ?? undefined, message: message.slice(0, 500) },
+    });
+  } catch (err) {
+    console.warn(`[open-everywhere:slack] quiet-fail audit write failed: ${String(err)}`);
+  }
+}
 
 function firstNonEmptyLine(text: string): string | undefined {
   for (const line of text.split(/\r?\n/u)) {
@@ -269,6 +299,9 @@ const slackMentionChannel = slackChannel({
       channel.state.pendingToolCallMessage = null;
       if (action.kind === "silent") {
         (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
+        console.log(
+          `[open-everywhere:slack] judged silence (NO_REPLY) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
+        );
         try {
           await channel.thread.startTyping();
         } catch {
@@ -277,6 +310,7 @@ const slackMentionChannel = slackChannel({
       }
       (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
       await channel.thread.post(action.text);
+      (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
       await setStatusReaction(channel.slack, "none");
       try {
         const { channelId, teamId, threadTs } = channel.state;
@@ -300,7 +334,24 @@ const slackMentionChannel = slackChannel({
       if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
       await setStatusReaction(channel.slack, "none");
     },
+    "turn.failed": async (data, channel) => {
+      if (isUninvited(channel.state)) {
+        await recordQuietFailure(channel.state, "turn.failed", data.message);
+        return;
+      }
+      await setStatusReaction(channel.slack, "blocked");
+      try {
+        await channel.thread.post(
+          `:octagonal_sign: I hit an error while handling your request (${data.message}). Please try again or rephrase.`,
+        );
+      } catch {
+      }
+    },
     "session.failed": async (data, channel) => {
+      if (isUninvited(channel.state)) {
+        await recordQuietFailure(channel.state, "session.failed", data.message);
+        return;
+      }
       await setStatusReaction(channel.slack, "blocked");
       try {
         await channel.thread.post(`:octagonal_sign: Task failed: ${data.message}`);

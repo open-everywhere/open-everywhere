@@ -95,4 +95,6 @@ export interface OperationalStore {
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
   disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   listEngagements(org: string): Promise<EngagementRow[]>;
+
+  markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 }

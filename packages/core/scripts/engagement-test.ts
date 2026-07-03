@@ -195,6 +195,12 @@ registerConfig({
   const d2 = new EventDedupe(10_000, 3);
   d2.mark("a", 0); d2.mark("b", 1); d2.mark("c", 2); d2.mark("dd", 3);
   ok(!d2.seen("a", 3) && d2.seen("dd", 3), "over-cap → oldest evicted, newest retained");
+
+  const store = getOperationalStore();
+  const TTL = 10 * 60_000;
+  ok(await store.markEventSeen("default", "EvX", "2026-07-03T10:00:00Z", TTL), "durable: first sighting → proceed");
+  ok(!(await store.markEventSeen("default", "EvX", "2026-07-03T10:00:03Z", TTL)), "durable: retry within TTL → dropped (cross-instance)");
+  ok(await store.markEventSeen("default", "EvX", "2026-07-03T10:30:00Z", TTL), "durable: expired sighting pruned → fresh again");
 }
 
 {
@@ -325,6 +331,7 @@ registerConfig({
   ok(calls[0].threadTs === "42.1", "reply thread is rooted at the triggering message's ts");
   ok(calls[0].message.includes("[name-drop]") && calls[0].message.includes(NO_REPLY_SENTINEL), "name-drop dispatch carries the judge instruction + sentinel");
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
+  ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === true, "name-drop wake state carries oeUninvited → failures stay quiet until a reply posts");
 
   calls.length = 0;
   infoCalls = 0;
