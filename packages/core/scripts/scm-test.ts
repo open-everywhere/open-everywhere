@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
 import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES } from "../agent/scm/git.js";
-import { repoSlug, mergeRepoSkills, isSafeSkillName, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
+import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import { repoAllowed } from "../agent/scm/provider.js";
@@ -238,6 +238,70 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
+  const probe = agentsProbe("repo");
+  ok(probe.includes(".agents/agents") && probe.includes(".claude/agents"), "agents probe checks both roots");
+  ok(probe.indexOf(".agents/agents") < probe.indexOf(".claude/agents"), "agents probe prefers .agents/agents (first existing root wins; never merged)");
+  ok(AGENT_ROOTS[0] === ".agents/agents" && AGENT_ROOTS[1] === ".claude/agents", ".agents/agents is the priority root");
+  ok(probe.includes("'repo'/"), "agents probe scopes to the checkout dir");
+  ok(probe.includes('"$ar"/*.md') && probe.includes('basename "$f" .md'), "agents are flat <name>.md files; the name is the basename without .md");
+  ok(probe.includes(`head -c ${MAX_SKILL_BYTES}`) && probe.indexOf("head -c") < probe.indexOf("base64"), "each agent file is byte-bounded BEFORE encoding");
+  ok(probe.includes(`-ge ${MAX_REPO_AGENTS}`) && probe.includes(AGENT_TRUNC_MARKER), "the loop is capped with a truncation marker");
+  ok(probe.includes("ar=''") && probe.includes("m=0") && skillsProbe("repo").includes("sr=''"), "agents probe uses its own shell vars (runs in the same script as the skills probe)");
+
+  const cmd = checkoutCommand("acme/web", "ghs_x", "repo", { name: "open-everywhere[bot]", email: "1+open-everywhere[bot]@users.noreply.github.com" });
+  ok(cmd.includes(AGENT_MARKER), "checkoutCommand includes the agents probe");
+  ok(cmd.indexOf(AGENT_MARKER) < cmd.indexOf(CHECKOUT_OK), "agents probe runs before the OK sentinel");
+}
+
+{
+  const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
+  const md = "---\nname: code-reviewer\ndescription: Reviews diffs for bugs.\nmodel: haiku\ntools: [Read, Grep]\n---\nYou are a meticulous reviewer.";
+  const out = parseAgentsProbe(`noise\n${AGENT_MARKER} reviewer ${b64(md)}\n${CHECKOUT_OK}`);
+  ok(Object.keys(out.agents).length === 1 && out.agents["reviewer"] === md && !out.truncated, "parseAgentsProbe decodes basename + content per marker line");
+  ok(Object.keys(parseAgentsProbe(`${AGENT_MARKER} evil not!base64!`).agents).length === 0, "agent bad base64 is skipped");
+  ok(Object.keys(parseAgentsProbe(`${AGENT_MARKER} ../up ${b64("x")}`).agents).length === 0, "an unsafe agent basename is skipped");
+  ok(parseAgentsProbe(`${AGENT_MARKER} a ${b64("x")}\n${AGENT_TRUNC_MARKER}`).truncated === true, "agent truncation marker is reported");
+
+  const def = parseRepoAgent("reviewer", md);
+  ok(def.name === "code-reviewer" && def.description === "Reviews diffs for bugs.", "parseRepoAgent reads frontmatter name + description");
+  ok(def.model === "haiku" && def.tools?.length === 2 && def.tools[0] === "Read", "model + tools are parsed and KEPT (dropped-with-reason at merge, usable by a future real-subagent mapping)");
+  ok(def.body === "You are a meticulous reviewer.", "the body is the persona, frontmatter stripped");
+
+  const bare = parseRepoAgent("triage", "Just a persona, no frontmatter.");
+  ok(bare.name === "triage" && bare.body === "Just a persona, no frontmatter." && bare.description === "", "a frontmatter-less file falls back to the basename, body verbatim");
+  ok(parseRepoAgent("fallback", "---\nname: Code Reviewer\n---\nBody.").name === "code-reviewer", "an unsafe frontmatter name is slugged (Eve's safe-name rule)");
+  ok(parseRepoAgent("t", "---\ntools: Read, Bash\n---\nB.").tools?.join("|") === "Read|Bash", "a comma-string tools list is split");
+}
+
+{
+  const warns: string[] = [];
+  const state: Record<string, RepoSkillsEntry> = {
+    "payments-api": {
+      repo: "acme/payments-api",
+      skills: { deploy: "---\ndescription: Ship it.\n---\nSteps." },
+      agents: {
+        "code-reviewer": { name: "code-reviewer", description: "Reviews diffs for bugs.", body: "You are a meticulous reviewer.", model: "haiku", tools: ["Read"] },
+        deploy: { name: "deploy", description: "Clashes with the skill.", body: "x" },
+        "no-desc": { name: "no-desc", description: "", body: "Persona." },
+      },
+    },
+  };
+  const merged = mergeRepoSkills(state, new Set(["payments-api--code-reviewer-granted"]), (m) => warns.push(m));
+  const reviewer = merged["payments-api--code-reviewer"];
+  ok(!!reviewer && reviewer.description === "Reviews diffs for bugs.", "an agent surfaces as <repoSlug>--<name> with ITS description (the when-to-delegate signal)");
+  ok(reviewer.markdown.startsWith(delegationHeader("acme/payments-api")), "the skill content starts with the trusted delegation header (repo interpolated)");
+  ok(reviewer.markdown.includes("call the `agent` tool") && reviewer.markdown.endsWith("You are a meticulous reviewer.\n"), "header explains the agent-tool mapping; persona body rides verbatim after it");
+  ok(!reviewer.markdown.includes("haiku"), "frontmatter model is dropped from the skill content (ignored at runtime; per-domain routing applies)");
+  ok(merged["payments-api--deploy"].description === "Ship it." && warns.some((w) => w.includes("the skill wins")), "on a same-repo skill/agent name clash the SKILL wins, agent dropped with a warn");
+  ok(merged["payments-api--no-desc"].description.includes("Delegation persona"), "a description-less agent gets a provenance fallback description");
+
+  const granted = mergeRepoSkills(state, new Set(["payments-api--code-reviewer"]), (m) => warns.push(m));
+  ok(!("payments-api--code-reviewer" in granted), "a granted skill wins a namespaced collision with an agent too");
+  const legacy = mergeRepoSkills({ web: { repo: "acme/web", skills: { s: "# S" } } }, new Set());
+  ok("web--s" in legacy, "state persisted before the agents field still merges (agents optional)");
+}
+
+{
   const base = (repos: string[]): EffectiveAccess => ({
     mode: "channel", scopeKey: "x", connections: [], connectorCredentials: {}, reachableHosts: [], repos, plugins: [], skills: [], subagents: [], connectors: [], instructionStack: [], warnings: [],
   });
@@ -248,4 +312,4 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, repo skills, guards, egress)\n`);
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, repo skills, repo agents, guards, egress)\n`);

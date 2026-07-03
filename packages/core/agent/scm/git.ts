@@ -48,6 +48,7 @@ export function checkoutCommand(
     `git -C '${dir}' config user.email '${identity.email}'`,
     conventionProbe(dir),
     skillsProbe(dir),
+    agentsProbe(dir),
     "echo __SCM_CHECKOUT_OK__",
   ].join("\n");
 }
@@ -133,6 +134,51 @@ export function parseSkillsProbe(stdout: string): RepoSkillsProbe {
     skills[m[1]] = content;
   }
   return { skills, truncated };
+}
+
+export const AGENT_ROOTS = [".agents/agents", ".claude/agents"] as const;
+
+export const AGENT_MARKER = "__OE_AGENT__";
+
+export const AGENT_TRUNC_MARKER = "__OE_AGENT_TRUNC__";
+
+export const MAX_REPO_AGENTS = 10;
+
+export interface RepoAgentsProbe {
+  agents: Record<string, string>;
+  truncated: boolean;
+}
+
+export function agentsProbe(dir: string): string {
+  return (
+    `ar=''; for r in ${AGENT_ROOTS.join(" ")}; do ` +
+    `if [ -d '${dir}'/"$r" ]; then ar='${dir}'/"$r"; break; fi; done; ` +
+    `m=0; if [ -n "$ar" ]; then for f in "$ar"/*.md; do ` +
+    `if [ -f "$f" ]; then ` +
+    `if [ $m -ge ${MAX_REPO_AGENTS} ]; then echo ${AGENT_TRUNC_MARKER}; break; fi; ` +
+    `m=$((m+1)); ` +
+    `echo "${AGENT_MARKER} $(basename "$f" .md) $(head -c ${MAX_SKILL_BYTES} "$f" | base64 -w0)"; ` +
+    `fi; done; fi`
+  );
+}
+
+export function parseAgentsProbe(stdout: string): RepoAgentsProbe {
+  const re = new RegExp(`^${AGENT_MARKER}\\s+(\\S+)\\s+([A-Za-z0-9+/=]+)$`);
+  const agents: Record<string, string> = {};
+  let truncated = false;
+  for (const line of stdout.split("\n")) {
+    const t = line.trim();
+    if (t === AGENT_TRUNC_MARKER) {
+      truncated = true;
+      continue;
+    }
+    const m = t.match(re);
+    if (!m || !isSafeSkillName(m[1])) continue;
+    const content = decodeBase64Utf8(m[2]);
+    if (!content || !content.trim()) continue;
+    agents[m[1]] = content;
+  }
+  return { agents, truncated };
 }
 
 export function redactSecret(text: string, ...secrets: string[]): string {
