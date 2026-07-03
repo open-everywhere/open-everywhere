@@ -31,28 +31,43 @@ function loadEveInternals(): Promise<EveInternals | null> {
         import(abs("dist/src/context/keys.js")),
         import(abs("dist/src/runtime/sessions/runtime-context-keys.js")),
       ]);
-      if (!container?.contextStorage || !keys?.AuthKey || !runtimeKeys?.ChannelKey) return null;
+      if (!container?.contextStorage || !keys?.AuthKey || !runtimeKeys?.ChannelKey) {
+        internalsLoadError = "internal modules loaded but expected exports are missing";
+        return null;
+      }
       return {
         contextStorage: container.contextStorage,
         AuthKey: keys.AuthKey,
         InitiatorAuthKey: keys.InitiatorAuthKey,
         ChannelKey: runtimeKeys.ChannelKey,
       };
-    } catch {
+    } catch (err) {
+      internalsLoadError = String(err);
       return null;
     }
   })();
   return internalsPromise;
 }
 
+let internalsLoadError: string | undefined;
+
+const nullReasons = new Set<string>();
+function nullBecause(reason: string): null {
+  if (!nullReasons.has(reason)) {
+    nullReasons.add(reason);
+    console.warn(`[open-everywhere:surface-context] unresolvable: ${reason}`);
+  }
+  return null;
+}
+
 export async function readSurfaceContext(): Promise<BindableContext | null> {
   const eve = await loadEveInternals();
-  if (!eve) return null;
+  if (!eve) return nullBecause(`eve internals failed to load: ${internalsLoadError ?? "(unknown)"}`);
   const store = eve.contextStorage.getStore();
-  if (!store) return null;
+  if (!store) return nullBecause("no ALS store — outside an eve session scope");
   const current = store.get(eve.AuthKey) ?? null;
   const initiator = store.get(eve.InitiatorAuthKey) ?? current;
-  if (current === null && initiator === null) return null;
+  if (current === null && initiator === null) return nullBecause("ALS store present but no auth keys set");
   const channel = store.get(eve.ChannelKey) as { kind?: string } | undefined;
   type SessionAuth = NonNullable<NonNullable<BindableContext["session"]>["auth"]>;
   return {

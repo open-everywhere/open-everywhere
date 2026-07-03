@@ -277,6 +277,7 @@ const slackMentionChannel = slackChannel({
       }
       (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
       await channel.thread.post(action.text);
+      await setStatusReaction(channel.slack, "none");
       try {
         const { channelId, teamId, threadTs } = channel.state;
         if (channelId && threadTs) {

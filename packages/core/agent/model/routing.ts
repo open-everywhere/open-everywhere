@@ -3,6 +3,7 @@ import { modelRouteFor } from "../memory/domain.js";
 import { readSurfaceContext } from "../access/connector-scope.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
+import { surfaceHint } from "./surface-hint.js";
 
 export interface RoutedCallOptions {
   reasoning?: string;
@@ -37,7 +38,8 @@ export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
 export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains"> = {
   surfaceKey: async () => {
     const ctx = await readSurfaceContext();
-    return ctx ? resolvePartition(ctx).surfaceKey : null;
+    if (ctx) return resolvePartition(ctx).surfaceKey;
+    return surfaceHint();
   },
   domains: () => getConfig().loadDomains(),
 };
@@ -85,6 +87,10 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
       return {};
     }
     if (surfaceKey === null) {
+      if (!applied.has("__no_surface__")) {
+        applied.add("__no_surface__");
+        console.log(`[open-everywhere:model-routing] ${role}: no surface at model-call time — routing inactive, defaults apply`);
+      }
       return {};
     }
     try {
