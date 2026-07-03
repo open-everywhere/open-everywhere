@@ -15,6 +15,8 @@ import {
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { statusVerbsFor } from "../memory/domain.js";
+import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageAction } from "./slack-events.js";
@@ -32,6 +34,19 @@ import {
   PINNED_HEADER,
   type ReactionState,
 } from "../status/status.js";
+
+function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
+  try {
+    const p = resolvePartition({
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+    });
+    const verbs = statusVerbsFor(p.surfaceKey, getConfig().loadDomains());
+    return `${verbs[Math.floor(Math.random() * verbs.length)]}…`;
+  } catch {
+    return "Working…";
+  }
+}
 
 function isUninvited(state: unknown): boolean {
   return (state as Record<string, unknown> | undefined)?.oeUninvited === true;
@@ -244,7 +259,7 @@ async function onInbound(
   }
 
   try {
-    await ctx.thread.startTyping("Thinking…");
+    await ctx.thread.startTyping(statusVerb({ channelId: message.channelId, teamId: message.teamId }));
   } catch {
   }
   await setStatusReaction(ctx.slack, "working");
@@ -278,7 +293,7 @@ const slackMentionChannel = slackChannel({
       if (last != null && now - last >= 0 && now - last < 5000) return;
       channel.state.lastReasoningTypingAtMs = now;
       try {
-        await channel.thread.startTyping("Thinking…");
+        await channel.thread.startTyping(statusVerb(channel.state));
       } catch {
       }
     },
@@ -286,7 +301,7 @@ const slackMentionChannel = slackChannel({
       const preamble = channel.state.pendingToolCallMessage;
       channel.state.pendingToolCallMessage = null;
       try {
-        await channel.thread.startTyping(preamble ? preamble.slice(0, 150) : "Working…");
+        await channel.thread.startTyping(preamble ? preamble.slice(0, 150) : statusVerb(channel.state));
       } catch {
       }
     },

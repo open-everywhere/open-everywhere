@@ -31,6 +31,8 @@ export interface Domain {
   readonly bundle?: string;
   readonly nameDropWake?: boolean;
   readonly models?: ModelRoutes;
+  readonly statusVerbs?: readonly string[];
+  readonly statusVerbsMode?: "extend" | "replace";
 }
 
 export function memoryRefs(domain: Domain): string[] {
@@ -69,6 +71,30 @@ export function modelRouteFor(role: ModelRole, channelKey: string, domains: read
     };
   }
   return route;
+}
+
+export const DEFAULT_STATUS_VERBS: readonly string[] = [
+  "Tinkering",
+  "Untangling",
+  "Sifting",
+  "Weaving",
+  "Whittling",
+  "Rummaging",
+  "Distilling",
+  "Plotting",
+  "Doodling",
+  "Juggling",
+];
+
+export function statusVerbsFor(channelKey: string, domains: readonly Domain[]): readonly string[] {
+  const layers = [criteriaDomain("org", domains), domainForChannel(channelKey, domains)];
+  let verbs = [...DEFAULT_STATUS_VERBS];
+  for (const d of layers) {
+    const own = (d?.statusVerbs ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
+    if (own.length === 0 && d?.statusVerbsMode !== "replace") continue;
+    verbs = d?.statusVerbsMode === "replace" ? own : [...verbs, ...own.filter((v) => !verbs.includes(v))];
+  }
+  return verbs.length > 0 ? verbs : DEFAULT_STATUS_VERBS;
 }
 
 export function assertChannelExclusivity(domains: readonly Domain[]): void {
