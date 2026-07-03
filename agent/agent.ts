@@ -16,6 +16,7 @@ export default defineAgent({
   reasoning: "medium",
   compaction: {
     model: gatewayRoutedModel("utility", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),
+    modelContextWindowTokens: 1_000_000,
   },
   modelOptions: {
     providerOptions: {

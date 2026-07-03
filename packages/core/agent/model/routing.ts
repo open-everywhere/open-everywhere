@@ -75,6 +75,7 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
     console.warn(`[open-everywhere:model-routing] ${role}: ${reason} — using default model "${defaults.id}"`);
   };
 
+  const applied = new Set<string>();
   const resolve = async (): Promise<ModelRoute> => {
     let surfaceKey: string | null;
     try {
@@ -87,7 +88,15 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
       return {};
     }
     try {
-      return modelRouteFor(role, surfaceKey, deps.domains());
+      const route = modelRouteFor(role, surfaceKey, deps.domains());
+      if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
+        const key = `${surfaceKey} ${JSON.stringify(route)}`;
+        if (!applied.has(key)) {
+          applied.add(key);
+          console.log(`[open-everywhere:model-routing] ${role}: ${surfaceKey} → ${JSON.stringify(route)}`);
+        }
+      }
+      return route;
     } catch (err) {
       warnOnce(`domain config unavailable (${String(err)})`);
       return {};
