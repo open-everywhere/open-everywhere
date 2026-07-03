@@ -142,7 +142,15 @@ interface BulletRef {
   readonly negated: boolean;
 }
 
-function contentWords(line: string): Set<string> {
+export function isNegated(line: string): boolean {
+  return NEGATION.test(line);
+}
+
+export function bulletDate(line: string): string | null {
+  return line.match(DATE_PREFIX)?.[1] ?? null;
+}
+
+export function contentWords(line: string): Set<string> {
   const body = line
     .replace(DATE_PREFIX, "")
     .replace(/^\s*-\s+/, "")
@@ -164,7 +172,7 @@ function bulletRefs(files: MemoryFiles): BulletRef[] {
   return refs;
 }
 
-function jaccard(a: Set<string>, b: Set<string>): number {
+export function jaccard(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
   let inter = 0;
   for (const w of a) if (b.has(w)) inter++;

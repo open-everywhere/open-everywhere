@@ -2,6 +2,7 @@ import { defineAgent } from "eve";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayRoutedModel } from "@open-everywhere/adapters/agent/model/gateway.js";
+import { registerGatewayDreamJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 
 const GATEWAY_DEFAULTS = {
   only: ["fireworks"],
@@ -9,6 +10,8 @@ const GATEWAY_DEFAULTS = {
   caching: "auto",
 } as const;
 const DEFAULT_MODEL = "zai/glm-5.2";
+
+registerGatewayDreamJudge({ id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS });
 
 export default defineAgent({
   model: gatewayRoutedModel("primary", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),

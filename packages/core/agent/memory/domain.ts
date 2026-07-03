@@ -88,7 +88,7 @@ export function assertChannelExclusivity(domains: readonly Domain[]): void {
     throw new Error(
       "open-everywhere: a channel may belong to at most one memory domain, but:\n" +
         clashes.join("\n") +
-        "\nRemove the channel from all but one domain (docs/memory-model.md).",
+        "\nRemove the channel from all but one domain (docs/capabilities/memory.md).",
     );
   }
 }
@@ -120,7 +120,7 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
   }
   if (bad.length > 0) {
     throw new Error(
-      "open-everywhere: invalid memory domain(s):\n" + bad.join("\n") + "\n(memory/domain.ts / docs/memory-model.md)",
+      "open-everywhere: invalid memory domain(s):\n" + bad.join("\n") + "\n(memory/domain.ts / docs/capabilities/memory.md)",
     );
   }
 }

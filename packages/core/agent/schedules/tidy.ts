@@ -3,12 +3,19 @@ import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
 import { siloTier, tierId, type Tier } from "../memory/store.js";
 import type { Partition } from "../memory/partition.js";
-import { tidySilo } from "../memory/dream/tidy.js";
+import { tidySilo, tidySiloJudged, type TidyResult, type JudgeStats } from "../memory/dream/tidy.js";
+import { dreamJudge } from "../memory/dream/judge.js";
+import { DEFAULT_CANDIDATE_CAP } from "../memory/dream/candidates.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/tidy] ${msg}`);
+}
+
+export function dreamCandidateCap(): number {
+  const n = Number.parseInt(process.env.OE_DREAM_MAX_CANDIDATES ?? "", 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_CANDIDATE_CAP;
 }
 
 export function tidyOrgs(): string[] {
@@ -36,23 +43,29 @@ export interface TidyTickReport {
   readonly applied: number;
   readonly proposed: number;
   readonly changed: number;
+  readonly judged: JudgeStats;
 }
 
 export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: readonly string[] } = {}): Promise<TidyTickReport> {
   const now = opts.now ?? new Date();
   const orgs = opts.orgs ?? tidyOrgs();
   let silos: readonly { name: string; provider: string; readOnly?: boolean }[];
+  const noJudge: JudgeStats = { candidates: 0, confirmed: 0, rejected: 0, failed: 0 };
   try {
     silos = getConfig().loadSilos();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
-    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0 };
+    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge };
   }
+
+  const judge = dreamJudge();
+  const cap = dreamCandidateCap();
 
   let siloCount = 0;
   let applied = 0;
   let proposed = 0;
   let changed = 0;
+  let judged = noJudge;
 
   for (const org of orgs) {
     const p = partitionForOrg(org);
@@ -69,7 +82,19 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       if (Object.keys(files).length === 0) continue;
       siloCount++;
 
-      const result = tidySilo(files, { now });
+      let result: TidyResult;
+      if (judge) {
+        const r = await tidySiloJudged(files, silo.name, judge, { now, maxCandidates: cap });
+        judged = {
+          candidates: judged.candidates + r.judged.candidates,
+          confirmed: judged.confirmed + r.judged.confirmed,
+          rejected: judged.rejected + r.judged.rejected,
+          failed: judged.failed + r.judged.failed,
+        };
+        result = r;
+      } else {
+        result = tidySilo(files, { now });
+      }
 
       if (result.changed) {
         try {
@@ -104,8 +129,11 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     }
   }
 
-  log(`tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ${proposed} proposal(s) recorded`);
-  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed };
+  const judgeNote = judge
+    ? ` (judge: ${judged.candidates} candidate(s), ${judged.confirmed} confirmed, ${judged.rejected} rejected, ${judged.failed} failed-quiet)`
+    : " (no judge registered — zero-LLM heuristics)";
+  log(`tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ${proposed} proposal(s) recorded${judgeNote}`);
+  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged };
 }
 
 export default defineSchedule({

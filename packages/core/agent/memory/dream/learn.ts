@@ -1,9 +1,16 @@
 import type { RecurrenceLedger } from "./recurrence.js";
 import { workflowSignature } from "./recurrence.js";
 import type { Proposal } from "./proposal.js";
+import type { DreamJudge, DistillInput, DistilledFact } from "./judge.js";
+import type { Partition } from "../partition.js";
+import type { Tier } from "../store.js";
+import type { MemorySilo } from "../silo.js";
+import { providerById } from "../provider.js";
+import { upsertUnderSection } from "../markdown.js";
 
 export interface LearnSignals {
   readonly request?: string;
+  readonly messages?: readonly string[];
 }
 
 export interface LearnOptions {
@@ -70,4 +77,44 @@ export async function learnFromSession(
       : null;
 
   return { signature, count, enrich: count === enrichThreshold, skillProposal };
+}
+
+export async function safeDistill(judge: DreamJudge | null, input: DistillInput): Promise<readonly DistilledFact[] | null> {
+  if (!judge) return null;
+  try {
+    return await judge.distill(input);
+  } catch {
+    return null;
+  }
+}
+
+export function enrichmentBullets(
+  result: Pick<LearnResult, "signature" | "count">,
+  facts: readonly DistilledFact[] | null,
+  today: string,
+): string[] {
+  if (facts && facts.length > 0) {
+    return facts.slice(0, 3).map((f) => {
+      const links = f.links
+        .filter((l) => !f.text.includes(`[[${l}]]`))
+        .map((l) => ` [[${l}]]`)
+        .join("");
+      return `- ${today}: ${f.text}${links}`;
+    });
+  }
+  return [`- ${today}: recurring workflow — ${result.signature} (seen ${result.count}×) [[MEMORY]]`];
+}
+
+export async function writeEnrichment(
+  p: Partition,
+  target: { readonly tier: Tier; readonly silo: MemorySilo },
+  bullets: readonly string[],
+): Promise<string | null> {
+  const provider = providerById(target.silo.provider);
+  const files = await provider.readTier(p, target.tier, target.silo);
+  const seed = `# Recurring workflows (auto-learned)\n\n## Recurring\n(none yet)\n`;
+  let recurring = files["RECURRING.md"] ?? seed;
+  for (const b of bullets) recurring = upsertUnderSection(recurring, "Recurring", b);
+  files["RECURRING.md"] = recurring;
+  return provider.writeTier(p, target.tier, files, `dream:learn recurrence enrich [${target.silo.name}]`, target.silo);
 }

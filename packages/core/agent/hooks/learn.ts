@@ -3,16 +3,18 @@ import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
-import { providerById } from "../memory/provider.js";
-import { upsertUnderSection } from "../memory/markdown.js";
 import { auditRecurrenceLedger } from "../memory/dream/recurrence.js";
-import { learnFromSession } from "../memory/dream/learn.js";
+import { learnFromSession, safeDistill, enrichmentBullets, writeEnrichment } from "../memory/dream/learn.js";
+import { dreamJudge } from "../memory/dream/judge.js";
 import { recordProposal } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
 
-const learnLog = defineState<{ firstMessage?: string }>(
+const MAX_MESSAGES = 10;
+const MAX_MESSAGE_CHARS = 300;
+
+const learnLog = defineState<{ messages: string[] }>(
   "open-everywhere.learn.sessionLog",
-  () => ({}),
+  () => ({ messages: [] }),
 );
 
 function log(msg: string): void {
@@ -20,7 +22,8 @@ function log(msg: string): void {
 }
 
 async function consolidate(ctx: HookContext): Promise<void> {
-  const request = learnLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 300);
+  const messages = learnLog.get().messages;
+  const request = messages[0]?.trim().replace(/\n+/g, " ").slice(0, 300);
   if (!request) return;
 
   const p = resolvePartition(ctx);
@@ -30,17 +33,20 @@ async function consolidate(ctx: HookContext): Promise<void> {
   const scope = target ? target.silo.name : p.surfaceKey;
 
   const ledger = auditRecurrenceLedger(p.org);
-  const result = await learnFromSession(scope, { request }, ledger);
+  const result = await learnFromSession(scope, { request, messages }, ledger);
   if (!result.signature) return;
 
   if (result.enrich && target) {
     try {
-      const provider = providerById(target.silo.provider);
-      const files = await provider.readTier(p, target.tier, target.silo);
-      const seed = `# Recurring workflows (auto-learned)\n\n## Recurring\n(none yet)\n`;
-      const bullet = `- ${new Date().toISOString().slice(0, 10)}: recurring workflow — ${result.signature} (seen ${result.count}×) [[MEMORY]]`;
-      files["RECURRING.md"] = upsertUnderSection(files["RECURRING.md"] ?? seed, "Recurring", bullet);
-      const sha = await provider.writeTier(p, target.tier, files, `dream:learn recurrence enrich [${target.silo.name}]`, target.silo);
+      const facts = await safeDistill(dreamJudge(), {
+        scope,
+        request,
+        messages,
+        signature: result.signature,
+        count: result.count,
+      });
+      const bullets = enrichmentBullets(result, facts, new Date().toISOString().slice(0, 10));
+      const sha = await writeEnrichment(p, target, bullets);
       await appendAudit({
         org: p.org,
         platform: p.platform,
@@ -48,9 +54,9 @@ async function consolidate(ctx: HookContext): Promise<void> {
         surface: p.surface,
         principalId: binding.principalId,
         action: "memory.learn",
-        detail: { silo: target.silo.name, signature: result.signature, count: result.count, version: sha },
+        detail: { silo: target.silo.name, signature: result.signature, count: result.count, distilled: facts?.length ?? 0, version: sha },
       });
-      log(`enriched ${target.silo.name}: recurring workflow "${result.signature}" (${result.count}×)`);
+      log(`enriched ${target.silo.name}: ${facts && facts.length > 0 ? `${facts.length} distilled fact(s)` : `recurring workflow "${result.signature}"`} (${result.count}×)`);
     } catch (err) {
       log(`enrich skipped: ${String(err)}`);
     }
@@ -65,9 +71,9 @@ async function consolidate(ctx: HookContext): Promise<void> {
 export default defineHook({
   events: {
     "message.received": (event, _ctx) => {
-      const current = learnLog.get();
-      if (!current.firstMessage && typeof event.data?.message === "string") {
-        learnLog.update((s) => ({ ...s, firstMessage: event.data.message }));
+      const raw = event.data?.message;
+      if (learnLog.get().messages.length < MAX_MESSAGES && typeof raw === "string") {
+        learnLog.update((s) => ({ ...s, messages: [...s.messages, raw.slice(0, MAX_MESSAGE_CHARS)] }));
       }
     },
 
