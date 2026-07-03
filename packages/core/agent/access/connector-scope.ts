@@ -45,7 +45,7 @@ function loadEveInternals(): Promise<EveInternals | null> {
   return internalsPromise;
 }
 
-async function readSurfaceContext(): Promise<BindableContext | null> {
+export async function readSurfaceContext(): Promise<BindableContext | null> {
   const eve = await loadEveInternals();
   if (!eve) return null;
   const store = eve.contextStorage.getStore();
