@@ -233,10 +233,13 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
   telegram: bindTelegram,
 };
 
-export function bindFrom(ctx: BindableContext): SurfaceBinding {
+export function channelPlatform(ctx: BindableContext): string | undefined {
   const rawKind = ctx.channel?.kind ?? process.env.OE_PLATFORM;
-  const bareKind = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
-  const platform = seg(bareKind, "local");
+  return rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
+}
+
+export function bindFrom(ctx: BindableContext): SurfaceBinding {
+  const platform = seg(channelPlatform(ctx), "local");
   const raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";

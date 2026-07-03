@@ -1,11 +1,10 @@
 export type WorkState = "working" | "done" | "needs_input" | "blocked";
 
-export const STATUS_REACTION: Record<WorkState, string> = {
-  working: "hourglass_flowing_sand",
-  done: "white_check_mark",
-  needs_input: "question",
+export const STATUS_REACTION = {
+  working: "eyes",
   blocked: "octagonal_sign",
-};
+} as const;
+export type ReactionState = keyof typeof STATUS_REACTION;
 export const ALL_STATUS_REACTIONS: readonly string[] = Object.values(STATUS_REACTION);
 
 const ICON: Record<WorkState, string> = {

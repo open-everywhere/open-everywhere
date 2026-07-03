@@ -16,6 +16,7 @@ import {
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
+import { finalMessageAction } from "./slack-events.js";
 import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
 import { readTier, ensureTier, writeTier, SURFACE, tierId } from "../memory/store.js";
 import { upsertUnderSection } from "../memory/markdown.js";
@@ -28,10 +29,18 @@ import {
   STATUS_REACTION,
   renderPinned,
   PINNED_HEADER,
-  type WorkState,
+  type ReactionState,
 } from "../status/status.js";
 
-async function setStatusReaction(slack: SlackHandle, state: WorkState): Promise<void> {
+function firstNonEmptyLine(text: string): string | undefined {
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+async function setStatusReaction(slack: SlackHandle, state: ReactionState | "none"): Promise<void> {
   const channel = slack.channelId;
   const timestamp = slack.threadTs;
   if (!channel || !timestamp) return;
@@ -216,7 +225,7 @@ async function onInbound(
       await ctx.thread.post("Standing down — I'll stop following this thread. @-mention me to pull me back in.");
     } catch {
     }
-    await setStatusReaction(ctx.slack, "done");
+    await setStatusReaction(ctx.slack, "none");
     return { auth: null };
   }
 
@@ -243,12 +252,52 @@ const slackMentionChannel = slackChannel({
       } catch {
       }
     },
+    "actions.requested": async (_data, channel) => {
+      const preamble = channel.state.pendingToolCallMessage;
+      channel.state.pendingToolCallMessage = null;
+      try {
+        await channel.thread.startTyping(preamble ? preamble.slice(0, 150) : "Working…");
+      } catch {
+      }
+    },
+    "message.completed": async (data, channel) => {
+      const action = finalMessageAction(data.finishReason, data.message);
+      if (action.kind === "buffer-tool-status") {
+        channel.state.pendingToolCallMessage = data.message ? firstNonEmptyLine(data.message) ?? null : null;
+        return;
+      }
+      channel.state.pendingToolCallMessage = null;
+      if (action.kind === "silent") {
+        (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
+        try {
+          await channel.thread.startTyping();
+        } catch {
+        }
+        return;
+      }
+      (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
+      await channel.thread.post(action.text);
+      try {
+        const { channelId, teamId, threadTs } = channel.state;
+        if (channelId && threadTs) {
+          const p = resolvePartition({
+            channel: { kind: "slack" },
+            session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+          });
+          await markThreadEngaged(p, threadTs, new Date().toISOString());
+        }
+      } catch {
+      }
+    },
     "session.completed": async (_data, channel) => {
-      await setStatusReaction(channel.slack, "done");
+      if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn !== true) {
+        await setStatusReaction(channel.slack, "none");
+      }
       await syncPinnedStatus(channel);
     },
     "session.waiting": async (_data, channel) => {
-      await setStatusReaction(channel.slack, "needs_input");
+      if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
+      await setStatusReaction(channel.slack, "none");
     },
     "session.failed": async (data, channel) => {
       await setStatusReaction(channel.slack, "blocked");

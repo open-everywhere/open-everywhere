@@ -1,5 +1,27 @@
 export type DomainMatch = "org" | "public" | "dm";
 
+export type ModelReasoning =
+  | "provider-default"
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+
+export interface ModelRoute {
+  readonly id?: string;
+  readonly providers?: readonly string[];
+  readonly reasoning?: ModelReasoning;
+}
+
+export interface ModelRoutes {
+  readonly primary?: ModelRoute;
+  readonly utility?: ModelRoute;
+}
+
+export type ModelRole = keyof ModelRoutes;
+
 export interface Domain {
   readonly name: string;
   readonly channels?: readonly string[];
@@ -7,6 +29,8 @@ export interface Domain {
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
   readonly bundle?: string;
+  readonly nameDropWake?: boolean;
+  readonly models?: ModelRoutes;
 }
 
 export function memoryRefs(domain: Domain): string[] {
@@ -24,6 +48,27 @@ export function domainForChannel(channelKey: string, domains: readonly Domain[])
 
 export function criteriaDomain(match: DomainMatch, domains: readonly Domain[]): Domain | undefined {
   return domains.find((d) => d.match === match);
+}
+
+export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  const explicit = domainForChannel(channelKey, domains);
+  if (explicit) return explicit.nameDropWake === true;
+  return criteriaDomain("org", domains)?.nameDropWake === true;
+}
+
+export function modelRouteFor(role: ModelRole, channelKey: string, domains: readonly Domain[]): ModelRoute {
+  const layers = [criteriaDomain("org", domains), domainForChannel(channelKey, domains)];
+  let route: ModelRoute = {};
+  for (const d of layers) {
+    const r = d?.models?.[role];
+    if (!r) continue;
+    route = {
+      id: r.id ?? route.id,
+      providers: r.providers ?? (r.id !== undefined && r.id !== route.id ? undefined : route.providers),
+      reasoning: r.reasoning ?? route.reasoning,
+    };
+  }
+  return route;
 }
 
 export function assertChannelExclusivity(domains: readonly Domain[]): void {

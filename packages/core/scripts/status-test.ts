@@ -18,8 +18,8 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-ok(STATUS_REACTION.working === "hourglass_flowing_sand" && STATUS_REACTION.blocked === "octagonal_sign", "reaction names map the four states");
-ok(ALL_STATUS_REACTIONS.length === 4 && new Set(ALL_STATUS_REACTIONS).size === 4, "four distinct status reactions");
+ok(STATUS_REACTION.working === "eyes" && STATUS_REACTION.blocked === "octagonal_sign", "bot vocabulary: 👀 working + 🛑 blocked only (✅ is the humans' mark; no ❓ — parked ≠ question)");
+ok(ALL_STATUS_REACTIONS.length === 2 && new Set(ALL_STATUS_REACTIONS).size === 2, "exactly two bot-set reactions — done is signalled by REMOVAL, not an emoji");
 
 const line = statusItemLine("sess-1", "working", "Investigating  the   flaky test", "2026-06-24 09:30Z");
 ok(line.startsWith("- ⏳ ") && line.includes("`sess-1`"), "item line carries icon + id key");

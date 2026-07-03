@@ -6,7 +6,8 @@ import { bindFrom } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { readableChannelList } from "../channels/slack-read.js";
-import type { BindableContext } from "../identity/binding.js";
+import { botDisplayName } from "../channels/slack-events.js";
+import { channelPlatform, type BindableContext } from "../identity/binding.js";
 
 function renderChannelScope(ctx: BindableContext): string {
   const channels = readableChannelList(ctx);
@@ -19,17 +20,23 @@ function renderChannelScope(ctx: BindableContext): string {
   );
 }
 
-function renderIdentity(): string {
-  const name = process.env.OE_AGENT_NAME?.trim() || "Open Everywhere";
-  return `Your name in this workspace is **${name}** — identify as that, not as any framework or model name.`;
+async function surfaceAgentName(ctx: BindableContext): Promise<string | undefined> {
+  return channelPlatform(ctx) === "slack" ? botDisplayName() : undefined;
 }
 
-function resolve(ctx: BindableContext) {
+function renderIdentity(name: string | undefined): string {
+  return name
+    ? `Your name in this workspace is **${name}** — identify as that, not as any framework or model name.`
+    : `Identify as this team's agent — never as a framework or model name.`;
+}
+
+async function resolve(ctx: BindableContext) {
   const access = resolveAccessFor(ctx);
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const plan = planFor(bindFrom(ctx), resolvePartition(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads) : "";
-  const markdown = [renderIdentity(), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
+  const name = await surfaceAgentName(ctx);
+  const markdown = [renderIdentity(name), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
     .filter((s) => s.length > 0)
     .join("\n\n");
   return defineInstructions({ markdown });

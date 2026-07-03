@@ -1,7 +1,14 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
 import { slackContinuationToken } from "eve/channels/slack";
-import { parseMessageEvent, routeMessageEvent, liveDeps, type SlackEventEnvelope } from "./slack-events.js";
+import {
+  parseMessageEvent,
+  routeMessageEvent,
+  liveDeps,
+  routeNameDropEvent,
+  liveNameDropDeps,
+  type SlackEventEnvelope,
+} from "./slack-events.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -179,7 +186,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
 
     const ev = parseMessageEvent(decision.env);
-    if (!ev || !ev.threadTs) return OK();
+    if (!ev) return OK();
 
     const { userId: botUserId } = await getBotIdentity();
     if (botUserId && ev.text.includes(`<@${botUserId}>`)) return OK();
@@ -188,8 +195,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (dedupe.seen(key, now())) return OK();
     dedupe.mark(key, now());
 
-    const threadKey = slackContinuationToken(ev.channelId, ev.threadTs);
     const send = args.send as unknown as Parameters<typeof liveDeps>[0];
+
+    if (!ev.threadTs) {
+      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(() => undefined));
+      return OK();
+    }
+
+    const threadKey = slackContinuationToken(ev.channelId, ev.threadTs);
     args.waitUntil(fifo.enqueue(threadKey, () => routeMessageEvent(ev, liveDeps(send)).then(() => undefined)));
     return OK();
   };

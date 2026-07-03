@@ -5,7 +5,21 @@ import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { isStopRequest, shouldDeliverReply } from "../agent/channels/engagement.js";
-import { parseMessageEvent, routeMessageEvent, type MessageRouteDeps } from "../agent/channels/slack-events.js";
+import {
+  parseMessageEvent,
+  routeMessageEvent,
+  renderWakeMessage,
+  isNoReply,
+  finalMessageAction,
+  NO_REPLY_SENTINEL,
+  nameDropPattern,
+  shouldNameDropWake,
+  routeNameDropEvent,
+  renderNameDropMessage,
+  type MessageRouteDeps,
+  type NameDropRouteDeps,
+} from "../agent/channels/slack-events.js";
+import { nameDropWakeEnabled } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
@@ -217,4 +231,129 @@ registerConfig({
   ok(fifo2.activeThreads === 0, "FIFO drops idle thread chains once settled");
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO)`);
+{
+  const ev = parseMessageEvent({
+    type: "event_callback",
+    team_id: "T_ENG",
+    event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "what do you reckon, Dave?" },
+  })!;
+  const wakeMsg = renderWakeMessage(ev);
+  ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
+  ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
+
+  const woke: string[] = [];
+  const deps: MessageRouteDeps = {
+    isEngaged: async () => true,
+    wake: async ({ message }) => {
+      woke.push(message);
+    },
+  };
+  const out = await routeMessageEvent(ev, deps);
+  ok(out.woke && woke[0].includes(NO_REPLY_SENTINEL), "wake delivery carries the judge instruction");
+
+  ok(isNoReply("NO_REPLY"), "bare sentinel → silent");
+  ok(isNoReply("  NO_REPLY."), "whitespace + trailing punctuation → silent");
+  ok(isNoReply("NO_REPLY — they're talking among themselves"), "half-compliant rationale after the sentinel → still silent (never post the private judgment)");
+  ok(!isNoReply("I checked — NO_REPLY is the sentinel we use"), "sentinel mid-message is a genuine reply, not silence");
+  ok(!isNoReply("Sure, here's the summary…"), "ordinary reply → posts");
+
+  ok(finalMessageAction("tool-calls", "Checking the repo…").kind === "buffer-tool-status", "tool-calls finish → buffer for typing status");
+  ok(finalMessageAction("stop", null).kind === "silent", "empty final message → silent (default behaviour preserved)");
+  ok(finalMessageAction("stop", "NO_REPLY").kind === "silent", "sentinel final message → swallowed, nothing posted");
+  const post = finalMessageAction("stop", "Here's the answer.");
+  ok(post.kind === "post" && post.text === "Here's the answer.", "genuine reply → posted verbatim");
+}
+
+{
+  const re = nameDropPattern("Ada");
+  ok(re.test("could ada take a look?"), "name matches case-insensitively");
+  ok(re.test("Ada?"), "name at start with trailing punctuation matches");
+  ok(!re.test("adamant refusal"), "name inside a longer word does NOT match");
+  ok(nameDropPattern("Open Everywhere").test("ask open  everywhere about it"), "multi-word name tolerates whitespace runs");
+
+  const base = {
+    inThread: false,
+    authorIsBot: false,
+    isAppMention: false,
+    subtype: undefined as string | undefined,
+    channelType: "channel" as string | undefined,
+    textMatchesName: true,
+    domainEnabled: true,
+    channelConfirmedInternal: true,
+  };
+  ok(shouldNameDropWake(base).deliver, "top-level human name-drop in an enabled internal channel → deliver");
+  ok(!shouldNameDropWake({ ...base, inThread: true }).deliver, "thread reply → engagement path, not name-drop");
+  ok(!shouldNameDropWake({ ...base, authorIsBot: true }).deliver, "bot author → never");
+  ok(!shouldNameDropWake({ ...base, subtype: "channel_topic" }).deliver, "subtype → never");
+  ok(!shouldNameDropWake({ ...base, channelType: "mpim" }).deliver, "group DM → never (channels/groups only)");
+  ok(!shouldNameDropWake({ ...base, textMatchesName: false }).deliver, "no name in text → never");
+  ok(!shouldNameDropWake({ ...base, domainEnabled: false }).deliver, "domain not opted in → never");
+  ok(!shouldNameDropWake({ ...base, channelConfirmedInternal: false }).deliver, "unconfirmed/external channel → fail closed");
+
+  const domains = [
+    defineDomain({ name: "opted-in", channels: ["slack/T1/C_IN"], nameDropWake: true }),
+    defineDomain({ name: "opted-out", channels: ["slack/T1/C_OUT"] }),
+    defineDomain({ name: "org-default", match: "org", nameDropWake: true }),
+  ];
+  ok(nameDropWakeEnabled("slack/T1/C_IN", domains), "explicit domain with the flag → on");
+  ok(!nameDropWakeEnabled("slack/T1/C_OUT", domains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
+  ok(nameDropWakeEnabled("slack/T1/C_UNASSIGNED", domains), "unassigned channel → org pseudo-domain's flag");
+  ok(!nameDropWakeEnabled("slack/T1/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
+
+  const topLevel = (over: Record<string, unknown> = {}) =>
+    parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_TXN", ts: "42.1", user: "U1", channel_type: "channel", text: "can Ada check the deploy?", ...over },
+    })!;
+  const calls: Array<{ threadTs: string; message: string; state: unknown }> = [];
+  let infoCalls = 0;
+  const deps = (enabled: boolean, internal: boolean): NameDropRouteDeps => ({
+    enabledFor: () => enabled,
+    confirmInternal: async () => {
+      infoCalls++;
+      return internal;
+    },
+    wake: async ({ threadTs, message, state }) => {
+      calls.push({ threadTs, message, state });
+    },
+    displayName: async () => "Ada",
+  });
+
+  let out = await routeNameDropEvent(topLevel(), deps(true, true));
+  ok(out.woke && calls.length === 1, "enabled + internal + name → wakes");
+  ok(calls[0].threadTs === "42.1", "reply thread is rooted at the triggering message's ts");
+  ok(calls[0].message.includes("[name-drop]") && calls[0].message.includes(NO_REPLY_SENTINEL), "name-drop dispatch carries the judge instruction + sentinel");
+  ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
+
+  calls.length = 0;
+  infoCalls = 0;
+  out = await routeNameDropEvent(topLevel({ text: "no bots were harmed" }), deps(true, true));
+  ok(!out.woke && infoCalls === 0, "no name in text → dropped before any API call");
+
+  out = await routeNameDropEvent(topLevel(), deps(false, true));
+  ok(!out.woke && infoCalls === 0, "domain off → dropped before the conversations.info call");
+
+  out = await routeNameDropEvent(topLevel(), deps(true, false));
+  ok(!out.woke && infoCalls === 1 && calls.length === 0, "external/unconfirmed channel → checked once, then fail-closed drop");
+
+  out = await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), deps(true, true));
+  ok(!out.woke, "threaded message never enters the name-drop path");
+
+  ok(renderNameDropMessage(topLevel(), "Ada").includes("can Ada check the deploy?"), "dispatch includes the raw message text");
+
+  calls.length = 0;
+  out = await routeNameDropEvent(topLevel({ text: "Test Slack Bot, what's the ETA?" }), {
+    ...deps(true, true),
+    displayName: async () => "Test Slack Bot",
+  });
+  ok(out.woke && calls.length === 1, "the bot's Slack display name is the needle");
+  ok(calls[0].message.includes('("Test Slack Bot")'), "dispatch names the display name that matched");
+  out = await routeNameDropEvent(topLevel(), {
+    ...deps(true, true),
+    displayName: async () => undefined,
+  });
+  ok(!out.woke, "display-name lookup failure → no needle → no wake (fail-soft, never a crash)");
+}
+
+console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO + judged-reply sentinel + name-drop wake)`);
