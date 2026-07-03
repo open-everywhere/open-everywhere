@@ -1,6 +1,20 @@
 import { PINNED_HEADER } from "../status/status.js";
+import { ensureTier, writeTier, SURFACE } from "../memory/store.js";
+import type { Partition } from "../memory/partition.js";
 
 export const ONBOARDED_MARKER = "_onboarded";
+
+export async function isSurfaceOnboarded(p: Partition): Promise<boolean> {
+  const marker = await ensureTier(p, SURFACE);
+  return marker[ONBOARDED_MARKER] !== undefined;
+}
+
+export async function markSurfaceOnboarded(p: Partition): Promise<void> {
+  const marker = await ensureTier(p, SURFACE);
+  if (marker[ONBOARDED_MARKER] !== undefined) return;
+  marker[ONBOARDED_MARKER] = new Date().toISOString();
+  await writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
+}
 
 export function extractPinnedInstructions(pinsList: unknown): string | null {
   const items = (pinsList as { items?: unknown })?.items;

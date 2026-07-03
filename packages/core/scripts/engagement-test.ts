@@ -16,12 +16,17 @@ import {
   shouldNameDropWake,
   routeNameDropEvent,
   renderNameDropMessage,
+  parseChannelJoinEvent,
+  routeChannelJoinEvent,
+  renderChannelJoinMessage,
+  channelJoinMetaFromInfo,
   type MessageRouteDeps,
   type NameDropRouteDeps,
+  type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
-import { nameDropWakeEnabled } from "../agent/memory/domain.js";
+import { nameDropWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
-import { classifyEnvelope, verifySlackSignature, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
+import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -363,4 +368,119 @@ registerConfig({
   ok(!out.woke, "display-name lookup failure → no needle → no wake (fail-soft, never a crash)");
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO + judged-reply sentinel + name-drop wake)`);
+{
+  const JSON_CT = "application/json";
+  const joinEnv = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: "EvJOIN1",
+      event: { type: "member_joined_channel", channel: "C_TXN", channel_type: "C", user: "UBOT", event_ts: "77.1", inviter: "U1", ...over },
+    });
+
+  const d = classifyEnvelope(joinEnv(), JSON_CT);
+  ok(d.kind === "join" && d.env !== undefined, "member_joined_channel → join kind (carries env)");
+
+  const jev = parseChannelJoinEvent(JSON.parse(joinEnv()));
+  ok(jev !== null && jev.channelId === "C_TXN" && jev.userId === "UBOT" && jev.ts === "77.1" && jev.inviterId === "U1", "parses a join event (channel/user/ts/inviter)");
+  ok(parseChannelJoinEvent(JSON.parse(joinEnv({ event_ts: undefined }))) === null, "missing event_ts → null");
+  ok(parseChannelJoinEvent(JSON.parse(joinEnv({ type: "member_left_channel" }))) === null, "non-join event → null");
+
+  const secret = "join-secret";
+  const nowMs = 1_700_000_000_000;
+  const mkReq = (body: string) => {
+    const ts = String(Math.floor(nowMs / 1000));
+    const sig = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": JSON_CT, "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+  const waits: Array<Promise<unknown>> = [];
+  const fakeArgs = { send: async () => ({}), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
+  const frontOpts = { signingSecret: secret, now: () => nowMs, markEventSeen: async () => true };
+  const handler = buildFrontHandler(async () => new Response("inner"), { ...frontOpts, getBotIdentity: async () => ({ userId: "UBOT" }) });
+  let res = await handler(mkReq(joinEnv({ user: "UHUMAN" })), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  ok(res.status === 200 && waits.length === 0, "human join → dropped (no wake scheduled)");
+  const anon = buildFrontHandler(async () => new Response("inner"), { ...frontOpts, getBotIdentity: async () => ({}) });
+  res = await anon(mkReq(joinEnv()), fakeArgs as unknown as Parameters<typeof anon>[1]);
+  ok(res.status === 200 && waits.length === 0, "unresolved bot identity → join dropped (fail-closed)");
+
+  const joined = (over: Record<string, unknown> = {}) => parseChannelJoinEvent(JSON.parse(joinEnv(over)))!;
+  const meta = { channelId: "C_TXN", name: "txn-eng", topic: "Transactions engineering", purpose: "All things transactions", memberCount: 12, channelType: "channel", isPrivate: false };
+  const calls: Array<{ threadTs: string; message: string; state: unknown }> = [];
+  const seq: string[] = [];
+  const marked: string[] = [];
+  let infoCalls = 0;
+  const deps = (onboarded: boolean, internal: boolean): ChannelJoinRouteDeps => ({
+    isOnboarded: async () => onboarded,
+    confirmInternal: async (id) => {
+      infoCalls++;
+      return { internal, meta: { ...meta, channelId: id } };
+    },
+    wake: async ({ threadTs, message, state }) => {
+      seq.push("wake");
+      calls.push({ threadTs, message, state });
+    },
+    markOnboarded: async (p) => {
+      seq.push("mark");
+      marked.push(p.surfaceKey);
+    },
+  });
+
+  let out = await routeChannelJoinEvent(joined(), deps(true, true));
+  ok(!out.woke && infoCalls === 0 && marked.length === 0, "already onboarded → no wake, before any conversations.info");
+
+  out = await routeChannelJoinEvent(joined(), deps(false, false));
+  ok(!out.woke && infoCalls === 1 && calls.length === 0 && marked.length === 0, "unconfirmable/external channel → fail-closed, marker untouched");
+
+  out = await routeChannelJoinEvent(joined(), deps(false, true));
+  ok(out.woke && calls.length === 1, "bot join in a fresh internal channel → intro wake");
+  ok(calls[0].threadTs === "77.1", "intro threads under the join notice's ts");
+  ok(calls[0].message.includes("[channel-join]") && calls[0].message.includes(NO_REPLY_SENTINEL), "join dispatch carries the intro procedure + silence escape hatch");
+  ok(calls[0].message.includes("#txn-eng") && calls[0].message.includes("Transactions engineering") && calls[0].message.includes("~12"), "join dispatch embeds the channel metadata");
+  ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
+  ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === undefined, "join wake is INVITED — no oeUninvited, failures may post");
+  ok(marked.length === 1 && marked[0] === "slack/T_ENG/C_TXN", "surface marked onboarded (a later mention won't re-intro)");
+  ok(seq.join(",") === "wake,mark", "marker is written AFTER the wake dispatch");
+
+  const bare = renderChannelJoinMessage({ channelId: "C_X" });
+  ok(bare.includes("(unknown)") && bare.includes(NO_REPLY_SENTINEL), "metadata-less dispatch degrades to (unknown) fields");
+  const parsedMeta = channelJoinMetaFromInfo("C_X", {
+    channel: { name: "help", topic: { value: "Ask here" }, purpose: { value: "" }, num_members: 640, is_channel: true },
+  });
+  ok(parsedMeta.name === "help" && parsedMeta.topic === "Ask here" && parsedMeta.purpose === undefined && parsedMeta.memberCount === 640 && parsedMeta.channelType === "channel", "meta extraction: fields probed defensively, empty purpose dropped");
+  ok(channelJoinMetaFromInfo("C_X", { ok: false }).name === undefined, "failed conversations.info → bare meta (dispatch still renders)");
+}
+
+{
+  const K = "slack/T1/C_IN";
+  ok(statusVerbsFor(K, []).length === DEFAULT_STATUS_VERBS.length, "no domains → framework defaults");
+  const orgExtend = [defineDomain({ name: "org", match: "org", statusVerbs: ["Yodelling"] })];
+  ok(statusVerbsFor(K, orgExtend).includes("Yodelling") && statusVerbsFor(K, orgExtend).includes("Tinkering"), "org extends the defaults");
+  const layered = [
+    defineDomain({ name: "org", match: "org", statusVerbs: ["Yodelling"] }),
+    defineDomain({ name: "team", channels: [K], statusVerbs: ["Shipping it"] }),
+  ];
+  const v = statusVerbsFor(K, layered);
+  ok(v.includes("Tinkering") && v.includes("Yodelling") && v.includes("Shipping it"), "domain extends org extends defaults");
+  const replaced = statusVerbsFor(K, [
+    defineDomain({ name: "org", match: "org", statusVerbs: ["Yodelling"] }),
+    defineDomain({ name: "team", channels: [K], statusVerbs: ["Only this"], statusVerbsMode: "replace" }),
+  ]);
+  ok(replaced.length === 1 && replaced[0] === "Only this", "domain replace = its list IS the vocabulary");
+  const orgReplaced = statusVerbsFor(K, [defineDomain({ name: "org", match: "org", statusVerbs: ["A", "B"], statusVerbsMode: "replace" })]);
+  ok(orgReplaced.length === 2, "org replace drops the framework defaults");
+  ok(
+    statusVerbsFor(K, [defineDomain({ name: "team", channels: [K], statusVerbs: [], statusVerbsMode: "replace" })]).length ===
+      DEFAULT_STATUS_VERBS.length,
+    "replace-with-empty falls back to defaults (never verb-less)",
+  );
+  ok(
+    statusVerbsFor(K, [defineDomain({ name: "org", match: "org", statusVerbs: ["Tinkering", "  "] })]).length === DEFAULT_STATUS_VERBS.length,
+    "duplicates + blanks are dropped on extend",
+  );
+}
+
+console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO + judged-reply sentinel + name-drop wake + channel-join intro)`);

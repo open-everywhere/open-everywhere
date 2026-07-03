@@ -7,7 +7,11 @@ import {
   liveDeps,
   routeNameDropEvent,
   liveNameDropDeps,
+  parseChannelJoinEvent,
+  routeChannelJoinEvent,
+  liveChannelJoinDeps,
   bindableFor,
+  bindableForJoin,
   type SlackEventEnvelope,
   type RouteOutcome,
 } from "./slack-events.js";
@@ -21,7 +25,8 @@ export const INTERNAL_SLACK_ROUTE = "/eve/v1/slack/mention";
 
 export type FrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
-  | { readonly kind: "wake"; readonly reason: string; readonly env: SlackEventEnvelope };
+  | { readonly kind: "wake"; readonly reason: string; readonly env: SlackEventEnvelope }
+  | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope };
 
 export function classifyEnvelope(rawBody: string, contentType: string): FrontDecision {
   if (contentType.includes("application/x-www-form-urlencoded")) {
@@ -42,6 +47,9 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
   const eventType = typeof env.event?.type === "string" ? env.event.type : undefined;
   if (eventType === "app_mention") {
     return { kind: "forward", reason: "app_mention — the mention path owns it" };
+  }
+  if (eventType === "member_joined_channel") {
+    return { kind: "join", reason: "member_joined_channel — channel-join intro candidate", env };
   }
   if (eventType !== "message") {
     return { kind: "forward", reason: `event "${String(eventType)}" — not a message` };
@@ -211,6 +219,28 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (decision.kind === "forward") {
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "join") {
+      const jev = parseChannelJoinEvent(decision.env);
+      if (!jev) return OK();
+      const { userId: joinBotUserId } = await getBotIdentity();
+      if (!joinBotUserId || jev.userId !== joinBotUserId) return OK();
+
+      const joinKey = wakeKey(decision.env, jev.channelId, jev.ts);
+      if (dedupe.seen(joinKey, now())) return OK();
+      dedupe.mark(joinKey, now());
+      try {
+        const org = resolvePartition(bindableForJoin(jev)).org;
+        if (!(await markEventSeen(org, joinKey, new Date(now()).toISOString()))) return OK();
+      } catch {
+      }
+
+      const joinSend = args.send as unknown as Parameters<typeof liveDeps>[0];
+      args.waitUntil(
+        routeChannelJoinEvent(jev, liveChannelJoinDeps(joinSend)).then(logOutcome("channel-join", jev.channelId, jev.ts)),
+      );
+      return OK();
     }
 
     const ev = parseMessageEvent(decision.env);
