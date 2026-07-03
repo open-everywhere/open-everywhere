@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
 import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES } from "../agent/scm/git.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES } from "../agent/scm/git.js";
+import { repoSlug, mergeRepoSkills, isSafeSkillName, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import { repoAllowed } from "../agent/scm/provider.js";
@@ -170,6 +171,73 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
+  const probe = skillsProbe("repo");
+  ok(probe.includes(".agents/skills") && probe.includes(".claude/skills"), "skills probe checks both roots");
+  ok(probe.indexOf(".agents/skills") < probe.indexOf(".claude/skills"), "skills probe prefers .agents/skills (first existing root wins; never merged)");
+  ok(SKILL_ROOTS[0] === ".agents/skills" && SKILL_ROOTS[1] === ".claude/skills", ".agents/skills is the priority root");
+  ok(probe.includes("'repo'/"), "skills probe scopes to the checkout dir");
+  ok(probe.includes(`head -c ${MAX_SKILL_BYTES}`), "each SKILL.md is byte-bounded BEFORE encoding");
+  ok(probe.indexOf("head -c") < probe.indexOf("base64"), "the byte bound is applied before base64");
+  ok(probe.includes("base64 -w0"), "content rides as single-line base64 (can't collide with markers)");
+  ok(probe.includes(`-ge ${MAX_REPO_SKILLS}`) && probe.includes(SKILL_TRUNC_MARKER), "the loop is capped with a truncation marker");
+
+  const cmd = checkoutCommand("acme/web", "ghs_x", "repo", { name: "open-everywhere[bot]", email: "1+open-everywhere[bot]@users.noreply.github.com" });
+  ok(cmd.includes(SKILL_MARKER), "checkoutCommand includes the skills probe");
+  ok(cmd.indexOf(SKILL_MARKER) < cmd.indexOf(CHECKOUT_OK), "skills probe runs before the OK sentinel");
+}
+
+{
+  const b64 = (s: string) => Buffer.from(s, "utf-8").toString("base64");
+  const out = parseSkillsProbe(
+    [
+      "clone noise",
+      `${SKILL_MARKER} deploy ${b64("---\ndescription: Ship it.\n---\nSteps.")}`,
+      `${SKILL_MARKER} db-migrate ${b64("# Migrations")}`,
+      CHECKOUT_OK,
+    ].join("\n"),
+  );
+  ok(Object.keys(out.skills).length === 2 && out.skills["deploy"].includes("Ship it."), "parseSkillsProbe decodes name + content per marker line");
+  ok(out.truncated === false, "no truncation marker → truncated false");
+
+  ok(Object.keys(parseSkillsProbe(`${SKILL_MARKER} evil not!base64!`).skills).length === 0, "bad base64 is skipped, not thrown on");
+  ok(Object.keys(parseSkillsProbe(`${SKILL_MARKER} ../escape ${b64("x")}`).skills).length === 0, "an unsafe skill name is skipped");
+  ok(Object.keys(parseSkillsProbe(`${SKILL_MARKER} empty ${b64("  ")}`).skills).length === 0, "empty content is skipped");
+  ok(parseSkillsProbe(`${SKILL_MARKER} a ${b64("x")}\n${SKILL_TRUNC_MARKER}`).truncated === true, "truncation marker is reported");
+  const none = parseSkillsProbe(CHECKOUT_OK);
+  ok(Object.keys(none.skills).length === 0 && !none.truncated, "no marker lines → zero skills");
+}
+
+{
+  ok(repoSlug("acme/payments-api", {}) === "payments-api", "repoSlug is the slugged short name");
+  const taken: Record<string, RepoSkillsEntry> = { "payments-api": { repo: "globex/payments-api", skills: {} } };
+  ok(repoSlug("acme/payments-api", taken) === `acme${REPO_SKILL_SEP}payments-api`, "a short-name collision falls back to owner--repo");
+  const same: Record<string, RepoSkillsEntry> = { "payments-api": { repo: "acme/payments-api", skills: {} } };
+  ok(repoSlug("acme/payments-api", same) === "payments-api", "re-checkout of the SAME repo keeps its slug");
+  ok(isSafeSkillName("payments-api--deploy") && !isSafeSkillName("a:b") && !isSafeSkillName("../x"), "safe-name mirror rejects ':' and traversal (Eve's rule)");
+}
+
+{
+  const warns: string[] = [];
+  const state: Record<string, RepoSkillsEntry> = {
+    "payments-api": {
+      repo: "acme/payments-api",
+      skills: { deploy: "---\ndescription: Ship it.\n---\nSteps.", "db-migrate": "# No frontmatter", "bad name": "x" },
+    },
+  };
+  const merged = mergeRepoSkills(state, new Set(["deploy", "linear"]), (m) => warns.push(m));
+  ok(Object.keys(merged).every((k) => k.includes(REPO_SKILL_SEP)), "every repo skill is namespaced — never a bare name");
+  ok("payments-api--deploy" in merged && "payments-api--db-migrate" in merged, "names are <repoSlug>--<skill>");
+  ok(!("deploy" in merged), "a granted bare name ('deploy') is untouched by repo skills");
+  ok(merged["payments-api--deploy"].description === "Ship it.", "description comes from SKILL.md frontmatter");
+  ok(merged["payments-api--db-migrate"].description.includes("acme/payments-api"), "missing frontmatter gets a provenance fallback description");
+  ok(!Object.keys(merged).some((k) => k.includes("bad name")) && warns.some((w) => w.includes("unsafe name")), "an unsafe composed name is dropped with a warn");
+
+  const collided = mergeRepoSkills(state, new Set(["payments-api--deploy"]), (m) => warns.push(m));
+  ok(!("payments-api--deploy" in collided) && warns.some((w) => w.includes("granted wins")), "granted skill wins a namespaced collision; repo skill dropped with a warn");
+  ok(Object.keys(mergeRepoSkills({}, new Set())).length === 0, "empty state → no repo skills (fail-soft resolver path)");
+}
+
+{
   const base = (repos: string[]): EffectiveAccess => ({
     mode: "channel", scopeKey: "x", connections: [], connectorCredentials: {}, reachableHosts: [], repos, plugins: [], skills: [], subagents: [], connectors: [], instructionStack: [], warnings: [],
   });
@@ -180,4 +248,4 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, guards, egress)\n`);
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, repo skills, guards, egress)\n`);

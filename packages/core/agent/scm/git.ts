@@ -1,3 +1,5 @@
+import { isSafeSkillName } from "./repo-skills.js";
+
 export function authExtraHeader(token: string): string {
   const b64 = Buffer.from(`x-access-token:${token}`, "utf-8").toString("base64");
   return `AUTHORIZATION: basic ${b64}`;
@@ -45,6 +47,7 @@ export function checkoutCommand(
     `git -C '${dir}' config user.name '${identity.name}'`,
     `git -C '${dir}' config user.email '${identity.email}'`,
     conventionProbe(dir),
+    skillsProbe(dir),
     "echo __SCM_CHECKOUT_OK__",
   ].join("\n");
 }
@@ -76,6 +79,60 @@ export function parseConventionProbe(stdout: string): RepoConvention | null {
     if (m) return { file: m[1], lines: Number(m[2]), bytes: Number(m[3]) };
   }
   return null;
+}
+
+export const SKILL_ROOTS = [".agents/skills", ".claude/skills"] as const;
+
+export const SKILL_MARKER = "__OE_SKILL__";
+
+export const SKILL_TRUNC_MARKER = "__OE_SKILL_TRUNC__";
+
+export const MAX_REPO_SKILLS = 20;
+export const MAX_SKILL_BYTES = 32768;
+
+export interface RepoSkillsProbe {
+  skills: Record<string, string>;
+  truncated: boolean;
+}
+
+export function skillsProbe(dir: string): string {
+  return (
+    `sr=''; for r in ${SKILL_ROOTS.join(" ")}; do ` +
+    `if [ -d '${dir}'/"$r" ]; then sr='${dir}'/"$r"; break; fi; done; ` +
+    `n=0; if [ -n "$sr" ]; then for d in "$sr"/*/; do ` +
+    `if [ -f "$d"SKILL.md ]; then ` +
+    `if [ $n -ge ${MAX_REPO_SKILLS} ]; then echo ${SKILL_TRUNC_MARKER}; break; fi; ` +
+    `n=$((n+1)); ` +
+    `echo "${SKILL_MARKER} $(basename "$d") $(head -c ${MAX_SKILL_BYTES} "$d"SKILL.md | base64 -w0)"; ` +
+    `fi; done; fi`
+  );
+}
+
+function decodeBase64Utf8(b64: string): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(b64, "base64"));
+  } catch {
+    return null;
+  }
+}
+
+export function parseSkillsProbe(stdout: string): RepoSkillsProbe {
+  const re = new RegExp(`^${SKILL_MARKER}\\s+(\\S+)\\s+([A-Za-z0-9+/=]+)$`);
+  const skills: Record<string, string> = {};
+  let truncated = false;
+  for (const line of stdout.split("\n")) {
+    const t = line.trim();
+    if (t === SKILL_TRUNC_MARKER) {
+      truncated = true;
+      continue;
+    }
+    const m = t.match(re);
+    if (!m || !isSafeSkillName(m[1])) continue;
+    const content = decodeBase64Utf8(m[2]);
+    if (!content || !content.trim()) continue;
+    skills[m[1]] = content;
+  }
+  return { skills, truncated };
 }
 
 export function redactSecret(text: string, ...secrets: string[]): string {
