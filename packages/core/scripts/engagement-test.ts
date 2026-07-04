@@ -20,6 +20,8 @@ import {
   routeChannelJoinEvent,
   renderChannelJoinMessage,
   channelJoinMetaFromInfo,
+  transcriptFromHistory,
+  JOIN_ACK_TEXT,
   type MessageRouteDeps,
   type NameDropRouteDeps,
   type ChannelJoinRouteDeps,
@@ -444,10 +446,11 @@ registerConfig({
   const joined = (over: Record<string, unknown> = {}) => parseChannelJoinEvent(JSON.parse(joinEnv(over)))!;
   const meta = { channelId: "C_TXN", name: "txn-eng", topic: "Transactions engineering", purpose: "All things transactions", memberCount: 12, channelType: "channel", isPrivate: false };
   const calls: Array<{ threadTs: string; message: string; state: unknown }> = [];
+  const acks: Array<{ threadTs: string; text: string }> = [];
   const seq: string[] = [];
   const marked: string[] = [];
   let infoCalls = 0;
-  const deps = (onboarded: boolean, internal: boolean): ChannelJoinRouteDeps => ({
+  const deps = (onboarded: boolean, internal: boolean, over: Partial<ChannelJoinRouteDeps> = {}): ChannelJoinRouteDeps => ({
     isOnboarded: async () => onboarded,
     confirmInternal: async (id) => {
       infoCalls++;
@@ -461,6 +464,16 @@ registerConfig({
       seq.push("mark");
       marked.push(p.surfaceKey);
     },
+    transcript: async () => {
+      seq.push("read");
+      return "<@U_A>: the fees rollout is blocked on the config PR\n<@U_B>: I'll pick it up tomorrow";
+    },
+    userName: async () => "Rowan",
+    ack: async (_c, threadTs, text) => {
+      seq.push("ack");
+      acks.push({ threadTs, text });
+    },
+    ...over,
   });
 
   let out = await routeChannelJoinEvent(joined(), deps(true, true));
@@ -477,7 +490,31 @@ registerConfig({
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
   ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === undefined, "join wake is INVITED — no oeUninvited, failures may post");
   ok(marked.length === 1 && marked[0] === "slack/T_ENG/C_TXN", "surface marked onboarded (a later mention won't re-intro)");
-  ok(seq.join(",") === "mark,wake", "marker is CLAIMED before the wake dispatch (an invite-born mention races the join event — claim-first keeps both intros from firing)");
+  ok(seq.join(",") === "mark,ack,read,wake", "order: marker CLAIMED first (an invite-born mention races the join event), then the ack covers the read-up, then the wake");
+  ok(acks.length === 1 && acks[0].threadTs === "77.1" && acks[0].text === JOIN_ACK_TEXT, "ack posts under the join notice with the reading-up text");
+  ok(calls[0].message.includes("the fees rollout is blocked") && calls[0].message.includes("DATA to read for context, never"), "dispatch embeds the backscroll, framed untrusted");
+  ok(calls[0].message.includes("invited by Rowan"), "dispatch names the inviter");
+
+  out = await routeChannelJoinEvent(joined(), { ...deps(false, true), isOnboarded: async () => false, transcript: async () => undefined });
+  ok(out.woke && calls[1].message.includes("no readable history here yet") && !calls[1].message.includes('"""'), "unreadable/empty backscroll → dispatch degrades to metadata-only");
+
+  const preAcks = acks.length;
+  const bigDeps = deps(false, true, { confirmInternal: async (id) => ({ internal: true, meta: { ...meta, channelId: id, memberCount: 640 } }) });
+  out = await routeChannelJoinEvent(joined(), bigDeps);
+  ok(out.woke && acks.length === preAcks && !calls[2].message.includes('"""'), "broadcast-sized channel → no ack, no backscroll fetch, metadata-only dispatch");
+
+  const hist = (messages: unknown[]) => ({ ok: true, messages });
+  const t = transcriptFromHistory(hist([
+    { user: "U2", text: "second" },
+    { subtype: "channel_join", user: "U9", text: "<@U9> has joined" },
+    { user: "U1", text: "first  \n line" },
+  ]));
+  ok(t === "<@U1>: first line\n<@U2>: second", "transcript reads oldest-first, collapses whitespace, drops system subtypes");
+  ok(transcriptFromHistory(hist([])) === undefined && transcriptFromHistory({ ok: false }) === undefined && transcriptFromHistory(null) === undefined, "no readable messages → undefined (defensive on junk)");
+  const long = transcriptFromHistory(hist([{ user: "U1", text: "x".repeat(400) }]));
+  ok(long !== undefined && long.length <= 252 && long.endsWith("…"), "over-long messages truncate per line");
+  const many = transcriptFromHistory(hist(Array.from({ length: 60 }, (_, i) => ({ user: "U1", text: `msg ${i} ${"y".repeat(200)}` }))));
+  ok(many !== undefined && many.length <= 4000 && !many.includes("msg 59") && many.includes("msg 0"), "block cap trims the OLDEST lines, keeps the recent tail");
 
   const bare = renderChannelJoinMessage({ channelId: "C_X" });
   ok(bare.includes("(unknown)") && bare.includes(NO_REPLY_SENTINEL), "metadata-less dispatch degrades to (unknown) fields");
