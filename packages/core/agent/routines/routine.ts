@@ -1,7 +1,7 @@
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
   | { readonly kind: "interval"; readonly everyMinutes: number }
-  | { readonly kind: "watch"; readonly everyMinutes: number }
+  | { readonly kind: "watch"; readonly everyMinutes?: number; readonly expr?: string }
   | {
       readonly kind: "event";
       readonly source: string;
@@ -57,11 +57,13 @@ export function routineMarker(attributes: Attrs): { id: string; surfaceKey: stri
 export function describeTrigger(t: RoutineTrigger): string {
   switch (t.kind) {
     case "cron":
-      return `cron "${t.expr}" (UTC)`;
+      return `cron "${t.expr}" (UTC; posts every run)`;
     case "interval":
-      return `every ${t.everyMinutes} min`;
+      return `every ${t.everyMinutes} min (posts every run)`;
     case "watch":
-      return `watch every ${t.everyMinutes} min (posts only on change)`;
+      return t.expr !== undefined
+        ? `cron "${t.expr}" (UTC; posts only on change)`
+        : `every ${t.everyMinutes} min (posts only on change)`;
     case "event": {
       const m = t.match ? ` ${JSON.stringify(t.match)}` : "";
       return `on ${t.source} event${m}`;

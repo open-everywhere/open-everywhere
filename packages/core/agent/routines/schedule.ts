@@ -90,15 +90,17 @@ export function nextCronAfter(c: ParsedCron, from: Date): Date | null {
 type Trigger =
   | { kind: "cron"; expr: string }
   | { kind: "interval"; everyMinutes: number }
-  | { kind: "watch"; everyMinutes: number }
+  | { kind: "watch"; everyMinutes?: number; expr?: string }
   | { kind: "event"; source: string; match?: Record<string, string> };
 
 export function computeNextRun(trigger: Trigger, from: Date): Date | null {
   switch (trigger.kind) {
     case "cron":
       return nextCronAfter(parseCron(trigger.expr), from);
-    case "interval":
     case "watch":
+      if (trigger.expr !== undefined) return nextCronAfter(parseCron(trigger.expr), from);
+      return trigger.everyMinutes === undefined ? null : new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
+    case "interval":
       return new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
     case "event":
       return null;

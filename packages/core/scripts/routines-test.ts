@@ -23,7 +23,8 @@ import {
   WATCH_SILENCE_SENTINEL,
   WATCH_STATE_TOOL,
 } from "../agent/routines/watch.js";
-import { routineMarker, ROUTINE_MARKER, type Routine } from "../agent/routines/routine.js";
+import { routineMarker, ROUTINE_MARKER, describeTrigger, type Routine } from "../agent/routines/routine.js";
+import { storedTrigger } from "../agent/tools/create_routine.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -73,7 +74,27 @@ const iv = computeNextRun({ kind: "interval", everyMinutes: 30 }, from);
 ok(iv !== null && iv.toISOString() === "2026-06-24T12:30:00.000Z", "interval next = from + 30min");
 const wn = computeNextRun({ kind: "watch", everyMinutes: 5 }, from);
 ok(wn !== null && wn.toISOString() === "2026-06-24T12:05:00.000Z", "watch next = from + 5min");
+const wc = computeNextRun({ kind: "watch", expr: "0 9 * * 1-5" }, from);
+ok(wc !== null && wc.toISOString() === "2026-06-25T09:00:00.000Z", "a cron-scheduled only-on-change trigger uses cron math");
+ok(computeNextRun({ kind: "watch" }, from) === null, "a watch with neither cadence nor cron never fires (create_routine refuses it)");
 ok(computeNextRun({ kind: "event", source: "github" }, from) === null, "event has no clock-next");
+
+{
+  const st = (t: Parameters<typeof storedTrigger>[0]) => storedTrigger(t);
+  ok(JSON.stringify(st({ kind: "scheduled", everyMinutes: 60, postPolicy: "every-run" })) === '{"kind":"interval","everyMinutes":60}', "cadence + every-run → interval");
+  ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "every-run" })) === '{"kind":"cron","expr":"0 9 * * *"}', "cron + every-run → cron");
+  ok(JSON.stringify(st({ kind: "scheduled", everyMinutes: 60, postPolicy: "only-on-change" })) === '{"kind":"watch","everyMinutes":60}', "cadence + only-on-change → watch");
+  ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "only-on-change" })) === '{"kind":"watch","expr":"0 9 * * *"}', "cron + only-on-change → cron-scheduled watch (new expressiveness)");
+  let threw = 0;
+  try { st({ kind: "scheduled", postPolicy: "every-run" }); } catch { threw++; }
+  try { st({ kind: "scheduled", cron: "0 9 * * *", everyMinutes: 5, postPolicy: "every-run" }); } catch { threw++; }
+  ok(threw === 2, "neither / both of cron+everyMinutes is refused");
+  ok(st({ kind: "event", source: "github", match: { event: "push" } }).kind === "event", "event passes through unchanged");
+}
+
+ok(describeTrigger({ kind: "interval", everyMinutes: 60 }) === "every 60 min (posts every run)", "interval description states the policy");
+ok(describeTrigger({ kind: "watch", everyMinutes: 60 }) === "every 60 min (posts only on change)", "only-on-change description avoids the word watch");
+ok(describeTrigger({ kind: "watch", expr: "0 9 * * 1-5" }).includes("posts only on change"), "cron-scheduled only-on-change described consistently");
 
 ok(isDue("2026-06-24T11:59:00Z", from), "past nextRunAt is due");
 ok(!isDue("2026-06-24T12:01:00Z", from), "future nextRunAt is not due");
