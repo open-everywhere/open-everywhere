@@ -19,7 +19,7 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageAction } from "./slack-events.js";
+import { finalMessageAction, botDisplayName } from "./slack-events.js";
 import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -31,7 +31,7 @@ import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_M
 import {
   STATUS_REACTION,
   renderPinned,
-  PINNED_HEADER,
+  isPinnedStatusMessage,
   type ReactionState,
 } from "../status/status.js";
 
@@ -114,7 +114,7 @@ async function syncPinnedStatus(channel: SlackEventContext): Promise<void> {
     if (list.ok && Array.isArray(items)) {
       for (const it of items) {
         const m = (it as { message?: { text?: unknown; ts?: unknown } })?.message;
-        if (m && typeof m.text === "string" && m.text.startsWith(PINNED_HEADER) && typeof m.ts === "string") {
+        if (m && typeof m.text === "string" && isPinnedStatusMessage(m.text) && typeof m.ts === "string") {
           ts = m.ts;
           break;
         }
@@ -208,7 +208,7 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
     marker[ONBOARDED_MARKER] = new Date().toISOString();
     await getProvider().writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
     try {
-      await ctx.thread.post(introMessage(adopted));
+      await ctx.thread.post(introMessage(adopted, await botDisplayName()));
     } catch {
     }
   } catch {

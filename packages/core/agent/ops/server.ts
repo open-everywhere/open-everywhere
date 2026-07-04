@@ -38,7 +38,7 @@ export function buildOpsServer(): McpServer {
     "preflight",
     {
       title: "Preflight check",
-      description: "Check the prerequisites for running/deploying OpenEverywhere (node, model key, providers, durable DB, control-plane auth). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
+      description: "Check the prerequisites for running/deploying Open Everywhere (node, model key, providers, durable DB, control-plane auth). Reads the project's .env.local. Read-only — reports what's set and how to fix what's missing.",
       inputSchema: { envPath: z.string().optional() },
     },
     (a) => json(preflight(mergedEnv(a.envPath))),

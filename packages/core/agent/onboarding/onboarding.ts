@@ -1,4 +1,4 @@
-import { PINNED_HEADER } from "../status/status.js";
+import { isPinnedStatusMessage } from "../status/status.js";
 import { SURFACE } from "../memory/store.js";
 import { getProvider } from "../memory/provider.js";
 import type { Partition } from "../memory/partition.js";
@@ -26,15 +26,14 @@ export function extractPinnedInstructions(pinsList: unknown): string | null {
     const m = (it as { message?: { text?: unknown } })?.message;
     if (m && typeof m.text === "string") {
       const t = m.text.trim();
-      if (t && !t.startsWith(PINNED_HEADER)) texts.push(t);
+      if (t && !isPinnedStatusMessage(t)) texts.push(t);
     }
   }
   return texts.length ? texts.join("\n\n") : null;
 }
 
-export function introMessage(adoptedInstructions: boolean): string {
-  const base =
-    "👋 Hi, I'm **OpenEverywhere** — an autonomous engineering teammate. Tag me with a task (investigate a bug, draft a PR, watch something on a schedule) and I'll work it through and report back. Consequential actions pause for your approval.";
+export function introMessage(adoptedInstructions: boolean, name?: string): string {
+  const base = `👋 Hi, I'm **${name?.trim() || "Open Everywhere"}** — an autonomous engineering teammate. Tag me with a task (investigate a bug, draft a PR, watch something on a schedule) and I'll work it through and report back. Consequential actions pause for your approval.`;
   return adoptedInstructions
     ? `${base}\n\nI've read this channel's pinned message and will treat it as my standing instructions here.`
     : base;
