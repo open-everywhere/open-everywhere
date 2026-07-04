@@ -1,0 +1,100 @@
+import { defineTool } from "eve/tools";
+import { never } from "eve/tools/approval";
+import { z } from "zod";
+import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
+import { principalIdOf } from "../access/request.js";
+import { domainForChannel } from "../memory/domain.js";
+import { getConfig } from "../access/config.js";
+import { effectiveCaps } from "../spend/caps.js";
+import { defaultScopeKey } from "./set_spend_limit.js";
+import { requestApproval } from "../approvals/flow.js";
+
+const LEVELS = ["surface", "workspace"] as const;
+type Level = (typeof LEVELS)[number];
+
+export interface ClearSpendLimitInput {
+  readonly level?: Level;
+  readonly scopeKey?: string;
+}
+
+export interface SpendClearPlan {
+  readonly kind: "spend.clear";
+  readonly args: {
+    readonly org: string;
+    readonly scopeKey: string;
+    readonly level: Level;
+    readonly currentCap: number | null;
+  };
+  readonly scopeKey: string;
+  readonly domain: string | null;
+}
+
+export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, currentCap: number | null, domain: string | null): SpendClearPlan {
+  if (binding.platform !== "slack") {
+    throw new Error(`clear_spend_limit is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
+  }
+  if (!binding.principalId) {
+    throw new Error("clear_spend_limit needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  }
+  const level = input.level ?? "surface";
+  const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
+  return {
+    kind: "spend.clear",
+    args: { org: binding.org, scopeKey, level, currentCap },
+    scopeKey,
+    domain,
+  };
+}
+
+export default defineTool({
+  description:
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. Tell the user plainly that a card was posted and the override is still in effect until approved.',
+  inputSchema: z.object({
+    level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace).'),
+    scopeKey: z
+      .string()
+      .optional()
+      .describe('Override the scope key, e.g. "slack/T123/C456" for a surface or "slack/T123" for a workspace. Defaults to this surface\'s own scope.'),
+  }),
+  outputSchema: z.object({
+    requested: z.boolean(),
+    pendingId: z.string(),
+    expiresAt: z.string(),
+    note: z.string(),
+  }),
+  approval: never(),
+  async execute(input, ctx) {
+    const binding = bindFrom(ctx);
+    const level = input.level ?? "surface";
+    const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
+    const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
+    const workspaceKey = `${binding.platform}/${binding.workspace}`;
+    const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey);
+    const currentCap = (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null;
+
+    const plan = planClearSpendLimit(binding, input, currentCap, domain);
+
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    if (!channelId) {
+      throw new Error("clear_spend_limit couldn't resolve this Slack channel's id — try again from a real channel or DM, not a synthetic context.");
+    }
+
+    const posted = await requestApproval({
+      org: plan.args.org,
+      kind: plan.kind,
+      args: plan.args,
+      scopeKey: plan.scopeKey,
+      domain: plan.domain,
+      requestedBy: principalIdOf(ctx)!,
+      channelId,
+      threadTs: null,
+    });
+
+    return {
+      requested: true,
+      pendingId: posted.id,
+      expiresAt: posted.expiresAt,
+      note: `Posted a confirmation card to clear the ${plan.args.level} spend-limit override on "${plan.args.scopeKey}" (current: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString() + " tokens/month"}). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+    };
+  },
+});

@@ -96,3 +96,18 @@ export function ensureFullHistoryPointer(content: string, sectionTitle: string, 
 
   return [...lines.slice(0, headingIdx + 1), ...cleaned, ...lines.slice(end)].join("\n");
 }
+
+export function removeBulletLine(content: string, bullet: string): { content: string; removed: boolean } {
+  const target = bullet.replace(/[ \t]+$/, "");
+  const lines = content.split("\n");
+  const idx = lines.findIndex((l) => l.replace(/[ \t]+$/, "") === target);
+  if (idx === -1) return { content, removed: false };
+
+  const before = lines.slice(0, idx);
+  const after = lines.slice(idx + 1);
+  const prevBlank = before.length > 0 && before[before.length - 1].trim() === "";
+  const nextBlank = after.length > 0 && after[0].trim() === "";
+  const merged = prevBlank && nextBlank ? [...before, ...after.slice(1)] : [...before, ...after];
+
+  return { content: merged.join("\n"), removed: true };
+}

@@ -345,7 +345,7 @@ const TRANSCRIPT_MESSAGES = 50;
 const TRANSCRIPT_LINE_CHARS = 240;
 const TRANSCRIPT_TOTAL_CHARS = 4000;
 
-async function slackForm(method: string, body: string): Promise<Record<string, unknown> | undefined> {
+export async function slackForm(method: string, body: string): Promise<Record<string, unknown> | undefined> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return undefined;
   try {

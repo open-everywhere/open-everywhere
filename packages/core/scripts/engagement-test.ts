@@ -29,6 +29,7 @@ import {
 import { nameDropWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
+import { OE_APPROVAL_PREFIX } from "../agent/approvals/flow.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -205,6 +206,111 @@ registerConfig({
     const d = classifyEnvelope(ev({ type: "message", channel: "C", ts: "1.1", thread_ts: "1.0", channel_type: ct, user: "U1", text: "more" }), JSON_CT);
     ok(d.kind === "wake" && d.env !== undefined, `message.${ct} → wake (carries env)`);
   }
+
+  const FORM_CT = "application/x-www-form-urlencoded";
+  const payloadBody = (o: unknown) => `payload=${encodeURIComponent(JSON.stringify(o))}`;
+  const blockActions = (actionIds: string[]) => ({ type: "block_actions", actions: actionIds.map((action_id) => ({ action_id })) });
+
+  {
+    const d = classifyEnvelope(payloadBody(blockActions([`${OE_APPROVAL_PREFIX}approve:42`])), FORM_CT);
+    ok(d.kind === "approval-click", "urlencoded block_actions carrying an oe_approval: action_id → approval-click");
+    ok(
+      (d as { payload: { actions: Array<{ action_id: string }> } }).payload.actions[0].action_id === `${OE_APPROVAL_PREFIX}approve:42`,
+      "the decision carries the parsed JSON payload, not a re-strung id",
+    );
+  }
+  ok(
+    classifyEnvelope(payloadBody(blockActions(["eve_input:req1"])), FORM_CT).kind === "forward",
+    "block_actions with ONLY eve_input: action ids (Eve's HITL) → forward, untouched",
+  );
+  ok(
+    classifyEnvelope(payloadBody(blockActions(["eve_input:req1", `${OE_APPROVAL_PREFIX}reject:9`])), FORM_CT).kind === "approval-click",
+    "ANY action id carrying the prefix is enough, even mixed with Eve's own HITL ids in the same click",
+  );
+  ok(
+    classifyEnvelope("command=%2Fstatus&text=&user_id=U1", FORM_CT).kind === "forward",
+    "slash-command body (urlencoded, no `payload` field at all) → forward",
+  );
+  ok(classifyEnvelope("payload=not-json", FORM_CT).kind === "forward", "garbage payload JSON → forward (fail-safe, never throws)");
+  ok(
+    classifyEnvelope(payloadBody({ type: "view_submission" }), FORM_CT).kind === "forward",
+    "view_submission (not block_actions) → forward, untouched",
+  );
+  ok(classifyEnvelope(payloadBody({}), FORM_CT).kind === "forward", "payload with no type/actions at all → forward");
+}
+
+{
+  const FORM_CT = "application/x-www-form-urlencoded";
+  const payloadBody = (o: unknown) => `payload=${encodeURIComponent(JSON.stringify(o))}`;
+  const oeClick = (id: string) => payloadBody({ type: "block_actions", actions: [{ action_id: `${OE_APPROVAL_PREFIX}approve:${id}` }] });
+
+  const secret = "approval-secret";
+  const nowMs = 1_700_000_000_000;
+  const mkReq = (body: string) => {
+    const ts = String(Math.floor(nowMs / 1000));
+    const sig = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": FORM_CT, "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+  const fakeArgs = { send: async () => ({}), waitUntil: (p: Promise<unknown>) => void p };
+
+  let innerCalled = false;
+  let handledPayload: unknown;
+  const handler = buildFrontHandler(
+    async () => {
+      innerCalled = true;
+      return new Response("inner");
+    },
+    {
+      signingSecret: secret,
+      now: () => nowMs,
+      handleApprovalPayload: async (p) => {
+        handledPayload = p;
+        return true;
+      },
+    },
+  );
+  let res = await handler(mkReq(oeClick("7")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  const bodyText = await res.text();
+  ok(res.status === 200 && bodyText === "", "approval-click → fast 200 with an empty body (our own chat.update follows async)");
+  ok(!innerCalled, "approval-click is handled locally — slackChannel's own (Eve) handler is never invoked");
+  ok(
+    (handledPayload as { actions: Array<{ action_id: string }> })?.actions[0]?.action_id === `${OE_APPROVAL_PREFIX}approve:7`,
+    "the injected handler receives the parsed block_actions payload, not a re-strung id",
+  );
+
+  innerCalled = false;
+  const mismatch = buildFrontHandler(
+    async () => {
+      innerCalled = true;
+      return new Response("inner");
+    },
+    { signingSecret: secret, now: () => nowMs, handleApprovalPayload: async () => false },
+  );
+  res = await mismatch(mkReq(oeClick("8")), fakeArgs as unknown as Parameters<typeof mismatch>[1]);
+  ok(innerCalled && (await res.text()) === "inner", "handler returning false falls through to forwarding (nothing swallowed)");
+
+  innerCalled = false;
+  const other = buildFrontHandler(
+    async () => {
+      innerCalled = true;
+      return new Response("inner");
+    },
+    { signingSecret: secret, now: () => nowMs },
+  );
+  res = await other(mkReq("command=%2Fstatus&text=&user_id=U1"), fakeArgs as unknown as Parameters<typeof other>[1]);
+  ok(innerCalled && (await res.text()) === "inner", "non-approval urlencoded body (slash command) forwards unchanged");
+
+  const badSig = new Request("https://oe.test/eve/v1/slack", {
+    method: "POST",
+    headers: { "content-type": FORM_CT, "x-slack-request-timestamp": String(Math.floor(nowMs / 1000)), "x-slack-signature": "v0=deadbeef" },
+    body: oeClick("9"),
+  });
+  res = await other(badSig, fakeArgs as unknown as Parameters<typeof other>[1]);
+  ok(res.status === 401, "bad signature 401s before classification ever runs, even for an approval-shaped body");
 }
 
 {

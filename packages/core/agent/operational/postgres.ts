@@ -2,6 +2,7 @@ import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
 import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger, UsageEventEntry, UsageSummaryFilter } from "./store.js";
+import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -68,6 +69,25 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      seen_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS pending_actions (
+     org_id       text NOT NULL,
+     id           text NOT NULL,
+     kind         text NOT NULL,
+     args_json    text NOT NULL,
+     scope_key    text NOT NULL,
+     domain       text,
+     requested_by text NOT NULL,
+     channel_id   text NOT NULL,
+     thread_ts    text,
+     message_ts   text,
+     status       text NOT NULL,
+     created_at   text NOT NULL,
+     expires_at   text NOT NULL,
+     decided_by   text,
+     decided_at   text,
+     PRIMARY KEY (org_id, id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS pending_actions_org_status ON pending_actions (org_id, status)`,
   `CREATE TABLE IF NOT EXISTS domain_skill (
      org_id     text NOT NULL,
      domain     text NOT NULL,
@@ -108,6 +128,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -119,6 +140,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
+  `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -148,6 +170,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY usage_events_insert ON usage_events FOR INSERT
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY pending_actions_org_isolation ON pending_actions
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
 ];
 
 export async function initOperationalSchema(client: PgClient): Promise<void> {
@@ -161,6 +186,43 @@ const UPSERT_SPEND =
      input_tokens  = spend_ledger.input_tokens  + excluded.input_tokens,
      output_tokens = spend_ledger.output_tokens + excluded.output_tokens,
      calls         = spend_ledger.calls + 1`;
+
+type PendingActionPgRow = {
+  id: string;
+  kind: string;
+  args_json: string;
+  scope_key: string;
+  domain: string | null;
+  requested_by: string;
+  channel_id: string;
+  thread_ts: string | null;
+  message_ts: string | null;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+};
+
+function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActionRow {
+  return {
+    id: r.id,
+    org,
+    kind: r.kind,
+    argsJson: r.args_json,
+    scopeKey: r.scope_key,
+    domain: r.domain,
+    requestedBy: r.requested_by,
+    channelId: r.channel_id,
+    threadTs: r.thread_ts,
+    messageTs: r.message_ts,
+    status: r.status as PendingStatus,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    decidedBy: r.decided_by,
+    decidedAt: r.decided_at,
+  };
+}
 
 function ledgerFrom(rows: { period: string; input_tokens: number; output_tokens: number; calls: number }[]) {
   const windows: Record<string, { inputTokens: number; outputTokens: number; calls: number }> = {};
@@ -557,6 +619,54 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } = await client.query(
         "INSERT INTO event_dedupe (org_id, key, seen_at) VALUES ($1, $2, $3) ON CONFLICT (org_id, key) DO NOTHING RETURNING key",
         [org, key, at],
+      );
+      return rows.length > 0;
+    },
+
+    async addPendingAction(row: PendingActionRow) {
+      await client.query(
+        `INSERT INTO pending_actions
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          row.org,
+          row.id,
+          row.kind,
+          row.argsJson,
+          row.scopeKey,
+          row.domain,
+          row.requestedBy,
+          row.channelId,
+          row.threadTs,
+          row.messageTs,
+          row.status,
+          row.createdAt,
+          row.expiresAt,
+          row.decidedBy,
+          row.decidedAt,
+        ],
+      );
+    },
+
+    async getPendingAction(org, id) {
+      const { rows } = await client.query(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = $1 AND id = $2`,
+        [org, id],
+      );
+      const r = (rows as PendingActionPgRow[])[0];
+      return r ? pendingActionFromPgRow(org, r) : null;
+    },
+
+    async setPendingActionMessage(org, id, messageTs) {
+      await client.query("UPDATE pending_actions SET message_ts = $1 WHERE org_id = $2 AND id = $3", [messageTs, org, id]);
+    },
+
+    async decidePendingAction(org, id, status, decidedBy, decidedAt) {
+      const { rows } = await client.query(
+        `UPDATE pending_actions SET status = $1, decided_by = $2, decided_at = $3
+         WHERE org_id = $4 AND id = $5 AND status = 'pending' RETURNING id`,
+        [status, decidedBy, decidedAt, org, id],
       );
       return rows.length > 0;
     },

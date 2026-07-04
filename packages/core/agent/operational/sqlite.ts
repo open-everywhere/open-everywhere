@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger, UsageEventEntry } from "./store.js";
+import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 
 function dbPath(): string {
   if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
@@ -86,6 +87,25 @@ function getDb(): DatabaseSync {
       seen_at TEXT NOT NULL,                  -- ISO-8601 (lexicographic = chronological)
       PRIMARY KEY (org_id, key)
     );
+    CREATE TABLE IF NOT EXISTS pending_actions (
+      org_id       TEXT NOT NULL,
+      id           TEXT NOT NULL,
+      kind         TEXT NOT NULL,             -- e.g. "spend.set" (agent/approvals/actions.ts registry key)
+      args_json    TEXT NOT NULL,             -- FROZEN mutation args, JSON
+      scope_key    TEXT NOT NULL,             -- the scope the mutation targets
+      domain       TEXT,                      -- memory domain resolved at propose time (NULL if none)
+      requested_by TEXT NOT NULL,             -- proposing session's verified principal id
+      channel_id   TEXT NOT NULL,             -- where the card is posted
+      thread_ts    TEXT,
+      message_ts   TEXT,                      -- the card's ts, set after post
+      status       TEXT NOT NULL,             -- pending|approved|rejected|expired
+      created_at   TEXT NOT NULL,
+      expires_at   TEXT NOT NULL,
+      decided_by   TEXT,
+      decided_at   TEXT,
+      PRIMARY KEY (org_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS pending_actions_org_status ON pending_actions (org_id, status);
     CREATE TABLE IF NOT EXISTS domain_skill (
       org_id     TEXT NOT NULL,
       domain     TEXT NOT NULL,
@@ -172,6 +192,43 @@ function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
     cacheWriteTokens: r.cache_write_tokens,
     ...(r.model ? { model: r.model } : {}),
     ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
+  };
+}
+
+type PendingActionSqlRow = {
+  id: string;
+  kind: string;
+  args_json: string;
+  scope_key: string;
+  domain: string | null;
+  requested_by: string;
+  channel_id: string;
+  thread_ts: string | null;
+  message_ts: string | null;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_by: string | null;
+  decided_at: string | null;
+};
+
+function pendingActionFromRow(org: string, r: PendingActionSqlRow): PendingActionRow {
+  return {
+    id: r.id,
+    org,
+    kind: r.kind,
+    argsJson: r.args_json,
+    scopeKey: r.scope_key,
+    domain: r.domain,
+    requestedBy: r.requested_by,
+    channelId: r.channel_id,
+    threadTs: r.thread_ts,
+    messageTs: r.message_ts,
+    status: r.status as PendingStatus,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    decidedBy: r.decided_by,
+    decidedAt: r.decided_at,
   };
 }
 
@@ -538,6 +595,53 @@ export const sqliteOperationalStore: OperationalStore = {
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM event_dedupe WHERE seen_at < ?").run(cutoff);
     const info = handle.prepare("INSERT OR IGNORE INTO event_dedupe (org_id, key, seen_at) VALUES (?, ?, ?)").run(org, key, at);
+    return info.changes > 0;
+  },
+
+  async addPendingAction(row) {
+    getDb()
+      .prepare(
+        `INSERT INTO pending_actions
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.org,
+        row.id,
+        row.kind,
+        row.argsJson,
+        row.scopeKey,
+        row.domain,
+        row.requestedBy,
+        row.channelId,
+        row.threadTs,
+        row.messageTs,
+        row.status,
+        row.createdAt,
+        row.expiresAt,
+        row.decidedBy,
+        row.decidedAt,
+      );
+  },
+
+  async getPendingAction(org, id) {
+    const row = getDb()
+      .prepare(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = ? AND id = ?`,
+      )
+      .get(org, id) as PendingActionSqlRow | undefined;
+    return row ? pendingActionFromRow(org, row) : null;
+  },
+
+  async setPendingActionMessage(org, id, messageTs) {
+    getDb().prepare("UPDATE pending_actions SET message_ts = ? WHERE org_id = ? AND id = ?").run(messageTs, org, id);
+  },
+
+  async decidePendingAction(org, id, status, decidedBy, decidedAt) {
+    const info = getDb()
+      .prepare("UPDATE pending_actions SET status = ?, decided_by = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
+      .run(status, decidedBy, decidedAt, org, id);
     return info.changes > 0;
   },
 };

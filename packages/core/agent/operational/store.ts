@@ -1,5 +1,6 @@
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
+import type { PendingActionRow } from "../approvals/types.js";
 
 export interface AuditEntry {
   readonly ts: string;
@@ -157,4 +158,9 @@ export interface OperationalStore {
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
+
+  addPendingAction(row: PendingActionRow): Promise<void>;
+  getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
+  setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
+  decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
 }

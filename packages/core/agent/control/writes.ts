@@ -8,6 +8,7 @@ import { getConfig } from "../access/config.js";
 import { providerById } from "../memory/provider.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
+import { deleteDomainSkill } from "../skills/domain-skills.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -15,6 +16,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "revoke_connector",
   "clear_connector_override",
   "cancel_routine",
+  "delete_skill",
   "memory_write_file",
   "memory_delete_file",
 ] as const;
@@ -154,6 +156,27 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, cancelled, org: a.org, surfaceKey: a.surfaceKey, id: a.id });
       } catch (e) {
         return errorResult(`cancel_routine failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_skill",
+    {
+      title: "Delete a domain skill (break-glass)",
+      description:
+        "Break-glass removal of a runtime domain skill (agent/skills/domain-skills.ts) without needing Slack channel membership — the out-of-band twin of the in-channel delete_skill agent tool. Requires a domain:<name> role covering the domain (or org-wide \"admin\"). Returns deleted=false if no such skill existed.",
+      inputSchema: { org: z.string().min(1), domain: z.string().min(1), name: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      if (denial) return errorResult(denial);
+      try {
+        const deleted = await deleteDomainSkill(a.org, a.domain, a.name);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "skill.delete", detail: { domain: a.domain, name: a.name, deleted } });
+        return jsonResult({ ok: true, deleted, org: a.org, domain: a.domain, name: a.name });
+      } catch (e) {
+        return errorResult(`delete_skill failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

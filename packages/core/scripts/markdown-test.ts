@@ -5,6 +5,7 @@ import {
   appendToTopicFile,
   trimSectionToRecent,
   ensureFullHistoryPointer,
+  removeBulletLine,
 } from "../agent/memory/markdown.js";
 
 let n = 0;
@@ -95,6 +96,39 @@ function ok(cond: boolean, label: string): void {
 
   const untouched = ensureFullHistoryPointer(base, "Missing", "missing");
   ok(untouched === base, "pointer: an absent section is a no-op");
+}
+
+{
+  const content = "# Memory\n\n## People\n- 2026-07-01: Ada owns billing\n- 2026-07-02: Bo owns payouts\n\n## Notes\n- z: other-section\n";
+  const { content: next, removed } = removeBulletLine(content, "- 2026-07-01: Ada owns billing");
+  ok(removed === true, "removeBulletLine: present bullet reports removed:true");
+  ok(!next.includes("Ada owns billing"), "removeBulletLine: the matched line is gone");
+  ok(next.includes("- 2026-07-02: Bo owns payouts"), "removeBulletLine: a sibling bullet in the SAME section survives");
+  ok(next.includes("- z: other-section"), "removeBulletLine: a bullet in a DIFFERENT section is untouched");
+
+  const { content: sameContent, removed: notRemoved } = removeBulletLine(content, "- 2026-07-09: nothing like this exists");
+  ok(notRemoved === false, "removeBulletLine: absent bullet reports removed:false");
+  ok(sameContent === content, "removeBulletLine: content is byte-identical when nothing matched");
+
+  const trailing = "# Memory\n\n## Notes\n- 2026-07-01: has trailing spaces   \n- 2026-07-02: keep me\n";
+  const { content: trimmedOut, removed: trimmedRemoved } = removeBulletLine(trailing, "- 2026-07-01: has trailing spaces");
+  ok(trimmedRemoved === true, "removeBulletLine: matches even when the file's line has trailing whitespace");
+  ok(!trimmedOut.includes("has trailing spaces") && trimmedOut.includes("keep me"), "removeBulletLine: only the matched (trailing-whitespace) line is removed");
+
+  const multi = "# Memory\n\n## Standing instructions\n- a: one\n- b: two\n- c: three\n\n## Notes\n- x\n- y\n";
+  const { content: multiNext } = removeBulletLine(multi, "- b: two");
+  ok(multiNext.includes("- a: one") && multiNext.includes("- c: three") && !multiNext.includes("- b: two"), "removeBulletLine: removes only the targeted middle bullet");
+  ok(multiNext.includes("## Notes\n- x\n- y"), "removeBulletLine: a later, unrelated section is byte-identical");
+
+  const flanked = "# Memory\n\n## Notes\n- keep-before\n\n- 2026-07-01: remove me\n\n- keep-after\n";
+  const { content: collapsed } = removeBulletLine(flanked, "- 2026-07-01: remove me");
+  ok(!collapsed.includes("remove me"), "removeBulletLine: the flanked bullet is gone");
+  ok(!collapsed.includes("\n\n\n"), "removeBulletLine: removing a blank-flanked line never leaves a doubled (triple-newline) gap");
+  ok(collapsed.includes("- keep-before\n\n- keep-after"), "removeBulletLine: exactly one blank line remains between the surviving neighbours");
+
+  const untouchedGap = "# Memory\n\n## Notes\n- solo\n\n\n## Other\n- z\n";
+  const { content: afterUnrelatedRemoval } = removeBulletLine(untouchedGap, "- solo");
+  ok(afterUnrelatedRemoval.includes("\n\n\n"), "removeBulletLine: a pre-existing double-blank UNRELATED to the removed line is left alone");
 }
 
 console.log(`\n✓ markdown surgery (memory index + topic files): ${n} assertions passed\n`);

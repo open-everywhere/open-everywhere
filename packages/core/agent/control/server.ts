@@ -117,7 +117,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "Usage summary (tokens + $ estimate)",
       description:
-        "Grouped usage_events rollup (surface/user/kind/model) with an estimated $ figure where a model can be assumed — the control-plane view behind the session_cost/spend_report/usage_report agent tools. Pass domain OR surfaceKey to scope it (a domain:<name> role covers its own domain/surfaceKey); an unscoped, org-wide call needs the org-wide \"admin\" role. sinceDays defaults to 30. Read-only.",
+        "Grouped usage_events rollup (surface/user/kind/model) with an estimated $ figure where a model can be assumed — the control-plane view behind the session_cost/spend_report/usage_report agent tools, plus a routine-fired cost PROJECTION (7d/30d) per surface where there's enough history (routinePredictions — always an estimate, never a bill). Pass domain OR surfaceKey to scope it (a domain:<name> role covers its own domain/surfaceKey); an unscoped, org-wide call needs the org-wide \"admin\" role. sinceDays defaults to 30. Read-only.",
       inputSchema: {
         org: z.string().min(1),
         domain: z.string().optional(),

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import "./_register-test-config.js";
 
 const dir = join(tmpdir(), `open-everywhere-control-write-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -92,6 +93,35 @@ await client.connect(clientT);
 }
 
 {
+  ok("CONTROL_WRITE_TOOL_NAMES lists delete_skill", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("delete_skill"));
+
+  await getOperationalStore().putDomainSkill("default", "eng", "runbook", "# Steps", "U1", "2026-07-04T10:00:00Z");
+
+  const otherDomainServer = buildControlServer({ includeWrites: true, actor: "other-op", roles: ["domain:other"] });
+  const [c1, s1] = InMemoryTransport.createLinkedPair();
+  await otherDomainServer.connect(s1);
+  const otherClient = new Client({ name: "delete-skill-denied", version: "0" });
+  await otherClient.connect(c1);
+  const denied = await otherClient.callTool({ name: "delete_skill", arguments: { org: "default", domain: "eng", name: "runbook" } });
+  ok("delete_skill: an uncovered domain role is denied", denied.isError === true);
+  ok(
+    "delete_skill: a denied call doesn't touch the store",
+    (await getOperationalStore().listDomainSkills("default", "eng")).some((s: { name: string }) => s.name === "runbook"),
+  );
+  await otherClient.close();
+
+  const r = await callJson(client, "delete_skill", { org: "default", domain: "eng", name: "runbook" });
+  ok("delete_skill: happy path deletes the seeded skill", r.ok === true && r.deleted === true);
+  ok(
+    "delete_skill: skill is gone from the store",
+    !(await getOperationalStore().listDomainSkills("default", "eng")).some((s: { name: string }) => s.name === "runbook"),
+  );
+
+  const miss = await callJson(client, "delete_skill", { org: "default", domain: "eng", name: "runbook" });
+  ok("delete_skill: deleting an already-gone skill reports deleted:false (not an error)", miss.ok === true && miss.deleted === false);
+}
+
+{
   const r = await callJson(client, "set_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyTokens: 5000, ttlSeconds: 3600, reason: "blocked mid-task" });
   ok("set_spend_limit with ttlSeconds returns a future expiresAt", typeof r.expiresAt === "number" && r.expiresAt > Date.now());
   ok("a future-dated bridge is still applied", (await effectiveCaps("default", "slack/T1", "slack/T1/C1")).surfaceMonthlyTokens === 5000);
@@ -114,10 +144,14 @@ await client.connect(clientT);
 {
   const audit = await readAudit({ org: "default" });
   const actions = audit.map((e) => e.action);
-  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel"]) {
+  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel", "skill.delete"]) {
     ok(`audited: ${a}`, actions.includes(a));
   }
   ok("write actions carry the acting principal", audit.filter((e) => e.action.startsWith("admin.")).every((e) => e.principalId === "admin@example.com"));
+  ok(
+    "delete_skill audits with the control actor, same action string the agent-side delete_skill tool uses (skill.delete)",
+    audit.some((e) => e.action === "skill.delete" && e.principalId === "admin@example.com" && (e.detail as { name?: string })?.name === "runbook"),
+  );
 }
 
 await client.close();

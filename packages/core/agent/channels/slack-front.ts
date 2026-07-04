@@ -17,6 +17,7 @@ import {
 } from "./slack-events.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -26,10 +27,37 @@ export const INTERNAL_SLACK_ROUTE = "/eve/v1/slack/mention";
 export type FrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
   | { readonly kind: "wake"; readonly reason: string; readonly env: SlackEventEnvelope }
-  | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope };
+  | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope }
+  | { readonly kind: "approval-click"; readonly reason: string; readonly payload: unknown };
+
+function parseOeApprovalPayload(rawBody: string): unknown | undefined {
+  const raw = new URLSearchParams(rawBody).get("payload");
+  if (!raw) return undefined;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p.type !== "block_actions" || !Array.isArray(p.actions)) return undefined;
+  const isOurs = (p.actions as unknown[]).some(
+    (a) =>
+      typeof a === "object" &&
+      a !== null &&
+      typeof (a as Record<string, unknown>).action_id === "string" &&
+      ((a as Record<string, unknown>).action_id as string).startsWith(OE_APPROVAL_PREFIX),
+  );
+  return isOurs ? payload : undefined;
+}
 
 export function classifyEnvelope(rawBody: string, contentType: string): FrontDecision {
   if (contentType.includes("application/x-www-form-urlencoded")) {
+    const approvalPayload = parseOeApprovalPayload(rawBody);
+    if (approvalPayload !== undefined) {
+      return { kind: "approval-click", reason: "block_actions oe_approval: click — ours, never forwarded", payload: approvalPayload };
+    }
     return { kind: "forward", reason: "urlencoded interaction/slash — slackChannel owns it" };
   }
   let env: SlackEventEnvelope;
@@ -170,6 +198,7 @@ export interface FrontOptions {
   readonly getBotIdentity?: () => Promise<{ readonly userId?: string; readonly botId?: string }>;
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
+  readonly handleApprovalPayload?: (payload: unknown) => Promise<boolean>;
 }
 
 const OK = () => new Response("ok");
@@ -208,6 +237,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const now = opts.now ?? (() => Date.now());
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
+  const handleApproval = opts.handleApprovalPayload ?? liveHandleApprovalPayload;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     const rawBody = await req.text();
@@ -217,6 +247,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
     if (decision.kind === "forward") {
+      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
+      return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "approval-click") {
+      if (await handleApproval(decision.payload)) {
+        return new Response(null, { status: 200 });
+      }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);
     }
