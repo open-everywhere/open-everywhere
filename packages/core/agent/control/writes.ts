@@ -3,6 +3,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { scopeDenial } from "./auth.js";
+import { assertSafeRelPath } from "./views.js";
+import { getConfig } from "../access/config.js";
+import { providerById } from "../memory/provider.js";
+import { siloTier } from "../memory/store.js";
+import { controlPartition } from "../memory/partition.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -10,7 +15,24 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "revoke_connector",
   "clear_connector_override",
   "cancel_routine",
+  "memory_write_file",
+  "memory_delete_file",
 ] as const;
+
+export const MEMORY_WRITE_MAX_BYTES = 64 * 1024;
+
+export function assertMemoryFileWritable(relPath: string, content?: string): void {
+  const base = relPath.split("/").pop() ?? relPath;
+  if (base.startsWith("_")) {
+    throw new Error(`"${relPath}" looks like a host-internal operational marker (a "_"-prefixed name, e.g. "_onboarded") — refusing to touch it from the control plane.`);
+  }
+  if (!/\.(md|txt)$/i.test(relPath)) {
+    throw new Error(`"${relPath}" must be a ".md" or ".txt" file (memory content only).`);
+  }
+  if (content !== undefined && Buffer.byteLength(content, "utf-8") > MEMORY_WRITE_MAX_BYTES) {
+    throw new Error(`"${relPath}" is ${Buffer.byteLength(content, "utf-8")} bytes, over the ${MEMORY_WRITE_MAX_BYTES / 1024}KB control-plane write cap.`);
+  }
+}
 
 function whereFromScope(org: string, scopeKey: string): { org: string; platform: string; workspace: string; surface?: string } {
   const [platform, workspace, surface] = scopeKey.split("/");
@@ -132,6 +154,75 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, cancelled, org: a.org, surfaceKey: a.surfaceKey, id: a.id });
       } catch (e) {
         return errorResult(`cancel_routine failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  const requireAdmin = (): string | null =>
+    roles.includes("admin")
+      ? null
+      : `forbidden: memory writes require the org-wide "admin" role (v1 — domain roles get memory_list/memory_read only; have: ${roles.length ? roles.join(", ") : "none"}).`;
+
+  server.registerTool(
+    "memory_write_file",
+    {
+      title: "Write a memory file (full-file replace)",
+      description:
+        "Full-file replace of one file inside one memory silo (creates it if absent). ADMIN ONLY (v1) — an org admin IS the approver here, unlike the dream cycle's propose-only gate for the untrusted-autonomous agent. `.md`/`.txt` only, 64KB cap, refuses a `_`-prefixed operational marker (e.g. `_onboarded`). Audited (`memory.write`) and committed with a `control-plane edit by <subject>` message.",
+      inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1), content: z.string() },
+    },
+    async (a) => {
+      const denial = requireAdmin();
+      if (denial) return errorResult(denial);
+      try {
+        assertSafeRelPath(a.relPath);
+        assertMemoryFileWritable(a.relPath, a.content);
+        const silo = getConfig()
+          .loadSilos()
+          .find((s) => s.name === a.silo);
+        if (!silo) return errorResult(`memory_write_file failed: no memory silo named "${a.silo}".`);
+        const provider = providerById(silo.provider);
+        const p = controlPartition(a.org);
+        const tier = siloTier(silo.name);
+        const files = await provider.readTier(p, tier, silo);
+        files[a.relPath] = a.content;
+        const commit = await provider.writeTier(p, tier, files, `control-plane edit by ${actor}`, silo);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.write", detail: { silo: a.silo, relPath: a.relPath, bytes: Buffer.byteLength(a.content, "utf-8"), commit } });
+        return jsonResult({ ok: true, org: a.org, silo: a.silo, relPath: a.relPath, commit });
+      } catch (e) {
+        return errorResult(`memory_write_file failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_delete_file",
+    {
+      title: "Delete a memory file",
+      description:
+        "Delete one file from one memory silo. ADMIN ONLY (v1), same posture as memory_write_file. Refuses a `_`-prefixed operational marker. Returns deleted=false if the file wasn't there. Audited (`memory.delete`) and committed with a `control-plane edit by <subject>` message.",
+      inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireAdmin();
+      if (denial) return errorResult(denial);
+      try {
+        assertSafeRelPath(a.relPath);
+        assertMemoryFileWritable(a.relPath);
+        const silo = getConfig()
+          .loadSilos()
+          .find((s) => s.name === a.silo);
+        if (!silo) return errorResult(`memory_delete_file failed: no memory silo named "${a.silo}".`);
+        const provider = providerById(silo.provider);
+        if (!provider.deleteFile) {
+          return errorResult(`memory_delete_file failed: the "${provider.id}" memory backend doesn't support single-file deletion yet (silo "${a.silo}").`);
+        }
+        const commit = await provider.deleteFile(controlPartition(a.org), siloTier(silo.name), a.relPath, silo);
+        const deleted = commit !== null;
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.delete", detail: { silo: a.silo, relPath: a.relPath, deleted, ...(commit ? { commit } : {}) } });
+        return jsonResult({ ok: true, deleted, org: a.org, silo: a.silo, relPath: a.relPath, commit });
+      } catch (e) {
+        return errorResult(`memory_delete_file failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

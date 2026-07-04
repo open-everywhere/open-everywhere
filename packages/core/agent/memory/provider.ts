@@ -4,6 +4,7 @@ import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
 import {
   deleteTier as gitDeleteTier,
+  deleteFile as gitDeleteFile,
   ensureTier as gitEnsureTier,
   readTier as gitReadTier,
   storeRoot as gitStoreRoot,
@@ -23,6 +24,8 @@ export interface MemoryProvider {
 
   deleteTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<void>;
 
+  deleteFile?(p: Partition, tier: Tier, relPath: string, silo?: MemorySilo): Promise<string | null>;
+
   root?(): string;
 }
 
@@ -32,6 +35,7 @@ export const gitProvider: MemoryProvider = {
   ensureTier: gitEnsureTier,
   writeTier: gitWriteTier,
   deleteTier: gitDeleteTier,
+  deleteFile: gitDeleteFile,
   root: gitStoreRoot,
 };
 

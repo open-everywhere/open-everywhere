@@ -103,5 +103,16 @@ export function makePostgresProvider(client: PgClient): MemoryProvider {
       await client.query("DELETE FROM memory_file WHERE org_id = $1 AND tier_path = $2", [p.org, path]);
       await client.query("DELETE FROM memory_tier WHERE org_id = $1 AND tier_path = $2", [p.org, path]);
     },
+
+    async deleteFile(p, tier, relPath) {
+      const path = tierRelDir(p, tier);
+      const { rows } = await client.query(
+        "SELECT 1 FROM memory_file WHERE org_id = $1 AND tier_path = $2 AND rel_path = $3",
+        [p.org, path, relPath],
+      );
+      if (rows.length === 0) return null;
+      await client.query("DELETE FROM memory_file WHERE org_id = $1 AND tier_path = $2 AND rel_path = $3", [p.org, path, relPath]);
+      return bumpVersion(p.org, path);
+    },
   };
 }

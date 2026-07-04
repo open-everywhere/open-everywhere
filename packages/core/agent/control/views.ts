@@ -14,6 +14,12 @@ import { estimateCostUsd } from "../spend/pricing.js";
 import { resolveAssumedModel, filterToDomain } from "../spend/reporting.js";
 import { listDomainSkills } from "../skills/domain-skills.js";
 import type { DomainSkillRow } from "../operational/store.js";
+import { providerById } from "../memory/provider.js";
+import { siloTier } from "../memory/store.js";
+import { controlPartition } from "../memory/partition.js";
+import { sourceLabel } from "../memory/listing.js";
+import { siloCoveringDomains } from "./auth.js";
+import type { MemorySilo } from "../memory/silo.js";
 
 const currentPeriod = (): string => new Date().toISOString().slice(0, 7);
 
@@ -229,6 +235,98 @@ export interface SkillsListResult {
 export async function skillsListView(q: SkillsListQuery): Promise<SkillsListResult> {
   const skills = await listDomainSkills(q.org, q.domain);
   return { org: q.org, domain: q.domain, skills };
+}
+
+export interface MemoryFileRow {
+  readonly path: string;
+  readonly bytes: number;
+}
+export interface MemoryTierRow {
+  readonly silo: string;
+  readonly domains: readonly string[];
+  readonly provider: string;
+  readonly backing: string;
+  readonly readOnly: boolean;
+  readonly files: readonly MemoryFileRow[];
+  readonly totalBytes: number;
+}
+export interface MemoryListResult {
+  readonly org: string;
+  readonly tiers: readonly MemoryTierRow[];
+}
+
+function byteSize(content: string): number {
+  return Buffer.byteLength(content, "utf-8");
+}
+
+async function memoryTierRow(org: string, silo: MemorySilo, domains: string[]): Promise<MemoryTierRow> {
+  const provider = providerById(silo.provider);
+  const files = await provider.readTier(controlPartition(org), siloTier(silo.name), silo);
+  const rows: MemoryFileRow[] = Object.entries(files)
+    .map(([path, content]) => ({ path, bytes: byteSize(content) }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return {
+    silo: silo.name,
+    domains,
+    provider: silo.provider,
+    backing: sourceLabel(silo),
+    readOnly: silo.readOnly === true,
+    files: rows,
+    totalBytes: rows.reduce((sum, f) => sum + f.bytes, 0),
+  };
+}
+
+export async function memoryListView(org: string, roles: readonly string[]): Promise<MemoryListResult> {
+  const cfg = getConfig();
+  const domains = cfg.loadDomains();
+  const isAdmin = roles.includes("admin");
+  const domainRoles = new Set(roles.filter((r) => r.startsWith("domain:")).map((r) => r.slice("domain:".length)));
+
+  const tiers: MemoryTierRow[] = [];
+  for (const silo of cfg.loadSilos()) {
+    const covering = siloCoveringDomains(silo.name, domains);
+    if (!isAdmin && !covering.some((d) => domainRoles.has(d))) continue;
+    tiers.push(await memoryTierRow(org, silo, covering));
+  }
+  return { org, tiers: tiers.sort((a, b) => a.silo.localeCompare(b.silo)) };
+}
+
+export function assertSafeRelPath(relPath: string): void {
+  if (!relPath || relPath.trim().length === 0) throw new Error("relPath is required");
+  if (relPath.startsWith("/") || relPath.includes("\\")) throw new Error(`relPath must be a relative posix path (got "${relPath}")`);
+  const segments = relPath.split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) {
+    throw new Error(`relPath must not contain ".." or empty segments (got "${relPath}")`);
+  }
+}
+
+export interface MemoryReadQuery {
+  readonly org: string;
+  readonly silo: string;
+  readonly relPath: string;
+}
+export interface MemoryReadResult {
+  readonly org: string;
+  readonly silo: string;
+  readonly relPath: string;
+  readonly content: string;
+  readonly bytes: number;
+}
+
+export async function memoryReadView(q: MemoryReadQuery): Promise<MemoryReadResult> {
+  assertSafeRelPath(q.relPath);
+  const silo = getConfig()
+    .loadSilos()
+    .find((s) => s.name === q.silo);
+  if (!silo) throw new Error(`no memory silo named "${q.silo}" (memory_list for the configured silos).`);
+  const provider = providerById(silo.provider);
+  const files = await provider.readTier(controlPartition(q.org), siloTier(silo.name), silo);
+  const content = files[q.relPath];
+  if (content === undefined) {
+    const have = Object.keys(files).sort().join(", ") || "(none)";
+    throw new Error(`"${q.relPath}" is not a file in silo "${q.silo}" (have: ${have}).`);
+  }
+  return { org: q.org, silo: q.silo, relPath: q.relPath, content, bytes: byteSize(content) };
 }
 
 export interface AccessQuery {

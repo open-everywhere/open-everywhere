@@ -144,6 +144,23 @@ export const sqliteProvider: MemoryProvider = {
     }
   },
 
+  async deleteFile(p, tier, relPath) {
+    const path = tierRelDir(p, tier);
+    const handle = getDb();
+    const existing = handle.prepare("SELECT 1 FROM memory_file WHERE org_id = ? AND tier_path = ? AND rel_path = ?").get(p.org, path, relPath);
+    if (!existing) return null;
+    handle.exec("BEGIN");
+    try {
+      handle.prepare("DELETE FROM memory_file WHERE org_id = ? AND tier_path = ? AND rel_path = ?").run(p.org, path, relPath);
+      const version = bumpVersion(p.org, path);
+      handle.exec("COMMIT");
+      return version;
+    } catch (e) {
+      handle.exec("ROLLBACK");
+      throw e;
+    }
+  },
+
   root() {
     return dbPath();
   },

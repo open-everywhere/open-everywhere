@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, skillsListView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, skillsListView, memoryListView, memoryReadView } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
-import { scopeDenial } from "./auth.js";
+import { scopeDenial, siloScopeDenial } from "./auth.js";
+import { getConfig } from "../access/config.js";
 
 const SESSION_MODE = z.enum(["channel", "dm", "mpim"]);
 
@@ -28,6 +29,8 @@ export const CONTROL_TOOL_NAMES = [
   "overrides_list",
   "usage_summary",
   "skills_list",
+  "memory_list",
+  "memory_read",
 ] as const;
 
 export interface ControlServerOptions {
@@ -144,6 +147,33 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         const denial = scopeDenial(roles, { org: args.org, domain: args.domain });
         if (denial) throw new Error(denial);
         return skillsListView(args);
+      })(),
+  );
+
+  server.registerTool(
+    "memory_list",
+    {
+      title: "List memory silos (the org brain, without SQL)",
+      description:
+        "Every memory silo (memory/silo.ts) the caller's roles cover, enumerated from CONFIG (the domains registry, incl. the conventional \"org-brain\" silo) — not by scanning the store. Each row: silo name, the explicit domain(s) referencing it, provider/backing, read-only flag, and its files with sizes. Row-filtered by role, never an all-or-nothing denial: a domain:<name> role sees only silos an explicit domain of that name references; \"admin\" sees every silo. The org-brain (or any silo referenced only by the org/public/dm pseudo-domains, or by no domain at all) is admin-only. DM/personal and workspace-tier memory are never listed here (excluded entirely — fail-closed privacy). Read-only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    (args) => jsonTool(() => memoryListView(args.org, roles))(),
+  );
+
+  server.registerTool(
+    "memory_read",
+    {
+      title: "Read one memory file",
+      description:
+        "Read one file (relPath, e.g. \"MEMORY.md\" or \"people.md\") out of one memory silo (memory_list for the silo names + file lists). Requires a role covering that silo (\"admin\", or a \"domain:<name>\" role for an explicit domain referencing it) — same admin-only carve-out as memory_list for the org-brain / an unreferenced silo. Read-only.",
+      inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1) },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const denial = siloScopeDenial(roles, args.org, args.silo, getConfig().loadDomains());
+        if (denial) throw new Error(denial);
+        return memoryReadView(args);
       })(),
   );
 

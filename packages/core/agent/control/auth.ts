@@ -1,6 +1,6 @@
 import { jwtVerify, createRemoteJWKSet, type JWTVerifyGetKey } from "jose";
 import type { IncomingMessage } from "node:http";
-import { domainForChannel, type Domain } from "../memory/domain.js";
+import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 
 export interface AdminIdentity {
@@ -67,6 +67,18 @@ export function scopeDenial(roles: readonly string[], scope: ScopeRequest): stri
   if (roleCoversScope(roles, scope, getConfig().loadDomains())) return null;
   const label = scope.surfaceKey ?? scope.domain ?? `org "${scope.org}" (org-wide)`;
   return `forbidden: no role covers ${label} (have: ${roles.length ? roles.join(", ") : "none"}; need "admin" or a covering "domain:<name>").`;
+}
+
+export function siloCoveringDomains(siloName: string, domains: readonly Domain[]): string[] {
+  return domains.filter((d) => d.channels !== undefined && memoryRefs(d).includes(siloName)).map((d) => d.name);
+}
+
+export function siloScopeDenial(roles: readonly string[], org: string, siloName: string, domains: readonly Domain[]): string | null {
+  if (roles.includes("admin")) return null;
+  const covering = siloCoveringDomains(siloName, domains);
+  const domainRoles = new Set(roles.filter((r) => r.startsWith("domain:")).map((r) => r.slice("domain:".length)));
+  if (covering.some((d) => domainRoles.has(d))) return null;
+  return `forbidden: no role covers memory silo "${siloName}" in org "${org}" (have: ${roles.length ? roles.join(", ") : "none"}; need "admin" or a covering "domain:<name>").`;
 }
 
 function bearer(req: IncomingMessage): string | null {

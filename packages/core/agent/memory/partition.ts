@@ -24,3 +24,15 @@ export function resolvePartition(ctx: BindableContext): Partition {
     key: surfaceKey,
   };
 }
+
+export function controlPartition(org: string): Partition {
+  return {
+    org,
+    platform: "control",
+    workspace: "control",
+    surface: "control",
+    workspaceKey: "control/control",
+    surfaceKey: "control/control/control",
+    key: "control/control/control",
+  };
+}

@@ -31,6 +31,11 @@ export function seedFor(p: Partition, tier: Tier): MemoryFiles {
 ## Notes
 (none yet)
 `;
+  const linkGuidance =
+    "Link related subjects like `[[name]]` — facts about the same person/system/decision " +
+    "connect up. This index keeps only the most recent few bullets per section; each " +
+    "category's full history lives in its own topic file (`people.md`, `decisions.md`, …).";
+
   switch (tier.kind) {
     case "workspace":
       return {
@@ -38,7 +43,7 @@ export function seedFor(p: Partition, tier: Tier): MemoryFiles {
 
 Shared across **every surface** (channel/DM) in this workspace. Put facts here
 when they're true org-wide — deploy process, who owns what, standing decisions —
-so a new or similar surface inherits them instead of starting blank.
+so a new or similar surface inherits them instead of starting blank. ${linkGuidance}
 ${body}`,
       };
     case "silo":
@@ -47,7 +52,7 @@ ${body}`,
 
 A shared brain. Every channel whose domain references the **${tier.name}** silo reads
 and writes here, so a sibling channel isn't context-stranded. Put facts here that are
-true for this team/area/topic.
+true for this team/area/topic. ${linkGuidance}
 ${body}`,
       };
     case "surface":
@@ -55,7 +60,7 @@ ${body}`,
         "MEMORY.md": `# Personal memory — index (${p.surfaceKey})
 
 Specific to **this DM only** — your private universe with this person. Nothing here
-leaks to shared (silo) memory.
+leaks to shared (silo) memory. ${linkGuidance}
 ${body}`,
       };
   }

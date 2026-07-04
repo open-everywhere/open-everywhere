@@ -119,6 +119,14 @@ export async function deleteTier(p: Partition, tier: Tier): Promise<void> {
   commit(storeRelDir(p, tier), `delete ${tierId(tier)} memory for ${storeRelDir(p, tier)}`);
 }
 
+export async function deleteFile(p: Partition, tier: Tier, relPath: string): Promise<string | null> {
+  const dir = tierAbsDir(p, tier);
+  const abs = join(dir, ...relPath.split("/"));
+  if (!existsSync(abs)) return null;
+  await rm(abs, { force: true });
+  return commit(storeRelDir(p, tier), `delete ${relPath} from ${tierId(tier)} memory for ${storeRelDir(p, tier)}`);
+}
+
 export function storeRoot(): string {
   return ROOT;
 }
