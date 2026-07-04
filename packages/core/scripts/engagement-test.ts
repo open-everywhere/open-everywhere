@@ -477,7 +477,7 @@ registerConfig({
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
   ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === undefined, "join wake is INVITED — no oeUninvited, failures may post");
   ok(marked.length === 1 && marked[0] === "slack/T_ENG/C_TXN", "surface marked onboarded (a later mention won't re-intro)");
-  ok(seq.join(",") === "wake,mark", "marker is written AFTER the wake dispatch");
+  ok(seq.join(",") === "mark,wake", "marker is CLAIMED before the wake dispatch (an invite-born mention races the join event — claim-first keeps both intros from firing)");
 
   const bare = renderChannelJoinMessage({ channelId: "C_X" });
   ok(bare.includes("(unknown)") && bare.includes(NO_REPLY_SENTINEL), "metadata-less dispatch degrades to (unknown) fields");

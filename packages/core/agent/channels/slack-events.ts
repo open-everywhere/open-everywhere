@@ -485,6 +485,13 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   }
 
   const m = meta ?? { channelId: ev.channelId };
+
+  try {
+    await deps.markOnboarded(p);
+  } catch (err) {
+    console.warn(`[open-everywhere:slack-events] onboarded marker write failed (${p.surfaceKey}): ${String(err)}`);
+  }
+
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.ts,
@@ -502,11 +509,6 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
     state: { channelId: ev.channelId, threadTs: ev.ts, teamId: ev.teamId ?? null, triggeringUserId: ev.inviterId ?? null },
   });
 
-  try {
-    await deps.markOnboarded(p);
-  } catch (err) {
-    console.warn(`[open-everywhere:slack-events] onboarded marker write failed (${p.surfaceKey}): ${String(err)}`);
-  }
   return { deliver: true, reason: "bot added to a confirmed-internal channel — judged intro wake", woke: true };
 }
 
