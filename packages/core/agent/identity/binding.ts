@@ -1,4 +1,5 @@
 import type { SessionMode } from "../access/resolver.js";
+import { readBindingBridge, bridgedContext } from "./binding-bridge.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { discordMode, discordVisibility } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility } from "../channels/telegram-identity.js";
@@ -239,8 +240,18 @@ export function channelPlatform(ctx: BindableContext): string | undefined {
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
-  const platform = seg(channelPlatform(ctx), "local");
-  const raw = (MAPPERS[platform] ?? bindLocal)(ctx);
+  let platform = seg(channelPlatform(ctx), "local");
+  let raw = (MAPPERS[platform] ?? bindLocal)(ctx);
+  if (raw.workspace === undefined && raw.surface === undefined) {
+    const bridged = readBindingBridge();
+    if (bridged) {
+      platform = seg(bridged.platform, "local");
+      raw = (MAPPERS[platform] ?? bindLocal)(bridgedContext(bridged));
+      console.warn(
+        `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
+      );
+    }
+  }
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
   let trust = raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external");

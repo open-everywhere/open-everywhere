@@ -21,11 +21,11 @@ import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageAction } from "./slack-events.js";
 import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
-import { readTier, ensureTier, writeTier, SURFACE, tierId } from "../memory/store.js";
+import { SURFACE, tierId } from "../memory/store.js";
+import { getProvider, providerById } from "../memory/provider.js";
 import { upsertUnderSection } from "../memory/markdown.js";
 import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
-import { providerById } from "../memory/provider.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_MARKER } from "../onboarding/onboarding.js";
 import {
@@ -104,7 +104,7 @@ async function syncPinnedStatus(channel: SlackEventContext): Promise<void> {
       channel: { kind: "slack" },
       session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
     });
-    const files = await readTier(p, SURFACE);
+    const files = await getProvider().readTier(p, SURFACE);
     const text = renderPinned(files["STATUS.md"]);
 
     const slack = channel.slack;
@@ -186,7 +186,7 @@ function authFromFacts(message: SlackMessage, facts: ChannelFacts): OpenEverywhe
 async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<void> {
   try {
     const p = resolvePartition(where);
-    const marker = await ensureTier(p, SURFACE);
+    const marker = await getProvider().ensureTier(p, SURFACE);
     if (marker[ONBOARDED_MARKER] !== undefined) return;
 
     let adopted = false;
@@ -206,7 +206,7 @@ async function maybeOnboard(ctx: SlackContext, where: BindableContext): Promise<
     }
 
     marker[ONBOARDED_MARKER] = new Date().toISOString();
-    await writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
+    await getProvider().writeTier(p, SURFACE, marker, `onboarding ${p.surfaceKey}`);
     try {
       await ctx.thread.post(introMessage(adopted));
     } catch {

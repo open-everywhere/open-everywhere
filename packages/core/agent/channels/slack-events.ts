@@ -5,7 +5,7 @@ import { getConfig } from "../access/config.js";
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
-import { buildSlackAuth, channelFactsFromInfo, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 
 export interface SlackEventEnvelope {
   readonly type?: string;
@@ -87,6 +87,7 @@ export interface MessageRouteDeps {
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; state?: unknown }) => Promise<void>;
   readonly touch?: (p: ReturnType<typeof resolvePartition>, threadTs: string, atIso: string) => Promise<void>;
   readonly now?: () => string;
+  readonly confirmInternal?: (channelId: string) => Promise<boolean>;
 }
 
 export interface RouteOutcome extends ReplyDecision {
@@ -134,7 +135,9 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   });
   if (!decision.deliver) return { ...decision, woke: false };
 
-  const auth = authForEvent(ev);
+  const confirmable = ev.channelType === "channel" || ev.channelType === "group";
+  const internal = confirmable && deps.confirmInternal ? await deps.confirmInternal(ev.channelId).catch(() => false) : false;
+  const auth = authForEvent(ev, internal ? { isExternal: false, trustChecked: true } : undefined);
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
@@ -165,19 +168,23 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
   return {
     isEngaged: (p, threadTs) => isThreadEngaged(p, threadTs),
     touch: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso),
+    confirmInternal: confirmChannelInternal,
     async wake({ channelId, threadTs, auth, message, state }) {
       await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
     },
   };
 }
 
-function authForEvent(ev: ParsedMessageEvent): OpenEverywhereSlackAuth {
+function authForEvent(ev: ParsedMessageEvent, facts?: ChannelFacts): OpenEverywhereSlackAuth {
   return buildSlackAuth({
     userId: ev.userId ?? "",
     teamId: ev.teamId,
     channelId: ev.channelId,
     threadTs: ev.threadTs,
     channelType: ev.channelType,
+    isPrivate: facts?.isPrivate,
+    isExternal: facts?.isExternal,
+    trustChecked: facts?.trustChecked,
   });
 }
 
@@ -262,7 +269,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.ts,
-    auth: authForEvent({ ...ev, threadTs: ev.ts }),
+    auth: authForEvent({ ...ev, threadTs: ev.ts }, { isExternal: false, trustChecked: true }),
     message: renderNameDropMessage(ev, matched!),
     state: wakeState(ev, ev.ts, { oeUninvited: true }),
   });

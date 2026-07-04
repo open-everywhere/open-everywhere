@@ -2,7 +2,8 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { writeTier, SURFACE } from "../memory/store.js";
+import { SURFACE } from "../memory/store.js";
+import { getProvider } from "../memory/provider.js";
 import { readTierFile, writeTierFile, readTierFromSandbox } from "../memory/sandbox-sync.js";
 import { statusItemLine, upsertStatusItem, statusSeed, type WorkState } from "../status/status.js";
 
@@ -30,7 +31,7 @@ export default defineTool({
     await writeTierFile(sandbox, SURFACE, "STATUS.md", updated);
     const files = await readTierFromSandbox(sandbox, SURFACE);
     files["STATUS.md"] = updated;
-    await writeTier(p, SURFACE, files, `status [${input.state}] ${sessionId}`);
+    await getProvider().writeTier(p, SURFACE, files, `status [${input.state}] ${sessionId}`);
 
     return { updated: true, state: input.state };
   },

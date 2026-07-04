@@ -135,6 +135,36 @@ registerConfig({
 }
 
 {
+  const auths: Array<Record<string, string>> = [];
+  const deps = (confirm?: boolean): MessageRouteDeps => ({
+    isEngaged: async () => true,
+    wake: async ({ auth }) => {
+      auths.push((auth as { attributes: Record<string, string> }).attributes);
+    },
+    ...(confirm === undefined ? {} : { confirmInternal: async () => confirm }),
+  });
+  const ev = (over: Record<string, unknown> = {}) =>
+    parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", channel_type: "channel", text: "more", ...over },
+    })!;
+
+  await routeMessageEvent(ev(), deps(true));
+  ok(auths[0].is_ext_shared === "false" && auths[0].trust_checked === "true", "confirmed-internal channel → wake auth carries the trust verdict");
+  ok(auths[0].team_id === "T_ENG" && auths[0].channel_id === "C_TXN", "wake auth carries the platform ids");
+
+  await routeMessageEvent(ev(), deps(false));
+  ok(auths[1].is_ext_shared === undefined && auths[1].trust_checked === undefined, "unconfirmed channel → auth stays UNSTAMPED (session fails closed)");
+
+  await routeMessageEvent(ev(), deps(undefined));
+  ok(auths[2].is_ext_shared === undefined, "no confirmInternal dep → unstamped (fail-closed default)");
+
+  await routeMessageEvent(ev({ channel_type: "im" }), deps(true));
+  ok(auths[3].is_ext_shared === undefined, "DM engagement never gets a channel trust stamp");
+}
+
+{
   const ctxFor = (channelId: string): BindableContext =>
     ({
       channel: { kind: "slack" },
@@ -317,7 +347,7 @@ registerConfig({
       team_id: "T_ENG",
       event: { type: "message", channel: "C_TXN", ts: "42.1", user: "U1", channel_type: "channel", text: "can Ada check the deploy?", ...over },
     })!;
-  const calls: Array<{ threadTs: string; message: string; state: unknown }> = [];
+  const calls: Array<{ threadTs: string; message: string; state: unknown; auth: unknown }> = [];
   let infoCalls = 0;
   const deps = (enabled: boolean, internal: boolean): NameDropRouteDeps => ({
     enabledFor: () => enabled,
@@ -325,8 +355,8 @@ registerConfig({
       infoCalls++;
       return internal;
     },
-    wake: async ({ threadTs, message, state }) => {
-      calls.push({ threadTs, message, state });
+    wake: async ({ threadTs, message, state, auth }) => {
+      calls.push({ threadTs, message, state, auth });
     },
     displayName: async () => "Ada",
   });
@@ -334,6 +364,10 @@ registerConfig({
   let out = await routeNameDropEvent(topLevel(), deps(true, true));
   ok(out.woke && calls.length === 1, "enabled + internal + name → wakes");
   ok(calls[0].threadTs === "42.1", "reply thread is rooted at the triggering message's ts");
+  {
+    const a = (calls[0].auth as { attributes: Record<string, string> }).attributes;
+    ok(a.is_ext_shared === "false" && a.trust_checked === "true", "name-drop wake auth carries the gate's own internal verdict (session arms trusted)");
+  }
   ok(calls[0].message.includes("[name-drop]") && calls[0].message.includes(NO_REPLY_SENTINEL), "name-drop dispatch carries the judge instruction + sentinel");
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
   ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === true, "name-drop wake state carries oeUninvited → failures stay quiet until a reply posts");

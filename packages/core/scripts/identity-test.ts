@@ -1,4 +1,5 @@
 import { bindFrom, slackMode, slackVisibility, slackTrust, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
+import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { teamsTrust } from "../agent/channels/teams-identity.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import {
@@ -210,5 +211,19 @@ delete process.env.OE_TRUST;
 process.env.OE_MODE = "dm";
 ok(bindFrom({}).trust === "internal", "bindFrom: local/dev DM stays internal (platform-exempt)");
 delete process.env.OE_MODE;
+
+ok(readBindingBridge() === null, "binding-bridge: read outside a session context → null (fail-soft)");
+stampBindingBridge(slackCtx({ team_id: "T", channel_id: "C" }));
+ok(readBindingBridge() === null, "binding-bridge: stamp outside a session context is a no-op");
+const bridged = bindFrom(
+  bridgedContext({
+    platform: "slack",
+    principalId: "U1",
+    principalType: "slack-user",
+    attributes: { team_id: "T9", channel_id: "C9", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" },
+  }),
+);
+ok(bridged.workspace === "T9" && bridged.surface === "C9" && bridged.trust === "internal" && bridged.principalId === "U1",
+  "binding-bridge: a stamped identity reconstitutes the full binding (ids + trust + principal)");
 
 console.log(`✓ identity: ${passed} assertions passed`);
