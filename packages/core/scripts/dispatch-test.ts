@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { routineMarker, type Routine } from "../agent/routines/routine.js";
 import { WATCH_SILENCE_SENTINEL, WATCH_STATE_TOOL } from "../agent/routines/watch.js";
 import { NO_REPLY_SENTINEL } from "../agent/channels/slack-events.js";
+import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
+import { resolvePartition } from "../agent/memory/partition.js";
+import { registerConfig, getConfig } from "../agent/access/config.js";
+import { defineDomain, domainForChannel } from "../agent/memory/domain.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -135,6 +139,100 @@ ok(cappedAfter?.consecutiveFailures === 0, "a budget decline never counts toward
 ok(
   cappedAfter?.nextRunAt !== undefined && cappedAfter?.nextRunAt !== null && Date.parse(cappedAfter.nextRunAt) > now.getTime(),
   "a budget decline advances the schedule (retries at its cadence, not every tick)",
+);
+
+const testDomains = [defineDomain({ name: "watched", channels: ["slack/T9/C9"] })];
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => testDomains,
+  loadSilos: () => [],
+  domainsForSurface: (p) => {
+    const d = domainForChannel(`${p.workspaceKey}/${p.surface}`, testDomains);
+    return d ? [d.name] : [];
+  },
+});
+
+const surfaceRoutine: Routine = {
+  id: "r-surface",
+  org: "default",
+  surfaceKey: "slack/T9/C9",
+  trigger: { kind: "interval", everyMinutes: 60 },
+  prompt: "check the thing",
+  createdAt: now.toISOString(),
+  status: "active",
+  consecutiveFailures: 0,
+  nextRunAt: past,
+  target: { channelId: "C9" },
+};
+await store.addRoutine({} as never, surfaceRoutine);
+
+let capturedAuth: { attributes?: Record<string, unknown> } | null = null;
+const captureReceive = ((_channel: unknown, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+  const mk = routineMarker(opts.auth?.attributes as never);
+  if (mk?.id === "r-surface") capturedAuth = (opts.auth ?? null) as never;
+  return Promise.resolve();
+}) as never;
+await dispatch.dispatchTick({
+  now,
+  receive: captureReceive,
+  waitUntil: (_p: Promise<unknown>) => {},
+  appAuth: { attributes: {} } as never,
+  confirmInternal: async () => true,
+} as never);
+
+ok(capturedAuth !== null, "item 15: the routine fired and its auth was captured");
+
+const firedCtx: BindableContext = {
+  channel: { kind: "slack" },
+  session: { auth: { current: capturedAuth as never } },
+};
+const binding = bindFrom(firedCtx);
+ok(binding.platform === "slack", "item 15: bindFrom resolves platform slack for a routine fire");
+ok(binding.workspace === "T9", "item 15: bindFrom resolves the routine's REAL workspace (team_id) — not the env fallback (\"dev\")");
+ok(binding.surface === "C9", "item 15: bindFrom resolves the routine's REAL surface (channel_id) — not the env fallback (\"default\")");
+ok(binding.principalId === undefined, "item 15: no fake user principal is stamped on a routine fire (correctly absent)");
+
+const firedPartition = resolvePartition(firedCtx);
+ok(
+  firedPartition.surfaceKey === "slack/T9/C9",
+  "item 15: resolvePartition resolves the routine's REAL surfaceKey (spend/usage attribution lands on the right surface)",
+);
+
+const firedDomains = getConfig().domainsForSurface({ workspaceKey: firedPartition.workspaceKey, surface: firedPartition.surface });
+ok(
+  firedDomains.includes("watched"),
+  "item 15: domainsForSurface resolves the routine's channel to its configured domain (bundle/skill grants arm for the routine's surface)",
+);
+
+ok(
+  binding.trust === "internal",
+  "trust: a fire whose live conversations.info check confirms internal binds trust=internal (runtime domain skills + shared memory arm)",
+);
+
+await store.updateRoutine(surfaceRoutine.org, surfaceRoutine.surfaceKey, surfaceRoutine.id, { nextRunAt: past, lastOutcome: undefined });
+capturedAuth = null;
+await dispatch.dispatchTick({
+  now,
+  receive: captureReceive,
+  waitUntil: (_p: Promise<unknown>) => {},
+  appAuth: { attributes: {} } as never,
+  confirmInternal: async () => false,
+} as never);
+ok(capturedAuth !== null, "trust: the routine re-fired for the unconfirmed case");
+const unconfirmedBinding = bindFrom({
+  channel: { kind: "slack" },
+  session: { auth: { current: capturedAuth as never } },
+});
+ok(
+  unconfirmedBinding.trust === "external",
+  "trust: an UNCONFIRMED fire binds trust=external (fail-closed — domain-skills tier and shared memory stay off)",
+);
+ok(
+  unconfirmedBinding.workspace === "T9" && unconfirmedBinding.surface === "C9",
+  "trust: the unconfirmed fire still resolves its real surface (spend attribution unaffected by the trust gate)",
 );
 
 rmSync(dir, { recursive: true, force: true });

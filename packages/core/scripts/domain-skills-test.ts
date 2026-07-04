@@ -1,0 +1,255 @@
+process.env.OE_SQLITE_PATH = ":memory:";
+
+import assert from "node:assert/strict";
+import { registerConfig } from "../agent/access/config.js";
+import { defineBundle, defineBinding } from "../agent/access/bundle.js";
+import { defineDomain } from "../agent/memory/domain.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import type { DomainSkillRow } from "../agent/operational/store.js";
+import {
+  MAX_DOMAIN_SKILL_BYTES,
+  domainSkillCap,
+  domainSkillRefusalMessage,
+  resolveDomainSkillRows,
+  resolveSkillDomainDetailed,
+  resolveSkillDomain,
+  skillDomainFor,
+  skillPackageFromRow,
+  withDescription,
+} from "../agent/skills/domain-skills.js";
+import { resolveSkillEntries } from "../agent/skills/scoped.js";
+import type { BindableContext } from "../agent/identity/binding.js";
+import type { SurfaceBinding } from "../agent/identity/binding.js";
+import type { Partition } from "../agent/memory/partition.js";
+import createSkillTool from "../agent/tools/create_skill.js";
+import listSkillsTool from "../agent/tools/list_skills.js";
+import deleteSkillTool from "../agent/tools/delete_skill.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+registerConfig({
+  loadBundles: () => [defineBundle({ name: "org-tools", plugins: ["acme-plugin"] })],
+  loadBindings: () => [defineBinding({ bundle: "org-tools", scope: { level: "org" } })],
+  pluginRegistry: { "acme-plugin": { skills: ["granted-one"] } },
+  skillContent: { "granted-one": { description: "A bundle-granted skill.", markdown: "# Granted\nDo the granted thing." } },
+  loadDomains: () => [
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] }),
+    defineDomain({ name: "org", match: "org" }),
+  ],
+  loadSilos: () => [],
+  domainsForSurface: ({ surface }) => (surface === "C_ENG" ? ["eng"] : []),
+});
+
+function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string; internal?: boolean }): BindableContext {
+  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId };
+  if (opts.channelType) attributes.channel_type = opts.channelType;
+  if (opts.internal) attributes.trust_checked = "true";
+  return {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes, principalId: opts.principalId ?? "U1", principalType: "slack-user" } } },
+  } as BindableContext;
+}
+
+const ctxEng = ctxFor({ channelId: "C_ENG", internal: true });
+const ctxUnassigned = ctxFor({ channelId: "C_RANDOM", internal: true });
+const ctxDm = ctxFor({ channelId: "D1", channelType: "im" });
+const ctxMpim = ctxFor({ channelId: "G1", channelType: "mpim" });
+const ctxExternal = ctxFor({ channelId: "C_EXT" });
+
+{
+  const store = getOperationalStore();
+  ok((await store.listDomainSkills("default", "eng")).length === 0, "store: empty domain starts with no skills");
+
+  await store.putDomainSkill("default", "eng", "deploy-runbook", "# Deploy\nSteps.", "U1", "2026-07-04T10:00:00Z");
+  let rows = await store.listDomainSkills("default", "eng");
+  ok(rows.length === 1 && rows[0].name === "deploy-runbook" && rows[0].updatedBy === "U1", "store: create persists name/content/updatedBy");
+
+  await store.putDomainSkill("default", "eng", "deploy-runbook", "# Deploy v2", "U2", "2026-07-04T11:00:00Z");
+  rows = await store.listDomainSkills("default", "eng");
+  ok(rows.length === 1 && rows[0].content === "# Deploy v2" && rows[0].updatedBy === "U2", "store: put on an existing name upserts in place");
+
+  await store.putDomainSkill("default", "eng", "other-skill", "# Other", undefined, "2026-07-04T12:00:00Z");
+  rows = await store.listDomainSkills("default", "eng");
+  ok(rows.length === 2 && rows.find((r) => r.name === "other-skill")?.updatedBy === undefined, "store: updatedBy is optional (undefined round-trips as absent)");
+
+  ok((await store.listDomainSkills("default", "watercooler")).length === 0, "store: another domain in the same org is isolated");
+  ok((await store.listDomainSkills("acme", "eng")).length === 0, "store: another org is isolated even for the same domain name");
+  await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Acme's own", "U9", "2026-07-04T13:00:00Z");
+  ok((await store.listDomainSkills("default", "eng")).length === 2, "store: another org's write doesn't leak into this org's list");
+  ok((await store.listDomainSkills("acme", "eng"))[0].content === "# Acme's own", "store: each org keeps its own row for the same (domain, name)");
+
+  ok((await store.deleteDomainSkill("default", "eng", "other-skill")) === true, "store: delete returns true when a row was removed");
+  ok((await store.deleteDomainSkill("default", "eng", "other-skill")) === false, "store: delete is idempotent (false when absent)");
+  ok((await store.listDomainSkills("default", "eng")).length === 1, "store: gone after delete");
+}
+
+{
+  const b = (mode: SurfaceBinding["mode"], trust: SurfaceBinding["trust"]): SurfaceBinding => ({
+    org: "default", platform: "slack", workspace: "T", surface: "C", mode, visibility: "public", trust,
+  });
+  const p = (surface: string): Partition => ({ org: "default", platform: "slack", workspace: "T", surface, workspaceKey: "slack/T", surfaceKey: `slack/T/${surface}`, key: `slack/T/${surface}` });
+  const domains = [
+    defineDomain({ name: "eng", channels: ["slack/T/C_ENG"] }),
+    defineDomain({ name: "org", match: "org" }),
+  ];
+
+  ok(skillDomainFor(b("channel", "internal"), p("C_ENG"), domains).domain === "eng", "pure: explicit domain wins");
+  ok(skillDomainFor(b("channel", "internal"), p("C_OTHER"), domains).domain === "org", "pure: internal unassigned channel falls to the org pseudo-domain");
+  const dm = skillDomainFor(b("dm", "internal"), p("C_ANY"), domains);
+  ok(dm.domain === null && dm.reason === "dm", "pure: dm never resolves a domain (even if trust says internal)");
+  const mpim = skillDomainFor(b("mpim", "internal"), p("C_ANY"), domains);
+  ok(mpim.domain === null && mpim.reason === "mpim", "pure: group chat (mpim) never resolves a domain");
+  const ext = skillDomainFor(b("channel", "external"), p("C_ENG"), domains);
+  ok(ext.domain === null && ext.reason === "external", "pure: an externally-shared/unconfirmed channel never resolves, even if it's in an explicit domain");
+  const none = skillDomainFor(b("channel", "internal"), p("C_OTHER"), []);
+  ok(none.domain === null && none.reason === "unassigned", "pure: unassigned + no org pseudo-domain → \"unassigned\"");
+}
+
+{
+  ok(resolveSkillDomainDetailed(ctxEng).domain === "eng", "ctx: explicit domain resolves by real channel→domain lookup");
+  ok(resolveSkillDomainDetailed(ctxUnassigned).domain === "org", "ctx: internal unassigned channel resolves to the org pseudo-domain");
+  ok(resolveSkillDomain(ctxDm) === undefined, "ctx: dm session has no resolved domain");
+  ok(resolveSkillDomain(ctxMpim) === undefined, "ctx: group-chat session has no resolved domain");
+  ok(resolveSkillDomain(ctxExternal) === undefined, "ctx: externally-shared/unconfirmed session has no resolved domain");
+
+  for (const reason of ["dm", "mpim", "external", "unassigned"] as const) {
+    const msg = domainSkillRefusalMessage(reason);
+    ok(msg.length > 0 && !msg.includes("undefined"), `refusal message for "${reason}" is a real sentence`);
+  }
+}
+
+{
+  ok(withDescription("body only", undefined) === "body only", "withDescription: no description → content untouched");
+  const withDesc = withDescription("Steps go here.", "When to deploy.\nmulti-line");
+  ok(withDesc.startsWith("---\ndescription: When to deploy. multi-line\n---\n\n"), "withDescription: folds description into frontmatter, newlines collapsed");
+  ok(withDesc.endsWith("Steps go here."), "withDescription: original body rides after the frontmatter");
+  const already = "---\ndescription: mine\n---\nBody";
+  ok(withDescription(already, "ignored") === already, "withDescription: never clobbers content that already carries frontmatter");
+
+  const row: DomainSkillRow = { org: "default", domain: "eng", name: "deploy-runbook", content: withDesc, updatedBy: "U1", updatedAt: "2026-07-04T10:00:00Z" };
+  ok(skillPackageFromRow(row).description === "When to deploy. multi-line", "skillPackageFromRow: description parsed from frontmatter");
+  const bare: DomainSkillRow = { org: "default", domain: "eng", name: "no-frontmatter", content: "Just steps.", updatedAt: "2026-07-04T10:00:00Z" };
+  const pkg = skillPackageFromRow(bare);
+  ok(pkg.description.includes('"no-frontmatter"') && pkg.description.includes('"eng"') && !pkg.description.includes("authored by"), "skillPackageFromRow: frontmatter-less row gets a provenance fallback description, no dangling 'authored by' when updatedBy is absent");
+  const withAuthor = skillPackageFromRow({ ...bare, updatedBy: "U2" });
+  ok(withAuthor.description.includes("authored by U2"), "skillPackageFromRow: fallback description credits updatedBy when known");
+}
+
+{
+  delete process.env.OE_DOMAIN_SKILL_CAP;
+  ok(domainSkillCap() === 50, "domainSkillCap: default is 50 with no env override");
+  process.env.OE_DOMAIN_SKILL_CAP = "5";
+  ok(domainSkillCap() === 5, "domainSkillCap: env override applies");
+  process.env.OE_DOMAIN_SKILL_CAP = "not-a-number";
+  ok(domainSkillCap() === 50, "domainSkillCap: garbage env falls back to the default (never throws)");
+  process.env.OE_DOMAIN_SKILL_CAP = "0";
+  ok(domainSkillCap() === 50, "domainSkillCap: a non-positive override falls back to the default");
+  delete process.env.OE_DOMAIN_SKILL_CAP;
+}
+
+{
+  const store = getOperationalStore();
+  await store.putDomainSkill("default", "eng", "safe-one", "# Safe", "U1", "2026-07-04T10:00:00Z");
+  await store.putDomainSkill("default", "eng", "bad:name", "# Bad", "U1", "2026-07-04T10:00:00Z");
+  await store.putDomainSkill("default", "eng", "granted-one", "# Shadowing a grant", "U1", "2026-07-04T10:00:00Z");
+
+  const warns: string[] = [];
+  const rows = await resolveDomainSkillRows(ctxEng, new Set(["granted-one"]), (m) => warns.push(m));
+  ok(rows.some((r) => r.name === "safe-one"), "resolveDomainSkillRows: a safely-named, non-colliding row is kept");
+  ok(!rows.some((r) => r.name === "bad:name"), "resolveDomainSkillRows: an unsafe name is dropped defensively at read time");
+  ok(warns.some((w) => w.includes("unsafe name")), "resolveDomainSkillRows: unsafe name drop is warned");
+  ok(!rows.some((r) => r.name === "granted-one"), "resolveDomainSkillRows: a domain skill colliding with a granted name is dropped — granted wins");
+  ok(warns.some((w) => w.includes("granted wins")), "resolveDomainSkillRows: granted-collision drop is warned");
+
+  ok((await resolveDomainSkillRows(ctxDm, new Set())).length === 0, "resolveDomainSkillRows: dm session → []");
+  ok((await resolveDomainSkillRows(ctxExternal, new Set())).length === 0, "resolveDomainSkillRows: external/unconfirmed session → []");
+
+  const orig = store.listDomainSkills;
+  store.listDomainSkills = async () => {
+    throw new Error("simulated store outage");
+  };
+  const failWarns: string[] = [];
+  const failRows = await resolveDomainSkillRows(ctxEng, new Set(), (m) => failWarns.push(m));
+  ok(failRows.length === 0 && failWarns.some((w) => w.includes("failed to read")), "resolveDomainSkillRows: a store error is fail-soft (empty + warn), never thrown");
+  store.listDomainSkills = orig;
+
+  await store.deleteDomainSkill("default", "eng", "bad:name").catch(() => {});
+  await store.deleteDomainSkill("default", "eng", "granted-one");
+}
+
+{
+  const entries = await resolveSkillEntries(ctxEng);
+  const byName = new Map(entries.map((e) => [e.name, e]));
+  ok(byName.get("granted-one")?.tier === "granted", "resolveSkillEntries: bundle-granted skill is present with tier \"granted\"");
+  ok(byName.get("safe-one")?.tier === "domain", "resolveSkillEntries: domain-authored skill is present with tier \"domain\"");
+  ok(byName.get("safe-one")?.updatedBy === "U1", "resolveSkillEntries: domain tier carries updatedBy provenance");
+  ok(!byName.has("bad:name"), "resolveSkillEntries: the unsafe-named row never reaches the merge");
+
+  const dmEntries = await resolveSkillEntries(ctxDm);
+  ok(!dmEntries.some((e) => e.tier === "domain"), "resolveSkillEntries: dm session never gets a domain tier");
+  const extEntries = await resolveSkillEntries(ctxExternal);
+  ok(extEntries.some((e) => e.tier === "granted") && !extEntries.some((e) => e.tier === "domain"), "resolveSkillEntries: external/unconfirmed session sees granted skills but no domain skills");
+
+  await getOperationalStore().putDomainSkill("default", "org", "org-wide-note", "# Org note", "U1", "2026-07-04T10:00:00Z");
+  const unassignedEntries = await resolveSkillEntries(ctxUnassigned);
+  ok(unassignedEntries.some((e) => e.name === "org-wide-note" && e.tier === "domain"), "resolveSkillEntries: an internal unassigned channel gets the org pseudo-domain's skills");
+}
+
+{
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "bad:name", content: "x" }, ctxEng as never); }, /valid skill name/, "create_skill: rejects an unsafe name");
+  n++;
+
+  const oversized = "x".repeat(MAX_DOMAIN_SKILL_BYTES + 1);
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "too-big", content: oversized }, ctxEng as never); }, /32KB|cap is/, "create_skill: rejects content over the byte cap");
+  n++;
+
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxDm as never); }, /DM/, "create_skill: refuses from a DM with an explanatory message");
+  n++;
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxMpim as never); }, /group chat/, "create_skill: refuses from a group chat");
+  n++;
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxExternal as never); }, /externally-shared|unconfirmed/, "create_skill: refuses from an externally-shared/unconfirmed channel");
+  n++;
+
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "granted-one", content: "y" }, ctxEng as never); }, /already a bundle-granted skill/, "create_skill: refuses a name that collides with a bundle-granted skill");
+  n++;
+
+  const created = await createSkillTool.execute({ name: "new-skill", content: "# Body", description: "A new one." }, ctxEng as never);
+  ok(created.ok && created.action === "created" && created.domain === "eng", "create_skill: first write is \"created\"");
+  const updated = await createSkillTool.execute({ name: "new-skill", content: "# Body v2" }, ctxEng as never);
+  ok(updated.action === "updated", "create_skill: writing the same name again is \"updated\", not a duplicate");
+  const rows = await getOperationalStore().listDomainSkills("default", "eng");
+  ok(rows.filter((r) => r.name === "new-skill").length === 1, "create_skill: update overwrites in place, no duplicate row");
+
+  process.env.OE_DOMAIN_SKILL_CAP = String((await getOperationalStore().listDomainSkills("default", "eng")).length);
+  await assert.rejects(async () => { await createSkillTool.execute({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
+  n++;
+  const stillWorks = await createSkillTool.execute({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
+  ok(stillWorks.action === "updated", "create_skill: updating an EXISTING name still works at the cap (cap only blocks growth)");
+  delete process.env.OE_DOMAIN_SKILL_CAP;
+}
+
+{
+  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "no-such-skill" }, ctxEng as never); }, /No skill named/, "delete_skill: clear not-found message");
+  n++;
+  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "x" }, ctxDm as never); }, /DM/, "delete_skill: refuses from a DM too");
+  n++;
+
+  const result = await deleteSkillTool.execute({ name: "new-skill" }, ctxEng as never);
+  ok(result.deleted === true && result.domain === "eng", "delete_skill: deletes an existing skill");
+  ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "delete_skill: gone from the store after delete");
+}
+
+{
+  const { skills } = await listSkillsTool.execute({}, ctxEng as never);
+  const entries = await resolveSkillEntries(ctxEng);
+  ok(skills.length === entries.length, "list_skills: returns exactly what resolveSkillEntries resolves — no separate source of truth");
+  ok(skills.every((s) => ["granted", "domain", "repo"].includes(s.tier)), "list_skills: every entry carries a recognizable tier");
+  const sorted = [...skills].sort((a, b) => a.name.localeCompare(b.name));
+  ok(JSON.stringify(skills) === JSON.stringify(sorted), "list_skills: output is sorted by name");
+}
+
+console.log(`✓ domain-skills: ${n} assertions passed (store round-trip, domain resolution policy, resolver merge, tool validation matrix)`);

@@ -1,0 +1,280 @@
+process.env.OE_SQLITE_PATH = ":memory:";
+
+import assert from "node:assert/strict";
+import { registerConfig } from "../agent/access/config.js";
+import { defineBundle, defineBinding } from "../agent/access/bundle.js";
+import { defineDomain } from "../agent/memory/domain.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import { appendUsageEvent } from "../agent/spend/usage-events.js";
+import type { BindableContext } from "../agent/identity/binding.js";
+import {
+  pricedModelIds,
+  soleConfiguredModel,
+  _resetPricingCacheForTest,
+} from "../agent/spend/pricing.js";
+import { estimateSandboxCostUsd, sandboxMemoryGiB, sandboxGiBHourUsd } from "../agent/spend/sandbox-pricing.js";
+import {
+  domainOfUsageRow,
+  filterToDomain,
+  resolveAssumedModel,
+  firesPerDay,
+  buildRoutinePredictions,
+  approxConversationCount,
+  aggregateByUser,
+  aggregateBySurface,
+  resolveReportScope,
+  reportDomainRefusalMessage,
+} from "../agent/spend/reporting.js";
+import sessionCostTool from "../agent/tools/session_cost.js";
+import spendReportTool from "../agent/tools/spend_report.js";
+import usageReportTool from "../agent/tools/usage_report.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+registerConfig({
+  loadBundles: () => [defineBundle({ name: "org-tools" })],
+  loadBindings: () => [defineBinding({ bundle: "org-tools", scope: { level: "org" } })],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
+    defineDomain({ name: "other", channels: ["slack/T1/C_OTHER"] }),
+    defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
+  ],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+
+function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string; internal?: boolean; sessionId?: string }): BindableContext {
+  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId };
+  if (opts.channelType) attributes.channel_type = opts.channelType;
+  if (opts.internal) attributes.trust_checked = "true";
+  return {
+    channel: { kind: "slack" },
+    session: { id: opts.sessionId ?? "sess-ctx", auth: { current: { attributes, principalId: opts.principalId ?? "U1", principalType: "slack-user" } } },
+  } as unknown as BindableContext;
+}
+
+const ctxEng = (sessionId?: string) => ctxFor({ channelId: "C_ENG", internal: true, sessionId });
+const ctxEngAdmin = ctxFor({ channelId: "C_ENG", internal: true, principalId: "U_ENG_ADMIN" });
+const ctxOrgAdmin = ctxFor({ channelId: "C_RANDOM", internal: true, principalId: "U_ORG_ADMIN" });
+const ctxPlainUnassigned = ctxFor({ channelId: "C_RANDOM", internal: true, principalId: "U_PLAIN" });
+const ctxDm = ctxFor({ channelId: "D1", channelType: "im" });
+const ctxMpim = ctxFor({ channelId: "G1", channelType: "mpim" });
+const ctxExternal = ctxFor({ channelId: "C_EXT" });
+
+{
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+  ok(pricedModelIds().length === 1 && pricedModelIds()[0] === "zai/glm-5.2", "pricedModelIds: just the one built-in, verified model by default");
+  ok(soleConfiguredModel() === "zai/glm-5.2", "soleConfiguredModel: resolves the sole priced model");
+
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
+  _resetPricingCacheForTest();
+  ok(pricedModelIds().length === 2, "pricedModelIds: env override adds to the built-in set");
+  ok(soleConfiguredModel() === undefined, "soleConfiguredModel: two candidates -> undefined, never guesses");
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+}
+
+{
+  delete process.env.OE_SANDBOX_MEMORY_GIB;
+  delete process.env.OE_SANDBOX_GIB_HOUR_USD;
+  ok(sandboxMemoryGiB() === 4, "sandboxMemoryGiB: default is Vercel Sandbox's platform default (4 GiB)");
+  ok(sandboxGiBHourUsd() === 0.0212, "sandboxGiBHourUsd: default is the verified Vercel rate");
+  const oneHour = estimateSandboxCostUsd(3600);
+  ok(Math.abs(oneHour - 0.0848) < 1e-9, "estimateSandboxCostUsd: 1hr default-size sandbox matches the verified rate");
+  ok(estimateSandboxCostUsd(0) === 0, "estimateSandboxCostUsd: zero seconds -> $0, not undefined");
+  ok(estimateSandboxCostUsd(-10) === 0, "estimateSandboxCostUsd: never goes negative on bad input");
+
+  process.env.OE_SANDBOX_MEMORY_GIB = "8";
+  process.env.OE_SANDBOX_GIB_HOUR_USD = "0.01";
+  ok(estimateSandboxCostUsd(3600) === 0.08, "estimateSandboxCostUsd: env overrides both the memory size and the rate");
+  delete process.env.OE_SANDBOX_MEMORY_GIB;
+  delete process.env.OE_SANDBOX_GIB_HOUR_USD;
+}
+
+{
+  const domains = [
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] }),
+    defineDomain({ name: "org", match: "org" }),
+  ];
+  ok(domainOfUsageRow("slack/T1/C_ENG", "channel", domains) === "eng", "domainOfUsageRow: explicit domain wins");
+  ok(domainOfUsageRow("slack/T1/C_RANDOM", "channel", domains) === "org", "domainOfUsageRow: unassigned channel-kind row falls to the org pseudo-domain");
+  ok(domainOfUsageRow("slack/T1/C_RANDOM", "routine", domains) === "org", "domainOfUsageRow: routine-kind row also falls through to org");
+  ok(domainOfUsageRow("slack/T1/D1", "dm", domains) === undefined, "domainOfUsageRow: dm-kind row never attributes to any domain");
+  ok(domainOfUsageRow("slack/T1/C_RANDOM", "channel", []) === undefined, "domainOfUsageRow: no org pseudo-domain configured -> undefined for an unassigned surface");
+
+  const rows = [
+    { surfaceKey: "slack/T1/C_ENG", kind: "channel" },
+    { surfaceKey: "slack/T1/D1", kind: "dm" },
+    { surfaceKey: "slack/T1/C_RANDOM", kind: "channel" },
+  ];
+  ok(filterToDomain(rows, "eng", domains).length === 1, "filterToDomain: keeps only the requested domain's rows");
+  ok(filterToDomain(rows, "org", domains).length === 1, "filterToDomain: org bucket excludes the dm row and the eng row");
+}
+
+{
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+  const auto = resolveAssumedModel(undefined);
+  ok(auto.model === "zai/glm-5.2" && auto.pricing !== undefined, "resolveAssumedModel: falls back to the sole configured model");
+  ok(/only priced model/.test(auto.note), "resolveAssumedModel: note explains the auto-assumption");
+
+  const explicit = resolveAssumedModel("zai/glm-5.2");
+  ok(explicit.model === "zai/glm-5.2" && /you supplied/.test(explicit.note), "resolveAssumedModel: an explicit model id is honoured and labelled as caller-supplied");
+
+  const unpriced = resolveAssumedModel("no/such-model");
+  ok(unpriced.model === "no/such-model" && unpriced.pricing === undefined && /no configured pricing/.test(unpriced.note), "resolveAssumedModel: an unpriced explicit model -> no pricing, explained, never a guessed rate");
+
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
+  _resetPricingCacheForTest();
+  const ambiguous = resolveAssumedModel(undefined);
+  ok(ambiguous.model === undefined && ambiguous.pricing === undefined && /no single default/.test(ambiguous.note), "resolveAssumedModel: two candidates and no explicit choice -> omitted, never a guess");
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+}
+
+{
+  const eng = resolveReportScope(ctxEng(), "domain");
+  ok(eng.domain === "eng" && eng.org === "default", "resolveReportScope: domain scope resolves the caller's explicit domain (anyone in it — no admin check)");
+
+  assert.throws(() => resolveReportScope(ctxDm, "domain"), /DM/, "resolveReportScope: domain scope refuses from a DM");
+  n++;
+  assert.throws(() => resolveReportScope(ctxMpim, "domain"), /group chat/, "resolveReportScope: domain scope refuses from a group chat");
+  n++;
+  assert.throws(() => resolveReportScope(ctxExternal, "domain"), /externally-shared|unconfirmed/, "resolveReportScope: domain scope refuses from an external/unconfirmed channel");
+  n++;
+
+  ok(resolveReportScope(ctxOrgAdmin, "org").org === "default", "resolveReportScope: org scope passes for an org admin");
+  assert.throws(() => resolveReportScope(ctxPlainUnassigned, "org"), /org admin/i, "resolveReportScope: org scope throws a clear denial for a non-admin");
+  n++;
+  assert.throws(() => resolveReportScope(ctxEngAdmin, "org"), /org admin/i, "resolveReportScope: a DOMAIN admin (not org) still can't get org scope");
+  n++;
+
+  for (const reason of ["dm", "mpim", "external", "unassigned"] as const) {
+    const msg = reportDomainRefusalMessage(reason);
+    ok(msg.length > 0 && !msg.includes("undefined") && !/authored/.test(msg), "reportDomainRefusalMessage: a real sentence, and doesn't misleadingly talk about authoring a skill");
+  }
+}
+
+{
+  ok(firesPerDay({ kind: "interval", everyMinutes: 60 }) === 24, "firesPerDay: interval -> 1440/everyMinutes");
+  ok(firesPerDay({ kind: "cron", expr: "0 * * * *" }) === 24, "firesPerDay: hourly cron -> 24/day");
+  ok(firesPerDay({ kind: "cron", expr: "*/15 * * * *" }) === 96, "firesPerDay: every-15-min cron -> 96/day");
+  ok(firesPerDay({ kind: "watch", everyMinutes: 10 }) === undefined, "firesPerDay: watch cadence unknowable for prediction (posts only on diff)");
+  ok(firesPerDay({ kind: "event", source: "github" }) === undefined, "firesPerDay: event trigger unknowable (not clock-scheduled)");
+  ok(firesPerDay({ kind: "cron", expr: "not a cron" }) === undefined, "firesPerDay: a malformed cron degrades to undefined, not a throw");
+
+  const store = getOperationalStore();
+  await store.addRoutine({ id: "r-a", org: "default", surfaceKey: "slack/T1/C_A", trigger: { kind: "interval", everyMinutes: 60 }, prompt: "x", createdAt: "2026-07-01T00:00:00Z", status: "active", consecutiveFailures: 0 });
+  await store.addRoutine({ id: "r-b", org: "default", surfaceKey: "slack/T1/C_B", trigger: { kind: "interval", everyMinutes: 30 }, prompt: "x", createdAt: "2026-07-01T00:00:00Z", status: "active", consecutiveFailures: 0 });
+  await store.addRoutine({ id: "r-c", org: "default", surfaceKey: "slack/T1/C_C", trigger: { kind: "watch", everyMinutes: 15 }, prompt: "x", createdAt: "2026-07-01T00:00:00Z", status: "active", consecutiveFailures: 0 });
+  await store.addRoutine({ id: "r-d", org: "default", surfaceKey: "slack/T1/C_D", trigger: { kind: "interval", everyMinutes: 60 }, prompt: "x", createdAt: "2026-07-01T00:00:00Z", status: "disabled", consecutiveFailures: 5 });
+
+  const rows = [
+    { surfaceKey: "slack/T1/C_A", kind: "routine", inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, events: 3, sessions: 3 },
+    { surfaceKey: "slack/T1/C_B", kind: "routine", inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, events: 2, sessions: 2 },
+    { surfaceKey: "slack/T1/C_C", kind: "routine", inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, events: 3, sessions: 3 },
+    { surfaceKey: "slack/T1/C_D", kind: "routine", inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0, events: 3, sessions: 3 },
+  ] as never[];
+
+  const predictions = await buildRoutinePredictions("default", rows, { inPerMtok: 1, outPerMtok: 2 });
+  const byKey = new Map(predictions.map((p) => [p.surfaceKey, p]));
+
+  const a = byKey.get("slack/T1/C_A")!;
+  ok(a.observedFires === 3 && a.avgTokensPerFire === 400, "buildRoutinePredictions: avg tokens/fire = total/observedFires");
+  ok(a.cadencePerDay === 24 && a.projected !== null, "buildRoutinePredictions: an active hourly interval routine yields a 24/day cadence + a projection");
+  ok(a.projected!.tokens7d === 400 * 24 * 7 && a.projected!.tokens30d === 400 * 24 * 30, "buildRoutinePredictions: 7d/30d token projections = avg * cadence * days");
+  ok(a.projected!.costUsd7d !== undefined && a.projected!.costUsd30d !== undefined, "buildRoutinePredictions: $ projection present when a pricing was supplied");
+
+  const b = byKey.get("slack/T1/C_B")!;
+  ok(b.projected === null && /fewer than 3/.test(b.skippedReason ?? ""), "buildRoutinePredictions: fewer than 3 observed fires -> skipped for lack of signal, even though it has an active interval routine");
+
+  const c = byKey.get("slack/T1/C_C")!;
+  ok(c.projected === null && /cadence unknowable/.test(c.skippedReason ?? ""), "buildRoutinePredictions: a watch-only surface -> cadence unknowable, skipped");
+
+  const d = byKey.get("slack/T1/C_D")!;
+  ok(d.projected === null && /no active cron\/interval/.test(d.skippedReason ?? ""), "buildRoutinePredictions: a disabled routine doesn't count as an active cadence source");
+}
+
+{
+  const rows = [
+    { surfaceKey: "slack/T1/C1", principalId: "U1", kind: "channel", model: undefined, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0, events: 2, sessions: 1 },
+    { surfaceKey: "slack/T1/C1", principalId: "U2", kind: "channel", model: undefined, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, events: 1, sessions: 1 },
+    { surfaceKey: "slack/T1/C1", kind: "sandbox", model: undefined, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, events: 1, sessions: 1 },
+    { surfaceKey: "slack/T1/C2", principalId: "U1", kind: "dm", model: undefined, inputTokens: 20, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, events: 1, sessions: 1 },
+  ] as never[];
+
+  ok(approxConversationCount(rows) === 3, "approxConversationCount: sums sessions across non-sandbox rows (2 on C1 + 1 dm)");
+
+  const byUser = aggregateByUser(rows);
+  ok(byUser.length === 2, "aggregateByUser: excludes the sandbox row (no meaningful principal) and groups the rest by principalId");
+  const u1 = byUser.find((u) => u.principalId === "U1")!;
+  ok(u1.events === 3 && u1.inputTokens === 120, "aggregateByUser: sums events/tokens across a user's surfaces (C1 channel + C2 dm)");
+  ok(byUser[0].events >= byUser[1].events, "aggregateByUser: sorted busiest-first");
+
+  const bySurface = aggregateBySurface(rows);
+  ok(bySurface.length === 2, "aggregateBySurface: one row per surface, sandbox rows excluded from the surface breakdown");
+  const c1 = bySurface.find((s) => s.surfaceKey === "slack/T1/C1")!;
+  ok(c1.events === 3 && c1.sessions === 2 && c1.inputTokens === 110, "aggregateBySurface: sums events/sessions/tokens across a surface's principal groups");
+}
+
+{
+  const empty = await sessionCostTool.execute({}, ctxEng("sess-empty") as never);
+  ok(empty.events === 0 && empty.inputTokens === 0 && empty.sandboxSeconds === 0 && empty.costUsd === 0, "session_cost: an empty session reports all zeros, incl. a real $0 (not a fabricated non-zero)");
+
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, ts: "2026-07-07T22:45:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 200, outputTokens: 100, ts: "2026-07-07T22:46:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", kind: "sandbox", detail: { sandboxSeconds: 3600 }, ts: "2026-07-07T22:47:00Z" });
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+  const populated = await sessionCostTool.execute({}, ctxEng("sess-cost") as never);
+  ok(populated.events === 2, "session_cost: events count excludes the sandbox row");
+  ok(populated.inputTokens === 1200 && populated.outputTokens === 600, "session_cost: token totals sum the non-sandbox rows");
+  ok(populated.pricedModel === "zai/glm-5.2" && populated.costUsd !== undefined, "session_cost: auto-assumes the deploy's sole priced model");
+  ok(populated.sandboxSeconds === 3600 && populated.sandboxCostUsd !== undefined && Math.abs(populated.sandboxCostUsd - 0.0848) < 1e-9, "session_cost: sandbox seconds + $ estimate from the verified rate");
+
+  const withExplicitModel = await sessionCostTool.execute({ assumedModelId: "no/such-model" }, ctxEng("sess-cost") as never);
+  ok(withExplicitModel.costUsd === undefined && /no configured pricing/.test(withExplicitModel.note), "session_cost: an unpriced explicit model -> no $ fabricated, explained in the note");
+}
+
+{
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_OTHER", sessionId: "sess-other", principalId: "U9", kind: "channel", inputTokens: 5_000_000, outputTokens: 0, ts: "2026-07-07T22:45:00Z" });
+
+  const domainReport = await spendReportTool.execute({ scope: "domain" }, ctxEng() as never);
+  ok(domainReport.domain === "eng", "spend_report: domain scope reports the caller's own domain");
+  ok(domainReport.bySurfaceAndKind.every((r) => r.surfaceKey === "slack/T1/C_ENG"), "spend_report: domain scope never leaks another domain's surface");
+  ok(domainReport.ledger.period.length === 7, "spend_report: ledger continuity carries a YYYY-MM period");
+  ok(Array.isArray(domainReport.routinePredictions), "spend_report: routinePredictions is present even with none in scope");
+
+  await assert.rejects(async () => spendReportTool.execute({ scope: "org" }, ctxPlainUnassigned as never), /org admin/i, "spend_report: org scope refuses a non-admin with a clear denial");
+  n++;
+
+  const orgReport = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
+  ok(orgReport.bySurfaceAndKind.some((r) => r.surfaceKey === "slack/T1/C_OTHER"), "spend_report: org scope for an org admin sees every surface, including other domains'");
+  ok(orgReport.domain === undefined, "spend_report: org scope carries no domain field");
+}
+
+{
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u1", principalId: "U_A", kind: "channel", inputTokens: 10, outputTokens: 5, ts: "2026-07-07T22:45:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u2", principalId: "U_B", kind: "channel", inputTokens: 20, outputTokens: 10, ts: "2026-07-07T22:45:00Z" });
+
+  const report = await usageReportTool.execute({ scope: "domain" }, ctxEng() as never);
+  ok(report.domain === "eng", "usage_report: domain scope reports the caller's own domain");
+  ok(report.turns > 0, "usage_report: turns is a positive exact count");
+  ok(report.byUser.some((u) => u.principalId === "U_A") && report.byUser.some((u) => u.principalId === "U_B"), "usage_report: per-user breakdown includes each distinct sender");
+  ok(report.busiestSurfaces.every((s) => s.surfaceKey === "slack/T1/C_ENG"), "usage_report: domain scope stays within the resolved domain's surfaces");
+  ok(/approximation/.test(report.note), "usage_report: the conversations-estimate caveat is surfaced in the note");
+
+  await assert.rejects(async () => usageReportTool.execute({ scope: "org" }, ctxPlainUnassigned as never), /org admin/i, "usage_report: org scope refuses a non-admin");
+  n++;
+}
+
+console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing, session_cost/spend_report/usage_report tools)`);

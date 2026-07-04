@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, skillsListView } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
+import { scopeDenial } from "./auth.js";
 
 const SESSION_MODE = z.enum(["channel", "dm", "mpim"]);
 
@@ -19,15 +20,25 @@ function jsonTool<T>(run: () => Promise<T>) {
   };
 }
 
-export const CONTROL_TOOL_NAMES = ["spend_report", "routines_list", "audit_query", "access_preview", "overrides_list"] as const;
+export const CONTROL_TOOL_NAMES = [
+  "spend_report",
+  "routines_list",
+  "audit_query",
+  "access_preview",
+  "overrides_list",
+  "usage_summary",
+  "skills_list",
+] as const;
 
 export interface ControlServerOptions {
   readonly includeWrites?: boolean;
   readonly actor?: string;
+  readonly roles?: readonly string[];
 }
 
 export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
   const server = new McpServer({ name: "open-everywhere-control", version: "0.1.0" });
+  const roles = opts.roles ?? ["admin"];
 
   server.registerTool(
     "spend_report",
@@ -87,13 +98,56 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "overrides_list",
     {
       title: "List runtime overrides (drift view)",
-      description: "The reconcile worklist: every live override overlaying config-as-code for an org — spend caps (with configCap, divergesFromConfig, expired) and connector revokes (sticky) — each with reason/setBy. Overrides are temporary bridges; this shows which need PR'ing into config or clearing. Read-only.",
+      description: "The reconcile worklist: every live override overlaying config-as-code for an org — spend caps (with configCap, divergesFromConfig, expired) and connector revokes (sticky) — each with reason/setBy. Overrides are temporary bridges; this shows which need PR'ing into config or clearing. Read-only. Org-wide (every scopeKey in the org) — requires org-admin; a domain-scoped role can't cover an unscoped org-wide listing.",
       inputSchema: { org: z.string().min(1) },
     },
-    (args) => jsonTool(() => overridesView(args.org))(),
+    (args) =>
+      jsonTool(async () => {
+        const denial = scopeDenial(roles, { org: args.org });
+        if (denial) throw new Error(denial);
+        return overridesView(args.org);
+      })(),
   );
 
-  if (opts.includeWrites) registerControlWriteTools(server, opts.actor ?? "unknown");
+  server.registerTool(
+    "usage_summary",
+    {
+      title: "Usage summary (tokens + $ estimate)",
+      description:
+        "Grouped usage_events rollup (surface/user/kind/model) with an estimated $ figure where a model can be assumed — the control-plane view behind the session_cost/spend_report/usage_report agent tools. Pass domain OR surfaceKey to scope it (a domain:<name> role covers its own domain/surfaceKey); an unscoped, org-wide call needs the org-wide \"admin\" role. sinceDays defaults to 30. Read-only.",
+      inputSchema: {
+        org: z.string().min(1),
+        domain: z.string().optional(),
+        surfaceKey: z.string().optional(),
+        sinceDays: z.number().int().positive().max(365).optional(),
+        assumedModelId: z.string().optional(),
+      },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const denial = scopeDenial(roles, { org: args.org, domain: args.domain, surfaceKey: args.surfaceKey });
+        if (denial) throw new Error(denial);
+        return usageSummaryView(args);
+      })(),
+  );
+
+  server.registerTool(
+    "skills_list",
+    {
+      title: "List a domain's runtime-authored skills",
+      description:
+        "Every runtime DOMAIN skill (agent/skills/domain-skills.ts) authored for one memory domain — the control-plane mirror of the list_skills agent tool's \"domain\" tier. Requires a domain:<name> role covering it (or org-wide \"admin\"). Read-only.",
+      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const denial = scopeDenial(roles, { org: args.org, domain: args.domain });
+        if (denial) throw new Error(denial);
+        return skillsListView(args);
+      })(),
+  );
+
+  if (opts.includeWrites) registerControlWriteTools(server, opts.actor ?? "unknown", roles);
 
   return server;
 }

@@ -30,6 +30,7 @@ export async function handleControlRequest(
   parsedBody?: unknown,
 ): Promise<void> {
   let actor = "local-operator";
+  let roles: readonly string[] = ["admin"];
   if (opts.allowUnauthenticated !== true) {
     if (!opts.authenticate) {
       deny(res, 401, "unauthorized: the remote control plane requires OAuth (RFC 9728) — no authenticator configured");
@@ -45,6 +46,7 @@ export async function handleControlRequest(
       return;
     }
     actor = `${identity.issuer}#${identity.subject}`;
+    roles = identity.roles;
   }
 
   let body = parsedBody;
@@ -57,7 +59,7 @@ export async function handleControlRequest(
     }
   }
 
-  const server = buildControlServer({ includeWrites: opts.includeWrites, actor });
+  const server = buildControlServer({ includeWrites: opts.includeWrites, actor, roles });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     void transport.close();

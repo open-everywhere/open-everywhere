@@ -31,7 +31,7 @@ const trigger = z.discriminatedUnion("kind", [
 
 export default defineTool({
   description:
-    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/interval), a watch (re-check on a cadence, post only when state changes), or an event subscription. Use this when the user asks for recurring, scheduled, or 'let me know when…' work. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine.",
+    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/interval), a watch (re-check on a cadence, post only when state changes), or an event subscription. Use this when the user asks for recurring, scheduled, or 'let me know when…' work. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
   inputSchema: z.object({
     prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (the firing session has no prior thread context)."),
     trigger,

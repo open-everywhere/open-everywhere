@@ -87,6 +87,26 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const base = { org: "acme", surfaceKey: "slack/T1/C1", sessionId: "sess-1", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  await store.appendUsageEvent({ ...base, ts: "2026-06-24T10:00:00Z", principalId: "U1", kind: "channel", inputTokens: 100, outputTokens: 50 });
+  await store.appendUsageEvent({ ...base, ts: "2026-06-24T10:05:00Z", principalId: "U1", kind: "channel", inputTokens: 10, outputTokens: 5 });
+  await store.appendUsageEvent({ ...base, sessionId: "sess-2", ts: "2026-06-24T10:10:00Z", principalId: "U2", kind: "dm", inputTokens: 200 });
+  await store.appendUsageEvent({ org: "globex", surfaceKey: "slack/T1/C1", sessionId: "sess-9", ts: "2026-06-24T10:00:00Z", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+
+  const forSession = await store.usageForSession("acme", "sess-1");
+  ok(forSession.length === 2 && forSession[0].ts === "2026-06-24T10:00:00Z", "usage events: usageForSession returns the session's rows, oldest-first");
+  ok((await store.usageForSession("globex", "sess-1")).length === 0, "usage events: usageForSession is org-isolated");
+
+  const summary = await store.usageSummary("acme");
+  const chan = summary.find((r) => r.kind === "channel");
+  ok(chan?.inputTokens === 110 && chan.outputTokens === 55 && chan.events === 2 && chan.sessions === 1, "usage events: usageSummary sums tokens + counts events/sessions per group");
+  ok((await store.usageSummary("globex")).every((r) => r.sessions === 1), "usage events: usageSummary is org-isolated");
+
+  ok((await store.pruneUsageEvents("acme", "2099-01-01T00:00:00Z")) === 0, "usage events: pruneUsageEvents is a no-op on Postgres (append-only)");
+  ok((await store.usageForSession("acme", "sess-1")).length === 2, "usage events: rows survive the no-op prune untouched");
+}
+
+{
   await store.setSpendLimit("default", "slack/T1/C1", "surface", 1000);
   await store.setSpendLimit("default", "slack/T1", "workspace", 50000);
   await store.setSpendLimit("acme", "slack/T1/C1", "surface", 7);
@@ -121,7 +141,7 @@ const store = makeOperationalPostgresStore(client);
 
 {
   await db.exec(`CREATE ROLE open_everywhere_app NOSUPERUSER;
-                 GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry TO open_everywhere_app;`);
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON spend_ledger, routine, audit_entry, usage_events TO open_everywhere_app;`);
   try {
     await db.exec("SET ROLE open_everywhere_app");
     await setOrgContext(client, "acme");
@@ -130,15 +150,22 @@ const store = makeOperationalPostgresStore(client);
     ok(spendOrgs.length === 1 && spendOrgs[0] === "acme", "RLS: spend no-WHERE read returns only the GUC org");
     const auditOrgs = ((await client.query("SELECT DISTINCT org_id FROM audit_entry")).rows as { org_id: string }[]).map((r) => r.org_id);
     ok(auditOrgs.length === 1 && auditOrgs[0] === "acme", "RLS: audit no-WHERE read returns only the GUC org");
+    const usageOrgs = ((await client.query("SELECT DISTINCT org_id FROM usage_events")).rows as { org_id: string }[]).map((r) => r.org_id);
+    ok(usageOrgs.length === 1 && usageOrgs[0] === "acme", "RLS: usage_events no-WHERE read returns only the GUC org");
 
     const del = (await client.query("DELETE FROM audit_entry RETURNING seq")).rows;
     ok(del.length === 0, "RLS: DELETE on audit_entry affects 0 rows under the app role (append-only)");
     const upd = (await client.query("UPDATE audit_entry SET action = 'tampered' RETURNING seq")).rows;
     ok(upd.length === 0, "RLS: UPDATE on audit_entry affects 0 rows under the app role (immutable)");
+    const delUsage = (await client.query("DELETE FROM usage_events RETURNING seq")).rows;
+    ok(delUsage.length === 0, "RLS: DELETE on usage_events affects 0 rows under the app role (append-only, same as audit_entry)");
+    const updUsage = (await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows;
+    ok(updUsage.length === 0, "RLS: UPDATE on usage_events affects 0 rows under the app role (immutable)");
   } finally {
     await db.exec("RESET ROLE");
   }
   ok((await store.readAudit({ org: "acme" })).length === 2, "RLS: audit rows survived the blocked DELETE/UPDATE");
+  ok((await store.usageForSession("acme", "sess-1")).length === 2 && (await store.usageForSession("acme", "sess-1"))[0].kind === "channel", "RLS: usage_events rows survived the blocked DELETE/UPDATE, content unchanged");
 }
 
 {
@@ -161,5 +188,28 @@ const store = makeOperationalPostgresStore(client);
   ok(!(await store.markEventSeen("acme", "Ev123", "2026-06-30T10:30:01Z", TTL)), "pg: re-marked key dedupes again");
 }
 
+{
+  ok((await store.listDomainSkills("acme", "eng")).length === 0, "pg: empty domain starts with no skills");
+  await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Deploy\nSteps.", "U1", "2026-06-30T10:00:00Z");
+  let rows = await store.listDomainSkills("acme", "eng");
+  ok(rows.length === 1 && rows[0].name === "deploy-runbook" && rows[0].updatedBy === "U1", "pg: create persists name/content/updatedBy");
+
+  await store.putDomainSkill("acme", "eng", "deploy-runbook", "# Deploy v2", "U2", "2026-06-30T11:00:00Z");
+  rows = await store.listDomainSkills("acme", "eng");
+  ok(rows.length === 1 && rows[0].content === "# Deploy v2" && rows[0].updatedBy === "U2", "pg: put on an existing name upserts in place, not a second row");
+
+  await store.putDomainSkill("acme", "eng", "no-author", "# No author", undefined, "2026-06-30T12:00:00Z");
+  ok((await store.listDomainSkills("acme", "eng")).find((r) => r.name === "no-author")?.updatedBy === undefined, "pg: updatedBy is optional (undefined round-trips as absent)");
+
+  ok((await store.listDomainSkills("acme", "watercooler")).length === 0, "pg: another domain in the same org is isolated");
+  ok((await store.listDomainSkills("globex", "eng")).length === 0, "pg: another org is isolated even for the same domain name");
+  await store.putDomainSkill("globex", "eng", "deploy-runbook", "# Globex's own", "U9", "2026-06-30T13:00:00Z");
+  ok((await store.listDomainSkills("acme", "eng")).length === 2, "pg: another org's write doesn't leak into this org's list");
+
+  ok((await store.deleteDomainSkill("acme", "eng", "no-author")) === true, "pg: delete returns true when a row was removed");
+  ok((await store.deleteDomainSkill("acme", "eng", "no-author")) === false, "pg: delete is idempotent (false when absent)");
+  ok((await store.listDomainSkills("acme", "eng")).length === 1, "pg: gone after delete");
+}
+
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills)`);

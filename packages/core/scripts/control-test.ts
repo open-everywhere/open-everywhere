@@ -1,7 +1,9 @@
 import "./_register-test-config.js";
 import assert from "node:assert/strict";
-import { spendView, routinesView, auditView, accessView } from "../agent/control/views.js";
+import { spendView, routinesView, auditView, accessView, usageSummaryView, skillsListView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
+import { appendUsageEvent } from "../agent/spend/usage-events.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -34,6 +36,61 @@ ok("accessView resolves a scopeKey", typeof access.scopeKey === "string" && acce
 ok("accessView connectors is an array", Array.isArray(access.connectors));
 for (const c of access.connections) {
   ok(`connection ${c.id} exposes only a secretRef name, never a value`, !("secret" in c) && !("token" in c) && !("authorization" in c));
+}
+
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const domains = [defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"] })];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+
+  await appendUsageEvent({ org: "ctl-test", surfaceKey: "slack/T1/C_ENG", sessionId: "s1", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500 });
+  await appendUsageEvent({ org: "ctl-test", surfaceKey: "slack/T1/C_OTHER", sessionId: "s2", principalId: "U2", kind: "channel", inputTokens: 10, outputTokens: 5 });
+  await getOperationalStore().putDomainSkill("ctl-test", "eng", "runbook", "# Steps", "U1", "2026-07-04T10:00:00Z");
+
+  const usageAll = await usageSummaryView({ org: "ctl-test" });
+  ok("usageSummaryView (unscoped): sees every surface", usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_ENG") && usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_OTHER"));
+  ok("usageSummaryView: prices with the deploy's sole configured model by default", usageAll.pricedModel === "zai/glm-5.2" && usageAll.rows.every((r) => typeof r.costUsd === "number"));
+
+  const usageDomain = await usageSummaryView({ org: "ctl-test", domain: "eng" });
+  ok("usageSummaryView (domain-scoped): only the domain's surfaces", usageDomain.rows.every((r) => r.surfaceKey === "slack/T1/C_ENG"));
+
+  const skills = await skillsListView({ org: "ctl-test", domain: "eng" });
+  ok("skillsListView: returns the domain's runtime-authored skills", skills.skills.length === 1 && skills.skills[0].name === "runbook");
+
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const callJson = async (client: InstanceType<typeof Client>, name: string, args: Record<string, unknown>) => {
+    const res = await client.callTool({ name, arguments: args });
+    return JSON.parse((res.content as { type: string; text: string }[])[0].text);
+  };
+
+  const engServer = buildControlServer({ roles: ["domain:eng"] });
+  const [c1, s1] = InMemoryTransport.createLinkedPair();
+  await engServer.connect(s1);
+  const engClient = new Client({ name: "eng-role", version: "0" });
+  await engClient.connect(c1);
+
+  const okDomain = await callJson(engClient, "usage_summary", { org: "ctl-test", domain: "eng" });
+  ok("usage_summary: a domain:eng role can read its own domain", Array.isArray(okDomain.rows));
+  const deniedOrgWide = await engClient.callTool({ name: "usage_summary", arguments: { org: "ctl-test" } });
+  ok("usage_summary: a domain:eng role is denied an unscoped, org-wide call", deniedOrgWide.isError === true);
+  const deniedOtherSurface = await engClient.callTool({ name: "usage_summary", arguments: { org: "ctl-test", surfaceKey: "slack/T1/C_OTHER" } });
+  ok("usage_summary: a domain:eng role is denied a surface outside its domain", deniedOtherSurface.isError === true);
+  const skillsOk = await callJson(engClient, "skills_list", { org: "ctl-test", domain: "eng" });
+  ok("skills_list: a domain:eng role can list its own domain's skills", skillsOk.skills.length === 1);
+  const skillsDenied = await engClient.callTool({ name: "skills_list", arguments: { org: "ctl-test", domain: "other" } });
+  ok("skills_list: a domain:eng role is denied a different domain", skillsDenied.isError === true);
+
+  await engClient.close();
 }
 
 const server = buildControlServer();

@@ -33,6 +33,7 @@ export interface Domain {
   readonly models?: ModelRoutes;
   readonly statusVerbs?: readonly string[];
   readonly statusVerbsMode?: "extend" | "replace";
+  readonly admins?: readonly string[];
 }
 
 export function memoryRefs(domain: Domain): string[] {

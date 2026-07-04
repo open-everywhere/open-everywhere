@@ -8,6 +8,12 @@ import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
+import { usageSummary } from "../spend/usage-events.js";
+import type { UsageSummaryRow } from "../operational/store.js";
+import { estimateCostUsd } from "../spend/pricing.js";
+import { resolveAssumedModel, filterToDomain } from "../spend/reporting.js";
+import { listDomainSkills } from "../skills/domain-skills.js";
+import type { DomainSkillRow } from "../operational/store.js";
 
 const currentPeriod = (): string => new Date().toISOString().slice(0, 7);
 
@@ -168,6 +174,61 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
     connectors: connectorRows,
     note: "Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a caps.ts PR (or clear_spend_limit); expired=true rows are no longer applied and should be cleared. Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.",
   };
+}
+
+export interface UsageSummaryQuery {
+  readonly org: string;
+  readonly domain?: string;
+  readonly surfaceKey?: string;
+  readonly sinceDays?: number;
+  readonly assumedModelId?: string;
+}
+export interface UsageSummaryViewRow extends UsageSummaryRow {
+  readonly costUsd?: number;
+}
+export interface UsageSummaryViewResult {
+  readonly org: string;
+  readonly domain?: string;
+  readonly surfaceKey?: string;
+  readonly sinceDays: number;
+  readonly since: string;
+  readonly rows: readonly UsageSummaryViewRow[];
+  readonly pricedModel?: string;
+  readonly note: string;
+}
+
+export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSummaryViewResult> {
+  const sinceDays = q.sinceDays ?? 30;
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+  const all = await usageSummary(q.org, { sinceTs: since, ...(q.surfaceKey && !q.domain ? { surfaceKeyPrefix: q.surfaceKey } : {}) });
+  const rows = q.domain ? filterToDomain(all, q.domain, getConfig().loadDomains()) : all;
+  const assumed = resolveAssumedModel(q.assumedModelId);
+  const priced: UsageSummaryViewRow[] = rows.map((r) => ({ ...r, ...(assumed.pricing ? { costUsd: estimateCostUsd(r, assumed.pricing) } : {}) }));
+  return {
+    org: q.org,
+    ...(q.domain ? { domain: q.domain } : {}),
+    ...(q.surfaceKey ? { surfaceKey: q.surfaceKey } : {}),
+    sinceDays,
+    since,
+    rows: priced,
+    ...(assumed.model ? { pricedModel: assumed.model } : {}),
+    note: assumed.note,
+  };
+}
+
+export interface SkillsListQuery {
+  readonly org: string;
+  readonly domain: string;
+}
+export interface SkillsListResult {
+  readonly org: string;
+  readonly domain: string;
+  readonly skills: readonly DomainSkillRow[];
+}
+
+export async function skillsListView(q: SkillsListQuery): Promise<SkillsListResult> {
+  const skills = await listDomainSkills(q.org, q.domain);
+  return { org: q.org, domain: q.domain, skills };
 }
 
 export interface AccessQuery {

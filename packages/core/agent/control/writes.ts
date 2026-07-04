@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { scopeDenial } from "./auth.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -24,7 +25,7 @@ function errorResult(message: string) {
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 
-export function registerControlWriteTools(server: McpServer, actor: string): void {
+export function registerControlWriteTools(server: McpServer, actor: string, roles: readonly string[] = ["admin"]): void {
   const store = () => getOperationalStore();
 
   server.registerTool(
@@ -42,6 +43,8 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
       },
     },
     async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.scopeKey });
+      if (denial) return errorResult(denial);
       try {
         const expiresAt = a.ttlSeconds != null ? Date.now() + a.ttlSeconds * 1000 : undefined;
         await store().setSpendLimit(a.org, a.scopeKey, a.level, a.monthlyTokens, { expiresAt, reason: a.reason, setBy: actor });
@@ -61,6 +64,8 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
       inputSchema: { org: z.string().min(1), scopeKey: z.string().min(1), level: z.enum(["surface", "workspace"]) },
     },
     async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.scopeKey });
+      if (denial) return errorResult(denial);
       try {
         const cleared = await store().clearSpendLimit(a.org, a.scopeKey, a.level);
         await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.clear_limit", detail: { scopeKey: a.scopeKey, level: a.level, cleared } });
@@ -79,6 +84,8 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
       inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1), reason: z.string().optional() },
     },
     async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.surfaceKey });
+      if (denial) return errorResult(denial);
       try {
         await store().setConnectorOverride(a.org, a.surfaceKey, a.connector, false, { reason: a.reason, setBy: actor });
         await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.revoke", detail: { connector: a.connector, ...(a.reason ? { reason: a.reason } : {}) } });
@@ -97,6 +104,8 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
       inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), connector: z.string().min(1) },
     },
     async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.surfaceKey });
+      if (denial) return errorResult(denial);
       try {
         const cleared = await store().clearConnectorOverride(a.org, a.surfaceKey, a.connector);
         await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.connector.clear_override", detail: { connector: a.connector, cleared } });
@@ -115,6 +124,8 @@ export function registerControlWriteTools(server: McpServer, actor: string): voi
       inputSchema: { org: z.string().min(1), surfaceKey: z.string().min(1), id: z.string().min(1) },
     },
     async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.surfaceKey });
+      if (denial) return errorResult(denial);
       try {
         const cancelled = await store().removeRoutine(a.org, a.surfaceKey, a.id);
         await appendAudit({ ...whereFromScope(a.org, a.surfaceKey), principalId: actor, action: "admin.routine.cancel", detail: { id: a.id, cancelled } });

@@ -8,9 +8,13 @@ import {
   staticTokenVerifier,
   resolveRoles,
   makeAdminAuthenticator,
+  roleCoversScope,
+  scopeDenial,
   type RoleRule,
 } from "../agent/control/auth.js";
 import { createAdminHttpServer } from "../agent/control/http.js";
+import { registerConfig } from "../agent/access/config.js";
+import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -115,6 +119,52 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
   const u3 = await listen(noToken);
   ok("an unresolved identity is refused (401)", (await fetch(u3, { method: "POST", headers, body })).status === 401);
   noToken.close();
+}
+
+{
+  const domains: Domain[] = [
+    defineDomain({ name: "org", match: "org", memory: "org-brain" }),
+    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"] }),
+  ];
+  ok("\"admin\" covers any scope, incl. an unscoped org-wide ask", roleCoversScope(["admin"], { org: "default" }, domains));
+  ok(
+    "domain:<name> covers its own surfaceKey",
+    roleCoversScope(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_TXN" }, domains),
+  );
+  ok(
+    "domain:<name> covers naming the domain directly (no surfaceKey)",
+    roleCoversScope(["domain:txn"], { org: "default", domain: "txn" }, domains),
+  );
+  ok(
+    "domain:<name> does NOT cover a different domain's surfaceKey",
+    !roleCoversScope(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_OTHER" }, domains),
+  );
+  ok(
+    "FAIL-CLOSED: domain:<name> does not cover an unscoped org-wide ask (no surfaceKey/domain)",
+    !roleCoversScope(["domain:txn"], { org: "default" }, domains),
+  );
+  ok("FAIL-CLOSED: no roles at all covers nothing", !roleCoversScope([], { org: "default", surfaceKey: "slack/T1/C_TXN" }, domains));
+  ok(
+    "FAIL-CLOSED: an unresolvable surfaceKey (no matching domain) is covered by nothing",
+    !roleCoversScope(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_NOWHERE" }, domains),
+  );
+
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  ok("scopeDenial: admin -> null (covered)", scopeDenial(["admin"], { org: "default", surfaceKey: "slack/T1/C_TXN" }) === null);
+  ok(
+    "scopeDenial: covering domain role -> null (covered)",
+    scopeDenial(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_TXN" }) === null,
+  );
+  const denial = scopeDenial(["domain:txn"], { org: "default", surfaceKey: "slack/T1/C_OTHER" });
+  ok("scopeDenial: non-covering domain role -> a denial message naming the scope", typeof denial === "string" && /C_OTHER/.test(denial));
 }
 
 console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC)\n`);

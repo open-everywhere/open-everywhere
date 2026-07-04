@@ -1,5 +1,7 @@
 import { jwtVerify, createRemoteJWKSet, type JWTVerifyGetKey } from "jose";
 import type { IncomingMessage } from "node:http";
+import { domainForChannel, type Domain } from "../memory/domain.js";
+import { getConfig } from "../access/config.js";
 
 export interface AdminIdentity {
   readonly issuer: string;
@@ -44,6 +46,27 @@ export function resolveRoles(id: RawIdentity, rules: readonly RoleRule[]): strin
     for (const r of rule.roles) granted.add(r);
   }
   return [...granted];
+}
+
+export interface ScopeRequest {
+  readonly org: string;
+  readonly surfaceKey?: string;
+  readonly domain?: string;
+}
+
+export function roleCoversScope(roles: readonly string[], scope: ScopeRequest, domains: readonly Domain[]): boolean {
+  if (roles.includes("admin")) return true;
+  const domainRoles = new Set(roles.filter((r) => r.startsWith("domain:")).map((r) => r.slice("domain:".length)));
+  if (domainRoles.size === 0) return false;
+  const resolved = scope.domain ?? (scope.surfaceKey ? domainForChannel(scope.surfaceKey, domains)?.name : undefined);
+  return resolved !== undefined && domainRoles.has(resolved);
+}
+
+export function scopeDenial(roles: readonly string[], scope: ScopeRequest): string | null {
+  if (roles.includes("admin")) return null;
+  if (roleCoversScope(roles, scope, getConfig().loadDomains())) return null;
+  const label = scope.surfaceKey ?? scope.domain ?? `org "${scope.org}" (org-wide)`;
+  return `forbidden: no role covers ${label} (have: ${roles.length ? roles.join(", ") : "none"}; need "admin" or a covering "domain:<name>").`;
 }
 
 function bearer(req: IncomingMessage): string | null {

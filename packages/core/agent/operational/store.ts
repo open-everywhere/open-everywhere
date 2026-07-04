@@ -56,6 +56,57 @@ export interface ScopedConnectorOverrideRow extends ConnectorOverrideRow {
   readonly scopeKey: string;
 }
 
+export interface DomainSkillRow {
+  readonly org: string;
+  readonly domain: string;
+  readonly name: string;
+  readonly content: string;
+  readonly updatedBy?: string;
+  readonly updatedAt: string;
+}
+
+export interface UsageEventEntry {
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly sessionId: string;
+  readonly principalId?: string;
+  readonly ts: string;
+  readonly kind?: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly model?: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+}
+
+export type UsageEventInput = Omit<UsageEventEntry, "ts" | "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens"> & {
+  readonly ts?: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+};
+
+export interface UsageSummaryFilter {
+  readonly surfaceKeyPrefix?: string;
+  readonly sinceTs?: string;
+  readonly untilTs?: string;
+}
+
+export interface UsageSummaryRow {
+  readonly surfaceKey: string;
+  readonly principalId?: string;
+  readonly kind?: string;
+  readonly model?: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly events: number;
+  readonly sessions: number;
+}
+
 export interface EngagementRow {
   readonly org: string;
   readonly surfaceKey: string;
@@ -95,6 +146,15 @@ export interface OperationalStore {
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
   disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   listEngagements(org: string): Promise<EngagementRow[]>;
+
+  listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
+  putDomainSkill(org: string, domain: string, name: string, content: string, updatedBy: string | undefined, updatedAt: string): Promise<void>;
+  deleteDomainSkill(org: string, domain: string, name: string): Promise<boolean>;
+
+  appendUsageEvent(entry: UsageEventEntry): Promise<void>;
+  usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
+  usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
+  pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 }

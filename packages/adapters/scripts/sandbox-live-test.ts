@@ -102,7 +102,8 @@ async function scenarioHook(): Promise<void> {
   const name = mk("hook");
   await Sandbox.create({ name, timeout: 240_000, resources: { vcpus: 2 }, tags: { sessionId } });
   const stopped = await stopSessionSandboxes(sessionId);
-  ok(stopped.length === 1 && stopped[0] === name, "D: hook's real SDK path found the tagged sandbox and stopped it");
+  ok(stopped.length === 1 && stopped[0].name === name, "D: hook's real SDK path found the tagged sandbox and stopped it");
+  ok(stopped[0].sandboxSeconds >= 0, "D: sandboxSeconds is a real non-negative window from the SDK's createdAt");
   const meta = await Sandbox.get({ name });
   ok(meta.status === "stopped" || meta.status === "snapshotting" || meta.status === "stopping", `D: sandbox is stopping/stopped after the hook (status=${meta.status})`);
   const again = await stopSessionSandboxes(sessionId);

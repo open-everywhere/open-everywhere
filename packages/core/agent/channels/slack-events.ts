@@ -330,7 +330,7 @@ async function channelInternalAndMeta(channelId: string): Promise<{ internal: bo
   }
 }
 
-async function confirmChannelInternal(channelId: string): Promise<boolean> {
+export async function confirmChannelInternal(channelId: string): Promise<boolean> {
   return (await channelInternalAndMeta(channelId)).internal;
 }
 

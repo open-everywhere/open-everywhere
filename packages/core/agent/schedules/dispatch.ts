@@ -1,5 +1,6 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import slack from "../channels/slack.js";
+import { confirmChannelInternal } from "../channels/slack-events.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
@@ -40,11 +41,30 @@ function partitionOf(r: Routine): Partition {
   return { org: r.org, platform, workspace, surface: rest.join("/"), workspaceKey, surfaceKey: r.surfaceKey, key: r.surfaceKey };
 }
 
+function surfaceAttributesFor(
+  r: Routine,
+  dest: DispatchTarget,
+  mode: "dm" | "channel",
+  confirmedInternal: boolean,
+): Record<string, string> {
+  const teamId = r.surfaceKey.split("/")[1] ?? "";
+  return {
+    team_id: teamId,
+    channel_id: dest.target.channelId,
+    channel_type: mode === "dm" ? "im" : "channel",
+    ...(confirmedInternal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+  };
+}
+
 export async function dispatchTick(
-  args: ScheduleHandlerArgs & { readonly now?: Date },
+  args: ScheduleHandlerArgs & {
+    readonly now?: Date;
+    readonly confirmInternal?: (channelId: string) => Promise<boolean>;
+  },
 ): Promise<void> {
   const { receive, waitUntil, appAuth } = args;
   const now = args.now ?? new Date();
+  const confirmInternal = args.confirmInternal ?? confirmChannelInternal;
   let all: Routine[];
   try {
     all = await listAllRoutines();
@@ -75,8 +95,8 @@ export async function dispatchTick(
       continue;
     }
     const next = computeNextRun(r.trigger, now);
+    const mode = dest.target.channelId.startsWith("D") ? "dm" : "channel";
     try {
-      const mode = dest.target.channelId.startsWith("D") ? "dm" : "channel";
       const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString());
       if (verdict.over) {
         declined++;
@@ -96,10 +116,15 @@ export async function dispatchTick(
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
       });
+      const internal =
+        r.surfaceKey.startsWith("slack/") && mode === "channel"
+          ? await confirmInternal(dest.target.channelId).catch(() => false)
+          : false;
       const markedAuth = {
         ...appAuth,
         attributes: {
           ...appAuth.attributes,
+          ...surfaceAttributesFor(r, dest, mode, internal),
           [ROUTINE_MARKER.id]: r.id,
           [ROUTINE_MARKER.surface]: r.surfaceKey,
           [ROUTINE_MARKER.org]: r.org,

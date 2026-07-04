@@ -1,7 +1,7 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger } from "./store.js";
+import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger, UsageEventEntry, UsageSummaryFilter } from "./store.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -68,6 +68,32 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      seen_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS domain_skill (
+     org_id     text NOT NULL,
+     domain     text NOT NULL,
+     name       text NOT NULL,
+     content    text NOT NULL,
+     updated_by text,
+     updated_at text NOT NULL,
+     PRIMARY KEY (org_id, domain, name)
+   )`,
+  `CREATE TABLE IF NOT EXISTS usage_events (
+     seq                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id             text   NOT NULL,
+     surface_key        text   NOT NULL,
+     session_id         text   NOT NULL,
+     principal_id       text,
+     ts                 text   NOT NULL,
+     kind               text,
+     input_tokens       bigint NOT NULL DEFAULT 0,
+     output_tokens      bigint NOT NULL DEFAULT 0,
+     cache_read_tokens  bigint NOT NULL DEFAULT 0,
+     cache_write_tokens bigint NOT NULL DEFAULT 0,
+     model              text,
+     detail             text
+   )`,
+  `CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id)`,
+  `CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts)`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -80,6 +106,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -88,6 +116,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
+  `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
+  `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
+  `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -109,6 +140,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
      USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY domain_skill_org_isolation ON domain_skill
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY usage_events_select ON usage_events FOR SELECT
+     USING (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY usage_events_insert ON usage_events FOR INSERT
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
 ];
 
@@ -366,6 +404,151 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         engagedAt: r.engaged_at,
         lastTurnAt: r.last_turn_at,
       }));
+    },
+
+    async listDomainSkills(org, domain) {
+      const { rows } = await client.query(
+        "SELECT name, content, updated_by, updated_at FROM domain_skill WHERE org_id = $1 AND domain = $2 ORDER BY name",
+        [org, domain],
+      );
+      return (rows as { name: string; content: string; updated_by: string | null; updated_at: string }[]).map((r) => ({
+        org,
+        domain,
+        name: r.name,
+        content: r.content,
+        ...(r.updated_by ? { updatedBy: r.updated_by } : {}),
+        updatedAt: r.updated_at,
+      }));
+    },
+
+    async putDomainSkill(org, domain, name, content, updatedBy, updatedAt) {
+      await client.query(
+        `INSERT INTO domain_skill (org_id, domain, name, content, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (org_id, domain, name) DO UPDATE SET
+           content    = excluded.content,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`,
+        [org, domain, name, content, updatedBy ?? null, updatedAt],
+      );
+    },
+
+    async deleteDomainSkill(org, domain, name) {
+      const { rows } = await client.query(
+        "DELETE FROM domain_skill WHERE org_id = $1 AND domain = $2 AND name = $3 RETURNING name",
+        [org, domain, name],
+      );
+      return rows.length > 0;
+    },
+
+    async appendUsageEvent(entry: UsageEventEntry) {
+      await client.query(
+        `INSERT INTO usage_events
+           (org_id, surface_key, session_id, principal_id, ts, kind,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [
+          entry.org,
+          entry.surfaceKey,
+          entry.sessionId,
+          entry.principalId ?? null,
+          entry.ts,
+          entry.kind ?? null,
+          entry.inputTokens,
+          entry.outputTokens,
+          entry.cacheReadTokens,
+          entry.cacheWriteTokens,
+          entry.model ?? null,
+          entry.detail ? JSON.stringify(entry.detail) : null,
+        ],
+      );
+    },
+
+    async usageForSession(org, sessionId) {
+      const { rows } = await client.query(
+        `SELECT surface_key, session_id, principal_id, ts, kind,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail
+         FROM usage_events WHERE org_id = $1 AND session_id = $2 ORDER BY seq ASC`,
+        [org, sessionId],
+      );
+      return (rows as {
+        surface_key: string;
+        session_id: string;
+        principal_id: string | null;
+        ts: string;
+        kind: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_write_tokens: number;
+        model: string | null;
+        detail: string | null;
+      }[]).map((r) => ({
+        org,
+        surfaceKey: r.surface_key,
+        sessionId: r.session_id,
+        ...(r.principal_id ? { principalId: r.principal_id } : {}),
+        ts: r.ts,
+        ...(r.kind ? { kind: r.kind } : {}),
+        inputTokens: Number(r.input_tokens),
+        outputTokens: Number(r.output_tokens),
+        cacheReadTokens: Number(r.cache_read_tokens),
+        cacheWriteTokens: Number(r.cache_write_tokens),
+        ...(r.model ? { model: r.model } : {}),
+        ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
+      }));
+    },
+
+    async usageSummary(org, filter: UsageSummaryFilter = {}) {
+      const where: string[] = ["org_id = $1"];
+      const params: unknown[] = [org];
+      if (filter.surfaceKeyPrefix !== undefined) {
+        params.push(`${filter.surfaceKeyPrefix}%`);
+        where.push(`surface_key LIKE $${params.length}`);
+      }
+      if (filter.sinceTs !== undefined) {
+        params.push(filter.sinceTs);
+        where.push(`ts >= $${params.length}`);
+      }
+      if (filter.untilTs !== undefined) {
+        params.push(filter.untilTs);
+        where.push(`ts <= $${params.length}`);
+      }
+      const { rows } = await client.query(
+        `SELECT surface_key, principal_id, kind, model,
+                SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+                SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+                COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
+         FROM usage_events WHERE ${where.join(" AND ")}
+         GROUP BY surface_key, principal_id, kind, model`,
+        params,
+      );
+      return (rows as {
+        surface_key: string;
+        principal_id: string | null;
+        kind: string | null;
+        model: string | null;
+        input_tokens: number;
+        output_tokens: number;
+        cache_read_tokens: number;
+        cache_write_tokens: number;
+        events: number;
+        sessions: number;
+      }[]).map((r) => ({
+        surfaceKey: r.surface_key,
+        ...(r.principal_id ? { principalId: r.principal_id } : {}),
+        ...(r.kind ? { kind: r.kind } : {}),
+        ...(r.model ? { model: r.model } : {}),
+        inputTokens: Number(r.input_tokens),
+        outputTokens: Number(r.output_tokens),
+        cacheReadTokens: Number(r.cache_read_tokens),
+        cacheWriteTokens: Number(r.cache_write_tokens),
+        events: Number(r.events),
+        sessions: Number(r.sessions),
+      }));
+    },
+
+    async pruneUsageEvents() {
+      return 0;
     },
 
     async markEventSeen(org, key, at, ttlMs) {

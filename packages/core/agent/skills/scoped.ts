@@ -2,19 +2,52 @@ import { defineDynamic, defineSkill } from "eve/skills";
 import { resolveAccessFor } from "../access/request.js";
 import { getConfig } from "../access/config.js";
 import { repoSkillPackages } from "../scm/repo-skills.js";
+import { resolveDomainSkillRows, skillPackageFromRow } from "./domain-skills.js";
 import type { BindableContext } from "../identity/binding.js";
+import type { SkillPackageDefinition } from "eve/skills";
 
-function granted(ctx: BindableContext) {
+export interface ResolvedSkillEntry {
+  readonly name: string;
+  readonly tier: "granted" | "domain" | "repo";
+  readonly pkg: SkillPackageDefinition;
+  readonly updatedBy?: string;
+  readonly updatedAt?: string;
+}
+
+export async function resolveSkillEntries(ctx: BindableContext): Promise<ResolvedSkillEntry[]> {
   const access = resolveAccessFor(ctx);
   const skillContent = getConfig().skillContent;
-  const out: Record<string, ReturnType<typeof defineSkill>> = {};
+  const grantedNames = new Set(access.skills);
+  const entries: ResolvedSkillEntry[] = [];
+  const claimed = new Set<string>();
+
   for (const name of access.skills) {
     const content = skillContent[name];
-    if (content) out[name] = defineSkill(content);
+    if (!content) continue;
+    entries.push({ name, tier: "granted", pkg: content });
+    claimed.add(name);
   }
-  for (const [name, pkg] of Object.entries(repoSkillPackages(new Set(access.skills)))) {
-    out[name] = defineSkill(pkg);
+
+  for (const row of await resolveDomainSkillRows(ctx, grantedNames)) {
+    entries.push({ name: row.name, tier: "domain", pkg: skillPackageFromRow(row), updatedBy: row.updatedBy, updatedAt: row.updatedAt });
+    claimed.add(row.name);
   }
+
+  for (const [name, pkg] of Object.entries(repoSkillPackages(grantedNames))) {
+    if (claimed.has(name)) {
+      console.warn(`[open-everywhere:skills] repo skill "${name}" collides with an already-resolved skill for this session — that one wins, repo skill dropped`);
+      continue;
+    }
+    entries.push({ name, tier: "repo", pkg });
+    claimed.add(name);
+  }
+
+  return entries;
+}
+
+async function granted(ctx: BindableContext) {
+  const out: Record<string, ReturnType<typeof defineSkill>> = {};
+  for (const entry of await resolveSkillEntries(ctx)) out[entry.name] = defineSkill(entry.pkg);
   return out;
 }
 

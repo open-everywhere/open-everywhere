@@ -42,6 +42,24 @@ const baseline = { surfaceMonthlyTokens: 2 };
 ok(applyCapOverrides(baseline, activeSpendLimits([expired], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 2, "expired bridge reverts to the (tighter) config cap");
 ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 9, "active bridge overlays the config cap");
 
+{
+  const { turnKind } = await import("../agent/hooks/spend.js");
+  const ctxWith = (mode: string, attributes: Record<string, string> = {}) => ({
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { channel_type: mode === "dm" ? "im" : "channel", channel_id: mode === "dm" ? "D1" : "C1", ...attributes } } } },
+  });
+  ok(turnKind(ctxWith("channel") as never) === "channel", "turnKind: an ordinary channel turn -> \"channel\"");
+  ok(turnKind(ctxWith("dm") as never) === "dm", "turnKind: a DM turn -> \"dm\"");
+  const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+  const routineCtx = ctxWith("channel", {
+    [ROUTINE_MARKER.id]: "r-1",
+    [ROUTINE_MARKER.surface]: "slack/T1/C1",
+    [ROUTINE_MARKER.org]: "default",
+  });
+  ok(turnKind(routineCtx as never) === "routine", "turnKind: a routine-fired session -> \"routine\" (checked before mode)");
+  ok(turnKind({} as never) === "channel", "turnKind: an unusual/empty ctx degrades to \"channel\", never throws");
+}
+
 const dir = join(tmpdir(), `open-everywhere-spend-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
@@ -65,6 +83,39 @@ await store.recordUsage(pOrg2 as never, "2026-06", { inputTokens: 777, outputTok
 ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: other org's usage does not bleed into this org's surface total");
 ok((await store.surfaceTokens("acme", "slack/T1/C1", "2026-06")) === 777, "store: the other org has its own isolated ledger");
 ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "store: workspace rollup stays within one org");
+
+{
+  const usageEvents = await import("../agent/spend/usage-events.js");
+  const base = { org: "default", surfaceKey: "slack/T1/C1", sessionId: "sess-1" };
+
+  await usageEvents.appendUsageEvent({ ...base, ts: "2026-06-24T10:00:00Z", principalId: "U1", kind: "channel", inputTokens: 100, outputTokens: 50 });
+  await usageEvents.appendUsageEvent({ ...base, ts: "2026-06-24T10:05:00Z", principalId: "U1", kind: "channel", inputTokens: 10, outputTokens: 5, cacheReadTokens: 999 });
+  await usageEvents.appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C2", sessionId: "sess-2", ts: "2026-06-24T10:10:00Z", principalId: "U2", kind: "dm", inputTokens: 200 });
+  await usageEvents.appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C1", sessionId: "sess-1", ts: "2026-06-24T10:06:00Z", kind: "sandbox", detail: { sandboxSeconds: 42 } });
+  await usageEvents.appendUsageEvent({ org: "acme", surfaceKey: "slack/T1/C1", sessionId: "sess-9", ts: "2026-06-24T10:00:00Z", inputTokens: 777 });
+
+  const forSession = await usageEvents.usageForSession("default", "sess-1");
+  ok(forSession.length === 3, "usageForSession: returns every row for the session (2 model calls + 1 sandbox stop)");
+  ok(forSession[0].ts === "2026-06-24T10:00:00Z" && forSession[1].ts === "2026-06-24T10:05:00Z", "usageForSession: oldest-first");
+  ok(forSession[2].kind === "sandbox" && forSession[2].inputTokens === 0 && forSession[2].detail?.sandboxSeconds === 42, "usageForSession: zero-token detail event round-trips");
+  ok((await usageEvents.usageForSession("default", "sess-9")).length === 0, "usageForSession: another org's session is invisible");
+
+  const summary = await usageEvents.usageSummary("default");
+  const c1Channel = summary.find((r) => r.surfaceKey === "slack/T1/C1" && r.kind === "channel");
+  ok(c1Channel?.inputTokens === 110 && c1Channel.outputTokens === 55 && c1Channel.events === 2 && c1Channel.sessions === 1, "usageSummary: sums tokens + counts events/sessions per (surface, principal, kind, model)");
+  const sandboxGroup = summary.find((r) => r.kind === "sandbox");
+  ok(sandboxGroup?.inputTokens === 0 && sandboxGroup.events === 1, "usageSummary: a zero-token group still sums/counts correctly");
+  ok(summary.every((r) => r.surfaceKey !== "slack/T1/C1" || r.kind !== "dm"), "usageSummary: acme's row never surfaces under default's org");
+  const prefixed = await usageEvents.usageSummary("default", { surfaceKeyPrefix: "slack/T1/C2" });
+  ok(prefixed.length === 1 && prefixed[0].principalId === "U2", "usageSummary: surfaceKeyPrefix filters to one surface");
+  const windowed = await usageEvents.usageSummary("default", { sinceTs: "2026-06-24T10:05:00Z", untilTs: "2026-06-24T10:06:00Z" });
+  ok(windowed.reduce((n, r) => n + r.events, 0) === 2, "usageSummary: sinceTs/untilTs narrow the window (inclusive bounds, excludes the 10:10 row)");
+
+  const removed = await usageEvents.pruneUsageEvents("default", "2026-06-24T10:05:30Z");
+  ok(removed === 2, "pruneUsageEvents: removes rows older than the cutoff (the two 10:00/10:05 slack/T1/C1 channel rows)");
+  ok((await usageEvents.usageForSession("default", "sess-1")).length === 1, "pruneUsageEvents: the pruned session keeps only its newer row");
+  ok((await usageEvents.usageForSession("acme", "sess-9")).length === 1, "pruneUsageEvents: another org's rows are untouched by this org's prune");
+}
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ spend: ${passed} assertions passed`);
