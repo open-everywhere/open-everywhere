@@ -23,6 +23,10 @@ export function applyOutcome(
   return next;
 }
 
+export function settleOutcome(sessionOutcome: "ok" | "failed", recorded: RunOutcome | undefined): RunOutcome {
+  return sessionOutcome === "ok" && recorded === "skipped" ? "skipped" : sessionOutcome;
+}
+
 export function shouldPostOnDiff(prevHash: string | undefined, newHash: string): boolean {
   return prevHash !== newHash;
 }

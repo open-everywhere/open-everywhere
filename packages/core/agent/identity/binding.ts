@@ -161,7 +161,7 @@ const bindTeams: Mapper = (ctx) => {
     surface: conversationId,
     mode,
     visibility: teamsVisibility(scope, membershipType, mode),
-    trust: teamsTrust(scope, membershipType, mode),
+    trust: teamsTrust(scope, membershipType, mode, tenantId),
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target:
       conversationId && serviceUrl

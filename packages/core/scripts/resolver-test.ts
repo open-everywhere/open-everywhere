@@ -1,5 +1,5 @@
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
-import type { Binding, Bundle } from "../agent/access/bundle.js";
+import { assertBindingsValid, assertBundlesValid, type Binding, type Bundle } from "../agent/access/bundle.js";
 import type { PluginRegistry } from "../agent/plugins/types.js";
 
 let passed = 0;
@@ -9,6 +9,16 @@ function ok(cond: boolean, label: string): void {
     process.exit(1);
   }
   passed++;
+}
+
+function throwsWith(fn: () => void, fragment: string, label: string): void {
+  try {
+    fn();
+  } catch (err) {
+    ok(String(err).includes(fragment), label);
+    return;
+  }
+  ok(false, label);
 }
 
 const chan = (workspace: string, channel: string, domains?: string[]): ResolveRequest => ({
@@ -276,6 +286,97 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
       registry,
     ).warnings.some((w) => w.startsWith("broad grant")),
     "plugins at channel scope -> NO broad-grant warning",
+  );
+}
+
+{
+  const good: Bundle[] = [
+    {
+      name: "ok",
+      repos: ["acme/web", "acme/api.v2"],
+      connectors: ["notion", "linear-mcp"],
+      connections: [{ id: "gh", credentialType: "bearer", secretRef: "GH", allowedWebsites: ["api.github.com", "*.googleapis.com"] }],
+      domains: ["raw.githubusercontent.com"],
+    },
+  ];
+  assertBundlesValid(good);
+  ok(true, "a well-formed bundle set validates (incl. org-subdomain wildcard)");
+
+  throwsWith(
+    () => assertBundlesValid([{ name: "dup" }, { name: "dup" }]),
+    'bundle name "dup" is defined more than once',
+    "duplicate bundle names throw",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connections: [{ id: "gh", credentialType: "bearer", secretRef: "GH", allowedWebsites: [] }] }]),
+    "empty allowedWebsites",
+    "a connection with an empty allowedWebsites throws (credential sendable nowhere)",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connections: [{ id: "gh", credentialType: "bearer", secretRef: "GH", allowedWebsites: ["*"] }] }]),
+    'pattern "*" is overly broad',
+    'a bare "*" allowedWebsites pattern throws',
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", domains: ["*.com"] }]),
+    'pattern "*.com" is overly broad',
+    'a single-label wildcard ("*.<tld>") egress domain throws',
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", connectors: ["notion", "notion"] }]),
+    'grants connector "notion" more than once',
+    "duplicate connector names within one bundle throw",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", repos: ["https://github.com/acme/web"] }]),
+    "must be bare owner/name form",
+    "a repo URL (not owner/name) throws",
+  );
+  throwsWith(() => assertBundlesValid([{ name: "b", repos: ["acme"] }]), "owner/name", "a bare owner with no repo name throws");
+  throwsWith(() => assertBundlesValid([{ name: "b", repos: ["acme/web/tree"] }]), "owner/name", "an owner/name/extra path throws");
+}
+
+{
+  const bundles: Bundle[] = [{ name: "basket" }];
+  const good: Binding[] = [
+    { bundle: "basket", scope: { level: "org" } },
+    { bundle: "basket", scope: { level: "workspace", workspace: "T1" } },
+    { bundle: "basket", scope: { level: "domain", workspace: "T1", domain: "payments" } },
+    { bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "basket", scope: { level: "workspace", workspace: "dm:U1" } },
+  ];
+  assertBindingsValid(good, bundles);
+  ok(true, "well-formed bindings at every level validate (incl. dm:U1 personal scope)");
+
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "ghost", scope: { level: "org" } }], bundles),
+    'unknown bundle "ghost"',
+    "a binding to an undefined bundle throws at config load",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "workspace" } }], bundles),
+    "needs scope.workspace",
+    "a workspace-level binding without workspace throws",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain", workspace: "T1" } }], bundles),
+    "needs scope.domain",
+    "a domain-level binding without domain throws",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "T1" } }], bundles),
+    "needs scope.channel",
+    "a channel-level binding without channel throws",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "slack/T1", channel: "C1" } }], bundles),
+    "BARE platform id",
+    'a "slack/T…" surface-key workspace throws (bindings take bare team_id)',
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "T1/C1" } }], bundles),
+    'scope.channel "T1/C1" contains "/"',
+    "a slash-bearing channel id throws (bare channel_id required)",
   );
 }
 

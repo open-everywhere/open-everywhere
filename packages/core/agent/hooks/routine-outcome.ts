@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { routineMarker } from "../routines/routine.js";
-import { applyOutcome } from "../routines/lifecycle.js";
+import { applyOutcome, settleOutcome } from "../routines/lifecycle.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
 
 function log(msg: string): void {
@@ -16,7 +16,8 @@ async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void>
   try {
     const routine = await getRoutine(marker.org, marker.surfaceKey, marker.id);
     if (!routine) return;
-    const updated = applyOutcome(routine, outcome, new Date());
+    const settled = settleOutcome(outcome, routine.lastOutcome);
+    const updated = applyOutcome(routine, settled, new Date());
     await updateRoutine(marker.org, marker.surfaceKey, marker.id, {
       lastRunAt: updated.lastRunAt,
       lastOutcome: updated.lastOutcome,
@@ -26,7 +27,7 @@ async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void>
       nextRunAt: updated.nextRunAt,
     });
     log(
-      `outcome ${outcome} for ${marker.id} [${marker.surfaceKey}] ` +
+      `outcome ${settled} for ${marker.id} [${marker.surfaceKey}] ` +
         `(fails=${updated.consecutiveFailures}${updated.status === "disabled" ? ", AUTO-DISABLED" : ""})`,
     );
   } catch (err) {

@@ -3,6 +3,9 @@ import slack from "../channels/slack.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
+import { renderWatchMessage } from "../routines/watch.js";
+import { scopeOverBudget } from "../spend/check.js";
+import type { Partition } from "../memory/partition.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
@@ -31,6 +34,12 @@ function resolveTarget(routine: Routine): DispatchTarget | null {
   return null;
 }
 
+function partitionOf(r: Routine): Partition {
+  const [platform = "", workspace = "", ...rest] = r.surfaceKey.split("/");
+  const workspaceKey = `${platform}/${workspace}`;
+  return { org: r.org, platform, workspace, surface: rest.join("/"), workspaceKey, surfaceKey: r.surfaceKey, key: r.surfaceKey };
+}
+
 export async function dispatchTick(
   args: ScheduleHandlerArgs & { readonly now?: Date },
 ): Promise<void> {
@@ -53,6 +62,7 @@ export async function dispatchTick(
   let fired = 0;
   let dryRun = 0;
   let deferred = 0;
+  let declined = 0;
   for (const r of due) {
     const dest = resolveTarget(r);
     if (!dest) {
@@ -66,9 +76,25 @@ export async function dispatchTick(
     }
     const next = computeNextRun(r.trigger, now);
     try {
+      const mode = dest.target.channelId.startsWith("D") ? "dm" : "channel";
+      const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString());
+      if (verdict.over) {
+        declined++;
+        log(`DECLINED (over budget): ${r.id} on ${r.surfaceKey} — ${verdict.reason ?? "cap reached"}`);
+        await updateRoutine(r.org, r.surfaceKey, r.id, {
+          lastRunAt: now.toISOString(),
+          nextRunAt: next ? next.toISOString() : null,
+          lastOutcome: "skipped",
+        });
+        continue;
+      }
+    } catch {
+    }
+    try {
       await updateRoutine(r.org, r.surfaceKey, r.id, {
         lastRunAt: now.toISOString(),
         nextRunAt: next ? next.toISOString() : null,
+        lastOutcome: undefined,
       });
       const markedAuth = {
         ...appAuth,
@@ -81,7 +107,7 @@ export async function dispatchTick(
       };
       waitUntil(
         receive(dest.channel, {
-          message: r.prompt,
+          message: r.trigger.kind === "watch" ? renderWatchMessage(r) : r.prompt,
           target: dest.target,
           auth: markedAuth,
         }),
@@ -91,7 +117,7 @@ export async function dispatchTick(
       log(`failed to dispatch ${r.id} on ${r.surfaceKey}: ${String(err)}`);
     }
   }
-  log(`tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${deferred} deferred (cap ${cap})`);
+  log(`tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${deferred} deferred (cap ${cap})`);
 }
 
 export default defineSchedule({

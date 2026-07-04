@@ -32,6 +32,10 @@ export function isSafeCheckoutDir(dir: string): boolean {
   return SAFE_PATH.test(dir) && !dir.includes("..") && !dir.startsWith("/");
 }
 
+export function isSafeBranchName(name: string): boolean {
+  return SAFE_PATH.test(name) && !name.includes("..") && !name.startsWith("-") && !name.startsWith("/") && !name.endsWith("/");
+}
+
 export function checkoutCommand(
   repo: string,
   token: string,
@@ -54,6 +58,11 @@ export function checkoutCommand(
 }
 
 export const CHECKOUT_OK = "__SCM_CHECKOUT_OK__";
+
+export function pushCommand(dir: string, token: string, head: string): string {
+  const header = authExtraHeader(token);
+  return `git -C '${dir}' -c 'http.extraheader=${header}' push origin 'refs/heads/${head}:refs/heads/${head}'`;
+}
 
 export const CONVENTION_FILES = ["AGENTS.md", "CLAUDE.md"] as const;
 

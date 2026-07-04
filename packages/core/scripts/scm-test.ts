@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
-import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
+import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, pushCommand, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
+import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
 import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
@@ -40,9 +41,12 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 {
   const body = buildMintBody(["web", "web", "api"]);
   ok(body.repositories.length === 2 && body.repositories.includes("web") && body.repositories.includes("api"), "mint body dedups repo names");
-  ok(body.permissions.contents === "write" && body.permissions.pull_requests === "write" && body.permissions.metadata === "read", "default permissions are least-privilege");
+  ok(body.permissions.contents === "write" && body.permissions.pull_requests === "write" && body.permissions.metadata === "read", "default permissions are the PR-flow write set");
   ok(buildMintBody(Array.from({ length: 600 }, (_, i) => `r${i}`)).repositories.length === 500, "repo list is capped at 500");
   ok(DEFAULT_PERMISSIONS.contents === "write", "exported default permissions are correct");
+  const ro = buildMintBody(["web"], READ_PERMISSIONS);
+  ok(ro.permissions.contents === "read" && ro.permissions.metadata === "read", "checkout read set is contents:read + metadata:read");
+  ok(ro.permissions.pull_requests === undefined && ro.permissions.issues === undefined, "checkout read set requests NO write permissions");
 }
 
 {
@@ -103,7 +107,7 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  const calls: { installationId: string; body: { repositories: string[] } }[] = [];
+  const calls: { installationId: string; body: { repositories: string[]; permissions: Record<string, string> } }[] = [];
   const fetchFn: FetchFn = async (url, init) => {
     const installationId = url.match(/installations\/([^/]+)\//)![1];
     calls.push({ installationId, body: JSON.parse(init.body) });
@@ -118,6 +122,10 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(calls.length === 1 && calls[0].body.repositories.length === 2, "the owner's two repos are scoped into a single token (mint per owner, not per repo)");
   ok(ungranted.length === 1 && ungranted[0] === "globex/secret", "a repo whose owner has no installation is reported ungranted, never widened");
   ok(app.committer().email === "12345+open-everywhere[bot]@users.noreply.github.com", "orchestrator exposes the bot committer");
+
+  ok(calls[0].body.permissions.contents === "write" && calls[0].body.permissions.pull_requests === "write", "tokensForRepos default mint requests the write set (PR flow)");
+  await app.tokensForRepos(["acme/web"], READ_PERMISSIONS);
+  ok(calls[1].body.permissions.contents === "read" && calls[1].body.permissions.pull_requests === undefined, "tokensForRepos with READ_PERMISSIONS requests read-only (checkout mint)");
 }
 
 {
@@ -138,11 +146,63 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(cmd.includes("clone -- 'https://github.com/acme/web.git' 'repo'"), "checkout clones the clean https url");
   ok(!cmd.includes("ghs_secret@"), "token is NOT in the clone URL");
   ok(cmd.includes("http.extraheader=AUTHORIZATION: basic"), "token rides in http.extraheader");
-  ok(cmd.includes("git -C 'repo' config http.extraheader"), "header is persisted to the clone so later push/fetch are authed");
+  ok(cmd.includes("git -C 'repo' config http.extraheader"), "the READ-ONLY header is persisted to the clone so later fetch/pull are authed (it can't push)");
   ok(cmd.includes("config user.name 'open-everywhere[bot]'"), "bot identity is configured");
   ok(cmd.includes(CHECKOUT_OK), "command prints the success sentinel");
   ok(isSafeCheckoutDir("svc/web") && !isSafeCheckoutDir("../etc"), "checkout dir guard blocks traversal");
   ok(!isSafeCheckoutDir("a'; rm -rf /"), "checkout dir guard blocks shell metacharacters");
+}
+
+{
+  const cmd = pushCommand("repo", "ghs_write", "fix/issue-9");
+  ok(cmd.startsWith("git -C 'repo' -c 'http.extraheader=AUTHORIZATION: basic"), "push carries the write token one-shot via git -c");
+  ok(cmd.includes("push origin 'refs/heads/fix/issue-9:refs/heads/fix/issue-9'"), "push targets the named branch with an explicit refspec (not HEAD, not push.default)");
+  ok(!cmd.includes("config http.extraheader"), "the write token is NEVER persisted with git config");
+  ok(!cmd.includes("ghs_write"), "raw token never appears (base64 extraheader form only)");
+  ok(isSafeBranchName("fix/issue-9") && isSafeBranchName("release-1.2"), "branch guard accepts normal branch names");
+  ok(!isSafeBranchName("-f") && !isSafeBranchName("a:b") && !isSafeBranchName("../x") && !isSafeBranchName("a'; rm -rf /"), "branch guard blocks option injection, refspec smuggling, traversal, shell metacharacters");
+}
+
+{
+  const mkFetch = (post: { status: number; body?: string; json?: unknown }, list?: unknown): { fn: PrFetchFn; seen: { url: string; method: string; body?: string }[] } => {
+    const seen: { url: string; method: string; body?: string }[] = [];
+    const fn: PrFetchFn = async (url, init) => {
+      seen.push({ url, method: init.method, body: init.body });
+      if (init.method === "POST") {
+        return { ok: post.status < 300, status: post.status, text: async () => post.body ?? "", json: async () => post.json ?? {} };
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => list ?? [] };
+    };
+    return { fn, seen };
+  };
+
+  const created = mkFetch({ status: 201, json: { html_url: "https://github.com/acme/web/pull/7", number: 7 } });
+  const madePr = await createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: created.fn });
+  ok(madePr.number === 7 && madePr.updated === false, "a fresh head creates a PR (updated: false)");
+  ok(created.seen[0].url.endsWith("/repos/acme/web/pulls") && created.seen[0].method === "POST", "create POSTs the pulls endpoint");
+  ok(JSON.parse(created.seen[0].body!).head === "fix/x", "create body carries the head branch");
+
+  const existing = mkFetch(
+    { status: 422, body: 'Validation Failed: {"message":"A pull request already exists for acme:fix/x."}' },
+    [{ html_url: "https://github.com/acme/web/pull/3", number: 3 }],
+  );
+  const updatedPr = await createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: existing.fn });
+  ok(updatedPr.number === 3 && updatedPr.updated === true, "422 already-exists resolves to the existing open PR (updated: true)");
+  ok(existing.seen[1].method === "GET" && existing.seen[1].url.includes(`head=${encodeURIComponent("acme:fix/x")}`) && existing.seen[1].url.includes("state=open"), "existing PR is looked up by owner:branch head, open only");
+
+  const ghost = mkFetch({ status: 422, body: "A pull request already exists" }, []);
+  await assert.rejects(
+    createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: ghost.fn }),
+    /422/,
+  );
+  n++;
+
+  const denied = mkFetch({ status: 403, body: "forbidden" });
+  await assert.rejects(
+    createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: denied.fn }),
+    /403 forbidden/,
+  );
+  n++;
 }
 
 {
@@ -312,4 +372,4 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, git-arg safety, identity, config, orchestrator, checkout cmd, convention probe, repo skills, repo agents, guards, egress)\n`);
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress)\n`);

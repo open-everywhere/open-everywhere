@@ -32,6 +32,27 @@ export async function computeEgressPolicy(
   }
 }
 
+export interface AppliedEgressPolicy {
+  readonly enforced: boolean;
+  readonly enforceError?: string;
+}
+
+export async function applyEgressPolicy(
+  apply: () => Promise<unknown>,
+  allowUnenforced: boolean,
+): Promise<AppliedEgressPolicy> {
+  try {
+    await apply();
+    return { enforced: true };
+  } catch (err) {
+    if (allowUnenforced) return { enforced: false, enforceError: String(err) };
+    throw new Error(
+      `egress enforcement failed — aborting the session rather than running on Eve's allow-all default ` +
+        `(set OE_ALLOW_UNENFORCED_EGRESS=1 to warn-and-continue in dev): ${String(err)}`,
+    );
+  }
+}
+
 export default defineHook({
   events: {
     "session.started": async (_event, ctx) => {
@@ -52,15 +73,27 @@ export default defineHook({
           : `allow ${hostCount} host(s), default-deny`;
 
       const wantEnforce = process.env.OE_EGRESS_ENFORCE !== "0";
+      const allowUnenforced = process.env.OE_ALLOW_UNENFORCED_EGRESS === "1";
       let enforced = false;
+      let enforceError: string | undefined;
+      let abortError: Error | undefined;
       if (wantEnforce || compileError) {
         try {
-          const sandbox = await ctx.getSandbox();
-          await sandbox.setNetworkPolicy(policy);
-          enforced = true;
-          log(`${wantEnforce ? "enforced" : "enforced (compile-error deny-all)"}: ${summary} for ${scopeKey}`);
+          const applied = await applyEgressPolicy(async () => {
+            const sandbox = await ctx.getSandbox();
+            await sandbox.setNetworkPolicy(policy);
+          }, allowUnenforced);
+          enforced = applied.enforced;
+          enforceError = applied.enforceError;
+          if (enforced) {
+            log(`${wantEnforce ? "enforced" : "enforced (compile-error deny-all)"}: ${summary} for ${scopeKey}`);
+          } else {
+            log(`enforce FAILED (backend rejected setNetworkPolicy) — running UNENFORCED (OE_ALLOW_UNENFORCED_EGRESS=1): ${enforceError}`);
+          }
         } catch (err) {
-          log(`enforce FAILED (backend rejected setNetworkPolicy) — running UNENFORCED: ${String(err)}`);
+          abortError = err instanceof Error ? err : new Error(String(err));
+          enforceError = abortError.message;
+          log(`enforce FAILED — aborting session (fail-closed): ${abortError.message}`);
         }
       } else {
         log(`dry-run (OE_EGRESS_ENFORCE=0): ${summary} for ${scopeKey}`);
@@ -76,7 +109,15 @@ export default defineHook({
           surface: p.surface,
           principalId,
           action: "egress.policy",
-          detail: { hosts: hostCount, enforced, scopeKey, summary, ...(compileError ? { error: compileError } : {}) },
+          detail: {
+            hosts: hostCount,
+            enforced,
+            scopeKey,
+            summary,
+            ...(compileError ? { error: compileError } : {}),
+            ...(enforceError ? { enforceError } : {}),
+            ...(abortError ? { aborted: true } : {}),
+          },
         });
 
         await appendAudit({
@@ -91,6 +132,8 @@ export default defineHook({
       } catch (err) {
         log(`audit skipped (policy still applied): ${String(err)}`);
       }
+
+      if (abortError) throw abortError;
     },
   },
 });

@@ -8,6 +8,11 @@ export const DEFAULT_PERMISSIONS: MintPermissions = {
   metadata: "read",
 };
 
+export const READ_PERMISSIONS: MintPermissions = {
+  contents: "read",
+  metadata: "read",
+};
+
 export function normalizePrivateKeyPem(pem: string): string {
   return pem.includes("\\n") && !pem.includes("\n") ? pem.replace(/\\n/g, "\n") : pem;
 }

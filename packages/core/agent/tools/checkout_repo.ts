@@ -3,12 +3,13 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { READ_PERMISSIONS } from "../scm/mint.js";
 import { checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
 
 export default defineTool({
   description:
-    "Clone one of the allowed repositories (see list_repos) into your workspace so you can read and change its code. Only granted repos can be cloned. After it returns, work in the given directory with bash — branch, edit, commit, push — then call open_pull_request. If the result flags a convention file (AGENTS.md or CLAUDE.md), READ it before changing code — it carries the repo's own rules. If the result lists skills or delegation personas shipped in the repo, those become invocable skills from your next turn.",
+    "Clone one of the allowed repositories (see list_repos) into your workspace so you can read and change its code. Only granted repos can be cloned. After it returns, work in the given directory with bash — branch, edit, commit — then call open_pull_request, which pushes your branch and opens the PR after human approval (the checkout credential is read-only; plain `git push` will be rejected). If the result flags a convention file (AGENTS.md or CLAUDE.md), READ it before changing code — it carries the repo's own rules. If the result lists skills or delegation personas shipped in the repo, those become invocable skills from your next turn.",
   inputSchema: z.object({
     repo: z.string().describe("owner/repo, exactly as shown by list_repos."),
     dir: z.string().optional().describe("workspace-relative checkout directory (default: the repo name)."),
@@ -47,7 +48,7 @@ export default defineTool({
       throw new Error(`invalid checkout dir "${dir}" — use a simple workspace-relative path.`);
     }
 
-    const { tokens, ungranted } = await app.tokensForRepos([input.repo]);
+    const { tokens, ungranted } = await app.tokensForRepos([input.repo], READ_PERMISSIONS);
     if (ungranted.length) {
       throw new Error(
         `repo "${input.repo}": its owner has no linked GitHub App installation. ` +
@@ -103,7 +104,7 @@ export default defineTool({
       agents,
       message:
         `Cloned ${input.repo} into ${dir}/ (authored commits will be ${app.committer().name}). ` +
-        `Branch, commit, push there, then open_pull_request.${conventionNote}${skillNote}${agentNote}`,
+        `Branch and commit there, then open_pull_request — it pushes your branch and opens the PR after approval (plain git push is not authorized).${conventionNote}${skillNote}${agentNote}`,
     };
   },
 });

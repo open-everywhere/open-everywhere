@@ -65,11 +65,15 @@ export function teamsTrust(
   scope: string | undefined,
   membershipType: string | undefined,
   mode: SessionMode,
-): Trust {
+  tenantId?: string,
+): Trust | undefined {
   if (mode === "dm" || mode === "mpim") return "internal";
   if (scope === "personal" || scope === "groupChat") return "internal";
   if (membershipType === "shared") return "external";
-  return "internal";
+  if (tenantId && (membershipType === "standard" || membershipType === "private")) {
+    return "internal";
+  }
+  return undefined;
 }
 
 type Visibility = "public" | "private";

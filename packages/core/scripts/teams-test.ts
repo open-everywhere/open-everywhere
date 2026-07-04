@@ -2,11 +2,16 @@ import {
   buildTeamsAuth,
   teamsMembershipType,
   teamsMode,
+  teamsTrust,
   teamsVisibility,
   type OpenEverywhereTeamsAuth,
+  type TeamsIdentityInput,
 } from "../agent/channels/teams-identity.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
-import type { SessionMode } from "../agent/access/resolver.js";
+import { resolvePartition } from "../agent/memory/partition.js";
+import { resolveMemoryPlan, type MemoryResolveConfig } from "../agent/memory/resolve.js";
+import { defineDomain } from "../agent/memory/domain.js";
+import { defineMemorySilo } from "../agent/memory/silo.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -19,44 +24,9 @@ function ok(cond: boolean, label: string): void {
 
 for (const k of [
   "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL",
-  "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL",
+  "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST",
 ]) {
   delete process.env[k];
-}
-
-function attr(a: OpenEverywhereTeamsAuth["attributes"], key: string): string | undefined {
-  const v = a[key];
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-interface MappedIdentity {
-  workspace?: string;
-  surface?: string;
-  mode: SessionMode;
-  visibility: "public" | "private";
-  principalId?: string;
-  target?: Readonly<Record<string, unknown>>;
-}
-function bindTeams(auth: OpenEverywhereTeamsAuth): MappedIdentity {
-  const a = auth.attributes;
-  const scope = attr(a, "scope");
-  const membershipType = attr(a, "membership_type");
-  const mode = teamsMode(scope);
-  const conversationId = attr(a, "conversation_id");
-  const serviceUrl = attr(a, "service_url");
-  return {
-    workspace: attr(a, "tenant_id"),
-    surface: conversationId,
-    mode,
-    visibility: teamsVisibility(scope, membershipType, mode),
-    principalId: (auth.principalId && auth.principalId.length > 0 ? auth.principalId : undefined) ?? attr(a, "user_id"),
-    target: conversationId && serviceUrl
-      ? { serviceUrl, conversationId, tenantId: attr(a, "tenant_id"), channelId: attr(a, "channel_id"), teamId: attr(a, "team_id") }
-      : undefined,
-  };
-}
-
-function ctxFromAuth(auth: OpenEverywhereTeamsAuth): BindableContext {
-  return { channel: { kind: "teams" }, session: { auth: { current: auth } } };
 }
 
 ok(teamsMode("personal") === "dm", "scope personal -> dm");
@@ -73,13 +43,44 @@ ok(teamsVisibility("personal", "standard", "dm") === "private", "personal is nev
 ok(teamsVisibility("groupChat", "standard", "mpim") === "private", "groupChat is never public");
 ok(teamsVisibility("unknown", undefined, "channel") === "private", "FAIL-CLOSED: unknown scope -> private");
 
+ok(teamsTrust("channel", "shared", "channel", "TEN") === "external", "shared channel -> external (cross-tenant)");
+ok(teamsTrust("channel", "standard", "channel", "TEN") === "internal", "standard channel + tenant -> internal");
+ok(teamsTrust("channel", undefined, "channel", "TEN") === undefined, "FAIL-CLOSED: unknown membership -> no verdict");
+ok(teamsTrust("channel", "standard", "channel", undefined) === undefined, "FAIL-CLOSED: missing tenant -> no verdict");
+
 ok(teamsMembershipType({ channel: { membershipType: "standard" } }) === "standard", "membershipType read from channelData.channel");
 ok(teamsMembershipType({ channel: {} }) === undefined, "membershipType absent -> undefined");
 ok(teamsMembershipType({}) === undefined, "no channel key -> undefined");
 ok(teamsMembershipType(undefined) === undefined, "defensive on undefined channelData");
 
+function ctxFromAuth(auth: OpenEverywhereTeamsAuth): BindableContext {
+  return { channel: { kind: "teams" }, session: { auth: { current: auth } } };
+}
+
+interface Resolved {
+  auth: OpenEverywhereTeamsAuth;
+  binding: ReturnType<typeof bindFrom>;
+  partition: ReturnType<typeof resolvePartition>;
+}
+
+function dispatch(input: TeamsIdentityInput): Resolved {
+  const auth = buildTeamsAuth(input);
+  const ctx = ctxFromAuth(auth);
+  return { auth, binding: bindFrom(ctx), partition: resolvePartition(ctx) };
+}
+
+const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
+const pubSilo = defineMemorySilo({ name: "pub-faq", provider: "sqlite", readOnly: true });
+const memCfg: MemoryResolveConfig = {
+  domains: [
+    defineDomain({ name: "org", match: "org", memory: "org-brain" }),
+    defineDomain({ name: "public", match: "public", memory: "pub-faq" }),
+  ],
+  silos: [orgSilo, pubSilo],
+};
+
 {
-  const auth = buildTeamsAuth({
+  const { auth, binding, partition } = dispatch({
     userId: "29:user-alice",
     aadObjectId: "aad-alice",
     userName: "Alice",
@@ -91,15 +92,15 @@ ok(teamsMembershipType(undefined) === undefined, "defensive on undefined channel
     scope: "channel",
     membershipType: teamsMembershipType({ channel: { membershipType: "standard" } }),
   });
-  const m = bindTeams(auth);
 
-  ok(bindFrom(ctxFromAuth(auth)).platform === "teams", "A: bindFrom wires platform=teams from channel.kind");
-  ok(m.workspace === "TENANT_ACME", "A: workspace = tenant id");
-  ok(m.surface === "19:channel-eng@thread.tacv2", "A: surface = conversation id");
-  ok(m.mode === "channel" && m.visibility === "public", "A: standard channel -> channel/public");
-  ok(m.principalId === "29:user-alice", "A: principal = from.id");
+  ok(binding.platform === "teams", "A: bindFrom wires platform=teams from channel.kind");
+  ok(binding.workspace === "TENANT_ACME", "A: workspace = tenant id");
+  ok(binding.surface === "19-channel-eng-thread.tacv2", "A: surface = conversation id (sanitized)");
+  ok(binding.mode === "channel" && binding.visibility === "public", "A: standard channel -> channel/public");
+  ok(binding.trust === "internal", "A: POSITIVELY-verified standard in-tenant channel -> internal");
+  ok(binding.principalId === "29:user-alice", "A: principal = from.id");
   ok(
-    JSON.stringify(m.target) === JSON.stringify({
+    JSON.stringify(binding.target) === JSON.stringify({
       serviceUrl: "https://smba.trafficmanager.net/uk/",
       conversationId: "19:channel-eng@thread.tacv2",
       tenantId: "TENANT_ACME",
@@ -108,12 +109,17 @@ ok(teamsMembershipType(undefined) === undefined, "defensive on undefined channel
     }),
     "A: post-back target = Bot Connector reference",
   );
+  ok(partition.workspaceKey === "teams/TENANT_ACME", "A: partition workspaceKey = platform/tenant");
   ok(auth.authenticator === "teams" && auth.principalType === "teams-user", "A: auth principal fields");
   ok(auth.attributes.membership_type === "standard" && auth.attributes.scope === "channel", "A: facts captured as strings");
+
+  const plan = resolveMemoryPlan(binding, partition, memCfg);
+  ok(plan.reads.some((r) => r.silo.name === "org-brain"), "A: internal channel plans org-brain reads");
+  ok(plan.writes.some((w) => w.silo.name === "org-brain"), "A: internal channel plans org-brain writes");
 }
 
 {
-  const auth = buildTeamsAuth({
+  const input: TeamsIdentityInput = {
     userId: "29:user-bob",
     tenantId: "TENANT_ACME",
     conversationId: "19:channel-secret@thread.tacv2",
@@ -122,32 +128,60 @@ ok(teamsMembershipType(undefined) === undefined, "defensive on undefined channel
     serviceUrl: "https://smba.trafficmanager.net/uk/",
     scope: "channel",
     membershipType: teamsMembershipType({ channel: { id: "19:channel-secret@thread.tacv2" } }),
-  });
-  const m = bindTeams(auth);
+  };
+  const { auth, binding, partition } = dispatch(input);
 
-  ok(m.mode === "channel", "B: still a channel (not a DM)");
-  ok(m.visibility === "private", "B: FAIL-CLOSED — unknown membershipType resolves to private");
+  ok(binding.mode === "channel", "B: still a channel (not a DM)");
+  ok(binding.visibility === "private", "B: FAIL-CLOSED — unknown membershipType resolves to private");
+  ok(binding.trust === "external", "B: FAIL-CLOSED — unknown membershipType binds EXTERNAL (never internal)");
   ok(auth.attributes.membership_type === undefined, "B: no false membershipType claim when absent");
+
+  const plan = resolveMemoryPlan(binding, partition, memCfg);
+  ok(!plan.reads.some((r) => r.silo.name === "org-brain"), "B: ambiguous Teams event NEVER reads the org brain");
+  ok(plan.writes.length === 0, "B: ambiguous Teams event never writes shared memory");
+  ok(
+    plan.reads.length === 1 && plan.reads[0].silo.name === "pub-faq" && plan.reads[0].readOnly === true,
+    "B: ambiguous Teams event gets at most read-only public memory",
+  );
+
+  process.env.OE_TRUST = "internal";
+  ok(dispatch(input).binding.trust === "internal", "B: OE_TRUST=internal vouches for the unverifiable channel (single-tenant opt-in)");
+  delete process.env.OE_TRUST;
 }
 
 {
-  const auth = buildTeamsAuth({
+  const input: TeamsIdentityInput = {
+    userId: "29:user-eve",
+    tenantId: "TENANT_ACME",
+    conversationId: "19:channel-partner@thread.tacv2",
+    serviceUrl: "https://smba.trafficmanager.net/uk/",
+    scope: "channel",
+    membershipType: "shared",
+  };
+  ok(dispatch(input).binding.trust === "external", "B2: Shared Channel (cross-tenant) binds external");
+  process.env.OE_TRUST = "internal";
+  ok(dispatch(input).binding.trust === "external", "B2: OE_TRUST=internal does NOT override a POSITIVE external verdict");
+  delete process.env.OE_TRUST;
+}
+
+{
+  const { binding } = dispatch({
     userId: "29:user-carol",
     tenantId: "TENANT_ACME",
     conversationId: "a:1on1-carol",
     serviceUrl: "https://smba.trafficmanager.net/uk/",
     scope: "personal",
   });
-  const m = bindTeams(auth);
 
-  ok(m.mode === "dm", "C: personal -> dm mode");
-  ok(m.visibility === "private", "C: a personal chat is never public");
-  ok(m.surface === "a:1on1-carol", "C: surface = conversation id");
-  ok(m.principalId === "29:user-carol", "C: principal = the DM caller");
+  ok(binding.mode === "dm", "C: personal -> dm mode");
+  ok(binding.visibility === "private", "C: a personal chat is never public");
+  ok(binding.surface === "a-1on1-carol", "C: surface = conversation id (sanitized)");
+  ok(binding.principalId === "29:user-carol", "C: principal = the DM caller");
+  ok(binding.trust === "external", "C: unverified Teams DM partner fails closed to external");
 }
 
 {
-  const auth = buildTeamsAuth({
+  const { binding, partition } = dispatch({
     userId: "29:user-dan",
     tenantId: "TENANT_ACME",
     conversationId: "19:groupchat@thread.v2",
@@ -155,10 +189,11 @@ ok(teamsMembershipType(undefined) === undefined, "defensive on undefined channel
     scope: "groupChat",
     membershipType: "standard",
   });
-  const m = bindTeams(auth);
 
-  ok(m.mode === "mpim", "D: groupChat -> mpim mode");
-  ok(m.visibility === "private", "D: a group chat is never public (even with membershipType=standard)");
+  ok(binding.mode === "mpim", "D: groupChat -> mpim mode");
+  ok(binding.visibility === "private", "D: a group chat is never public (even with membershipType=standard)");
+  const plan = resolveMemoryPlan(binding, partition, memCfg);
+  ok(plan.reads.length === 0 && plan.writes.length === 0, "D: group chat is execution-only (no memory)");
 }
 
-console.log(`✓ teams: ${passed} assertions passed (activity → identity; fail-closed visibility)`);
+console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust)`);

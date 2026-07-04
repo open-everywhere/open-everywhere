@@ -29,16 +29,24 @@ for (const bundle of loadBundles()) {
 const ungrantedMounts = mounted.filter((name) => !granted.has(name));
 const unmountedGrants = [...granted].filter((name) => !mounted.includes(name)).sort();
 
+let failed = false;
 if (unmountedGrants.length > 0) {
-  console.warn(`⚠ granted but not mounted (inert until the file exists): ${unmountedGrants.join(", ")}`);
+  failed = true;
+  console.error(
+    `✗ connections-lint: granted with NO mounted connection file: ${unmountedGrants.join(", ")}\n` +
+      `  The grant silently does nothing — no agent/connections/<name>.ts exists for Eve to\n` +
+      `  mount. Either mount the connection (create agent/connections/<name>.ts) or remove\n` +
+      `  the grant from agent/access/bundles.ts (connectors: ["<name>"] / the provider grant).`,
+  );
 }
 if (ungrantedMounts.length > 0) {
+  failed = true;
   console.error(
     `✗ connections-lint: mounted with NO bundle grant: ${ungrantedMounts.join(", ")}\n` +
       `  Eve advertises these to every session. Either grant each one on a bundle\n` +
       `  (connectors: ["<name>"] or a provider grant) in agent/access/bundles.ts,\n` +
       `  or delete agent/connections/<name>.ts until a bundle needs it.`,
   );
-  process.exit(1);
 }
+if (failed) process.exit(1);
 console.log(`✓ connections-lint: ${mounted.length} mounted connection(s), all granted (${granted.size} grant(s) total)`);

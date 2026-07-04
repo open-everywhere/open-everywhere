@@ -1,7 +1,7 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import slack from "./slack.js";
 import { listAllRoutines } from "../routines/store.js";
-import { matchesEvent, normalizeGithubEvent, eventPrompt, verifyGithubSignature, type NormalizedEvent } from "../routines/events.js";
+import { matchesEvent, normalizeGithubEvent, eventPrompt, gateGithubDelivery, type NormalizedEvent } from "../routines/events.js";
 import { ROUTINE_MARKER } from "../routines/routine.js";
 
 const ROUTE = "/eve/v1/github";
@@ -36,9 +36,15 @@ export default defineChannel({
   routes: [
     POST(ROUTE, async (req, { receive, waitUntil }) => {
       const body = await req.text();
-      const secret = process.env.GITHUB_WEBHOOK_SECRET;
-      if (secret && !verifyGithubSignature(secret, body, req.headers.get("x-hub-signature-256"))) {
-        return new Response("invalid signature", { status: 401 });
+      const rejection = gateGithubDelivery(
+        process.env.GITHUB_WEBHOOK_SECRET,
+        body,
+        req.headers.get("x-hub-signature-256"),
+        process.env.OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK === "1",
+      );
+      if (rejection) {
+        log(`webhook rejected: ${rejection}`);
+        return new Response(rejection, { status: 401 });
       }
       let payload: Record<string, unknown>;
       try {

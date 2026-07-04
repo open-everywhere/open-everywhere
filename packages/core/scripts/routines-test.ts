@@ -11,11 +11,18 @@ import {
 } from "../agent/routines/schedule.js";
 import {
   applyOutcome,
+  settleOutcome,
   shouldPostOnDiff,
   hashState,
   gcOrphaned,
   MAX_CONSECUTIVE_FAILURES,
 } from "../agent/routines/lifecycle.js";
+import {
+  renderWatchMessage,
+  applyWatchObservation,
+  WATCH_SILENCE_SENTINEL,
+  WATCH_STATE_TOOL,
+} from "../agent/routines/watch.js";
 import { routineMarker, ROUTINE_MARKER, type Routine } from "../agent/routines/routine.js";
 
 let passed = 0;
@@ -92,6 +99,35 @@ ok(shouldPostOnDiff(undefined, hashState("state-a")), "first observation always 
 ok(!shouldPostOnDiff(hashState("same"), hashState("same")), "no diff -> no post");
 ok(shouldPostOnDiff(hashState("old"), hashState("new")), "changed state -> post");
 ok(hashState("x") === hashState("x") && hashState("x") !== hashState("y"), "hashState is stable + distinguishes");
+
+const first = applyWatchObservation({ lastStateHash: undefined }, "3 open PRs: #1 #2 #3");
+ok(first.changed && first.firstObservation, "watch: first observation counts as changed (baseline)");
+ok(first.patch.lastStateHash === hashState("3 open PRs: #1 #2 #3"), "watch: first observation persists the new hash");
+ok(!("lastOutcome" in first.patch), "watch: a changed observation does NOT record an outcome (the session settles it)");
+
+const same = applyWatchObservation({ lastStateHash: first.patch.lastStateHash }, "3 open PRs: #1 #2 #3");
+ok(!same.changed && !same.firstObservation, "watch: identical state -> unchanged, not first");
+ok(same.patch.lastOutcome === "skipped", "watch: an unchanged observation records `skipped` NOW");
+ok(same.patch.lastStateHash === first.patch.lastStateHash, "watch: unchanged still (re)persists the hash");
+
+const moved = applyWatchObservation({ lastStateHash: first.patch.lastStateHash }, "4 open PRs: #1 #2 #3 #7");
+ok(moved.changed && !moved.firstObservation, "watch: different state -> changed");
+ok(moved.patch.lastStateHash !== first.patch.lastStateHash, "watch: changed state persists the NEW hash");
+
+const wm = renderWatchMessage({ id: "r-w", prompt: "watch the status page", lastStateHash: undefined });
+ok(wm.includes("watch the status page"), "watch message carries the routine's own prompt");
+ok(wm.includes(WATCH_STATE_TOOL), "watch message instructs calling the record_watch_state tool");
+ok(wm.includes(WATCH_SILENCE_SENTINEL), "watch message teaches the silence sentinel for the unchanged case");
+ok(wm.includes("first check"), "watch message flags a missing baseline (first check)");
+ok(
+  !renderWatchMessage({ id: "r-w", prompt: "p", lastStateHash: "abc" }).includes("first check"),
+  "watch message with a baseline does NOT claim first check",
+);
+
+ok(settleOutcome("ok", "skipped") === "skipped", "settle: an ok session keeps a run-recorded skip");
+ok(settleOutcome("ok", undefined) === "ok", "settle: an ok session with no recorded outcome is ok");
+ok(settleOutcome("ok", "ok") === "ok", "settle: a stale non-skip outcome never masks ok");
+ok(settleOutcome("failed", "skipped") === "failed", "settle: a failure always wins (even after a recorded skip)");
 
 const rs: Routine[] = [
   { ...base, id: "a", surfaceKey: "local/dev/alpha" },

@@ -103,9 +103,9 @@ throws(
   ];
   const bindings: Binding[] = [
     { bundle: "org-notion", scope: { level: "org" } },
-    { bundle: "payments-notion", scope: { level: "domain", workspace: "slack/T", domain: "payments" } },
+    { bundle: "payments-notion", scope: { level: "domain", workspace: "T1", domain: "payments" } },
   ];
-  const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "slack/T", channel: "C", domains: ["payments"] };
+  const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "T1", channel: "C", domains: ["payments"] };
   const eff = resolveAccess(req, bundles, bindings, {}, [tightProvider]);
   ok(eff.connectors.includes("notion"), "provider grant folds the connection slug into connectors");
   ok(eff.connectorCredentials["notion"]?.secretRef === "NOTION_PAYMENTS", "narrowest-wins: the domain's tight key overrides the org key");
@@ -116,8 +116,8 @@ throws(
 
 {
   const bundles: Bundle[] = [{ name: "b", providers: [{ provider: "notion", credential: "team-key" }] }];
-  const bindings: Binding[] = [{ bundle: "b", scope: { level: "workspace", workspace: "slack/T" } }];
-  const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "slack/T", channel: "C" };
+  const bindings: Binding[] = [{ bundle: "b", scope: { level: "workspace", workspace: "T1" } }];
+  const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "T1", channel: "C" };
   const eff = resolveAccess(req, bundles, bindings, {}, [notion]);
   ok(eff.warnings.some((w) => w.includes("broad grant") && w.includes("provider credential")), "provider grant at workspace scope warns (broad blast radius)");
 }

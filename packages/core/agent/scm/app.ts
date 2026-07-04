@@ -6,7 +6,7 @@ import {
   type FetchFn,
 } from "./mint.js";
 import { botCommitter } from "./git.js";
-import type { GitHubAppConfig, InstallationToken, RepoRef } from "./types.js";
+import type { GitHubAppConfig, InstallationToken, MintPermissions, RepoRef } from "./types.js";
 
 export interface MintOutcome {
   readonly tokens: Map<string, InstallationToken>;
@@ -35,7 +35,7 @@ export class GitHubApp {
     return this.config.installations[owner];
   }
 
-  async tokensForRepos(repos: readonly RepoRef[]): Promise<MintOutcome> {
+  async tokensForRepos(repos: readonly RepoRef[], permissions?: MintPermissions): Promise<MintOutcome> {
     const byOwner = new Map<string, string[]>();
     const ungranted: RepoRef[] = [];
     for (const ref of repos) {
@@ -61,6 +61,7 @@ export class GitHubApp {
           jwt,
           installationId: this.installationFor(owner)!,
           repoNames: names,
+          permissions,
           fetchFn: this.deps.fetchFn,
         }),
       );

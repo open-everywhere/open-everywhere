@@ -75,3 +75,17 @@ export function verifyGithubSignature(secret: string, body: string, signatureHea
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 }
+
+export function gateGithubDelivery(
+  secret: string | undefined,
+  body: string,
+  signatureHeader: string | null,
+  allowUnverified: boolean,
+): string | null {
+  if (!secret) {
+    return allowUnverified
+      ? null
+      : "GITHUB_WEBHOOK_SECRET is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK=1 for local dev)";
+  }
+  return verifyGithubSignature(secret, body, signatureHeader) ? null : "invalid signature";
+}

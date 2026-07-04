@@ -4,6 +4,7 @@ import {
   matchesEvent,
   eventPrompt,
   verifyGithubSignature,
+  gateGithubDelivery,
 } from "../agent/routines/events.js";
 import type { Routine } from "../agent/routines/routine.js";
 
@@ -67,5 +68,13 @@ ok(verifyGithubSignature(secret, body, good), "valid signature verifies");
 ok(!verifyGithubSignature(secret, body, "sha256=deadbeef"), "tampered signature rejected");
 ok(!verifyGithubSignature(secret, body, null), "missing signature rejected");
 ok(!verifyGithubSignature("wrong", body, good), "wrong secret rejected");
+
+ok(gateGithubDelivery(secret, body, good, false) === null, "configured secret + valid signature -> accepted");
+ok(gateGithubDelivery(secret, body, "sha256=deadbeef", false) !== null, "configured secret + bad signature -> rejected");
+const noSecret = gateGithubDelivery(undefined, body, good, false);
+ok(noSecret !== null && noSecret.includes("GITHUB_WEBHOOK_SECRET"), "unset secret -> rejected with a clear reason (fail-closed, NOT accept-all)");
+ok(gateGithubDelivery("", body, good, false) !== null, "empty-string secret is treated as unset -> rejected");
+ok(gateGithubDelivery(undefined, body, null, true) === null, "unset secret + OE_ALLOW_UNVERIFIED_GITHUB_WEBHOOK escape hatch -> accepted");
+ok(gateGithubDelivery(secret, body, "sha256=deadbeef", true) !== null, "escape hatch does NOT bypass verification when a secret IS set");
 
 console.log(`✓ events: ${passed} assertions passed`);

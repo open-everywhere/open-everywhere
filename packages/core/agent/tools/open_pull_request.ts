@@ -4,6 +4,8 @@ import { z } from "zod";
 import { auditToolAction } from "../audit/tool-action.js";
 import { resolveAccessFor } from "../access/request.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
+import { isSafeBranchName, isSafeCheckoutDir, pushCommand, redactSecret } from "../scm/git.js";
+import { createOrUpdatePullRequest } from "../scm/pr.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -19,13 +21,14 @@ async function resolvePrToken(repo: string): Promise<string> {
 }
 export default defineTool({
   description:
-    "Open a GitHub pull request. Write a clear body: what changed, why, how you verified it, and link the request that prompted it; open it as a draft if the repo's checks aren't passing. This is a consequential write and will pause for human approval before it runs.",
+    "Push your committed branch and open a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first; this tool pushes it for you after approval. Write a clear body: what changed, why, how you verified it, and link the request that prompted it; open it as a draft if the repo's checks aren't passing. If a PR is already open for that branch, this updates it with your new commits instead. This is a consequential write and will pause for human approval before it runs.",
   inputSchema: z.object({
     repo: z.string().describe("Target repository as 'owner/repo'."),
-    head: z.string().describe("The branch containing the changes."),
+    head: z.string().describe("The branch containing the changes (must exist in the checkout)."),
     base: z.string().default("main").describe("The branch to merge into."),
     title: z.string().describe("PR title."),
     body: z.string().describe("PR description (markdown)."),
+    dir: z.string().optional().describe("Workspace-relative checkout directory to push from (default: the repo name)."),
   }),
   approval: always(),
   async execute(input, ctx) {
@@ -37,40 +40,56 @@ export default defineTool({
       );
     }
 
-    const token = await resolvePrToken(input.repo);
-
-    const res = await fetch(
-      `https://api.github.com/repos/${input.repo}/pulls`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          accept: "application/vnd.github+json",
-          "x-github-api-version": "2022-11-28",
-        },
-        body: JSON.stringify({
-          title: input.title,
-          body: input.body,
-          head: input.head,
-          base: input.base,
-        }),
-      },
-    );
-
-    if (!res.ok) {
-      throw new Error(`GitHub PR creation failed: ${res.status} ${await res.text()}`);
+    if (!isSafeBranchName(input.head)) {
+      throw new Error(`invalid head branch "${input.head}" — use a simple branch name (e.g. fix/issue-123).`);
+    }
+    const dir = input.dir ?? input.repo.split("/")[1];
+    if (!isSafeCheckoutDir(dir)) {
+      throw new Error(`invalid checkout dir "${dir}" — use a simple workspace-relative path.`);
     }
 
-    const pr = (await res.json()) as { html_url: string; number: number };
+    const token = await resolvePrToken(input.repo);
 
-    await auditToolAction(ctx, "pr.open", {
+    let sandbox: Awaited<ReturnType<typeof ctx.getSandbox>>;
+    try {
+      sandbox = await ctx.getSandbox();
+    } catch (err) {
+      throw new Error(
+        `no workspace to push from (${err instanceof Error ? err.message : String(err)}). ` +
+          `checkout_repo the repo, commit on "${input.head}", then retry.`,
+      );
+    }
+    const push = await sandbox.run({ command: pushCommand(dir, token, input.head) });
+    if (push.exitCode !== 0) {
+      throw new Error(
+        `push of "${input.head}" from ${dir}/ failed — is the repo checked out there (checkout_repo) with that branch committed? ` +
+          redactSecret(push.stderr || push.stdout || "unknown error", token).slice(0, 500),
+      );
+    }
+
+    const pr = await createOrUpdatePullRequest({
+      repo: input.repo,
+      head: input.head,
+      base: input.base,
+      title: input.title,
+      body: input.body,
+      token,
+    });
+
+    await auditToolAction(ctx, pr.updated ? "pr.update" : "pr.open", {
       repo: input.repo,
       head: input.head,
       base: input.base,
       number: pr.number,
-      url: pr.html_url,
+      url: pr.url,
     });
 
-    return { url: pr.html_url, number: pr.number };
+    return {
+      url: pr.url,
+      number: pr.number,
+      message: pr.updated
+        ? `PR #${pr.number} was already open for ${input.head} — your pushed commits updated it: ${pr.url}`
+        : `Pushed ${input.head} and opened PR #${pr.number}: ${pr.url}`,
+    };
   },
 });

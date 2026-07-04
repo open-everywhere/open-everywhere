@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { compileNetworkPolicy } from "../agent/access/egress.js";
-import { computeEgressPolicy } from "../agent/hooks/egress.js";
+import { computeEgressPolicy, applyEgressPolicy } from "../agent/hooks/egress.js";
 import type { EffectiveAccess, ReachableHost } from "../agent/access/resolver.js";
 import type { Connection } from "../agent/access/bundle.js";
 
@@ -96,4 +96,27 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   ok(!!compileThrew.compileError && compileThrew.compileError.includes("ACME_KEY"), "compile failure records the error");
 }
 
-console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver)\n`);
+{
+  const applied = await applyEgressPolicy(async () => {}, false);
+  ok(applied.enforced && applied.enforceError === undefined, "successful apply reports enforced");
+
+  let threw: unknown;
+  try {
+    await applyEgressPolicy(async () => {
+      throw new Error("backend rejected setNetworkPolicy");
+    }, false);
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw instanceof Error && threw.message.includes("aborting the session"), "apply failure without the escape hatch throws (aborts the session, NOT warn-and-continue)");
+  ok(threw instanceof Error && threw.message.includes("OE_ALLOW_UNENFORCED_EGRESS"), "abort error names the escape hatch");
+  ok(threw instanceof Error && threw.message.includes("backend rejected setNetworkPolicy"), "abort error carries the underlying cause");
+
+  const degraded = await applyEgressPolicy(async () => {
+    throw new Error("backend rejected setNetworkPolicy");
+  }, true);
+  ok(!degraded.enforced, "escape hatch degrades to unenforced instead of throwing");
+  ok(!!degraded.enforceError && degraded.enforceError.includes("backend rejected"), "degraded result records the enforcement error");
+}
+
+console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure)\n`);

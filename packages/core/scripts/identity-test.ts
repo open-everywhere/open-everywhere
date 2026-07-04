@@ -167,10 +167,12 @@ ok(channelFactsFromInfo({ channel: { is_channel: true } }).isExternal === false,
 ok(channelFactsFromInfo({ channel: { is_channel: true } }).trustChecked === true, "factsFromInfo: successful fetch -> trustChecked true");
 ok(channelFactsFromInfo(null).trustChecked === undefined, "factsFromInfo: empty info -> trustChecked undefined (fetch failed)");
 
-ok(teamsTrust("channel", "shared", "channel") === "external", "teamsTrust: shared channel -> external");
-ok(teamsTrust("channel", "standard", "channel") === "internal", "teamsTrust: standard channel -> internal");
-ok(teamsTrust("channel", undefined, "channel") === "internal", "teamsTrust: unknown membership -> internal (no cross-org default)");
-ok(teamsTrust("personal", undefined, "dm") === "internal", "teamsTrust: personal chat -> internal (gate N/A)");
+ok(teamsTrust("channel", "shared", "channel", "TEN") === "external", "teamsTrust: shared channel -> external");
+ok(teamsTrust("channel", "standard", "channel", "TEN") === "internal", "teamsTrust: standard channel + tenant -> internal");
+ok(teamsTrust("channel", "private", "channel", "TEN") === "internal", "teamsTrust: private channel + tenant -> internal");
+ok(teamsTrust("channel", undefined, "channel", "TEN") === undefined, "teamsTrust: FAIL-CLOSED unknown membership -> no verdict (binds external)");
+ok(teamsTrust("channel", "standard", "channel", undefined) === undefined, "teamsTrust: FAIL-CLOSED missing tenant -> no verdict (binds external)");
+ok(teamsTrust("personal", undefined, "dm", "TEN") === "internal", "teamsTrust: personal chat -> internal (gate N/A; bindFrom's DM-partner gate still applies)");
 
 const trExt = bindFrom(slackCtx({ team_id: "T", channel_id: "CEXT", channel_type: "channel", is_ext_shared: "true", trust_checked: "true" }));
 ok(trExt.trust === "external", "bindFrom: slack ext-shared channel binds external");

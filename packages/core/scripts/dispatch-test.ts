@@ -2,6 +2,8 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { routineMarker, type Routine } from "../agent/routines/routine.js";
+import { WATCH_SILENCE_SENTINEL, WATCH_STATE_TOOL } from "../agent/routines/watch.js";
+import { NO_REPLY_SENTINEL } from "../agent/channels/slack-events.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -41,11 +43,15 @@ for (let i = 0; i < N; i++) {
 }
 ok((await store.listAllRoutines()).length === N, "seeded all N due routines");
 
+const firedMessages: Record<string, string> = {};
 async function tick(): Promise<string[]> {
   const started: string[] = [];
-  const receive = ((_channel: unknown, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+  const receive = ((_channel: unknown, opts: { message?: string; auth?: { attributes?: Record<string, unknown> } }) => {
     const mk = routineMarker(opts.auth?.attributes as never);
-    if (mk) started.push(mk.id);
+    if (mk) {
+      started.push(mk.id);
+      firedMessages[mk.id] = opts.message ?? "";
+    }
     return Promise.resolve();
   }) as never;
   const args = {
@@ -74,6 +80,62 @@ ok(new Set(allFired).size === N, "all N distinct routines fired exactly once");
 ok(ticks === Math.ceil(N / cap), `took the expected number of ticks (${Math.ceil(N / cap)}) at cap ${cap}`);
 
 ok((await tick()).length === 0, "no routine is left over-due after the backlog drains");
+
+ok(WATCH_SILENCE_SENTINEL === NO_REPLY_SENTINEL, "watch protocol's silence sentinel matches the channel's NO_REPLY sentinel");
+
+ok(firedMessages["r-0"] === "routine 0", "an interval fire sends the BARE prompt (no watch protocol)");
+
+const watch: Routine = {
+  id: "r-watch",
+  org: "default",
+  surfaceKey: "slack/T1/C1",
+  trigger: { kind: "watch", everyMinutes: 15 },
+  prompt: "watch the status page for incidents",
+  createdAt: now.toISOString(),
+  status: "active",
+  consecutiveFailures: 0,
+  nextRunAt: past,
+  lastOutcome: "skipped",
+  target: { channelId: "C1" },
+};
+await store.addRoutine({} as never, watch);
+ok((await tick()).includes("r-watch"), "a due watch routine fires");
+
+const wmsg = firedMessages["r-watch"] ?? "";
+ok(wmsg !== watch.prompt && wmsg.includes(watch.prompt), "a watch fire wraps the prompt (not bare interval execution)");
+ok(wmsg.includes(WATCH_STATE_TOOL), "the watch turn is told to record its observation via record_watch_state");
+ok(wmsg.includes(WATCH_SILENCE_SENTINEL), "the watch turn is taught the silence sentinel for the unchanged case");
+
+const watchAfter = await store.getRoutine("default", "slack/T1/C1", "r-watch");
+ok(watchAfter?.lastOutcome === undefined, "a fire CLEARS lastOutcome (outcome pending — the settleOutcome invariant)");
+ok(watchAfter?.lastStateHash === undefined, "dispatch never invents a state hash (the tool records the observation)");
+
+const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+await opStore.setSpendLimit("default", "slack/T1/C2", "surface", 100);
+await opStore.recordUsage("default", "slack/T1/C2", "2026-07", { inputTokens: 90, outputTokens: 20 });
+
+const capped: Routine = {
+  id: "r-capped",
+  org: "default",
+  surfaceKey: "slack/T1/C2",
+  trigger: { kind: "interval", everyMinutes: 30 },
+  prompt: "expensive recurring work",
+  createdAt: now.toISOString(),
+  status: "active",
+  consecutiveFailures: 0,
+  nextRunAt: past,
+  target: { channelId: "C2" },
+};
+await store.addRoutine({} as never, capped);
+ok((await tick()).length === 0, "an over-budget routine does NOT start a session");
+
+const cappedAfter = await store.getRoutine("default", "slack/T1/C2", "r-capped");
+ok(cappedAfter?.lastOutcome === "skipped", "a budget-declined fire records `skipped` (a correct nothing-to-do, not a failure)");
+ok(cappedAfter?.consecutiveFailures === 0, "a budget decline never counts toward self-disable");
+ok(
+  cappedAfter?.nextRunAt !== undefined && cappedAfter?.nextRunAt !== null && Date.parse(cappedAfter.nextRunAt) > now.getTime(),
+  "a budget decline advances the schedule (retries at its cadence, not every tick)",
+);
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ dispatch: ${passed} assertions passed`);

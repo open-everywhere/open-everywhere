@@ -1,0 +1,56 @@
+export type PrFetchFn = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string },
+) => Promise<{ ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> }>;
+
+export interface PrOutcome {
+  url: string;
+  number: number;
+  updated: boolean;
+}
+
+function headers(token: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${token}`,
+    accept: "application/vnd.github+json",
+    "x-github-api-version": "2022-11-28",
+  };
+}
+
+export async function createOrUpdatePullRequest(opts: {
+  repo: string;
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+  token: string;
+  fetchFn?: PrFetchFn;
+  apiBase?: string;
+}): Promise<PrOutcome> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+
+  const res = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls`, {
+    method: "POST",
+    headers: headers(opts.token),
+    body: JSON.stringify({ title: opts.title, body: opts.body, head: opts.head, base: opts.base }),
+  });
+  if (res.ok) {
+    const pr = (await res.json()) as { html_url: string; number: number };
+    return { url: pr.html_url, number: pr.number, updated: false };
+  }
+
+  const text = await res.text();
+  if (res.status === 422 && text.includes("A pull request already exists")) {
+    const owner = opts.repo.slice(0, opts.repo.indexOf("/"));
+    const q = await fetchFn(
+      `${apiBase}/repos/${opts.repo}/pulls?head=${encodeURIComponent(`${owner}:${opts.head}`)}&state=open`,
+      { method: "GET", headers: headers(opts.token) },
+    );
+    if (q.ok) {
+      const list = (await q.json()) as { html_url: string; number: number }[];
+      if (list.length) return { url: list[0].html_url, number: list[0].number, updated: true };
+    }
+  }
+  throw new Error(`GitHub PR creation failed: ${res.status} ${text}`);
+}
