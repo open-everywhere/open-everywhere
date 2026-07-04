@@ -5,12 +5,23 @@ export const WATCH_SILENCE_SENTINEL = "NO_REPLY";
 
 export const WATCH_STATE_TOOL = "record_watch_state";
 
-export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastStateHash">): string {
+export function firePreamble(r: Pick<Routine, "id" | "createdAt" | "lastRunAt">): string {
+  const last = r.lastRunAt ? `previous run: ${r.lastRunAt}` : "previous run: none — this is the FIRST run";
+  return `[routine ${r.id}] Scheduled fire (routine created: ${r.createdAt}; ${last}).`;
+}
+
+export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt">): string {
+  return [firePreamble(r), "", r.prompt].join("\n");
+}
+
+export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastStateHash" | "createdAt" | "lastRunAt">): string {
   const baseline =
     r.lastStateHash === undefined
       ? "No baseline is recorded yet — this is the first check, so report what you observe as the baseline."
       : "A baseline from the last check is recorded — the tool will tell you whether the state changed.";
   return [
+    firePreamble(r),
+    "",
     `[watch] This is a scheduled check of a WATCH routine — post ONLY if the watched state changed. ` +
       `Protocol: do the check below, then call the \`${WATCH_STATE_TOOL}\` tool with a canonical text ` +
       `representation of the watched state (stable ordering; leave out values that differ on every ` +

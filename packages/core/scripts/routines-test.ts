@@ -114,13 +114,14 @@ const moved = applyWatchObservation({ lastStateHash: first.patch.lastStateHash }
 ok(moved.changed && !moved.firstObservation, "watch: different state -> changed");
 ok(moved.patch.lastStateHash !== first.patch.lastStateHash, "watch: changed state persists the NEW hash");
 
-const wm = renderWatchMessage({ id: "r-w", prompt: "watch the status page", lastStateHash: undefined });
+const wm = renderWatchMessage({ id: "r-w", prompt: "watch the status page", lastStateHash: undefined, createdAt: "2026-07-01T09:00:00.000Z", lastRunAt: undefined });
 ok(wm.includes("watch the status page"), "watch message carries the routine's own prompt");
 ok(wm.includes(WATCH_STATE_TOOL), "watch message instructs calling the record_watch_state tool");
 ok(wm.includes(WATCH_SILENCE_SENTINEL), "watch message teaches the silence sentinel for the unchanged case");
 ok(wm.includes("first check"), "watch message flags a missing baseline (first check)");
+ok(wm.includes("FIRST run") && wm.includes("2026-07-01T09:00:00.000Z"), "watch message opens with the temporal fire preamble");
 ok(
-  !renderWatchMessage({ id: "r-w", prompt: "p", lastStateHash: "abc" }).includes("first check"),
+  !renderWatchMessage({ id: "r-w", prompt: "p", lastStateHash: "abc", createdAt: "2026-07-01T09:00:00.000Z", lastRunAt: "2026-07-02T09:00:00.000Z" }).includes("first check"),
   "watch message with a baseline does NOT claim first check",
 );
 

@@ -4,7 +4,7 @@ import { confirmChannelInternal } from "../channels/slack-events.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
-import { renderWatchMessage } from "../routines/watch.js";
+import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 
@@ -132,7 +132,7 @@ export async function dispatchTick(
       };
       waitUntil(
         receive(dest.channel, {
-          message: r.trigger.kind === "watch" ? renderWatchMessage(r) : r.prompt,
+          message: r.trigger.kind === "watch" ? renderWatchMessage(r) : renderScheduledMessage(r),
           target: dest.target,
           auth: markedAuth,
         }),

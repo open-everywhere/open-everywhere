@@ -87,7 +87,14 @@ ok((await tick()).length === 0, "no routine is left over-due after the backlog d
 
 ok(WATCH_SILENCE_SENTINEL === NO_REPLY_SENTINEL, "watch protocol's silence sentinel matches the channel's NO_REPLY sentinel");
 
-ok(firedMessages["r-0"] === "routine 0", "an interval fire sends the BARE prompt (no watch protocol)");
+ok(
+  firedMessages["r-0"].includes("routine 0") && !firedMessages["r-0"].includes(WATCH_STATE_TOOL),
+  "an interval fire sends the prompt without the watch protocol",
+);
+ok(
+  firedMessages["r-0"].startsWith("[routine r-0] Scheduled fire") && firedMessages["r-0"].includes("this is the FIRST run"),
+  "a first fire's preamble carries the routine's creation time and says it's the first run",
+);
 
 const watch: Routine = {
   id: "r-watch",
@@ -113,6 +120,30 @@ ok(wmsg.includes(WATCH_SILENCE_SENTINEL), "the watch turn is taught the silence 
 const watchAfter = await store.getRoutine("default", "slack/T1/C1", "r-watch");
 ok(watchAfter?.lastOutcome === undefined, "a fire CLEARS lastOutcome (outcome pending — the settleOutcome invariant)");
 ok(watchAfter?.lastStateHash === undefined, "dispatch never invents a state hash (the tool records the observation)");
+
+{
+  const prevRun = "2026-07-02T11:00:00.000Z";
+  const again: Routine = {
+    id: "r-again",
+    org: "default",
+    surfaceKey: "slack/T1/C1",
+    trigger: { kind: "interval", everyMinutes: 60 },
+    prompt: "report new commits since the last run",
+    createdAt: "2026-07-01T09:00:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: past,
+    lastRunAt: prevRun,
+    target: { channelId: "C1" },
+  };
+  await store.addRoutine({} as never, again);
+  ok((await tick()).includes("r-again"), "the seeded repeat routine fires");
+  ok(
+    firedMessages["r-again"].includes(`previous run: ${prevRun}`) && firedMessages["r-again"].includes("2026-07-01T09:00:00.000Z"),
+    "a repeat fire's preamble carries the PREVIOUS run time and the creation time",
+  );
+  ok(wmsg.startsWith("[routine r-watch] Scheduled fire"), "watch fires get the same temporal preamble ahead of the protocol");
+}
 
 const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
 await opStore.setSpendLimit("default", "slack/T1/C2", "surface", 100);
