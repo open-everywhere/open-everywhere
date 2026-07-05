@@ -17,6 +17,9 @@ import {
   domainOfUsageRow,
   filterToDomain,
   resolveAssumedModel,
+  rowCostUsd,
+  pricingMix,
+  pricingNote,
   firesPerDay,
   buildRoutinePredictions,
   approxConversationCount,
@@ -147,6 +150,41 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
+  _resetPricingCacheForTest();
+
+  const explicitAssumed = resolveAssumedModel("zai/glm-5.2");
+  const ambiguousAssumed = resolveAssumedModel(undefined);
+
+  const exactRow = { model: "anthropic/claude-sonnet-5", inputTokens: 1_000_000, outputTokens: 0 };
+  const stamplessRow = { inputTokens: 1_000_000, outputTokens: 0 };
+  const stampedUnpricedRow = { model: "no/such-model", inputTokens: 500, outputTokens: 0 };
+
+  ok(rowCostUsd(exactRow, explicitAssumed) === 3, "rowCostUsd: a stamped, priced model prices at ITS OWN rate ($3 = 1M in-tokens @ $3/Mtok)");
+  ok(rowCostUsd(exactRow, ambiguousAssumed) === 3, "rowCostUsd: own-model pricing doesn't need the assumed model to resolve at all");
+  ok(rowCostUsd(stamplessRow, explicitAssumed) === 1.4, "rowCostUsd: a stampless row falls back to the assumed model's rate");
+  ok(rowCostUsd(stamplessRow, ambiguousAssumed) === undefined, "rowCostUsd: stampless row + no assumable model -> omitted, not guessed");
+  ok(rowCostUsd(stampedUnpricedRow, explicitAssumed) === undefined, "rowCostUsd: a stamped model with NO configured rate is never priced at the assumed model's DIFFERENT rate — omitted, not silently wrong");
+
+  const mix = pricingMix([exactRow, stamplessRow, stampedUnpricedRow], explicitAssumed);
+  ok(mix.exact === 1 && mix.assumed === 1 && mix.unpriced === 1, "pricingMix: splits exact / assumed-fallback / unpriced correctly across a mixed set");
+
+  const mixedNote = pricingNote(mix, explicitAssumed);
+  ok(/1 row\(s\) priced exactly/.test(mixedNote), "pricingNote: reports the exact-priced count");
+  ok(mixedNote.includes(explicitAssumed.note), "pricingNote: folds in the assumed-model note verbatim for the fallback rows");
+  ok(/omitted/.test(mixedNote) && /hasn't configured a rate/.test(mixedNote), "pricingNote: explains the unpriced-stamped-model row rather than silently dropping it");
+
+  const allExactMix = pricingMix([exactRow], explicitAssumed);
+  ok(/exact — every priced row carries its own recorded model id/.test(pricingNote(allExactMix, explicitAssumed)), "pricingNote: an all-exact mix gets the confident 'every row' phrasing, not a row count");
+
+  const legacyMix = pricingMix([stamplessRow], explicitAssumed);
+  ok(pricingNote(legacyMix, explicitAssumed) === explicitAssumed.note, "pricingNote: zero stamped rows -> reproduces resolveAssumedModel's note verbatim (pre-item-17 wording, unchanged)");
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+}
+
+{
   const eng = resolveReportScope(ctxEng(), "domain");
   ok(eng.domain === "eng" && eng.org === "default", "resolveReportScope: domain scope resolves the caller's explicit domain (anyone in it — no admin check)");
 
@@ -249,6 +287,38 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
   const withExplicitModel = await sessionCostTool.execute({ assumedModelId: "no/such-model" }, ctxEng("sess-cost") as never);
   ok(withExplicitModel.costUsd === undefined && /no configured pricing/.test(withExplicitModel.note), "session_cost: an unpriced explicit model -> no $ fabricated, explained in the note");
+}
+
+{
+  await appendUsageEvent({
+    org: "default",
+    surfaceKey: "slack/T1/C_ENG",
+    sessionId: "sess-mixed",
+    principalId: "U1",
+    kind: "channel",
+    model: "anthropic/claude-sonnet-5",
+    inputTokens: 1_000_000,
+    outputTokens: 0,
+    ts: "2026-07-07T22:45:00Z",
+  });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-mixed", principalId: "U1", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: "2026-07-07T22:46:00Z" });
+
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
+  _resetPricingCacheForTest();
+
+  const mixed = await sessionCostTool.execute({ assumedModelId: "zai/glm-5.2" }, ctxEng("sess-mixed") as never);
+  ok(mixed.costUsd !== undefined && Math.abs(mixed.costUsd - 4.4) < 1e-9, "session_cost: mixed stamped+stampless rows sum EXACT + ASSUMED pricing, not a single blended rate");
+  ok(/priced exactly by their own recorded model/.test(mixed.note) && /no recorded model/.test(mixed.note), "session_cost: note honestly describes the exact/assumed mix");
+
+  const mixedReport = await spendReportTool.execute({ scope: "domain", assumedModelId: "zai/glm-5.2" }, ctxEng() as never);
+  const engChannel = mixedReport.bySurfaceAndKind.find((r) => r.surfaceKey === "slack/T1/C_ENG" && r.kind === "channel");
+  const expectedStamplessCost = (1_001_200 * 1.4 + 600 * 4.4) / 1_000_000;
+  const expectedExactCost = (1_000_000 * 3) / 1_000_000;
+  ok(engChannel?.costUsd !== undefined && Math.abs(engChannel.costUsd - (expectedStamplessCost + expectedExactCost)) < 1e-6, "spend_report: a (surfaceKey, kind) group prices EACH underlying summary row at its own resolution, then sums — never one blended rate across a merged group");
+  ok(/priced exactly by their own recorded model/.test(mixedReport.note) && /no recorded model/.test(mixedReport.note), "spend_report: note honestly describes the exact/assumed mix at rollup scope too");
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
 }
 
 {

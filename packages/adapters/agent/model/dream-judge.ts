@@ -4,6 +4,7 @@ import { modelRouteFor, memoryRefs } from "@open-everywhere/core/agent/memory/do
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import type { DreamCompletion, DreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
 import { judgeFromCompletion, registerDreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
+import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 
 export function utilityRouteForScope(scope: string): ModelRoute {
@@ -26,9 +27,18 @@ export function dreamCallSettings(
   return { id, reasoning: route.reasoning, providerOptions: options.providerOptions };
 }
 
+export function resolvedDreamCallSettings(
+  scope: string,
+  defaults: GatewayRoutedDefaults,
+): { id: string; reasoning?: ModelRoute["reasoning"]; providerOptions?: Record<string, unknown> } {
+  const s = dreamCallSettings(utilityRouteForScope(scope), defaults);
+  stampModelCall(s.id);
+  return s;
+}
+
 export function gatewayDreamCompletion(defaults: GatewayRoutedDefaults): DreamCompletion {
   return async (scope, prompt) => {
-    const s = dreamCallSettings(utilityRouteForScope(scope), defaults);
+    const s = resolvedDreamCallSettings(scope, defaults);
     const { text } = await generateText({
       model: gateway(s.id),
       prompt,

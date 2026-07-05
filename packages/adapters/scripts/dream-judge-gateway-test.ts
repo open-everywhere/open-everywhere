@@ -1,7 +1,11 @@
-import { utilityRouteForScope, dreamCallSettings, gatewayDreamJudge, registerGatewayDreamJudge } from "../agent/model/dream-judge.js";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { utilityRouteForScope, dreamCallSettings, resolvedDreamCallSettings, gatewayDreamJudge, registerGatewayDreamJudge } from "../agent/model/dream-judge.js";
 import { dreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
+import { readModelStamp } from "@open-everywhere/core/agent/model/model-stamp.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -60,6 +64,23 @@ registerConfig({
   registerGatewayDreamJudge(DEFAULTS);
   const registered = dreamJudge();
   ok(registered !== null && typeof registered.judge === "function", "judge: registerGatewayDreamJudge lands it in core's registry (the v2 opt-in)");
+}
+
+{
+  ok(readModelStamp() === null, "resolvedDreamCallSettings: no session -> nothing stamped yet");
+  const outside = resolvedDreamCallSettings("slack/T1/C_PAY", DEFAULTS);
+  ok(outside.id === "zai/glm-5.2-air", "resolvedDreamCallSettings: still resolves + returns settings outside a session");
+  ok(readModelStamp() === null, "resolvedDreamCallSettings: sessionless call (the tidy-schedule shape) -> stamp is a no-op, doesn't throw");
+
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    const inside = resolvedDreamCallSettings("slack/T1/C_PAY", DEFAULTS);
+    ok(readModelStamp() === inside.id && inside.id === "zai/glm-5.2-air", "resolvedDreamCallSettings: inside a session (the learn-hook shape) -> stamps the resolved id");
+  });
 }
 
 console.log(`dream-judge-gateway: ${passed} assertions passed`);

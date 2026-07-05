@@ -117,5 +117,48 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok((await usageEvents.usageForSession("acme", "sess-9")).length === 1, "pruneUsageEvents: another org's rows are untouched by this org's prune");
 }
 
+{
+  const spendHook = (await import("../agent/hooks/spend.js")).default;
+  const { stampModelCall } = await import("../agent/model/model-stamp.js");
+  const usageEvents = await import("../agent/spend/usage-events.js");
+
+  const hookCtx = (sessionId: string) => ({
+    channel: { kind: "slack" },
+    session: { id: sessionId, auth: { current: { attributes: { team_id: "T1", channel_id: "C_STAMP" }, principalId: "U1", principalType: "slack-user" } } },
+  });
+  const stepEvent = (inputTokens: number, outputTokens: number) => ({ data: { usage: { inputTokens, outputTokens } } });
+
+  const { createRequire } = await import("node:module");
+  const { dirname, join: pathJoin } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(pathJoin(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    stampModelCall("anthropic/claude-sonnet-5");
+    await spendHook.events["step.completed"](stepEvent(10, 5) as never, hookCtx("sess-stamped") as never);
+  });
+  const stampedRows = await usageEvents.usageForSession("default", "sess-stamped");
+  ok(stampedRows.length === 1 && stampedRows[0].model === "anthropic/claude-sonnet-5", "hooks/spend: step.completed attaches the model-stamp's id to the usage_events row");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    await spendHook.events["step.completed"](stepEvent(20, 10) as never, hookCtx("sess-unstamped") as never);
+  });
+  const unstampedRows = await usageEvents.usageForSession("default", "sess-unstamped");
+  ok(unstampedRows.length === 1 && unstampedRows[0].model === undefined, "hooks/spend: no stamp this session -> model absent (fail-soft, unchanged default)");
+
+  await spendHook.events["step.completed"](stepEvent(1, 1) as never, hookCtx("sess-no-context") as never);
+  const noContextRows = await usageEvents.usageForSession("default", "sess-no-context");
+  ok(noContextRows.length === 1 && noContextRows[0].model === undefined, "hooks/spend: step.completed outside any Eve context still records the row, unstamped");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    await spendHook.events["step.completed"](stepEvent(2, 2) as never, hookCtx("sess-isolated") as never);
+  });
+  const isolatedRows = await usageEvents.usageForSession("default", "sess-isolated");
+  ok(isolatedRows.length === 1 && isolatedRows[0].model === undefined, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ spend: ${passed} assertions passed`);
