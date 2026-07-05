@@ -17,14 +17,16 @@ import {
 
 export default defineTool({
   description:
-    "Create or update a SKILL for this channel's memory domain — a reusable markdown instruction package any future turn in the domain can invoke by its bare name. Any domain member can author one; it's audited but never needs approval, and it becomes invocable from your NEXT turn (skills resolve at turn start, not mid-turn). Can't be authored from a DM, a group chat, or an externally-shared/unconfirmed channel — author from a channel that's actually in the target domain.",
+    "Create or update a SKILL for this channel's memory domain — a reusable markdown instruction package any future turn in the domain can invoke by its bare name. Any domain member can author one; it's audited but never needs approval, and it becomes invocable from your NEXT turn (skills resolve at turn start, not mid-turn). Can't be authored from a DM, a group chat, or an externally-shared/unconfirmed channel — author from a channel that's actually in the target domain. Write one worth keeping: a trigger-rich description in the words a teammate would use, the intent behind the ask (not just the commands you ran), the edge cases you hit, and one coherent job per skill.",
   inputSchema: z.object({
     name: z.string().min(1).max(80).describe('Bare invocation name, e.g. "deploy-runbook". Letters, digits, ".", "_", "-" only (no ":", no "..").'),
     content: z.string().min(1).describe("The skill's markdown body — the instructions the model reads once it invokes this skill."),
     description: z
       .string()
       .optional()
-      .describe("One-line summary of when to use this skill, shown to the model alongside its name. Omit if `content` already starts with its own `---` frontmatter."),
+      .describe(
+        'One-line summary of when to use this skill, shown to the model alongside its name. Name the concrete situations it applies to ("when someone asks to deploy the payments API") — a vague description means the skill never fires. Omit if `content` already starts with its own `---` frontmatter.',
+      ),
   }),
   outputSchema: z.object({
     ok: z.boolean(),
