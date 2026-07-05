@@ -1,0 +1,55 @@
+import { defineTool } from "eve/tools";
+import { never } from "eve/tools/approval";
+import { z } from "zod";
+import { bindFrom } from "../identity/binding.js";
+import { getConfig } from "../access/config.js";
+import { adminControlRoles } from "../access/roles.js";
+import { memoryListView } from "../control/views.js";
+
+export default defineTool({
+  description:
+    'ADMIN ONLY: enumerate every memory silo you are allowed to inspect — org -> domains -> silos -> files, with sizes — from ANY channel or DM, not just the one you\'re speaking in right now (unlike the memory index the base instruction reads, which only ever shows THIS channel\'s armed silo(s)). Org admins see every eligible silo; domain admins see only the silos an explicit domain of theirs references. DM/personal memory and any silo referenced only by the org/public/dm pseudo-domains stay excluded, even for an org admin — same fail-closed privacy rule as the out-of-band control plane. Read-only; pass "silo" to see one silo\'s files, omit it to see everything you cover.',
+  inputSchema: z.object({
+    silo: z.string().optional().describe("Narrow to one silo's files (a name from a prior call). Omit to list every silo you cover."),
+  }),
+  outputSchema: z.object({
+    org: z.string(),
+    tiers: z.array(
+      z.object({
+        silo: z.string(),
+        domains: z.array(z.string()).describe("Explicit domains referencing this silo — empty means admin-only (org-brain / an orphaned silo)."),
+        provider: z.string(),
+        backing: z.string(),
+        readOnly: z.boolean(),
+        files: z.array(z.object({ path: z.string(), bytes: z.number() })),
+        totalBytes: z.number(),
+      }),
+    ),
+  }),
+  approval: never(),
+  async execute(input, ctx) {
+    const binding = bindFrom(ctx);
+    if (!binding.principalId) {
+      throw new Error(
+        "memory_admin_list needs a verified sender on this turn — no principal id resolved, so there's no caller to check admin standing for.",
+      );
+    }
+    const domains = getConfig().loadDomains();
+    const roles = adminControlRoles(binding.principalId, domains);
+    if (roles.length === 0) {
+      throw new Error(
+        `memory_admin_list requires an org admin, or a domain admin for at least one memory domain. Your id ("${binding.principalId}") ` +
+          `isn't listed on the "org" pseudo-domain's admins or any explicit domain's admins (Domain.admins, agent/memory/domains.ts).`,
+      );
+    }
+
+    const result = await memoryListView(binding.org, roles);
+    if (!input.silo) return result;
+
+    const tiers = result.tiers.filter((t) => t.silo === input.silo);
+    if (tiers.length === 0) {
+      throw new Error(`no memory silo named "${input.silo}" among the ones your roles cover (call memory_admin_list with no "silo" to see what you can reach).`);
+    }
+    return { org: result.org, tiers };
+  },
+});
