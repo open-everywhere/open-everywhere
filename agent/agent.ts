@@ -11,15 +11,22 @@ const GATEWAY_DEFAULTS = {
 } as const;
 const DEFAULT_MODEL = "zai/glm-5.2";
 
-registerGatewayDreamJudge({ id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS });
+const UTILITY_MODEL = "minimax/minimax-m2.7";
+const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 196_608;
+const UTILITY_GATEWAY_DEFAULTS = {
+  caching: "auto",
+} as const;
+
+registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 export default defineAgent({
   model: gatewayRoutedModel("primary", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),
   modelContextWindowTokens: 1_000_000,
   reasoning: "medium",
   compaction: {
-    model: gatewayRoutedModel("utility", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),
-    modelContextWindowTokens: 1_000_000,
+    model: gatewayRoutedModel("utility", { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
+    modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
+    thresholdPercent: 0.15,
   },
   modelOptions: {
     providerOptions: {
