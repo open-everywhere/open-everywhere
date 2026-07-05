@@ -7,6 +7,7 @@ import { resolveHeaders } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
+import { stampEnforcement } from "../access/enforcement.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
@@ -132,6 +133,8 @@ export default defineHook({
       } catch (err) {
         log(`audit skipped (policy still applied): ${String(err)}`);
       }
+
+      stampEnforcement(enforced);
 
       if (abortError) throw abortError;
     },

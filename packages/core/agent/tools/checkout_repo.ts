@@ -2,9 +2,13 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
+import { compileNetworkPolicy } from "../access/egress.js";
+import { resolveHeaders } from "../access/credentials.js";
+import { isEnforced } from "../access/enforcement.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
-import { checkoutCommand, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
+import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
+import { checkoutCommand, checkoutCommandBrokered, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
 
 export default defineTool({
@@ -47,21 +51,33 @@ export default defineTool({
     if (!isSafeCheckoutDir(dir)) {
       throw new Error(`invalid checkout dir "${dir}" — use a simple workspace-relative path.`);
     }
-
-    const { tokens, ungranted } = await app.tokensForRepos([input.repo], READ_PERMISSIONS);
-    if (ungranted.length) {
-      throw new Error(
+    const owner = input.repo.slice(0, input.repo.indexOf("/"));
+    const noInstallationError = () =>
+      new Error(
         `repo "${input.repo}": its owner has no linked GitHub App installation. ` +
           `Install the Open Everywhere GitHub App on that org (see docs/capabilities/source-control.md).`,
       );
-    }
-    const owner = input.repo.slice(0, input.repo.indexOf("/"));
-    const token = tokens.get(owner)!.token;
 
     const sandbox = await ctx.getSandbox();
-    const result = await sandbox.run({ command: checkoutCommand(input.repo, token, dir, app.committer()) });
-    if (!result.stdout.includes(CHECKOUT_OK)) {
-      throw new Error(`clone failed for "${input.repo}": ${redactSecret(result.stderr || result.stdout || "unknown error", token).slice(0, 500)}`);
+    let result: Awaited<ReturnType<typeof sandbox.run>>;
+
+    if (isEnforced()) {
+      const basePolicy = await compileNetworkPolicy(access, resolveHeaders);
+      const { rulesByOwner } = await mintGitReadBroker(app, access.repos);
+      if (!rulesByOwner.has(owner)) throw noInstallationError();
+      await sandbox.setNetworkPolicy(mergeGitReadBroker(basePolicy, rulesByOwner));
+      result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, app.committer()) });
+      if (!result.stdout.includes(CHECKOUT_OK)) {
+        throw new Error(`clone failed for "${input.repo}": ${(result.stderr || result.stdout || "unknown error").slice(0, 500)}`);
+      }
+    } else {
+      const { tokens, ungranted } = await app.tokensForRepos([input.repo], READ_PERMISSIONS);
+      if (ungranted.length) throw noInstallationError();
+      const token = tokens.get(owner)!.token;
+      result = await sandbox.run({ command: checkoutCommand(input.repo, token, dir, app.committer()) });
+      if (!result.stdout.includes(CHECKOUT_OK)) {
+        throw new Error(`clone failed for "${input.repo}": ${redactSecret(result.stderr || result.stdout || "unknown error", token).slice(0, 500)}`);
+      }
     }
 
     const conventions = parseConventionProbe(result.stdout) ?? undefined;

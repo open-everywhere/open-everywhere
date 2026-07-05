@@ -59,6 +59,24 @@ export function checkoutCommand(
 
 export const CHECKOUT_OK = "__SCM_CHECKOUT_OK__";
 
+export function checkoutCommandBrokered(
+  repo: string,
+  dir: string,
+  identity: { name: string; email: string },
+  host = "github.com",
+): string {
+  return [
+    "set -e",
+    `git clone -- 'https://${host}/${repo}.git' '${dir}'`,
+    `git -C '${dir}' config user.name '${identity.name}'`,
+    `git -C '${dir}' config user.email '${identity.email}'`,
+    conventionProbe(dir),
+    skillsProbe(dir),
+    agentsProbe(dir),
+    "echo __SCM_CHECKOUT_OK__",
+  ].join("\n");
+}
+
 export function pushCommand(dir: string, token: string, head: string): string {
   const header = authExtraHeader(token);
   return `git -C '${dir}' -c 'http.extraheader=${header}' push origin 'refs/heads/${head}:refs/heads/${head}'`;

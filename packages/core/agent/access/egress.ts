@@ -4,7 +4,7 @@ import type { Connection } from "./bundle.js";
 
 export type ResolveHeaders = (connection: Connection) => Promise<Record<string, string>>;
 
-type EgressRule = {
+export type EgressRule = {
   match?: { method?: string[]; path?: { startsWith?: string } };
   transform?: { headers?: Record<string, string> }[];
 };
