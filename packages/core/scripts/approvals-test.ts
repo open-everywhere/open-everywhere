@@ -62,7 +62,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
     messageTs: "111.222",
     status: "pending",
     createdAt: "2026-07-04T00:00:00Z",
-    expiresAt: "2026-07-05T00:00:00Z",
+    expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     decidedBy: null,
     decidedAt: null,
     ...over,
@@ -91,7 +91,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(parseApprovalAction(ids[0]) !== null && parseApprovalAction(ids[1]) !== null, "both card action_ids round-trip through parseApprovalAction");
   ok(actionsBlock!.elements.every((e) => e.value === "default"), "both buttons carry the org as their value");
   ok(text.includes("<@U_REQUESTER>") || blocks.some((b) => JSON.stringify(b).includes("<@U_REQUESTER>")), "the requester is @-mentioned somewhere on the card");
-  ok(JSON.stringify(blocks).includes("expires 2026-07-05T00:00:00Z"), "the card shows the expiry timestamp");
+  ok(JSON.stringify(blocks).includes(`expires ${r.expiresAt}`), "the card shows the expiry timestamp");
 
   const decided = decidedCardBlocks({ ...r, status: "approved", decidedBy: "U_ORG_ADMIN" }, ["line one"], "spend limit set");
   ok(!decided.blocks.some((b) => b.type === "actions"), "decidedCardBlocks has NO actions block (buttons are gone once decided)");
