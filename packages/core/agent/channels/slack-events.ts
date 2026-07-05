@@ -404,6 +404,22 @@ export function fetchUserDisplayName(userId: string): Promise<string | undefined
   return p;
 }
 
+const channelNameCache = new Map<string, Promise<string | undefined>>();
+export function fetchChannelDisplayName(channelId: string): Promise<string | undefined> {
+  let p = channelNameCache.get(channelId);
+  if (!p) {
+    p = (async () => {
+      const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}`);
+      if (info?.ok !== true) return undefined;
+      const ch = info.channel as { name?: string } | undefined;
+      const name = typeof ch?.name === "string" ? ch.name.trim() : "";
+      return name ? name : undefined;
+    })();
+    channelNameCache.set(channelId, p);
+  }
+  return p;
+}
+
 export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
   return {
     enabledFor: (surfaceKey) => nameDropWakeEnabled(surfaceKey, getConfig().loadDomains()),

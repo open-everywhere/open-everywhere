@@ -300,6 +300,24 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "blocks") ?? "").includes("oe_approval:approve:")), "requestApproval: posts a card whose blocks carry an oe_approval: approve action_id");
   const audit = await readAudit({ org: "default", action: "approval.requested" });
   ok(audit.some((e) => e.detail?.id === id && e.principalId === "U_REQUESTER"), "requestApproval: audits approval.requested with the requester as principal");
+  ok(!calls.some((c) => bodyField(c.body, "thread_ts") !== null), "requestApproval: no threadTs -> the card posts as a fresh channel message (no thread_ts param)");
+
+  await requestApproval(
+    {
+      org: "default",
+      kind: "spend.set",
+      args: { org: "default", scopeKey: "slack/T4/C4", level: "surface", monthlyTokens: 750, currentCap: null },
+      scopeKey: "slack/T4/C4",
+      requestedBy: "U_REQUESTER",
+      channelId: "C4",
+      threadTs: "1751.0042",
+    },
+    { post },
+  );
+  ok(
+    calls.some((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "1751.0042"),
+    "requestApproval: threadTs -> the card posts INTO that thread (thread_ts on chat.postMessage)",
+  );
 
   await assert.rejects(
     async () => requestApproval({ org: "default", kind: "no.such.kind", args: {}, scopeKey: "slack/T4/C4", requestedBy: "U_REQUESTER", channelId: "C4" }, { post }),

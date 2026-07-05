@@ -18,6 +18,7 @@ export interface SurfaceBinding {
   readonly trust: Trust;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
+  readonly threadTs?: string;
 }
 
 interface AuthPrincipal {
@@ -70,6 +71,7 @@ interface RawIdentity {
   readonly trustVerified?: boolean;
   readonly principalId?: string;
   readonly target?: Readonly<Record<string, unknown>>;
+  readonly threadTs?: string;
 }
 
 type Mapper = (ctx: BindableContext) => RawIdentity;
@@ -122,6 +124,7 @@ const bindSlack: Mapper = (ctx) => {
     trustVerified: mode === "dm" ? dmPartnerTrust !== undefined : undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: channelId ? { channelId } : undefined,
+    threadTs: attr(a, ["thread_ts", "threadTs"]),
   };
 };
 
@@ -268,5 +271,6 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     trust,
     principalId: raw.principalId ?? local.principalId,
     target: raw.target,
+    threadTs: raw.threadTs,
   };
 }

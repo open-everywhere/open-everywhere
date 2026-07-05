@@ -13,7 +13,7 @@ const silos: MemorySilo[] = [
 ];
 
 const domains: Domain[] = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true, admins: ["U0EXUSER002"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true, admins: ["U0EXOWNER", "U0EXUSER002"] }),
 
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
 

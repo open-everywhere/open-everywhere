@@ -24,6 +24,9 @@ import {
   aggregateBySurface,
   resolveReportScope,
   reportDomainRefusalMessage,
+  slackUserIdIn,
+  slackChannelIdIn,
+  resolveSlackLabels,
 } from "../agent/spend/reporting.js";
 import sessionCostTool from "../agent/tools/session_cost.js";
 import spendReportTool from "../agent/tools/spend_report.js";
@@ -277,4 +280,35 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   n++;
 }
 
-console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing, session_cost/spend_report/usage_report tools)`);
+{
+  ok(slackUserIdIn("U0EXOWNER") === "U0EXOWNER", "labels: bare slack member id recognised");
+  ok(slackUserIdIn("slack:T0EXAMPLE:U0EXOWNER") === "U0EXOWNER", "labels: composite slack:T:U principal -> member id");
+  ok(slackUserIdIn("slack:T0EXAMPLE:bot:U0BOT001") === "U0BOT001", "labels: bot principal -> member id (last segment)");
+  ok(slackUserIdIn("eve:app") === undefined, "labels: non-slack principal (eve:app) unrecognised");
+  ok(slackChannelIdIn("slack/T1/C123ABC") === "C123ABC", "labels: slack surface key -> channel id");
+  ok(slackChannelIdIn("teams/T1/C123ABC") === undefined, "labels: non-slack surface key unrecognised");
+  ok(slackChannelIdIn("slack/T1") === undefined, "labels: workspace-level key has no channel id");
+
+  const labels = await resolveSlackLabels(
+    ["U0EXOWNER", "eve:app", "U0EXOWNER"],
+    ["slack/T1/C123ABC", "slack/T1/D123ABC"],
+    {
+      userName: async (id) => (id === "U0EXOWNER" ? "Rowan Hale" : undefined),
+      channelName: async (id) => (id === "C123ABC" ? "test-channel" : undefined),
+    },
+  );
+  ok(labels.users.get("U0EXOWNER") === "Rowan Hale", "labels: resolved user name keyed by the ORIGINAL principal id");
+  ok(!labels.users.has("eve:app"), "labels: unresolvable principal stays unlabelled");
+  ok(labels.channels.get("slack/T1/C123ABC") === "#test-channel", "labels: channel name rendered as #name, keyed by surface key");
+  ok(!labels.channels.has("slack/T1/D123ABC"), "labels: DM surface never looked up (no conversations.info name)");
+
+  const failing = await resolveSlackLabels(["U0EXOWNER"], ["slack/T1/C123ABC"], {
+    userName: async () => {
+      throw new Error("api down");
+    },
+    channelName: async () => undefined,
+  });
+  ok(failing.users.size === 0 && failing.channels.size === 0, "labels: lookup failures -> silently unlabelled, never a throw");
+}
+
+console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels, session_cost/spend_report/usage_report tools)`);

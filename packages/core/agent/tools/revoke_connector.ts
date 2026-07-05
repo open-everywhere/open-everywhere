@@ -86,7 +86,7 @@ export default defineTool({
       domain: plan.domain,
       requestedBy: principalIdOf(ctx)!,
       channelId,
-      threadTs: null,
+      threadTs: binding.threadTs ?? null,
     });
 
     return {

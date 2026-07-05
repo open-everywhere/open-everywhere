@@ -195,6 +195,64 @@ export async function buildRoutinePredictions(
   return out;
 }
 
+export interface SlackLabelDeps {
+  readonly userName: (userId: string) => Promise<string | undefined>;
+  readonly channelName: (channelId: string) => Promise<string | undefined>;
+}
+
+export function slackUserIdIn(principalId: string): string | undefined {
+  const candidate = principalId.includes(":") ? principalId.slice(principalId.lastIndexOf(":") + 1) : principalId;
+  return /^[UW][A-Z0-9]{5,}$/.test(candidate) ? candidate : undefined;
+}
+
+export function slackChannelIdIn(surfaceKey: string): string | undefined {
+  const parts = surfaceKey.split("/");
+  if (parts[0] !== "slack" || parts.length < 3) return undefined;
+  const id = parts[2];
+  return /^[CGD][A-Z0-9]{5,}$/.test(id) ? id : undefined;
+}
+
+export interface SlackLabels {
+  readonly users: ReadonlyMap<string, string>;
+  readonly channels: ReadonlyMap<string, string>;
+}
+
+export async function resolveSlackLabels(
+  principalIds: readonly string[],
+  surfaceKeys: readonly string[],
+  deps: SlackLabelDeps,
+): Promise<SlackLabels> {
+  const users = new Map<string, string>();
+  const channels = new Map<string, string>();
+  const lookups: Promise<void>[] = [];
+  for (const pid of new Set(principalIds)) {
+    const userId = slackUserIdIn(pid);
+    if (!userId) continue;
+    lookups.push(
+      deps
+        .userName(userId)
+        .then((name) => {
+          if (name) users.set(pid, name);
+        })
+        .catch(() => {}),
+    );
+  }
+  for (const key of new Set(surfaceKeys)) {
+    const channelId = slackChannelIdIn(key);
+    if (!channelId || channelId.startsWith("D")) continue;
+    lookups.push(
+      deps
+        .channelName(channelId)
+        .then((name) => {
+          if (name) channels.set(key, `#${name}`);
+        })
+        .catch(() => {}),
+    );
+  }
+  await Promise.all(lookups);
+  return { users, channels };
+}
+
 export function approxConversationCount(rows: readonly UsageSummaryRow[]): number {
   let total = 0;
   for (const r of rows) {
