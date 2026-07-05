@@ -1,3 +1,6 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { defineDomain, modelRouteFor, type Domain } from "../agent/memory/domain.js";
 import {
   applyRoute,
@@ -15,6 +18,17 @@ function ok(cond: boolean, label: string): void {
     process.exit(1);
   }
   passed++;
+}
+
+{
+  const require = createRequire(import.meta.url);
+  const root = dirname(require.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
+  const keys = await import(abs("dist/src/context/keys.js"));
+  const runtimeKeys = await import(abs("dist/src/runtime/sessions/runtime-context-keys.js"));
+  ok(keys.AuthKey !== undefined, "eve still exports AuthKey (routing's ALS reach)");
+  ok(keys.InitiatorAuthKey !== undefined, "eve still exports InitiatorAuthKey (routing's ALS reach)");
+  ok(runtimeKeys.ChannelKey !== undefined, "eve still exports ChannelKey (routing's ALS reach)");
 }
 
 const C_TXN = "slack/T1/C_TXN";
