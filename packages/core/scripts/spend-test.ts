@@ -323,5 +323,62 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   _resetPricingCacheForTest();
 }
 
+{
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
+  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
+  _resetPricingCacheForTest();
+
+  const { scopeUsdSpend, workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod } = await import("../agent/spend/check.js");
+  const { activeSpendLimitsForOrg } = await import("../agent/spend/caps.js");
+  const usageEvents = await import("../agent/spend/usage-events.js");
+  const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+
+  const org = "usd-report-org";
+  const wk = "slack/T7";
+  const row = (surfaceKey: string, ts: string, inputTokens: number) => usageEvents.appendUsageEvent({ org, surfaceKey, sessionId: `s-${surfaceKey}-${ts}`, ts, kind: "channel", model: "zai/glm-5.2", inputTokens });
+
+  await row(`${wk}/C1`, "2026-05-08T18:15:00Z", 1_000_000);
+  await row(`${wk}/C2`, "2026-05-09T18:15:00Z", 2_000_000);
+  await row(`${wk}/C1`, "2026-06-13T18:15:00Z", 5_000_000);
+
+  const NOW_ISO = "2026-06-20T00:00:00.000Z";
+
+  const ws = await workspaceUsdSpendForCurrentMonth(org, wk, NOW_ISO);
+  const viaScope = await scopeUsdSpend(org, wk, `${wk}/C1`, NOW_ISO);
+  ok(ws.workspaceUsd === viaScope.workspaceUsd, "workspaceUsdSpendForCurrentMonth: workspaceUsd matches scopeUsdSpend's own arithmetic");
+  ok(ws.bySurface.get(`${wk}/C1`) === viaScope.surfaceUsd, "workspaceUsdSpendForCurrentMonth: bySurface's C1 entry matches scopeUsdSpend's surfaceUsd");
+  ok(ws.bySurface.get(`${wk}/C1`) === 5 && ws.workspaceUsd === 5, "workspaceUsdSpendForCurrentMonth: only June's row counts for the current-month window (May's rows are out of window)");
+
+  const may = await workspaceUsdSpendForPeriod(org, wk, "2026-05");
+  ok(may.workspaceUsd === 3, `workspaceUsdSpendForPeriod: May's two rows sum to $3, June's $5 excluded (got ${may.workspaceUsd})`);
+  ok(may.bySurface.get(`${wk}/C1`) === 1 && may.bySurface.get(`${wk}/C2`) === 2, "workspaceUsdSpendForPeriod: per-surface breakdown is correct for the past month");
+  ok(may.bySurface.get(`${wk}/C1`) !== undefined, "workspaceUsdSpendForPeriod: a mid-month row (the 10th) is inside the whole-month window");
+
+  await row(`${wk}/C1`, "2026-05-30T18:14:59.999Z", 500_000);
+  await row(`${wk}/C1`, "2026-06-01T00:00:00.000Z", 999_000_000);
+  const mayAfter = await workspaceUsdSpendForPeriod(org, wk, "2026-05");
+  ok(Math.abs(mayAfter.workspaceUsd - 3.5) < 1e-9, "workspaceUsdSpendForPeriod: the month's last millisecond is included, the next month's first instant is not");
+
+  await opStore.setSpendLimit(org, `${wk}/C1`, "surface", { monthlyUsd: 10 }, { reason: "active" });
+  await opStore.setSpendLimit(org, wk, "workspace", { monthlyUsd: 20 }, { reason: "expired", expiresAt: Date.now() - 1000 });
+  const active = await activeSpendLimitsForOrg(org);
+  ok(active.length === 1 && active[0].scopeKey === `${wk}/C1`, "activeSpendLimitsForOrg: drops the expired override, keeps the active one");
+
+  const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
+  const goodSpendPath = process.env.OE_SQLITE_PATH;
+  _resetOperationalDbForTest();
+  process.env.OE_SQLITE_PATH = "/dev/null/open-everywhere-nope-2/ops.sqlite3";
+  const softFailed = await activeSpendLimitsForOrg(org).then(
+    (v) => v,
+    () => "threw",
+  );
+  ok(Array.isArray(softFailed) && softFailed.length === 0, "activeSpendLimitsForOrg: a broken override store fails SOFT to [] (never throws, never widens)");
+  _resetOperationalDbForTest();
+  process.env.OE_SQLITE_PATH = goodSpendPath;
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ spend: ${passed} assertions passed`);

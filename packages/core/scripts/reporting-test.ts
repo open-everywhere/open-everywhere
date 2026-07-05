@@ -6,6 +6,7 @@ import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
+import { periodOf } from "../agent/spend/spend.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import {
   pricedModelIds,
@@ -336,6 +337,91 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const orgReport = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
   ok(orgReport.bySurfaceAndKind.some((r) => r.surfaceKey === "slack/T1/C_OTHER"), "spend_report: org scope for an org admin sees every surface, including other domains'");
   ok(orgReport.domain === undefined, "spend_report: org scope carries no domain field");
+}
+
+{
+  const org = "default";
+  const wsSurface = "slack/T1/C_CAPTEST";
+  const currentPeriod = periodOf(new Date().toISOString());
+  const store = await import("../agent/spend/store.js");
+  const opStore = getOperationalStore();
+  const { scopeOverBudget } = await import("../agent/spend/check.js");
+
+  await store.recordUsage({ org, surfaceKey: wsSurface } as never, currentPeriod, { inputTokens: 1_000_000, outputTokens: 0 });
+  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-1", principalId: "U_CAP", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: `${currentPeriod}-02T09:00:00Z` });
+  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-2", principalId: "U_CAP", kind: "channel", model: "mystery/unpriced", inputTokens: 9_000_000, outputTokens: 0, ts: `${currentPeriod}-02T09:01:00Z` });
+
+  const before = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
+  const rowBefore = before.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
+  ok(rowBefore !== undefined, "spend_report ledger: the seeded surface appears in ledger.surfaces");
+  ok(Math.abs(rowBefore!.usd - 1.4) < 1e-9, `spend_report ledger: usd sums only the priced row ($1.40 @ zai/glm-5.2's built-in rate), the unpriced-model-stamped row contributes $0, never guessed (got ${rowBefore!.usd})`);
+  ok(rowBefore!.tokens === 1_000_000, "spend_report ledger: tokens still come from the monthly token ledger, unchanged");
+  ok(rowBefore!.tokenCap === null && rowBefore!.usdCap === null, "spend_report ledger: no cap configured anywhere -> both caps null");
+  ok(rowBefore!.tokenOver === false && rowBefore!.usdOver === false && rowBefore!.over === false, "spend_report ledger: no cap -> never over");
+
+  const wsRowBefore = before.ledger.workspaces.find((w) => w.workspaceKey === "slack/T1");
+  ok(wsRowBefore !== undefined, "spend_report ledger: a workspace-level row is now present (previously the report had none)");
+  ok(wsRowBefore!.usd >= rowBefore!.usd - 1e-9, "spend_report ledger: the workspace usd rolls up at least its surface's contribution");
+  ok(wsRowBefore!.tokens >= rowBefore!.tokens, "spend_report ledger: the workspace tokens roll up at least its surface's contribution");
+
+  await opStore.setSpendLimit(org, wsSurface, "surface", { monthlyUsd: 1 }, { reason: "test bridge", setBy: "tester" });
+  const gateVerdict = await scopeOverBudget(
+    { org, platform: "slack", workspace: "T1", surface: "C_CAPTEST", workspaceKey: "slack/T1", surfaceKey: wsSurface, key: wsSurface } as never,
+    "channel",
+    new Date().toISOString(),
+  );
+  ok(gateVerdict.over === true, "sanity: the gate itself refuses this scope once the override is active");
+
+  const afterOverride = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
+  const rowAfter = afterOverride.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
+  ok(rowAfter!.usdCap === 1, "spend_report ledger: an ACTIVE override changes the shown cap (was null, now the override's $1)");
+  ok(rowAfter!.usdOver === true && rowAfter!.over === true, "spend_report ledger: with the override active the report shows over — the SAME verdict as the gate (report == gate)");
+  ok(Math.abs(rowAfter!.usd - rowBefore!.usd) < 1e-9, "spend_report ledger: the override changes the CAP shown, never the observed spend figure itself");
+
+  await opStore.clearSpendLimit(org, wsSurface, "surface");
+  const afterClear = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
+  const rowCleared = afterClear.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
+  ok(rowCleared!.usdCap === null && rowCleared!.usdOver === false, "spend_report ledger: clearing the override reverts to the (uncapped) config baseline, same as the gate would");
+
+  const [curYear, curMonth1Indexed] = currentPeriod.split("-").map(Number);
+  const prevDate = new Date(Date.UTC(curYear, curMonth1Indexed - 1, 1));
+  prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
+  const prevPeriod = prevDate.toISOString().slice(0, 7);
+  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-prev", principalId: "U_CAP", kind: "channel", inputTokens: 2_000_000, outputTokens: 0, ts: `${prevPeriod}-15T00:00:00Z` });
+  await store.recordUsage({ org, surfaceKey: wsSurface } as never, prevPeriod, { inputTokens: 42, outputTokens: 0 });
+  const prevReport = await spendReportTool.execute({ scope: "org", period: prevPeriod }, ctxOrgAdmin as never);
+  const prevRow = prevReport.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
+  ok(prevReport.ledger.period === prevPeriod, "spend_report ledger: an explicit past period is honoured");
+  ok(prevRow!.tokens === 42, "spend_report ledger: a past period's tokens come from THAT month's ledger window, not the current one");
+  ok(Math.abs(prevRow!.usd - 2.8) < 1e-9, `spend_report ledger: a past period's usd windows to THAT calendar month only (2,000,000 in-tokens @ $1.4/Mtok = $2.80, got ${prevRow!.usd})`);
+}
+
+{
+  const org = "default";
+  const currentPeriod = periodOf(new Date().toISOString());
+  const dmA = "slack/T1/D0CAPAAAAAA";
+  const dmB = "slack/T1/D0CAPBBBBBB";
+  const store = await import("../agent/spend/store.js");
+  const opStore = getOperationalStore();
+
+  await store.recordUsage({ org, surfaceKey: dmA } as never, currentPeriod, { inputTokens: 10, outputTokens: 0 });
+  await store.recordUsage({ org, surfaceKey: dmB } as never, currentPeriod, { inputTokens: 5, outputTokens: 0 });
+  await appendUsageEvent({ org, surfaceKey: dmA, sessionId: "sess-dm-cap-a", principalId: "U_DM_A", kind: "dm", inputTokens: 1_000_000, outputTokens: 0, ts: `${currentPeriod}-03T10:00:00Z` });
+  await appendUsageEvent({ org, surfaceKey: dmB, sessionId: "sess-dm-cap-b", principalId: "U_DM_B", kind: "dm", inputTokens: 500_000, outputTokens: 0, ts: `${currentPeriod}-03T10:01:00Z` });
+
+  await opStore.setSpendLimit(org, dmA, "surface", { monthlyUsd: 0.5 }, { reason: "test", setBy: "tester" });
+
+  const report = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
+  const dmBucket = report.ledger.surfaces.find((s) => s.surfaceKey === "slack/T1/(dms)");
+  ok(dmBucket !== undefined, "spend_report ledger: DM ledger rows fold into the (dms) bucket");
+  ok(dmBucket!.usdCap === null && dmBucket!.tokenCap === null, "spend_report ledger: the (dms) bucket hides per-DM caps as null (a shared bucket has no single cap)");
+  ok(dmBucket!.usdOver === true && dmBucket!.over === true, "spend_report ledger: the (dms) bucket still surfaces `over`/`usdOver` when ANY member DM breached its own cap — never masked into silence");
+  ok(
+    !report.ledger.surfaces.some((s) => s.surfaceKey === dmA || s.surfaceKey === dmB),
+    "spend_report ledger: individual DM surfaces are never listed, even when one of them is over budget",
+  );
+
+  await opStore.clearSpendLimit(org, dmA, "surface");
 }
 
 {

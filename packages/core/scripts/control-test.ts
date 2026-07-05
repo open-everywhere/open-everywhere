@@ -15,6 +15,14 @@ ok("spendView has a period", /^\d{4}-\d{2}$/.test(spend.period));
 ok("spendView surfaces is an array", Array.isArray(spend.surfaces));
 ok("spendView workspaces is an array", Array.isArray(spend.workspaces));
 ok("spendView is JSON-serialisable", typeof JSON.stringify(spend) === "string");
+ok(
+  "spendView: surface rows carry the tokenCap/tokenOver/usd/usdCap/usdOver/over shape",
+  spend.surfaces.every((s) => "tokenCap" in s && "tokenOver" in s && "usd" in s && "usdCap" in s && "usdOver" in s && "over" in s),
+);
+ok(
+  "spendView: workspace rows carry the same shape",
+  spend.workspaces.every((w) => "tokenCap" in w && "tokenOver" in w && "usd" in w && "usdCap" in w && "usdOver" in w && "over" in w),
+);
 
 const spend2 = await spendView("2020-01");
 ok("spendView honours an explicit period", spend2.period === "2020-01");
@@ -103,6 +111,38 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   ok("skills_list: a domain:eng role is denied a different domain", skillsDenied.isError === true);
 
   await engClient.close();
+}
+
+{
+  const store = await import("../agent/spend/store.js");
+  const opStore = getOperationalStore();
+  const surfaceKey = "slack/T1/C_CTLCAP";
+  const nowISO = new Date().toISOString();
+  const period = nowISO.slice(0, 7);
+
+  await store.recordUsage({ org: CTL_ORG, surfaceKey } as never, period, { inputTokens: 1_000_000, outputTokens: 0 });
+  await appendUsageEvent({ org: CTL_ORG, surfaceKey, sessionId: "s-ctl-cap", principalId: "U_CTL", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: `${period}-05T00:00:00Z` });
+
+  const spendBefore = await spendView(period);
+  const rowBefore = spendBefore.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
+  ok("spendView: the seeded surface appears in this period's surfaces", rowBefore !== undefined);
+  ok("spendView: usd is rendered and matches the priced row ($1.40 @ zai/glm-5.2's built-in rate)", Math.abs((rowBefore?.usd ?? -1) - 1.4) < 1e-9);
+  ok("spendView: no cap configured anywhere -> both caps null, never over", rowBefore?.tokenCap === null && rowBefore?.usdCap === null && rowBefore?.over === false);
+
+  const wsRowBefore = spendBefore.workspaces.find((w) => w.key === `${CTL_ORG}/slack/T1`);
+  ok("spendView: a workspace row exists for the seeded org/workspace", wsRowBefore !== undefined);
+  ok("spendView: workspace usd rolls up at least the surface's contribution", (wsRowBefore?.usd ?? 0) >= 1.4 - 1e-9);
+
+  await opStore.setSpendLimit(CTL_ORG, surfaceKey, "surface", { monthlyUsd: 1 }, { reason: "test", setBy: "tester" });
+  const spendAfter = await spendView(period);
+  const rowAfter = spendAfter.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
+  ok("spendView: an ACTIVE override changes the shown usd cap (report == gate)", rowAfter?.usdCap === 1);
+  ok("spendView: with the override active, the surface shows over", rowAfter?.usdOver === true && rowAfter?.over === true);
+
+  await opStore.clearSpendLimit(CTL_ORG, surfaceKey, "surface");
+  const spendCleared = await spendView(period);
+  const rowCleared = spendCleared.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
+  ok("spendView: clearing the override reverts to the (uncapped) config baseline", rowCleared?.usdCap === null && rowCleared?.usdOver === false);
 }
 
 const server = buildControlServer();

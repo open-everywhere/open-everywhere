@@ -47,3 +47,11 @@ export async function effectiveCaps(org: string, workspaceKey: string, surfaceKe
     return config;
   }
 }
+
+export async function activeSpendLimitsForOrg(org: string, now: number = Date.now()): Promise<SpendLimitRow[]> {
+  try {
+    return activeSpendLimits(await getOperationalStore().spendLimits(org), now);
+  } catch {
+    return [];
+  }
+}

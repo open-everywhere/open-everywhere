@@ -3,8 +3,9 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
 import { allLedgers } from "../spend/store.js";
-import { windowTokens, periodOf } from "../spend/spend.js";
-import { resolveCaps } from "../spend/caps.js";
+import { windowTokens, periodOf, type Caps } from "../spend/spend.js";
+import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg } from "../spend/caps.js";
+import { workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod, type WorkspaceUsdSpend } from "../spend/check.js";
 import { getConfig } from "../access/config.js";
 import {
   resolveReportScope,
@@ -28,7 +29,7 @@ function isoDaysAgo(days: number): string {
 
 export default defineTool({
   description:
-    "Token spend rollup for your memory domain, or (org admins only) the whole org: tokens + estimated $ by surface and turn-origin kind, the existing monthly ledger totals against configured caps, and a routine-fired cost PROJECTION (7d/30d) where a surface has enough history. scope=\"domain\" works for anyone in a memory domain (reports that domain only); scope=\"org\" requires an org admin. $ figures are estimates, always labelled with the assumption behind them.",
+    "Token spend rollup for your memory domain, or (org admins only) the whole org: tokens + estimated $ by surface and turn-origin kind, the existing monthly ledger totals (tokens AND $) against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same numbers the spend gate enforces), per surface and per workspace, and a routine-fired cost PROJECTION (7d/30d) where a surface has enough history. scope=\"domain\" works for anyone in a memory domain (reports that domain only); scope=\"org\" requires an org admin. $ figures are estimates, always labelled with the assumption behind them.",
   inputSchema: z.object({
     scope: z.enum(["domain", "org"]).describe('"domain" = your own resolved memory domain (anyone in it); "org" = the whole org (org-admin only).'),
     sinceDays: z.number().int().positive().max(365).optional().describe("Usage window in days, default 30."),
@@ -70,7 +71,32 @@ export default defineTool({
     ledger: z.object({
       period: z.string(),
       totalTokens: z.number(),
-      surfaces: z.array(z.object({ surfaceKey: z.string(), channel: z.string().optional(), tokens: z.number(), cap: z.number().nullable(), over: z.boolean() })),
+      totalUsd: z.number(),
+      surfaces: z.array(
+        z.object({
+          surfaceKey: z.string(),
+          channel: z.string().optional(),
+          tokens: z.number(),
+          tokenCap: z.number().nullable(),
+          tokenOver: z.boolean(),
+          usd: z.number(),
+          usdCap: z.number().nullable(),
+          usdOver: z.boolean(),
+          over: z.boolean(),
+        }),
+      ),
+      workspaces: z.array(
+        z.object({
+          workspaceKey: z.string(),
+          tokens: z.number(),
+          tokenCap: z.number().nullable(),
+          tokenOver: z.boolean(),
+          usd: z.number(),
+          usdCap: z.number().nullable(),
+          usdOver: z.boolean(),
+          over: z.boolean(),
+        }),
+      ),
     }),
     routinePredictions: z.array(
       z.object({
@@ -138,17 +164,42 @@ export default defineTool({
     const totalsWithCost = { ...totals, ...(pricedGroups.length > 0 ? { costUsd: pricedGroups.reduce((sum, r) => sum + r.costUsd!, 0) } : {}) };
     const mix = pricingMix(nonSandbox, assumed);
 
-    const period = input.period ?? periodOf(new Date().toISOString());
+    const nowISO = new Date().toISOString();
+    const currentPeriod = periodOf(nowISO);
+    const period = input.period ?? currentPeriod;
+    const isCurrentPeriod = period === currentPeriod;
     const ledgers = await allLedgers();
-    const rawLedgerSurfaces = ledgers
+    const orgLedgers = ledgers
       .filter((l) => l.org === resolved.org)
-      .filter((l) => !resolved.domain || domainOfUsageRow(l.surfaceKey, undefined, domains) === resolved.domain)
-      .map((l) => {
-        const tokens = windowTokens(l.ledger.windows[period]);
-        const cap = resolveCaps(l.surfaceKey.split("/").slice(0, 2).join("/"), l.surfaceKey).surfaceMonthlyTokens ?? null;
-        return { surfaceKey: l.surfaceKey, tokens, cap, over: cap != null && tokens >= cap };
-      });
-    const dmLedger = new Map<string, { surfaceKey: string; tokens: number; cap: number | null; over: boolean }>();
+      .filter((l) => !resolved.domain || domainOfUsageRow(l.surfaceKey, undefined, domains) === resolved.domain);
+
+    const overrideLimits = await activeSpendLimitsForOrg(resolved.org);
+    const effCapsForScope = (workspaceKey: string, surfaceKey: string): Caps => {
+      const config = resolveCaps(workspaceKey, surfaceKey);
+      return overrideLimits.length ? applyCapOverrides(config, overrideLimits, workspaceKey, surfaceKey) : config;
+    };
+
+    const workspaceKeysInScope = [...new Set(orgLedgers.map((l) => l.surfaceKey.split("/").slice(0, 2).join("/")))];
+    const usdByWorkspace = new Map<string, WorkspaceUsdSpend>(
+      await Promise.all(
+        workspaceKeysInScope.map(
+          async (wk) => [wk, isCurrentPeriod ? await workspaceUsdSpendForCurrentMonth(resolved.org, wk, nowISO) : await workspaceUsdSpendForPeriod(resolved.org, wk, period)] as const,
+        ),
+      ),
+    );
+
+    const rawLedgerSurfaces = orgLedgers.map((l) => {
+      const workspaceKey = l.surfaceKey.split("/").slice(0, 2).join("/");
+      const tokens = windowTokens(l.ledger.windows[period]);
+      const caps = effCapsForScope(workspaceKey, l.surfaceKey);
+      const tokenCap = caps.surfaceMonthlyTokens ?? null;
+      const tokenOver = tokenCap != null && tokens >= tokenCap;
+      const usd = usdByWorkspace.get(workspaceKey)?.bySurface.get(l.surfaceKey) ?? 0;
+      const usdCap = caps.surfaceMonthlyUsd ?? null;
+      const usdOver = usdCap != null && usd >= usdCap;
+      return { surfaceKey: l.surfaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
+    });
+    const dmLedger = new Map<string, (typeof rawLedgerSurfaces)[number]>();
     const ledgerSurfaces: typeof rawLedgerSurfaces = [];
     for (const s of rawLedgerSurfaces) {
       if (!isDmSurface(s.surfaceKey)) {
@@ -156,13 +207,34 @@ export default defineTool({
         continue;
       }
       const key = dmBucketKey(s.surfaceKey);
-      const acc = dmLedger.get(key) ?? { surfaceKey: key, tokens: 0, cap: null, over: false };
-      acc.tokens += s.tokens;
-      acc.over = acc.over || s.over;
-      dmLedger.set(key, acc);
+      const acc = dmLedger.get(key) ?? { surfaceKey: key, tokens: 0, tokenCap: null, tokenOver: false, usd: 0, usdCap: null, usdOver: false, over: false };
+      dmLedger.set(key, {
+        surfaceKey: key,
+        tokens: acc.tokens + s.tokens,
+        tokenCap: null,
+        tokenOver: acc.tokenOver || s.tokenOver,
+        usd: acc.usd + s.usd,
+        usdCap: null,
+        usdOver: acc.usdOver || s.usdOver,
+        over: acc.over || s.over,
+      });
     }
     ledgerSurfaces.push(...dmLedger.values());
     const ledgerTotalTokens = ledgerSurfaces.reduce((sum, s) => sum + s.tokens, 0);
+    const ledgerTotalUsd = ledgerSurfaces.reduce((sum, s) => sum + s.usd, 0);
+
+    const ledgerWorkspaces = workspaceKeysInScope.map((workspaceKey) => {
+      const tokens = orgLedgers
+        .filter((l) => l.surfaceKey.split("/").slice(0, 2).join("/") === workspaceKey)
+        .reduce((sum, l) => sum + windowTokens(l.ledger.windows[period]), 0);
+      const caps = effCapsForScope(workspaceKey, "");
+      const tokenCap = caps.workspaceMonthlyTokens ?? null;
+      const tokenOver = tokenCap != null && tokens >= tokenCap;
+      const usd = usdByWorkspace.get(workspaceKey)?.workspaceUsd ?? 0;
+      const usdCap = caps.workspaceMonthlyUsd ?? null;
+      const usdOver = usdCap != null && usd >= usdCap;
+      return { workspaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
+    });
 
     const routineRows = scopedRows.filter((r) => r.kind === "routine");
     const routinePredictions = (await buildRoutinePredictions(resolved.org, routineRows, assumed.pricing)).map((p) =>
@@ -183,9 +255,11 @@ export default defineTool({
       pricingNote(mix, assumed),
       "sandbox runtime isn't included in this rollup — see session_cost for a conversation's sandbox seconds/$.",
       "routinePredictions project future spend from this window's history and each surface's CURRENT active cron/interval routines — always an estimate, not a bill.",
-      "ledger.surfaces uses the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
+      "ledger.surfaces/ledger.workspaces use the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
+      "ledger caps are EFFECTIVE caps — config-as-code overlaid with any currently-active admin override (set_spend_limit) — the same numbers the spend gate enforces; an expired override has already reverted to config here, same as at the gate.",
+      "ledger.*.usd is the SAME evidence-only per-row estimate the gate uses (never a guessed rate); an all-unpriced deploy's usd reads $0 and its usd cap never trips. For the current month this figure equals what the gate is enforcing right now; it always uses the deploy's own default assumed-model resolution for this ledger, independent of any assumedModelId you passed above.",
       "channel labels are best-effort Slack lookups — prefer them when presenting; the surfaceKey stays the ground truth.",
-      'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution).',
+      'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution); tokenCap/usdCap are hidden as null for that bucket (a shared bucket has no single cap) but over/tokenOver/usdOver are never masked.',
     ];
     if (resolved.domain) {
       notes.push(
@@ -202,7 +276,13 @@ export default defineTool({
       bySurfaceAndKind: bySurfaceAndKind.map(labelled),
       totals: totalsWithCost,
       ...(assumed.model ? { pricedModel: assumed.model } : {}),
-      ledger: { period, totalTokens: ledgerTotalTokens, surfaces: ledgerSurfaces.map(labelled) },
+      ledger: {
+        period,
+        totalTokens: ledgerTotalTokens,
+        totalUsd: ledgerTotalUsd,
+        surfaces: ledgerSurfaces.map(labelled),
+        workspaces: ledgerWorkspaces,
+      },
       routinePredictions: routinePredictions.map(labelled),
       note: notes.join(" "),
     };

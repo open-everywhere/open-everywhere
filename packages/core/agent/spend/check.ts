@@ -15,22 +15,45 @@ export interface ScopeUsdSpend {
   readonly workspaceUsd: number;
 }
 
-export async function scopeUsdSpend(org: string, workspaceKey: string, surfaceKey: string, nowISO: string): Promise<ScopeUsdSpend> {
-  const rows = await usageSummary(org, {
-    surfaceKeyPrefix: `${workspaceKey}/`,
-    sinceTs: monthStartISO(nowISO),
-    untilTs: nowISO,
-  });
+export interface WorkspaceUsdSpend {
+  readonly workspaceUsd: number;
+  readonly bySurface: ReadonlyMap<string, number>;
+}
+
+function periodWindow(period: string): { sinceTs: string; untilTs: string } {
+  const [y, m] = period.split("-").map(Number);
+  return {
+    sinceTs: `${period}-01T00:00:00.000Z`,
+    untilTs: new Date(Date.UTC(y, m, 1) - 1).toISOString(),
+  };
+}
+
+async function workspaceUsdSpendInWindow(org: string, workspaceKey: string, sinceTs: string, untilTs: string): Promise<WorkspaceUsdSpend> {
+  const rows = await usageSummary(org, { surfaceKeyPrefix: `${workspaceKey}/`, sinceTs, untilTs });
   const assumed = resolveAssumedModel();
-  let surfaceUsd = 0;
   let workspaceUsd = 0;
+  const bySurface = new Map<string, number>();
   for (const r of rows) {
     const cost = rowCostUsd(r, assumed);
     if (cost === undefined) continue;
     workspaceUsd += cost;
-    if (r.surfaceKey === surfaceKey) surfaceUsd += cost;
+    bySurface.set(r.surfaceKey, (bySurface.get(r.surfaceKey) ?? 0) + cost);
   }
-  return { surfaceUsd, workspaceUsd };
+  return { workspaceUsd, bySurface };
+}
+
+export async function workspaceUsdSpendForCurrentMonth(org: string, workspaceKey: string, nowISO: string): Promise<WorkspaceUsdSpend> {
+  return workspaceUsdSpendInWindow(org, workspaceKey, monthStartISO(nowISO), nowISO);
+}
+
+export async function workspaceUsdSpendForPeriod(org: string, workspaceKey: string, period: string): Promise<WorkspaceUsdSpend> {
+  const { sinceTs, untilTs } = periodWindow(period);
+  return workspaceUsdSpendInWindow(org, workspaceKey, sinceTs, untilTs);
+}
+
+export async function scopeUsdSpend(org: string, workspaceKey: string, surfaceKey: string, nowISO: string): Promise<ScopeUsdSpend> {
+  const { workspaceUsd, bySurface } = await workspaceUsdSpendForCurrentMonth(org, workspaceKey, nowISO);
+  return { surfaceUsd: bySurface.get(surfaceKey) ?? 0, workspaceUsd };
 }
 
 export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: string): Promise<CapVerdict> {

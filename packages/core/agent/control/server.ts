@@ -47,7 +47,8 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "spend_report",
     {
       title: "Spend report",
-      description: "Per-surface and per-workspace token spend for a month against configured caps. Read-only. period defaults to the current month (YYYY-MM).",
+      description:
+        "Per-surface and per-workspace token + estimated USD spend for a month against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same caps the spend gate enforces). Read-only. period defaults to the current month (YYYY-MM).",
       inputSchema: { period: z.string().regex(/^\d{4}-\d{2}$/).optional() },
     },
     (args) => jsonTool(() => spendView(args.period))(),
