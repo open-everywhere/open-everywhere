@@ -3,6 +3,8 @@ import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayRoutedModel } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
+import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 
 const GATEWAY_DEFAULTS = {
   only: ["fireworks"],
@@ -12,6 +14,8 @@ const GATEWAY_DEFAULTS = {
 const DEFAULT_MODEL = "zai/glm-5.2";
 
 registerGatewayDreamJudge({ id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS });
+
+registerPricingSource(gatewayCatalogPricingSource());
 
 export default defineAgent({
   model: gatewayRoutedModel("primary", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),

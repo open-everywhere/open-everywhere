@@ -46,8 +46,30 @@ export function _resetPricingCacheForTest(): void {
   envTable = undefined;
 }
 
+export interface PricingSource {
+  priceFor(modelId: string): ModelPricing | undefined;
+}
+
+let pricingSource: PricingSource | null = null;
+
+export function registerPricingSource(source: PricingSource): void {
+  pricingSource = source;
+}
+
+export function _resetPricingSourceForTest(): void {
+  pricingSource = null;
+}
+
 export function modelPricing(modelId: string): ModelPricing | undefined {
-  return envPricingTable()[modelId] ?? BUILT_IN[modelId];
+  const configured = envPricingTable()[modelId] ?? BUILT_IN[modelId];
+  if (configured) return configured;
+  if (!pricingSource) return undefined;
+  try {
+    return pricingSource.priceFor(modelId) ?? undefined;
+  } catch (err) {
+    console.warn(`[open-everywhere:pricing] registered PricingSource threw for "${modelId}" — treating as unpriced: ${String(err)}`);
+    return undefined;
+  }
 }
 
 export function pricedModelIds(): string[] {

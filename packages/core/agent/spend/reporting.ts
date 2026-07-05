@@ -68,7 +68,7 @@ export function resolveAssumedModel(explicit?: string): AssumedModelPricing {
   }
   const pricing = modelPricing(model);
   if (!pricing) {
-    return { model, note: `token $ omitted — "${model}" has no configured pricing (see OE_MODEL_PRICING).` };
+    return { model, note: `token $ omitted — "${model}" has no configured pricing (checked OE_MODEL_PRICING, the built-in table, and the live catalog, if one is registered).` };
   }
   return {
     model,

@@ -1,4 +1,14 @@
-import { modelPricing, estimateCostUsd, _resetPricingCacheForTest } from "../agent/spend/pricing.js";
+import {
+  modelPricing,
+  estimateCostUsd,
+  pricedModelIds,
+  soleConfiguredModel,
+  registerPricingSource,
+  _resetPricingCacheForTest,
+  _resetPricingSourceForTest,
+  type ModelPricing,
+  type PricingSource,
+} from "../agent/spend/pricing.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -47,4 +57,48 @@ ok(modelPricing("acme/good")?.inPerMtok === 3, "env override: a well-formed sibl
 
 delete process.env.OE_MODEL_PRICING;
 _resetPricingCacheForTest();
+
+_resetPricingSourceForTest();
+ok(modelPricing("acme/live-only") === undefined, "no source registered: an id absent from env+built-in is still undefined");
+ok(modelPricing("zai/glm-5.2")?.inPerMtok === 1.4, "no source registered: built-in lookup behaves exactly as before this seam existed");
+
+const fakeSource: PricingSource = {
+  priceFor(modelId: string): ModelPricing | undefined {
+    const table: Record<string, ModelPricing> = {
+      "zai/glm-5.2": { inPerMtok: 999, outPerMtok: 999, cachedInPerMtok: 999 },
+      "minimax/minimax-m2.7": { inPerMtok: 0.3, outPerMtok: 1.2, cachedInPerMtok: 0.06 },
+    };
+    return table[modelId];
+  },
+};
+registerPricingSource(fakeSource);
+ok(modelPricing("zai/glm-5.2")?.inPerMtok === 1.4, "registered source: the built-in table's entry wins over the source's for the same id (hand-verified beats fetched)");
+ok(modelPricing("minimax/minimax-m2.7")?.inPerMtok === 0.3, "registered source: fills a gap the built-in table + env override leave open");
+ok(modelPricing("totally/unknown") === undefined, "registered source: an id the source also doesn't have stays undefined, not a guess");
+
+process.env.OE_MODEL_PRICING = JSON.stringify({ "minimax/minimax-m2.7": { inPerMtok: 7, outPerMtok: 7 } });
+_resetPricingCacheForTest();
+ok(modelPricing("minimax/minimax-m2.7")?.inPerMtok === 7, "registered source: an env override for the same id also wins over the source");
+delete process.env.OE_MODEL_PRICING;
+_resetPricingCacheForTest();
+
+ok(pricedModelIds().length === 1 && pricedModelIds()[0] === "zai/glm-5.2", "pricedModelIds: registered source's extra ids are NOT folded in");
+ok(soleConfiguredModel() === "zai/glm-5.2", "soleConfiguredModel: still resolves from built-in/env only, unaffected by a many-model live source");
+
+registerPricingSource({
+  priceFor(): ModelPricing | undefined {
+    throw new Error("catalog fetch exploded");
+  },
+});
+let threw = false;
+try {
+  modelPricing("minimax/minimax-m2.7");
+} catch {
+  threw = true;
+}
+ok(!threw, "registered source: a throwing priceFor() is caught — modelPricing never propagates it");
+ok(modelPricing("minimax/minimax-m2.7") === undefined, "registered source: a throwing source's id is treated as unpriced, not a crash");
+ok(modelPricing("zai/glm-5.2")?.inPerMtok === 1.4, "registered source: a throwing source doesn't disturb built-in lookups for OTHER ids");
+
+_resetPricingSourceForTest();
 console.log(`✓ pricing: ${passed} assertions passed`);
