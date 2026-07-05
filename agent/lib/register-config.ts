@@ -4,6 +4,7 @@ import { loadProviders } from "../access/providers.js";
 import { PLUGIN_REGISTRY } from "../plugins/registry.js";
 import { SKILL_CONTENT } from "../plugins/skill-content.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js";
+import { loadWebhooks } from "../webhooks/hooks.js";
 
 registerConfig({
   loadBundles,
@@ -14,4 +15,5 @@ registerConfig({
   loadDomains,
   loadSilos,
   domainsForSurface,
+  loadWebhooks,
 });
