@@ -13,8 +13,8 @@ const GATEWAY_DEFAULTS = {
 } as const;
 const DEFAULT_MODEL = "zai/glm-5.2";
 
-const UTILITY_MODEL = "minimax/minimax-m2.7";
-const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 196_608;
+const UTILITY_MODEL = "deepseek/deepseek-v4-flash";
+const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
 const UTILITY_GATEWAY_DEFAULTS = {
   caching: "auto",
 } as const;
@@ -30,7 +30,7 @@ export default defineAgent({
   compaction: {
     model: gatewayRoutedModel("utility", { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
-    thresholdPercent: 0.15,
+    thresholdPercent: 0.5,
   },
   modelOptions: {
     providerOptions: {
