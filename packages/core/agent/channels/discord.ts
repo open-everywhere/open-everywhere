@@ -4,6 +4,7 @@ import {
   type DiscordCommandInteraction,
 } from "eve/channels/discord";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
+import { finalMessageAction } from "./slack-events.js";
 
 function channelTypeFromRaw(raw: Record<string, unknown>): string | undefined {
   const ch = raw["channel"];
@@ -33,5 +34,17 @@ export default discordChannel({
     } catch {
     }
     return { auth };
+  },
+  events: {
+    "message.completed": async (data, channel) => {
+      const action = finalMessageAction(data.finishReason, data.message);
+      if (action.kind !== "post") {
+        if (action.kind === "silent" && data.message) {
+          console.log(`[open-everywhere:discord] judged silence (NO_REPLY) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
+        }
+        return;
+      }
+      await channel.discord.post(action.text);
+    },
   },
 });

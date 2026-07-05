@@ -169,7 +169,7 @@ const bindTeams: Mapper = (ctx) => {
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target:
       conversationId && serviceUrl
-        ? { serviceUrl, conversationId, tenantId, channelId: attr(a, ["channel_id", "channelId"]), teamId: attr(a, ["team_id", "teamId"]) }
+        ? { serviceUrl, conversationId, tenantId, channelId: attr(a, ["channel_id", "channelId"]), teamId: attr(a, ["team_id", "teamId"]), conversationType: scope }
         : undefined,
   };
 };
@@ -189,7 +189,7 @@ const bindDiscord: Mapper = (ctx) => {
     visibility: discordVisibility(everyoneCanView, mode),
     trust: undefined,
     principalId: authPrincipalId(ctx) ?? userId,
-    target: channelId ? { channelId } : undefined,
+    target: channelId ? { channelId, ...(guildId ? { guildId } : {}), ...(channelType ? { channelType } : {}) } : undefined,
   };
 };
 
@@ -208,7 +208,7 @@ const bindTelegram: Mapper = (ctx) => {
     visibility: telegramVisibility(chatType, mode),
     trust: undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
-    target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}) } : undefined,
+    target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}), ...(chatType ? { chatType } : {}) } : undefined,
   };
 };
 

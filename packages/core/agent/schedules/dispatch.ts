@@ -1,12 +1,20 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
+import type { TelegramReceiveTarget } from "eve/channels/telegram";
+import type { DiscordReceiveTarget } from "eve/channels/discord";
+import type { TeamsReceiveTarget } from "eve/channels/teams";
 import slack from "../channels/slack.js";
+import telegram from "../channels/telegram.js";
+import discord from "../channels/discord.js";
+import teams from "../channels/teams.js";
 import { confirmChannelInternal } from "../channels/slack-events.js";
+import { teamsMode } from "../channels/teams-identity.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
 import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
+import type { SessionMode } from "../access/resolver.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
@@ -21,39 +29,120 @@ function routineMaxConcurrency(): number {
 }
 
 interface DispatchTarget {
-  readonly channel: typeof slack;
-  readonly target: { channelId: string; threadTs?: string };
+  readonly channel: typeof slack | typeof telegram | typeof discord | typeof teams;
+  readonly target: { channelId: string; threadTs?: string } | TelegramReceiveTarget | DiscordReceiveTarget | TeamsReceiveTarget;
+  readonly mode: SessionMode;
+  readonly attributes: Readonly<Record<string, string>>;
 }
+
+function storedString(t: Routine["target"], key: string): string | undefined {
+  const v = t?.[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function resolveSlackTarget(r: Routine): DispatchTarget | null {
+  const channelId = storedString(r.target, "channelId");
+  if (!channelId) return null;
+  const mode: SessionMode = channelId.startsWith("D") ? "dm" : "channel";
+  return {
+    channel: slack,
+    target: { channelId },
+    mode,
+    attributes: {
+      team_id: r.surfaceKey.split("/")[1] ?? "",
+      channel_id: channelId,
+      channel_type: mode === "dm" ? "im" : "channel",
+    },
+  };
+}
+
+function resolveTelegramTarget(r: Routine): DispatchTarget | null {
+  const chatId = storedString(r.target, "chatId");
+  if (!chatId) return null;
+  const threadId = r.target?.["messageThreadId"];
+  const messageThreadId = typeof threadId === "number" && Number.isInteger(threadId) ? threadId : undefined;
+  const chatType = storedString(r.target, "chatType") ?? (chatId.startsWith("-") ? undefined : "private");
+  const mode: SessionMode = chatType === "private" ? "dm" : "channel";
+  return {
+    channel: telegram,
+    target: { chatId, ...(messageThreadId !== undefined ? { messageThreadId } : {}) },
+    mode,
+    attributes: {
+      chat_id: chatId,
+      ...(messageThreadId !== undefined ? { message_thread_id: String(messageThreadId) } : {}),
+      ...(chatType ? { chat_type: chatType } : {}),
+    },
+  };
+}
+
+function resolveDiscordTarget(r: Routine): DispatchTarget | null {
+  const channelId = storedString(r.target, "channelId");
+  if (!channelId) return null;
+  const channelType = storedString(r.target, "channelType");
+  const mode: SessionMode = channelType === "1" ? "dm" : channelType === "3" ? "mpim" : "channel";
+  return {
+    channel: discord,
+    target: { channelId },
+    mode,
+    attributes: {
+      channel_id: channelId,
+      guild_id: storedString(r.target, "guildId") ?? r.surfaceKey.split("/")[1] ?? "",
+      ...(channelType ? { channel_type: channelType } : {}),
+    },
+  };
+}
+
+function resolveTeamsTarget(r: Routine): DispatchTarget | null {
+  const serviceUrl = storedString(r.target, "serviceUrl");
+  const conversationId = storedString(r.target, "conversationId");
+  if (!serviceUrl || !conversationId) return null;
+  const conversationType = storedString(r.target, "conversationType");
+  const channelId = storedString(r.target, "channelId");
+  const teamId = storedString(r.target, "teamId");
+  const tenantId = storedString(r.target, "tenantId") ?? r.surfaceKey.split("/")[1] ?? "";
+  const mode = teamsMode(conversationType);
+  return {
+    channel: teams,
+    target: {
+      serviceUrl,
+      conversationId,
+      ...(conversationType ? { conversationType } : {}),
+      ...(channelId ? { channelId } : {}),
+      ...(teamId ? { teamId } : {}),
+      ...(tenantId ? { tenantId } : {}),
+    },
+    mode,
+    attributes: {
+      conversation_id: conversationId,
+      service_url: serviceUrl,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
+      ...(channelId ? { channel_id: channelId } : {}),
+      ...(teamId ? { team_id: teamId } : {}),
+      ...(conversationType ? { scope: conversationType } : {}),
+    },
+  };
+}
+
 function resolveTarget(routine: Routine): DispatchTarget | null {
   const platform = routine.surfaceKey.split("/")[0];
-  if (platform === "slack") {
-    const channelId = routine.target?.["channelId"];
-    if (typeof channelId === "string" && channelId.length > 0) {
-      return { channel: slack, target: { channelId } };
-    }
+  switch (platform) {
+    case "slack":
+      return resolveSlackTarget(routine);
+    case "telegram":
+      return resolveTelegramTarget(routine);
+    case "discord":
+      return resolveDiscordTarget(routine);
+    case "teams":
+      return resolveTeamsTarget(routine);
+    default:
+      return null;
   }
-  return null;
 }
 
 function partitionOf(r: Routine): Partition {
   const [platform = "", workspace = "", ...rest] = r.surfaceKey.split("/");
   const workspaceKey = `${platform}/${workspace}`;
   return { org: r.org, platform, workspace, surface: rest.join("/"), workspaceKey, surfaceKey: r.surfaceKey, key: r.surfaceKey };
-}
-
-function surfaceAttributesFor(
-  r: Routine,
-  dest: DispatchTarget,
-  mode: "dm" | "channel",
-  confirmedInternal: boolean,
-): Record<string, string> {
-  const teamId = r.surfaceKey.split("/")[1] ?? "";
-  return {
-    team_id: teamId,
-    channel_id: dest.target.channelId,
-    channel_type: mode === "dm" ? "im" : "channel",
-    ...(confirmedInternal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
-  };
 }
 
 export async function dispatchTick(
@@ -87,7 +176,7 @@ export async function dispatchTick(
     const dest = resolveTarget(r);
     if (!dest) {
       dryRun++;
-      log(`DUE (dry-run, no channel): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
+      log(`DUE (dry-run, unresolvable channel/target): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
       continue;
     }
     if (fired >= cap) {
@@ -95,7 +184,7 @@ export async function dispatchTick(
       continue;
     }
     const next = computeNextRun(r.trigger, now);
-    const mode = dest.target.channelId.startsWith("D") ? "dm" : "channel";
+    const mode = dest.mode;
     try {
       const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString());
       if (verdict.over) {
@@ -116,15 +205,15 @@ export async function dispatchTick(
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
       });
+      const slackChannelId = dest.channel === slack && "channelId" in dest.target ? dest.target.channelId : undefined;
       const internal =
-        r.surfaceKey.startsWith("slack/") && mode === "channel"
-          ? await confirmInternal(dest.target.channelId).catch(() => false)
-          : false;
+        slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
       const markedAuth = {
         ...appAuth,
         attributes: {
           ...appAuth.attributes,
-          ...surfaceAttributesFor(r, dest, mode, internal),
+          ...dest.attributes,
+          ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
           [ROUTINE_MARKER.id]: r.id,
           [ROUTINE_MARKER.surface]: r.surfaceKey,
           [ROUTINE_MARKER.org]: r.org,
@@ -135,7 +224,7 @@ export async function dispatchTick(
           message: r.trigger.kind === "watch" ? renderWatchMessage(r) : renderScheduledMessage(r),
           target: dest.target,
           auth: markedAuth,
-        }),
+        }).catch((err: unknown) => log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`)),
       );
       fired++;
     } catch (err) {

@@ -66,7 +66,10 @@ function dispatch(input: {
   ok(binding.mode === "channel", "A: guild text channel -> channel mode");
   ok(binding.visibility === "private", "A: FAIL-CLOSED — guild channel with no @everyone signal -> private");
   ok(binding.principalId === "U_alice", "A: principal from user id");
-  ok(JSON.stringify(binding.target) === JSON.stringify({ channelId: "C_ENG" }), "A: post-back target = { channelId }");
+  ok(
+    JSON.stringify(binding.target) === JSON.stringify({ channelId: "C_ENG", guildId: "G_ACME", channelType: "0" }),
+    "A: post-back target = { channelId } + raw guild/type facts for the routine dispatcher's fire-time re-stamp",
+  );
   ok(partition.workspaceKey === "discord/G_ACME", "A: workspaceKey");
   ok(partition.surfaceKey === "discord/G_ACME/C_ENG", "A: surfaceKey");
 }

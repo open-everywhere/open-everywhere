@@ -1,5 +1,6 @@
-import { teamsChannel } from "eve/channels/teams";
+import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
+import { finalMessageAction } from "./slack-events.js";
 
 export default teamsChannel({
   onMessage: (_ctx, message) => {
@@ -18,5 +19,19 @@ export default teamsChannel({
       membershipType: teamsMembershipType(message.channelData),
     });
     return { auth };
+  },
+  events: {
+    "message.completed": async (data, channel) => {
+      const action = finalMessageAction(data.finishReason, data.message);
+      if (action.kind !== "post") {
+        if (action.kind === "silent" && data.message) {
+          console.log(`[open-everywhere:teams] judged silence (NO_REPLY) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);
+        }
+        return;
+      }
+      for (const part of splitTeamsMessageText(action.text)) {
+        await channel.thread.post(part);
+      }
+    },
   },
 });

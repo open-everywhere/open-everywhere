@@ -106,8 +106,9 @@ const memCfg: MemoryResolveConfig = {
       tenantId: "TENANT_ACME",
       channelId: "19:channel-eng@thread.tacv2",
       teamId: "19:team-eng@thread.tacv2",
+      conversationType: "channel",
     }),
-    "A: post-back target = Bot Connector reference",
+    "A: post-back target = Bot Connector reference (+ scope fact for the routine dispatcher)",
   );
   ok(partition.workspaceKey === "teams/TENANT_ACME", "A: partition workspaceKey = platform/tenant");
   ok(auth.authenticator === "teams" && auth.principalType === "teams-user", "A: auth principal fields");
