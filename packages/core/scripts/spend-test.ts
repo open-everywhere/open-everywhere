@@ -1,7 +1,7 @@
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { periodOf, emptyWindow, addUsage, windowTokens, checkCap } from "../agent/spend/spend.js";
+import { periodOf, emptyWindow, addUsage, windowTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
 import type { SpendLimitRow } from "../agent/operational/store.js";
 
@@ -31,6 +31,65 @@ ok(!checkCap({ mode: "channel", surfaceTokens: 99999, workspaceTokens: 99999, ca
 const reason = checkCap({ mode: "channel", surfaceTokens: 1200, workspaceTokens: 0, caps }).reason;
 ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict carries a human reason");
 
+{
+  const usdCaps = { surfaceMonthlyUsd: 10, workspaceMonthlyUsd: 100 };
+  const base = { mode: "channel" as const, surfaceTokens: 0, workspaceTokens: 0 };
+  ok(!checkCap({ ...base, surfaceUsd: 9.99, workspaceUsd: 9.99, caps: usdCaps }).over, "under surface $ cap -> not over");
+  ok(checkCap({ ...base, surfaceUsd: 10, workspaceUsd: 10, caps: usdCaps }).over, "at surface $ cap -> over (>= like tokens)");
+  ok(checkCap({ ...base, surfaceUsd: 0, workspaceUsd: 100, caps: usdCaps }).over, "workspace $ cap breached -> over");
+  ok(!checkCap({ mode: "dm", surfaceTokens: 0, workspaceTokens: 0, surfaceUsd: 9999, workspaceUsd: 9999, caps: usdCaps }).over, "DM is exempt from $ caps too");
+  const usdReason = checkCap({ ...base, surfaceUsd: 12.345, workspaceUsd: 0, caps: usdCaps }).reason;
+  ok(typeof usdReason === "string" && usdReason.includes("$12.35") && usdReason.includes("$10.00"), "over-$ verdict shows spent-of-cap dollars");
+  ok(!checkCap({ ...base, caps: usdCaps }).over, "missing USD inputs read as $0 spent");
+  const mixed = { surfaceMonthlyTokens: 1000, surfaceMonthlyUsd: 10 };
+  ok(checkCap({ mode: "channel", surfaceTokens: 1000, workspaceTokens: 0, surfaceUsd: 1, workspaceUsd: 1, caps: mixed }).over, "mixed caps: token breach blocks despite $ headroom");
+  ok(checkCap({ mode: "channel", surfaceTokens: 1, workspaceTokens: 0, surfaceUsd: 10, workspaceUsd: 10, caps: mixed }).over, "mixed caps: $ breach blocks despite token headroom");
+  const both = checkCap({
+    mode: "channel",
+    surfaceTokens: 0,
+    workspaceTokens: 99999,
+    surfaceUsd: 50,
+    workspaceUsd: 50,
+    caps: { surfaceMonthlyUsd: 10, workspaceMonthlyTokens: 5000 },
+  });
+  ok(both.over && !!both.reason?.includes("channel"), "surface breach is reported before a workspace breach (narrowest scope first)");
+}
+
+{
+  const throws = (b: SpendBudgets, needle: string, label: string) => {
+    try {
+      assertSpendBudgetsValid(b);
+      ok(false, `${label} (did not throw)`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      ok(msg.includes(needle), `${label} (message: "${msg}")`);
+    }
+  };
+  const valid = (b: SpendBudgets, label: string) => {
+    try {
+      assertSpendBudgetsValid(b);
+      ok(true, label);
+    } catch (e) {
+      ok(false, `${label} (threw: ${String(e)})`);
+    }
+  };
+  valid({}, "empty registry is valid (uncapped by default — never invents a budget)");
+  valid(
+    {
+      default: { workspaceMonthlyUsd: 100 },
+      perWorkspace: { "slack/T1": { workspaceMonthlyTokens: 1_000_000 } },
+      perSurface: { "slack/T1/C1": { surfaceMonthlyUsd: 5, surfaceMonthlyTokens: 10_000 } },
+    },
+    "a well-formed registry with token + USD components validates",
+  );
+  throws({ perWorkspace: { "slack/T1/C1": { workspaceMonthlyUsd: 1 } } }, "platform/workspace", "a perWorkspace key with a surface leg is rejected");
+  throws({ perSurface: { "slack/T1": { surfaceMonthlyUsd: 1 } } }, "platform/workspace/surface", "a perSurface key missing its surface leg is rejected");
+  throws({ default: { surfaceMonthlyUSD: 5 } as never }, "unknown field", "a typo'd cap field fails loud (a silent no-op budget is the worst failure mode)");
+  throws({ default: {} }, "no cap at all", "an entry that caps nothing is rejected");
+  throws({ default: { surfaceMonthlyUsd: -1 } }, "> 0", "a non-positive amount is rejected");
+  throws({ default: { surfaceMonthlyTokens: 1.5 } }, "integer", "a fractional token cap is rejected");
+}
+
 const NOW = 1_000_000;
 ok(isSpendLimitActive({ org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 1 }, NOW), "no expiresAt → always active");
 ok(isSpendLimitActive({ org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 1, expiresAt: NOW + 1 }, NOW), "future expiry → active");
@@ -41,6 +100,20 @@ ok(activeSpendLimits([expired, sticky], NOW).length === 1, "activeSpendLimits dr
 const baseline = { surfaceMonthlyTokens: 2 };
 ok(applyCapOverrides(baseline, activeSpendLimits([expired], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 2, "expired bridge reverts to the (tighter) config cap");
 ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s").surfaceMonthlyTokens === 9, "active bridge overlays the config cap");
+
+{
+  const config = { surfaceMonthlyTokens: 1000, surfaceMonthlyUsd: 10, workspaceMonthlyUsd: 100 };
+  const usdOnly: SpendLimitRow = { org: "o", scopeKey: "p/w/s", level: "surface", monthlyUsd: 50 };
+  const afterUsd = applyCapOverrides(config, [usdOnly], "p/w", "p/w/s");
+  ok(afterUsd.surfaceMonthlyUsd === 50, "a USD-only surface override replaces the surface $ cap");
+  ok(afterUsd.surfaceMonthlyTokens === 1000, "…and leaves the config token cap in force (per-component overlay)");
+  ok(afterUsd.workspaceMonthlyUsd === 100, "…and never touches the other level's caps");
+  const tokenOnly: SpendLimitRow = { org: "o", scopeKey: "p/w/s", level: "surface", monthlyTokens: 5 };
+  const afterTok = applyCapOverrides(config, [tokenOnly], "p/w", "p/w/s");
+  ok(afterTok.surfaceMonthlyTokens === 5 && afterTok.surfaceMonthlyUsd === 10, "a token-only override leaves the config $ cap in force");
+  const wsUsd: SpendLimitRow = { org: "o", scopeKey: "p/w", level: "workspace", monthlyUsd: 250 };
+  ok(applyCapOverrides(config, [wsUsd], "p/w", "p/w/s").workspaceMonthlyUsd === 250, "a workspace-level USD override targets the workspace $ component");
+}
 
 {
   const { turnKind } = await import("../agent/hooks/spend.js");
@@ -158,6 +231,96 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   });
   const isolatedRows = await usageEvents.usageForSession("default", "sess-isolated");
   ok(isolatedRows.length === 1 && isolatedRows[0].model === undefined, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
+}
+
+{
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
+  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
+  _resetPricingCacheForTest();
+
+  let budgets: SpendBudgets = {};
+  const { registerConfig } = await import("../agent/access/config.js");
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets,
+  });
+
+  const { monthStartISO, scopeUsdSpend, scopeOverBudget } = await import("../agent/spend/check.js");
+  const usageEvents = await import("../agent/spend/usage-events.js");
+  const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+
+  ok(monthStartISO("2026-07-15T12:00:00.000Z") === "2026-07-01T00:00:00.000Z", "monthStartISO -> first instant of the calendar month (matches periodOf's bucketing)");
+
+  const NOW_ISO = "2026-07-15T12:00:00.000Z";
+  const org = "usd-org";
+  const row = (surfaceKey: string, ts: string, tokens: { inputTokens?: number; outputTokens?: number }, model?: string, kind = "channel") =>
+    usageEvents.appendUsageEvent({ org, surfaceKey, sessionId: `s-${ts}`, ts, kind, model, ...tokens });
+
+  await row("slack/T9/C1", "2026-07-02T00:00:00Z", { inputTokens: 1_000_000 }, "zai/glm-5.2");
+  await row("slack/T9/C1", "2026-07-03T00:00:00Z", { outputTokens: 1_000_000 });
+  await row("slack/T9/C1", "2026-07-04T00:00:00Z", { inputTokens: 9_000_000 }, "mystery/unpriced");
+  await row("slack/T9/C11", "2026-07-05T00:00:00Z", { inputTokens: 2_000_000 }, "zai/glm-5.2");
+  await row("slack/T9/D1", "2026-07-06T00:00:00Z", { inputTokens: 1_000_000 }, "zai/glm-5.2", "dm");
+  await row("slack/T9/C1", "2026-06-29T18:14:59Z", { inputTokens: 50_000_000 }, "zai/glm-5.2");
+  await row("slack/T9/C1", "2026-07-14T06:15:01Z", { inputTokens: 50_000_000 }, "zai/glm-5.2");
+  await usageEvents.appendUsageEvent({ org: "other-org", surfaceKey: "slack/T9/C1", sessionId: "s-x", ts: "2026-07-02T00:00:00Z", kind: "channel", model: "zai/glm-5.2", inputTokens: 50_000_000 });
+
+  const usd = await scopeUsdSpend(org, "slack/T9", "slack/T9/C1", NOW_ISO);
+  const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  ok(close(usd.surfaceUsd, 3), `surfaceUsd sums stamped ($1) + assumed ($2) rows, $0 for unpriced/out-of-window/other-surface/other-org (got ${usd.surfaceUsd})`);
+  ok(close(usd.workspaceUsd, 6), `workspaceUsd = whole workspace incl. the sibling surface ($2) and the DM ($1) (got ${usd.workspaceUsd})`);
+  const c11 = await scopeUsdSpend(org, "slack/T9", "slack/T9/C11", NOW_ISO);
+  ok(close(c11.surfaceUsd, 2), "surfaceUsd is an exact surfaceKey match, not a prefix match (C1 vs C11)");
+
+  const p = { org, platform: "slack", workspace: "T9", surface: "C1", workspaceKey: "slack/T9", surfaceKey: "slack/T9/C1", key: "slack/T9/C1" };
+
+  budgets = {};
+  ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "no caps configured -> not over");
+
+  budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyUsd: 2.5 } } };
+  const over = await scopeOverBudget(p as never, "channel", NOW_ISO);
+  ok(over.over === true, "config $ cap below the month's priced spend -> over (fail closed)");
+  ok(!!over.reason?.includes("$3.00") && !!over.reason?.includes("$2.50"), `the refusal names spent vs cap (got: "${over.reason}")`);
+  ok(!(await scopeOverBudget(p as never, "dm", NOW_ISO)).over, "the same over-$ scope is exempt in DM mode");
+  ok(!(await scopeOverBudget(p as never, "channel", "2026-04-04T23:30:00.000Z")).over, "the window resets at the calendar-month boundary (August sees $0)");
+
+  await opStore.setSpendLimit(org, "slack/T9/C1", "surface", { monthlyUsd: 10 }, { reason: "bridge while the PR lands", setBy: "admin#1" });
+  ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "an active USD override above the spend un-blocks the scope");
+  await opStore.setSpendLimit(org, "slack/T9/C1", "surface", { monthlyUsd: 10 }, { expiresAt: Date.now() - 1000 });
+  ok((await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "an EXPIRED USD override reverts to the tighter config cap (expiry narrows)");
+  await opStore.clearSpendLimit(org, "slack/T9/C1", "surface");
+
+  budgets = { default: { workspaceMonthlyUsd: 5 } };
+  const wsOver = await scopeOverBudget(p as never, "channel", NOW_ISO);
+  ok(wsOver.over && !!wsOver.reason?.includes("workspace"), "a workspace $ default blocks when the workspace's month crosses it");
+  budgets = { default: { workspaceMonthlyUsd: 100 } };
+  ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "under the workspace $ cap -> not over");
+
+  const store2 = await import("../agent/spend/store.js");
+  await store2.recordUsage(p as never, "2026-07", { inputTokens: 5, outputTokens: 5 });
+  budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyTokens: 10, surfaceMonthlyUsd: 100 } } };
+  const tokOver = await scopeOverBudget(p as never, "channel", NOW_ISO);
+  ok(tokOver.over && !!tokOver.reason?.includes("tokens"), "a token cap on the same scope enforces through the same gate");
+
+  const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
+  const goodPath = process.env.OE_SQLITE_PATH;
+  _resetOperationalDbForTest();
+  process.env.OE_SQLITE_PATH = "/dev/null/open-everywhere-nope/ops.sqlite3";
+  budgets = {};
+  ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "fast path: no caps -> not over, even with a broken store");
+  budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyUsd: 2.5 } } };
+  ok(await scopeOverBudget(p as never, "channel", NOW_ISO).then(() => false, () => true), "a broken store under a configured $ cap makes the CHECK throw (call sites catch -> fail open), never a silent verdict");
+  _resetOperationalDbForTest();
+  process.env.OE_SQLITE_PATH = goodPath;
+
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
 }
 
 rmSync(dir, { recursive: true, force: true });

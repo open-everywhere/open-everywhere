@@ -43,7 +43,25 @@ export interface SpendLimitRow extends OverrideMeta {
   readonly org: string;
   readonly scopeKey: string;
   readonly level: CapLevel;
-  readonly monthlyTokens: number;
+  readonly monthlyTokens?: number;
+  readonly monthlyUsd?: number;
+}
+
+export interface SpendLimitAmount {
+  readonly monthlyTokens?: number;
+  readonly monthlyUsd?: number;
+}
+
+export function assertSpendLimitAmount(limit: SpendLimitAmount): void {
+  if (limit.monthlyTokens == null && limit.monthlyUsd == null) {
+    throw new Error("spend limit must set monthlyTokens and/or monthlyUsd");
+  }
+  if (limit.monthlyTokens != null && (!Number.isInteger(limit.monthlyTokens) || limit.monthlyTokens <= 0)) {
+    throw new Error(`spend limit monthlyTokens must be a positive integer, got ${JSON.stringify(limit.monthlyTokens)}`);
+  }
+  if (limit.monthlyUsd != null && (!Number.isFinite(limit.monthlyUsd) || limit.monthlyUsd <= 0)) {
+    throw new Error(`spend limit monthlyUsd must be a finite number > 0, got ${JSON.stringify(limit.monthlyUsd)}`);
+  }
 }
 
 export interface ConnectorOverrideRow {
@@ -134,7 +152,7 @@ export interface OperationalStore {
   appendAudit(entry: AuditEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditEntry[]>;
 
-  setSpendLimit(org: string, scopeKey: string, level: CapLevel, monthlyTokens: number, meta?: OverrideMeta): Promise<void>;
+  setSpendLimit(org: string, scopeKey: string, level: CapLevel, limit: SpendLimitAmount, meta?: OverrideMeta): Promise<void>;
   clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;
   spendLimits(org: string): Promise<SpendLimitRow[]>;
 

@@ -107,14 +107,26 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  await store.setSpendLimit("default", "slack/T1/C1", "surface", 1000);
-  await store.setSpendLimit("default", "slack/T1", "workspace", 50000);
-  await store.setSpendLimit("acme", "slack/T1/C1", "surface", 7);
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 1000 });
+  await store.setSpendLimit("default", "slack/T1", "workspace", { monthlyTokens: 50000 });
+  await store.setSpendLimit("acme", "slack/T1/C1", "surface", { monthlyTokens: 7 });
   const def = await store.spendLimits("default");
   ok(def.length === 2, "spend limits persist per org");
   ok((await store.spendLimits("acme")).every((l) => l.monthlyTokens === 7), "spend limit is org-isolated");
-  await store.setSpendLimit("default", "slack/T1/C1", "surface", 2000);
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 2000 });
   ok((await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1")?.monthlyTokens === 2000, "setSpendLimit upserts");
+  const tokenOnly = (await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1");
+  ok(tokenOnly?.monthlyUsd === undefined, "a token-only override carries no monthlyUsd");
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyUsd: 12.5 });
+  const usdOnly = (await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1");
+  ok(usdOnly?.monthlyUsd === 12.5 && usdOnly?.monthlyTokens === undefined, "a USD-only override round-trips with monthlyTokens absent (sentinel never leaks)");
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 2000, monthlyUsd: 40 });
+  const both = (await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1");
+  ok(both?.monthlyTokens === 2000 && both?.monthlyUsd === 40, "an override carrying both components round-trips both");
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 2000 });
+  ok(await store.setSpendLimit("default", "slack/T1/C1", "surface", {}).then(() => false, () => true), "setSpendLimit rejects an override with no component");
+  ok(await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: -5 }).then(() => false, () => true), "setSpendLimit rejects a negative token limit (would collide with the sentinel)");
+  ok(await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyUsd: 0 }).then(() => false, () => true), "setSpendLimit rejects a non-positive USD limit");
   ok((await store.clearSpendLimit("default", "slack/T1/C1", "surface")) === true && (await store.spendLimits("default")).length === 1, "clearSpendLimit removes one");
 
   await store.setConnectorOverride("default", "slack/T1/C1", "notion", true);
@@ -126,10 +138,10 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  await store.setSpendLimit("default", "slack/T1/C1", "surface", 3000, { expiresAt: 1234567890, reason: "blocked mid-task", setBy: "admin#1" });
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 3000 }, { expiresAt: 1234567890, reason: "blocked mid-task", setBy: "admin#1" });
   const meta = (await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1" && l.level === "surface");
   ok(meta?.expiresAt === 1234567890 && meta?.reason === "blocked mid-task" && meta?.setBy === "admin#1", "spend override persists bridge metadata");
-  await store.setSpendLimit("default", "slack/T1/C1", "surface", 3000);
+  await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyTokens: 3000 });
   ok((await store.spendLimits("default")).find((l) => l.scopeKey === "slack/T1/C1" && l.level === "surface")?.expiresAt === undefined, "re-set without meta clears expiresAt (no stale bridge)");
 
   await store.setConnectorOverride("default", "slack/T1/C1", "notion", false, { reason: "leaked token", setBy: "admin#2" });

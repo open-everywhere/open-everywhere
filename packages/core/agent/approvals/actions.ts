@@ -22,13 +22,26 @@ function fmtCap(tokens: number | null): string {
   return tokens === null ? "none (uncapped)" : `${tokens.toLocaleString()} tokens/mo`;
 }
 
+function fmtCapUsd(usd: number | null): string {
+  return usd === null ? "none (uncapped)" : `$${usd.toFixed(2)}/mo`;
+}
+
 export interface SpendSetArgs {
   readonly org: string;
   readonly scopeKey: string;
   readonly level: CapLevel;
-  readonly monthlyTokens: number;
+  readonly monthlyTokens?: number;
+  readonly monthlyUsd?: number;
   readonly reason?: string;
   readonly currentCap: number | null;
+  readonly currentUsd?: number | null;
+}
+
+function spendChangeLines(args: SpendSetArgs): string[] {
+  const lines: string[] = [];
+  if (args.monthlyTokens != null) lines.push(`tokens: ${fmtCap(args.currentCap)} → ${fmtCap(args.monthlyTokens)}`);
+  if (args.monthlyUsd != null) lines.push(`$: ${fmtCapUsd(args.currentUsd ?? null)} → ${fmtCapUsd(args.monthlyUsd)}`);
+  return lines;
 }
 
 const spendSet: ActionKind<SpendSetArgs> = {
@@ -37,20 +50,36 @@ const spendSet: ActionKind<SpendSetArgs> = {
   summarize(args) {
     return [
       `Set spend limit — scope \`${args.scopeKey}\` (${args.level})`,
-      `${fmtCap(args.currentCap)} → ${fmtCap(args.monthlyTokens)}`,
+      ...spendChangeLines(args),
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
     ];
   },
   async execute(args, decidedBy) {
     const store = getOperationalStore();
-    await store.setSpendLimit(args.org, args.scopeKey, args.level, args.monthlyTokens, { reason: args.reason, setBy: decidedBy });
+    await store.setSpendLimit(
+      args.org,
+      args.scopeKey,
+      args.level,
+      { monthlyTokens: args.monthlyTokens, monthlyUsd: args.monthlyUsd },
+      { reason: args.reason, setBy: decidedBy },
+    );
     await appendAudit({
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,
       action: "admin.spend.set_limit",
-      detail: { scopeKey: args.scopeKey, level: args.level, monthlyTokens: args.monthlyTokens, ...(args.reason ? { reason: args.reason } : {}) },
+      detail: {
+        scopeKey: args.scopeKey,
+        level: args.level,
+        ...(args.monthlyTokens != null ? { monthlyTokens: args.monthlyTokens } : {}),
+        ...(args.monthlyUsd != null ? { monthlyUsd: args.monthlyUsd } : {}),
+        ...(args.reason ? { reason: args.reason } : {}),
+      },
     });
-    return `spend limit set to ${fmtCap(args.monthlyTokens)} for \`${args.scopeKey}\` (${args.level})`;
+    const set = [
+      ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
+      ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
+    ].join(" + ");
+    return `spend limit set to ${set} for \`${args.scopeKey}\` (${args.level})`;
   },
 };
 
@@ -59,13 +88,21 @@ export interface SpendClearArgs {
   readonly scopeKey: string;
   readonly level: CapLevel;
   readonly currentCap: number | null;
+  readonly currentUsd?: number | null;
 }
 
 const spendClear: ActionKind<SpendClearArgs> = {
   kind: "spend.clear",
   policy: "admin",
   summarize(args) {
-    return [`Clear spend limit override — scope \`${args.scopeKey}\` (${args.level})`, `${fmtCap(args.currentCap)} → reverts to the config-as-code cap`];
+    const current = [
+      ...(args.currentCap !== null ? [fmtCap(args.currentCap)] : []),
+      ...(args.currentUsd != null ? [fmtCapUsd(args.currentUsd)] : []),
+    ];
+    return [
+      `Clear spend limit override — scope \`${args.scopeKey}\` (${args.level})`,
+      `${current.length ? current.join(" + ") : "none (uncapped)"} → reverts to the config-as-code cap`,
+    ];
   },
   async execute(args, decidedBy) {
     const store = getOperationalStore();

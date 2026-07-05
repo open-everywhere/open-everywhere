@@ -6,7 +6,7 @@ import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps } from "../spend/caps.js";
-import { defaultScopeKey } from "./set_spend_limit.js";
+import { defaultScopeKey, type CurrentCaps } from "./set_spend_limit.js";
 import { requestApproval } from "../approvals/flow.js";
 
 const LEVELS = ["surface", "workspace"] as const;
@@ -24,12 +24,13 @@ export interface SpendClearPlan {
     readonly scopeKey: string;
     readonly level: Level;
     readonly currentCap: number | null;
+    readonly currentUsd: number | null;
   };
   readonly scopeKey: string;
   readonly domain: string | null;
 }
 
-export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, currentCap: number | null, domain: string | null): SpendClearPlan {
+export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, current: CurrentCaps, domain: string | null): SpendClearPlan {
   if (binding.platform !== "slack") {
     throw new Error(`clear_spend_limit is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
   }
@@ -40,7 +41,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
   const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
   return {
     kind: "spend.clear",
-    args: { org: binding.org, scopeKey, level, currentCap },
+    args: { org: binding.org, scopeKey, level, currentCap: current.tokens, currentUsd: current.usd },
     scopeKey,
     domain,
   };
@@ -70,9 +71,12 @@ export default defineTool({
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
     const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey);
-    const currentCap = (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null;
+    const current: CurrentCaps = {
+      tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
+      usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
+    };
 
-    const plan = planClearSpendLimit(binding, input, currentCap, domain);
+    const plan = planClearSpendLimit(binding, input, current, domain);
 
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
@@ -94,7 +98,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `Posted a confirmation card to clear the ${plan.args.level} spend-limit override on "${plan.args.scopeKey}" (current: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString() + " tokens/month"}). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+      note: `Posted a confirmation card to clear the ${plan.args.level} spend-limit override on "${plan.args.scopeKey}" (current: ${[...(plan.args.currentCap !== null ? [plan.args.currentCap.toLocaleString() + " tokens/month"] : []), ...(plan.args.currentUsd !== null ? [`$${plan.args.currentUsd.toFixed(2)}/month`] : [])].join(" + ") || "uncapped"}). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
     };
   },
 });

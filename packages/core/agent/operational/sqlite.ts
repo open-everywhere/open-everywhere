@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger, UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 
 function dbPath(): string {
@@ -58,7 +58,8 @@ function getDb(): DatabaseSync {
       org_id        TEXT NOT NULL,
       scope_key     TEXT NOT NULL,
       level         TEXT NOT NULL,            -- "surface" | "workspace"
-      monthly_tokens INTEGER NOT NULL,
+      monthly_tokens INTEGER NOT NULL,        -- -1 = no token component (legacy NOT NULL; see setSpendLimit)
+      monthly_usd   REAL,                     -- NULL = no USD component
       expires_at    INTEGER,                  -- epoch ms; NULL = no auto-expiry
       reason        TEXT,
       set_by        TEXT,
@@ -137,6 +138,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE spend_limit ADD COLUMN expires_at INTEGER",
     "ALTER TABLE spend_limit ADD COLUMN reason TEXT",
     "ALTER TABLE spend_limit ADD COLUMN set_by TEXT",
+    "ALTER TABLE spend_limit ADD COLUMN monthly_usd REAL",
+
     "ALTER TABLE connector_override ADD COLUMN reason TEXT",
     "ALTER TABLE connector_override ADD COLUMN set_by TEXT",
   ]) {
@@ -382,17 +385,19 @@ export const sqliteOperationalStore: OperationalStore = {
     }));
   },
 
-  async setSpendLimit(org, scopeKey, level, monthlyTokens, meta) {
+  async setSpendLimit(org, scopeKey, level, limit, meta) {
+    assertSpendLimitAmount(limit);
     getDb()
       .prepare(
-        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, expires_at, reason, set_by) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(org_id, scope_key, level) DO UPDATE SET
            monthly_tokens = excluded.monthly_tokens,
+           monthly_usd    = excluded.monthly_usd,
            expires_at     = excluded.expires_at,
            reason         = excluded.reason,
            set_by         = excluded.set_by`,
       )
-      .run(org, scopeKey, level, monthlyTokens, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null);
+      .run(org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null);
   },
 
   async clearSpendLimit(org, scopeKey, level) {
@@ -401,13 +406,14 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async spendLimits(org) {
     const rows = getDb()
-      .prepare("SELECT scope_key, level, monthly_tokens, expires_at, reason, set_by FROM spend_limit WHERE org_id = ?")
-      .all(org) as { scope_key: string; level: string; monthly_tokens: number; expires_at: number | null; reason: string | null; set_by: string | null }[];
+      .prepare("SELECT scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by FROM spend_limit WHERE org_id = ?")
+      .all(org) as { scope_key: string; level: string; monthly_tokens: number; monthly_usd: number | null; expires_at: number | null; reason: string | null; set_by: string | null }[];
     return rows.map((r) => ({
       org,
       scopeKey: r.scope_key,
       level: r.level as "surface" | "workspace",
-      monthlyTokens: r.monthly_tokens,
+      ...(r.monthly_tokens >= 0 ? { monthlyTokens: r.monthly_tokens } : {}),
+      ...(r.monthly_usd != null ? { monthlyUsd: r.monthly_usd } : {}),
       ...(r.expires_at != null ? { expiresAt: r.expires_at } : {}),
       ...(r.reason ? { reason: r.reason } : {}),
       ...(r.set_by ? { setBy: r.set_by } : {}),

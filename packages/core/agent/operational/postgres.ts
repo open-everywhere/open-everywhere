@@ -1,7 +1,7 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import type { AuditEntry, AuditFilter, OperationalStore, OrgSurfaceLedger, UsageEventEntry, UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 
 export type { PgClient } from "../memory/postgres.js";
@@ -40,7 +40,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      org_id         text   NOT NULL,
      scope_key      text   NOT NULL,
      level          text   NOT NULL,
-     monthly_tokens bigint NOT NULL,
+     monthly_tokens bigint NOT NULL,          -- -1 = no token component (matches the SQLite encoding)
+     monthly_usd    double precision,         -- NULL = no USD component
      expires_at     bigint,                  -- epoch ms; NULL = no auto-expiry
      reason         text,
      set_by         text,
@@ -117,6 +118,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
+  `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS monthly_usd double precision`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS set_by text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
@@ -376,15 +378,17 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
-    async setSpendLimit(org, scopeKey, level, monthlyTokens, meta) {
+    async setSpendLimit(org, scopeKey, level, limit, meta) {
+      assertSpendLimitAmount(limit);
       await client.query(
-        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO spend_limit (org_id, scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (org_id, scope_key, level) DO UPDATE SET
            monthly_tokens = excluded.monthly_tokens,
+           monthly_usd    = excluded.monthly_usd,
            expires_at     = excluded.expires_at,
            reason         = excluded.reason,
            set_by         = excluded.set_by`,
-        [org, scopeKey, level, monthlyTokens, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null],
+        [org, scopeKey, level, limit.monthlyTokens ?? -1, limit.monthlyUsd ?? null, meta?.expiresAt ?? null, meta?.reason ?? null, meta?.setBy ?? null],
       );
     },
 
@@ -394,12 +398,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async spendLimits(org) {
-      const { rows } = await client.query("SELECT scope_key, level, monthly_tokens, expires_at, reason, set_by FROM spend_limit WHERE org_id = $1", [org]);
-      return (rows as { scope_key: string; level: string; monthly_tokens: number; expires_at: number | null; reason: string | null; set_by: string | null }[]).map((r) => ({
+      const { rows } = await client.query("SELECT scope_key, level, monthly_tokens, monthly_usd, expires_at, reason, set_by FROM spend_limit WHERE org_id = $1", [org]);
+      return (rows as { scope_key: string; level: string; monthly_tokens: number; monthly_usd: number | null; expires_at: number | null; reason: string | null; set_by: string | null }[]).map((r) => ({
         org,
         scopeKey: r.scope_key,
         level: r.level as "surface" | "workspace",
-        monthlyTokens: Number(r.monthly_tokens),
+        ...(Number(r.monthly_tokens) >= 0 ? { monthlyTokens: Number(r.monthly_tokens) } : {}),
+        ...(r.monthly_usd != null ? { monthlyUsd: Number(r.monthly_usd) } : {}),
         ...(r.expires_at != null ? { expiresAt: Number(r.expires_at) } : {}),
         ...(r.reason ? { reason: r.reason } : {}),
         ...(r.set_by ? { setBy: r.set_by } : {}),

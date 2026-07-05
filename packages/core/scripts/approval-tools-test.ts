@@ -41,64 +41,78 @@ function slackBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding {
 ok(defaultScopeKey(slackBinding(), "surface") === "slack/T123/C456", "defaultScopeKey surface = platform/workspace/surface");
 ok(defaultScopeKey(slackBinding(), "workspace") === "slack/T123", "defaultScopeKey workspace = platform/workspace");
 
+const uncapped = { tokens: null, usd: null } as const;
 {
-  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 5_000_000, reason: "spike" }, 1_000_000, "eng");
+  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 5_000_000, reason: "spike" }, { tokens: 1_000_000, usd: null }, "eng");
   ok(plan.kind === "spend.set", "planSetSpendLimit kind is spend.set");
   ok(plan.args.level === "surface", "planSetSpendLimit defaults level to surface");
   ok(plan.args.scopeKey === "slack/T123/C456", "planSetSpendLimit defaults scopeKey to this surface");
   ok(plan.scopeKey === plan.args.scopeKey, "planSetSpendLimit top-level scopeKey mirrors args.scopeKey");
   ok(plan.args.monthlyTokens === 5_000_000, "planSetSpendLimit freezes monthlyTokens");
+  ok(plan.args.monthlyUsd === undefined, "planSetSpendLimit leaves an unproposed USD component absent (frozen args say only what changes)");
   ok(plan.args.reason === "spike", "planSetSpendLimit freezes reason");
-  ok(plan.args.currentCap === 1_000_000, "planSetSpendLimit freezes currentCap");
+  ok(plan.args.currentCap === 1_000_000, "planSetSpendLimit freezes the current token cap");
+  ok(plan.args.currentUsd === null, "planSetSpendLimit freezes the current USD cap (null = uncapped)");
   ok(plan.args.org === "acme", "planSetSpendLimit freezes org from the binding");
   ok(plan.domain === "eng", "planSetSpendLimit freezes the passed-in domain");
 }
 {
-  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 9, reason: "  trim  ", level: "workspace" }, null, null);
+  const plan = planSetSpendLimit(slackBinding(), { monthlyUsd: 50, reason: "incident headroom" }, { tokens: null, usd: 25 }, null);
+  ok(plan.args.monthlyUsd === 50 && plan.args.monthlyTokens === undefined, "planSetSpendLimit freezes a USD-only proposal");
+  ok(plan.args.currentUsd === 25, "planSetSpendLimit freezes the current USD cap for the card");
+}
+{
+  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 9, reason: "  trim  ", level: "workspace" }, uncapped, null);
   ok(plan.args.level === "workspace", "planSetSpendLimit honours an explicit level");
   ok(plan.args.scopeKey === "slack/T123", "planSetSpendLimit defaults scopeKey to the workspace for level:workspace");
   ok(plan.args.reason === "trim", "planSetSpendLimit trims reason");
   ok(plan.domain === null, "planSetSpendLimit passes through a null domain");
 }
 {
-  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 1, reason: "x", scopeKey: "slack/T123/COTHER" }, null, null);
+  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 1, reason: "x", scopeKey: "slack/T123/COTHER" }, uncapped, null);
   ok(plan.args.scopeKey === "slack/T123/COTHER", "planSetSpendLimit honours an explicit scopeKey override");
 }
 throwsWith(
-  () => planSetSpendLimit(slackBinding({ platform: "discord" }), { monthlyTokens: 1, reason: "x" }, null, null),
+  () => planSetSpendLimit(slackBinding({ platform: "discord" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
   "Slack-only",
   "planSetSpendLimit refuses a non-Slack binding",
 );
 throwsWith(
-  () => planSetSpendLimit(slackBinding({ principalId: undefined }), { monthlyTokens: 1, reason: "x" }, null, null),
+  () => planSetSpendLimit(slackBinding({ principalId: undefined }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
   "verified sender",
   "planSetSpendLimit refuses with no verified principal",
 );
 throwsWith(
-  () => planSetSpendLimit(slackBinding(), { monthlyTokens: 1, reason: "   " }, null, null),
+  () => planSetSpendLimit(slackBinding(), { monthlyTokens: 1, reason: "   " }, uncapped, null),
   "non-empty reason",
   "planSetSpendLimit refuses a blank reason",
 );
+throwsWith(
+  () => planSetSpendLimit(slackBinding(), { reason: "x" }, uncapped, null),
+  "monthlyTokens and/or monthlyUsd",
+  "planSetSpendLimit refuses a proposal with no cap component at all",
+);
 
 {
-  const plan = planClearSpendLimit(slackBinding(), {}, 2_000_000, null);
+  const plan = planClearSpendLimit(slackBinding(), {}, { tokens: 2_000_000, usd: 75 }, null);
   ok(plan.kind === "spend.clear", "planClearSpendLimit kind is spend.clear");
   ok(plan.args.level === "surface", "planClearSpendLimit defaults level to surface");
   ok(plan.args.scopeKey === "slack/T123/C456", "planClearSpendLimit defaults scopeKey to this surface");
-  ok(plan.args.currentCap === 2_000_000, "planClearSpendLimit freezes currentCap");
+  ok(plan.args.currentCap === 2_000_000, "planClearSpendLimit freezes the current token cap");
+  ok(plan.args.currentUsd === 75, "planClearSpendLimit freezes the current USD cap");
 }
 {
-  const plan = planClearSpendLimit(slackBinding(), { level: "workspace" }, null, "eng");
+  const plan = planClearSpendLimit(slackBinding(), { level: "workspace" }, uncapped, "eng");
   ok(plan.args.scopeKey === "slack/T123", "planClearSpendLimit defaults scopeKey to the workspace for level:workspace");
   ok(plan.domain === "eng", "planClearSpendLimit freezes the passed-in domain");
 }
 throwsWith(
-  () => planClearSpendLimit(slackBinding({ platform: "teams" }), {}, null, null),
+  () => planClearSpendLimit(slackBinding({ platform: "teams" }), {}, uncapped, null),
   "Slack-only",
   "planClearSpendLimit refuses a non-Slack binding",
 );
 throwsWith(
-  () => planClearSpendLimit(slackBinding({ principalId: undefined }), {}, null, null),
+  () => planClearSpendLimit(slackBinding({ principalId: undefined }), {}, uncapped, null),
   "verified sender",
   "planClearSpendLimit refuses with no verified principal",
 );

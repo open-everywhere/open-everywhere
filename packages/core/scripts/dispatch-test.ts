@@ -146,7 +146,7 @@ ok(watchAfter?.lastStateHash === undefined, "dispatch never invents a state hash
 }
 
 const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
-await opStore.setSpendLimit("default", "slack/T1/C2", "surface", 100);
+await opStore.setSpendLimit("default", "slack/T1/C2", "surface", { monthlyTokens: 100 });
 await opStore.recordUsage("default", "slack/T1/C2", "2026-07", { inputTokens: 90, outputTokens: 20 });
 
 const capped: Routine = {

@@ -181,7 +181,7 @@ ok(webhookOrg() === "acme", "webhookOrg reads OE_ORG (the same tenant default bi
 
 const now = new Date("2026-07-02T12:00:00.000Z");
 const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
-await opStore.setSpendLimit("acme", "slack/T1/C1", "surface", 100);
+await opStore.setSpendLimit("acme", "slack/T1/C1", "surface", { monthlyTokens: 100 });
 await opStore.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 90, outputTokens: 20 });
 
 {

@@ -55,9 +55,20 @@ await client.connect(clientT);
 }
 
 {
+  const r = await callJson(client, "set_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyUsd: 25.5 });
+  ok("set_spend_limit accepts a USD-only override", r.ok === true && r.monthlyUsd === 25.5 && r.monthlyTokens === undefined);
+  const after = await effectiveCaps("default", "slack/T1", "slack/T1/C1");
+  ok("effectiveCaps reflects the admin-set USD limit", after.surfaceMonthlyUsd === 25.5);
+  ok("the USD-only row replaced the token row (one override per scope+level)", after.surfaceMonthlyTokens === undefined);
+  const bad = await client.callTool({ name: "set_spend_limit", arguments: { org: "default", scopeKey: "slack/T1/C1", level: "surface" } });
+  ok("set_spend_limit with no component is refused", bad.isError === true);
+}
+
+{
   const r = await callJson(client, "clear_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface" });
   ok("clear_spend_limit reports cleared", r.cleared === true);
-  ok("effectiveCaps reverts to config after clear", (await effectiveCaps("default", "slack/T1", "slack/T1/C1")).surfaceMonthlyTokens === undefined);
+  const after = await effectiveCaps("default", "slack/T1", "slack/T1/C1");
+  ok("effectiveCaps reverts to config after clear", after.surfaceMonthlyTokens === undefined && after.surfaceMonthlyUsd === undefined);
 }
 
 {

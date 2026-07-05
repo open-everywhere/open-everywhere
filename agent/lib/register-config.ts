@@ -5,6 +5,7 @@ import { PLUGIN_REGISTRY } from "../plugins/registry.js";
 import { SKILL_CONTENT } from "../plugins/skill-content.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
+import { loadSpendBudgets } from "../spend/budgets.js";
 
 registerConfig({
   loadBundles,
@@ -16,4 +17,5 @@ registerConfig({
   loadSilos,
   domainsForSurface,
   loadWebhooks,
+  loadSpendBudgets,
 });

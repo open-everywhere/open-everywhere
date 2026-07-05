@@ -158,6 +158,15 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   const audit = await readAudit({ org: "default", action: "admin.spend.set_limit" });
   ok(audit.some((e) => e.principalId === "U_ORG_ADMIN" && e.detail?.scopeKey === "slack/T2/C2"), "spend.set: audits admin.spend.set_limit with the acting principal");
 
+  const usdArgs = { org: "default", scopeKey: "slack/T2/C2", level: "surface" as const, monthlyUsd: 42.5, reason: "usd bridge", currentCap: null, currentUsd: null };
+  const usdCard = spendSet.summarize(usdArgs);
+  ok(usdCard.some((line) => line.includes("$42.50/mo")), "spend.set: the card renders the proposed USD cap");
+  ok(!usdCard.some((line) => line.includes("tokens/mo")), "spend.set: a USD-only card shows no token line (only what changes is shown)");
+  await spendSet.execute(usdArgs, "U_ORG_ADMIN");
+  const afterUsd = await effectiveCaps("default", "slack/T2", "slack/T2/C2");
+  ok(afterUsd.surfaceMonthlyUsd === 42.5, "spend.set: a USD-only card execute lands as a USD override (effectiveCaps reflects it)");
+  ok(afterUsd.surfaceMonthlyTokens === undefined, "spend.set: the USD-only override replaced the previous row — token component reverts to config");
+
   await getOperationalStore().clearSpendLimit("default", "slack/T2/C2", "surface");
 }
 

@@ -56,12 +56,13 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     "set_spend_limit",
     {
       title: "Set spend limit",
-      description: "Set a monthly token budget override for a scope (overlays the config caps). level=surface uses a surfaceKey 'platform/workspace/surface'; level=workspace uses 'platform/workspace'. Takes effect immediately, no redeploy. An override is a TEMPORARY BRIDGE: pass ttlSeconds so it auto-reverts to the config cap (recommended — a raised cap should land in caps.ts via PR; an un-reconciled override drifts from git). reason is surfaced in the drift view (list_overrides).",
+      description: "Set a monthly budget override for a scope (overlays the config caps) — a token count (monthlyTokens) and/or a USD amount (monthlyUsd); at least one is required. level=surface uses a surfaceKey 'platform/workspace/surface'; level=workspace uses 'platform/workspace'. Takes effect immediately, no redeploy; replaces any previous override at the same scope+level. An override is a TEMPORARY BRIDGE: pass ttlSeconds so it auto-reverts to the config cap (recommended — a raised cap should land in the spend-budgets registry via PR; an un-reconciled override drifts from git). reason is surfaced in the drift view (list_overrides).",
       inputSchema: {
         org: z.string().min(1),
         scopeKey: z.string().min(1),
         level: z.enum(["surface", "workspace"]),
-        monthlyTokens: z.number().int().positive(),
+        monthlyTokens: z.number().int().positive().optional(),
+        monthlyUsd: z.number().positive().optional(),
         ttlSeconds: z.number().int().positive().optional(),
         reason: z.string().optional(),
       },
@@ -69,11 +70,15 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     async (a) => {
       const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.scopeKey });
       if (denial) return errorResult(denial);
+      if (a.monthlyTokens == null && a.monthlyUsd == null) {
+        return errorResult("set_spend_limit needs monthlyTokens and/or monthlyUsd — an override must set at least one cap component.");
+      }
       try {
         const expiresAt = a.ttlSeconds != null ? Date.now() + a.ttlSeconds * 1000 : undefined;
-        await store().setSpendLimit(a.org, a.scopeKey, a.level, a.monthlyTokens, { expiresAt, reason: a.reason, setBy: actor });
-        await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.set_limit", detail: { scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens, ...(expiresAt != null ? { expiresAt } : {}), ...(a.reason ? { reason: a.reason } : {}) } });
-        return jsonResult({ ok: true, org: a.org, scopeKey: a.scopeKey, level: a.level, monthlyTokens: a.monthlyTokens, ...(expiresAt != null ? { expiresAt } : {}) });
+        await store().setSpendLimit(a.org, a.scopeKey, a.level, { monthlyTokens: a.monthlyTokens, monthlyUsd: a.monthlyUsd }, { expiresAt, reason: a.reason, setBy: actor });
+        const amounts = { ...(a.monthlyTokens != null ? { monthlyTokens: a.monthlyTokens } : {}), ...(a.monthlyUsd != null ? { monthlyUsd: a.monthlyUsd } : {}) };
+        await appendAudit({ ...whereFromScope(a.org, a.scopeKey), principalId: actor, action: "admin.spend.set_limit", detail: { scopeKey: a.scopeKey, level: a.level, ...amounts, ...(expiresAt != null ? { expiresAt } : {}), ...(a.reason ? { reason: a.reason } : {}) } });
+        return jsonResult({ ok: true, org: a.org, scopeKey: a.scopeKey, level: a.level, ...amounts, ...(expiresAt != null ? { expiresAt } : {}) });
       } catch (e) {
         return errorResult(`set_spend_limit failed: ${e instanceof Error ? e.message : String(e)}`);
       }

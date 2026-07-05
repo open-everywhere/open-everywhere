@@ -12,10 +12,16 @@ const LEVELS = ["surface", "workspace"] as const;
 type Level = (typeof LEVELS)[number];
 
 export interface SetSpendLimitInput {
-  readonly monthlyTokens: number;
+  readonly monthlyTokens?: number;
+  readonly monthlyUsd?: number;
   readonly reason: string;
   readonly level?: Level;
   readonly scopeKey?: string;
+}
+
+export interface CurrentCaps {
+  readonly tokens: number | null;
+  readonly usd: number | null;
 }
 
 export interface SpendSetPlan {
@@ -24,9 +30,11 @@ export interface SpendSetPlan {
     readonly org: string;
     readonly scopeKey: string;
     readonly level: Level;
-    readonly monthlyTokens: number;
+    readonly monthlyTokens?: number;
+    readonly monthlyUsd?: number;
     readonly reason: string;
     readonly currentCap: number | null;
+    readonly currentUsd: number | null;
   };
   readonly scopeKey: string;
   readonly domain: string | null;
@@ -37,12 +45,15 @@ export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   return level === "workspace" ? workspaceKey : `${workspaceKey}/${binding.surface}`;
 }
 
-export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, currentCap: number | null, domain: string | null): SpendSetPlan {
+export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, current: CurrentCaps, domain: string | null): SpendSetPlan {
   if (binding.platform !== "slack") {
     throw new Error(`set_spend_limit is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
   }
   if (!binding.principalId) {
     throw new Error("set_spend_limit needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  }
+  if (input.monthlyTokens == null && input.monthlyUsd == null) {
+    throw new Error("set_spend_limit needs monthlyTokens and/or monthlyUsd — a proposal must set at least one cap component.");
   }
   const level = input.level ?? "surface";
   const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
@@ -52,7 +63,16 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
   }
   return {
     kind: "spend.set",
-    args: { org: binding.org, scopeKey, level, monthlyTokens: input.monthlyTokens, reason, currentCap },
+    args: {
+      org: binding.org,
+      scopeKey,
+      level,
+      ...(input.monthlyTokens != null ? { monthlyTokens: input.monthlyTokens } : {}),
+      ...(input.monthlyUsd != null ? { monthlyUsd: input.monthlyUsd } : {}),
+      reason,
+      currentCap: current.tokens,
+      currentUsd: current.usd,
+    },
     scopeKey,
     domain,
   };
@@ -60,9 +80,10 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly token spend limit for this surface (or, with level:"workspace", the whole Slack workspace) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one; an org admin, or a domain admin whose domain covers this scope, must click Approve before it takes effect. Config-as-code (caps.ts, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. Tell the user plainly that a card was posted and nothing has changed yet; don\'t say the limit is set.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole Slack workspace) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one; an org admin, or a domain admin whose domain covers this scope, must click Approve before it takes effect. At least one of monthlyTokens/monthlyUsd is required. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. Tell the user plainly that a card was posted and nothing has changed yet; don\'t say the limit is set.',
   inputSchema: z.object({
-    monthlyTokens: z.number().int().positive().describe("Proposed monthly token budget."),
+    monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
+    monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
     reason: z.string().min(1).describe("Why you're proposing this — shown on the approval card."),
     level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace).'),
     scopeKey: z
@@ -84,9 +105,12 @@ export default defineTool({
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
     const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey);
-    const currentCap = (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null;
+    const current: CurrentCaps = {
+      tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
+      usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
+    };
 
-    const plan = planSetSpendLimit(binding, input, currentCap, domain);
+    const plan = planSetSpendLimit(binding, input, current, domain);
 
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
@@ -104,11 +128,15 @@ export default defineTool({
       threadTs: binding.threadTs ?? null,
     });
 
+    const proposed = [
+      ...(plan.args.monthlyTokens != null ? [`${plan.args.monthlyTokens.toLocaleString()} tokens/month (current: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString()})`] : []),
+      ...(plan.args.monthlyUsd != null ? [`$${plan.args.monthlyUsd.toFixed(2)}/month (current: ${plan.args.currentUsd === null ? "uncapped" : `$${plan.args.currentUsd.toFixed(2)}`})`] : []),
+    ].join(" + ");
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `Posted a confirmation card for a ${plan.args.level} spend limit of ${plan.args.monthlyTokens.toLocaleString()} tokens/month on "${plan.args.scopeKey}" (current cap: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString()}). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+      note: `Posted a confirmation card for a ${plan.args.level} spend limit of ${proposed} on "${plan.args.scopeKey}". Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
     };
   },
 });

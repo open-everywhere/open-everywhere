@@ -246,7 +246,9 @@ async function onInbound(
     const verdict = await scopeOverBudget(partitionForMessage(message, facts), mode, new Date().toISOString());
     if (verdict.over) {
       try {
-        await ctx.thread.post(`:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise the budget in the spend config.`);
+        await ctx.thread.post(
+          `:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override for this channel (set_spend_limit) — an admin approves it on a card.`,
+        );
       } catch {
       }
       return { auth: null };

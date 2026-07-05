@@ -1,17 +1,19 @@
-import type { Caps } from "./spend.js";
+import { type Caps, type SpendBudgets } from "./spend.js";
 import type { SpendLimitRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { getConfig } from "../access/config.js";
 
-interface CapConfig {
-  readonly default?: Caps;
-  readonly perWorkspace?: Readonly<Record<string, Caps>>;
-  readonly perSurface?: Readonly<Record<string, Caps>>;
+function loadBudgets(): SpendBudgets {
+  try {
+    return getConfig().loadSpendBudgets?.() ?? {};
+  } catch {
+    return {};
+  }
 }
 
-const CONFIG: CapConfig = {};
-
 export function resolveCaps(workspaceKey: string, surfaceKey: string): Caps {
-  return CONFIG.perSurface?.[surfaceKey] ?? CONFIG.perWorkspace?.[workspaceKey] ?? CONFIG.default ?? {};
+  const budgets = loadBudgets();
+  return budgets.perSurface?.[surfaceKey] ?? budgets.perWorkspace?.[workspaceKey] ?? budgets.default ?? {};
 }
 
 export function isSpendLimitActive(row: SpendLimitRow, now: number): boolean {
@@ -23,13 +25,17 @@ export function activeSpendLimits(limits: readonly SpendLimitRow[], now: number)
 }
 
 export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[], workspaceKey: string, surfaceKey: string): Caps {
-  let surfaceMonthlyTokens = config.surfaceMonthlyTokens;
-  let workspaceMonthlyTokens = config.workspaceMonthlyTokens;
+  let { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd } = config;
   for (const l of limits) {
-    if (l.level === "surface" && l.scopeKey === surfaceKey) surfaceMonthlyTokens = l.monthlyTokens;
-    else if (l.level === "workspace" && l.scopeKey === workspaceKey) workspaceMonthlyTokens = l.monthlyTokens;
+    if (l.level === "surface" && l.scopeKey === surfaceKey) {
+      if (l.monthlyTokens != null) surfaceMonthlyTokens = l.monthlyTokens;
+      if (l.monthlyUsd != null) surfaceMonthlyUsd = l.monthlyUsd;
+    } else if (l.level === "workspace" && l.scopeKey === workspaceKey) {
+      if (l.monthlyTokens != null) workspaceMonthlyTokens = l.monthlyTokens;
+      if (l.monthlyUsd != null) workspaceMonthlyUsd = l.monthlyUsd;
+    }
   }
-  return { surfaceMonthlyTokens, workspaceMonthlyTokens };
+  return { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd };
 }
 
 export async function effectiveCaps(org: string, workspaceKey: string, surfaceKey: string): Promise<Caps> {

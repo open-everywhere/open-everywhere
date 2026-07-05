@@ -120,8 +120,10 @@ export async function auditView(filter: AuditFilter = {}): Promise<AuditView> {
 export interface SpendOverrideDriftRow {
   readonly scopeKey: string;
   readonly level: "surface" | "workspace";
-  readonly monthlyTokens: number;
+  readonly monthlyTokens?: number;
+  readonly monthlyUsd?: number;
   readonly configCap: number | null;
+  readonly configCapUsd: number | null;
   readonly divergesFromConfig: boolean;
   readonly expiresAt?: number;
   readonly expired: boolean;
@@ -148,16 +150,17 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
   const store = getOperationalStore();
   const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
   const spend: SpendOverrideDriftRow[] = limits.map((l) => {
-    const configCap =
-      l.level === "surface"
-        ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey).surfaceMonthlyTokens ?? null
-        : resolveCaps(l.scopeKey, "").workspaceMonthlyTokens ?? null;
+    const config = l.level === "surface" ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey) : resolveCaps(l.scopeKey, "");
+    const configCap = (l.level === "surface" ? config.surfaceMonthlyTokens : config.workspaceMonthlyTokens) ?? null;
+    const configCapUsd = (l.level === "surface" ? config.surfaceMonthlyUsd : config.workspaceMonthlyUsd) ?? null;
     return {
       scopeKey: l.scopeKey,
       level: l.level,
-      monthlyTokens: l.monthlyTokens,
+      ...(l.monthlyTokens != null ? { monthlyTokens: l.monthlyTokens } : {}),
+      ...(l.monthlyUsd != null ? { monthlyUsd: l.monthlyUsd } : {}),
       configCap,
-      divergesFromConfig: configCap !== l.monthlyTokens,
+      configCapUsd,
+      divergesFromConfig: (l.monthlyTokens != null && l.monthlyTokens !== configCap) || (l.monthlyUsd != null && l.monthlyUsd !== configCapUsd),
       ...(l.expiresAt != null ? { expiresAt: l.expiresAt } : {}),
       expired: l.expiresAt != null && l.expiresAt <= now,
       ...(l.reason ? { reason: l.reason } : {}),
@@ -177,7 +180,7 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
     now,
     spend,
     connectors: connectorRows,
-    note: "Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a caps.ts PR (or clear_spend_limit); expired=true rows are no longer applied and should be cleared. Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.",
+    note: "Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a spend-budgets PR (agent/spend/budgets.ts, or clear_spend_limit); expired=true rows are no longer applied and should be cleared. Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.",
   };
 }
 
