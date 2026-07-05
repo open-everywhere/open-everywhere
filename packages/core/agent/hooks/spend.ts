@@ -5,6 +5,7 @@ import { appendUsageEvent } from "../spend/usage-events.js";
 import { periodOf, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
+import { readModelStamp } from "../model/model-stamp.js";
 
 export function turnKind(ctx: BindableContext): string {
   try {
@@ -37,6 +38,7 @@ export default defineHook({
           sessionId: ctx.session.id,
           principalId: bindFrom(ctx).principalId,
           kind: turnKind(ctx),
+          model: readModelStamp() ?? undefined,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,

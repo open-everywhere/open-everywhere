@@ -10,6 +10,7 @@ import {
   type RoutedCallOptions,
   type RoutingDeps,
 } from "../agent/model/routing.js";
+import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -197,6 +198,41 @@ ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "doStream 
   await m.doGenerate(turnCall);
   await m.doGenerate(turnCall);
   ok(made.filter((id) => id === "anthropic/claude-sonnet-5").length === 1, "inner model construction memoized per id");
+}
+
+{
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+
+  ok(readModelStamp() === null, "model-stamp: read outside a session context -> null (fail-soft)");
+  stampModelCall("should-not-throw");
+  ok(readModelStamp() === null, "model-stamp: a stamp attempted outside a session is a no-op");
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    ok(readModelStamp() === null, "model-stamp: a fresh session starts unstamped");
+    const c: FakeCall[] = [];
+    const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_TXN, () => domains2, c));
+    await m.doGenerate(turnCall);
+    ok(readModelStamp() === "anthropic/claude-sonnet-5", "model-stamp: dispatch() stamps THIS call's resolved routed id");
+
+    const c2: FakeCall[] = [];
+    const utility = createDomainRoutedModel("utility", { id: DEFAULT_ID }, fakeDeps(async () => C_OTHER, () => domains2, c2));
+    await utility.doGenerate(turnCall);
+    ok(readModelStamp() === DEFAULT_ID, "model-stamp: a later call in the same session overwrites the earlier stamp");
+  });
+
+  await contextStorage.run(new ContextContainer(), async () => {
+    ok(readModelStamp() === null, "model-stamp: a DIFFERENT session is unaffected by a previous session's stamp");
+  });
+
+  {
+    const c: FakeCall[] = [];
+    const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_TXN, () => domains2, c));
+    await m.doGenerate(turnCall);
+    ok(c[0].id === "anthropic/claude-sonnet-5", "model-stamp: a sessionless dispatch still calls the routed model (stamp no-ops, doesn't block)");
+  }
 }
 
 console.log(`model-routing: ${passed} assertions passed`);

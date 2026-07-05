@@ -6,7 +6,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import type { UsageSummaryRow } from "../operational/store.js";
 import { parseCron, cronMatches } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
-import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing } from "./pricing.js";
+import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
 import type { BindableContext } from "../identity/binding.js";
 
 export type ReportScope = "domain" | "org";
@@ -77,6 +77,51 @@ export function resolveAssumedModel(explicit?: string): AssumedModelPricing {
       ? `token $ estimated at "${model}" rates (you supplied this model id — hook-written usage rows don't carry one).`
       : `token $ estimated at "${model}" rates (this deployment's only priced model — hook-written usage rows carry no model id).`,
   };
+}
+
+export type PriceableRow = UsageTokens & { readonly model?: string };
+
+export function rowCostUsd(row: PriceableRow, assumed: AssumedModelPricing): number | undefined {
+  if (row.model) {
+    const exact = modelPricing(row.model);
+    return exact ? estimateCostUsd(row, exact) : undefined;
+  }
+  return assumed.pricing ? estimateCostUsd(row, assumed.pricing) : undefined;
+}
+
+export interface PricingMix {
+  readonly exact: number;
+  readonly assumed: number;
+  readonly unpriced: number;
+}
+
+export function pricingMix(rows: readonly PriceableRow[], assumed: AssumedModelPricing): PricingMix {
+  let exact = 0;
+  let assumedCount = 0;
+  let unpriced = 0;
+  for (const r of rows) {
+    if (r.model) {
+      if (modelPricing(r.model)) exact++;
+      else unpriced++;
+    } else if (assumed.pricing) {
+      assumedCount++;
+    } else {
+      unpriced++;
+    }
+  }
+  return { exact, assumed: assumedCount, unpriced };
+}
+
+export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): string {
+  if (mix.exact === 0) return assumed.note;
+  const parts: string[] = [
+    mix.assumed === 0 && mix.unpriced === 0
+      ? "$ figures are exact — every priced row carries its own recorded model id."
+      : `${mix.exact} row(s) priced exactly by their own recorded model id.`,
+  ];
+  if (mix.assumed > 0) parts.push(`${mix.assumed} row(s) with no recorded model: ${assumed.note}`);
+  if (mix.unpriced > 0) parts.push(`${mix.unpriced} row(s) omitted — a recorded model this deployment hasn't configured a rate for (see OE_MODEL_PRICING), never priced at another model's rate.`);
+  return parts.join(" ");
 }
 
 function cronFiresPerDay(expr: string): number | undefined {

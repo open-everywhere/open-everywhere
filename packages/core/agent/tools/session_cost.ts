@@ -3,8 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { usageForSession } from "../spend/usage-events.js";
-import { estimateCostUsd } from "../spend/pricing.js";
-import { resolveAssumedModel } from "../spend/reporting.js";
+import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote } from "../spend/reporting.js";
 import { estimateSandboxCostUsd } from "../spend/sandbox-pricing.js";
 
 export default defineTool({
@@ -36,6 +35,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const sessionId = ctx.session.id;
     const rows = await usageForSession(p.org, sessionId);
+    const assumed = resolveAssumedModel(input.assumedModelId);
 
     let events = 0;
     let inputTokens = 0;
@@ -43,6 +43,7 @@ export default defineTool({
     let cacheReadTokens = 0;
     let cacheWriteTokens = 0;
     let sandboxSeconds = 0;
+    let costUsd: number | undefined;
 
     for (const r of rows) {
       if (r.kind === "sandbox") {
@@ -55,13 +56,18 @@ export default defineTool({
       outputTokens += r.outputTokens;
       cacheReadTokens += r.cacheReadTokens;
       cacheWriteTokens += r.cacheWriteTokens;
+      const rowCost = rowCostUsd(r, assumed);
+      if (rowCost !== undefined) costUsd = (costUsd ?? 0) + rowCost;
     }
+    if (costUsd === undefined && assumed.pricing) costUsd = 0;
 
-    const assumed = resolveAssumedModel(input.assumedModelId);
-    const costUsd = assumed.pricing ? estimateCostUsd({ inputTokens, outputTokens, cacheReadTokens }, assumed.pricing) : undefined;
+    const mix = pricingMix(
+      rows.filter((r) => r.kind !== "sandbox"),
+      assumed,
+    );
     const sandboxCostUsd = sandboxSeconds > 0 ? estimateSandboxCostUsd(sandboxSeconds) : undefined;
 
-    const notes = [assumed.note];
+    const notes = [pricingNote(mix, assumed)];
     if (sandboxSeconds > 0) {
       notes.push(
         "sandbox $ estimated from Vercel Sandbox's published Provisioned Memory rate at the platform-default sandbox size (verified against real billing — see the sandbox cost-model notes); an actual bill can differ if this deploy pins a non-default sandbox memory size.",

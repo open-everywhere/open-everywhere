@@ -10,8 +10,7 @@ import { getConfig } from "../access/config.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
 import type { UsageSummaryRow } from "../operational/store.js";
-import { estimateCostUsd } from "../spend/pricing.js";
-import { resolveAssumedModel, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
+import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
 import { listDomainSkills } from "../skills/domain-skills.js";
 import type { DomainSkillRow } from "../operational/store.js";
 import { providerById } from "../memory/provider.js";
@@ -210,7 +209,10 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
   const all = await usageSummary(q.org, { sinceTs: since, ...(q.surfaceKey && !q.domain ? { surfaceKeyPrefix: q.surfaceKey } : {}) });
   const rows = q.domain ? filterToDomain(all, q.domain, getConfig().loadDomains()) : all;
   const assumed = resolveAssumedModel(q.assumedModelId);
-  const priced: UsageSummaryViewRow[] = rows.map((r) => ({ ...r, ...(assumed.pricing ? { costUsd: estimateCostUsd(r, assumed.pricing) } : {}) }));
+  const priced: UsageSummaryViewRow[] = rows.map((r) => {
+    const costUsd = rowCostUsd(r, assumed);
+    return costUsd !== undefined ? { ...r, costUsd } : r;
+  });
   const routineRows = rows.filter((r) => r.kind === "routine");
   const routinePredictions = await buildRoutinePredictions(q.org, routineRows, assumed.pricing);
   return {
@@ -222,7 +224,7 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
     rows: priced,
     ...(assumed.model ? { pricedModel: assumed.model } : {}),
     routinePredictions,
-    note: assumed.note,
+    note: pricingNote(pricingMix(rows, assumed), assumed),
   };
 }
 

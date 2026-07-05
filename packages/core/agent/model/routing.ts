@@ -7,6 +7,7 @@ import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { surfaceHint } from "./surface-hint.js";
 import type { BindableContext } from "../identity/binding.js";
+import { stampModelCall } from "./model-stamp.js";
 
 interface RoutingContextStore {
   get(key: unknown): unknown;
@@ -183,6 +184,7 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
     const route = await resolve();
     const generic = applyRoute(route, options, defaults.id);
     const mapped = deps.backend.applyOptions(route, generic.options, { id: generic.id, defaultId: defaults.id });
+    stampModelCall(generic.id);
     return { model: modelFor(generic.id), options: mapped };
   };
 
