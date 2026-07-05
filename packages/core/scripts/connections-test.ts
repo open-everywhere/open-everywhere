@@ -13,7 +13,10 @@ ok(typeof notion.url === "string" && notion.url.startsWith("https://"), "notion 
 ok(typeof notion.description === "string" && notion.description.length > 0, "notion connection has a model-facing description");
 ok(typeof notion.approval === "function", "notion connection carries an approval gate (the live hard lever while per-surface scoping is an Eve gap)");
 
-const auth = notion.auth;
+ok(typeof notion.auth === "function", "notion auth is the resolver form (a function of SessionContext), not a static provider");
+const noAuthCtx = { session: { id: "s", auth: { current: null, initiator: null }, turn: { index: 0 } } };
+const auth = await (notion.auth as (ctx: unknown) => Promise<unknown> | unknown)(noAuthCtx);
+
 const authPrincipal = (auth as { principalType?: unknown }).principalType;
 ok(!!auth && (authPrincipal === "app" || authPrincipal === undefined), "auth is app-principal (defaults to app) — the service universe");
 ok(!!auth && typeof (auth as { getToken?: unknown }).getToken === "function", "app-principal auth is the non-interactive getToken form");

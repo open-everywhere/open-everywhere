@@ -1,21 +1,23 @@
 import {
   defineInteractiveAuthorization,
-  type ConnectionAuthDefinition,
+  type ConnectionAuthProvider,
+  type ConnectionAuthResolver,
   type InteractiveAuthorizationDefinition,
   type JsonValue,
   type TokenResult,
 } from "eve/connections";
+import type { SessionContext } from "eve/context";
 import { assertConnectorGranted, boundConnectorCredential } from "../access/connector-scope.js";
 import { getSecret } from "../access/credentials.js";
 
-const connectAuthById = new Map<string, Promise<ConnectionAuthDefinition>>();
-function connectAuthFor(connector: string, vercelConnector: string): Promise<ConnectionAuthDefinition> {
+const connectAuthById = new Map<string, Promise<ConnectionAuthProvider>>();
+function connectAuthFor(connector: string, vercelConnector: string): Promise<ConnectionAuthProvider> {
   let p = connectAuthById.get(vercelConnector);
   if (!p) {
     p = (async () => {
       try {
         const spec = "@vercel/connect" + "/eve";
-        const mod = (await import(spec)) as { connect(o: { connector: string }): ConnectionAuthDefinition };
+        const mod = (await import(spec)) as { connect(o: { connector: string }): ConnectionAuthProvider };
         return mod.connect({ connector: vercelConnector });
       } catch {
         throw new Error(
@@ -32,39 +34,39 @@ function connectAuthFor(connector: string, vercelConnector: string): Promise<Con
 export function appStaticToken(opts: {
   readonly connector: string;
   readonly secretRef: string;
-}): ConnectionAuthDefinition {
-  return {
+}): ConnectionAuthResolver {
+  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken() {
-      await assertConnectorGranted(opts.connector);
+      await assertConnectorGranted(opts.connector, ctx.session.auth);
       return { token: await getSecret(opts.secretRef) };
     },
-  };
+  });
 }
 
 export function appConnectToken(opts: {
   readonly connector: string;
   readonly vercelConnector: string;
-}): ConnectionAuthDefinition {
-  return {
+}): ConnectionAuthResolver {
+  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      await assertConnectorGranted(opts.connector);
+      await assertConnectorGranted(opts.connector, ctx.session.auth);
       const base = await connectAuthFor(opts.connector, opts.vercelConnector);
       return (base as { getToken(o: unknown): unknown }).getToken(o) as Promise<TokenResult>;
     },
-  };
+  });
 }
 
 export function appProviderToken(opts: {
   readonly connector: string;
   readonly fallbackSecretRef?: string;
-}): ConnectionAuthDefinition {
-  return {
+}): ConnectionAuthResolver {
+  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      await assertConnectorGranted(opts.connector);
-      const cred = await boundConnectorCredential(opts.connector);
+      await assertConnectorGranted(opts.connector, ctx.session.auth);
+      const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
       if (!cred) {
         if (opts.fallbackSecretRef) return { token: await getSecret(opts.fallbackSecretRef) };
         throw new Error(
@@ -87,7 +89,7 @@ export function appProviderToken(opts: {
           `(user-principal credentials resolve in the DM universe).`,
       );
     },
-  };
+  });
 }
 
 export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts: {
@@ -97,15 +99,16 @@ export function userInteractiveOAuth<Resume extends JsonValue = JsonValue>(opts:
   readonly completeAuthorization: InteractiveAuthorizationDefinition<Resume>["completeAuthorization"];
   readonly displayName?: string;
   readonly evict?: InteractiveAuthorizationDefinition<Resume>["evict"];
-}): InteractiveAuthorizationDefinition<Resume> {
-  return defineInteractiveAuthorization<Resume>({
-    displayName: opts.displayName,
-    async getToken(o) {
-      await assertConnectorGranted(opts.connector);
-      return opts.getToken(o);
-    },
-    startAuthorization: opts.startAuthorization,
-    completeAuthorization: opts.completeAuthorization,
-    evict: opts.evict,
-  });
+}): ConnectionAuthResolver {
+  return async (ctx: SessionContext): Promise<ConnectionAuthProvider> =>
+    defineInteractiveAuthorization<Resume>({
+      displayName: opts.displayName,
+      async getToken(o) {
+        await assertConnectorGranted(opts.connector, ctx.session.auth);
+        return opts.getToken(o);
+      },
+      startAuthorization: opts.startAuthorization,
+      completeAuthorization: opts.completeAuthorization,
+      evict: opts.evict,
+    });
 }

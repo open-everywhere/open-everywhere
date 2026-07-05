@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { SessionAuth } from "eve/context";
 import type { BindableContext } from "../identity/binding.js";
 import { resolveAccessFor } from "./request.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -13,8 +14,6 @@ interface ContextStore {
 }
 interface EveInternals {
   contextStorage: { getStore(): ContextStore | undefined };
-  AuthKey: unknown;
-  InitiatorAuthKey: unknown;
   ChannelKey: unknown;
 }
 
@@ -26,21 +25,15 @@ function loadEveInternals(): Promise<EveInternals | null> {
       const require = createRequire(import.meta.url);
       const root = dirname(require.resolve("eve/package.json"));
       const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
-      const [container, keys, runtimeKeys] = await Promise.all([
+      const [container, runtimeKeys] = await Promise.all([
         import(abs("dist/src/context/container.js")),
-        import(abs("dist/src/context/keys.js")),
         import(abs("dist/src/runtime/sessions/runtime-context-keys.js")),
       ]);
-      if (!container?.contextStorage || !keys?.AuthKey || !runtimeKeys?.ChannelKey) {
+      if (!container?.contextStorage || !runtimeKeys?.ChannelKey) {
         internalsLoadError = "internal modules loaded but expected exports are missing";
         return null;
       }
-      return {
-        contextStorage: container.contextStorage,
-        AuthKey: keys.AuthKey,
-        InitiatorAuthKey: keys.InitiatorAuthKey,
-        ChannelKey: runtimeKeys.ChannelKey,
-      };
+      return { contextStorage: container.contextStorage, ChannelKey: runtimeKeys.ChannelKey };
     } catch (err) {
       internalsLoadError = String(err);
       return null;
@@ -51,28 +44,41 @@ function loadEveInternals(): Promise<EveInternals | null> {
 
 let internalsLoadError: string | undefined;
 
-const nullReasons = new Set<string>();
-function nullBecause(reason: string): null {
-  if (!nullReasons.has(reason)) {
-    nullReasons.add(reason);
-    console.warn(`[open-everywhere:surface-context] unresolvable: ${reason}`);
+const loggedReasons = new Set<string>();
+function logOnce(reason: string): void {
+  if (!loggedReasons.has(reason)) {
+    loggedReasons.add(reason);
+    console.warn(`[open-everywhere:surface-context] ${reason}`);
   }
-  return null;
 }
 
-export async function readSurfaceContext(): Promise<BindableContext | null> {
+async function readChannelKind(): Promise<string | undefined> {
   const eve = await loadEveInternals();
-  if (!eve) return nullBecause(`eve internals failed to load: ${internalsLoadError ?? "(unknown)"}`);
+  if (!eve) {
+    logOnce(`channel kind unresolvable: eve internals failed to load: ${internalsLoadError ?? "(unknown)"}`);
+    return undefined;
+  }
   const store = eve.contextStorage.getStore();
-  if (!store) return nullBecause("no ALS store — outside an eve session scope");
-  const current = store.get(eve.AuthKey) ?? null;
-  const initiator = store.get(eve.InitiatorAuthKey) ?? current;
-  if (current === null && initiator === null) return nullBecause("ALS store present but no auth keys set");
+  if (!store) {
+    logOnce("channel kind unresolvable: no ALS store — outside an eve session scope (expected on a hosted build)");
+    return undefined;
+  }
   const channel = store.get(eve.ChannelKey) as { kind?: string } | undefined;
-  type SessionAuth = NonNullable<NonNullable<BindableContext["session"]>["auth"]>;
+  return channel?.kind;
+}
+
+export async function surfaceContextFromAuth(auth: SessionAuth): Promise<BindableContext | null> {
+  const current = auth.current ?? null;
+  const initiator = auth.initiator ?? current;
+  if (current === null && initiator === null) {
+    logOnce("resolver ctx carried no auth identity (current/initiator both null) — fail closed");
+    return null;
+  }
+  const kind = await readChannelKind();
+  type SessionAuthShape = NonNullable<NonNullable<BindableContext["session"]>["auth"]>;
   return {
-    session: { auth: { current, initiator } as SessionAuth },
-    channel: { kind: channel?.kind },
+    session: { auth: { current, initiator } as SessionAuthShape },
+    channel: { kind },
   } as BindableContext;
 }
 
@@ -87,8 +93,8 @@ export function applyConnectorOverrides(
   return [...set].sort();
 }
 
-export async function grantedConnectors(): Promise<readonly string[] | null> {
-  const ctx = await readSurfaceContext();
+export async function grantedConnectors(auth: SessionAuth): Promise<readonly string[] | null> {
+  const ctx = await surfaceContextFromAuth(auth);
   if (!ctx) return null;
   try {
     const base = resolveAccessFor(ctx).connectors;
@@ -107,8 +113,9 @@ export async function grantedConnectors(): Promise<readonly string[] | null> {
 
 export async function boundConnectorCredential(
   connection: string,
+  auth: SessionAuth,
 ): Promise<import("./providers.js").ResolvedConnectorCredential | null> {
-  const ctx = await readSurfaceContext();
+  const ctx = await surfaceContextFromAuth(auth);
   if (!ctx) return null;
   try {
     return resolveAccessFor(ctx).connectorCredentials[connection] ?? null;
@@ -117,12 +124,12 @@ export async function boundConnectorCredential(
   }
 }
 
-export async function assertConnectorGranted(connectionName: string): Promise<void> {
-  const granted = await grantedConnectors();
+export async function assertConnectorGranted(connectionName: string, auth: SessionAuth): Promise<void> {
+  const granted = await grantedConnectors(auth);
   if (granted === null) {
     throw new ConnectorScopeError(
       `connection "${connectionName}": refusing — could not resolve the calling surface ` +
-        `(no eve session context, or unresolvable identity). Fail closed.`,
+        `(no auth identity on the resolver ctx). Fail closed.`,
     );
   }
   if (!granted.includes(connectionName)) {

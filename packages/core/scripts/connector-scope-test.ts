@@ -16,13 +16,13 @@ const require = createRequire(import.meta.url);
 const root = dirname(require.resolve("eve/package.json"));
 const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
 const container = await import(abs("dist/src/context/container.js"));
-const keys = await import(abs("dist/src/context/keys.js"));
 const runtimeKeys = await import(abs("dist/src/runtime/sessions/runtime-context-keys.js"));
 
 ok(typeof container.ContextContainer === "function", "eve still exports ContextContainer (ALS scope builder)");
 ok(typeof container.contextStorage?.run === "function", "eve still exports contextStorage with .run()");
-ok(keys.AuthKey !== undefined && keys.InitiatorAuthKey !== undefined, "eve still exports AuthKey + InitiatorAuthKey");
 ok(runtimeKeys.ChannelKey !== undefined, "eve still exports ChannelKey");
+
+const scope = await import("../agent/access/connector-scope.js");
 
 const slackAuth = {
   principalType: "service",
@@ -37,41 +37,48 @@ const slackAuth = {
   },
 };
 
-const scope = await import("../agent/access/connector-scope.js");
-
-function withScope<T>(auth: unknown, channelKind: string | undefined, fn: () => Promise<T>): Promise<T> {
+function withChannelScope<T>(channelKind: string | undefined, fn: () => Promise<T>): Promise<T> {
   const store = new container.ContextContainer();
-  store.set(keys.AuthKey, auth);
-  store.set(keys.InitiatorAuthKey, auth);
   if (channelKind !== undefined) store.set(runtimeKeys.ChannelKey, { kind: channelKind });
   return container.contextStorage.run(store, fn);
 }
 
-ok((await scope.grantedConnectors()) === null, "no eve session scope -> grantedConnectors() is null (fail closed)");
+const noAuth = { current: null, initiator: null };
+ok((await scope.grantedConnectors(noAuth)) === null, "no auth identity on the ctx -> grantedConnectors() is null (fail closed)");
 {
   let threw = false;
   try {
-    await scope.assertConnectorGranted("notion");
+    await scope.assertConnectorGranted("notion", noAuth);
   } catch (e) {
     threw = e instanceof scope.ConnectorScopeError;
   }
-  ok(threw, "no scope -> assertConnectorGranted throws ConnectorScopeError");
+  ok(threw, "no auth identity -> assertConnectorGranted throws ConnectorScopeError");
 }
 
-const resolved = await withScope(slackAuth, "slack", () => scope.grantedConnectors());
-ok(resolved !== null, "inside an eve scope with AuthKey+ChannelKey, the surface resolves (NOT null) — the internal plumbing works");
-ok(Array.isArray(resolved), "grantedConnectors returns the resolver's connector array for the resolved surface");
+{
+  const authOnly = { current: slackAuth, initiator: slackAuth };
+  const resolved = await scope.grantedConnectors(authOnly);
+  ok(resolved !== null, "auth passed directly with NO ALS scope -> the surface still resolves (NOT null)");
+  ok(Array.isArray(resolved), "grantedConnectors returns the resolver's connector array for the resolved surface");
+}
 
 {
-  const empty = await container.contextStorage.run(new container.ContextContainer(), () => scope.grantedConnectors());
-  ok(empty === null, "scope with no AuthKey -> null (fail closed on unauthenticated session)");
+  const authOnly = { current: slackAuth, initiator: slackAuth };
+  const resolved = await withChannelScope("slack", () => scope.grantedConnectors(authOnly));
+  ok(resolved !== null, "auth passed directly + a ChannelKey ALS scope -> still resolves");
+}
+
+{
+  const currentOnly = { current: slackAuth, initiator: null };
+  const resolved = await scope.grantedConnectors(currentOnly);
+  ok(resolved !== null, "initiator omitted (null) -> falls back to current, still resolves");
 }
 
 {
   let threw = false;
   let msg = "";
   try {
-    await withScope(slackAuth, "slack", () => scope.assertConnectorGranted("notion"));
+    await scope.assertConnectorGranted("notion", { current: slackAuth, initiator: slackAuth });
   } catch (e) {
     threw = e instanceof scope.ConnectorScopeError;
     msg = (e as Error).message;

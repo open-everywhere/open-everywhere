@@ -94,24 +94,28 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
   return `// GENERATED from a plugin MCP server by scripts/extract-plugin.ts — review before trusting.
 // Eve connection (host-side connector plane). The per-surface HARD gate
 // (assertConnectorGranted) + once() approval are applied by default, matching
-// agent/connections/notion.ts. Swap getToken for Vercel Connect in a real deployment.
+// agent/connections/notion.ts. \`auth\` is the resolver form (eve#299): Eve hands the
+// caller's session context to the resolver once per execution step, so the gate reads
+// the caller identity straight off \`ctx.session.auth\` — no ALS reach needed. Swap
+// getToken for Vercel Connect in a real deployment.
 import { defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
+import type { SessionContext } from "eve/context";
 import { assertConnectorGranted } from "../access/connector-scope.js";
 
 export default defineMcpClientConnection({
   url: ${JSON.stringify(server.url)},
   description: ${JSON.stringify(description)},
-  auth: {
+  auth: (ctx: SessionContext) => ({
     principalType: "app",
     async getToken() {
       // Refuse surfaces this connector isn't granted to (bundle/resolver decides).
-      await assertConnectorGranted(${JSON.stringify(slug)});
+      await assertConnectorGranted(${JSON.stringify(slug)}, ctx.session.auth);
       const token = process.env.${envVar};
       if (!token) throw new Error('connection "${slug}": ${envVar} is not set');
       return { token };
     },
-  },
+  }),
   approval: once(),
 });
 `;

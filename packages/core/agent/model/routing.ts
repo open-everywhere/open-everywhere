@@ -1,9 +1,79 @@
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ModelRole, ModelRoute, Domain } from "../memory/domain.js";
 import { modelRouteFor } from "../memory/domain.js";
-import { readSurfaceContext } from "../access/connector-scope.js";
 import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { surfaceHint } from "./surface-hint.js";
+import type { BindableContext } from "../identity/binding.js";
+
+interface RoutingContextStore {
+  get(key: unknown): unknown;
+}
+interface RoutingEveInternals {
+  contextStorage: { getStore(): RoutingContextStore | undefined };
+  AuthKey: unknown;
+  InitiatorAuthKey: unknown;
+  ChannelKey: unknown;
+}
+
+let routingInternalsPromise: Promise<RoutingEveInternals | null> | undefined;
+let routingInternalsLoadError: string | undefined;
+function loadRoutingEveInternals(): Promise<RoutingEveInternals | null> {
+  if (routingInternalsPromise) return routingInternalsPromise;
+  routingInternalsPromise = (async () => {
+    try {
+      const require = createRequire(import.meta.url);
+      const root = dirname(require.resolve("eve/package.json"));
+      const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
+      const [container, keys, runtimeKeys] = await Promise.all([
+        import(abs("dist/src/context/container.js")),
+        import(abs("dist/src/context/keys.js")),
+        import(abs("dist/src/runtime/sessions/runtime-context-keys.js")),
+      ]);
+      if (!container?.contextStorage || !keys?.AuthKey || !runtimeKeys?.ChannelKey) {
+        routingInternalsLoadError = "internal modules loaded but expected exports are missing";
+        return null;
+      }
+      return {
+        contextStorage: container.contextStorage,
+        AuthKey: keys.AuthKey,
+        InitiatorAuthKey: keys.InitiatorAuthKey,
+        ChannelKey: runtimeKeys.ChannelKey,
+      };
+    } catch (err) {
+      routingInternalsLoadError = String(err);
+      return null;
+    }
+  })();
+  return routingInternalsPromise;
+}
+
+const routingNullReasons = new Set<string>();
+function routingNullBecause(reason: string): null {
+  if (!routingNullReasons.has(reason)) {
+    routingNullReasons.add(reason);
+    console.warn(`[open-everywhere:model-routing] surface-context unresolvable: ${reason}`);
+  }
+  return null;
+}
+
+async function readAlsSurfaceContext(): Promise<BindableContext | null> {
+  const eve = await loadRoutingEveInternals();
+  if (!eve) return routingNullBecause(`eve internals failed to load: ${routingInternalsLoadError ?? "(unknown)"}`);
+  const store = eve.contextStorage.getStore();
+  if (!store) return routingNullBecause("no ALS store — outside an eve session scope");
+  const current = store.get(eve.AuthKey) ?? null;
+  const initiator = store.get(eve.InitiatorAuthKey) ?? current;
+  if (current === null && initiator === null) return routingNullBecause("ALS store present but no auth keys set");
+  const channel = store.get(eve.ChannelKey) as { kind?: string } | undefined;
+  type SessionAuthShape = NonNullable<NonNullable<BindableContext["session"]>["auth"]>;
+  return {
+    session: { auth: { current, initiator } as SessionAuthShape },
+    channel: { kind: channel?.kind },
+  } as BindableContext;
+}
 
 export interface RoutedCallOptions {
   reasoning?: string;
@@ -37,7 +107,7 @@ export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
 
 export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains"> = {
   surfaceKey: async () => {
-    const ctx = await readSurfaceContext();
+    const ctx = await readAlsSurfaceContext();
     if (ctx) return resolvePartition(ctx).surfaceKey;
     return surfaceHint();
   },
