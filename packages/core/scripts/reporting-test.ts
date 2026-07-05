@@ -27,6 +27,9 @@ import {
   slackUserIdIn,
   slackChannelIdIn,
   resolveSlackLabels,
+  isDmSurface,
+  dmBucketKey,
+  maskDmSurfaceKey,
 } from "../agent/spend/reporting.js";
 import sessionCostTool from "../agent/tools/session_cost.js";
 import spendReportTool from "../agent/tools/spend_report.js";
@@ -311,4 +314,25 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(failing.users.size === 0 && failing.channels.size === 0, "labels: lookup failures -> silently unlabelled, never a throw");
 }
 
-console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels, session_cost/spend_report/usage_report tools)`);
+{
+  ok(isDmSurface("slack/T1/D0EXDMCH001") === true, "dm-mask: slack D-prefixed surface id recognised without a kind");
+  ok(isDmSurface("slack/T1/C123ABC") === false, "dm-mask: a channel surface is not a DM");
+  ok(isDmSurface("teams/T1/19-something", "dm") === true, "dm-mask: kind=dm marks a DM on ANY platform (ledger-less rows aside)");
+  ok(isDmSurface("slack/T1/C123ABC", "channel") === false, "dm-mask: kind=channel never masks");
+  ok(dmBucketKey("slack/T1/D0EXDMCH001") === "slack/T1/(dms)", "dm-mask: bucket key keeps platform/workspace, drops the DM id");
+
+  const dmRow = { surfaceKey: "slack/T1/D0EXDMCH001", kind: "dm", events: 4 };
+  const chRow = { surfaceKey: "slack/T1/C123ABC", kind: "channel", events: 2 };
+  ok(maskDmSurfaceKey(dmRow).surfaceKey === "slack/T1/(dms)", "dm-mask: a DM row's surfaceKey is rewritten to the bucket");
+  ok(maskDmSurfaceKey(chRow) === chRow, "dm-mask: a non-DM row passes through as the SAME object");
+
+  const aggregated = aggregateBySurface(
+    [
+      { surfaceKey: "slack/T1/D0AAA11AAAA", principalId: "U_A", kind: "dm", model: null, events: 2, sessions: 1, inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      { surfaceKey: "slack/T1/D0BBB22BBBB", principalId: "U_B", kind: "dm", model: null, events: 3, sessions: 1, inputTokens: 20, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    ].map(maskDmSurfaceKey) as never,
+  );
+  ok(aggregated.length === 1 && aggregated[0].surfaceKey === "slack/T1/(dms)" && aggregated[0].events === 5, "dm-mask: two distinct DMs aggregate into one (dms) bucket row");
+}
+
+console.log(`✓ reporting: ${n} assertions passed (pricing/sandbox-pricing additions, reporting.ts shared plumbing incl. display labels + DM masking, session_cost/spend_report/usage_report tools)`);

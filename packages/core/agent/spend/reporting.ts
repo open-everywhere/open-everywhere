@@ -253,6 +253,21 @@ export async function resolveSlackLabels(
   return { users, channels };
 }
 
+export function isDmSurface(surfaceKey: string, kind?: string): boolean {
+  if (kind === "dm") return true;
+  const parts = surfaceKey.split("/");
+  return parts.length >= 3 && /^D[A-Z0-9]{5,}$/.test(parts[2]);
+}
+
+export function dmBucketKey(surfaceKey: string): string {
+  const parts = surfaceKey.split("/");
+  return parts.length >= 2 ? `${parts[0]}/${parts[1]}/(dms)` : "(dms)";
+}
+
+export function maskDmSurfaceKey<T extends { readonly surfaceKey: string; readonly kind?: string }>(row: T): T {
+  return isDmSurface(row.surfaceKey, row.kind) ? { ...row, surfaceKey: dmBucketKey(row.surfaceKey) } : row;
+}
+
 export function approxConversationCount(rows: readonly UsageSummaryRow[]): number {
   let total = 0;
   for (const r of rows) {
