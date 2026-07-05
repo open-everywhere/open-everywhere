@@ -1,9 +1,9 @@
-import type { Connection, CredentialType, CustomHeader } from "./bundle.js";
+import type { Connection, CredentialAuthorizationDetail, CredentialType, CustomHeader } from "./bundle.js";
 
 export class CredentialError extends Error {}
 
 export interface CredentialBroker {
-  getSecret(ref: string): Promise<string>;
+  getSecret(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<string>;
 }
 
 export const envBroker: CredentialBroker = {
@@ -42,8 +42,8 @@ export function selectBroker(): CredentialBroker {
   return broker;
 }
 
-export function getSecret(ref: string): Promise<string> {
-  return selectBroker().getSecret(ref);
+export function getSecret(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<string> {
+  return selectBroker().getSecret(ref, authorizationDetails);
 }
 
 async function resolveCustomHeaders(
@@ -58,15 +58,15 @@ type Handler = (conn: Connection) => Promise<Record<string, string>>;
 
 const HANDLERS: Record<CredentialType, Handler> = {
   bearer: async (conn) => ({
-    authorization: `Bearer ${await getSecret(conn.secretRef)}`,
+    authorization: `Bearer ${await getSecret(conn.secretRef, conn.authorizationDetails)}`,
     ...(await resolveCustomHeaders(conn.customHeaders)),
   }),
   basic: async (conn) => {
-    const b64 = Buffer.from(await getSecret(conn.secretRef), "utf-8").toString("base64");
+    const b64 = Buffer.from(await getSecret(conn.secretRef, conn.authorizationDetails), "utf-8").toString("base64");
     return { authorization: `Basic ${b64}`, ...(await resolveCustomHeaders(conn.customHeaders)) };
   },
   "github-app": async (conn) => ({
-    authorization: `Bearer ${await getSecret(conn.secretRef)}`,
+    authorization: `Bearer ${await getSecret(conn.secretRef, conn.authorizationDetails)}`,
     ...(await resolveCustomHeaders(conn.customHeaders)),
   }),
 };

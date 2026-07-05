@@ -19,6 +19,11 @@ export interface CustomHeader {
   readonly secretRef: string;
 }
 
+export interface CredentialAuthorizationDetail {
+  readonly type: string;
+  readonly [key: string]: unknown;
+}
+
 export interface Connection {
   readonly id: string;
   readonly credentialType: CredentialType;
@@ -27,6 +32,7 @@ export interface Connection {
   readonly pathPrefixes?: readonly string[];
   readonly customHeaders?: readonly CustomHeader[];
   readonly methods?: readonly HttpMethod[];
+  readonly authorizationDetails?: readonly CredentialAuthorizationDetail[];
 }
 
 export interface Bundle {

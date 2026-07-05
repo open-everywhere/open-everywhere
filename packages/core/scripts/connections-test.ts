@@ -81,6 +81,32 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
   if (savedVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = savedVercel;
 
+  {
+    const seenArgs: unknown[][] = [];
+    registerBroker("captor", {
+      async getSecret(...args: unknown[]) {
+        seenArgs.push(args);
+        return "secret";
+      },
+    });
+    process.env.OE_CREDENTIAL_BROKER = "captor";
+
+    await resolveHeaders({ id: "plain", credentialType: "bearer", secretRef: "REF", allowedWebsites: ["x"] });
+    ok(seenArgs.at(-1)?.[1] === undefined, "no authorizationDetails declared -> broker's getSecret gets undefined (unchanged behaviour)");
+
+    const details = [{ type: "github_app_installation", repositories: ["acme/web"] }];
+    await resolveHeaders({
+      id: "scoped",
+      credentialType: "bearer",
+      secretRef: "REF",
+      allowedWebsites: ["x"],
+      authorizationDetails: details,
+    });
+    ok(seenArgs.at(-1)?.[1] === details, "declared authorizationDetails forwards verbatim (same reference) to the broker's getSecret");
+
+    resetBrokers();
+  }
+
   process.env.OE_CREDENTIAL_BROKER = "env";
 
   process.env.DD_API_KEY = "api123";

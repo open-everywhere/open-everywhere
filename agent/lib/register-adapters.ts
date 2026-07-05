@@ -2,8 +2,9 @@ import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentia
 import { registerGitHubMemory } from "@open-everywhere/core/agent/memory/github.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
+import { loadBundles } from "../access/bundles.js";
 
-registerVercelConnect();
+registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
 
 registerGitHubMemory();
 
