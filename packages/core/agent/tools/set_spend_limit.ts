@@ -7,6 +7,7 @@ import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps } from "../spend/caps.js";
 import { requestApproval, type RequestApprovalDeps } from "../approvals/flow.js";
+import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { postDiscordApprovalCard } from "../approvals/discord-flow.js";
 
 const LEVELS = ["surface", "workspace"] as const;
@@ -126,11 +127,13 @@ export default defineTool({
       throw new Error("set_spend_limit couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
     }
 
+    const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
+
     const posted = await requestApproval(
       {
         org: plan.args.org,
         kind: plan.kind,
-        args: plan.args,
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,

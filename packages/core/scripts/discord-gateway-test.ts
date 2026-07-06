@@ -280,6 +280,12 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(untracked.delivery.kind === "post", "plan: untracked turn → plain reply post");
   const untrackedSilent = planCompletion({ action: silent, reactionActive: false });
   ok(untrackedSilent.reaction === "none" && untrackedSilent.delivery.kind === "none", "plan: untracked + silence → nothing, no reaction");
+
+  const carded = planCompletion({ action: postAction, reactionActive: true, cardPostedThisTurn: true });
+  ok(carded.delivery.kind === "none", "plan: card posted this turn → model narration suppressed (the card IS the reply)");
+  ok(carded.reaction === "success", "plan: card posted → still counts as answered (✅ swap proceeds)");
+  const cardedUntracked = planCompletion({ action: postAction, reactionActive: false, cardPostedThisTurn: true });
+  ok(cardedUntracked.delivery.kind === "none" && cardedUntracked.reaction === "none", "plan: card posted, untracked → suppressed, reaction untouched");
 }
 
 {

@@ -6,6 +6,7 @@ import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
+import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -333,15 +334,16 @@ export interface CompletionPlan {
 export function planCompletion(input: {
   readonly action: FinalMessageAction;
   readonly reactionActive: boolean;
+  readonly cardPostedThisTurn?: boolean;
 }): CompletionPlan {
-  const { action, reactionActive } = input;
+  const { action, reactionActive, cardPostedThisTurn } = input;
   if (action.kind === "buffer-tool-status") {
     return { reaction: "none", delivery: { kind: "none" } };
   }
   if (action.kind === "post") {
     return {
       reaction: reactionActive ? "success" : "none",
-      delivery: { kind: "post", chunks: splitForDiscord(action.text) },
+      delivery: cardPostedThisTurn ? { kind: "none" } : { kind: "post", chunks: splitForDiscord(action.text) },
     };
   }
   return {
@@ -513,7 +515,11 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const status = takeTurnStatus(channel.state);
-      const plan = planCompletion({ action, reactionActive: Boolean(status.original) });
+      const plan = planCompletion({
+        action,
+        reactionActive: Boolean(status.original),
+        cardPostedThisTurn: consumeCardPostedThisTurn(),
+      });
 
       if (plan.reaction !== "none" && status.original) {
         await setDiscordReaction(status.original.channelId, status.original.messageId, EYES_EMOJI, "DELETE");

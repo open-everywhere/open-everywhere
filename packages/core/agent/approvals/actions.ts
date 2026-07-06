@@ -26,6 +26,10 @@ function fmtCapUsd(usd: number | null): string {
   return usd === null ? "none (uncapped)" : `$${usd.toFixed(2)}/mo`;
 }
 
+function scopeLine(label: string | undefined, scopeKey: string, level: string): string {
+  return label ? `${label} (${level})` : `scope \`${scopeKey}\` (${level})`;
+}
+
 export interface SpendSetArgs {
   readonly org: string;
   readonly scopeKey: string;
@@ -33,6 +37,7 @@ export interface SpendSetArgs {
   readonly monthlyTokens?: number;
   readonly monthlyUsd?: number;
   readonly reason?: string;
+  readonly scopeLabel?: string;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
 }
@@ -49,7 +54,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
   policy: "admin",
   summarize(args) {
     return [
-      `Set spend limit — scope \`${args.scopeKey}\` (${args.level})`,
+      `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       ...spendChangeLines(args),
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
     ];
@@ -89,6 +94,7 @@ export interface SpendClearArgs {
   readonly level: CapLevel;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
+  readonly scopeLabel?: string;
 }
 
 const spendClear: ActionKind<SpendClearArgs> = {
@@ -100,7 +106,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
       ...(args.currentUsd != null ? [fmtCapUsd(args.currentUsd)] : []),
     ];
     return [
-      `Clear spend limit override — scope \`${args.scopeKey}\` (${args.level})`,
+      `Clear spend limit override — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       `${current.length ? current.join(" + ") : "none (uncapped)"} → reverts to the config-as-code cap`,
     ];
   },
