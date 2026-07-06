@@ -2,6 +2,8 @@ import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } f
 import { verifyDiscordSignature } from "eve/channels/discord";
 import { OE_DISCORD_APPROVAL_PREFIX } from "../approvals/discord-card.js";
 import { handleDiscordApprovalInteraction, type DiscordInteractionResponse } from "../approvals/discord-flow.js";
+import { OE_COMMAND_NAME } from "../commands/core.js";
+import { handleDiscordOeCommandInteraction } from "../commands/discord-commands.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -26,7 +28,8 @@ export function verifyDiscordInteraction(
 
 export type DiscordFrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
-  | { readonly kind: "approval-click"; readonly reason: string; readonly interaction: unknown };
+  | { readonly kind: "approval-click"; readonly reason: string; readonly interaction: unknown }
+  | { readonly kind: "oe-command"; readonly reason: string; readonly interaction: unknown };
 
 export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecision {
   let json: unknown;
@@ -39,6 +42,14 @@ export function classifyDiscordInteraction(rawBody: string): DiscordFrontDecisio
     return { kind: "forward", reason: "non-object body — let discordChannel answer it" };
   }
   const p = json as Record<string, unknown>;
+  if (p.type === 2) {
+    const data = typeof p.data === "object" && p.data !== null ? (p.data as Record<string, unknown>) : undefined;
+    const name = typeof data?.name === "string" ? data.name : undefined;
+    if (name === OE_COMMAND_NAME) {
+      return { kind: "oe-command", reason: `"/${OE_COMMAND_NAME}" command — ours, zero-inference, never forwarded`, interaction: json };
+    }
+    return { kind: "forward", reason: `application command "${name ?? "?"}" — not ours, discordChannel dispatches it` };
+  }
   if (p.type !== 3) {
     return { kind: "forward", reason: `interaction type ${String(p.type)} — not a component click` };
   }
@@ -54,6 +65,7 @@ export interface DiscordFrontOptions {
   readonly publicKey?: string;
   readonly now?: () => number;
   readonly handleApprovalInteraction?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
+  readonly handleOeCommand?: (raw: unknown) => Promise<DiscordInteractionResponse | null>;
 }
 
 function interactionJson(body: DiscordInteractionResponse): Response {
@@ -64,6 +76,7 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
   const now = opts.now ?? (() => Date.now());
   const publicKey = () => opts.publicKey ?? process.env.DISCORD_PUBLIC_KEY;
   const handleClick = opts.handleApprovalInteraction ?? handleDiscordApprovalInteraction;
+  const handleOeCommand = opts.handleOeCommand ?? handleDiscordOeCommandInteraction;
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     const rawBody = await req.text();
@@ -74,6 +87,11 @@ export function buildDiscordFrontHandler(innerHandler: RouteHandler, opts: Disco
 
     if (decision.kind === "approval-click") {
       const response = await handleClick(decision.interaction);
+      if (response) return interactionJson(response);
+    }
+
+    if (decision.kind === "oe-command") {
+      const response = await handleOeCommand(decision.interaction);
       if (response) return interactionJson(response);
     }
 

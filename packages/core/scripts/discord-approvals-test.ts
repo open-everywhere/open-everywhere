@@ -197,7 +197,12 @@ function clickPayload(
 
 {
   ok(classifyDiscordInteraction(JSON.stringify({ type: 1 })).kind === "forward", "PING forwards (eve answers PONG)");
-  ok(classifyDiscordInteraction(JSON.stringify({ type: 2, data: { name: "oe" } })).kind === "forward", "a slash command forwards");
+  ok(classifyDiscordInteraction(JSON.stringify({ type: 2, data: { name: "ask" } })).kind === "forward", "a non-oe slash command forwards");
+  ok(
+    classifyDiscordInteraction(JSON.stringify({ type: 2, data: { name: "oe" } })).kind === "oe-command",
+    "an /oe slash command classifies as ours (backlog item 23 — zero-inference, never forwarded)",
+  );
+  ok(classifyDiscordInteraction(JSON.stringify({ type: 2 })).kind === "forward", "a slash command with no data forwards");
   ok(classifyDiscordInteraction(JSON.stringify({ type: 5, data: { custom_id: "eve_input:x" } })).kind === "forward", "a modal submit forwards");
   ok(
     classifyDiscordInteraction(JSON.stringify({ type: 3, data: { custom_id: "eve_input:abc" } })).kind === "forward",

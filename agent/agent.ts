@@ -5,6 +5,9 @@ import { gatewayRoutedModel } from "@open-everywhere/adapters/agent/model/gatewa
 import { registerGatewayDreamJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
+import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const GATEWAY_DEFAULTS = {
   only: ["fireworks"],
@@ -22,6 +25,17 @@ const UTILITY_GATEWAY_DEFAULTS = {
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerPricingSource(gatewayCatalogPricingSource());
+
+function readAppVersion(): string {
+  try {
+    const path = fileURLToPath(new URL("../package.json", import.meta.url));
+    const pkg = JSON.parse(readFileSync(path, "utf8")) as { version?: unknown };
+    return typeof pkg.version === "string" && pkg.version.length > 0 ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+registerAppInfo({ version: readAppVersion(), primaryModel: DEFAULT_MODEL, utilityModel: UTILITY_MODEL });
 
 export default defineAgent({
   model: gatewayRoutedModel("primary", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),
