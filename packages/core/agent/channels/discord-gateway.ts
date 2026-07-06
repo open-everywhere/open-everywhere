@@ -501,6 +501,14 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     "reasoning.appended": async (_data, channel) => {
       if (statusUxEnabled() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
+    "turn.failed": async (data, channel) => {
+      const detail = (data as { error?: { message?: string } } | undefined)?.error?.message;
+      log(`turn failed (channel ${channel.channelId || "?"})${detail ? `: ${detail}` : ""}`);
+      await postDiscordReply(
+        channel.channelId,
+        "⚠️ I hit an error while handling that and couldn't finish. Please try again — and if it keeps failing, check the deployment logs.",
+      );
+    },
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;

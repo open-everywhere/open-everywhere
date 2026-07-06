@@ -1,5 +1,6 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext } from "./binding-bridge.js";
+import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { discordMode, discordVisibility } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
@@ -238,18 +239,8 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
   telegram: bindTelegram,
 };
 
-const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
-  "discord-gateway": "discord",
-};
-
-export function normalizePlatform(bare: string | undefined): string | undefined {
-  return bare ? (PLATFORM_ALIASES[bare] ?? bare) : bare;
-}
-
 export function channelPlatform(ctx: BindableContext): string | undefined {
-  const rawKind = ctx.channel?.kind ?? process.env.OE_PLATFORM;
-  const bare = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
-  return normalizePlatform(bare);
+  return platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
