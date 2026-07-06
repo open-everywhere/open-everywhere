@@ -6,6 +6,7 @@ import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
+import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
 
 function log(msg: string): void {
@@ -397,17 +398,35 @@ async function dispatchTurn(
     return;
   }
 
+  const binding = bindFrom(ctxFromAuth(auth));
   try {
-    const verdict = await scopeOverBudget(partition, bindFrom(ctxFromAuth(auth)).mode, new Date().toISOString());
+    const verdict = await scopeOverBudget(partition, binding.mode, new Date().toISOString());
     if (verdict.over) {
-      await discordCreateMessage(
-        msg.channelId,
-        `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
-          `spend-budgets config, or DM me to propose a temporary override for this channel ` +
-          `(set_spend_limit) — an admin approves it on a card.`,
-      );
-      log(`declined ${partition.surfaceKey}: over budget (${verdict.reason ?? "over cap"})`);
-      return;
+      const standing = await capBypassFor({
+        org: binding.org,
+        principalId: msg.author.id,
+        surfaceKey: partition.surfaceKey,
+        reason: verdict.reason,
+      });
+      if (standing) {
+        await discordCreateMessage(
+          msg.channelId,
+          `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or ` +
+            `clear the cap (an approval card follows), or change it permanently in the ` +
+            `spend-budgets config.`,
+        );
+        log(`cap bypassed (${standing}) on ${partition.surfaceKey} by ${msg.author.id}`);
+      } else {
+        await discordCreateMessage(
+          msg.channelId,
+          `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
+            `spend-budgets config, or DM me to propose a temporary override — an admin approves it ` +
+            `on a card. Scope keys for the override: this channel = \`${partition.surfaceKey}\`, ` +
+            `whole server = \`${binding.platform}/${binding.workspace}\`.`,
+        );
+        log(`declined ${partition.surfaceKey}: over budget (${verdict.reason ?? "over cap"})`);
+        return;
+      }
     }
   } catch {
   }

@@ -32,6 +32,7 @@ const {
 const { postDiscordApprovalCard, parseDiscordComponentClick, discordResponseFor, handleDiscordApprovalInteraction } = await import(
   "../agent/approvals/discord-flow.js"
 );
+const { guildIdFromScopeKey, isGuildAdminViaRest } = await import("../agent/approvals/discord-admin.js");
 const {
   PUBLIC_DISCORD_ROUTE,
   INTERNAL_DISCORD_ROUTE,
@@ -467,4 +468,67 @@ const store = getOperationalStore();
   n++;
 }
 
-console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, ed25519 gate, poster, click matrix, front route)\n`);
+{
+  ok(guildIdFromScopeKey("discord/G1") === "G1", "guildIdFromScopeKey parses a workspace key");
+  ok(guildIdFromScopeKey("discord/G1/C2") === "G1", "guildIdFromScopeKey parses a surface key");
+  ok(guildIdFromScopeKey("slack/T1/C2") === undefined, "guildIdFromScopeKey rejects other platforms");
+  ok(guildIdFromScopeKey("discord/") === undefined, "guildIdFromScopeKey rejects an empty guild segment");
+  ok(guildIdFromScopeKey("discord") === undefined, "guildIdFromScopeKey rejects a bare platform");
+}
+
+{
+  const jsonRes = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+  const restFetch =
+    (guild: unknown, member: unknown, memberStatus = 200) =>
+    (async (url: string | URL) => {
+      const u = String(url);
+      if (/\/guilds\/[^/]+$/.test(u)) return jsonRes(guild === undefined ? 404 : 200, guild ?? {});
+      if (/\/members\//.test(u)) return jsonRes(memberStatus, member ?? {});
+      throw new Error(`unexpected REST url ${u}`);
+    }) as typeof fetch;
+
+  const adminRole = { id: "r-admin", permissions: "8" };
+  const plainRole = { id: "r-plain", permissions: "104324673" };
+
+  ok(
+    (await isGuildAdminViaRest("Ga", "U-owner", { token: "t", fetchFn: restFetch({ owner_id: "U-owner", roles: [] }, undefined) })) === true,
+    "guild OWNER is admin (no member call needed)",
+  );
+  ok(
+    (await isGuildAdminViaRest("Gb", "U-roled", { token: "t", fetchFn: restFetch({ owner_id: "X", roles: [adminRole, plainRole] }, { roles: ["r-plain", "r-admin"] }) })) === true,
+    "a member holding an ADMINISTRATOR role is admin",
+  );
+  ok(
+    (await isGuildAdminViaRest("Gc", "U-plain", { token: "t", fetchFn: restFetch({ owner_id: "X", roles: [adminRole, plainRole] }, { roles: ["r-plain"] }) })) === false,
+    "a member with only non-admin roles is not",
+  );
+  ok(
+    (await isGuildAdminViaRest("Gd", "U-out", { token: "t", fetchFn: restFetch({ owner_id: "X", roles: [adminRole] }, undefined, 404) })) === false,
+    "a non-member (member 404) is not admin",
+  );
+  ok(
+    (await isGuildAdminViaRest("Ge", "U-any", { token: "t", fetchFn: restFetch(undefined, undefined) })) === false,
+    "FAIL-CLOSED: an unknown guild (404 — e.g. a DM-bucket user id in the guild slot) is not admin",
+  );
+  ok((await isGuildAdminViaRest("Gf", "U-any", { token: "" })) === false, "FAIL-CLOSED: no bot token is not admin");
+  ok(
+    (await isGuildAdminViaRest("Gg", "U-any", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("network down");
+      }) as typeof fetch,
+    })) === false,
+    "FAIL-CLOSED: a thrown fetch is not admin (never throws out)",
+  );
+  ok(
+    (await isGuildAdminViaRest("Ga", "U-owner", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("should not be called — cached");
+      }) as typeof fetch,
+    })) === true,
+    "verdicts are cached inside the TTL (no second REST round-trip)",
+  );
+}
+
+console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, front route)\n`);

@@ -1,4 +1,5 @@
 import { planSetSpendLimit, defaultScopeKey } from "../agent/tools/set_spend_limit.js";
+import { rosterStanding } from "../agent/spend/bypass.js";
 import { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
 import { planRevokeConnector } from "../agent/tools/revoke_connector.js";
 import { planClearConnectorOverride } from "../agent/tools/clear_connector_override.js";
@@ -181,5 +182,48 @@ throwsWith(
   "non-empty connector",
   "planClearConnectorOverride refuses a blank connector name",
 );
+
+function discordDmBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding {
+  return slackBinding({ platform: "discord", workspace: "300000000000000104", surface: "D1", mode: "dm", target: { channelId: "D1" }, ...overrides });
+}
+const setInput = { monthlyUsd: 0.1, reason: "test" } as const;
+throwsWith(
+  () => planSetSpendLimit(discordDmBinding(), { ...setInput, level: "workspace" }, uncapped, null),
+  "belongs to no server",
+  "planSetSpendLimit refuses a Discord-DM workspace default (would target the DM bucket, not a server)",
+);
+throwsWith(
+  () => planSetSpendLimit(discordDmBinding(), setInput, uncapped, null),
+  "never be enforced",
+  "planSetSpendLimit refuses a DM surface default (the gate never enforces DM caps)",
+);
+throwsWith(
+  () => planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), setInput, uncapped, null),
+  "never be enforced",
+  "planSetSpendLimit refuses a Slack-DM surface default too",
+);
+{
+  const plan = planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { ...setInput, level: "workspace" }, uncapped, null);
+  ok(plan.args.scopeKey === "slack/T123", "planSetSpendLimit ALLOWS a Slack-DM workspace default (a Slack DM keeps its real team id)");
+}
+{
+  const plan = planSetSpendLimit(discordDmBinding(), { ...setInput, level: "workspace", scopeKey: "discord/G777" }, uncapped, null);
+  ok(plan.args.scopeKey === "discord/G777", "planSetSpendLimit ALLOWS an explicit scopeKey from a DM (the escape hatch)");
+}
+throwsWith(
+  () => planClearSpendLimit(discordDmBinding(), { level: "workspace" }, uncapped, null),
+  "belongs to no server",
+  "planClearSpendLimit refuses a Discord-DM workspace default",
+);
+{
+  const plan = planClearSpendLimit(discordDmBinding(), { level: "workspace", scopeKey: "discord/G777" }, uncapped, null);
+  ok(plan.args.scopeKey === "discord/G777", "planClearSpendLimit ALLOWS an explicit scopeKey from a DM");
+}
+
+ok(rosterStanding(["admin"], null) === true, "rosterStanding: org admin bypasses everywhere (no covering domain needed)");
+ok(rosterStanding(["domain:eng"], "eng") === true, "rosterStanding: a domain admin bypasses inside their own domain");
+ok(rosterStanding(["domain:eng"], "sales") === false, "rosterStanding: a domain admin does NOT bypass another domain's surface");
+ok(rosterStanding(["domain:eng"], null) === false, "rosterStanding: a domain admin does NOT bypass an un-domained surface");
+ok(rosterStanding([], "eng") === false, "rosterStanding: FAIL-CLOSED on no roles");
 
 console.log(`✓ ${passed} approval-tools assertions passed`);

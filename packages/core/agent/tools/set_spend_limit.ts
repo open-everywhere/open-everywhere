@@ -55,6 +55,20 @@ export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   return level === "workspace" ? workspaceKey : `${workspaceKey}/${binding.surface}`;
 }
 
+export function assertScopableFromHere(tool: string, binding: SurfaceBinding, level: Level, explicitScopeKey: string | undefined): void {
+  if (explicitScopeKey?.trim() || binding.mode === "channel") return;
+  if (level === "surface") {
+    throw new Error(
+      `${tool}: this is a DM, and DM usage is never gated (caps guard shared channels/servers), so a cap scoped here would never be enforced. Pass scopeKey for the channel or server you mean — e.g. "discord/<serverId>/<channelId>" or "slack/<teamId>/<channelId>"; the ⛔ decline message in an over-budget channel shows its exact keys.`,
+    );
+  }
+  if (binding.platform === "discord") {
+    throw new Error(
+      `${tool}: a Discord DM belongs to no server, so level:"workspace" here would target your personal DM bucket ("discord/${binding.workspace}"), not a server. Pass scopeKey "discord/<serverId>" for the server you mean — the ⛔ decline message in an over-budget channel shows it, or ask again from a channel in that server.`,
+    );
+  }
+}
+
 export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, current: CurrentCaps, domain: string | null): SpendSetPlan {
   if (!hasApprovalCardPath(binding.platform)) {
     throw new Error(`set_spend_limit needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
@@ -66,6 +80,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
     throw new Error("set_spend_limit needs monthlyTokens and/or monthlyUsd — a proposal must set at least one cap component.");
   }
   const level = input.level ?? "surface";
+  assertScopableFromHere("set_spend_limit", binding, level, input.scopeKey);
   const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
   const reason = input.reason.trim();
   if (!reason) {
@@ -90,7 +105,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one; an org admin, or a domain admin whose domain covers this scope, must click Approve before it takes effect. At least one of monthlyTokens/monthlyUsd is required. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one; an org admin, or a domain admin whose domain covers this scope, must click Approve before it takes effect. At least one of monthlyTokens/monthlyUsd is required. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, and a Discord DM belongs to no server — the defaults would target the wrong scope); an over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),

@@ -6,7 +6,7 @@ import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps } from "../spend/caps.js";
-import { defaultScopeKey, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
+import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 
@@ -39,6 +39,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
     throw new Error("clear_spend_limit needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
   }
   const level = input.level ?? "surface";
+  assertScopableFromHere("clear_spend_limit", binding, level, input.scopeKey);
   const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
   return {
     kind: "spend.clear",
@@ -54,7 +55,7 @@ export default defineDynamic({
       if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
       return defineTool({
   description:
-    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, and a Discord DM belongs to no server — the defaults would target the wrong scope). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace / Discord server).'),
     scopeKey: z

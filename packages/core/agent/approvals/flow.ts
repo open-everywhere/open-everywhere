@@ -188,7 +188,7 @@ export interface ResolveApprovalClickInput {
   readonly id: string;
   readonly decision: "approve" | "reject";
   readonly clickerId: string;
-  readonly platformAdmin?: (row: PendingActionRow) => boolean;
+  readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
 }
 
 export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
@@ -212,7 +212,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "unregistered-kind" };
   }
 
-  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId) && input.platformAdmin?.(row) !== true) {
+  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId) && (await input.platformAdmin?.(row)) !== true) {
     return { outcome: "denied", row };
   }
 

@@ -7,6 +7,7 @@ import {
   isGuildAdministrator,
   scopeWithinGuild,
 } from "./discord-card.js";
+import { guildIdFromScopeKey, isGuildAdminViaRest } from "./discord-admin.js";
 import type { PendingActionRow } from "./types.js";
 
 function log(msg: string): void {
@@ -135,7 +136,11 @@ export async function handleDiscordApprovalInteraction(raw: unknown): Promise<Di
       id: parsed.id,
       decision: parsed.decision,
       clickerId,
-      platformAdmin: (row) => isGuildAdministrator(click.memberPermissions) && scopeWithinGuild(row.scopeKey, click.guildId),
+      platformAdmin: async (row) => {
+        if (click.guildId) return isGuildAdministrator(click.memberPermissions) && scopeWithinGuild(row.scopeKey, click.guildId);
+        const rowGuild = guildIdFromScopeKey(row.scopeKey);
+        return rowGuild ? isGuildAdminViaRest(rowGuild, clickerId) : false;
+      },
     });
     return discordResponseFor(res);
   } catch (err) {

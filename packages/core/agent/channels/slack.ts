@@ -28,6 +28,7 @@ import { upsertUnderSection } from "../memory/markdown.js";
 import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
 import { scopeOverBudget } from "../spend/check.js";
+import { capBypassFor } from "../spend/bypass.js";
 import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_MARKER } from "../onboarding/onboarding.js";
 import {
   STATUS_REACTION,
@@ -243,15 +244,32 @@ async function onInbound(
   const mode = slackMode(facts.channelType, message.channelId);
 
   try {
-    const verdict = await scopeOverBudget(partitionForMessage(message, facts), mode, new Date().toISOString());
+    const partition = partitionForMessage(message, facts);
+    const verdict = await scopeOverBudget(partition, mode, new Date().toISOString());
     if (verdict.over) {
-      try {
-        await ctx.thread.post(
-          `:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override for this channel (set_spend_limit) — an admin approves it on a card.`,
-        );
-      } catch {
+      const binding = bindFrom(bindableForMessage(message, facts));
+      const standing = await capBypassFor({
+        org: binding.org,
+        principalId: message.author?.userId,
+        surfaceKey: partition.surfaceKey,
+        reason: verdict.reason,
+      });
+      if (standing) {
+        try {
+          await ctx.thread.post(
+            `:warning: ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.`,
+          );
+        } catch {
+        }
+      } else {
+        try {
+          await ctx.thread.post(
+            `:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = \`${partition.surfaceKey}\`, whole workspace = \`${binding.platform}/${binding.workspace}\`.`,
+          );
+        } catch {
+        }
+        return { auth: null };
       }
-      return { auth: null };
     }
   } catch {
   }
