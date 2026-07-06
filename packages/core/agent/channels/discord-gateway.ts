@@ -11,16 +11,14 @@ function log(msg: string): void {
 }
 
 export interface DiscordGatewayState {
-  readonly channelId: string;
-  readonly holdingMessageId?: string;
-  readonly originalChannelId?: string;
-  readonly originalMessageId?: string;
+  channelId: string;
+  holdingMessageId?: string;
+  originalChannelId?: string;
+  originalMessageId?: string;
 }
 interface DiscordGatewayContext {
   readonly channelId: string;
-  readonly holdingMessageId?: string;
-  readonly originalChannelId?: string;
-  readonly originalMessageId?: string;
+  readonly state: DiscordGatewayState;
 }
 
 export interface DiscordRelayMessage {
@@ -100,16 +98,24 @@ function ctxFromAuth(auth: OpenEverywhereDiscordAuth): BindableContext {
   return { channel: { kind: "discord" }, session: { auth: { current: auth } } };
 }
 
-export function shouldDispatchDiscord(input: { readonly mentionsBot: boolean; readonly isEngaged: boolean }): boolean {
-  return input.mentionsBot || input.isEngaged;
+export function isDmChannel(channelType: string | undefined): boolean {
+  return channelType === "1" || channelType === "3";
+}
+
+export function shouldDispatchDiscord(input: {
+  readonly mentionsBot: boolean;
+  readonly isEngaged: boolean;
+  readonly isDm: boolean;
+}): boolean {
+  return input.isDm || input.mentionsBot || input.isEngaged;
 }
 
 function engagementKey(msg: DiscordRelayMessage): string {
   return msg.channelId;
 }
 
-export function renderTurn(mentionsBot: boolean, content: string): string {
-  if (mentionsBot) return content;
+export function renderTurn(direct: boolean, content: string): string {
+  if (direct) return content;
   return [
     `[thread-follow] You were not mentioned — this message reached you because you're following ` +
       `this Discord channel. Reply only if it warrants a response from you: it's addressed to you, ` +
@@ -368,15 +374,28 @@ export function planCompletion(input: {
 
 export function buildGatewayState(input: {
   readonly replyChannelId: string;
-  readonly holdingMessageId?: string;
   readonly original?: { readonly channelId: string; readonly messageId: string };
 }): DiscordGatewayState {
   return {
     channelId: input.replyChannelId,
-    holdingMessageId: input.holdingMessageId,
     originalChannelId: input.original?.channelId,
     originalMessageId: input.original?.messageId,
   };
+}
+
+export function takeTurnStatus(state: DiscordGatewayState): {
+  holdingMessageId?: string;
+  original?: { channelId: string; messageId: string };
+} {
+  const holdingMessageId = state.holdingMessageId;
+  const original =
+    state.originalChannelId && state.originalMessageId
+      ? { channelId: state.originalChannelId, messageId: state.originalMessageId }
+      : undefined;
+  state.holdingMessageId = undefined;
+  state.originalChannelId = undefined;
+  state.originalMessageId = undefined;
+  return { holdingMessageId, original };
 }
 
 type DiscordGatewaySend = (
@@ -396,17 +415,14 @@ async function dispatchTurn(
 ): Promise<void> {
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
   const key = engagementKey(msg);
-  const engaged = msg.mentionsBot ? true : await isThreadEngaged(partition, key);
-  if (!shouldDispatchDiscord({ mentionsBot: msg.mentionsBot, isEngaged: engaged })) {
+  const isDm = isDmChannel(msg.channelType);
+  const engaged = isDm || msg.mentionsBot ? true : await isThreadEngaged(partition, key);
+  if (!shouldDispatchDiscord({ mentionsBot: msg.mentionsBot, isEngaged: engaged, isDm })) {
     log(`drop ${partition.surfaceKey}: non-mention in a channel the agent isn't following`);
     return;
   }
 
   const statusUx = statusUxEnabled();
-  if (statusUx) {
-    await setDiscordReaction(msg.channelId, msg.id, EYES_EMOJI, "PUT");
-  }
-
   let threadId: string | null = null;
   if (msg.mentionsBot && shouldAutoThread(msg.channelType, autoThreadEnabled())) {
     threadId = await createThread(msg.channelId, msg.id, deriveThreadName(msg.content));
@@ -415,28 +431,29 @@ async function dispatchTurn(
     }
   }
 
+  if (statusUx && threadId) {
+    await setDiscordReaction(msg.channelId, msg.id, EYES_EMOJI, "PUT");
+  }
+
   const surface = dispatchSurfaceFor(msg, auth, threadId);
   const dispatchPartition: Partition = threadId ? resolvePartition(ctxFromAuth(surface.auth)) : partition;
 
   if (msg.mentionsBot) {
     await markThreadEngaged(dispatchPartition, surface.engagementKey, new Date().toISOString());
   }
-  const holdingMessageId = statusUx ? ((await postHoldingMessage(surface.state.channelId)) ?? undefined) : undefined;
-
   const turnState: DiscordGatewayState = buildGatewayState({
     replyChannelId: surface.state.channelId,
-    holdingMessageId,
-    original: statusUx ? { channelId: msg.channelId, messageId: msg.id } : undefined,
+    original: statusUx && threadId ? { channelId: msg.channelId, messageId: msg.id } : undefined,
   });
 
-  await send(renderTurn(msg.mentionsBot, msg.content), {
+  await send(renderTurn(msg.mentionsBot || isDm, msg.content), {
     auth: surface.auth,
     continuationToken: surface.continuationToken,
     state: turnState,
   });
   log(
-    `dispatched ${dispatchPartition.surfaceKey} (${msg.mentionsBot ? "mention" : "engaged"}` +
-      `${threadId ? ", auto-threaded" : ""}${statusUx ? (holdingMessageId ? ", holding+👀" : ", 👀 only") : ""})`,
+    `dispatched ${dispatchPartition.surfaceKey} (${isDm ? "dm" : msg.mentionsBot ? "mention" : "engaged"}` +
+      `${threadId ? ", auto-threaded+👀" : ""})`,
   );
 }
 
@@ -445,9 +462,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   state: { channelId: "" },
   context: (state: DiscordGatewayState): DiscordGatewayContext => ({
     channelId: state.channelId,
-    holdingMessageId: state.holdingMessageId,
-    originalChannelId: state.originalChannelId,
-    originalMessageId: state.originalMessageId,
+    state,
   }),
   routes: [
     POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { send, waitUntil }) => {
@@ -477,15 +492,25 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     }),
   ],
   events: {
+    "turn.started": async (_data, channel) => {
+      channel.state.holdingMessageId = undefined;
+      if (!statusUxEnabled() || !channel.channelId) return;
+      channel.state.holdingMessageId = (await postHoldingMessage(channel.channelId)) ?? undefined;
+    },
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
-      const reactionActive = Boolean(channel.originalMessageId && channel.originalChannelId);
-      const plan = planCompletion({ action, holdingMessageId: channel.holdingMessageId, reactionActive });
+      if (action.kind === "buffer-tool-status") return;
+      const status = takeTurnStatus(channel.state);
+      const plan = planCompletion({
+        action,
+        holdingMessageId: status.holdingMessageId,
+        reactionActive: Boolean(status.original),
+      });
 
-      if (plan.reaction !== "none" && channel.originalChannelId && channel.originalMessageId) {
-        await setDiscordReaction(channel.originalChannelId, channel.originalMessageId, EYES_EMOJI, "DELETE");
+      if (plan.reaction !== "none" && status.original) {
+        await setDiscordReaction(status.original.channelId, status.original.messageId, EYES_EMOJI, "DELETE");
         if (plan.reaction === "success") {
-          await setDiscordReaction(channel.originalChannelId, channel.originalMessageId, CHECK_EMOJI, "PUT");
+          await setDiscordReaction(status.original.channelId, status.original.messageId, CHECK_EMOJI, "PUT");
         }
       }
 

@@ -4,7 +4,9 @@ import {
   parseRelayPayload,
   authForRelayMessage,
   shouldDispatchDiscord,
+  isDmChannel,
   renderTurn,
+  takeTurnStatus,
   splitForDiscord,
   shouldAutoThread,
   autoThreadEnabled,
@@ -132,16 +134,23 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 }
 
 {
-  ok(shouldDispatchDiscord({ mentionsBot: true, isEngaged: false }) === true, "wake: mention wakes even when not engaged");
-  ok(shouldDispatchDiscord({ mentionsBot: false, isEngaged: true }) === true, "wake: engaged channel wakes on a plain reply");
-  ok(shouldDispatchDiscord({ mentionsBot: false, isEngaged: false }) === false, "wake: non-mention in a non-engaged channel is dropped");
-  ok(shouldDispatchDiscord({ mentionsBot: true, isEngaged: true }) === true, "wake: mention + engaged wakes");
+  ok(shouldDispatchDiscord({ mentionsBot: true, isEngaged: false, isDm: false }) === true, "wake: mention wakes even when not engaged");
+  ok(shouldDispatchDiscord({ mentionsBot: false, isEngaged: true, isDm: false }) === true, "wake: engaged channel wakes on a plain reply");
+  ok(shouldDispatchDiscord({ mentionsBot: false, isEngaged: false, isDm: false }) === false, "wake: non-mention in a non-engaged channel is dropped");
+  ok(shouldDispatchDiscord({ mentionsBot: true, isEngaged: true, isDm: false }) === true, "wake: mention + engaged wakes");
+  ok(shouldDispatchDiscord({ mentionsBot: false, isEngaged: false, isDm: true }) === true, "wake: a DM wakes WITHOUT a mention (it's inherently addressed to the bot)");
+
+  ok(isDmChannel("1") === true, "dm: type 1 (DM) is a DM");
+  ok(isDmChannel("3") === true, "dm: type 3 (group DM) is a DM");
+  ok(isDmChannel("0") === false, "dm: type 0 (guild text) is not a DM");
+  ok(isDmChannel("11") === false, "dm: type 11 (public thread) is not a DM");
+  ok(isDmChannel(undefined) === false, "dm: unknown channel type is not a DM (fail-safe)");
 }
 
 {
-  ok(renderTurn(true, "do the thing") === "do the thing", "render: mention text passes straight through (trusted user input)");
+  ok(renderTurn(true, "do the thing") === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input)");
   const woke = renderTurn(false, "chatter");
-  ok(woke.includes(NO_REPLY_SENTINEL) && woke.endsWith("chatter"), "render: non-mention wake carries the NO_REPLY judge preamble + content");
+  ok(woke.includes(NO_REPLY_SENTINEL) && woke.endsWith("chatter"), "render: non-direct wake carries the NO_REPLY judge preamble + content");
 }
 
 {
@@ -287,17 +296,37 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 
   const state = buildGatewayState({
     replyChannelId: surface.state.channelId,
-    holdingMessageId: "H_hold",
     original: { channelId: msg.channelId, messageId: msg.id },
   });
   ok(state.channelId === "T_THREAD", "state: reply surface follows the thread re-key");
   ok(state.originalChannelId === "C_BASE", "state: reaction target stays on the ORIGINAL (base) channel");
   ok(state.originalMessageId === "M_trigger", "state: reaction target stays on the ORIGINAL trigger message");
-  ok(state.holdingMessageId === "H_hold", "state: holding message id threaded through");
+  ok(state.holdingMessageId === undefined, "state: holding id is NEVER seeded at dispatch (turn.started owns it per turn)");
 
-  const off = buildGatewayState({ replyChannelId: "C_BASE", holdingMessageId: undefined, original: undefined });
-  ok(off.originalChannelId === undefined && off.originalMessageId === undefined, "state: UX off → no reaction coords (no swap)");
-  ok(off.channelId === "C_BASE" && off.holdingMessageId === undefined, "state: UX off → base reply surface, no holding");
+  const off = buildGatewayState({ replyChannelId: "C_BASE", original: undefined });
+  ok(off.originalChannelId === undefined && off.originalMessageId === undefined, "state: no thread/UX off → no reaction coords (no swap)");
+  ok(off.channelId === "C_BASE" && off.holdingMessageId === undefined, "state: no thread/UX off → base reply surface, no holding");
+}
+
+{
+  const state = buildGatewayState({
+    replyChannelId: "T_THREAD",
+    original: { channelId: "C_BASE", messageId: "M_trigger" },
+  });
+  state.holdingMessageId = "H_turn1";
+
+  const first = takeTurnStatus(state);
+  ok(first.holdingMessageId === "H_turn1", "take: returns this turn's holding id");
+  ok(first.original?.channelId === "C_BASE" && first.original?.messageId === "M_trigger", "take: returns the reaction coords");
+  ok(state.holdingMessageId === undefined && state.originalChannelId === undefined && state.originalMessageId === undefined, "take: CLEARS all per-turn fields (consume-once)");
+  ok(state.channelId === "T_THREAD", "take: leaves the session-stable reply surface untouched");
+
+  const second = takeTurnStatus(state);
+  ok(second.holdingMessageId === undefined && second.original === undefined, "take: second consume is empty — turn 2 can never see turn 1's messages");
+
+  const partial = buildGatewayState({ replyChannelId: "C" });
+  partial.originalChannelId = "C_BASE";
+  ok(takeTurnStatus(partial).original === undefined, "take: partial coords → no reaction target (fail-safe)");
 }
 
 {
@@ -319,4 +348,4 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(state.channelId === "C_BASE2" && state.originalChannelId === "C_BASE2" && state.originalMessageId === "M9", "state: inline reply — reaction + reply both on the base channel/trigger message");
 }
 
-console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + state threading)`);
+console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status)`);
