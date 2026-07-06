@@ -6,6 +6,7 @@ import { SKILL_CONTENT } from "../plugins/skill-content.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
+import "../identity/trusted-surfaces.js";
 
 registerConfig({
   loadBundles,

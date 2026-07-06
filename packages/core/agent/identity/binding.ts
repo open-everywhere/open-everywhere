@@ -2,7 +2,8 @@ import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext } from "./binding-bridge.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { discordMode, discordVisibility } from "../channels/discord-identity.js";
-import { telegramMode, telegramVisibility } from "../channels/telegram-identity.js";
+import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
+import { isVouchedInternal } from "./trust.js";
 
 export type Visibility = "public" | "private";
 
@@ -199,7 +200,7 @@ const bindTelegram: Mapper = (ctx) => {
   const chatType = attr(a, ["chat_type", "chatType"]);
   const threadId = attr(a, ["message_thread_id", "messageThreadId"]);
   const mode = telegramMode(chatType);
-  const chatKey = chatId !== undefined && chatId.startsWith("-") ? `g${chatId.slice(1)}` : chatId;
+  const chatKey = chatId !== undefined ? telegramChatKey(chatId) : chatId;
   const surface = threadId ? `${chatKey}.t${threadId}` : chatKey;
   return {
     workspace: chatKey,
@@ -257,15 +258,20 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   }
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
-  let trust = raw.trust ?? local.trust ?? (platform === "local" ? "internal" : "external");
-  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal" && !raw.trustVerified) {
+  const workspace = seg(raw.workspace ?? local.workspace, "dev");
+  const surface = seg(raw.surface ?? local.surface, "default");
+  const vouched = isVouchedInternal(`${platform}/${workspace}`, `${platform}/${workspace}/${surface}`)
+    ? ("internal" as const)
+    : undefined;
+  let trust = raw.trust ?? vouched ?? local.trust ?? (platform === "local" ? "internal" : "external");
+  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal" && !raw.trustVerified && vouched !== "internal") {
     trust = "external";
   }
   return {
     org: seg(process.env.OE_ORG, "default"),
     platform,
-    workspace: seg(raw.workspace ?? local.workspace, "dev"),
-    surface: seg(raw.surface ?? local.surface, "default"),
+    workspace,
+    surface,
     mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
