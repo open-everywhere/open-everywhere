@@ -247,38 +247,28 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 
 {
   const postAction = finalMessageAction("stop", "here is the answer");
-  const edited = planCompletion({ action: postAction, holdingMessageId: "H1", reactionActive: true });
-  ok(edited.reaction === "success", "plan: postable → reaction swap to ✅ (success)");
-  ok(edited.delivery.kind === "edit", "plan: postable + holding → edit the holding in place");
-  ok(edited.delivery.kind === "edit" && edited.delivery.holdingId === "H1", "plan: edit targets the holding message id");
-  ok(edited.delivery.kind === "edit" && edited.delivery.chunks[0] === "here is the answer", "plan: edit carries the reply chunk(s)");
+  const posted = planCompletion({ action: postAction, reactionActive: true });
+  ok(posted.reaction === "success", "plan: postable → reaction swap to ✅ (success)");
+  ok(posted.delivery.kind === "post", "plan: postable → fresh post (never an edit)");
+  ok(posted.delivery.kind === "post" && posted.delivery.chunks[0] === "here is the answer", "plan: post carries the reply chunk(s)");
 
   const long = "a".repeat(2500);
-  const multi = planCompletion({ action: finalMessageAction("stop", long), holdingMessageId: "H2", reactionActive: true });
-  ok(multi.delivery.kind === "edit" && multi.delivery.chunks.length === 2, "plan: an over-2000 reply splits into edit + append chunks");
-
-  const posted = planCompletion({ action: postAction, holdingMessageId: undefined, reactionActive: true });
-  ok(posted.delivery.kind === "post", "plan: postable + no holding → plain fresh post (fail-open fallback)");
-  ok(posted.reaction === "success", "plan: fail-open fallback still swaps the reaction to ✅");
+  const multi = planCompletion({ action: finalMessageAction("stop", long), reactionActive: true });
+  ok(multi.delivery.kind === "post" && multi.delivery.chunks.length === 2, "plan: an over-2000 reply splits into two post chunks");
 
   const silent = finalMessageAction("stop", NO_REPLY_SENTINEL);
-  const cleared = planCompletion({ action: silent, holdingMessageId: "H3", reactionActive: true });
+  const cleared = planCompletion({ action: silent, reactionActive: true });
   ok(cleared.reaction === "clear", "plan: silence → remove 👀 only (no ✅)");
-  ok(cleared.delivery.kind === "delete-holding", "plan: silence + holding → delete the stranded holding");
-  ok(cleared.delivery.kind === "delete-holding" && cleared.delivery.holdingId === "H3", "plan: delete targets the holding id");
+  ok(cleared.delivery.kind === "none", "plan: silence → nothing to deliver");
 
-  const silentNoHold = planCompletion({ action: silent, holdingMessageId: undefined, reactionActive: true });
-  ok(silentNoHold.delivery.kind === "none", "plan: silence + no holding → nothing to deliver");
-  ok(silentNoHold.reaction === "clear", "plan: silence still clears 👀 when no holding stands");
-
-  const tool = planCompletion({ action: finalMessageAction("tool-calls", null), holdingMessageId: "H4", reactionActive: true });
+  const tool = planCompletion({ action: finalMessageAction("tool-calls", null), reactionActive: true });
   ok(tool.reaction === "none" && tool.delivery.kind === "none", "plan: interim tool turn → no reaction, no delivery");
 
-  const uxOff = planCompletion({ action: postAction, holdingMessageId: undefined, reactionActive: false });
-  ok(uxOff.reaction === "none", "plan: UX off → no reaction swap (today's behaviour)");
-  ok(uxOff.delivery.kind === "post", "plan: UX off → plain reply post");
-  const uxOffSilent = planCompletion({ action: silent, holdingMessageId: undefined, reactionActive: false });
-  ok(uxOffSilent.reaction === "none" && uxOffSilent.delivery.kind === "none", "plan: UX off + silence → nothing, no reaction");
+  const untracked = planCompletion({ action: postAction, reactionActive: false });
+  ok(untracked.reaction === "none", "plan: untracked turn → no reaction swap");
+  ok(untracked.delivery.kind === "post", "plan: untracked turn → plain reply post");
+  const untrackedSilent = planCompletion({ action: silent, reactionActive: false });
+  ok(untrackedSilent.reaction === "none" && untrackedSilent.delivery.kind === "none", "plan: untracked + silence → nothing, no reaction");
 }
 
 {
@@ -301,11 +291,10 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(state.channelId === "T_THREAD", "state: reply surface follows the thread re-key");
   ok(state.originalChannelId === "C_BASE", "state: reaction target stays on the ORIGINAL (base) channel");
   ok(state.originalMessageId === "M_trigger", "state: reaction target stays on the ORIGINAL trigger message");
-  ok(state.holdingMessageId === undefined, "state: holding id is NEVER seeded at dispatch (turn.started owns it per turn)");
 
   const off = buildGatewayState({ replyChannelId: "C_BASE", original: undefined });
   ok(off.originalChannelId === undefined && off.originalMessageId === undefined, "state: no thread/UX off → no reaction coords (no swap)");
-  ok(off.channelId === "C_BASE" && off.holdingMessageId === undefined, "state: no thread/UX off → base reply surface, no holding");
+  ok(off.channelId === "C_BASE", "state: no thread/UX off → base reply surface");
 }
 
 {
@@ -313,16 +302,14 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     replyChannelId: "T_THREAD",
     original: { channelId: "C_BASE", messageId: "M_trigger" },
   });
-  state.holdingMessageId = "H_turn1";
 
   const first = takeTurnStatus(state);
-  ok(first.holdingMessageId === "H_turn1", "take: returns this turn's holding id");
   ok(first.original?.channelId === "C_BASE" && first.original?.messageId === "M_trigger", "take: returns the reaction coords");
-  ok(state.holdingMessageId === undefined && state.originalChannelId === undefined && state.originalMessageId === undefined, "take: CLEARS all per-turn fields (consume-once)");
+  ok(state.originalChannelId === undefined && state.originalMessageId === undefined, "take: CLEARS the coords (consume-once)");
   ok(state.channelId === "T_THREAD", "take: leaves the session-stable reply surface untouched");
 
   const second = takeTurnStatus(state);
-  ok(second.holdingMessageId === undefined && second.original === undefined, "take: second consume is empty — turn 2 can never see turn 1's messages");
+  ok(second.original === undefined, "take: second consume is empty — turn 2 can never see turn 1's message");
 
   const partial = buildGatewayState({ replyChannelId: "C" });
   partial.originalChannelId = "C_BASE";

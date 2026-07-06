@@ -3,8 +3,9 @@ import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-iden
 import { finalMessageAction, NO_REPLY_SENTINEL, type FinalMessageAction } from "./slack-events.js";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
-import type { BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
+import { scopeOverBudget } from "../spend/check.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -12,7 +13,6 @@ function log(msg: string): void {
 
 export interface DiscordGatewayState {
   channelId: string;
-  holdingMessageId?: string;
   originalChannelId?: string;
   originalMessageId?: string;
 }
@@ -179,51 +179,19 @@ async function postDiscordReply(channelId: string, text: string): Promise<void> 
   }
 }
 
-const HOLDING_MESSAGE = "🤔 On it — working through this…";
-
-async function postHoldingMessage(channelId: string): Promise<string | null> {
-  return discordCreateMessage(channelId, HOLDING_MESSAGE);
-}
-
-async function editDiscordMessage(channelId: string, messageId: string, content: string): Promise<boolean> {
+async function triggerDiscordTyping(channelId: string): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
-    log(`DISCORD_BOT_TOKEN is not set — cannot edit message ${messageId} in channel ${channelId}`);
-    return false;
-  }
+  if (!token || !channelId) return;
   try {
-    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
-      method: "PATCH",
-      headers: botAuthHeaders(token),
-      body: JSON.stringify({ content }),
+    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/typing`, {
+      method: "POST",
+      headers: { authorization: `Bot ${token}` },
     });
     if (!res.ok) {
-      log(`Discord edit-message failed (${res.status}) for message ${messageId} in channel ${channelId}`);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    log(`Discord edit-message error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
-    return false;
-  }
-}
-
-async function deleteDiscordMessage(channelId: string, messageId: string): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
-    log(`DISCORD_BOT_TOKEN is not set — cannot delete message ${messageId} in channel ${channelId}`);
-    return;
-  }
-  try {
-    const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages/${messageId}`, {
-      method: "DELETE",
-      headers: botAuthHeaders(token),
-    });
-    if (!res.ok) {
-      log(`Discord delete-message failed (${res.status}) for message ${messageId} in channel ${channelId}`);
+      log(`Discord typing trigger failed (${res.status}) for channel ${channelId}`);
     }
   } catch (err) {
-    log(`Discord delete-message error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
+    log(`Discord typing trigger error for channel ${channelId}: ${(err as Error)?.message ?? String(err)}`);
   }
 }
 
@@ -340,9 +308,7 @@ export type ReactionResolution =
   | "none";
 
 export type CompletionDelivery =
-  | { readonly kind: "edit"; readonly chunks: readonly string[]; readonly holdingId: string }
   | { readonly kind: "post"; readonly chunks: readonly string[] }
-  | { readonly kind: "delete-holding"; readonly holdingId: string }
   | { readonly kind: "none" };
 
 export interface CompletionPlan {
@@ -352,23 +318,21 @@ export interface CompletionPlan {
 
 export function planCompletion(input: {
   readonly action: FinalMessageAction;
-  readonly holdingMessageId?: string;
   readonly reactionActive: boolean;
 }): CompletionPlan {
-  const { action, holdingMessageId, reactionActive } = input;
+  const { action, reactionActive } = input;
   if (action.kind === "buffer-tool-status") {
     return { reaction: "none", delivery: { kind: "none" } };
   }
   if (action.kind === "post") {
-    const chunks = splitForDiscord(action.text);
     return {
       reaction: reactionActive ? "success" : "none",
-      delivery: holdingMessageId ? { kind: "edit", chunks, holdingId: holdingMessageId } : { kind: "post", chunks },
+      delivery: { kind: "post", chunks: splitForDiscord(action.text) },
     };
   }
   return {
     reaction: reactionActive ? "clear" : "none",
-    delivery: holdingMessageId ? { kind: "delete-holding", holdingId: holdingMessageId } : { kind: "none" },
+    delivery: { kind: "none" },
   };
 }
 
@@ -384,18 +348,15 @@ export function buildGatewayState(input: {
 }
 
 export function takeTurnStatus(state: DiscordGatewayState): {
-  holdingMessageId?: string;
   original?: { channelId: string; messageId: string };
 } {
-  const holdingMessageId = state.holdingMessageId;
   const original =
     state.originalChannelId && state.originalMessageId
       ? { channelId: state.originalChannelId, messageId: state.originalMessageId }
       : undefined;
-  state.holdingMessageId = undefined;
   state.originalChannelId = undefined;
   state.originalMessageId = undefined;
-  return { holdingMessageId, original };
+  return { original };
 }
 
 type DiscordGatewaySend = (
@@ -422,6 +383,21 @@ async function dispatchTurn(
     return;
   }
 
+  try {
+    const verdict = await scopeOverBudget(partition, bindFrom(ctxFromAuth(auth)).mode, new Date().toISOString());
+    if (verdict.over) {
+      await discordCreateMessage(
+        msg.channelId,
+        `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
+          `spend-budgets config, or DM me to propose a temporary override for this channel ` +
+          `(set_spend_limit) — an admin approves it on a card.`,
+      );
+      log(`declined ${partition.surfaceKey}: over budget (${verdict.reason ?? "over cap"})`);
+      return;
+    }
+  } catch {
+  }
+
   const statusUx = statusUxEnabled();
   let threadId: string | null = null;
   if (msg.mentionsBot && shouldAutoThread(msg.channelType, autoThreadEnabled())) {
@@ -431,7 +407,7 @@ async function dispatchTurn(
     }
   }
 
-  if (statusUx && threadId) {
+  if (statusUx && (msg.mentionsBot || isDm)) {
     await setDiscordReaction(msg.channelId, msg.id, EYES_EMOJI, "PUT");
   }
 
@@ -445,6 +421,10 @@ async function dispatchTurn(
     replyChannelId: surface.state.channelId,
     original: statusUx && threadId ? { channelId: msg.channelId, messageId: msg.id } : undefined,
   });
+
+  if (statusUx) {
+    await triggerDiscordTyping(surface.state.channelId);
+  }
 
   await send(renderTurn(msg.mentionsBot || isDm, msg.content), {
     auth: surface.auth,
@@ -493,19 +473,19 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   ],
   events: {
     "turn.started": async (_data, channel) => {
-      channel.state.holdingMessageId = undefined;
-      if (!statusUxEnabled() || !channel.channelId) return;
-      channel.state.holdingMessageId = (await postHoldingMessage(channel.channelId)) ?? undefined;
+      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+    },
+    "actions.requested": async (_data, channel) => {
+      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+    },
+    "action.result": async (_data, channel) => {
+      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
     },
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const status = takeTurnStatus(channel.state);
-      const plan = planCompletion({
-        action,
-        holdingMessageId: status.holdingMessageId,
-        reactionActive: Boolean(status.original),
-      });
+      const plan = planCompletion({ action, reactionActive: Boolean(status.original) });
 
       if (plan.reaction !== "none" && status.original) {
         await setDiscordReaction(status.original.channelId, status.original.messageId, EYES_EMOJI, "DELETE");
@@ -514,29 +494,10 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         }
       }
 
-      switch (plan.delivery.kind) {
-        case "edit": {
-          const [first, ...rest] = plan.delivery.chunks;
-          const edited = await editDiscordMessage(channel.channelId, plan.delivery.holdingId, first ?? "");
-          if (!edited) {
-            await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : first ?? "");
-          } else {
-            for (const chunk of rest) await discordCreateMessage(channel.channelId, chunk);
-          }
-          break;
-        }
-        case "post":
-          await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
-          break;
-        case "delete-holding":
-          log(`judged silence (NO_REPLY) — removing holding message (channel ${channel.channelId || "?"})`);
-          await deleteDiscordMessage(channel.channelId, plan.delivery.holdingId);
-          break;
-        case "none":
-          if (action.kind === "silent" && data.message) {
-            log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
-          }
-          break;
+      if (plan.delivery.kind === "post") {
+        await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
+      } else if (action.kind === "silent" && data.message) {
+        log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
       }
     },
   },
