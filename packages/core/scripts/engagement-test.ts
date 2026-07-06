@@ -11,6 +11,7 @@ import {
   renderWakeMessage,
   isNoReply,
   finalMessageAction,
+  turnEffectsFor,
   NO_REPLY_SENTINEL,
   nameDropPattern,
   shouldNameDropWake,
@@ -411,6 +412,18 @@ registerConfig({
   ok(finalMessageAction("stop", "NO_REPLY").kind === "silent", "sentinel final message → swallowed, nothing posted");
   const post = finalMessageAction("stop", "Here's the answer.");
   ok(post.kind === "post" && post.text === "Here's the answer.", "genuine reply → posted verbatim");
+
+  const silentAction = finalMessageAction("stop", "NO_REPLY");
+  if (silentAction.kind !== "silent") throw new Error("expected finalMessageAction to judge NO_REPLY as silent");
+  ok(turnEffectsFor(silentAction, false).kind === "silent", "turnEffectsFor: a silent turn stays silent regardless of the card flag");
+  ok(turnEffectsFor(silentAction, true).kind === "silent", "turnEffectsFor: even if a card somehow posted, NO_REPLY still silences (no text either way)");
+
+  const postAction = finalMessageAction("stop", "Here's the answer.");
+  if (postAction.kind !== "post") throw new Error("expected finalMessageAction to judge a genuine reply as post");
+  const noCard = turnEffectsFor(postAction, false);
+  ok(noCard.kind === "reply" && noCard.postText === true, "turnEffectsFor: no card posted this turn → normal reply, text posts (covers the refusal/validation-error path, which never reaches requestApproval)");
+  const withCard = turnEffectsFor(postAction, true);
+  ok(withCard.kind === "reply" && withCard.postText === false, "turnEffectsFor: a card posted this turn → still a 'reply' (participating), but the text is suppressed");
 }
 
 {

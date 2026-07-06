@@ -82,6 +82,18 @@ export function finalMessageAction(finishReason: string, message: string | null)
   return { kind: "post", text: message };
 }
 
+export type TurnEffects =
+  | { readonly kind: "silent" }
+  | { readonly kind: "reply"; readonly postText: boolean };
+
+export function turnEffectsFor(
+  action: Extract<FinalMessageAction, { kind: "silent" } | { kind: "post" }>,
+  cardPostedThisTurn: boolean,
+): TurnEffects {
+  if (action.kind === "silent") return { kind: "silent" };
+  return { kind: "reply", postText: !cardPostedThisTurn };
+}
+
 export interface MessageRouteDeps {
   readonly isEngaged: (p: ReturnType<typeof resolvePartition>, threadTs: string) => Promise<boolean>;
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; state?: unknown }) => Promise<void>;

@@ -19,7 +19,8 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageAction, botDisplayName } from "./slack-events.js";
+import { finalMessageAction, turnEffectsFor, botDisplayName } from "./slack-events.js";
+import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -45,6 +46,13 @@ function statusVerb(state: { channelId?: string | null; teamId?: string | null }
     return `${verbs[Math.floor(Math.random() * verbs.length)]}…`;
   } catch {
     return "Working…";
+  }
+}
+
+async function refreshTypingStatus(channel: SlackEventContext): Promise<void> {
+  try {
+    await channel.thread.startTyping(statusVerb(channel.state));
+  } catch {
   }
 }
 
@@ -75,14 +83,6 @@ async function recordQuietFailure(
   } catch (err) {
     console.warn(`[open-everywhere:slack] quiet-fail audit write failed: ${String(err)}`);
   }
-}
-
-function firstNonEmptyLine(text: string): string | undefined {
-  for (const line of text.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed.length > 0) return trimmed;
-  }
-  return undefined;
 }
 
 async function setStatusReaction(slack: SlackHandle, state: ReactionState | "none"): Promise<void> {
@@ -294,26 +294,17 @@ const slackMentionChannel = slackChannel({
       const last = channel.state.lastReasoningTypingAtMs;
       if (last != null && now - last >= 0 && now - last < 5000) return;
       channel.state.lastReasoningTypingAtMs = now;
-      try {
-        await channel.thread.startTyping(statusVerb(channel.state));
-      } catch {
-      }
+      await refreshTypingStatus(channel);
     },
     "actions.requested": async (_data, channel) => {
-      const preamble = channel.state.pendingToolCallMessage;
-      channel.state.pendingToolCallMessage = null;
-      try {
-        await channel.thread.startTyping(preamble ? preamble.slice(0, 150) : statusVerb(channel.state));
-      } catch {
-      }
+      await refreshTypingStatus(channel);
     },
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") {
-        channel.state.pendingToolCallMessage = data.message ? firstNonEmptyLine(data.message) ?? null : null;
         return;
       }
-      channel.state.pendingToolCallMessage = null;
+      const cardPostedThisTurn = consumeCardPostedThisTurn();
       if (action.kind === "silent") {
         (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
         console.log(
@@ -325,8 +316,18 @@ const slackMentionChannel = slackChannel({
         }
         return;
       }
+      const effects = turnEffectsFor(action, cardPostedThisTurn);
+      if (effects.kind !== "reply") {
+        return;
+      }
       (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
-      await channel.thread.post(action.text);
+      if (effects.postText) {
+        await channel.thread.post(action.text);
+      } else {
+        console.log(
+          `[open-everywhere:slack] approval card already posted this turn — suppressing the redundant text reply (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
+        );
+      }
       (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
       await setStatusReaction(channel.slack, "none");
       try {

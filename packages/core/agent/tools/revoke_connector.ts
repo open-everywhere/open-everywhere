@@ -51,7 +51,7 @@ export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnec
 
 export default defineTool({
   description:
-    "Break-glass PROPOSE: cut an Eve connector (by name, e.g. \"notion\") from this surface at runtime — this does NOT revoke anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve before the hard gate blocks it (no redeploy needed once approved). Use for incidents (leaked token, abuse) where the change needs to happen NOW, not after a PR review. A revoke is STICKY once approved (no auto-expiry) — revert with clear_connector_override or a PR removing the grant. Tell the user plainly that a card was posted and the connector still works until approved.",
+    "Break-glass PROPOSE: cut an Eve connector (by name, e.g. \"notion\") from this surface at runtime — this does NOT revoke anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve before the hard gate blocks it (no redeploy needed once approved). Use for incidents (leaked token, abuse) where the change needs to happen NOW, not after a PR review. A revoke is STICKY once approved (no auto-expiry) — revert with clear_connector_override or a PR removing the grant. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.",
   inputSchema: z.object({
     connector: z.string().min(1).describe('Connector name to revoke, e.g. "notion".'),
     reason: z.string().min(1).describe("Why — shown on the approval card (e.g. \"suspected leaked token\")."),
@@ -93,7 +93,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `Posted a confirmation card to revoke connector "${plan.args.connector}" from "${plan.args.scopeKey}". Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+      note: `card posted — revoke "${plan.args.connector}" from "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
   },
 });

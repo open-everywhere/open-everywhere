@@ -6,6 +6,7 @@ import { criteriaDomain } from "../memory/domain.js";
 import { slackForm } from "../channels/slack-events.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
+import { markCardPostedThisTurn } from "./card-signal.js";
 import type { PendingActionRow } from "./types.js";
 import "./memory-forget.js";
 
@@ -95,6 +96,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   }
 
   await store.setPendingActionMessage(input.org, row.id, messageTs);
+  markCardPostedThisTurn();
   await appendAudit({
     ...whereFromScope(input.org, input.scopeKey),
     principalId: input.requestedBy,

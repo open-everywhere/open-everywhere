@@ -49,7 +49,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
 
 export default defineTool({
   description:
-    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. Tell the user plainly that a card was posted and the override is still in effect until approved.',
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace).'),
     scopeKey: z
@@ -98,7 +98,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `Posted a confirmation card to clear the ${plan.args.level} spend-limit override on "${plan.args.scopeKey}" (current: ${[...(plan.args.currentCap !== null ? [plan.args.currentCap.toLocaleString() + " tokens/month"] : []), ...(plan.args.currentUsd !== null ? [`$${plan.args.currentUsd.toFixed(2)}/month`] : [])].join(" + ") || "uncapped"}). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+      note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
   },
 });

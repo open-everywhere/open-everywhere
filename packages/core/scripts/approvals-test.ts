@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 
 const dir = join(tmpdir(), `open-everywhere-approvals-${process.pid}`);
@@ -17,6 +19,13 @@ const { pendingCardBlocks, decidedCardBlocks } = await import("../agent/approval
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
 const { applyConnectorOverrides } = await import("../agent/access/connector-scope.js");
+const { markCardPostedThisTurn, consumeCardPostedThisTurn } = await import("../agent/approvals/card-signal.js");
+
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+const inSession = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn);
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -349,4 +358,39 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(threw, "requestApproval: throws when the Slack post fails (a pending nobody can see must not linger)");
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix)\n`);
+{
+  markCardPostedThisTurn();
+  ok(consumeCardPostedThisTurn() === false, "card-signal: outside an Eve context, mark/consume are no-ops (fail-soft, never false-positive)");
+
+  const post = async () => ({ ok: true, ts: "777.888" });
+
+  await inSession(async () => {
+    ok(consumeCardPostedThisTurn() === false, "card-signal: a fresh session starts with no card posted");
+    await requestApproval(
+      { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T6/C6", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T6/C6", requestedBy: "U_REQUESTER", channelId: "C6" },
+      { post },
+    );
+    ok(consumeCardPostedThisTurn() === true, "card-signal: requestApproval's successful post marks the flag");
+    ok(consumeCardPostedThisTurn() === false, "card-signal: consuming resets it — a second read in the same session sees false again (the next turn starts clean)");
+  });
+
+  await inSession(async () => {
+    ok(consumeCardPostedThisTurn() === false, "card-signal: a different session is unaffected by a previous session's card");
+  });
+
+  const failingPost = async () => undefined;
+  await inSession(async () => {
+    await assert.rejects(
+      async () =>
+        requestApproval(
+          { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T7/C7", level: "surface", monthlyTokens: 1, currentCap: null }, scopeKey: "slack/T7/C7", requestedBy: "U_REQUESTER", channelId: "C7" },
+          { post: failingPost },
+        ),
+      /failed to post/,
+    );
+    n++;
+    ok(consumeCardPostedThisTurn() === false, "card-signal: a failed post (card never reached Slack) does NOT mark the flag — the thrown error still replies normally");
+  });
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal)\n`);

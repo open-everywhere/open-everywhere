@@ -45,7 +45,7 @@ export function planClearConnectorOverride(binding: SurfaceBinding, input: Clear
 
 export default defineTool({
   description:
-    "PROPOSE reverting an earlier break-glass connector revoke, restoring this surface's config-as-code bundle grants for that connector — this does NOT clear anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve (this widens access back to config, so the admin click is the gate). Use to undo revoke_connector once the incident is resolved. Tell the user plainly that a card was posted and the connector stays revoked until approved.",
+    "PROPOSE reverting an earlier break-glass connector revoke, restoring this surface's config-as-code bundle grants for that connector — this does NOT clear anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve (this widens access back to config, so the admin click is the gate). Use to undo revoke_connector once the incident is resolved. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.",
   inputSchema: z.object({
     connector: z.string().min(1).describe('Connector name to restore, e.g. "notion".'),
     scopeKey: z
@@ -86,7 +86,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `Posted a confirmation card to clear the connector override for "${plan.args.connector}" on "${plan.args.scopeKey}" (reverts to config-as-code grants). Nothing has changed yet — an org or domain admin needs to click Approve on the card (expires ${posted.expiresAt}).`,
+      note: `card posted — clear override for "${plan.args.connector}" on "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
   },
 });
