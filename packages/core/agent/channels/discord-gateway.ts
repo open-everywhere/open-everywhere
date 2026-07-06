@@ -1,9 +1,11 @@
 import { defineChannel, POST } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { threadParentChannelId } from "./discord-channel-info.js";
-import { finalMessageAction, NO_REPLY_SENTINEL, type FinalMessageAction } from "./slack-events.js";
+import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, type FinalMessageAction } from "./slack-events.js";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { domainKeyOf, resolvePartition, type Partition } from "../memory/partition.js";
+import { nameDropWakeEnabled } from "../memory/domain.js";
+import { getConfig } from "../access/config.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
@@ -33,6 +35,7 @@ export interface DiscordRelayMessage {
   readonly author: { readonly id: string; readonly username?: string; readonly bot: boolean };
   readonly mentionsBot: boolean;
   readonly referencedMessageId?: string;
+  readonly botName?: string;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -56,6 +59,7 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
   const author = isObject(m["author"]) ? (m["author"] as Record<string, unknown>) : undefined;
   const authorId = author ? str(author["id"]) : undefined;
   if (!channelId || !authorId) return null;
+  const bot = isObject(m["bot"]) ? (m["bot"] as Record<string, unknown>) : undefined;
   return {
     id: str(m["id"]) ?? "",
     content: typeof m["content"] === "string" ? (m["content"] as string) : "",
@@ -65,6 +69,7 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
     author: { id: authorId, username: str(author!["username"]), bot: author!["bot"] === true },
     mentionsBot: m["mentionsBot"] === true,
     referencedMessageId: str(m["referencedMessageId"]),
+    botName: bot ? str(bot["name"]) : undefined,
   };
 }
 
@@ -121,6 +126,23 @@ function engagementKey(msg: DiscordRelayMessage): string {
   return msg.channelId;
 }
 
+export function nameDropEligible(input: {
+  readonly mentionsBot: boolean;
+  readonly isDm: boolean;
+  readonly isEngaged: boolean;
+  readonly authorIsBot: boolean;
+  readonly channelType?: string;
+  readonly content: string;
+  readonly botName?: string;
+}): boolean {
+  if (input.mentionsBot || input.isDm || input.isEngaged) return false;
+  if (input.authorIsBot) return false;
+  const t = input.channelType;
+  if (t !== "0" && t !== "5" && t !== "10" && t !== "11" && t !== "12") return false;
+  if (!input.botName) return false;
+  return nameDropPattern(input.botName).test(input.content);
+}
+
 export function renderTurn(direct: boolean, content: string): string {
   if (direct) return content;
   return [
@@ -129,6 +151,19 @@ export function renderTurn(direct: boolean, content: string): string {
       `asks you something, or moves the task you're working on. If the humans are talking among ` +
       `themselves and your reply would be noise, output exactly ${NO_REPLY_SENTINEL} and nothing ` +
       `else — nothing will be posted.`,
+    "",
+    content,
+  ].join("\n");
+}
+
+export function renderNameDropTurn(content: string, botName: string): string {
+  return [
+    `[name-drop] A channel message said your name ("${botName}") without @mentioning you. ` +
+      `You were NOT invited into this conversation — reply only if the message is clearly asking ` +
+      `for you or requesting something you can directly do. When in doubt, stay out: output exactly ` +
+      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. If you do reply, note that ` +
+      `you are NOT following this channel: tell the humans to @mention you (or say your name again) ` +
+      `for follow-ups.`,
     "",
     content,
   ].join("\n");
@@ -412,9 +447,23 @@ async function dispatchTurn(
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
   const engaged = isDm || msg.mentionsBot ? true : await isThreadEngaged(partition, key);
+  let nameDrop = false;
   if (!shouldDispatchDiscord({ mentionsBot: msg.mentionsBot, isEngaged: engaged, isDm })) {
-    log(`drop ${partition.surfaceKey}: non-mention in a channel the agent isn't following`);
-    return;
+    nameDrop =
+      nameDropEligible({
+        mentionsBot: msg.mentionsBot,
+        isDm,
+        isEngaged: engaged,
+        authorIsBot: msg.author.bot,
+        channelType: msg.channelType,
+        content: msg.content,
+        botName: msg.botName,
+      }) && nameDropWakeEnabled(domainKeyOf(partition), getConfig().loadDomains());
+    if (!nameDrop) {
+      log(`drop ${partition.surfaceKey}: non-mention in a channel the agent isn't following`);
+      return;
+    }
+    log(`name-drop wake on ${partition.surfaceKey} ("${msg.botName}")`);
   }
 
   const binding = bindFrom(ctxFromAuth(auth));
@@ -480,13 +529,15 @@ async function dispatchTurn(
     await triggerDiscordTyping(surface.state.channelId);
   }
 
-  await send(renderTurn(msg.mentionsBot || isDm, msg.content), {
+  const turnText =
+    nameDrop && msg.botName ? renderNameDropTurn(msg.content, msg.botName) : renderTurn(msg.mentionsBot || isDm, msg.content);
+  await send(turnText, {
     auth: surface.auth,
     continuationToken: surface.continuationToken,
     state: turnState,
   });
   log(
-    `dispatched ${dispatchPartition.surfaceKey} (${isDm ? "dm" : msg.mentionsBot ? "mention" : "engaged"}` +
+    `dispatched ${dispatchPartition.surfaceKey} (${isDm ? "dm" : msg.mentionsBot ? "mention" : nameDrop ? "name-drop" : "engaged"}` +
       `${threadId ? ", auto-threaded+👀" : ""})`,
   );
 }

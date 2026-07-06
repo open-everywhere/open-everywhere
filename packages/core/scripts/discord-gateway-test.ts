@@ -17,6 +17,8 @@ import {
   buildGatewayState,
   typingRefreshDue,
   isThreadChannelType,
+  nameDropEligible,
+  renderNameDropTurn,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
@@ -420,4 +422,46 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   clearDiscordInfoCacheForTest();
 }
 
-console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);
+{
+  const withBot = parseRelayPayload(
+    relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false }, bot: { id: "B1", name: "Test Slack Bot" } }),
+  );
+  ok(withBot?.botName === "Test Slack Bot", "parse: relayed bot.name surfaces as botName");
+  const noBot = parseRelayPayload(relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false } }));
+  ok(noBot !== null && noBot.botName === undefined, "parse: an older relay (no bot field) parses with botName undefined");
+  const garbageBot = parseRelayPayload(
+    relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false }, bot: { id: 42, name: 7 } }),
+  );
+  ok(garbageBot !== null && garbageBot.botName === undefined, "parse: a garbage bot field degrades to botName undefined (never throws)");
+
+  const base = {
+    mentionsBot: false,
+    isDm: false,
+    isEngaged: false,
+    authorIsBot: false,
+    channelType: "0" as string | undefined,
+    content: "Test Slack Bot can you check the deploy?",
+    botName: "Test Slack Bot" as string | undefined,
+  };
+  ok(nameDropEligible(base) === true, "name-drop: unengaged guild text channel + name in text is eligible");
+  ok(nameDropEligible({ ...base, channelType: "11" }) === true, "name-drop: an UN-engaged thread is eligible (deliberate Slack deviation — threads are Discord's conversation surface)");
+  ok(nameDropEligible({ ...base, channelType: "5" }) === true, "name-drop: announcement channels are eligible");
+  ok(nameDropEligible({ ...base, mentionsBot: true }) === false, "name-drop: a mention is the mention path's, not eligible");
+  ok(nameDropEligible({ ...base, isDm: true, channelType: "1" }) === false, "name-drop: DMs always wake anyway — not eligible");
+  ok(nameDropEligible({ ...base, isEngaged: true }) === false, "name-drop: an engaged surface is the engagement path's");
+  ok(nameDropEligible({ ...base, authorIsBot: true }) === false, "name-drop: a bot author never triggers (defence in depth)");
+  ok(nameDropEligible({ ...base, channelType: "15" }) === false, "name-drop: a forum container is not a conversation surface");
+  ok(nameDropEligible({ ...base, channelType: undefined }) === false, "name-drop: unknown channel type fails safe");
+  ok(nameDropEligible({ ...base, botName: undefined }) === false, "name-drop: no relayed bot name (older relay) fails closed");
+  ok(nameDropEligible({ ...base, content: "unrelated chatter" }) === false, "name-drop: text without the name is not eligible");
+  ok(nameDropEligible({ ...base, content: "test slack bot lowercase works" }) === true, "name-drop: the name match is case-insensitive");
+  ok(nameDropEligible({ ...base, content: "ATestSlackBotX" }) === false, "name-drop: the name must be a standalone phrase, not a substring");
+
+  const turn = renderNameDropTurn("Test Slack Bot help", "Test Slack Bot");
+  ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
+  ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
+  ok(turn.includes("NOT following this channel"), "name-drop turn: honest that a reply does not engage (v1 is stateless)");
+  ok(turn.endsWith("Test Slack Bot help"), "name-drop turn: the human's message rides last, unmodified");
+}
+
+console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);
