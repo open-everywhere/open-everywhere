@@ -50,6 +50,7 @@ ok(pub.mode === "channel" && pub.visibility === "public", "slack public channel 
 ok(pub.principalId === "U7", "slack: principalId from user_id attribute");
 ok(JSON.stringify(pub.target) === JSON.stringify({ channelId: "C9" }), "slack: post-back target is { channelId }");
 ok(pub.threadTs === undefined, "slack: no thread_ts attribute -> binding.threadTs undefined");
+ok(pub.domainSurface === undefined, "slack: domainSurface never set (thread grain == channel grain on Slack)");
 
 const threaded = bindFrom(slackCtx({ team_id: "T1", channel_id: "C9", channel_type: "channel", is_private: "false", user_id: "U7", thread_ts: "1751.0042" }));
 ok(threaded.threadTs === "1751.0042", "slack: thread_ts attribute -> binding.threadTs (unsanitized, dot intact)");

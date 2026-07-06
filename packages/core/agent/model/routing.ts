@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import type { ModelRole, ModelRoute, Domain } from "../memory/domain.js";
 import { modelRouteFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { resolvePartition } from "../memory/partition.js";
+import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { surfaceHint } from "./surface-hint.js";
 import type { BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
@@ -109,7 +109,7 @@ export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
 export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains"> = {
   surfaceKey: async () => {
     const ctx = await readAlsSurfaceContext();
-    if (ctx) return resolvePartition(ctx).surfaceKey;
+    if (ctx) return domainKeyOf(resolvePartition(ctx));
     return surfaceHint();
   },
   domains: () => getConfig().loadDomains(),

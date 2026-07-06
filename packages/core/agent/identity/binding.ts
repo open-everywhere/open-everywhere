@@ -15,6 +15,7 @@ export interface SurfaceBinding {
   readonly platform: string;
   readonly workspace: string;
   readonly surface: string;
+  readonly domainSurface?: string;
   readonly mode: SessionMode;
   readonly visibility: Visibility;
   readonly trust: Trust;
@@ -67,6 +68,7 @@ function attr(a: AuthPrincipal["attributes"], keys: readonly string[]): string |
 interface RawIdentity {
   readonly workspace?: string;
   readonly surface?: string;
+  readonly domainSurface?: string;
   readonly mode?: SessionMode;
   readonly visibility?: Visibility;
   readonly trust?: Trust;
@@ -187,6 +189,7 @@ const bindDiscord: Mapper = (ctx) => {
   return {
     workspace: guildId ?? userId,
     surface: channelId,
+    domainSurface: attr(a, ["parent_channel_id", "parentChannelId"]),
     mode,
     visibility: discordVisibility(everyoneCanView, mode),
     trust: undefined,
@@ -272,6 +275,8 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     platform,
     workspace,
     surface,
+    domainSurface:
+      raw.domainSurface && seg(raw.domainSurface, surface) !== surface ? seg(raw.domainSurface, surface) : undefined,
     mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,

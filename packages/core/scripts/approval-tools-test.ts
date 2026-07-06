@@ -41,6 +41,11 @@ function slackBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding {
 
 ok(defaultScopeKey(slackBinding(), "surface") === "slack/T123/C456", "defaultScopeKey surface = platform/workspace/surface");
 ok(defaultScopeKey(slackBinding(), "workspace") === "slack/T123", "defaultScopeKey workspace = platform/workspace");
+{
+  const thread = slackBinding({ platform: "discord", workspace: "G1", surface: "T_THREAD", domainSurface: "C_PARENT", target: { channelId: "T_THREAD" } });
+  ok(defaultScopeKey(thread, "surface") === "discord/G1/C_PARENT", "defaultScopeKey surface from a thread = the PARENT channel (domain/spend grain)");
+  ok(defaultScopeKey(thread, "workspace") === "discord/G1", "defaultScopeKey workspace unaffected by thread grain");
+}
 
 const uncapped = { tokens: null, usd: null } as const;
 {

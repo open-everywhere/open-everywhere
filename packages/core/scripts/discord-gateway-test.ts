@@ -16,10 +16,12 @@ import {
   planCompletion,
   buildGatewayState,
   typingRefreshDue,
+  isThreadChannelType,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
+import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
-import { resolvePartition } from "../agent/memory/partition.js";
+import { domainKeyOf, resolvePartition } from "../agent/memory/partition.js";
 import { finalMessageAction, NO_REPLY_SENTINEL } from "../agent/channels/slack-events.js";
 import type { OpenEverywhereDiscordAuth } from "../agent/channels/discord-identity.js";
 
@@ -361,4 +363,61 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(state.channelId === "C_BASE2" && state.originalChannelId === "C_BASE2" && state.originalMessageId === "M9", "state: inline reply — reaction + reply both on the base channel/trigger message");
 }
 
-console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status)`);
+{
+  ok(isThreadChannelType("10") && isThreadChannelType("11") && isThreadChannelType("12"), "grain: 10/11/12 are threads");
+  ok(!isThreadChannelType("0") && !isThreadChannelType("5") && !isThreadChannelType("1") && !isThreadChannelType(undefined), "grain: base/announcement/DM/unknown are not threads");
+
+  const msg: DiscordRelayMessage = {
+    id: "M_g1",
+    content: "<@bot> cap this channel",
+    channelId: "C_BASE3",
+    channelType: "0",
+    guildId: "G3",
+    author: { id: "U3", bot: false },
+    mentionsBot: true,
+  };
+  const baseAuth = authForRelayMessage(msg) as OpenEverywhereDiscordAuth;
+  const threaded = dispatchSurfaceFor(msg, baseAuth, "T_NEW");
+  ok(threaded.auth.attributes.parent_channel_id === "C_BASE3", "grain: auto-thread re-key stamps the base channel as parent (free — no REST)");
+  const tCtx: BindableContext = { channel: { kind: "discord" }, session: { auth: { current: threaded.auth } } };
+  const p = resolvePartition(tCtx);
+  ok(p.surfaceKey === "discord/G3/T_NEW", "grain: conversational surfaceKey stays the thread");
+  ok(p.domainKey === "discord/G3/C_BASE3", "grain: domainKey = the parent channel (domain + spend scope)");
+  ok(domainKeyOf(p) === "discord/G3/C_BASE3", "grain: domainKeyOf reads the parent grain");
+  const inline = dispatchSurfaceFor(msg, baseAuth, null);
+  ok(inline.auth.attributes.parent_channel_id === undefined, "grain: inline path stamps no parent");
+  const ip = resolvePartition({ channel: { kind: "discord" }, session: { auth: { current: inline.auth } } });
+  ok(domainKeyOf(ip) === ip.surfaceKey, "grain: no parent → domainKeyOf falls back to the surfaceKey");
+}
+
+{
+  clearDiscordInfoCacheForTest();
+  let calls = 0;
+  const fakeFetch = (async (url: string | URL | Request) => {
+    calls++;
+    const u = String(url);
+    if (u.endsWith("/channels/T_THREAD")) {
+      return new Response(JSON.stringify({ name: "cap this channel", type: 11, parent_id: "C_PARENT" }), { status: 200 });
+    }
+    if (u.endsWith("/channels/C_PARENT")) {
+      return new Response(JSON.stringify({ name: "eng", type: 0, parent_id: "CAT_1" }), { status: 200 });
+    }
+    return new Response("nope", { status: 404 });
+  }) as typeof fetch;
+  const deps = { fetchFn: fakeFetch, token: "test-token" };
+
+  ok((await threadParentChannelId("T_THREAD", deps)) === "C_PARENT", "info: thread → parent channel id");
+  ok((await threadParentChannelId("C_PARENT", deps)) === undefined, "info: base channel → no parent (category ignored)");
+  ok((await threadParentChannelId("C_MISSING", deps)) === undefined, "info: REST failure → undefined (fail-open to thread grain)");
+  const before = calls;
+  await threadParentChannelId("T_THREAD", deps);
+  ok(calls === before, "info: verdicts are cached — a repeat lookup pays no fetch");
+  clearDiscordInfoCacheForTest();
+  const noNet = (async () => {
+    throw new Error("must not be called");
+  }) as unknown as typeof fetch;
+  ok((await threadParentChannelId("T_THREAD", { fetchFn: noNet, token: undefined })) === undefined, "info: no bot token → undefined, no network call");
+  clearDiscordInfoCacheForTest();
+}
+
+console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);

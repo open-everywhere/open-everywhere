@@ -3,7 +3,7 @@ import {
   type DiscordContext,
   type DiscordCommandInteraction,
 } from "eve/channels/discord";
-import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
+import { buildDiscordAuth, threadParentFromRawChannel, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { finalMessageAction } from "./slack-events.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 
@@ -23,6 +23,7 @@ function authFromInteraction(interaction: DiscordCommandInteraction): OpenEveryw
     guildId: interaction.guildId,
     channelId: interaction.channelId,
     channelType: channelTypeFromRaw(interaction.raw),
+    parentChannelId: threadParentFromRawChannel(interaction.raw),
   });
 }
 

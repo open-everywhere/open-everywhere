@@ -54,6 +54,11 @@ const domains: Domain[] = [
 
   const noConfig = roleForBinding(bind({ principalId: "U_ORG_ADMIN" }), []);
   ok(!noConfig.isOrgAdmin && !noConfig.isDomainAdmin, "FAIL-CLOSED: no domains configured -> no admin bits even for a would-be admin id");
+
+  const inThread = roleForBinding(bind({ principalId: "U_TXN_ADMIN", surface: "T_THREAD", domainSurface: "C_TXN" }), domains);
+  ok(inThread.isDomainAdmin && inThread.domain === "txn", "thread grain: domainSurface (parent channel) resolves the domain — admin standing holds in the thread");
+  const inThreadNoParent = roleForBinding(bind({ principalId: "U_TXN_ADMIN", surface: "T_THREAD" }), domains);
+  ok(!inThreadNoParent.isDomainAdmin && inThreadNoParent.domain === undefined, "thread grain: no domainSurface (fail-open ingress) -> thread key resolves no domain, standing fails closed");
 }
 
 registerConfig({

@@ -308,6 +308,19 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const tokOver = await scopeOverBudget(p as never, "channel", NOW_ISO);
   ok(tokOver.over && !!tokOver.reason?.includes("tokens"), "a token cap on the same scope enforces through the same gate");
 
+  const pThread = {
+    org, platform: "slack", workspace: "T9", surface: "T_TH1",
+    workspaceKey: "slack/T9", surfaceKey: "slack/T9/T_TH1",
+    domainKey: "slack/T9/C1", key: "slack/T9/T_TH1",
+  };
+  budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyUsd: 2.5 } } };
+  ok((await scopeOverBudget(pThread as never, "channel", NOW_ISO)).over, "thread grain: a cap on the PARENT channel gates the thread's turns (via domainKey)");
+  ok(!(await scopeOverBudget({ ...pThread, domainKey: undefined } as never, "channel", NOW_ISO)).over, "thread grain: no domainKey (fail-open ingress) → the thread checks its own key, today's behaviour");
+  const beforeTokens = await store2.surfaceTokens(org, "slack/T9/C1", "2026-07");
+  await store2.recordUsage(pThread as never, "2026-07", { inputTokens: 7, outputTokens: 0 });
+  ok((await store2.surfaceTokens(org, "slack/T9/C1", "2026-07")) === beforeTokens + 7, "thread grain: recordUsage buckets thread usage under the PARENT channel's ledger");
+  ok((await store2.surfaceTokens(org, "slack/T9/T_TH1", "2026-07")) === 0, "thread grain: nothing accumulates under the thread's own key");
+
   const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
   const goodPath = process.env.OE_SQLITE_PATH;
   _resetOperationalDbForTest();

@@ -52,7 +52,7 @@ export interface SpendSetPlan {
 
 export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   const workspaceKey = `${binding.platform}/${binding.workspace}`;
-  return level === "workspace" ? workspaceKey : `${workspaceKey}/${binding.surface}`;
+  return level === "workspace" ? workspaceKey : `${workspaceKey}/${binding.domainSurface ?? binding.surface}`;
 }
 
 export function assertScopableFromHere(tool: string, binding: SurfaceBinding, level: Level, explicitScopeKey: string | undefined): void {

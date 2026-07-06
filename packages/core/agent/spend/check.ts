@@ -3,7 +3,7 @@ import { checkCap, periodOf, type CapVerdict } from "./spend.js";
 import { surfaceTokens, workspaceTokens } from "./store.js";
 import { usageSummary } from "./usage-events.js";
 import { resolveAssumedModel, rowCostUsd } from "./reporting.js";
-import type { Partition } from "../memory/partition.js";
+import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
 
 export function monthStartISO(nowISO: string): string {
@@ -57,14 +57,15 @@ export async function scopeUsdSpend(org: string, workspaceKey: string, surfaceKe
 }
 
 export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: string): Promise<CapVerdict> {
-  const caps = await effectiveCaps(p.org, p.workspaceKey, p.surfaceKey);
+  const scopeKey = domainKeyOf(p);
+  const caps = await effectiveCaps(p.org, p.workspaceKey, scopeKey);
   const tokenCapped = caps.surfaceMonthlyTokens != null || caps.workspaceMonthlyTokens != null;
   const usdCapped = caps.surfaceMonthlyUsd != null || caps.workspaceMonthlyUsd != null;
   if (!tokenCapped && !usdCapped) return { over: false };
   const period = periodOf(nowISO);
   const [st, wt] = tokenCapped
-    ? await Promise.all([surfaceTokens(p.org, p.surfaceKey, period), workspaceTokens(p.org, p.workspaceKey, period)])
+    ? await Promise.all([surfaceTokens(p.org, scopeKey, period), workspaceTokens(p.org, p.workspaceKey, period)])
     : [0, 0];
-  const usd = usdCapped ? await scopeUsdSpend(p.org, p.workspaceKey, p.surfaceKey, nowISO) : { surfaceUsd: 0, workspaceUsd: 0 };
+  const usd = usdCapped ? await scopeUsdSpend(p.org, p.workspaceKey, scopeKey, nowISO) : { surfaceUsd: 0, workspaceUsd: 0 };
   return checkCap({ mode, surfaceTokens: st, workspaceTokens: wt, surfaceUsd: usd.surfaceUsd, workspaceUsd: usd.workspaceUsd, caps });
 }

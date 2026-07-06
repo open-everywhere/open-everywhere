@@ -18,7 +18,7 @@ export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain
   const org = criteriaDomain("org", domains);
   const isOrgAdmin = org?.admins?.includes(principalId) === true;
 
-  const channelKey = `${binding.platform}/${binding.workspace}/${binding.surface}`;
+  const channelKey = `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
   const explicit = domainForChannel(channelKey, domains);
   const isDomainAdmin = isOrgAdmin || explicit?.admins?.includes(principalId) === true;
 

@@ -1,4 +1,4 @@
-import type { Partition } from "../memory/partition.js";
+import { domainKeyOf, type Partition } from "../memory/partition.js";
 import { windowTokens, type SurfaceLedger, type Usage } from "./spend.js";
 import { getOperationalStore } from "../operational/provider.js";
 
@@ -7,7 +7,7 @@ export function spendRoot(): string {
 }
 
 export async function recordUsage(p: Partition, period: string, usage: Usage): Promise<void> {
-  await getOperationalStore().recordUsage(p.org, p.surfaceKey, period, usage);
+  await getOperationalStore().recordUsage(p.org, domainKeyOf(p), period, usage);
 }
 
 export async function surfaceTokens(org: string, surfaceKey: string, period: string): Promise<number> {
