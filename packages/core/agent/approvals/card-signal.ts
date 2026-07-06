@@ -9,6 +9,14 @@ export function markCardPostedThisTurn(): void {
   }
 }
 
+export function peekCardPostedThisTurn(): boolean {
+  try {
+    return slot.get();
+  } catch {
+    return false;
+  }
+}
+
 export function consumeCardPostedThisTurn(): boolean {
   try {
     const was = slot.get();

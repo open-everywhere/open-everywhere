@@ -259,7 +259,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 {
   const postAction = finalMessageAction("stop", "here is the answer");
   const posted = planCompletion({ action: postAction, reactionActive: true });
-  ok(posted.reaction === "success", "plan: postable → reaction swap to ✅ (success)");
+  ok(posted.reaction === "clear", "plan: postable → remove the 👀 (absence = done; the bot never plants ✅)");
   ok(posted.delivery.kind === "post", "plan: postable → fresh post (never an edit)");
   ok(posted.delivery.kind === "post" && posted.delivery.chunks[0] === "here is the answer", "plan: post carries the reply chunk(s)");
 
@@ -283,7 +283,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 
   const carded = planCompletion({ action: postAction, reactionActive: true, cardPostedThisTurn: true });
   ok(carded.delivery.kind === "none", "plan: card posted this turn → model narration suppressed (the card IS the reply)");
-  ok(carded.reaction === "success", "plan: card posted → still counts as answered (✅ swap proceeds)");
+  ok(carded.reaction === "clear", "plan: card posted → still counts as answered (👀 clears)");
   const cardedUntracked = planCompletion({ action: postAction, reactionActive: false, cardPostedThisTurn: true });
   ok(cardedUntracked.delivery.kind === "none" && cardedUntracked.reaction === "none", "plan: card posted, untracked → suppressed, reaction untouched");
 }

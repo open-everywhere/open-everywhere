@@ -6,7 +6,7 @@ import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
-import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
+import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -211,7 +211,6 @@ async function triggerDiscordTyping(channelId: string): Promise<void> {
 }
 
 const EYES_EMOJI = "👀";
-const CHECK_EMOJI = "✅";
 
 async function setDiscordReaction(
   channelId: string,
@@ -318,7 +317,6 @@ export function dispatchSurfaceFor(
 }
 
 export type ReactionResolution =
-  | "success"
   | "clear"
   | "none";
 
@@ -342,7 +340,7 @@ export function planCompletion(input: {
   }
   if (action.kind === "post") {
     return {
-      reaction: reactionActive ? "success" : "none",
+      reaction: reactionActive ? "clear" : "none",
       delivery: cardPostedThisTurn ? { kind: "none" } : { kind: "post", chunks: splitForDiscord(action.text) },
     };
   }
@@ -498,10 +496,10 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
     },
     "message.appended": async (_data, channel) => {
-      if (statusUxEnabled() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "reasoning.appended": async (_data, channel) => {
-      if (statusUxEnabled() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "turn.failed": async (data, channel) => {
       const detail = (data as { error?: { message?: string } } | undefined)?.error?.message;
@@ -521,11 +519,8 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         cardPostedThisTurn: consumeCardPostedThisTurn(),
       });
 
-      if (plan.reaction !== "none" && status.original) {
+      if (plan.reaction === "clear" && status.original) {
         await setDiscordReaction(status.original.channelId, status.original.messageId, EYES_EMOJI, "DELETE");
-        if (plan.reaction === "success") {
-          await setDiscordReaction(status.original.channelId, status.original.messageId, CHECK_EMOJI, "PUT");
-        }
       }
 
       if (plan.delivery.kind === "post") {

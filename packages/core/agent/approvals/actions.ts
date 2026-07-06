@@ -84,7 +84,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
       ...(args.monthlyTokens != null ? [fmtCap(args.monthlyTokens)] : []),
       ...(args.monthlyUsd != null ? [fmtCapUsd(args.monthlyUsd)] : []),
     ].join(" + ");
-    return `spend limit set to ${set} for \`${args.scopeKey}\` (${args.level})`;
+    return `spend limit set to ${set} for ${args.scopeLabel ?? `\`${args.scopeKey}\``} (${args.level})`;
   },
 };
 
@@ -119,9 +119,10 @@ const spendClear: ActionKind<SpendClearArgs> = {
       action: "admin.spend.clear_limit",
       detail: { scopeKey: args.scopeKey, level: args.level, cleared },
     });
+    const scope = args.scopeLabel ?? `\`${args.scopeKey}\``;
     return cleared
-      ? `spend limit override cleared for \`${args.scopeKey}\` (${args.level}) — reverted to config`
-      : `no spend limit override was set for \`${args.scopeKey}\` (${args.level}) — nothing to clear`;
+      ? `spend limit override cleared for ${scope} (${args.level}) — reverted to config`
+      : `no spend limit override was set for ${scope} (${args.level}) — nothing to clear`;
   },
 };
 
