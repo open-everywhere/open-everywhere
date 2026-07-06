@@ -5,7 +5,7 @@ export interface ModelPricing {
 }
 
 const BUILT_IN: Readonly<Record<string, ModelPricing>> = {
-  "zai/glm-5.2": { inPerMtok: 1.4, outPerMtok: 4.4, cachedInPerMtok: 0.14 },
+  "zai/glm-5.2": { inPerMtok: 1.4, outPerMtok: 4.4, cachedInPerMtok: 0.26 },
 };
 
 let envTable: Readonly<Record<string, ModelPricing>> | null | undefined;
@@ -92,7 +92,8 @@ export function estimateCostUsd(usage: UsageTokens, pricing: ModelPricing | unde
   const input = usage.inputTokens ?? 0;
   const output = usage.outputTokens ?? 0;
   const cachedIn = usage.cacheReadTokens ?? 0;
+  const nonCachedIn = Math.max(0, input - cachedIn);
   const cachedRate = pricing.cachedInPerMtok ?? pricing.inPerMtok;
-  const cost = (input * pricing.inPerMtok + cachedIn * cachedRate + output * pricing.outPerMtok) / 1_000_000;
+  const cost = (nonCachedIn * pricing.inPerMtok + cachedIn * cachedRate + output * pricing.outPerMtok) / 1_000_000;
   return cost;
 }

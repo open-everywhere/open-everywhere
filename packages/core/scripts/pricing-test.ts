@@ -26,12 +26,13 @@ function close(a: number | undefined, b: number): boolean {
 delete process.env.OE_MODEL_PRICING;
 _resetPricingCacheForTest();
 const glm = modelPricing("zai/glm-5.2");
-ok(glm?.inPerMtok === 1.4 && glm?.outPerMtok === 4.4 && glm?.cachedInPerMtok === 0.14, "built-in: zai/glm-5.2 matches the verified Fireworks serverless rate");
+ok(glm?.inPerMtok === 1.4 && glm?.outPerMtok === 4.4 && glm?.cachedInPerMtok === 0.26, "built-in: zai/glm-5.2 matches the gateway-billing-verified rate (cache read $0.26)");
 ok(modelPricing("some/unknown-model") === undefined, "built-in: an unpriced model returns undefined, never a guess");
 
 ok(close(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, glm), 5.8), "estimateCostUsd: 1M in + 1M out at the built-in rate");
 ok(close(estimateCostUsd({ inputTokens: 500_000 }, glm), 0.7), "estimateCostUsd: partial input-only usage scales linearly");
-ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, glm), 1.54), "estimateCostUsd: cached input tokens billed at cachedInPerMtok");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, glm), 0.26), "estimateCostUsd: an all-cached prompt bills ONLY the cache rate (input==cached -> $0 non-cached), no double-count");
+ok(close(estimateCostUsd({ inputTokens: 1_000_000, cacheReadTokens: 800_000, outputTokens: 100_000 }, glm), 0.2 * 1.4 + 0.8 * 0.26 + 0.1 * 4.4), "estimateCostUsd: only the NON-cached remainder of input is billed at the input rate (partial-cache, no double-count)");
 ok(estimateCostUsd({ inputTokens: 1_000_000 }, undefined) === undefined, "estimateCostUsd: no pricing -> undefined (tokens-only upstream), never fabricated");
 const noCacheRate = { inPerMtok: 2, outPerMtok: 6 };
 ok(close(estimateCostUsd({ cacheReadTokens: 1_000_000 }, noCacheRate), 2), "estimateCostUsd: a pricing with no cachedInPerMtok bills cache reads at the plain input rate (conservative, non-underestimating)");
