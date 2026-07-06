@@ -1,7 +1,7 @@
-import { defineTool } from "eve/tools";
+import { defineDynamic, defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
+import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
@@ -47,7 +47,11 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
   };
 }
 
-export default defineTool({
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      return defineTool({
   description:
     'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
@@ -100,5 +104,8 @@ export default defineTool({
       expiresAt: posted.expiresAt,
       note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
+  },
+      });
+    },
   },
 });

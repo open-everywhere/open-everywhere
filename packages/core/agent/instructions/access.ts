@@ -10,6 +10,7 @@ import { botDisplayName } from "../channels/slack-events.js";
 import { channelPlatform, type BindableContext } from "../identity/binding.js";
 
 function renderChannelScope(ctx: BindableContext): string {
+  if (channelPlatform(ctx) !== "slack") return "";
   const channels = readableChannelList(ctx);
   if (channels.length < 2) return "";
   return (
@@ -30,13 +31,29 @@ function renderIdentity(name: string | undefined): string {
     : `Identify as this team's agent — never as a framework or model name.`;
 }
 
+const SURFACE_NAMES: Record<string, string> = {
+  slack: "Slack",
+  discord: "Discord",
+  telegram: "Telegram",
+  teams: "Microsoft Teams",
+  linear: "Linear",
+};
+
+function renderSurface(platform: string): string {
+  const name = SURFACE_NAMES[platform] ?? (platform ? platform[0].toUpperCase() + platform.slice(1) : "");
+  return name
+    ? `You are reaching this team through **${name}** — when you describe where you live or work, it's ${name}, not any other chat platform.`
+    : "";
+}
+
 async function resolve(ctx: BindableContext) {
   const access = resolveAccessFor(ctx);
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
-  const plan = planFor(bindFrom(ctx), resolvePartition(ctx));
+  const binding = bindFrom(ctx);
+  const plan = planFor(binding, resolvePartition(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads) : "";
   const name = await surfaceAgentName(ctx);
-  const markdown = [renderIdentity(name), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
+  const markdown = [renderIdentity(name), renderSurface(binding.platform), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
     .filter((s) => s.length > 0)
     .join("\n\n");
   return defineInstructions({ markdown });
