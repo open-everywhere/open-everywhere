@@ -40,7 +40,7 @@ export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnec
   if (!reason) {
     throw new Error("revoke_connector needs a non-empty reason — it's shown on the approval card.");
   }
-  const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.surface}`;
+  const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
   return {
     kind: "connector.revoke",
     args: { org: binding.org, scopeKey, connector, reason },
@@ -69,7 +69,7 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
-    const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.surface}`;
+    const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const plan = planRevokeConnector(binding, input, domain);
 

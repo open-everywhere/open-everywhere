@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
+import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { appendUsageEvent } from "@open-everywhere/core/agent/spend/usage-events.js";
 
 function log(msg: string): void {
@@ -82,7 +82,7 @@ async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandbox[]): 
     for (const s of stopped) {
       await appendUsageEvent({
         org: p.org,
-        surfaceKey: p.surfaceKey,
+        surfaceKey: domainKeyOf(p),
         sessionId: ctx.session.id,
         kind: "sandbox",
         inputTokens: 0,

@@ -1,5 +1,5 @@
 import { bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
-import { resolvePartition, type Partition } from "../memory/partition.js";
+import { domainKeyOf, resolvePartition, type Partition } from "../memory/partition.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -27,7 +27,7 @@ export function skillDomainFor(binding: SurfaceBinding, partition: Partition, do
   if (binding.mode === "dm") return { domain: null, reason: "dm" };
   if (binding.mode === "mpim") return { domain: null, reason: "mpim" };
   if (binding.trust === "external") return { domain: null, reason: "external" };
-  const explicit = domainForChannel(partition.surfaceKey, domains);
+  const explicit = domainForChannel(domainKeyOf(partition), domains);
   if (explicit) return { domain: explicit.name };
   const org = criteriaDomain("org", domains);
   return org ? { domain: org.name } : { domain: null, reason: "unassigned" };

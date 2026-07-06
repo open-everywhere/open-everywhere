@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { resolvePartition } from "../memory/partition.js";
+import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { recordUsage } from "../spend/store.js";
 import { appendUsageEvent } from "../spend/usage-events.js";
 import { periodOf, type Usage } from "../spend/spend.js";
@@ -34,7 +34,7 @@ export default defineHook({
       try {
         await appendUsageEvent({
           org: p.org,
-          surfaceKey: p.surfaceKey,
+          surfaceKey: domainKeyOf(p),
           sessionId: ctx.session.id,
           principalId: bindFrom(ctx).principalId,
           kind: turnKind(ctx),

@@ -34,7 +34,7 @@ export function planClearConnectorOverride(binding: SurfaceBinding, input: Clear
   if (!connector) {
     throw new Error("clear_connector_override needs a non-empty connector name.");
   }
-  const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.surface}`;
+  const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
   return {
     kind: "connector.clear",
     args: { org: binding.org, scopeKey, connector },
@@ -66,7 +66,7 @@ export default defineDynamic({
   approval: never(),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
-    const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.surface}`;
+    const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const plan = planClearConnectorOverride(binding, input, domain);
 

@@ -17,6 +17,7 @@ export interface DiscordIdentityInput {
   readonly channelId: string;
   readonly channelType?: string;
   readonly everyoneCanView?: boolean;
+  readonly parentChannelId?: string;
 }
 
 export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDiscordAuth {
@@ -27,7 +28,19 @@ export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDis
   if (input.guildId) attributes.guild_id = input.guildId;
   if (input.channelType) attributes.channel_type = input.channelType;
   if (typeof input.everyoneCanView === "boolean") attributes.everyone_can_view = String(input.everyoneCanView);
+  if (input.parentChannelId) attributes.parent_channel_id = input.parentChannelId;
   return { authenticator: "discord", principalId: input.userId, principalType: "discord-user", attributes };
+}
+
+export function threadParentFromRawChannel(raw: Record<string, unknown>): string | undefined {
+  const ch = raw["channel"];
+  if (ch && typeof ch === "object") {
+    const c = ch as Record<string, unknown>;
+    const isThread = c["type"] === 10 || c["type"] === 11 || c["type"] === 12;
+    const parent = c["parent_id"];
+    if (isThread && typeof parent === "string" && parent.length > 0) return parent;
+  }
+  return undefined;
 }
 
 export function discordMode(channelType: string | undefined, guildId: string | undefined): SessionMode {

@@ -1,8 +1,9 @@
 import { defineChannel, POST } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
+import { threadParentChannelId } from "./discord-channel-info.js";
 import { finalMessageAction, NO_REPLY_SENTINEL, type FinalMessageAction } from "./slack-events.js";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
-import { resolvePartition, type Partition } from "../memory/partition.js";
+import { domainKeyOf, resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
@@ -98,6 +99,10 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
 
 function ctxFromAuth(auth: OpenEverywhereDiscordAuth): BindableContext {
   return { channel: { kind: "discord" }, session: { auth: { current: auth } } };
+}
+
+export function isThreadChannelType(channelType: string | undefined): boolean {
+  return channelType === "10" || channelType === "11" || channelType === "12";
 }
 
 export function isDmChannel(channelType: string | undefined): boolean {
@@ -306,6 +311,7 @@ export function dispatchSurfaceFor(
       guildId: msg.guildId,
       channelId: threadId,
       channelType: "11",
+      parentChannelId: msg.channelId,
     });
     return { auth, continuationToken: `discord:${threadId}`, state: { channelId: threadId }, engagementKey: threadId };
   }
@@ -388,7 +394,20 @@ async function dispatchTurn(
   auth: OpenEverywhereDiscordAuth,
   send: DiscordGatewaySend,
   createThread: (channelId: string, messageId: string, name: string) => Promise<string | null> = createDiscordThread,
+  resolveParent: (channelId: string) => Promise<string | undefined> = threadParentChannelId,
 ): Promise<void> {
+  if (isThreadChannelType(msg.channelType)) {
+    const parentChannelId = await resolveParent(msg.channelId);
+    if (parentChannelId) {
+      auth = buildDiscordAuth({
+        userId: msg.author.id,
+        guildId: msg.guildId,
+        channelId: msg.channelId,
+        channelType: msg.channelType,
+        parentChannelId,
+      });
+    }
+  }
   const partition: Partition = resolvePartition(ctxFromAuth(auth));
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
@@ -405,7 +424,7 @@ async function dispatchTurn(
       const bypass = await capBypassFor({
         org: binding.org,
         principalId: msg.author.id,
-        surfaceKey: partition.surfaceKey,
+        surfaceKey: domainKeyOf(partition),
         reason: verdict.reason,
       });
       if (bypass) {
@@ -417,16 +436,16 @@ async function dispatchTurn(
               `spend-budgets config.`,
           );
         }
-        log(`cap bypassed (${bypass.standing}${bypass.warn ? "" : ", warn throttled"}) on ${partition.surfaceKey} by ${msg.author.id}`);
+        log(`cap bypassed (${bypass.standing}${bypass.warn ? "" : ", warn throttled"}) on ${domainKeyOf(partition)} by ${msg.author.id}`);
       } else {
         await discordCreateMessage(
           msg.channelId,
           `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
             `spend-budgets config, or DM me to propose a temporary override — an admin approves it ` +
-            `on a card. Scope keys for the override: this channel = \`${partition.surfaceKey}\`, ` +
+            `on a card. Scope keys for the override: this channel = \`${domainKeyOf(partition)}\`, ` +
             `whole server = \`${binding.platform}/${binding.workspace}\`.`,
         );
-        log(`declined ${partition.surfaceKey}: over budget (${verdict.reason ?? "over cap"})`);
+        log(`declined ${domainKeyOf(partition)}: over budget (${verdict.reason ?? "over cap"})`);
         return;
       }
     }

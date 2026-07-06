@@ -28,8 +28,8 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     mode: b.mode,
     platform: p.platform,
     workspace: p.workspace,
-    channel: p.surface,
-    domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: p.surface }),
+    channel: b.domainSurface ?? p.surface,
+    domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
     principalId: b.principalId,
   };
 }

@@ -129,6 +129,19 @@ const noOrg: MemoryResolveConfig = { domains: cfg.domains.filter((d) => d.match 
 const orgless = resolveMemoryPlan(binding("channel", "internal"), partition("C_RANDOM"), noOrg);
 ok(orgless.reads.length === 0 && orgless.writes.length === 0, "unassigned + no org domain → no memory");
 
+{
+  const threadPartition: Partition = {
+    org: "default", platform: "discord", workspace: "G", surface: "T_THREAD",
+    workspaceKey: "discord/G", surfaceKey: "discord/G/T_THREAD",
+    domainKey: "slack/T/C_TXN",
+    key: "discord/G/T_THREAD",
+  };
+  const viaParent = resolveMemoryPlan(binding("channel", "internal"), threadPartition, cfg);
+  ok(viaParent.reads.length === 1 && viaParent.reads[0].tier.kind === "silo" && viaParent.reads[0].tier.name === "txn", "thread grain: domainKey (parent channel) resolves the parent's domain silo");
+  const noParent = resolveMemoryPlan(binding("channel", "internal"), { ...threadPartition, domainKey: undefined }, cfg);
+  ok(names(noParent.reads).join(",") === ["org-base", "org-rw"].join(","), "thread grain: no domainKey → falls back to surfaceKey (unassigned → org), today's behaviour");
+}
+
 throws(
   () => resolveMemoryPlan(binding("channel", "internal"), partition("C_TXN"), { domains: cfg.domains, silos: [] }),
   "referencing an undefined silo throws",

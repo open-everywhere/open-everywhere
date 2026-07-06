@@ -1,5 +1,5 @@
 import type { SurfaceBinding } from "../identity/binding.js";
-import type { Partition } from "./partition.js";
+import { domainKeyOf, type Partition } from "./partition.js";
 import type { Domain } from "./domain.js";
 import type { MemorySilo } from "./silo.js";
 import { SURFACE, siloTier, type Tier } from "./store.js";
@@ -99,7 +99,7 @@ export function resolveMemoryPlan(
     };
   }
 
-  const domain = domainForChannel(partition.surfaceKey, cfg.domains);
+  const domain = domainForChannel(domainKeyOf(partition), cfg.domains);
   if (domain) {
     const reads = resolveDomainReads(domain, cfg, false);
     if (reads.length > 0) {

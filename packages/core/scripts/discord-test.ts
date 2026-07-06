@@ -2,6 +2,7 @@ import {
   buildDiscordAuth,
   discordMode,
   discordVisibility,
+  threadParentFromRawChannel,
   type OpenEverywhereDiscordAuth,
 } from "../agent/channels/discord-identity.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
@@ -51,6 +52,7 @@ function dispatch(input: {
   channelId: string;
   channelType?: string;
   everyoneCanView?: boolean;
+  parentChannelId?: string;
 }): Resolved {
   const auth = buildDiscordAuth(input);
   const ctx = ctxFromAuth(auth);
@@ -110,4 +112,29 @@ function dispatch(input: {
   ok(binding.visibility === "private", "E: FAIL-CLOSED — unknown type/visibility -> private");
 }
 
-console.log(`✓ discord: ${passed} assertions passed (interaction fields → identity + memory; fail-closed + DM isolation)`);
+{
+  const { binding, partition } = dispatch({
+    userId: "U_alice", guildId: "G_ACME", channelId: "T_THREAD9", channelType: "11", parentChannelId: "C_ENG",
+  });
+  ok(binding.surface === "T_THREAD9", "F: conversational surface stays the THREAD id");
+  ok(binding.domainSurface === "C_ENG", "F: domainSurface = the parent channel (domain/spend grain)");
+  ok(partition.surfaceKey === "discord/G_ACME/T_THREAD9", "F: surfaceKey stays thread-grain (sessions/memory paths)");
+  ok(partition.domainKey === "discord/G_ACME/C_ENG", "F: domainKey resolves to the parent channel");
+
+  const base = dispatch({ userId: "U_alice", guildId: "G_ACME", channelId: "C_ENG", channelType: "0" });
+  ok(base.binding.domainSurface === undefined, "F: no parent stamped → no domainSurface");
+  ok(base.partition.domainKey === base.partition.surfaceKey, "F: no parent → domainKey === surfaceKey");
+  const self = dispatch({ userId: "U_alice", guildId: "G_ACME", channelId: "C_ENG", channelType: "0", parentChannelId: "C_ENG" });
+  ok(self.binding.domainSurface === undefined, "F: parent == surface → dropped (no degenerate grain)");
+}
+
+{
+  ok(threadParentFromRawChannel({ channel: { type: 11, parent_id: "C_ENG" } }) === "C_ENG", "G: public thread (11) → parent_id");
+  ok(threadParentFromRawChannel({ channel: { type: 12, parent_id: "C_ENG" } }) === "C_ENG", "G: private thread (12) → parent_id");
+  ok(threadParentFromRawChannel({ channel: { type: 0, parent_id: "CAT_9" } }) === undefined, "G: base channel's parent_id is its CATEGORY — never a grain anchor");
+  ok(threadParentFromRawChannel({ channel: { type: 11 } }) === undefined, "G: thread with no parent_id → undefined (fail-open)");
+  ok(threadParentFromRawChannel({ channel: { type: 11, parent_id: 42 } }) === undefined, "G: non-string parent_id → undefined (defensive)");
+  ok(threadParentFromRawChannel({}) === undefined, "G: no channel partial → undefined");
+}
+
+console.log(`✓ discord: ${passed} assertions passed (interaction fields → identity + memory; fail-closed + DM isolation + thread→parent grain)`);

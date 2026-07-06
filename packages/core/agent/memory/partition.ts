@@ -7,7 +7,12 @@ export interface Partition {
   readonly surface: string;
   readonly workspaceKey: string;
   readonly surfaceKey: string;
+  readonly domainKey?: string;
   readonly key: string;
+}
+
+export function domainKeyOf(p: Pick<Partition, "domainKey" | "surfaceKey">): string {
+  return p.domainKey ?? p.surfaceKey;
 }
 
 export function resolvePartition(ctx: BindableContext): Partition {
@@ -21,6 +26,7 @@ export function resolvePartition(ctx: BindableContext): Partition {
     surface: b.surface,
     workspaceKey,
     surfaceKey,
+    domainKey: `${workspaceKey}/${b.domainSurface ?? b.surface}`,
     key: surfaceKey,
   };
 }
