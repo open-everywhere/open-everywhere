@@ -15,6 +15,7 @@ import {
   dispatchSurfaceFor,
   planCompletion,
   buildGatewayState,
+  typingRefreshDue,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
@@ -104,6 +105,16 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(binding.platform === "discord" && binding.workspace === "G_ACME" && binding.surface === "C_ENG", "identity: workspace=guild, surface=channel");
   ok(binding.mode === "channel" && binding.visibility === "private", "identity: guild text channel -> channel/private (fail-closed)");
   ok(partition.surfaceKey === "discord/G_ACME/C_ENG", "identity: surfaceKey");
+
+  for (const kind of ["discord-gateway", "channel:discord-gateway"]) {
+    const sessionCtx: BindableContext = { channel: { kind }, session: { auth: { current: a } } };
+    const b = bindFrom(sessionCtx);
+    ok(
+      b.platform === "discord" && b.workspace === "G_ACME" && b.surface === "C_ENG" && b.mode === "channel",
+      `identity: in-session kind "${kind}" aliases to the discord mapper (same binding as route-side)`,
+    );
+    ok(resolvePartition(sessionCtx).surfaceKey === "discord/G_ACME/C_ENG", `identity: in-session kind "${kind}" -> same surfaceKey as route-side`);
+  }
 }
 
 {
@@ -295,6 +306,15 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   const off = buildGatewayState({ replyChannelId: "C_BASE", original: undefined });
   ok(off.originalChannelId === undefined && off.originalMessageId === undefined, "state: no thread/UX off → no reaction coords (no swap)");
   ok(off.channelId === "C_BASE", "state: no thread/UX off → base reply surface");
+}
+
+{
+  const state = new Map<string, number>();
+  ok(typingRefreshDue("C1", 1_000, state) === true, "typing: first trigger for a channel is due");
+  ok(typingRefreshDue("C1", 3_000, state) === false, "typing: 2s later — indicator still fresh, not due");
+  ok(typingRefreshDue("C2", 3_000, state) === true, "typing: another channel throttles independently");
+  ok(typingRefreshDue("C1", 8_100, state) === true, "typing: past the refresh window — due again");
+  ok(typingRefreshDue("C1", 8_200, state) === false, "typing: the refire reset the clock");
 }
 
 {

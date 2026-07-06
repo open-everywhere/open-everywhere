@@ -238,9 +238,14 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
   telegram: bindTelegram,
 };
 
+const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
+  "discord-gateway": "discord",
+};
+
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const rawKind = ctx.channel?.kind ?? process.env.OE_PLATFORM;
-  return rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
+  const bare = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
+  return bare ? (PLATFORM_ALIASES[bare] ?? bare) : bare;
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {

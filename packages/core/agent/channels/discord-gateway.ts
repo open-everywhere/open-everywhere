@@ -179,6 +179,20 @@ async function postDiscordReply(channelId: string, text: string): Promise<void> 
   }
 }
 
+const lastTypingAt = new Map<string, number>();
+const TYPING_REFRESH_MS = 7_000;
+
+export function typingRefreshDue(
+  channelId: string,
+  nowMs: number = Date.now(),
+  state: Map<string, number> = lastTypingAt,
+): boolean {
+  const last = state.get(channelId);
+  if (last !== undefined && nowMs - last < TYPING_REFRESH_MS) return false;
+  state.set(channelId, nowMs);
+  return true;
+}
+
 async function triggerDiscordTyping(channelId: string): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token || !channelId) return;
@@ -480,6 +494,12 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     },
     "action.result": async (_data, channel) => {
       if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+    },
+    "message.appended": async (_data, channel) => {
+      if (statusUxEnabled() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+    },
+    "reasoning.appended": async (_data, channel) => {
+      if (statusUxEnabled() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
