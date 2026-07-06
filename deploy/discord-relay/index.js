@@ -53,6 +53,12 @@ function toPayload(message) {
       },
       mentionsBot: client.user ? message.mentions.users.has(client.user.id) : false,
       referencedMessageId: message.reference?.messageId ?? undefined,
+      bot: client.user
+        ? {
+            id: client.user.id,
+            name: message.guild?.members?.me?.displayName ?? client.user.displayName ?? client.user.username,
+          }
+        : undefined,
     },
   };
 }
