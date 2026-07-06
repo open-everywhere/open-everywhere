@@ -84,6 +84,7 @@ await scenario("02-thread-followup-resume", async (s) => {
     mentionsBot: false,
   });
   await s.event("discord:TH1", "turn.started");
+  await s.event("discord:TH1", "message.appended", { messageSoFar: "no-unused-vars" });
   await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "no-unused-vars, in ci.ts line 12." });
 }, { channelInfo: { TH1: { name: "can you check the failing build?", type: 11, parent_id: "C2" } } });
 

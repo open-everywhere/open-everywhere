@@ -16,6 +16,10 @@ import {
   planCompletion,
   buildGatewayState,
   typingRefreshDue,
+  closeTypingGate,
+  openTypingGate,
+  typingGateOpen,
+  typingGateFeed,
   isThreadChannelType,
   nameDropEligible,
   renderNameDropTurn,
@@ -326,6 +330,36 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(typingRefreshDue("C2", 3_000, state) === true, "typing: another channel throttles independently");
   ok(typingRefreshDue("C1", 8_100, state) === true, "typing: past the refresh window — due again");
   ok(typingRefreshDue("C1", 8_200, state) === false, "typing: the refire reset the clock");
+}
+
+{
+  const gates = new Set<string>();
+  ok(typingGateOpen("C1", gates) === true, "gate: fresh channel — open (addressed turns unaffected)");
+  ok(typingGateFeed("C1", "anything", gates) === true, "gate: feeding an ungated channel is a no-op (open)");
+
+  closeTypingGate("C1", gates);
+  ok(typingGateOpen("C1", gates) === false, "gate: closed at judged dispatch — no typing");
+  ok(typingGateOpen("C2", gates) === true, "gate: channels are independent");
+  ok(typingGateFeed("C1", "", gates) === false, "gate: empty stream — undecided, hold");
+  ok(typingGateFeed("C1", "  NO", gates) === false, "gate: sentinel prefix (leading whitespace trimmed) — still undecided, hold");
+  ok(typingGateFeed("C1", "NO_REP", gates) === false, "gate: longer sentinel prefix — hold");
+  ok(typingGateFeed("C1", "NO_REPLY", gates) === false, "gate: the sentinel itself — judged silence, hold forever");
+  ok(typingGateFeed("C1", "NO_REPLY — they're talking among themselves", gates) === false, "gate: sentinel + trailing text is still swallowed by isNoReply — hold");
+  ok(typingGateOpen("C1", gates) === false, "gate: a silent turn never opens its gate");
+
+  ok(typingGateFeed("C1", "Sure! What do you need?", gates) === true, "gate: text deviating from the sentinel proves a reply — opens");
+  ok(typingGateOpen("C1", gates) === true, "gate: once proven, stays open for the rest of the turn");
+  ok(typingGateFeed("C1", "NO_REPLY", gates) === true, "gate: after opening, later chunks can never re-close it");
+
+  closeTypingGate("C1", gates);
+  ok(typingGateFeed("C1", "no_reply", gates) === true, "gate: lowercase is NOT the sentinel (isNoReply is case-sensitive → it WOULD post) — opens");
+
+  closeTypingGate("C1", gates);
+  ok(typingGateFeed("C1", "  Yes, I'm here!", gates) === true, "gate: leading whitespace before a real reply still opens (trimStart mirror)");
+
+  closeTypingGate("C1", gates);
+  openTypingGate("C1", gates);
+  ok(typingGateOpen("C1", gates) === true, "gate: openTypingGate clears (turn end / addressed dispatch reset)");
 }
 
 {

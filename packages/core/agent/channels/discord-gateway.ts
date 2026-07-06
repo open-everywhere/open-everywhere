@@ -238,6 +238,32 @@ export function typingRefreshDue(
   return true;
 }
 
+const closedTypingGates = new Set<string>();
+
+export function closeTypingGate(channelId: string, gates: Set<string> = closedTypingGates): void {
+  gates.add(channelId);
+}
+
+export function openTypingGate(channelId: string, gates: Set<string> = closedTypingGates): void {
+  gates.delete(channelId);
+}
+
+export function typingGateOpen(channelId: string, gates: Set<string> = closedTypingGates): boolean {
+  return !gates.has(channelId);
+}
+
+export function typingGateFeed(
+  channelId: string,
+  messageSoFar: string,
+  gates: Set<string> = closedTypingGates,
+): boolean {
+  if (!gates.has(channelId)) return true;
+  const t = messageSoFar.trimStart();
+  if (t.startsWith(NO_REPLY_SENTINEL) || NO_REPLY_SENTINEL.startsWith(t)) return false;
+  gates.delete(channelId);
+  return true;
+}
+
 async function triggerDiscordTyping(channelId: string): Promise<void> {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token || !channelId) return;
@@ -544,7 +570,12 @@ async function dispatchTurn(
   });
 
   if (statusUx) {
-    await triggerDiscordTyping(surface.state.channelId);
+    if (msg.mentionsBot || isDm) {
+      openTypingGate(surface.state.channelId);
+      await triggerDiscordTyping(surface.state.channelId);
+    } else {
+      closeTypingGate(surface.state.channelId);
+    }
   }
 
   const turnText =
@@ -598,21 +629,25 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
   ],
   events: {
     "turn.started": async (_data, channel) => {
-      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && typingGateOpen(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "actions.requested": async (_data, channel) => {
-      if (statusUxEnabled() && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
     "action.result": async (_data, channel) => {
-      if (statusUxEnabled() && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
-    "message.appended": async (_data, channel) => {
-      if (statusUxEnabled() && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+    "message.appended": async (data, channel) => {
+      if (!statusUxEnabled()) return;
+      const soFar = (data as { messageSoFar?: string } | undefined)?.messageSoFar ?? "";
+      if (!typingGateFeed(channel.channelId, soFar)) return;
+      if (!peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "reasoning.appended": async (_data, channel) => {
-      if (statusUxEnabled() && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && typingGateOpen(channel.channelId) && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
     },
     "turn.failed": async (data, channel) => {
+      openTypingGate(channel.channelId);
       const detail = (data as { error?: { message?: string } } | undefined)?.error?.message;
       log(`turn failed (channel ${channel.channelId || "?"})${detail ? `: ${detail}` : ""}`);
       await postDiscordReply(
@@ -623,6 +658,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     "message.completed": async (data, channel) => {
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
+      openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
       const plan = planCompletion({
         action,
