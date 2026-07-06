@@ -490,10 +490,10 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
     },
     "actions.requested": async (_data, channel) => {
-      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
     "action.result": async (_data, channel) => {
-      if (statusUxEnabled()) await triggerDiscordTyping(channel.channelId);
+      if (statusUxEnabled() && !peekCardPostedThisTurn()) await triggerDiscordTyping(channel.channelId);
     },
     "message.appended": async (_data, channel) => {
       if (statusUxEnabled() && !peekCardPostedThisTurn() && typingRefreshDue(channel.channelId)) await triggerDiscordTyping(channel.channelId);
