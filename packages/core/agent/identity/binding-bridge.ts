@@ -1,5 +1,5 @@
 import { defineState } from "eve/context";
-import type { BindableContext } from "./binding.js";
+import { channelPlatform, type BindableContext } from "./binding.js";
 
 export interface BridgedIdentity {
   readonly platform: string;
@@ -21,8 +21,7 @@ function flatten(a: Readonly<Record<string, string | readonly string[]>> | undef
 
 export function stampBindingBridge(ctx: BindableContext): void {
   try {
-    const rawKind = ctx.channel?.kind;
-    const platform = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
+    const platform = channelPlatform(ctx);
     if (!platform || platform === "local") return;
     const auth = ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
     const attributes = flatten(auth?.attributes);

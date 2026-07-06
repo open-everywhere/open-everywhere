@@ -242,10 +242,14 @@ const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
   "discord-gateway": "discord",
 };
 
+export function normalizePlatform(bare: string | undefined): string | undefined {
+  return bare ? (PLATFORM_ALIASES[bare] ?? bare) : bare;
+}
+
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const rawKind = ctx.channel?.kind ?? process.env.OE_PLATFORM;
   const bare = rawKind && rawKind.includes(":") ? rawKind.slice(rawKind.lastIndexOf(":") + 1) : rawKind;
-  return bare ? (PLATFORM_ALIASES[bare] ?? bare) : bare;
+  return normalizePlatform(bare);
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
@@ -254,7 +258,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   if (raw.workspace === undefined && raw.surface === undefined) {
     const bridged = readBindingBridge();
     if (bridged) {
-      platform = seg(bridged.platform, "local");
+      platform = seg(normalizePlatform(bridged.platform), "local");
       raw = (MAPPERS[platform] ?? bindLocal)(bridgedContext(bridged));
       console.warn(
         `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,

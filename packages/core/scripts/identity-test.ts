@@ -230,5 +230,15 @@ const bridged = bindFrom(
 );
 ok(bridged.workspace === "T9" && bridged.surface === "C9" && bridged.trust === "internal" && bridged.principalId === "U1",
   "binding-bridge: a stamped identity reconstitutes the full binding (ids + trust + principal)");
+const bridgedSlug = bindFrom(
+  bridgedContext({
+    platform: "discord-gateway",
+    principalId: "U_dg",
+    principalType: "discord-user",
+    attributes: { guild_id: "G7", channel_id: "C7", channel_type: "0", user_id: "U_dg" },
+  }),
+);
+ok(bridgedSlug.platform === "discord" && bridgedSlug.workspace === "G7" && bridgedSlug.surface === "C7",
+  "binding-bridge: a channel-slug platform stamp ('discord-gateway') normalizes to the discord mapper");
 
 console.log(`✓ identity: ${passed} assertions passed`);
