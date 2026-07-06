@@ -41,8 +41,11 @@ export interface RequestApprovalInput {
   readonly threadTs?: string | null;
 }
 
+export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]) => Promise<string | undefined>;
+
 export interface RequestApprovalDeps {
   readonly post?: PostFn;
+  readonly postCard?: CardPoster;
 }
 
 export async function requestApproval(input: RequestApprovalInput, deps: RequestApprovalDeps = {}): Promise<{ id: string; expiresAt: string }> {
@@ -79,16 +82,22 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   await store.addPendingAction(row);
 
   const summaryLines = kindDef.summarize(input.args);
-  const { blocks, text } = pendingCardBlocks(row, summaryLines);
 
-  const body = new URLSearchParams();
-  body.set("channel", input.channelId);
-  if (input.threadTs) body.set("thread_ts", input.threadTs);
-  body.set("text", text);
-  body.set("blocks", JSON.stringify(blocks));
+  let messageTs: string | undefined;
+  if (deps.postCard) {
+    messageTs = await deps.postCard(row, summaryLines);
+  } else {
+    const { blocks, text } = pendingCardBlocks(row, summaryLines);
 
-  const res = await post("chat.postMessage", body.toString());
-  const messageTs = res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
+    const body = new URLSearchParams();
+    body.set("channel", input.channelId);
+    if (input.threadTs) body.set("thread_ts", input.threadTs);
+    body.set("text", text);
+    body.set("blocks", JSON.stringify(blocks));
+
+    const res = await post("chat.postMessage", body.toString());
+    messageTs = res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
+  }
 
   if (!messageTs) {
     await store.decidePendingAction(input.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
@@ -164,6 +173,73 @@ function summaryLinesFor(row: PendingActionRow): string[] {
   }
 }
 
+export type ApprovalClickResolution =
+  | { readonly outcome: "unknown" }
+  | { readonly outcome: "not-pending" }
+  | { readonly outcome: "expired"; readonly row: PendingActionRow; readonly summaryLines: string[] }
+  | { readonly outcome: "expired-race" }
+  | { readonly outcome: "unregistered-kind" }
+  | { readonly outcome: "denied"; readonly row: PendingActionRow }
+  | { readonly outcome: "lost-race" }
+  | { readonly outcome: "decided"; readonly row: PendingActionRow; readonly summaryLines: string[]; readonly outcomeLine: string };
+
+export interface ResolveApprovalClickInput {
+  readonly org: string;
+  readonly id: string;
+  readonly decision: "approve" | "reject";
+  readonly clickerId: string;
+  readonly platformAdmin?: (row: PendingActionRow) => boolean;
+}
+
+export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
+  const store = getOperationalStore();
+  const row = await store.getPendingAction(input.org, input.id);
+
+  if (!row) return { outcome: "unknown" };
+  if (row.status !== "pending") return { outcome: "not-pending" };
+
+  const nowIso = new Date().toISOString();
+  if (Date.parse(row.expiresAt) <= Date.now()) {
+    const cas = await store.decidePendingAction(input.org, row.id, "expired", "system", nowIso);
+    if (!cas) return { outcome: "expired-race" };
+    const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
+    return { outcome: "expired", row: expiredRow, summaryLines: summaryLinesFor(expiredRow) };
+  }
+
+  const kindDef = actionKind(row.kind);
+  if (!kindDef) {
+    console.error(`[open-everywhere:approvals] no registered ActionKind for "${row.kind}" (pending ${row.id}) — cannot decide`);
+    return { outcome: "unregistered-kind" };
+  }
+
+  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId) && input.platformAdmin?.(row) !== true) {
+    return { outcome: "denied", row };
+  }
+
+  const status = input.decision === "approve" ? "approved" : "rejected";
+  const cas = await store.decidePendingAction(input.org, row.id, status, input.clickerId, nowIso);
+  if (!cas) return { outcome: "lost-race" };
+
+  const decidedRow: PendingActionRow = { ...row, status, decidedBy: input.clickerId, decidedAt: nowIso };
+  const summaryLines = summaryLinesFor(decidedRow);
+
+  if (status === "rejected") {
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind } });
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
+  }
+
+  try {
+    const args = JSON.parse(row.argsJson) as unknown;
+    const outcome = await kindDef.execute(args, input.clickerId);
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, outcome } });
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, error: message } });
+    return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}` };
+  }
+}
+
 export async function handleApprovalPayload(payload: unknown, deps: HandleApprovalDeps = {}): Promise<boolean> {
   const p = payload as BlockActionsPayload | null | undefined;
   const action = p?.actions?.[0];
@@ -186,63 +262,26 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       return true;
     }
 
-    const store = getOperationalStore();
-    const row = await store.getPendingAction(org, parsed.id);
-
-    if (!row) {
-      await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
-      return true;
+    const res = await resolveApprovalClick({ org, id: parsed.id, decision: parsed.decision, clickerId });
+    switch (res.outcome) {
+      case "unknown":
+        await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
+        return true;
+      case "not-pending":
+      case "expired-race":
+      case "unregistered-kind":
+      case "lost-race":
+        return true;
+      case "expired":
+        await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, "expired"));
+        return true;
+      case "denied":
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
+        return true;
+      case "decided":
+        await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
+        return true;
     }
-
-    if (row.status !== "pending") {
-      return true;
-    }
-
-    const nowIso = new Date().toISOString();
-    if (Date.parse(row.expiresAt) <= Date.now()) {
-      const cas = await store.decidePendingAction(org, row.id, "expired", "system", nowIso);
-      if (cas) {
-        const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
-        await updateCard(post, channelId, messageTs, decidedCardBlocks(expiredRow, summaryLinesFor(expiredRow), "expired"));
-      }
-      return true;
-    }
-
-    const kindDef = actionKind(row.kind);
-    if (!kindDef) {
-      console.error(`[open-everywhere:approvals] no registered ActionKind for "${row.kind}" (pending ${row.id}) — cannot decide`);
-      return true;
-    }
-
-    if (kindDef.policy === "admin" && !clickerMayDecide(row, clickerId)) {
-      await postThreadNote(post, channelId, row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
-      return true;
-    }
-
-    const status = parsed.decision === "approve" ? "approved" : "rejected";
-    const cas = await store.decidePendingAction(org, row.id, status, clickerId, nowIso);
-    if (!cas) return true;
-
-    const decidedRow: PendingActionRow = { ...row, status, decidedBy: clickerId, decidedAt: nowIso };
-    const summaryLines = summaryLinesFor(decidedRow);
-
-    if (status === "rejected") {
-      await updateCard(post, channelId, messageTs, decidedCardBlocks(decidedRow, summaryLines, "rejected"));
-      await appendAudit({ ...whereFromScope(org, row.scopeKey), principalId: clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind } });
-      return true;
-    }
-
-    try {
-      const args = JSON.parse(row.argsJson) as unknown;
-      const outcome = await kindDef.execute(args, clickerId);
-      await updateCard(post, channelId, messageTs, decidedCardBlocks(decidedRow, summaryLines, outcome));
-      await appendAudit({ ...whereFromScope(org, row.scopeKey), principalId: clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, outcome } });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await updateCard(post, channelId, messageTs, decidedCardBlocks(decidedRow, summaryLines, `FAILED: ${message}`));
-      await appendAudit({ ...whereFromScope(org, row.scopeKey), principalId: clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, error: message } });
-    }
-    return true;
   } catch (err) {
     console.error(`[open-everywhere:approvals] handleApprovalPayload failed softly for "${actionId}": ${String(err)}`);
     return true;

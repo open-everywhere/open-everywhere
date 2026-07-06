@@ -72,10 +72,14 @@ const uncapped = { tokens: null, usd: null } as const;
   const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 1, reason: "x", scopeKey: "slack/T123/COTHER" }, uncapped, null);
   ok(plan.args.scopeKey === "slack/T123/COTHER", "planSetSpendLimit honours an explicit scopeKey override");
 }
+{
+  const plan = planSetSpendLimit(slackBinding({ platform: "discord", workspace: "G123", surface: "C456" }), { monthlyTokens: 1, reason: "x" }, uncapped, null);
+  ok(plan.args.scopeKey === "discord/G123/C456", "planSetSpendLimit accepts a Discord binding (card path exists) and scopes to the guild surface");
+}
 throwsWith(
-  () => planSetSpendLimit(slackBinding({ platform: "discord" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
-  "Slack-only",
-  "planSetSpendLimit refuses a non-Slack binding",
+  () => planSetSpendLimit(slackBinding({ platform: "telegram" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
+  "approval-card path",
+  "planSetSpendLimit refuses a binding with no approval-card path",
 );
 throwsWith(
   () => planSetSpendLimit(slackBinding({ principalId: undefined }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
@@ -106,10 +110,14 @@ throwsWith(
   ok(plan.args.scopeKey === "slack/T123", "planClearSpendLimit defaults scopeKey to the workspace for level:workspace");
   ok(plan.domain === "eng", "planClearSpendLimit freezes the passed-in domain");
 }
+{
+  const plan = planClearSpendLimit(slackBinding({ platform: "discord", workspace: "G123", surface: "C456" }), {}, uncapped, null);
+  ok(plan.args.scopeKey === "discord/G123/C456", "planClearSpendLimit accepts a Discord binding (card path exists)");
+}
 throwsWith(
   () => planClearSpendLimit(slackBinding({ platform: "teams" }), {}, uncapped, null),
-  "Slack-only",
-  "planClearSpendLimit refuses a non-Slack binding",
+  "approval-card path",
+  "planClearSpendLimit refuses a binding with no approval-card path",
 );
 throwsWith(
   () => planClearSpendLimit(slackBinding({ principalId: undefined }), {}, uncapped, null),

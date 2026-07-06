@@ -5,6 +5,7 @@ import {
 } from "eve/channels/discord";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { finalMessageAction } from "./slack-events.js";
+import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 
 function channelTypeFromRaw(raw: Record<string, unknown>): string | undefined {
   const ch = raw["channel"];
@@ -25,7 +26,8 @@ function authFromInteraction(interaction: DiscordCommandInteraction): OpenEveryw
   });
 }
 
-export default discordChannel({
+const discordInteractionChannel = discordChannel({
+  route: INTERNAL_DISCORD_ROUTE,
   onCommand: async (ctx: DiscordContext, interaction: DiscordCommandInteraction) => {
     const auth = authFromInteraction(interaction);
     if (auth === null) return null;
@@ -48,3 +50,5 @@ export default discordChannel({
     },
   },
 });
+
+export default frontDiscordChannel(discordInteractionChannel);

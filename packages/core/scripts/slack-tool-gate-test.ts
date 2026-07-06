@@ -33,7 +33,10 @@ const EVENTS = ["session.started"] as const;
 
 const NON_SLACK_KINDS = ["discord", "teams", "telegram", "linear", "local", "channel:discord", "channel:teams"];
 
-async function assertGate(name: string, def: unknown, descNeedle: string): Promise<void> {
+const CARD_PATH_KINDS = ["slack", "channel:slack", "discord", "channel:discord"];
+const NON_CARD_KINDS = ["teams", "telegram", "linear", "local", "channel:teams"];
+
+async function assertGate(name: string, def: unknown, descNeedle: string, armedKinds: readonly string[] = ["slack", "channel:slack"], hiddenKinds: readonly string[] = NON_SLACK_KINDS): Promise<void> {
   const d = def as DynamicLike;
   ok(d.kind === "eve:dynamic", `${name} default export is a dynamic (defineDynamic) sentinel`);
   ok(!!d.events, `${name} exposes an events map`);
@@ -44,18 +47,18 @@ async function assertGate(name: string, def: unknown, descNeedle: string): Promi
     ok(typeof handler === "function", `${name} has a ${ev} resolver`);
     if (typeof handler !== "function") return;
 
-    for (const slackKind of ["slack", "channel:slack"]) {
-      const armed = await handler({}, ctxFor(slackKind));
-      ok(isToolEntry(armed), `${name}[${ev}] arms the tool on ${slackKind}`);
+    for (const armedKind of armedKinds) {
+      const armed = await handler({}, ctxFor(armedKind));
+      ok(isToolEntry(armed), `${name}[${ev}] arms the tool on ${armedKind}`);
       if (isToolEntry(armed)) {
         ok(
           typeof armed.description === "string" && (armed.description as string).includes(descNeedle),
-          `${name}[${ev}] arms the SAME tool on ${slackKind} (description intact)`,
+          `${name}[${ev}] arms the SAME tool on ${armedKind} (description intact)`,
         );
       }
     }
 
-    for (const kind of NON_SLACK_KINDS) {
+    for (const kind of hiddenKinds) {
       const hidden = await handler({}, ctxFor(kind));
       ok(hidden === null, `${name}[${ev}] hides the tool on ${kind} (returns null)`);
     }
@@ -65,7 +68,7 @@ async function assertGate(name: string, def: unknown, descNeedle: string): Promi
 await assertGate("read_slack_channel", readSlackChannel, "Read recent messages from a Slack channel");
 await assertGate("read_slack_thread", readSlackThread, "Read all replies in a Slack thread");
 await assertGate("clear_connector_override", clearConnectorOverride, "PROPOSE reverting an earlier break-glass connector revoke");
-await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override");
+await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", CARD_PATH_KINDS, NON_CARD_KINDS);
 await assertGate("forget", forget, "PROPOSE forgetting one remembered fact");
 
 console.log(`✓ ${passed} slack-tool-gate assertions passed`);
