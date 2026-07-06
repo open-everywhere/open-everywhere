@@ -13,7 +13,7 @@ for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_
   delete process.env[k];
 }
 
-const { ScenarioDriver, installFakeDiscordRest, stubMonotonicNow, checkGolden } = await import("./scenario-harness.js");
+const { ScenarioRunner } = await import("./scenario-harness.js");
 const { default: discordGateway } = await import("../agent/channels/discord-gateway.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
@@ -43,27 +43,8 @@ function partitionFor(input: { userId: string; guildId?: string; channelId: stri
   return resolvePartition(ctx);
 }
 
-let failures = 0;
-let ran = 0;
-
-async function scenario(name: string, body: (s: InstanceType<typeof ScenarioDriver>) => Promise<void>, opts: { failNextThreadCreate?: boolean } = {}): Promise<void> {
-  const driver = new ScenarioDriver(discordGateway, RELAY_SECRET);
-  const rest = installFakeDiscordRest(driver.timeline, { failNextThreadCreate: opts.failNextThreadCreate });
-  const restoreNow = stubMonotonicNow();
-  try {
-    await body(driver);
-  } catch (err) {
-    failures++;
-    ran++;
-    console.error(`✗ ${name}: scenario threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
-    return;
-  } finally {
-    rest.restore();
-    restoreNow();
-  }
-  ran++;
-  if (!checkGolden(name, driver.timeline)) failures++;
-}
+const runner = new ScenarioRunner(discordGateway, RELAY_SECRET);
+const scenario = runner.scenario.bind(runner);
 
 await scenario("01-mention-autothread-reply", async (s) => {
   await s.inbound({
@@ -104,7 +85,7 @@ await scenario("02-thread-followup-resume", async (s) => {
   });
   await s.event("discord:TH1", "turn.started");
   await s.event("discord:TH1", "message.completed", { finishReason: "stop", message: "no-unused-vars, in ci.ts line 12." });
-});
+}, { channelInfo: { TH1: { name: "can you check the failing build?", type: 11, parent_id: "C2" } } });
 
 await scenario("03-dm-direct-reply", async (s) => {
   await s.inbound({
@@ -155,7 +136,7 @@ await scenario("05-card-suppression", async (s) => {
     finishReason: "stop",
     message: "I've posted an approval card proposing a $5/month cap — an admin needs to approve it.",
   });
-});
+}, { channelInfo: { C5T: { name: "spend chat", type: 11, parent_id: "C5" } } });
 
 await scenario("06-cap-decline-nonadmin", async (s) => {
   const p = partitionFor({ userId: "U_RANDO6", guildId: "G6", channelId: "C6", channelType: "0" });
@@ -234,8 +215,4 @@ await scenario(
 );
 
 rmSync(tmp, { recursive: true, force: true });
-if (failures > 0) {
-  console.error(`\n✗ scenarios: ${failures}/${ran} golden timeline(s) diverged\n`);
-  process.exit(1);
-}
-console.log(`\n✓ scenarios: ${ran} golden timelines matched (discord-gateway sequencing pinned)\n`);
+runner.finish("scenarios (discord-gateway sequencing)");

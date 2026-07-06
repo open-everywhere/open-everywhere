@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
 
 export class Timeline {
   private readonly lines: string[] = [];
@@ -38,19 +39,29 @@ export function stubMonotonicNow(): () => void {
 const DISCORD_API = "https://discord.com/api/v10";
 const EYES_ENCODED = encodeURIComponent("👀");
 
+export type ChannelInfoScript = { readonly name: string; readonly type: number; readonly parent_id?: string } | "error-500" | "network-error";
+
 export interface FetchScript {
   failNextThreadCreate?: boolean;
+  channelInfo?: Record<string, ChannelInfoScript>;
+  guildProbeNetworkError?: readonly string[];
 }
 
-export function installFakeDiscordRest(timeline: Timeline, script: FetchScript = {}): { restore: () => void } {
+export interface FetchCapture {
+  lastCardCustomIds: string[];
+}
+
+export function installFakeDiscordRest(timeline: Timeline, script: FetchScript = {}): { restore: () => void; capture: FetchCapture } {
   const realFetch = globalThis.fetch;
   let threadN = 0;
   let botMsgN = 0;
+  const capture: FetchCapture = { lastCardCustomIds: [] };
 
   const fake = async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? (typeof input === "object" && "method" in input ? (input as Request).method : "GET")).toUpperCase();
     if (!url.startsWith(DISCORD_API)) {
+      timeline.add(`  → ✗ UNEXPECTED egress ${method} ${url}`);
       throw new Error(`scenario fetch fake: unexpected egress ${method} ${url}`);
     }
     const path = url.slice(DISCORD_API.length).replaceAll(EYES_ENCODED, "👀");
@@ -68,8 +79,17 @@ export function installFakeDiscordRest(timeline: Timeline, script: FetchScript =
     }
     if (method === "POST" && /^\/channels\/[^/]+\/messages$/.test(path)) {
       const id = `BM${++botMsgN}`;
-      const content = body ? (JSON.parse(body) as { content?: string }).content : undefined;
-      timeline.addBlock(`  → POST ${path} ⇒ 200 message ${id}`, content ?? "(no content)");
+      const parsed = body ? (JSON.parse(body) as { content?: string; components?: { components?: { custom_id?: string; label?: string }[] }[] }) : {};
+      const buttons = (parsed.components ?? []).flatMap((row) => row.components ?? []);
+      if (buttons.length > 0) {
+        capture.lastCardCustomIds = buttons.map((b) => b.custom_id ?? "");
+        timeline.addBlock(
+          `  → POST ${path} ⇒ 200 message ${id} [buttons: ${buttons.map((b) => b.label ?? "?").join("/")}]`,
+          parsed.content ?? "(no content)",
+        );
+      } else {
+        timeline.addBlock(`  → POST ${path} ⇒ 200 message ${id}`, parsed.content ?? "(no content)");
+      }
       return new Response(JSON.stringify({ id }), { status: 200 });
     }
     if (method === "POST" && /^\/channels\/[^/]+\/typing$/.test(path)) {
@@ -80,7 +100,31 @@ export function installFakeDiscordRest(timeline: Timeline, script: FetchScript =
       timeline.add(`  → ${method} ${path} ⇒ 204`);
       return new Response(null, { status: 204 });
     }
+    if (method === "GET" && /^\/channels\/[^/]+$/.test(path)) {
+      const id = path.slice("/channels/".length);
+      const scripted = script.channelInfo?.[id];
+      if (scripted === "network-error") {
+        timeline.add(`  → GET ${path} ⇒ ✗ network error (scripted)`);
+        throw new Error("scripted network error");
+      }
+      if (scripted === "error-500") {
+        timeline.add(`  → GET ${path} ⇒ 500 (scripted)`);
+        return new Response(JSON.stringify({ message: "Internal Server Error" }), { status: 500 });
+      }
+      if (scripted) {
+        const parentNote = scripted.parent_id ? ` parent=${scripted.parent_id}` : "";
+        timeline.add(`  → GET ${path} ⇒ 200 name="${scripted.name}" type=${scripted.type}${parentNote}`);
+        return new Response(JSON.stringify(scripted), { status: 200 });
+      }
+      timeline.add(`  → GET ${path} ⇒ 404 (unscripted — lookup fail-opens)`);
+      return new Response(JSON.stringify({ message: "Unknown Channel", code: 10003 }), { status: 404 });
+    }
     if (method === "GET" && /^\/guilds\/[^/]+$/.test(path)) {
+      const id = path.slice("/guilds/".length);
+      if (script.guildProbeNetworkError?.includes(id)) {
+        timeline.add(`  → GET ${path} ⇒ ✗ network error (scripted — admin probe explodes)`);
+        throw new Error("scripted network error");
+      }
       timeline.add(`  → GET ${path} ⇒ 404 (unknown guild — REST admin probe fail-closes)`);
       return new Response(JSON.stringify({ message: "Unknown Guild", code: 10004 }), { status: 404 });
     }
@@ -88,6 +132,7 @@ export function installFakeDiscordRest(timeline: Timeline, script: FetchScript =
       timeline.add(`  → GET ${path} ⇒ 404`);
       return new Response(JSON.stringify({ message: "Unknown Member", code: 10007 }), { status: 404 });
     }
+    timeline.add(`  → ✗ UNEXPECTED egress ${method} ${path} (unhandled Discord call)`);
     throw new Error(`scenario fetch fake: unhandled Discord call ${method} ${path}`);
   };
 
@@ -96,6 +141,7 @@ export function installFakeDiscordRest(timeline: Timeline, script: FetchScript =
     restore: () => {
       globalThis.fetch = realFetch;
     },
+    capture,
   };
 }
 
@@ -151,6 +197,7 @@ export interface RelayMessageInput {
   readonly authorId: string;
   readonly authorUsername?: string;
   readonly mentionsBot: boolean;
+  readonly authorIsBot?: boolean;
 }
 
 interface SessionSim {
@@ -184,8 +231,9 @@ export class ScenarioDriver {
 
   async inbound(msg: RelayMessageInput): Promise<void> {
     const kind = msg.channelType === "1" || msg.channelType === "3" ? "dm" : msg.mentionsBot ? "mention" : "plain";
+    const bot = msg.authorIsBot ? " (BOT author)" : "";
     const where = msg.guildId ? `guild ${msg.guildId} channel ${msg.channelId} (type ${msg.channelType ?? "?"})` : `dm channel ${msg.channelId}`;
-    this.timeline.addBlock(`IN  relay message ${msg.id} · ${where} · from ${msg.authorId} · ${kind}`, msg.content);
+    this.timeline.addBlock(`IN  relay message ${msg.id} · ${where} · from ${msg.authorId}${bot} · ${kind}`, msg.content);
 
     const rawBody = JSON.stringify({
       source: "discord-gateway-relay",
@@ -195,25 +243,38 @@ export class ScenarioDriver {
         channelId: msg.channelId,
         channelType: msg.channelType,
         guildId: msg.guildId,
-        author: { id: msg.authorId, username: msg.authorUsername ?? msg.authorId.toLowerCase(), bot: false },
+        author: { id: msg.authorId, username: msg.authorUsername ?? msg.authorId.toLowerCase(), bot: msg.authorIsBot === true },
         mentionsBot: msg.mentionsBot,
       },
     });
     const signature = "sha256=" + createHmac("sha256", this.secret).update(rawBody, "utf8").digest("hex");
+    await this.post(rawBody, signature);
+  }
 
+  async inboundRaw(label: string, rawBody: string, signature: string | null): Promise<void> {
+    this.timeline.add(`IN  ${label}`);
+    await this.post(rawBody, signature);
+  }
+
+  signBody(rawBody: string): string {
+    return "sha256=" + createHmac("sha256", this.secret).update(rawBody, "utf8").digest("hex");
+  }
+
+  private async post(rawBody: string, signature: string | null): Promise<void> {
     const background: Promise<unknown>[] = [];
     const send = async (message: string, options: { auth: unknown; continuationToken: string; state: Record<string, unknown> }) => {
       const existing = this.sessions.get(options.continuationToken);
+      const auth = options.auth as { principalId?: string; attributes?: Record<string, string> };
+      const attrs = auth.attributes ?? {};
+      const parent = attrs.parent_channel_id ? ` parent=${attrs.parent_channel_id}` : "";
+      const authLabel = `${auth.principalId ?? "?"} @ ${attrs.guild_id ?? "(no guild)"}/${attrs.channel_id ?? "?"} type=${attrs.channel_type ?? "?"}${parent}`;
       if (existing) {
-        this.timeline.addBlock(`  ⇢ DISPATCH resume ${options.continuationToken} (state option dropped — resume keeps session state)`, message);
+        this.timeline.addBlock(`  ⇢ DISPATCH resume ${options.continuationToken} · auth ${authLabel} (state option dropped — resume keeps session state)`, message);
       } else {
         this.sessions.set(options.continuationToken, {
           state: options.state,
           ctx: new FakeEveContext(`session-${this.sessions.size + 1}`),
         });
-        const auth = options.auth as { principalId?: string; attributes?: Record<string, string> };
-        const attrs = auth.attributes ?? {};
-        const authLabel = `${auth.principalId ?? "?"} @ ${attrs.guild_id ?? "(no guild)"}/${attrs.channel_id ?? "?"} type=${attrs.channel_type ?? "?"}`;
         this.timeline.addBlock(`  ⇢ DISPATCH start ${options.continuationToken} · auth ${authLabel} · state ${JSON.stringify(options.state)}`, message);
       }
       return {};
@@ -224,7 +285,7 @@ export class ScenarioDriver {
     const res = await (route.handler as RouteHandler)(
       new Request(`https://oe.example${route.path}`, {
         method: "POST",
-        headers: { "x-oe-relay-signature": signature, "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...(signature !== null ? { "x-oe-relay-signature": signature } : {}) },
         body: rawBody,
       }),
       {
@@ -242,7 +303,7 @@ export class ScenarioDriver {
         requestIp: null,
       },
     );
-    if (res.status !== 200) this.timeline.add(`  ⇠ route responded ${res.status} ${await res.text()}`);
+    this.timeline.add(`  ⇠ ${res.status} ${await res.text()}`);
     for (const p of background) await p;
   }
 
@@ -349,4 +410,46 @@ export function checkGolden(name: string, timeline: Timeline): boolean {
   console.error(`✗ ${name}: timeline diverged from golden (- expected / + actual):`);
   console.error(unifiedDiff(expected, actual));
   return false;
+}
+
+export class ScenarioRunner {
+  private failures = 0;
+  private ran = 0;
+
+  constructor(
+    private readonly channelDefault: unknown,
+    private readonly relaySecret: string,
+  ) {}
+
+  async scenario(
+    name: string,
+    body: (s: ScenarioDriver, capture: FetchCapture) => Promise<void>,
+    script: FetchScript = {},
+  ): Promise<void> {
+    const driver = new ScenarioDriver(this.channelDefault, this.relaySecret);
+    const rest = installFakeDiscordRest(driver.timeline, script);
+    const restoreNow = stubMonotonicNow();
+    clearDiscordInfoCacheForTest();
+    try {
+      await body(driver, rest.capture);
+    } catch (err) {
+      this.failures++;
+      this.ran++;
+      console.error(`✗ ${name}: scenario threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+      return;
+    } finally {
+      rest.restore();
+      restoreNow();
+    }
+    this.ran++;
+    if (!checkGolden(name, driver.timeline)) this.failures++;
+  }
+
+  finish(suiteLabel: string): void {
+    if (this.failures > 0) {
+      console.error(`\n✗ ${suiteLabel}: ${this.failures}/${this.ran} golden timeline(s) diverged\n`);
+      process.exit(1);
+    }
+    console.log(`\n✓ ${suiteLabel}: ${this.ran} golden timelines matched\n`);
+  }
 }
