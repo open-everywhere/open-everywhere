@@ -248,18 +248,20 @@ async function onInbound(
     const verdict = await scopeOverBudget(partition, mode, new Date().toISOString());
     if (verdict.over) {
       const binding = bindFrom(bindableForMessage(message, facts));
-      const standing = await capBypassFor({
+      const bypass = await capBypassFor({
         org: binding.org,
         principalId: message.author?.userId,
         surfaceKey: partition.surfaceKey,
         reason: verdict.reason,
       });
-      if (standing) {
-        try {
-          await ctx.thread.post(
-            `:warning: ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.`,
-          );
-        } catch {
+      if (bypass) {
+        if (bypass.warn) {
+          try {
+            await ctx.thread.post(
+              `:warning: ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.`,
+            );
+          } catch {
+          }
         }
       } else {
         try {

@@ -2,10 +2,17 @@ import { adminControlRoles } from "../access/roles.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel } from "../memory/domain.js";
 import { guildIdFromScopeKey, isGuildAdminViaRest } from "../approvals/discord-admin.js";
-import { appendAudit } from "../audit/audit.js";
+import { appendAudit, readAudit } from "../audit/audit.js";
 import { whereFromScope } from "../approvals/actions.js";
 
 export type CapBypassStanding = "roster" | "guild-admin";
+
+export interface CapBypass {
+  readonly standing: CapBypassStanding;
+  readonly warn: boolean;
+}
+
+const WARN_COOLDOWN_MS = 60 * 60 * 1000;
 
 export function rosterStanding(roles: readonly string[], coveringDomain: string | null): boolean {
   return roles.includes("admin") || (coveringDomain !== null && roles.includes(`domain:${coveringDomain}`));
@@ -16,7 +23,7 @@ export async function capBypassFor(input: {
   readonly principalId: string | undefined;
   readonly surfaceKey: string;
   readonly reason?: string;
-}): Promise<CapBypassStanding | null> {
+}): Promise<CapBypass | null> {
   try {
     if (!input.principalId) return null;
     const domains = getConfig().loadDomains();
@@ -29,16 +36,30 @@ export async function capBypassFor(input: {
       if (guildId && (await isGuildAdminViaRest(guildId, input.principalId))) standing = "guild-admin";
     }
     if (!standing) return null;
+
+    const where = whereFromScope(input.org, input.surfaceKey);
+    let warn = true;
+    try {
+      const recent = await readAudit({
+        ...where,
+        action: "spend.cap_bypassed",
+        since: new Date(Date.now() - WARN_COOLDOWN_MS).toISOString(),
+        limit: 1,
+      });
+      warn = recent.length === 0;
+    } catch {
+      warn = true;
+    }
     try {
       await appendAudit({
-        ...whereFromScope(input.org, input.surfaceKey),
+        ...where,
         principalId: input.principalId,
         action: "spend.cap_bypassed",
         detail: { standing, ...(input.reason ? { reason: input.reason } : {}) },
       });
     } catch {
     }
-    return standing;
+    return { standing, warn };
   } catch {
     return null;
   }

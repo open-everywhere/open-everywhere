@@ -402,20 +402,22 @@ async function dispatchTurn(
   try {
     const verdict = await scopeOverBudget(partition, binding.mode, new Date().toISOString());
     if (verdict.over) {
-      const standing = await capBypassFor({
+      const bypass = await capBypassFor({
         org: binding.org,
         principalId: msg.author.id,
         surfaceKey: partition.surfaceKey,
         reason: verdict.reason,
       });
-      if (standing) {
-        await discordCreateMessage(
-          msg.channelId,
-          `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or ` +
-            `clear the cap (an approval card follows), or change it permanently in the ` +
-            `spend-budgets config.`,
-        );
-        log(`cap bypassed (${standing}) on ${partition.surfaceKey} by ${msg.author.id}`);
+      if (bypass) {
+        if (bypass.warn) {
+          await discordCreateMessage(
+            msg.channelId,
+            `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or ` +
+              `clear the cap (an approval card follows), or change it permanently in the ` +
+              `spend-budgets config.`,
+          );
+        }
+        log(`cap bypassed (${bypass.standing}${bypass.warn ? "" : ", warn throttled"}) on ${partition.surfaceKey} by ${msg.author.id}`);
       } else {
         await discordCreateMessage(
           msg.channelId,
