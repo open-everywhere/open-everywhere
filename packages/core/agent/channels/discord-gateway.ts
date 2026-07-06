@@ -7,7 +7,7 @@ import { domainKeyOf, resolvePartition, type Partition } from "../memory/partiti
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { isThreadEngaged, markThreadEngaged } from "./engagement.js";
+import { disengageThread, isStopRequest, isThreadEngaged, markThreadEngaged } from "./engagement.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
@@ -156,14 +156,17 @@ export function renderTurn(direct: boolean, content: string): string {
   ].join("\n");
 }
 
-export function renderNameDropTurn(content: string, botName: string): string {
+export function renderNameDropTurn(content: string, botName: string, followsThread = false): string {
+  const followUps = followsThread
+    ? `You are now following this thread — later messages here will reach you for the same ` +
+      `judged treatment, and the humans can say "stop" to end that.`
+    : `If you do reply, note that you are NOT following this channel: tell the humans to ` +
+      `@mention you (or say your name again) for follow-ups.`;
   return [
     `[name-drop] A channel message said your name ("${botName}") without @mentioning you. ` +
       `You were NOT invited into this conversation — reply only if the message is clearly asking ` +
       `for you or requesting something you can directly do. When in doubt, stay out: output exactly ` +
-      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. If you do reply, note that ` +
-      `you are NOT following this channel: tell the humans to @mention you (or say your name again) ` +
-      `for follow-ups.`,
+      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. ${followUps}`,
     "",
     content,
   ].join("\n");
@@ -276,6 +279,10 @@ async function setDiscordReaction(
   }
 }
 
+export function stripLeadingMention(content: string): string {
+  return content.replace(/^\s*<@!?[^>]+>\s*/, "");
+}
+
 export function shouldAutoThread(channelType: string | undefined, enabled: boolean): boolean {
   if (!enabled) return false;
   return channelType === "0" || channelType === "5";
@@ -291,7 +298,7 @@ export function statusUxEnabled(env: string | undefined = process.env.OE_DISCORD
 
 export function deriveThreadName(content: string, botName?: string): string {
   const fallback = `Conversation with ${botName ?? "the agent"}`;
-  const cleaned = content.replace(/^\s*<@!?[^>]+>\s*/, "").replace(/\s+/g, " ").trim();
+  const cleaned = stripLeadingMention(content).replace(/\s+/g, " ").trim();
   if (cleaned.length === 0) return fallback;
   if (cleaned.length <= 100) return cleaned;
   const hard = cleaned.slice(0, 100);
@@ -447,6 +454,14 @@ async function dispatchTurn(
   const key = engagementKey(msg);
   const isDm = isDmChannel(msg.channelType);
   const engaged = isDm || msg.mentionsBot ? true : await isThreadEngaged(partition, key);
+
+  if (!isDm && (engaged || msg.mentionsBot) && isStopRequest(stripLeadingMention(msg.content))) {
+    await disengageThread(partition, key);
+    await discordCreateMessage(msg.channelId, "👍 Stopped following here — @mention me (or say my name) when you need me again.");
+    log(`disengaged ${partition.surfaceKey} on stop request`);
+    return;
+  }
+
   let nameDrop = false;
   if (!shouldDispatchDiscord({ mentionsBot: msg.mentionsBot, isEngaged: engaged, isDm })) {
     nameDrop =
@@ -462,6 +477,9 @@ async function dispatchTurn(
     if (!nameDrop) {
       log(`drop ${partition.surfaceKey}: non-mention in a channel the agent isn't following`);
       return;
+    }
+    if (isThreadChannelType(msg.channelType)) {
+      await markThreadEngaged(partition, key, new Date().toISOString());
     }
     log(`name-drop wake on ${partition.surfaceKey} ("${msg.botName}")`);
   }
@@ -530,7 +548,9 @@ async function dispatchTurn(
   }
 
   const turnText =
-    nameDrop && msg.botName ? renderNameDropTurn(msg.content, msg.botName) : renderTurn(msg.mentionsBot || isDm, msg.content);
+    nameDrop && msg.botName
+      ? renderNameDropTurn(msg.content, msg.botName, isThreadChannelType(msg.channelType))
+      : renderTurn(msg.mentionsBot || isDm, msg.content);
   await send(turnText, {
     auth: surface.auth,
     continuationToken: surface.continuationToken,

@@ -19,6 +19,7 @@ import {
   isThreadChannelType,
   nameDropEligible,
   renderNameDropTurn,
+  stripLeadingMention,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
@@ -460,8 +461,17 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   const turn = renderNameDropTurn("Test Slack Bot help", "Test Slack Bot");
   ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
   ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
-  ok(turn.includes("NOT following this channel"), "name-drop turn: honest that a reply does not engage (v1 is stateless)");
+  ok(turn.includes("NOT following this channel"), "name-drop turn (base channel): honest that a reply does not engage");
   ok(turn.endsWith("Test Slack Bot help"), "name-drop turn: the human's message rides last, unmodified");
+  const threadTurn = renderNameDropTurn("help", "Bot", true);
+  ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
+  ok(threadTurn.includes('"stop"'), "name-drop turn (thread): names the stop verb as the undo");
+  ok(!threadTurn.includes("NOT following"), "name-drop turn (thread): no contradictory not-following note");
+
+  ok(stripLeadingMention("<@123> stop") === "stop", "stripLeadingMention: bare mention prefix removed");
+  ok(stripLeadingMention("<@!99>  stop following") === "stop following", "stripLeadingMention: nickname-form mention + extra space removed");
+  ok(stripLeadingMention("stop") === "stop", "stripLeadingMention: no mention → unchanged");
+  ok(stripLeadingMention("hey <@123> stop") === "hey <@123> stop", "stripLeadingMention: only a LEADING mention is stripped");
 }
 
 console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);
