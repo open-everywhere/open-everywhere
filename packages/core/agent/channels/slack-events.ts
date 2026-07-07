@@ -6,6 +6,7 @@ import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
 
 export interface SlackEventEnvelope {
   readonly type?: string;
@@ -129,7 +130,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const inThread = Boolean(ev.threadTs);
   const pre = shouldDeliverReply({
     isEngaged: true,
-    authorIsBot: Boolean(ev.botId),
+    authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     isAppMention: ev.isAppMention,
     inThread,
     subtype: ev.subtype,
@@ -140,7 +141,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const engaged = await deps.isEngaged(p, ev.threadTs!);
   const decision = shouldDeliverReply({
     isEngaged: engaged,
-    authorIsBot: Boolean(ev.botId),
+    authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     isAppMention: ev.isAppMention,
     inThread,
     subtype: ev.subtype,
@@ -261,7 +262,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const matched = name && nameDropPattern(name).test(ev.text) ? name : undefined;
   const base = {
     inThread: Boolean(ev.threadTs),
-    authorIsBot: Boolean(ev.botId),
+    authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
     isAppMention: ev.isAppMention,
     subtype: ev.subtype,
     channelType: ev.channelType,

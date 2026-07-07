@@ -4,7 +4,7 @@ import {
   parseRelayPayload,
   authForRelayMessage,
 } from "../agent/channels/discord-gateway.js";
-import { parseDriverAllowlist, isAllowedDriver } from "../agent/testing/driver-allowlist.js";
+import { parseDriverAllowlist, isAllowedDriver, isAllowedSlackDriver } from "../agent/testing/driver-allowlist.js";
 import {
   shouldDispatchDiscord,
   isDmChannel,
@@ -469,6 +469,17 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(parseDriverAllowlist(":456").size === 0 && parseDriverAllowlist("123:").size === 0, "driver: empty halves are discarded");
   ok(parseDriverAllowlist("g1:bot1").size === 0, "driver: non-snowflake ids are discarded (digits only)");
   ok(parseDriverAllowlist("123:456,garbage,:,999:888").size === 2, "driver: malformed entries drop without poisoning valid ones");
+
+  const mixed = parseDriverAllowlist("123:456,T0EXAMPLE:B0EXBOT0001");
+  ok(mixed.has("T0EXAMPLE:B0EXBOT0001") && mixed.has("123:456") && mixed.size === 2, "driver: Slack teamId:botId parses alongside Discord pairs");
+  ok(parseDriverAllowlist("t0example:b0exbot0001").size === 0, "driver: lowercase Slack ids are discarded (exact Slack id shape only)");
+  ok(parseDriverAllowlist("T0EXAMPLE:U0EXOWNER").size === 0, "driver: a Slack USER id (U…) is discarded — vouch the app's bot record, never a human");
+  ok(parseDriverAllowlist("T0EXAMPLE:xoxp-123").size === 0, "driver: token-shaped garbage is discarded");
+  ok(isAllowedSlackDriver("T0EXAMPLE", "B0EXBOT0001", mixed) === true, "driver: exact Slack team+bot match accepted");
+  ok(isAllowedSlackDriver("T9OTHER", "B0EXBOT0001", mixed) === false, "driver: right Slack bot in the WRONG team → dropped (team pin holds)");
+  ok(isAllowedSlackDriver("T0EXAMPLE", "B9OTHER", mixed) === false, "driver: wrong Slack bot in the right team → dropped");
+  ok(isAllowedSlackDriver(undefined, "B0EXBOT0001", mixed) === false, "driver: no team id never matches");
+  ok(isAllowedSlackDriver("T0EXAMPLE", undefined, mixed) === false, "driver: a message with NO bot_id is not a driver question at all");
 
   ok(isAllowedDriver("123", "456", list) === true, "driver: exact guild+bot match accepted");
   ok(isAllowedDriver("123", "999", list) === false, "driver: wrong bot in the right guild → dropped");

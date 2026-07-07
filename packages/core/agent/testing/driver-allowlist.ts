@@ -1,14 +1,12 @@
+const DISCORD_PAIR = /^\d+:\d+$/;
+const SLACK_PAIR = /^T[A-Z0-9]+:B[A-Z0-9]+$/;
+
 export function parseDriverAllowlist(raw: string | undefined): ReadonlySet<string> {
   const out = new Set<string>();
   if (!raw) return out;
   for (const entry of raw.split(",")) {
     const pair = entry.trim();
-    const sep = pair.indexOf(":");
-    if (sep <= 0 || sep === pair.length - 1) continue;
-    const guildId = pair.slice(0, sep).trim();
-    const botUserId = pair.slice(sep + 1).trim();
-    if (!/^\d+$/.test(guildId) || !/^\d+$/.test(botUserId)) continue;
-    out.add(`${guildId}:${botUserId}`);
+    if (DISCORD_PAIR.test(pair) || SLACK_PAIR.test(pair)) out.add(pair);
   }
   return out;
 }
@@ -20,4 +18,13 @@ export function isAllowedDriver(
 ): boolean {
   if (!guildId || !botUserId) return false;
   return allowlist.has(`${guildId}:${botUserId}`);
+}
+
+export function isAllowedSlackDriver(
+  teamId: string | undefined,
+  botId: string | undefined,
+  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+): boolean {
+  if (!teamId || !botId) return false;
+  return allowlist.has(`${teamId}:${botId}`);
 }

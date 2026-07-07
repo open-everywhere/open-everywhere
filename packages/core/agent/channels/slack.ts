@@ -26,6 +26,7 @@ import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
 import { upsertUnderSection } from "../memory/markdown.js";
 import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
+import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
 import { planFor } from "../memory/resolve.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
@@ -241,7 +242,11 @@ async function onInbound(
   message: SlackMessage,
   isDm: boolean,
 ): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
-  if (message.author?.isBot) return { auth: null };
+  if (message.author?.isBot) {
+    const rawBotId = typeof (message.raw as { bot_id?: unknown })?.bot_id === "string" ? (message.raw as { bot_id: string }).bot_id : undefined;
+    if (!isAllowedSlackDriver(message.teamId, rawBotId)) return { auth: null };
+    console.log(`[open-everywhere:slack] e2e driver accepted: bot-authored mention from ${rawBotId} in team ${message.teamId} (allowlisted)`);
+  }
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 

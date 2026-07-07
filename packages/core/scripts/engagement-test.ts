@@ -134,6 +134,25 @@ registerConfig({
   out = await routeMessageEvent(ev({ bot_id: "B9", user: undefined }), deps(true));
   ok(!out.woke, "bot author short-circuits BEFORE the engagement lookup");
 
+  {
+    const evT = (over: Record<string, unknown> = {}) =>
+      parseMessageEvent({ type: "event_callback", team_id: "TENG123", event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "more please", ...over } })!;
+    const prevEnv = process.env.OE_TEST_DRIVER_IDS;
+    process.env.OE_TEST_DRIVER_IDS = "TENG123:B9";
+    woke.length = 0;
+    out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
+    ok(out.woke && woke.length === 1, "allowlisted driver bot in its pinned team wakes the engaged thread");
+    out = await routeMessageEvent(evT({ bot_id: "B8" }), deps(true));
+    ok(!out.woke, "a DIFFERENT bot still drops while the seam is armed");
+    process.env.OE_TEST_DRIVER_IDS = "T_ENG:B9";
+    out = await routeMessageEvent(ev({ bot_id: "B9" }), deps(true));
+    ok(!out.woke, "a malformed (non-Slack-shaped) pair never arms — parse can only narrow");
+    if (prevEnv === undefined) delete process.env.OE_TEST_DRIVER_IDS;
+    else process.env.OE_TEST_DRIVER_IDS = prevEnv;
+    out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
+    ok(!out.woke, "seam disarmed (env cleared) → the driver bot drops again (default off)");
+  }
+
   out = await routeMessageEvent(ev({ thread_ts: undefined }), deps(true));
   ok(!out.woke && /thread/.test(out.reason), "no thread_ts → not delivered");
 }
