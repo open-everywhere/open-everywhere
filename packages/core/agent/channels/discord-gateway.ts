@@ -36,6 +36,7 @@ export interface DiscordRelayMessage {
   readonly mentionsBot: boolean;
   readonly referencedMessageId?: string;
   readonly botName?: string;
+  readonly botId?: string;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -70,6 +71,7 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
     mentionsBot: m["mentionsBot"] === true,
     referencedMessageId: str(m["referencedMessageId"]),
     botName: bot ? str(bot["name"]) : undefined,
+    botId: bot ? str(bot["id"]) : undefined,
   };
 }
 

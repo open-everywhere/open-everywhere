@@ -2,8 +2,16 @@ const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
   "discord-gateway": "discord",
 };
 
+const PLATFORM_PREFIXES: readonly string[] = ["slack", "discord", "teams", "telegram", "linear"];
+
 export function normalizePlatform(bare: string | undefined): string | undefined {
-  return bare ? (PLATFORM_ALIASES[bare] ?? bare) : bare;
+  if (!bare) return bare;
+  const aliased = PLATFORM_ALIASES[bare];
+  if (aliased) return aliased;
+  for (const p of PLATFORM_PREFIXES) {
+    if (bare.startsWith(`${p}-`)) return p;
+  }
+  return bare;
 }
 
 export function platformFromKind(rawKind: string | undefined): string | undefined {

@@ -203,9 +203,9 @@ export interface FrontOptions {
 
 const OK = () => new Response("ok");
 
-function wakeKey(env: SlackEventEnvelope, channelId: string, ts: string): string {
+function wakeKey(env: SlackEventEnvelope, channelId: string, ts: string, botIdentity = "default"): string {
   const eventId = typeof env.event_id === "string" ? env.event_id : undefined;
-  return eventId ?? `${channelId}:${ts}`;
+  return `${botIdentity}:${eventId ?? `${channelId}:${ts}`}`;
 }
 
 const DEDUPE_TTL_MS = 10 * 60_000;

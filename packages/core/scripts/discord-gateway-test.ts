@@ -462,12 +462,15 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
     relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false }, bot: { id: "B1", name: "Test Slack Bot" } }),
   );
   ok(withBot?.botName === "Test Slack Bot", "parse: relayed bot.name surfaces as botName");
+  ok(withBot?.botId === "B1", "parse: relayed bot.id surfaces as botId (item-27 attribution field, kept not discarded)");
   const noBot = parseRelayPayload(relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false } }));
   ok(noBot !== null && noBot.botName === undefined, "parse: an older relay (no bot field) parses with botName undefined");
+  ok(noBot !== null && noBot.botId === undefined, "parse: an older relay (no bot field) parses with botId undefined");
   const garbageBot = parseRelayPayload(
     relayEnvelope({ id: "m1", content: "hi", channelId: "C1", author: { id: "U1", bot: false }, bot: { id: 42, name: 7 } }),
   );
   ok(garbageBot !== null && garbageBot.botName === undefined, "parse: a garbage bot field degrades to botName undefined (never throws)");
+  ok(garbageBot !== null && garbageBot.botId === undefined, "parse: a garbage bot field degrades to botId undefined too");
 
   const base = {
     mentionsBot: false,

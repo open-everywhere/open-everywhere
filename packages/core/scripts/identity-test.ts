@@ -1,4 +1,5 @@
 import { bindFrom, slackMode, slackVisibility, slackTrust, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
+import { normalizePlatform } from "../agent/identity/platform.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { teamsTrust } from "../agent/channels/teams-identity.js";
 import { resolvePartition } from "../agent/memory/partition.js";
@@ -241,5 +242,13 @@ const bridgedSlug = bindFrom(
 );
 ok(bridgedSlug.platform === "discord" && bridgedSlug.workspace === "G7" && bridgedSlug.surface === "C7",
   "binding-bridge: a channel-slug platform stamp ('discord-gateway') normalizes to the discord mapper");
+
+ok(normalizePlatform("slack-qabot") === "slack", "platform: slack-* slug collapses via the prefix rule");
+ok(normalizePlatform("discord-databot") === "discord", "platform: discord-* slug collapses via the prefix rule");
+ok(normalizePlatform("teams-support") === "teams", "platform: teams-* slug collapses via the prefix rule");
+ok(normalizePlatform("discord-gateway") === "discord", "platform: the explicit alias still wins (map before prefix)");
+ok(normalizePlatform("slack") === "slack", "platform: a bare platform passes through unchanged");
+ok(normalizePlatform("slackish") === "slackish", "platform: prefix rule needs the hyphen — no substring false-positives");
+ok(normalizePlatform("linear-bot") === "linear", "platform: linear-* slug collapses via the prefix rule");
 
 console.log(`✓ identity: ${passed} assertions passed`);
