@@ -22,6 +22,10 @@ export interface ModelRoutes {
 
 export type ModelRole = keyof ModelRoutes;
 
+export interface SandboxPreset {
+  readonly vcpus?: number;
+}
+
 export interface Domain {
   readonly name: string;
   readonly channels?: readonly string[];
@@ -33,6 +37,8 @@ export interface Domain {
   readonly models?: ModelRoutes;
   readonly statusVerbs?: readonly string[];
   readonly statusVerbsMode?: "extend" | "replace";
+  readonly role?: string;
+  readonly sandbox?: SandboxPreset;
   readonly admins?: readonly string[];
 }
 
@@ -59,8 +65,34 @@ export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain
   return criteriaDomain("org", domains)?.nameDropWake === true;
 }
 
-export function modelRouteFor(role: ModelRole, channelKey: string, domains: readonly Domain[]): ModelRoute {
-  const layers = [criteriaDomain("org", domains), domainForChannel(channelKey, domains)];
+interface KnobLayer {
+  readonly statusVerbs?: readonly string[];
+  readonly statusVerbsMode?: "extend" | "replace";
+  readonly models?: ModelRoutes;
+}
+
+export interface NamedKnobLayer extends KnobLayer {
+  readonly name: string;
+}
+
+function knobLayersFor(channelKey: string, domains: readonly Domain[], roles: readonly NamedKnobLayer[]): KnobLayer[] {
+  const layers: KnobLayer[] = [];
+  for (const d of [criteriaDomain("org", domains), domainForChannel(channelKey, domains)]) {
+    if (!d) continue;
+    const role = d.role !== undefined ? roles.find((r) => r.name === d.role) : undefined;
+    if (role) layers.push(role);
+    layers.push(d);
+  }
+  return layers;
+}
+
+export function modelRouteFor(
+  role: ModelRole,
+  channelKey: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[] = [],
+): ModelRoute {
+  const layers = knobLayersFor(channelKey, domains, roles);
   let route: ModelRoute = {};
   for (const d of layers) {
     const r = d?.models?.[role];
@@ -87,8 +119,12 @@ export const DEFAULT_STATUS_VERBS: readonly string[] = [
   "Juggling",
 ];
 
-export function statusVerbsFor(channelKey: string, domains: readonly Domain[]): readonly string[] {
-  const layers = [criteriaDomain("org", domains), domainForChannel(channelKey, domains)];
+export function statusVerbsFor(
+  channelKey: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[] = [],
+): readonly string[] {
+  const layers = knobLayersFor(channelKey, domains, roles);
   let verbs = [...DEFAULT_STATUS_VERBS];
   for (const d of layers) {
     const own = (d?.statusVerbs ?? []).map((v) => v.trim()).filter((v) => v.length > 0);

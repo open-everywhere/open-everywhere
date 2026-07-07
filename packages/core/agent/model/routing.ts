@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ModelRole, ModelRoute, Domain } from "../memory/domain.js";
+import type { ModelRole, ModelRoute, Domain, NamedKnobLayer } from "../memory/domain.js";
 import { modelRouteFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
@@ -103,16 +103,18 @@ export interface ModelBackend<TModel extends RoutableModel = RoutableModel> {
 export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
   readonly surfaceKey: () => Promise<string | null>;
   readonly domains: () => readonly Domain[];
+  readonly roles?: () => readonly NamedKnobLayer[];
   readonly backend: ModelBackend<TModel>;
 }
 
-export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains"> = {
+export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains" | "roles"> = {
   surfaceKey: async () => {
     const ctx = await readAlsSurfaceContext();
     if (ctx) return domainKeyOf(resolvePartition(ctx));
     return surfaceHint();
   },
   domains: () => getConfig().loadDomains(),
+  roles: () => getConfig().loadRoles?.() ?? [],
 };
 
 export function applyRoute(
@@ -165,7 +167,7 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
       return {};
     }
     try {
-      const route = modelRouteFor(role, surfaceKey, deps.domains());
+      const route = modelRouteFor(role, surfaceKey, deps.domains(), deps.roles?.() ?? []);
       if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
         const key = `${surfaceKey} ${JSON.stringify(route)}`;
         if (!applied.has(key)) {

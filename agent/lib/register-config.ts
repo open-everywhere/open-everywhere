@@ -4,6 +4,7 @@ import { loadProviders } from "../access/providers.js";
 import { PLUGIN_REGISTRY } from "../plugins/registry.js";
 import { SKILL_CONTENT } from "../plugins/skill-content.js";
 import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js";
+import { loadRoles } from "../roles/roles.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
 import "../identity/trusted-surfaces.js";
@@ -16,6 +17,7 @@ registerConfig({
   skillContent: SKILL_CONTENT,
   loadDomains,
   loadSilos,
+  loadRoles,
   domainsForSurface,
   loadWebhooks,
   loadSpendBudgets,
