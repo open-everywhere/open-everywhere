@@ -1,5 +1,4 @@
 import { defineDynamic, defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
@@ -63,7 +62,6 @@ export default defineDynamic({
     expiresAt: z.string(),
     note: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
     const scopeKey = input.scopeKey?.trim() || `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;

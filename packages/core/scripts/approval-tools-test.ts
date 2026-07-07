@@ -231,4 +231,22 @@ ok(rosterStanding(["domain:eng"], "sales") === false, "rosterStanding: a domain 
 ok(rosterStanding(["domain:eng"], null) === false, "rosterStanding: a domain admin does NOT bypass an un-domained surface");
 ok(rosterStanding([], "eng") === false, "rosterStanding: FAIL-CLOSED on no roles");
 
+{
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
+  let scanned = 0;
+  for (const f of readdirSync(toolsDir).filter((f) => f.endsWith(".ts"))) {
+    const src = readFileSync(join(toolsDir, f), "utf8");
+    if (!src.includes("defineDynamic")) continue;
+    scanned++;
+    ok(
+      !/^\s*approval:/m.test(src),
+      `dynamic tool ${f} must NOT set \`approval:\` (breaks on resumed sessions — see pin comment)`,
+    );
+  }
+  ok(scanned >= 5, `source scan actually covered the dynamic tools (saw ${scanned})`);
+}
+
 console.log(`✓ ${passed} approval-tools assertions passed`);
