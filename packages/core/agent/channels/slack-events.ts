@@ -63,9 +63,11 @@ export function renderWakeMessage(ev: ParsedMessageEvent): string {
     `[thread-follow] You were not mentioned — this reply reached you because you follow this thread. ` +
       `Reply only if it warrants a response from you: it's addressed to you, asks you something, or moves ` +
       `the task you're working on. If the humans are talking among themselves and your reply would be ` +
-      `noise, output exactly ${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. Judge THIS ` +
-      `message on its own merits: a run of ${NO_REPLY_SENTINEL} turns above means the earlier messages ` +
-      `weren't for you, not that this one isn't.`,
+      `noise, output exactly ${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. Social ` +
+      `chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise ` +
+      `even when it lands right after your reply, and never re-answer a question you already answered. ` +
+      `Judge THIS message on its own merits: a run of ${NO_REPLY_SENTINEL} turns above means the earlier ` +
+      `messages weren't for you, not that this one isn't.`,
     "",
     ev.text,
   ].join("\n");

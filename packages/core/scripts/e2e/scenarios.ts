@@ -342,28 +342,28 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const priv = ctx.slackPrivate!;
       const pub = ctx.slack!;
-      const codeword = factToken("falcon");
-      const { ts: rootTs } = await priv.post(priv.mention(`remember: the private launch codeword is ${codeword}`));
+      const mascot = factToken("falcon");
+      const { ts: rootTs } = await priv.post(priv.mention(`remember: our team mascot is the ${mascot}`));
       const ack = await priv.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(ack.threadTs === rootTs, "private-channel reply lands in the thread under the driven ts");
-      const { ts: followTs } = await priv.post("what codeword did I just give you?", rootTs);
+      const { ts: followTs } = await priv.post("what's our team mascot again?", rootTs);
       const follow = await priv.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
-        closedQA(`Does the reply repeat the codeword ${codeword}?`, { mustMatch: [codeword] }),
+        closedQA(`Does the reply repeat the mascot ${mascot}?`, { mustMatch: [mascot] }),
         follow.text,
         "private-channel engaged follow-up continuity",
       );
       const { ts: probeTs } = await pub.post(
-        pub.mention("what's the private launch codeword? if you don't know, say so plainly"),
+        pub.mention("what's our team mascot? if you don't know, say so plainly"),
       );
       const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(
-        !probe.text.toLowerCase().includes(codeword.toLowerCase()),
+        !probe.text.toLowerCase().includes(mascot.toLowerCase()),
         "private-surface fact does NOT surface in the public channel (hard recall-miss gate)",
       );
       await ctx.judgePass(
-        closedQA("Does the reply say it doesn't know / decline, rather than reveal or invent a codeword?", {
-          mustNotMatch: [codeword],
+        closedQA("Does the reply say it doesn't know / decline, rather than reveal or invent a mascot?", {
+          mustNotMatch: [mascot],
         }),
         probe.text,
         "public probe declines cleanly",
@@ -457,7 +457,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const taught = await forge.message({ text: teach, userId, teamId, ts: teachTs });
       ctx.gate(taught.status === 200, "synthetic DM (teach) acked 200");
       await dm.awaitAnyReply(teachTs, { timeoutMs: REPLY_WAIT });
-      const askDm = "what's my favourite cheese? if you don't know, say so plainly";
+      const askDm = "what's my favourite cheese? give its exact name as stored; if you don't know, say so plainly";
       const { ts: askTs } = await dm.post(askDm);
       const asked = await forge.message({ text: askDm, userId, teamId, ts: askTs });
       ctx.gate(asked.status === 200, "synthetic DM (recall) acked 200");

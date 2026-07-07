@@ -439,6 +439,7 @@ registerConfig({
   const wakeMsg = renderWakeMessage(ev);
   ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
   ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
+  ok(/social\s+chatter/i.test(wakeMsg) && /never re-answer/i.test(wakeMsg), "wake message names social chatter as noise and forbids re-answering");
 
   const woke: string[] = [];
   const deps: MessageRouteDeps = {
