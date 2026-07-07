@@ -13,6 +13,14 @@ const GUILD_ALLOWLIST = (process.env.DISCORD_GUILD_ALLOWLIST ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+const TEST_DRIVER_IDS = new Set(
+  (process.env.OE_TEST_DRIVER_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((pair) => /^\d+:\d+$/.test(pair)),
+);
+const isDriverAllowlisted = (message) =>
+  Boolean(message.guildId) && TEST_DRIVER_IDS.has(`${message.guildId}:${message.author.id}`);
 
 if (!TOKEN) {
   console.error("[oe-discord-relay] DISCORD_BOT_TOKEN is required — exiting.");
@@ -96,10 +104,12 @@ client.once(Events.ClientReady, (c) => {
   console.log(`[oe-discord-relay] ready as ${c.user.tag} | mode: ${mode}`);
   console.log(`[oe-discord-relay] in guilds: ${guilds}`);
   if (GUILD_ALLOWLIST.length) console.log(`[oe-discord-relay] guild allowlist active: ${GUILD_ALLOWLIST.join(", ")}`);
+  if (TEST_DRIVER_IDS.size)
+    console.log(`[oe-discord-relay] e2e driver seam ARMED for ${TEST_DRIVER_IDS.size} pair(s) — bot messages from these ids are forwarded`);
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
+  if (message.author.bot && !isDriverAllowlisted(message)) return;
   if (GUILD_ALLOWLIST.length && message.guildId && !GUILD_ALLOWLIST.includes(message.guildId)) return;
 
   if (!INGEST_URL) {
