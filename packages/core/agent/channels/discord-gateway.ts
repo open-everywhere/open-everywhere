@@ -11,6 +11,7 @@ import { disengageThread, isStopRequest, isThreadEngaged, markThreadEngaged } fr
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
+import { isAllowedDriver } from "../testing/driver-allowlist.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -95,7 +96,10 @@ export function relayGate(
 }
 
 export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDiscordAuth | null {
-  if (msg.author.bot) return null;
+  if (msg.author.bot) {
+    if (!isAllowedDriver(msg.guildId, msg.author.id)) return null;
+    log(`e2e driver accepted as user: bot ${msg.author.id} in guild ${msg.guildId} (OE_TEST_DRIVER_IDS)`);
+  }
   return buildDiscordAuth({
     userId: msg.author.id,
     guildId: msg.guildId,
@@ -497,7 +501,7 @@ async function dispatchTurn(
         mentionsBot: msg.mentionsBot,
         isDm,
         isEngaged: engaged,
-        authorIsBot: msg.author.bot,
+        authorIsBot: msg.author.bot && !isAllowedDriver(msg.guildId, msg.author.id),
         channelType: msg.channelType,
         content: msg.content,
         botName: msg.botName,

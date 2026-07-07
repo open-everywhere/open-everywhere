@@ -3,6 +3,9 @@ import {
   relayGate,
   parseRelayPayload,
   authForRelayMessage,
+} from "../agent/channels/discord-gateway.js";
+import { parseDriverAllowlist, isAllowedDriver } from "../agent/testing/driver-allowlist.js";
+import {
   shouldDispatchDiscord,
   isDmChannel,
   renderTurn,
@@ -455,6 +458,40 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   }) as unknown as typeof fetch;
   ok((await threadParentChannelId("T_THREAD", { fetchFn: noNet, token: undefined })) === undefined, "info: no bot token → undefined, no network call");
   clearDiscordInfoCacheForTest();
+}
+
+{
+  ok(parseDriverAllowlist(undefined).size === 0, "driver: no env → empty allowlist (default off)");
+  ok(parseDriverAllowlist("").size === 0, "driver: empty env → empty allowlist");
+  const list = parseDriverAllowlist("123:456, 789:012");
+  ok(list.has("123:456") && list.has("789:012") && list.size === 2, "driver: comma-separated guild:bot pairs parse");
+  ok(parseDriverAllowlist("456").size === 0, "driver: a bare id (no guild pin) is DISCARDED — no bot-everywhere syntax");
+  ok(parseDriverAllowlist(":456").size === 0 && parseDriverAllowlist("123:").size === 0, "driver: empty halves are discarded");
+  ok(parseDriverAllowlist("g1:bot1").size === 0, "driver: non-snowflake ids are discarded (digits only)");
+  ok(parseDriverAllowlist("123:456,garbage,:,999:888").size === 2, "driver: malformed entries drop without poisoning valid ones");
+
+  ok(isAllowedDriver("123", "456", list) === true, "driver: exact guild+bot match accepted");
+  ok(isAllowedDriver("123", "999", list) === false, "driver: wrong bot in the right guild → dropped");
+  ok(isAllowedDriver("999", "456", list) === false, "driver: right bot in the WRONG guild → dropped (guild pin holds)");
+  ok(isAllowedDriver(undefined, "456", list) === false, "driver: no guild (a DM) never matches");
+  ok(isAllowedDriver("123", "456", new Set()) === false, "driver: empty allowlist → unconditional bot drop (today's behaviour)");
+
+  const prevEnv = process.env.OE_TEST_DRIVER_IDS;
+  process.env.OE_TEST_DRIVER_IDS = "555:777";
+  const driverMsg = parseRelayPayload(
+    relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "555", author: { id: "777", bot: true } }),
+  );
+  ok(driverMsg !== null && authForRelayMessage(driverMsg) !== null, "driver: allowlisted bot author builds auth (acts as a user)");
+  const otherBot = parseRelayPayload(
+    relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "555", author: { id: "778", bot: true } }),
+  );
+  ok(otherBot !== null && authForRelayMessage(otherBot) === null, "driver: any OTHER bot still drops while the seam is armed");
+  const wrongGuild = parseRelayPayload(
+    relayEnvelope({ id: "m9", content: "hi", channelId: "C9", guildId: "556", author: { id: "777", bot: true } }),
+  );
+  ok(wrongGuild !== null && authForRelayMessage(wrongGuild) === null, "driver: the allowlisted bot outside its pinned guild still drops");
+  if (prevEnv === undefined) delete process.env.OE_TEST_DRIVER_IDS;
+  else process.env.OE_TEST_DRIVER_IDS = prevEnv;
 }
 
 {
