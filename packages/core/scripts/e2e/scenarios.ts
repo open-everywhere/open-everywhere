@@ -452,12 +452,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const pub = ctx.slack!;
       const { userId, teamId } = await ctx.slack!.identity();
       const cheese = factToken("wensleydale");
-      const teach = `remember: my favourite cheese is ${cheese}`;
+      const batch = factToken("tasting");
+      const teach = `remember: my favourite cheese from ${batch} is ${cheese}`;
       const { ts: teachTs } = await dm.post(teach);
       const taught = await forge.message({ text: teach, userId, teamId, ts: teachTs });
       ctx.gate(taught.status === 200, "synthetic DM (teach) acked 200");
       await dm.awaitAnyReply(teachTs, { timeoutMs: REPLY_WAIT });
-      const askDm = "what's my favourite cheese? give its exact name as stored; if you don't know, say so plainly";
+      const askDm = `what's my favourite cheese from ${batch}? give its exact name as stored; if you don't know, say so plainly`;
       const { ts: askTs } = await dm.post(askDm);
       const asked = await forge.message({ text: askDm, userId, teamId, ts: askTs });
       ctx.gate(asked.status === 200, "synthetic DM (recall) acked 200");
@@ -472,7 +473,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "DM personal-memory factuality",
       );
       const { ts: probeTs } = await pub.post(
-        pub.mention("what's my favourite cheese? if you don't know, say so plainly"),
+        pub.mention(`what's my favourite cheese from ${batch}? if you don't know, say so plainly`),
       );
       const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(
@@ -486,6 +487,9 @@ export const SCENARIOS: readonly Scenario[] = [
         probe.text,
         "channel probe declines cleanly",
       );
+      const cleanup = `forget the stored fact about my favourite cheese from ${batch} — it was test data`;
+      const { ts: cleanTs } = await dm.post(cleanup);
+      await forge.message({ text: cleanup, userId, teamId, ts: cleanTs }).catch(() => undefined);
     },
   },
 ];
