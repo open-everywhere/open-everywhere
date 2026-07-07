@@ -95,6 +95,13 @@ export function effectiveRoleFor(
   return roleByName(criteriaDomain("org", domains)?.role, roles);
 }
 
+export function sandboxPresetFor(binding: SurfaceBinding, partition: Partition, domains: readonly Domain[]): SandboxPreset | undefined {
+  const scope = roleScopeDomain(binding, partition, domains);
+  if (scope?.sandbox) return scope.sandbox;
+  if (scope && scope.match === undefined) return criteriaDomain("org", domains)?.sandbox;
+  return undefined;
+}
+
 export function renderRoleInstructions(role: Role): string {
   const parts: string[] = [];
   if (role.instructions && role.instructions.trim().length > 0) parts.push(role.instructions.trim());

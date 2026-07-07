@@ -5,6 +5,7 @@ import {
   effectiveRoleFor,
   renderRoleInstructions,
   roleScopeDomain,
+  sandboxPresetFor,
   type Role,
 } from "../agent/roles/role.js";
 import {
@@ -209,6 +210,14 @@ ok(effectiveRoleFor(bindingFor(), partitionFor(), [defineDomain({ name: "team", 
   ok(block.includes("Hunt for edge cases") && block.includes("Voice: Precise and skeptical."), "instructions AND persona render");
   ok(renderRoleInstructions(pirate).includes("Voice: A good-natured pirate captain."), "a voice-only persona renders alone");
   ok(renderRoleInstructions(knobsOnly) === "", "a knob-only role injects NO prompt block");
+}
+
+{
+  const domains = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa" })], ROLES);
+  ok(sandboxPresetFor(bindingFor(), partitionFor(), domains)?.vcpus === 4, "role's sandbox preset reaches the resolved domain (via applyRoleDefaults)");
+  const orgSized = [defineDomain({ name: "org", match: "org", sandbox: { vcpus: 2 } }), defineDomain({ name: "team", channels: [K] })];
+  ok(sandboxPresetFor(bindingFor(), partitionFor(), orgSized)?.vcpus === 2, "explicit domain without a preset falls through to org's");
+  ok(sandboxPresetFor(bindingFor({ mode: "dm" }), partitionFor("D1"), orgSized) === undefined, "DMs don't inherit the org sandbox preset");
 }
 
 const seamDomains = applyRoleDefaults(
