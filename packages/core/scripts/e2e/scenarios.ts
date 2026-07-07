@@ -2,7 +2,8 @@ import type { Capability, SlackUser2Config } from "./env.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import { APPROVAL_PREFIX, type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
-import { sleep } from "./poll.js";
+import type { WebhookDriver } from "./webhook.js";
+import { pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 
 export class ScenarioSkip extends Error {
@@ -28,6 +29,7 @@ export interface ScenarioContext {
   readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
+  readonly webhook?: WebhookDriver;
   readonly judge: ReplyJudge;
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
@@ -52,6 +54,7 @@ const SILENCE_WINDOW = 45_000;
 const STOP_ACK = "Standing down";
 const CAP_REFUSAL = "I'm holding off here";
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
+const MEMORY_ADMIN_GATE = "requires an org admin";
 
 function closedQA(criteria: string, fallback: Rubric["fallback"]): Rubric {
   return { kind: "closedQA", criteria, atLeast: 1, fallback };
@@ -622,6 +625,202 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text,
         "non-admin memory_admin_list refusal",
       );
+    },
+  },
+  {
+    id: "S17",
+    title: "Access-request: propose renders a real in-vocabulary card (tap+PR loop opt-in)",
+    requires: ["slack", "synthetic", "slackUser2"],
+    optional: false,
+    timeoutMs: 360_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const synthetic = ctx.synthetic!;
+      const user2 = ctx.slackUser2!.userId;
+      const { ts: askTs } = await slack.post(
+        slack.mention(
+          "this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST",
+        ),
+      );
+      const card = await slack.awaitThreadMessage(
+        askTs,
+        { timeoutMs: REPLY_WAIT, what: `an access.request card (oe_approval buttons) in thread ${askTs}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
+      );
+      const btn = approveButton(card)!;
+      ctx.gate(btn.pendingId.length > 0, "access-request card carries a real pending id");
+      ctx.gate(btn.org.length > 0, "access-request card carries the org in its button value");
+      await ctx.judgePass(
+        closedQA("Does the card describe widening a connection to add POST access, naming the e2e-fixture connection?", {
+          mustMatch: [/post/i],
+        }),
+        card.text,
+        "access-request card legibility",
+      );
+
+      if (process.env.E2E_ACCESS_ALLOW_SEND !== "1") {
+        ctx.log("E2E_ACCESS_ALLOW_SEND not set — propose-only run; the card is left to expire on its TTL (no tap, no PR risk)");
+        return;
+      }
+
+      const sent = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, userId: user2 });
+      ctx.log(`${sent.label}: non-admin member tap ${btn.pendingId} as ${user2} → ${sent.status}`);
+      ctx.gate(sent.status === 200, "member tap acked 200");
+      const decided = await slack.awaitThreadMessage(
+        askTs,
+        { timeoutMs: REPLY_WAIT, what: `card ${card.ts} re-rendered decided (actions block gone)` },
+        (msgs) => msgs.find((m) => m.ts === card.ts && approveButton(m) === undefined),
+      );
+      ctx.gate(true, "non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
+
+      if (/dry-run/i.test(decided.text)) {
+        ctx.log("dry-run confirmed (OE_ACCESS_DRY_RUN=1 on the deployment) — validated, no PR, nothing to tear down");
+        return;
+      }
+
+      const prMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
+      ctx.gate(prMatch !== null, "live outcome names a real PR URL (github.com/<repo>/pull/<n>)");
+      const [, repo, prNumberStr] = prMatch!;
+      ctx.log(`live PR opened: ${repo}#${prNumberStr}`);
+
+      const threadNote = await slack.awaitThreadMessage(
+        askTs,
+        { timeoutMs: REPLY_WAIT, what: `the requesting-thread "sent" note in thread ${askTs}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== card.ts && m.text.includes(prNumberStr)),
+      );
+      ctx.gate(threadNote.text.toLowerCase().includes("access request sent"), "requesting thread gets the PR-sent note");
+
+      const adminNote = await pollUntil(
+        async () => (await slack.history(askTs)).find((m) => slack.isBotReply(m) && m.text.includes(prNumberStr)),
+        { timeoutMs: REPLY_WAIT, what: `the admin-channel PR notification (top-level) naming PR #${prNumberStr}` },
+      );
+      ctx.gate(adminNote.text.toLowerCase().includes("access request"), "admin-channel notification names the access request + PR link");
+
+      try {
+        const { execSync } = await import("node:child_process");
+        const token = execSync("gh auth token", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+        const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumberStr}`, {
+          method: "PATCH",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/vnd.github+json" },
+          body: JSON.stringify({ state: "closed" }),
+        });
+        ctx.log(`teardown: closed PR ${repo}#${prNumberStr} via the operator's gh token → ${res.status}`);
+      } catch (err) {
+        ctx.log(
+          `teardown (best-effort) could not close the PR automatically: ${String(err instanceof Error ? err.message : err)} — close ${repo}#${prNumberStr} by hand`,
+        );
+      }
+    },
+  },
+  {
+    id: "S18",
+    title: "Access-request negative: a DM ask and an out-of-vocabulary host ask both refuse (no card, either way)",
+    requires: ["slack", "syntheticDm"],
+    optional: false,
+    timeoutMs: 300_000,
+    judged: true,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const forge = ctx.syntheticDm!;
+      const pub = ctx.slack!;
+      const { userId, teamId } = await ctx.slack!.identity();
+
+      const dmAsk = "can you widen this channel's access to add POST to a connection here?";
+      const { ts: dmTs } = await dm.post(dmAsk);
+      const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
+      ctx.gate(sentDm.status === 200, "synthetic DM ask acked 200");
+      const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(dmReply.text.trim().length > 0, "agent replied to the DM access ask");
+      ctx.gate(approveButton(dmReply) === undefined, "NO access-request card is posted from a DM (hard gate)");
+      await ctx.judgePass(
+        closedQA("Does the reply decline to request access from a DM, rather than posting a request card?", {
+          mustMatch: [/channel|admin|dm|can.?t|cannot|unable/i],
+        }),
+        dmReply.text,
+        "DM access-ask refusal quality",
+      );
+
+      const { ts: hostTs } = await pub.post(
+        pub.mention("can we get access to a brand new host, https://totally-new-example-service.test — please add it as a new connection"),
+      );
+      const hostReply = await pub.awaitThreadReply(hostTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(approveButton(hostReply) === undefined, "NO access-request card is posted for an out-of-vocabulary host ask (hard gate)");
+      await ctx.judgePass(
+        closedQA(
+          "Does the reply decline to grant/request a brand-new host connection and point to an admin/manual PR instead of offering a request card?",
+          { mustMatch: [/admin|manual|hand|can.?t|cannot|unable/i] },
+        ),
+        hostReply.text,
+        "out-of-vocabulary refusal quality",
+      );
+    },
+  },
+  {
+    id: "S19",
+    title: "Admin memory_admin_list via forged mention gets a real listing (S16 already proves the non-admin refusal)",
+    requires: ["slack", "synthetic"],
+    optional: false,
+    timeoutMs: 240_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const synthetic = ctx.synthetic!;
+      const { teamId } = await slack.identity();
+      const { ts: anchorTs } = await slack.post("(e2e S19) anchor — thread parent for a forged admin mention");
+      const ask = slack.mention("use memory_admin_list and tell me every memory silo you can see, and which domains reference each one");
+      const admin = synthetic.adminUserId;
+      const sent = await synthetic.channelMention({ text: ask, userId: admin, teamId, ts: anchorTs });
+      ctx.log(`${sent.label}: admin app_mention as ${admin} → ${sent.status}`);
+      ctx.gate(sent.status === 200, "forged admin app_mention acked 200 by the deployment's Slack route");
+      const reply = await slack.awaitThreadReply(anchorTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply.text.trim().length > 0, "agent replied to the forged admin mention");
+      ctx.gate(
+        !reply.text.includes(MEMORY_ADMIN_GATE),
+        `an admin caller is NOT refused by memory_admin_list's admin gate (hard gate: "${MEMORY_ADMIN_GATE}" is absent)`,
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)?", {
+          mustMatch: [/silo|domain|brain/i],
+        }),
+        reply.text,
+        "admin memory_admin_list listing quality",
+      );
+    },
+  },
+  {
+    id: "S20",
+    title: "Inbound webhook: a signed POST wakes a judged, quoted reply; an unsigned POST is rejected and posts nothing",
+    requires: ["slack", "webhook"],
+    optional: false,
+    timeoutMs: 240_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const hook = ctx.webhook!;
+      const note = factToken("hook");
+      const { ts: anchorTs } = await slack.post("(e2e S20) webhook run anchor — positive leg");
+      const signed = await hook.post({ note });
+      ctx.log(`signed webhook POST /webhooks/${hook.hookId} → ${signed.status}`);
+      ctx.gate(signed.status === 200, "signed webhook POST is accepted (200)");
+      const reply = await pollUntil(
+        async () => (await slack.history(anchorTs)).find((m) => slack.isBotReply(m) && m.text.includes(note)),
+        { timeoutMs: REPLY_WAIT, what: `a webhook-fired reply quoting "${note}" in channel history after ${anchorTs}` },
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply confirm the webhook fired and quote the note field?", { mustMatch: [note] }),
+        reply.text,
+        "webhook reply quality",
+      );
+
+      const badNote = factToken("hookbad");
+      const { ts: badAnchorTs } = await slack.post("(e2e S20) webhook run anchor — negative leg");
+      const unsigned = await hook.post({ note: badNote }, { signed: false });
+      ctx.log(`unsigned webhook POST /webhooks/${hook.hookId} → ${unsigned.status}`);
+      ctx.gate(unsigned.status === 401, "an unsigned webhook POST is rejected (401)");
+      await sleep(20_000);
+      const stray = (await slack.history(badAnchorTs)).filter((m) => slack.isBotReply(m) && m.text.includes(badNote));
+      ctx.gate(stray.length === 0, "an unsigned webhook POST produces NO channel post (hard gate)");
     },
   },
 ];

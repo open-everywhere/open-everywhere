@@ -9,6 +9,15 @@ const hooks: WebhookHook[] = [
       "This is the deployment's smoke-test webhook. Post one short line confirming the " +
       "webhook fired and quote the payload's `note` field verbatim if present.",
   }),
+  defineWebhook({
+    id: "e2e-smoke",
+    secretEnv: "OE_WEBHOOK_E2E_SECRET",
+    target: "slack/T0EXAMPLE/C0EXCHAN003",
+    instruction:
+      "This is the e2e driver-bot pack's own smoke-test webhook. ALWAYS post one short line " +
+      "confirming the webhook fired and quote the payload's `note` field verbatim — never stay " +
+      "silent for this hook, even if nothing else about the payload looks actionable.",
+  }),
 ];
 
 assertWebhooksValid(hooks);

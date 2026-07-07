@@ -7,10 +7,12 @@ import {
   resolveSlackUser2,
   resolveSynthetic,
   resolveSyntheticDm,
+  resolveWebhook,
 } from "./env.js";
 import { SlackDriver } from "./slack-driver.js";
 import { DiscordDriver } from "./discord-driver.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
+import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, fetchRunUsage, renderCostReport } from "./cost.js";
@@ -50,6 +52,7 @@ async function main(): Promise<void> {
   const slackChannelB = resolveSlackChannelB();
   const syntheticDm = resolveSyntheticDm();
   const slackUser2 = resolveSlackUser2();
+  const webhook = resolveWebhook();
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
@@ -58,6 +61,7 @@ async function main(): Promise<void> {
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
   const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
+  const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
@@ -114,6 +118,7 @@ async function main(): Promise<void> {
       syntheticDm: syntheticDmForge,
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
+      webhook: webhookDriver,
       judge,
       gate(cond: boolean, label: string): void {
         if (!cond) throw new GateFailure(label);

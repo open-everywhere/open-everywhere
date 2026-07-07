@@ -14,9 +14,20 @@ export const ENV = {
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   includeOptional: "E2E_INCLUDE_OPTIONAL",
+  webhookSecret: "E2E_WEBHOOK_SECRET",
+  webhookHookId: "E2E_WEBHOOK_HOOK_ID",
+  accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
 } as const;
 
-export type Capability = "slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2";
+export type Capability =
+  | "slack"
+  | "discord"
+  | "synthetic"
+  | "slackPrivate"
+  | "slackChannelB"
+  | "syntheticDm"
+  | "slackUser2"
+  | "webhook";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -44,6 +55,12 @@ export interface SlackExtraChannelConfig {
 
 export interface SlackUser2Config {
   readonly userId: string;
+}
+
+export interface WebhookConfig {
+  readonly targetUrl: string;
+  readonly secret: string;
+  readonly hookId: string;
 }
 
 export interface SyntheticDmConfig {
@@ -112,6 +129,13 @@ export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDm
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], dmChannel: values[2] } };
 }
 
+export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> {
+  const { values, missing } = need(env, [ENV.targetUrl, ENV.webhookSecret]);
+  if (missing.length > 0) return { ok: false, missing };
+  const hookId = env[ENV.webhookHookId]?.trim() || "e2e-smoke";
+  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), secret: values[1], hookId } };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -126,6 +150,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slackChannelB = resolveSlackChannelB(env);
   const syntheticDm = resolveSyntheticDm(env);
   const slackUser2 = resolveSlackUser2(env);
+  const webhook = resolveWebhook(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -134,6 +159,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (slackChannelB.ok) available.add("slackChannelB");
   if (syntheticDm.ok) available.add("syntheticDm");
   if (slackUser2.ok) available.add("slackUser2");
+  if (webhook.ok) available.add("webhook");
   return {
     available,
     missing: {
@@ -144,6 +170,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
+      webhook: webhook.ok ? [] : webhook.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

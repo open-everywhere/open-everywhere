@@ -44,6 +44,19 @@ const bundles: Bundle[] = [
       "All three reach the same Notion workspace; use whichever a request asks for.",
   }),
 
+  defineBundle({
+    name: "e2e-access-fixture",
+    connections: [
+      {
+        id: "e2e-fixture",
+        credentialType: "bearer",
+        secretRef: "OE_E2E_FIXTURE_TOKEN",
+        allowedWebsites: ["raw.githubusercontent.com"],
+        methods: ["GET"],
+      },
+    ],
+  }),
+
 ];
 
 const bindings: Binding[] = [
@@ -52,6 +65,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "coding", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
 
   defineBinding({ bundle: "notion-connectors", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
+
+  defineBinding({ bundle: "e2e-access-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
 
   defineBinding({ bundle: "notion-connectors", scope: { level: "workspace", workspace: "1300000000000000100" } }),
 

@@ -124,6 +124,10 @@ export interface SyntheticResult {
 export class SyntheticSlack {
   constructor(private readonly cfg: SyntheticConfig) {}
 
+  get adminUserId(): string {
+    return this.cfg.adminUserId;
+  }
+
   private async signedPost(
     route: string,
     rawBody: string,

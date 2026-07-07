@@ -24,6 +24,7 @@ const {
   resolveSlackChannelB,
   resolveSyntheticDm,
   resolveSlackUser2,
+  resolveWebhook,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -39,11 +40,13 @@ const {
   SYNTHETIC_COMMANDS_ROUTE,
   APPROVAL_PREFIX,
 } = await import("./e2e/synthetic.js");
+const { signWebhookBody } = await import("./e2e/webhook.js");
 const { runFallbackCheck, FallbackJudge, judge3 } = await import("./e2e/judge.js");
 const { SCENARIOS, skipReason } = await import("./e2e/scenarios.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
 const { OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
+const { verifyWebhookSignature } = await import("../agent/webhooks/gate.js");
 const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../../node_modules/eve/dist/src/public/channels/slack/inbound.js");
 
 {
@@ -64,6 +67,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(!synDm.ok && synDm.missing.includes(ENV.slackDmChannel) && synDm.missing.includes(ENV.targetUrl), "synthetic-DM half misses E2E_SLACK_DM_CHANNEL + E2E_TARGET_URL");
   const user2Miss = resolveSlackUser2(empty);
   ok(!user2Miss.ok && user2Miss.missing.join(",") === ENV.slackUser2Id, "user2 add-on misses exactly E2E_SLACK_USER2_ID");
+  const webhookMiss = resolveWebhook(empty);
+  ok(
+    !webhookMiss.ok && webhookMiss.missing.includes(ENV.webhookSecret) && webhookMiss.missing.includes(ENV.targetUrl),
+    "webhook capability misses E2E_WEBHOOK_SECRET + E2E_TARGET_URL",
+  );
 
   const caps = resolveCapabilities(empty);
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
@@ -86,7 +94,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     capsBase.missing.slackPrivate.join(",") === ENV.slackPrivateChannel &&
       capsBase.missing.slackChannelB.join(",") === ENV.slackChannelB &&
       capsBase.missing.syntheticDm.join(",") === ENV.slackDmChannel &&
-      capsBase.missing.slackUser2.join(",") === ENV.slackUser2Id,
+      capsBase.missing.slackUser2.join(",") === ENV.slackUser2Id &&
+      capsBase.missing.webhook.join(",") === ENV.webhookSecret,
     "base env: each add-on capability names only ITS missing var (base vars not repeated)",
   );
   const full = {
@@ -95,13 +104,21 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.slackChannelB]: "C0BBB",
     [ENV.slackDmChannel]: "D0DM",
     [ENV.slackUser2Id]: "U2NONADMIN",
+    [ENV.webhookSecret]: "hook-secret",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 7, "full env: all seven capabilities live");
+  ok(capsFull.available.size === 8, "full env: all eight capabilities live");
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
   ok(dmCfg.ok && dmCfg.cfg.dmChannel === "D0DM" && dmCfg.cfg.targetUrl === "https://oe.example.test", "syntheticDm cfg carries the DM channel + slash-stripped target");
+  const webhookCfg = resolveWebhook(full);
+  ok(
+    webhookCfg.ok && webhookCfg.cfg.hookId === "e2e-smoke" && webhookCfg.cfg.targetUrl === "https://oe.example.test",
+    "webhook cfg defaults hookId to e2e-smoke and strips the target's trailing slash",
+  );
+  const webhookCfgOverride = resolveWebhook({ ...full, [ENV.webhookHookId]: "custom-hook" });
+  ok(webhookCfgOverride.ok && webhookCfgOverride.cfg.hookId === "custom-hook", "E2E_WEBHOOK_HOOK_ID overrides the default hook id");
   const syn = resolveSynthetic(full);
   ok(syn.ok && syn.cfg.targetUrl === "https://oe.example.test", "target URL trailing slash is stripped");
   ok(syn.ok && syn.cfg.org === "default", "E2E_ORG unset: synthetic org defaults to \"default\" (single-org fixture)");
@@ -112,14 +129,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  ok(SCENARIOS.length === 16, "pack has all sixteen scenarios S1–S16");
+  ok(SCENARIOS.length === 20, "pack has all twenty scenarios S1–S20");
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   ok(
-    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16",
-    "scenario ids are S1..S16 in plan order",
+    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20",
+    "scenario ids are S1..S20 in order",
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -130,7 +147,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 660_000, `${s.id} budget is within the re-derived 120–660s envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
-  ok(optional.join(",") === "S8,S9,S10", "exactly the plan's stretch scenarios are optional (S11–S16 are core coverage)");
+  ok(optional.join(",") === "S8,S9,S10", "exactly the plan's stretch scenarios are optional (S11–S20 are core coverage)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
   ok(unjudged.join(",") === "S3,S6,S10,S15", "S3/S6/S10/S15 are fully deterministic — no judge (plan §5)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
@@ -141,10 +158,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     req("S15") === "slack+synthetic+slackUser2" && req("S16") === "slack+synthetic+slackUser2",
     "S15/S16 require slack + synthetic + slackUser2",
   );
+  ok(req("S17") === "slack+synthetic+slackUser2", "S17 requires slack + synthetic + slackUser2 (the member-tap leg)");
+  ok(req("S18") === "slack+syntheticDm", "S18 requires slack + syntheticDm (DM leg + in-channel out-of-vocab leg)");
+  ok(req("S19") === "slack+synthetic", "S19 requires slack + synthetic (forged admin mention)");
+  ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -153,14 +174,24 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     slackChannelB: [ENV.slackChannelB],
     syntheticDm: [ENV.slackDmChannel],
     slackUser2: [ENV.slackUser2Id],
+    webhook: [ENV.webhookSecret],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2"] as const);
-  const noneMissing = { slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], syntheticDm: [], slackUser2: [] } as const;
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"] as const);
+  const noneMissing = {
+    slack: [],
+    discord: [],
+    synthetic: [],
+    slackPrivate: [],
+    slackChannelB: [],
+    syntheticDm: [],
+    slackUser2: [],
+    webhook: [],
+  } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "S1 runs when its capability is live");
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
@@ -182,11 +213,16 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r?.includes(ENV.slackDmChannel) === true && r.includes("syntheticDm"), `${id} skip names E2E_SLACK_DM_CHANNEL`);
   }
-  for (const id of ["S15", "S16"]) {
+  for (const id of ["S15", "S16", "S17"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r === `missing slackUser2 driver (set ${ENV.slackUser2Id})`, `${id} skip names exactly E2E_SLACK_USER2_ID`);
   }
-  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16"]) {
+  const s18 = skipReason(SCENARIOS.find((s) => s.id === "S18")!, baseOnly, missing, false);
+  ok(s18?.includes(ENV.slackDmChannel) === true && s18.includes("syntheticDm"), "S18 skip names E2E_SLACK_DM_CHANNEL");
+  ok(skipReason(SCENARIOS.find((s) => s.id === "S19")!, baseOnly, missing, false) === undefined, "S19 runs with base caps alone (slack+synthetic, no add-on fixture)");
+  const s20 = skipReason(SCENARIOS.find((s) => s.id === "S20")!, baseOnly, missing, false);
+  ok(s20 === `missing webhook driver (set ${ENV.webhookSecret})`, "S20 skip names exactly E2E_WEBHOOK_SECRET");
+  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
   }
 }
@@ -333,6 +369,18 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const s = signSlackRequest(raw, secret, nowMs);
   const headers = new Headers({ "x-slack-request-timestamp": s.timestamp, "x-slack-signature": s.signature });
   ok(verifySlackSignature(raw, headers, secret, nowMs), "a signed synthetic mention body verifies against verifySlackSignature");
+}
+
+{
+  const secret = "e2e-webhook-secret";
+  const body = JSON.stringify({ note: "hello-e2e" });
+  const sig = signWebhookBody(secret, body);
+  ok(sig.startsWith("sha256="), 'webhook signature carries the "sha256=" prefix gate.ts expects');
+  ok(verifyWebhookSignature(secret, body, sig), "a signed synthetic webhook body verifies against the real verifyWebhookSignature");
+  ok(!verifyWebhookSignature(secret, body + "x", sig), "a tampered webhook body fails verification");
+  ok(!verifyWebhookSignature("wrong-secret", body, sig), "the wrong webhook secret fails verification");
+  ok(!verifyWebhookSignature(secret, body, null), "a missing signature header fails verification");
+  ok(!verifyWebhookSignature(secret, body, "sha256=deadbeef"), "a garbage signature fails verification");
 }
 
 {
