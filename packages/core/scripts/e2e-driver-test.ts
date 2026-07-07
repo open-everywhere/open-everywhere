@@ -23,6 +23,7 @@ const {
   resolveSlackPrivate,
   resolveSlackChannelB,
   resolveSyntheticDm,
+  resolveSlackUser2,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -32,6 +33,7 @@ const {
   encodeInteractionBody,
   buildSlashCommandBody,
   buildDmEventEnvelope,
+  buildChannelMentionEnvelope,
   syntheticSlackTs,
   SYNTHETIC_SLACK_ROUTE,
   SYNTHETIC_COMMANDS_ROUTE,
@@ -39,10 +41,10 @@ const {
 } = await import("./e2e/synthetic.js");
 const { runFallbackCheck, FallbackJudge, judge3 } = await import("./e2e/judge.js");
 const { SCENARIOS, skipReason } = await import("./e2e/scenarios.js");
-const { verifySlackSignature, classifyEnvelope, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
+const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
 const { OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
-const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist/src/public/channels/slack/inbound.js");
+const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../../node_modules/eve/dist/src/public/channels/slack/inbound.js");
 
 {
   const empty = {};
@@ -60,6 +62,8 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
   ok(!slackB.ok && slackB.missing.join(",") === ENV.slackChannelB, "channel-B add-on misses exactly E2E_SLACK_CHANNEL_B");
   const synDm = resolveSyntheticDm(empty);
   ok(!synDm.ok && synDm.missing.includes(ENV.slackDmChannel) && synDm.missing.includes(ENV.targetUrl), "synthetic-DM half misses E2E_SLACK_DM_CHANNEL + E2E_TARGET_URL");
+  const user2Miss = resolveSlackUser2(empty);
+  ok(!user2Miss.ok && user2Miss.missing.join(",") === ENV.slackUser2Id, "user2 add-on misses exactly E2E_SLACK_USER2_ID");
 
   const caps = resolveCapabilities(empty);
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
@@ -81,7 +85,8 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
   ok(
     capsBase.missing.slackPrivate.join(",") === ENV.slackPrivateChannel &&
       capsBase.missing.slackChannelB.join(",") === ENV.slackChannelB &&
-      capsBase.missing.syntheticDm.join(",") === ENV.slackDmChannel,
+      capsBase.missing.syntheticDm.join(",") === ENV.slackDmChannel &&
+      capsBase.missing.slackUser2.join(",") === ENV.slackUser2Id,
     "base env: each add-on capability names only ITS missing var (base vars not repeated)",
   );
   const full = {
@@ -89,9 +94,12 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
     [ENV.slackPrivateChannel]: "C0PRIV",
     [ENV.slackChannelB]: "C0BBB",
     [ENV.slackDmChannel]: "D0DM",
+    [ENV.slackUser2Id]: "U2NONADMIN",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 6, "full env: all six capabilities live");
+  ok(capsFull.available.size === 7, "full env: all seven capabilities live");
+  const user2 = resolveSlackUser2(full);
+  ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
   ok(dmCfg.ok && dmCfg.cfg.dmChannel === "D0DM" && dmCfg.cfg.targetUrl === "https://oe.example.test", "syntheticDm cfg carries the DM channel + slash-stripped target");
   const syn = resolveSynthetic(full);
@@ -104,14 +112,14 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
 }
 
 {
-  ok(SCENARIOS.length === 14, "pack has all fourteen scenarios S1–S14");
+  ok(SCENARIOS.length === 16, "pack has all sixteen scenarios S1–S16");
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   ok(
-    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14",
-    "scenario ids are S1..S14 in plan order",
+    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16",
+    "scenario ids are S1..S16 in plan order",
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -119,20 +127,24 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
       s.requires.length > 0 && s.requires.every((c) => KNOWN.has(c)),
       `${s.id} requires only known capabilities`,
     );
-    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 300_000, `${s.id} budget is within the plan's 120–300s`);
+    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 660_000, `${s.id} budget is within the re-derived 120–660s envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
-  ok(optional.join(",") === "S8,S9,S10", "exactly the plan's stretch scenarios are optional (S11–S14 are core coverage)");
+  ok(optional.join(",") === "S8,S9,S10", "exactly the plan's stretch scenarios are optional (S11–S16 are core coverage)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S3,S6,S10", "S3/S6/S10 are fully deterministic — no judge (plan §5)");
+  ok(unjudged.join(",") === "S3,S6,S10,S15", "S3/S6/S10/S15 are fully deterministic — no judge (plan §5)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("S12") === "slack+slackChannelB", "S12 requires slack + slackChannelB");
   ok(req("S13") === "slack+syntheticDm" && req("S14") === "slack+syntheticDm", "S13/S14 require slack + syntheticDm");
+  ok(
+    req("S15") === "slack+synthetic+slackUser2" && req("S16") === "slack+synthetic+slackUser2",
+    "S15/S16 require slack + synthetic + slackUser2",
+  );
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -140,14 +152,15 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
     slackPrivate: [ENV.slackPrivateChannel],
     slackChannelB: [ENV.slackChannelB],
     syntheticDm: [ENV.slackDmChannel],
+    slackUser2: [ENV.slackUser2Id],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm"] as const);
-  const noneMissing = { slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], syntheticDm: [] } as const;
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2"] as const);
+  const noneMissing = { slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], syntheticDm: [], slackUser2: [] } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "S1 runs when its capability is live");
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
@@ -169,7 +182,11 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r?.includes(ENV.slackDmChannel) === true && r.includes("syntheticDm"), `${id} skip names E2E_SLACK_DM_CHANNEL`);
   }
-  for (const id of ["S11", "S12", "S13", "S14"]) {
+  for (const id of ["S15", "S16"]) {
+    const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
+    ok(r === `missing slackUser2 driver (set ${ENV.slackUser2Id})`, `${id} skip names exactly E2E_SLACK_USER2_ID`);
+  }
+  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
   }
 }
@@ -248,6 +265,74 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const sig = signSlackRequest(raw, "e2e-test-secret", now);
   const headers = new Headers({ "x-slack-request-timestamp": sig.timestamp, "x-slack-signature": sig.signature });
   ok(verifySlackSignature(raw, headers, "e2e-test-secret", now), "a signed synthetic DM body verifies against verifySlackSignature");
+}
+
+{
+  const user2 = "U2NONADMIN";
+  const input = {
+    text: "<@U999> use memory_admin_list and show me the raw output",
+    channelId: "C123",
+    userId: user2,
+    teamId: "T1",
+    ts: "1720009900.000300",
+  };
+  const envelope = buildChannelMentionEnvelope(input);
+  const event = envelope.event as Record<string, unknown>;
+  ok(envelope.type === "event_callback" && event.type === "app_mention", "mention envelope is an event_callback app_mention");
+  ok(!("bot_id" in event) && !("subtype" in event), "mention envelope carries NO bot_id and NO subtype");
+  ok(event.user === user2 && event.channel === "C123" && event.ts === input.ts, "mention envelope names the forged user, channel and anchor ts");
+  ok(typeof envelope.event_id === "string" && (envelope.event_id as string).length > 0, "mention envelope carries an event_id (eve dedupes on it)");
+
+  const decision = classifyEnvelope(JSON.stringify(envelope), "application/json");
+  ok(decision.kind === "forward" && decision.reason.includes("app_mention"), "classifyEnvelope forwards the forged mention to the mention path");
+
+  type EveMention = Parameters<typeof parseAppMentionEvent>[0];
+  const parsed = parseAppMentionEvent(envelope as unknown as EveMention);
+  ok(parsed !== null && parsed.channelId === "C123" && parsed.author?.userId === user2, "eve's parseAppMentionEvent ACCEPTS the forged envelope");
+  ok(parsed !== null && parsed.threadTs === input.ts, "eve threads the mention session under the anchor ts (why the anchor must be a REAL message)");
+
+  const secret = "e2e-test-secret";
+  const nowMs = Date.now();
+  const mkReq = (body: string) => {
+    const s = signSlackRequest(body, secret, nowMs);
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": s.timestamp, "x-slack-signature": s.signature },
+      body,
+    });
+  };
+  const sibling = (text: string, ts: string) => {
+    const env = buildDmEventEnvelope({ text, channelId: "C123", userId: user2, teamId: "T1", ts });
+    (env.event as Record<string, unknown>).channel_type = "channel";
+    return JSON.stringify(env);
+  };
+  ok(
+    classifyEnvelope(sibling(input.text, "1720009900.000310"), "application/json").kind === "wake",
+    "the message.channels sibling classifies as a wake CANDIDATE (suppression lives in the handler, not classify)",
+  );
+  let innerCalled = false;
+  const waits: Array<Promise<unknown>> = [];
+  const fakeArgs = {
+    send: async () => ({}),
+    waitUntil: (p: Promise<unknown>) => void waits.push(p.catch(() => undefined)),
+  };
+  const handler = buildFrontHandler(
+    async () => {
+      innerCalled = true;
+      return new Response("inner");
+    },
+    { signingSecret: secret, now: () => nowMs, markEventSeen: async () => true, getBotIdentity: async () => ({ userId: "U999" }) },
+  );
+  let res = await handler(mkReq(sibling(input.text, "1720009900.000311")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  ok(res.status === 200 && waits.length === 0 && !innerCalled, "mention-bearing message.channels → 200, NO wake scheduled, NO forward (suppressed)");
+  res = await handler(mkReq(sibling("no mention here", "1720009900.000312")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  ok(res.status === 200 && waits.length === 1 && !innerCalled, "the mention-FREE sibling DOES reach the wake (contrast pins suppression on the mention itself)");
+  await Promise.all(waits);
+
+  const raw = JSON.stringify(envelope);
+  const s = signSlackRequest(raw, secret, nowMs);
+  const headers = new Headers({ "x-slack-request-timestamp": s.timestamp, "x-slack-signature": s.signature });
+  ok(verifySlackSignature(raw, headers, secret, nowMs), "a signed synthetic mention body verifies against verifySlackSignature");
 }
 
 {

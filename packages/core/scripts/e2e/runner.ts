@@ -4,6 +4,7 @@ import {
   resolveSlack,
   resolveSlackChannelB,
   resolveSlackPrivate,
+  resolveSlackUser2,
   resolveSynthetic,
   resolveSyntheticDm,
 } from "./env.js";
@@ -48,6 +49,7 @@ async function main(): Promise<void> {
   const slackPrivate = resolveSlackPrivate();
   const slackChannelB = resolveSlackChannelB();
   const syntheticDm = resolveSyntheticDm();
+  const slackUser2 = resolveSlackUser2();
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
@@ -111,6 +113,7 @@ async function main(): Promise<void> {
       slackB: slackBDriver,
       syntheticDm: syntheticDmForge,
       dm: dmDriver,
+      slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
       judge,
       gate(cond: boolean, label: string): void {
         if (!cond) throw new GateFailure(label);

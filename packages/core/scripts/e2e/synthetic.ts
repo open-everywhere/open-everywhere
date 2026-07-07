@@ -88,21 +88,53 @@ export function buildDmEventEnvelope(input: DmEventInput): Record<string, unknow
   };
 }
 
+export interface ChannelMentionInput {
+  readonly text: string;
+  readonly channelId: string;
+  readonly userId: string;
+  readonly teamId: string;
+  readonly ts: string;
+  readonly eventId?: string;
+}
+
+export function buildChannelMentionEnvelope(input: ChannelMentionInput): Record<string, unknown> {
+  return {
+    type: "event_callback",
+    team_id: input.teamId,
+    event_id: input.eventId ?? `EvE2EM${input.ts.replace(".", "")}`,
+    event_time: Math.floor(Number.parseFloat(input.ts)),
+    event: {
+      type: "app_mention",
+      channel: input.channelId,
+      user: input.userId,
+      text: input.text,
+      ts: input.ts,
+      event_ts: input.ts,
+      team: input.teamId,
+    },
+  };
+}
+
 export interface SyntheticResult {
   readonly status: number;
   readonly body: string;
-  readonly label: "synthetic click" | "synthetic command" | "synthetic DM";
+  readonly label: "synthetic click" | "synthetic command" | "synthetic DM" | "synthetic mention";
 }
 
 export class SyntheticSlack {
   constructor(private readonly cfg: SyntheticConfig) {}
 
-  private async signedPost(route: string, rawBody: string, label: SyntheticResult["label"]): Promise<SyntheticResult> {
+  private async signedPost(
+    route: string,
+    rawBody: string,
+    label: SyntheticResult["label"],
+    contentType = "application/x-www-form-urlencoded",
+  ): Promise<SyntheticResult> {
     const { timestamp, signature } = signSlackRequest(rawBody, this.cfg.signingSecret);
     const res = await fetch(`${this.cfg.targetUrl}${route}`, {
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        "content-type": contentType,
         "x-slack-request-timestamp": timestamp,
         "x-slack-signature": signature,
       },
@@ -126,6 +158,11 @@ export class SyntheticSlack {
   async slash(text: string): Promise<SyntheticResult> {
     const body = buildSlashCommandBody({ text, userId: this.cfg.adminUserId, channelId: this.cfg.channel });
     return this.signedPost(SYNTHETIC_COMMANDS_ROUTE, body, "synthetic command");
+  }
+
+  async channelMention(input: { text: string; userId: string; teamId: string; ts: string }): Promise<SyntheticResult> {
+    const rawBody = JSON.stringify(buildChannelMentionEnvelope({ ...input, channelId: this.cfg.channel }));
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic mention", "application/json");
   }
 }
 

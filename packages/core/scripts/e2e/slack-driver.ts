@@ -53,6 +53,10 @@ export class SlackDriver {
     return `<@${this.cfg.botUserId}> ${text}`;
   }
 
+  get channelId(): string {
+    return this.cfg.channel;
+  }
+
   withChannel(channel: string): SlackDriver {
     return new SlackDriver({ ...this.cfg, channel });
   }

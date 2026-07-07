@@ -9,13 +9,14 @@ export const ENV = {
   slackPrivateChannel: "E2E_SLACK_PRIVATE_CHANNEL",
   slackChannelB: "E2E_SLACK_CHANNEL_B",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
+  slackUser2Id: "E2E_SLACK_USER2_ID",
   org: "E2E_ORG",
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   includeOptional: "E2E_INCLUDE_OPTIONAL",
 } as const;
 
-export type Capability = "slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm";
+export type Capability = "slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -39,6 +40,10 @@ export interface SyntheticConfig {
 
 export interface SlackExtraChannelConfig {
   readonly channel: string;
+}
+
+export interface SlackUser2Config {
+  readonly userId: string;
 }
 
 export interface SyntheticDmConfig {
@@ -95,6 +100,12 @@ export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtr
   return { ok: true, cfg: { channel: values[0] } };
 }
 
+export function resolveSlackUser2(env: Env = process.env): Resolved<SlackUser2Config> {
+  const { values, missing } = need(env, [ENV.slackUser2Id]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { userId: values[0] } };
+}
+
 export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDmConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackDmChannel]);
   if (missing.length > 0) return { ok: false, missing };
@@ -114,6 +125,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
   const syntheticDm = resolveSyntheticDm(env);
+  const slackUser2 = resolveSlackUser2(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -121,6 +133,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
   if (syntheticDm.ok) available.add("syntheticDm");
+  if (slackUser2.ok) available.add("slackUser2");
   return {
     available,
     missing: {
@@ -130,6 +143,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
+      slackUser2: slackUser2.ok ? [] : slackUser2.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };
