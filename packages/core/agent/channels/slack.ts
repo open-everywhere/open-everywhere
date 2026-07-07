@@ -241,6 +241,7 @@ async function onInbound(
   message: SlackMessage,
   isDm: boolean,
 ): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
+  if (message.author?.isBot) return { auth: null };
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 
