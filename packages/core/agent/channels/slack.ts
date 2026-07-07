@@ -21,7 +21,7 @@ import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageAction, turnEffectsFor, botDisplayName } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
-import { markThreadEngaged, disengageThread, isStopRequest } from "./engagement.js";
+import { markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
 import { upsertUnderSection } from "../memory/markdown.js";
@@ -296,7 +296,7 @@ async function onInbound(
   if (!isDm && message.author && isStopRequest(message.markdown)) {
     await disengageThread(partitionForMessage(message, facts), message.threadTs);
     try {
-      await ctx.thread.post("Standing down — I'll stop following this thread. @-mention me to pull me back in.");
+      await ctx.thread.post(STOP_ACK_COPY);
     } catch {
     }
     await setStatusReaction(ctx.slack, "none");

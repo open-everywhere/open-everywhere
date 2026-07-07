@@ -1,9 +1,9 @@
 import { slackContinuationToken } from "eve/channels/slack";
-import { resolvePartition } from "../memory/partition.js";
+import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { nameDropWakeEnabled } from "../memory/domain.js";
-import { isThreadEngaged, markThreadEngaged, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
+import { isThreadEngaged, markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
@@ -101,6 +101,8 @@ export interface MessageRouteDeps {
   readonly touch?: (p: ReturnType<typeof resolvePartition>, threadTs: string, atIso: string) => Promise<void>;
   readonly now?: () => string;
   readonly confirmInternal?: (channelId: string) => Promise<boolean>;
+  readonly disengage?: (p: Partition, threadTs: string) => Promise<boolean>;
+  readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
 }
 
 export interface RouteOutcome extends ReplyDecision {
@@ -139,6 +141,11 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
 
   const p = resolvePartition(bindableFor(ev));
   const engaged = await deps.isEngaged(p, ev.threadTs!);
+  if (engaged && isStopRequest(ev.text)) {
+    const dropped = deps.disengage ? await deps.disengage(p, ev.threadTs!) : false;
+    if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs!);
+    return { deliver: false, reason: `stop request — thread disengaged${dropped ? "" : " (no record found)"}`, woke: false };
+  }
   const decision = shouldDeliverReply({
     isEngaged: engaged,
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
@@ -182,6 +189,16 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     isEngaged: (p, threadTs) => isThreadEngaged(p, threadTs),
     touch: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso),
     confirmInternal: confirmChannelInternal,
+    disengage: (p, threadTs) => disengageThread(p, threadTs),
+    async stopAck(channelId, threadTs) {
+      try {
+        await slackForm(
+          "chat.postMessage",
+          `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(STOP_ACK_COPY)}`,
+        );
+      } catch {
+      }
+    },
     async wake({ channelId, threadTs, auth, message, state }) {
       await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
     },

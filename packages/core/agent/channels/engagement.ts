@@ -34,6 +34,8 @@ export function isStopRequest(text: string): boolean {
   return STOP_RE.test(text.trim());
 }
 
+export const STOP_ACK_COPY = "Standing down — I'll stop following this thread. @-mention me to pull me back in.";
+
 export interface ReplyDeliveryInput {
   readonly isEngaged: boolean;
   readonly authorIsBot: boolean;

@@ -155,6 +155,36 @@ registerConfig({
 
   out = await routeMessageEvent(ev({ thread_ts: undefined }), deps(true));
   ok(!out.woke && /thread/.test(out.reason), "no thread_ts → not delivered");
+
+  {
+    const disengaged: string[] = [];
+    const acked: string[] = [];
+    const stopDeps = (engaged: boolean): MessageRouteDeps => ({
+      isEngaged: async () => engaged,
+      wake: async ({ message }) => {
+        woke.push(message);
+      },
+      disengage: async (_p, threadTs) => {
+        disengaged.push(threadTs);
+        return true;
+      },
+      stopAck: async (channelId, threadTs) => {
+        acked.push(`${channelId}:${threadTs}`);
+      },
+    });
+    woke.length = 0;
+    out = await routeMessageEvent(ev({ text: "stop" }), stopDeps(true));
+    ok(!out.woke && disengaged.length === 1 && acked.length === 1 && woke.length === 0, "engaged + 'stop' → disengage + ack, NO agent wake");
+    ok(/stop request/.test(out.reason), "stop outcome says why");
+    out = await routeMessageEvent(ev({ text: "please stand down" }), stopDeps(true));
+    ok(!out.woke && disengaged.length === 2, "stop phrasing variants disengage too");
+    out = await routeMessageEvent(ev({ text: "don't stop the deploy" }), stopDeps(true));
+    ok(out.woke, "a sentence merely CONTAINING stop still wakes normally");
+    disengaged.length = 0;
+    acked.length = 0;
+    out = await routeMessageEvent(ev({ text: "stop" }), stopDeps(false));
+    ok(!out.woke && disengaged.length === 0 && acked.length === 0, "'stop' in a NOT-engaged thread is inert chatter (no disengage, no ack)");
+  }
 }
 
 {
