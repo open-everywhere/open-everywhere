@@ -4,6 +4,7 @@ import { DiscordDriver } from "./discord-driver.js";
 import { SyntheticSlack } from "./synthetic.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
+import { buildCostReport, fetchRunUsage, renderCostReport } from "./cost.js";
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -29,6 +30,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 async function main(): Promise<void> {
+  const runStartedIso = new Date().toISOString();
   const report = resolveCapabilities();
   const slack = resolveSlack();
   const discord = resolveDiscord();
@@ -103,6 +105,23 @@ async function main(): Promise<void> {
     console.log(`✓ e2e driver pack: skipped — no driver tokens (${skipped}/${SCENARIOS.length} scenarios dry-skipped)`);
     return;
   }
+
+  const dbUrl = process.env.E2E_USAGE_DB_URL;
+  const workspaces = (process.env.E2E_USAGE_WORKSPACES ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (dbUrl && workspaces.length > 0) {
+    try {
+      const rows = await fetchRunUsage(dbUrl, runStartedIso, workspaces);
+      for (const line of renderCostReport(buildCostReport([...rows]))) console.log(line);
+    } catch (err) {
+      console.log(`e2e run cost: unavailable (${String(err instanceof Error ? err.message : err)})`);
+    }
+  } else {
+    console.log("e2e run cost: skipped — set E2E_USAGE_DB_URL (read-only) + E2E_USAGE_WORKSPACES to price runs");
+  }
+
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
   if (failed > 0) {
     console.error(`✗ e2e driver pack: ${summary}`);

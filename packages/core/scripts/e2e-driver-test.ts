@@ -207,5 +207,28 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(timedOut, "pollUntil throws a legible PollTimeout when the budget elapses");
 }
 
+{
+  const { buildCostReport, renderCostReport } = await import("./e2e/cost.js");
+  const rows = [
+    { surface_key: "slack/T1/C1", model: "test/model-a", calls: "3", input_tokens: "1000000", output_tokens: "500000", cache_read_tokens: "0", cache_write_tokens: "0" },
+    { surface_key: "discord/G1/C2", model: "test/unpriced", calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0 },
+  ];
+  const prevPricing = process.env.OE_MODEL_PRICING;
+  process.env.OE_MODEL_PRICING = JSON.stringify({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
+  const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
+  _resetPricingCacheForTest();
+  const report = buildCostReport(rows);
+  ok(Math.abs(report.totalUsd - 2) < 1e-9, "priced slice: 1M in @$1 + 0.5M out @$2 = $2.00 exactly");
+  ok(report.unpricedModels.length === 1 && report.unpricedModels[0] === "test/unpriced", "unpriced model reported by name, contributes $0");
+  ok(report.slices[1].estimatedUsd === undefined, "unpriced slice carries no dollar figure (evidence rule)");
+  const lines = renderCostReport(report);
+  ok(lines[lines.length - 1].startsWith("e2e run cost: $2.0000"), "total line renders the priced sum");
+  ok(lines[lines.length - 1].includes("test/unpriced"), "total line names what it could NOT price");
+  ok(lines[0].includes("3 calls") && lines[0].includes("1000000in/500000out"), "slice line shows calls + tokens");
+  if (prevPricing === undefined) delete process.env.OE_MODEL_PRICING;
+  else process.env.OE_MODEL_PRICING = prevPricing;
+  _resetPricingCacheForTest();
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ e2e-driver: ${passed} assertions passed`);
