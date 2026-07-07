@@ -156,20 +156,23 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dbUrl = process.env.E2E_USAGE_DB_URL;
+  const costTarget = (process.env.E2E_TARGET_URL ?? "").trim();
+  const readToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
   const workspaces = (process.env.E2E_USAGE_WORKSPACES ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  if (dbUrl && workspaces.length > 0) {
+  if (costTarget && readToken && workspaces.length > 0) {
     try {
-      const rows = await fetchRunUsage(dbUrl, runStartedIso, workspaces);
-      for (const line of renderCostReport(buildCostReport([...rows]))) console.log(line);
+      const rows = await fetchRunUsage(costTarget, readToken, runStartedIso, workspaces);
+      for (const line of renderCostReport(buildCostReport(rows))) console.log(line);
     } catch (err) {
       console.log(`e2e run cost: unavailable (${String(err instanceof Error ? err.message : err)})`);
     }
   } else {
-    console.log("e2e run cost: skipped — set E2E_USAGE_DB_URL (read-only) + E2E_USAGE_WORKSPACES to price runs");
+    console.log(
+      "e2e run cost: skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN + E2E_USAGE_WORKSPACES to price runs (reads GET /control/v1/usage)",
+    );
   }
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;

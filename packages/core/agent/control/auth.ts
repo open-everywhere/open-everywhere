@@ -187,18 +187,22 @@ export function parseServiceTokenEntries(raw: string | undefined): ServiceTokenE
   return out;
 }
 
+export function verifyServiceToken(token: string, entries: readonly ServiceTokenEntry[]): AdminIdentity | null {
+  if (!token || entries.length === 0) return null;
+  const presented = createHash("sha256").update(token, "utf-8").digest();
+  for (const e of entries) {
+    const digest = Buffer.from(e.sha256, "hex");
+    if (digest.length === presented.length && timingSafeEqual(presented, digest)) {
+      return { issuer: SERVICE_TOKEN_ISSUER, subject: `svc:${e.name}`, emailVerified: false, roles: ["admin"], readOnly: true };
+    }
+  }
+  return null;
+}
+
 export function makeServiceTokenAuthenticator(entries: readonly ServiceTokenEntry[]): (req: IncomingMessage) => Promise<AdminIdentity | null> {
-  const hashes = entries.map((e) => ({ name: e.name, digest: Buffer.from(e.sha256, "hex") }));
   return async (req) => {
     const token = bearer(req);
-    if (!token || hashes.length === 0) return null;
-    const presented = createHash("sha256").update(token, "utf-8").digest();
-    for (const e of hashes) {
-      if (e.digest.length === presented.length && timingSafeEqual(presented, e.digest)) {
-        return { issuer: SERVICE_TOKEN_ISSUER, subject: `svc:${e.name}`, emailVerified: false, roles: ["admin"], readOnly: true };
-      }
-    }
-    return null;
+    return token ? verifyServiceToken(token, entries) : null;
   };
 }
 

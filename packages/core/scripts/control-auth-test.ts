@@ -11,6 +11,7 @@ import {
   makeAdminAuthenticator,
   parseServiceTokenEntries,
   makeServiceTokenAuthenticator,
+  verifyServiceToken,
   adminAuthenticatorFromEnv,
   SERVICE_TOKEN_ISSUER,
   roleCoversScope,
@@ -201,6 +202,12 @@ const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
   );
   ok("service tokens: a wrong token -> null", (await auth(reqWith("not-the-token"))) === null);
   ok("service tokens: no bearer -> null", (await auth(reqWith())) === null);
+
+  const direct = verifyServiceToken(SVC_SECRET, [{ name: "e2e-harness", sha256: SVC_SHA }]);
+  ok("verifyServiceToken: matching value -> the same readOnly svc principal", direct?.subject === "svc:e2e-harness" && direct?.readOnly === true);
+  ok("verifyServiceToken: wrong value -> null", verifyServiceToken("nope", [{ name: "e2e-harness", sha256: SVC_SHA }]) === null);
+  ok("verifyServiceToken: empty token -> null", verifyServiceToken("", [{ name: "e2e-harness", sha256: SVC_SHA }]) === null);
+  ok("verifyServiceToken: no entries -> null (mode off)", verifyServiceToken(SVC_SECRET, []) === null);
 }
 
 {

@@ -50,10 +50,7 @@ const rel = (f: string) => f.slice(REPO_ROOT.length + 1);
   const files = coreDirs.flatMap(tsFiles);
   ok(files.length > 50, `scanned core (${files.length} files)`);
 
-  const DEV_HARNESS_EXEMPT = new Set(["packages/core/scripts/e2e/cost.ts"]);
-
   for (const f of files) {
-    if (DEV_HARNESS_EXEMPT.has(rel(f))) continue;
     for (const spec of specifiers(f)) {
       ok(!VENDOR_SDK.test(spec), `core is vendor-SDK-free: ${rel(f)} imports "${spec}"`);
       ok(!ADAPTERS_PKG.test(spec), `core does not import adapters: ${rel(f)} imports "${spec}"`);

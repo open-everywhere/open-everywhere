@@ -1,5 +1,3 @@
-import { modelPricing, estimateCostUsd } from "../../agent/spend/pricing.js";
-
 export interface UsageSlice {
   readonly surfaceKey: string;
   readonly model: string;
@@ -17,70 +15,57 @@ export interface RunCostReport {
   readonly unpricedModels: readonly string[];
 }
 
-interface UsageRow {
-  surface_key: string;
-  model: string | null;
-  calls: string | number;
-  input_tokens: string | number;
-  output_tokens: string | number;
-  cache_read_tokens: string | number;
-  cache_write_tokens: string | number;
+export interface UsageWindowWireRow {
+  readonly surfaceKey: string;
+  readonly model?: string;
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly estimatedUsd?: number;
 }
 
-const n = (v: string | number): number => (typeof v === "number" ? v : Number(v) || 0);
-
-export function buildCostReport(rows: readonly UsageRow[]): RunCostReport {
+export function buildCostReport(rows: readonly UsageWindowWireRow[]): RunCostReport {
   const slices: UsageSlice[] = [];
   const unpriced = new Set<string>();
   let total = 0;
   for (const r of rows) {
     const model = r.model ?? "(unstamped)";
-    const usage = {
-      inputTokens: n(r.input_tokens),
-      outputTokens: n(r.output_tokens),
-      cacheReadTokens: n(r.cache_read_tokens),
-      cacheWriteTokens: n(r.cache_write_tokens),
-    };
-    const usd = estimateCostUsd(usage, modelPricing(model));
-    if (usd === undefined) unpriced.add(model);
-    else total += usd;
+    if (r.estimatedUsd === undefined) unpriced.add(model);
+    else total += r.estimatedUsd;
     slices.push({
-      surfaceKey: r.surface_key,
+      surfaceKey: r.surfaceKey,
       model,
-      calls: n(r.calls),
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      cacheReadTokens: usage.cacheReadTokens,
-      cacheWriteTokens: usage.cacheWriteTokens,
-      estimatedUsd: usd,
+      calls: r.calls,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      cacheReadTokens: r.cacheReadTokens,
+      cacheWriteTokens: r.cacheWriteTokens,
+      estimatedUsd: r.estimatedUsd,
     });
   }
   return { slices, totalUsd: total, unpricedModels: [...unpriced].sort() };
 }
 
 export async function fetchRunUsage(
-  dbUrl: string,
+  targetUrl: string,
+  readToken: string,
   sinceIso: string,
-  workspacePrefixes: readonly string[],
-): Promise<readonly UsageRow[]> {
-  const { neon } = await import("@neondatabase/serverless");
-  const sql = neon(dbUrl);
-  const like = workspacePrefixes.map((p) => `${p}/%`);
-  const rows = (await sql.query(
-    `SELECT surface_key, model,
-            count(*)                 AS calls,
-            sum(input_tokens)        AS input_tokens,
-            sum(output_tokens)       AS output_tokens,
-            sum(cache_read_tokens)   AS cache_read_tokens,
-            sum(cache_write_tokens)  AS cache_write_tokens
-       FROM usage_events
-      WHERE ts >= $1
-        AND surface_key LIKE ANY($2)
-      GROUP BY surface_key, model
-      ORDER BY surface_key, model`,
-    [sinceIso, like],
-  )) as UsageRow[];
-  return rows;
+  workspaceKeys: readonly string[],
+): Promise<readonly UsageWindowWireRow[]> {
+  const base = targetUrl.replace(/\/+$/, "");
+  const qs = new URLSearchParams({ since: sinceIso, workspaces: workspaceKeys.join(",") });
+  const res = await fetch(`${base}/control/v1/usage?${qs.toString()}`, {
+    headers: { authorization: `Bearer ${readToken}`, accept: "application/json" },
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    throw new Error(`GET /control/v1/usage → ${res.status}${detail ? ` (${detail})` : ""}`);
+  }
+  const parsed = (await res.json()) as { rows?: UsageWindowWireRow[] };
+  if (!Array.isArray(parsed.rows)) throw new Error("GET /control/v1/usage returned no rows array (malformed response)");
+  return parsed.rows;
 }
 
 const fmtUsd = (v: number): string => `$${v.toFixed(4)}`;
