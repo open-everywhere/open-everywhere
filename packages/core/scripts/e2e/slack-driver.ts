@@ -26,10 +26,27 @@ function tsAfter(ts: string, floor: string): boolean {
 }
 
 export class SlackDriver {
+  private identityCache?: { userId: string; teamId: string };
+
   constructor(private readonly cfg: SlackDriverConfig) {}
 
   mention(text: string): string {
     return `<@${this.cfg.botUserId}> ${text}`;
+  }
+
+  withChannel(channel: string): SlackDriver {
+    return new SlackDriver({ ...this.cfg, channel });
+  }
+
+  async identity(): Promise<{ userId: string; teamId: string }> {
+    if (!this.identityCache) {
+      const json = await this.api("auth.test", {});
+      const userId = typeof json.user_id === "string" ? json.user_id : "";
+      const teamId = typeof json.team_id === "string" ? json.team_id : "";
+      if (!userId || !teamId) throw new Error("slack auth.test returned no user_id/team_id");
+      this.identityCache = { userId, teamId };
+    }
+    return this.identityCache;
   }
 
   private async api(method: string, params: Record<string, string>): Promise<Record<string, unknown>> {
@@ -83,6 +100,17 @@ export class SlackDriver {
     return pollUntil(
       async () => (await this.replies(rootTs)).find((m) => this.isBotReply(m) && tsAfter(m.ts, floor)),
       { timeoutMs: opts.timeoutMs, what: `a bot reply in thread ${rootTs}` },
+    );
+  }
+
+  async awaitAnyReply(anchorTs: string, opts: { timeoutMs: number }): Promise<SlackMessage> {
+    return pollUntil(
+      async () => {
+        const threaded = (await this.replies(anchorTs)).find((m) => this.isBotReply(m) && tsAfter(m.ts, anchorTs));
+        if (threaded) return threaded;
+        return (await this.history(anchorTs)).find((m) => this.isBotReply(m));
+      },
+      { timeoutMs: opts.timeoutMs, what: `a bot reply (threaded or top-level) after ${anchorTs}` },
     );
   }
 

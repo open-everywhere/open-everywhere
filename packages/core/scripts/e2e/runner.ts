@@ -1,7 +1,15 @@
-import { resolveCapabilities, resolveDiscord, resolveSlack, resolveSynthetic } from "./env.js";
+import {
+  resolveCapabilities,
+  resolveDiscord,
+  resolveSlack,
+  resolveSlackChannelB,
+  resolveSlackPrivate,
+  resolveSynthetic,
+  resolveSyntheticDm,
+} from "./env.js";
 import { SlackDriver } from "./slack-driver.js";
 import { DiscordDriver } from "./discord-driver.js";
-import { SyntheticSlack } from "./synthetic.js";
+import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, fetchRunUsage, renderCostReport } from "./cost.js";
@@ -37,9 +45,17 @@ async function main(): Promise<void> {
   const synthetic = resolveSynthetic();
   const judge = resolveJudge();
 
+  const slackPrivate = resolveSlackPrivate();
+  const slackChannelB = resolveSlackChannelB();
+  const syntheticDm = resolveSyntheticDm();
+
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
+  const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
+  const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
+  const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
+  const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
@@ -63,6 +79,10 @@ async function main(): Promise<void> {
       slack: slackDriver,
       discord: discordDriver,
       synthetic: syntheticSlack,
+      slackPrivate: slackPrivateDriver,
+      slackB: slackBDriver,
+      syntheticDm: syntheticDmForge,
+      dm: dmDriver,
       judge,
       gate(cond: boolean, label: string): void {
         if (!cond) throw new GateFailure(label);

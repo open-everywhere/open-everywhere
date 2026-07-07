@@ -6,12 +6,15 @@ export const ENV = {
   discordDriverToken: "E2E_DISCORD_DRIVER_TOKEN",
   discordChannel: "E2E_DISCORD_CHANNEL",
   discordBotUserId: "E2E_DISCORD_BOT_USER_ID",
+  slackPrivateChannel: "E2E_SLACK_PRIVATE_CHANNEL",
+  slackChannelB: "E2E_SLACK_CHANNEL_B",
+  slackDmChannel: "E2E_SLACK_DM_CHANNEL",
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   includeOptional: "E2E_INCLUDE_OPTIONAL",
 } as const;
 
-export type Capability = "slack" | "discord" | "synthetic";
+export type Capability = "slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -30,6 +33,16 @@ export interface SyntheticConfig {
   readonly signingSecret: string;
   readonly adminUserId: string;
   readonly channel: string;
+}
+
+export interface SlackExtraChannelConfig {
+  readonly channel: string;
+}
+
+export interface SyntheticDmConfig {
+  readonly targetUrl: string;
+  readonly signingSecret: string;
+  readonly dmChannel: string;
 }
 
 export type Resolved<T> =
@@ -67,6 +80,24 @@ export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConf
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], adminUserId: values[2], channel: values[3] } };
 }
 
+export function resolveSlackPrivate(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
+  const { values, missing } = need(env, [ENV.slackPrivateChannel]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
+export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
+  const { values, missing } = need(env, [ENV.slackChannelB]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
+export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDmConfig> {
+  const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackDmChannel]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], dmChannel: values[2] } };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -77,16 +108,25 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slack = resolveSlack(env);
   const discord = resolveDiscord(env);
   const synthetic = resolveSynthetic(env);
+  const slackPrivate = resolveSlackPrivate(env);
+  const slackChannelB = resolveSlackChannelB(env);
+  const syntheticDm = resolveSyntheticDm(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
   if (synthetic.ok) available.add("synthetic");
+  if (slackPrivate.ok) available.add("slackPrivate");
+  if (slackChannelB.ok) available.add("slackChannelB");
+  if (syntheticDm.ok) available.add("syntheticDm");
   return {
     available,
     missing: {
       slack: slack.ok ? [] : slack.missing,
       discord: discord.ok ? [] : discord.missing,
       synthetic: synthetic.ok ? [] : synthetic.missing,
+      slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
+      slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
+      syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

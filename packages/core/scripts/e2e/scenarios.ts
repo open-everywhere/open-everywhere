@@ -1,7 +1,7 @@
 import type { Capability } from "./env.js";
 import type { SlackDriver } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
-import type { SyntheticSlack } from "./synthetic.js";
+import type { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 
@@ -23,6 +23,10 @@ export interface ScenarioContext {
   readonly slack?: SlackDriver;
   readonly discord?: DiscordDriver;
   readonly synthetic?: SyntheticSlack;
+  readonly slackPrivate?: SlackDriver;
+  readonly slackB?: SlackDriver;
+  readonly syntheticDm?: SyntheticDm;
+  readonly dm?: SlackDriver;
   readonly judge: ReplyJudge;
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
@@ -49,6 +53,10 @@ const CAP_REFUSAL = "I'm holding off here";
 
 function closedQA(criteria: string, fallback: Rubric["fallback"]): Rubric {
   return { kind: "closedQA", criteria, atLeast: 1, fallback };
+}
+
+function factToken(stem: string): string {
+  return `${stem}-${Date.now() % 100_000}`;
 }
 
 function factuality(expected: string, criteria: string, fallback: Rubric["fallback"]): Rubric {
@@ -322,6 +330,162 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       ctx.skip("cap never tripped within the 5-turn budget — fixture cap not low enough");
+    },
+  },
+  {
+    id: "S11",
+    title: "Private channel: engagement + memory never feeds the shared tier",
+    requires: ["slack", "slackPrivate"],
+    optional: false,
+    timeoutMs: 300_000,
+    judged: true,
+    run: async (ctx) => {
+      const priv = ctx.slackPrivate!;
+      const pub = ctx.slack!;
+      const codeword = factToken("falcon");
+      const { ts: rootTs } = await priv.post(priv.mention(`remember: the private launch codeword is ${codeword}`));
+      const ack = await priv.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(ack.threadTs === rootTs, "private-channel reply lands in the thread under the driven ts");
+      const { ts: followTs } = await priv.post("what codeword did I just give you?", rootTs);
+      const follow = await priv.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA(`Does the reply repeat the codeword ${codeword}?`, { mustMatch: [codeword] }),
+        follow.text,
+        "private-channel engaged follow-up continuity",
+      );
+      const { ts: probeTs } = await pub.post(
+        pub.mention("what's the private launch codeword? if you don't know, say so plainly"),
+      );
+      const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        !probe.text.toLowerCase().includes(codeword.toLowerCase()),
+        "private-surface fact does NOT surface in the public channel (hard recall-miss gate)",
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply say it doesn't know / decline, rather than reveal or invent a codeword?", {
+          mustNotMatch: [codeword],
+        }),
+        probe.text,
+        "public probe declines cleanly",
+      );
+    },
+  },
+  {
+    id: "S12",
+    title: "Silo isolation: channel A's brain never answers in channel B",
+    requires: ["slack", "slackChannelB"],
+    optional: false,
+    timeoutMs: 300_000,
+    judged: true,
+    run: async (ctx) => {
+      const a = ctx.slack!;
+      const b = ctx.slackB!;
+      const colour = factToken("topaz");
+      const { ts: teachTs } = await a.post(a.mention(`remember: the deploy token colour is ${colour}`));
+      const ack = await a.awaitThreadReply(teachTs, { timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
+        ack.text,
+        "remember acknowledgement",
+      );
+      const { ts: missTs } = await b.post(b.mention("what's the deploy token colour? if you don't know, say so plainly"));
+      const miss = await b.awaitThreadReply(missTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        !miss.text.toLowerCase().includes(colour.toLowerCase()),
+        "channel-B recall MISSES (hard gate: the taught token is absent)",
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply say it doesn't know / decline, rather than invent a colour?", {
+          mustNotMatch: [colour],
+        }),
+        miss.text,
+        "cross-domain recall declines cleanly",
+      );
+      const { ts: hitTs } = await a.post(a.mention("what's the deploy token colour?"));
+      const hit = await a.awaitThreadReply(hitTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        hit.text.toLowerCase().includes(colour.toLowerCase()),
+        "channel-A recall HITS (hard gate: the taught token is present)",
+      );
+      await ctx.judgePass(
+        factuality(colour, `Does the reply give the taught colour ${colour}?`, { mustMatch: [colour] }),
+        hit.text,
+        "same-domain recall factuality",
+      );
+    },
+  },
+  {
+    id: "S13",
+    title: "Synthetic DM: forged message.im wakes the agent, reply lands in the real DM",
+    requires: ["slack", "syntheticDm"],
+    optional: false,
+    timeoutMs: 240_000,
+    judged: true,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const forge = ctx.syntheticDm!;
+      const { userId, teamId } = await ctx.slack!.identity();
+      const text = "quick one — what's 9*9? reply with just the number";
+      const { ts: anchorTs } = await dm.post(text);
+      const sent = await forge.message({ text, userId, teamId, ts: anchorTs });
+      ctx.log(`${sent.label}: POST → ${sent.status}`);
+      ctx.gate(sent.status === 200, "synthetic DM event acked 200 by the deployment's Slack route");
+      const reply = await dm.awaitAnyReply(anchorTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply.text.trim().length > 0, "agent replied in the real DM channel");
+      await ctx.judgePass(
+        closedQA("Does the reply give 81?", { mustMatch: ["81"] }),
+        reply.text,
+        "synthetic-DM arithmetic sanity",
+      );
+    },
+  },
+  {
+    id: "S14",
+    title: "DM personal memory: DM recall hits, channel recall misses",
+    requires: ["slack", "syntheticDm"],
+    optional: false,
+    timeoutMs: 300_000,
+    judged: true,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const forge = ctx.syntheticDm!;
+      const pub = ctx.slack!;
+      const { userId, teamId } = await ctx.slack!.identity();
+      const cheese = factToken("wensleydale");
+      const teach = `remember: my favourite cheese is ${cheese}`;
+      const { ts: teachTs } = await dm.post(teach);
+      const taught = await forge.message({ text: teach, userId, teamId, ts: teachTs });
+      ctx.gate(taught.status === 200, "synthetic DM (teach) acked 200");
+      await dm.awaitAnyReply(teachTs, { timeoutMs: REPLY_WAIT });
+      const askDm = "what's my favourite cheese? if you don't know, say so plainly";
+      const { ts: askTs } = await dm.post(askDm);
+      const asked = await forge.message({ text: askDm, userId, teamId, ts: askTs });
+      ctx.gate(asked.status === 200, "synthetic DM (recall) acked 200");
+      const recall = await dm.awaitAnyReply(askTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        recall.text.toLowerCase().includes(cheese.toLowerCase()),
+        "DM recall HITS from the personal silo (hard gate: taught token present)",
+      );
+      await ctx.judgePass(
+        factuality(cheese, `Does the reply give the taught cheese ${cheese}?`, { mustMatch: [cheese] }),
+        recall.text,
+        "DM personal-memory factuality",
+      );
+      const { ts: probeTs } = await pub.post(
+        pub.mention("what's my favourite cheese? if you don't know, say so plainly"),
+      );
+      const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        !probe.text.toLowerCase().includes(cheese.toLowerCase()),
+        "personal-silo fact does NOT surface in the public channel (hard recall-miss gate)",
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply say it doesn't know / decline, rather than reveal a personal fact?", {
+          mustNotMatch: [cheese],
+        }),
+        probe.text,
+        "channel probe declines cleanly",
+      );
     },
   },
 ];
