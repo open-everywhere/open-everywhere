@@ -4,6 +4,7 @@ import type { PluginRegistry } from "../plugins/types.js";
 import type { SkillPackageDefinition } from "eve/skills";
 import type { Domain } from "../memory/domain.js";
 import type { MemorySilo } from "../memory/silo.js";
+import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
 
@@ -15,6 +16,7 @@ export interface AppConfig {
   readonly skillContent: Record<string, SkillPackageDefinition>;
   loadDomains(): readonly Domain[];
   loadSilos(): readonly MemorySilo[];
+  loadRoles?(): readonly Role[];
   domainsForSurface(arg: { workspaceKey: string; surface: string }): readonly string[];
   loadWebhooks?(): readonly WebhookHook[];
   loadSpendBudgets?(): SpendBudgets;

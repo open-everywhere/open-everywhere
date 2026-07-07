@@ -10,9 +10,10 @@ import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 export function utilityRouteForScope(scope: string): ModelRoute {
   try {
     const domains = getConfig().loadDomains();
-    if (domains.some((d) => d.channels?.includes(scope))) return modelRouteFor("utility", scope, domains);
+    const roles = getConfig().loadRoles?.() ?? [];
+    if (domains.some((d) => d.channels?.includes(scope))) return modelRouteFor("utility", scope, domains, roles);
     const owner = domains.find((d) => memoryRefs(d).includes(scope) && (d.channels?.length ?? 0) > 0);
-    return modelRouteFor("utility", owner?.channels?.[0] ?? scope, domains);
+    return modelRouteFor("utility", owner?.channels?.[0] ?? scope, domains, roles);
   } catch {
     return {};
   }

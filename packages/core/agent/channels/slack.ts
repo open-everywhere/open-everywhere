@@ -43,7 +43,8 @@ function statusVerb(state: { channelId?: string | null; teamId?: string | null }
       channel: { kind: "slack" },
       session: { auth: { current: { attributes: { team_id: state.teamId ?? "", channel_id: state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
     });
-    const verbs = statusVerbsFor(p.surfaceKey, getConfig().loadDomains());
+    const cfg = getConfig();
+    const verbs = statusVerbsFor(p.surfaceKey, cfg.loadDomains(), cfg.loadRoles?.() ?? []);
     return `${verbs[Math.floor(Math.random() * verbs.length)]}…`;
   } catch {
     return "Working…";

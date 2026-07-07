@@ -1,9 +1,11 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { resolveAccessFor } from "../access/request.js";
 import { assembleAccessInstructions } from "../access/instructions.js";
+import { getConfig } from "../access/config.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { planFor } from "../memory/resolve.js";
+import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { readableChannelList } from "../channels/slack-read.js";
 import { botDisplayName } from "../channels/slack-events.js";
@@ -46,6 +48,18 @@ function renderSurface(platform: string): string {
     : "";
 }
 
+export function renderRolePrompt(ctx: BindableContext): string {
+  try {
+    const cfg = getConfig();
+    const roles = cfg.loadRoles?.() ?? [];
+    if (roles.length === 0) return "";
+    const role = effectiveRoleFor(bindFrom(ctx), resolvePartition(ctx), cfg.loadDomains(), roles);
+    return role ? renderRoleInstructions(role) : "";
+  } catch {
+    return "";
+  }
+}
+
 async function resolve(ctx: BindableContext) {
   const access = resolveAccessFor(ctx);
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
@@ -53,7 +67,14 @@ async function resolve(ctx: BindableContext) {
   const plan = planFor(binding, resolvePartition(ctx));
   const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads) : "";
   const name = await surfaceAgentName(ctx);
-  const markdown = [renderIdentity(name), renderSurface(binding.platform), assembleAccessInstructions(access) ?? "", memoryMd, renderChannelScope(ctx)]
+  const markdown = [
+    renderIdentity(name),
+    renderSurface(binding.platform),
+    renderRolePrompt(ctx),
+    assembleAccessInstructions(access) ?? "",
+    memoryMd,
+    renderChannelScope(ctx),
+  ]
     .filter((s) => s.length > 0)
     .join("\n\n");
   return defineInstructions({ markdown });
