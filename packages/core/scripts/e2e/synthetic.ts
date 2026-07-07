@@ -22,6 +22,7 @@ export interface ApprovalClickInput {
   readonly userId: string;
   readonly channelId: string;
   readonly messageTs: string;
+  readonly org: string;
 }
 
 export function buildApprovalClickPayload(input: ApprovalClickInput): Record<string, unknown> {
@@ -30,7 +31,7 @@ export function buildApprovalClickPayload(input: ApprovalClickInput): Record<str
     user: { id: input.userId },
     channel: { id: input.channelId },
     message: { ts: input.messageTs },
-    actions: [{ action_id: `${APPROVAL_PREFIX}${input.decision}:${input.pendingId}`, type: "button" }],
+    actions: [{ action_id: `${APPROVAL_PREFIX}${input.decision}:${input.pendingId}`, type: "button", value: input.org }],
   };
 }
 
@@ -110,11 +111,14 @@ export class SyntheticSlack {
     return { status: res.status, body: await res.text(), label };
   }
 
-  async click(input: Omit<ApprovalClickInput, "userId" | "channelId"> & { userId?: string; channelId?: string }): Promise<SyntheticResult> {
+  async click(
+    input: Omit<ApprovalClickInput, "userId" | "channelId" | "org"> & { userId?: string; channelId?: string; org?: string },
+  ): Promise<SyntheticResult> {
     const payload = buildApprovalClickPayload({
       ...input,
       userId: input.userId ?? this.cfg.adminUserId,
       channelId: input.channelId ?? this.cfg.channel,
+      org: input.org ?? this.cfg.org,
     });
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }

@@ -1,12 +1,18 @@
 import type { SlackDriverConfig } from "./env.js";
 import { pollUntil, sleep } from "./poll.js";
 
+export interface SlackMessageAction {
+  readonly actionId: string;
+  readonly value?: string;
+}
+
 export interface SlackMessage {
   readonly ts: string;
   readonly threadTs?: string;
   readonly userId?: string;
   readonly botId?: string;
   readonly text: string;
+  readonly actions?: readonly SlackMessageAction[];
 }
 
 interface SlackApiMessage {
@@ -15,10 +21,23 @@ interface SlackApiMessage {
   user?: string;
   bot_id?: string;
   text?: string;
+  blocks?: readonly { type?: string; elements?: readonly { action_id?: string; value?: string }[] }[];
 }
 
 function toMessage(m: SlackApiMessage): SlackMessage {
-  return { ts: m.ts ?? "", threadTs: m.thread_ts, userId: m.user, botId: m.bot_id, text: m.text ?? "" };
+  const actions = (m.blocks ?? [])
+    .filter((b) => b.type === "actions")
+    .flatMap((b) => b.elements ?? [])
+    .filter((e): e is { action_id: string; value?: string } => typeof e.action_id === "string")
+    .map((e) => ({ actionId: e.action_id, value: e.value }));
+  return {
+    ts: m.ts ?? "",
+    threadTs: m.thread_ts,
+    userId: m.user,
+    botId: m.bot_id,
+    text: m.text ?? "",
+    actions: actions.length > 0 ? actions : undefined,
+  };
 }
 
 function tsAfter(ts: string, floor: string): boolean {
@@ -101,6 +120,14 @@ export class SlackDriver {
       async () => (await this.replies(rootTs)).find((m) => this.isBotReply(m) && tsAfter(m.ts, floor)),
       { timeoutMs: opts.timeoutMs, what: `a bot reply in thread ${rootTs}` },
     );
+  }
+
+  async awaitThreadMessage(
+    rootTs: string,
+    opts: { timeoutMs: number; what: string },
+    find: (msgs: readonly SlackMessage[]) => SlackMessage | undefined,
+  ): Promise<SlackMessage> {
+    return pollUntil(async () => find(await this.replies(rootTs)), { timeoutMs: opts.timeoutMs, what: opts.what });
   }
 
   async awaitAnyReply(anchorTs: string, opts: { timeoutMs: number }): Promise<SlackMessage> {

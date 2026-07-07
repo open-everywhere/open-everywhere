@@ -96,6 +96,9 @@ const { parseDirectMessageEvent } = await import("../../../node_modules/eve/dist
   ok(dmCfg.ok && dmCfg.cfg.dmChannel === "D0DM" && dmCfg.cfg.targetUrl === "https://oe.example.test", "syntheticDm cfg carries the DM channel + slash-stripped target");
   const syn = resolveSynthetic(full);
   ok(syn.ok && syn.cfg.targetUrl === "https://oe.example.test", "target URL trailing slash is stripped");
+  ok(syn.ok && syn.cfg.org === "default", "E2E_ORG unset: synthetic org defaults to \"default\" (single-org fixture)");
+  const orgSyn = resolveSynthetic({ ...full, [ENV.org]: "acme" });
+  ok(orgSyn.ok && orgSyn.cfg.org === "acme", "E2E_ORG set: synthetic org carries the override");
   const blank = resolveSlack({ ...full, [ENV.slackChannel]: "   " });
   ok(!blank.ok && blank.missing.includes(ENV.slackChannel), "a whitespace-only value counts as missing (fail-closed)");
 }
@@ -178,7 +181,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 {
   const secret = "e2e-test-secret";
   const body = encodeInteractionBody(
-    buildApprovalClickPayload({ pendingId: "abc123", decision: "approve", userId: "U2ADMIN", channelId: "C123", messageTs: "1720009900.000100" }),
+    buildApprovalClickPayload({ pendingId: "abc123", decision: "approve", org: "default", userId: "U2ADMIN", channelId: "C123", messageTs: "1720009900.000100" }),
   );
   const now = Date.now();
   const { timestamp, signature } = signSlackRequest(body, secret, now);
@@ -193,9 +196,10 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
-  const payload = buildApprovalClickPayload({ pendingId: "row-1", decision: "reject", userId: "U2ADMIN", channelId: "C123", messageTs: "1720009900.000100" });
-  const actions = payload.actions as readonly { action_id: string }[];
+  const payload = buildApprovalClickPayload({ pendingId: "row-1", decision: "reject", org: "default", userId: "U2ADMIN", channelId: "C123", messageTs: "1720009900.000100" });
+  const actions = payload.actions as readonly { action_id: string; value?: string }[];
   ok(actions[0].action_id === "oe_approval:reject:row-1", "action_id is oe_approval:<decision>:<id>");
+  ok(actions[0].value === "default", "the click payload carries the org in actions[0].value (real cards stamp row.org)");
   const decision = classifyEnvelope(encodeInteractionBody(payload), "application/x-www-form-urlencoded");
   ok(decision.kind === "approval-click", "the real classifyEnvelope routes the synthetic body to the approval-click handler");
   const foreign = classifyEnvelope(

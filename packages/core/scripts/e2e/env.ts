@@ -9,6 +9,7 @@ export const ENV = {
   slackPrivateChannel: "E2E_SLACK_PRIVATE_CHANNEL",
   slackChannelB: "E2E_SLACK_CHANNEL_B",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
+  org: "E2E_ORG",
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   includeOptional: "E2E_INCLUDE_OPTIONAL",
@@ -33,6 +34,7 @@ export interface SyntheticConfig {
   readonly signingSecret: string;
   readonly adminUserId: string;
   readonly channel: string;
+  readonly org: string;
 }
 
 export interface SlackExtraChannelConfig {
@@ -77,7 +79,8 @@ export function resolveDiscord(env: Env = process.env): Resolved<DiscordDriverCo
 export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel]);
   if (missing.length > 0) return { ok: false, missing };
-  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], adminUserId: values[2], channel: values[3] } };
+  const org = env[ENV.org]?.trim() || "default";
+  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], adminUserId: values[2], channel: values[3], org } };
 }
 
 export function resolveSlackPrivate(env: Env = process.env): Resolved<SlackExtraChannelConfig> {

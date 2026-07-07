@@ -1,7 +1,7 @@
 import type { Capability } from "./env.js";
-import type { SlackDriver } from "./slack-driver.js";
+import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
-import type { SyntheticDm, SyntheticSlack } from "./synthetic.js";
+import { APPROVAL_PREFIX, type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import { sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 
@@ -61,6 +61,13 @@ function factToken(stem: string): string {
 
 function factuality(expected: string, criteria: string, fallback: Rubric["fallback"]): Rubric {
   return { kind: "factuality", expected, criteria, atLeast: 0.6, fallback };
+}
+
+function approveButton(m: SlackMessage): { pendingId: string; org: string } | undefined {
+  const prefix = `${APPROVAL_PREFIX}approve:`;
+  const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));
+  if (!btn) return undefined;
+  return { pendingId: btn.actionId.slice(prefix.length), org: btn.value ?? "" };
 }
 
 export function skipReason(
@@ -182,7 +189,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "S5",
-    title: "Approval card e2e (Slack, synthetic click)",
+    title: "Approval card e2e (Slack, synthetic click, self-cleaning)",
     requires: ["slack", "synthetic"],
     optional: false,
     timeoutMs: 300_000,
@@ -190,12 +197,28 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const slack = ctx.slack!;
       const synthetic = ctx.synthetic!;
-      const { ts: askTs } = await slack.post(slack.mention("raise this channel's spend cap to $20/day"));
-      const card = await slack.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(card.text.length > 0, "a card/proposal message posted in the thread");
-      const clicked = await synthetic.click({ pendingId: "e2e-placeholder", decision: "approve", messageTs: card.ts });
-      ctx.log(`${clicked.label}: POST → ${clicked.status}`);
-      ctx.gate(clicked.status < 500, `${clicked.label} answered without a server error`);
+      const driveDecide = async (ask: string, leg: string): Promise<SlackMessage> => {
+        const { ts: askTs } = await slack.post(slack.mention(ask));
+        const card = await slack.awaitThreadMessage(
+          askTs,
+          { timeoutMs: REPLY_WAIT, what: `an approval card (oe_approval buttons) in thread ${askTs}` },
+          (msgs) => msgs.find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
+        );
+        const btn = approveButton(card)!;
+        ctx.gate(btn.pendingId.length > 0, `${leg}: card button carries a real pending id in its action_id`);
+        ctx.gate(btn.org.length > 0, `${leg}: card button carries the org in its value (flow.ts needs it pre-lookup)`);
+        const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts });
+        ctx.log(`${clicked.label}: approve ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
+        ctx.gate(clicked.status === 200, `${leg}: forged approve click acked 200`);
+        await slack.awaitThreadMessage(
+          askTs,
+          { timeoutMs: REPLY_WAIT, what: `card ${card.ts} re-rendered decided (actions block gone)` },
+          (msgs) => msgs.find((m) => m.ts === card.ts && approveButton(m) === undefined),
+        );
+        ctx.gate(true, `${leg}: card DECIDED — buttons removed by the deployment's chat.update (hard gate)`);
+        return card;
+      };
+      const card = await driveDecide("raise this channel's spend cap to $20/day", "cap-raise");
       await ctx.judgePass(
         closedQA("Does the card clearly state what will change, the scope, and who asked?", {
           mustMatch: [/\$?20/],
@@ -203,6 +226,7 @@ export const SCENARIOS: readonly Scenario[] = [
         card.text,
         "card legibility",
       );
+      await driveDecide("clear the spend cap override for this channel", "teardown");
     },
   },
   {
