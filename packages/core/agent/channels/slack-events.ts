@@ -78,7 +78,7 @@ export type FinalMessageAction =
 
 export function finalMessageAction(finishReason: string, message: string | null): FinalMessageAction {
   if (finishReason === "tool-calls") return { kind: "buffer-tool-status" };
-  if (!message) return { kind: "silent", reason: "empty final message" };
+  if (!message || !message.trim()) return { kind: "silent", reason: "empty final message" };
   if (isNoReply(message)) return { kind: "silent", reason: "NO_REPLY sentinel — judged not warranted" };
   return { kind: "post", text: message };
 }

@@ -226,6 +226,7 @@ async function discordCreateMessage(channelId: string, content: string): Promise
 
 async function postDiscordReply(channelId: string, text: string): Promise<void> {
   for (const chunk of splitForDiscord(text)) {
+    if (!chunk.trim()) continue;
     await discordCreateMessage(channelId, chunk);
   }
 }

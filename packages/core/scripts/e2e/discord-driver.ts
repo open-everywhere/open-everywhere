@@ -86,7 +86,7 @@ export class DiscordDriver {
   }
 
   isBotReply(m: DiscordMessage): boolean {
-    return m.authorId === this.cfg.botUserId;
+    return m.authorId === this.cfg.botUserId && m.content.trim().length > 0;
   }
 
   async awaitThread(messageId: string, opts: { timeoutMs: number }): Promise<string> {
