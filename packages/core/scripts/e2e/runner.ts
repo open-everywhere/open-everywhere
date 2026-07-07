@@ -65,7 +65,35 @@ async function main(): Promise<void> {
   let failed = 0;
   let skipped = 0;
 
+  const onlyIdx = process.argv.findIndex((a) => a === "--only" || a.startsWith("--only="));
+  const onlyRaw =
+    onlyIdx === -1
+      ? process.env.E2E_ONLY
+      : process.argv[onlyIdx].includes("=")
+        ? process.argv[onlyIdx].split("=")[1]
+        : process.argv[onlyIdx + 1];
+  const only = new Set(
+    (onlyRaw ?? "")
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean),
+  );
+  if (only.size > 0) {
+    const known = new Set(SCENARIOS.map((s) => s.id.toUpperCase()));
+    const unknown = [...only].filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      console.error(`✗ --only names unknown scenario id(s): ${unknown.join(", ")} (known: ${[...known].join(", ")})`);
+      process.exit(1);
+    }
+    console.log(`selective run: ${[...only].join(", ")}`);
+  }
+
   for (const scenario of SCENARIOS) {
+    if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
+      skipped++;
+      console.log(`– ${scenario.id} ${scenario.title}: skipped (filtered by --only)`);
+      continue;
+    }
     const reason = skipReason(scenario, report.available, report.missing, report.includeOptional);
     if (reason !== undefined) {
       skipped++;
@@ -106,17 +134,19 @@ async function main(): Promise<void> {
       },
     };
 
+    const startedAt = Date.now();
+    const secs = () => `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
     try {
       await withTimeout(scenario.run(ctx), scenario.timeoutMs);
       passed++;
-      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged)`);
+      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged, ${secs()})`);
     } catch (err) {
       if (err instanceof ScenarioSkip) {
         skipped++;
         console.log(`– ${scenario.id} ${scenario.title}: skipped (${err.message})`);
       } else {
         failed++;
-        console.error(`✗ ${scenario.id} ${scenario.title}: ${String(err instanceof Error ? err.message : err)}`);
+        console.error(`✗ ${scenario.id} ${scenario.title} (${secs()}): ${String(err instanceof Error ? err.message : err)}`);
       }
     }
   }
