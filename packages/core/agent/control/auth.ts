@@ -1,4 +1,5 @@
 import { jwtVerify, createRemoteJWKSet, type JWTVerifyGetKey } from "jose";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { domainForChannel, memoryRefs, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
@@ -9,6 +10,7 @@ export interface AdminIdentity {
   readonly email?: string;
   readonly emailVerified: boolean;
   readonly roles: readonly string[];
+  readonly readOnly?: boolean;
 }
 
 export interface RawIdentity {
@@ -155,6 +157,51 @@ export function staticTokenVerifier(opts: { token: string; subject?: string }): 
   };
 }
 
+export const SERVICE_TOKEN_ISSUER = "service-token";
+
+export interface ServiceTokenEntry {
+  readonly name: string;
+  readonly sha256: string;
+}
+
+const SERVICE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export function parseServiceTokenEntries(raw: string | undefined): ServiceTokenEntry[] {
+  if (!raw || raw.trim().length === 0) return [];
+  const out: ServiceTokenEntry[] = [];
+  raw.split(",").forEach((part, i) => {
+    const entry = part.trim();
+    if (!entry) return;
+    const at = entry.indexOf(":");
+    const name = at > 0 ? entry.slice(0, at) : "";
+    const hash = at > 0 ? entry.slice(at + 1).toLowerCase() : "";
+    if (!SERVICE_NAME.test(name) || !SHA256_HEX.test(hash)) {
+      console.warn(
+        `[open-everywhere:control] OE_CONTROL_READ_TOKENS entry #${i + 1} ignored — expected "name:sha256hex" (lowercase name, 64-hex-char sha256 of the token). Entry content not shown.`,
+      );
+      return;
+    }
+    out.push({ name, sha256: hash });
+  });
+  return out;
+}
+
+export function makeServiceTokenAuthenticator(entries: readonly ServiceTokenEntry[]): (req: IncomingMessage) => Promise<AdminIdentity | null> {
+  const hashes = entries.map((e) => ({ name: e.name, digest: Buffer.from(e.sha256, "hex") }));
+  return async (req) => {
+    const token = bearer(req);
+    if (!token || hashes.length === 0) return null;
+    const presented = createHash("sha256").update(token, "utf-8").digest();
+    for (const e of hashes) {
+      if (e.digest.length === presented.length && timingSafeEqual(presented, e.digest)) {
+        return { issuer: SERVICE_TOKEN_ISSUER, subject: `svc:${e.name}`, emailVerified: false, roles: ["admin"], readOnly: true };
+      }
+    }
+    return null;
+  };
+}
+
 export function makeAdminAuthenticator(
   verifiers: readonly TokenVerifier[],
   rules: readonly RoleRule[],
@@ -176,6 +223,7 @@ export function makeAdminAuthenticator(
 export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<AdminIdentity | null>) | null {
   const verifiers: TokenVerifier[] = [];
   const rules: RoleRule[] = [];
+  const serviceTokens = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
 
   const issuer = process.env.OE_ADMIN_OIDC_ISSUER;
   const audience = process.env.OE_ADMIN_OIDC_AUDIENCE;
@@ -198,6 +246,9 @@ export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<
     }
   }
 
-  if (verifiers.length === 0) return null;
-  return makeAdminAuthenticator(verifiers, rules);
+  if (verifiers.length === 0 && serviceTokens.length === 0) return null;
+  const base = verifiers.length > 0 ? makeAdminAuthenticator(verifiers, rules) : null;
+  const service = serviceTokens.length > 0 ? makeServiceTokenAuthenticator(serviceTokens) : null;
+  if (!service) return base;
+  return async (req) => (await service(req)) ?? (base ? await base(req) : null);
 }

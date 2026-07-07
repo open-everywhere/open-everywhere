@@ -12,6 +12,8 @@ import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/
 import { usageSummary } from "../spend/usage-events.js";
 import type { UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
+import { modelPricing, estimateCostUsd } from "../spend/pricing.js";
+import { deploymentOrg } from "../identity/binding.js";
 import { listDomainSkills } from "../skills/domain-skills.js";
 import type { DomainSkillRow } from "../operational/store.js";
 import { providerById } from "../memory/provider.js";
@@ -276,6 +278,79 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
     routinePredictions,
     note: pricingNote(pricingMix(rows, assumed), assumed),
   };
+}
+
+export interface UsageWindowQuery {
+  readonly sinceIso: string;
+  readonly workspaceKeys: readonly string[];
+  readonly org?: string;
+}
+export interface UsageWindowRow {
+  readonly surfaceKey: string;
+  readonly model?: string;
+  readonly calls: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly estimatedUsd?: number;
+}
+export interface UsageWindowResult {
+  readonly org: string;
+  readonly since: string;
+  readonly workspaceKeys: readonly string[];
+  readonly rows: readonly UsageWindowRow[];
+  readonly totalUsd: number;
+  readonly unpricedModels: readonly string[];
+}
+
+const WORKSPACE_KEY_SHAPE = /^[^/\s]+\/[^/\s]+$/;
+
+export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowResult> {
+  const parsedSince = Date.parse(q.sinceIso);
+  if (Number.isNaN(parsedSince)) {
+    throw new Error(`sinceIso "${q.sinceIso}" is not a parseable ISO-8601 timestamp (e.g. "2026-07-11T12:00:00Z").`);
+  }
+  const since = new Date(parsedSince).toISOString();
+  if (!Array.isArray(q.workspaceKeys) || q.workspaceKeys.length === 0) {
+    throw new Error('workspaceKeys must be a non-empty array of "platform/workspace" keys.');
+  }
+  for (const wk of q.workspaceKeys) {
+    if (typeof wk !== "string" || !WORKSPACE_KEY_SHAPE.test(wk)) {
+      throw new Error(`workspaceKeys entry "${String(wk)}" must be exactly "platform/workspace" (two segments, e.g. "slack/T1") — not a surface key or a bare platform.`);
+    }
+  }
+  const org = q.org ?? deploymentOrg();
+  const keys = [...new Set(q.workspaceKeys)];
+  const grouped = await Promise.all(keys.map((wk) => usageSummary(org, { sinceTs: since, surfaceKeyPrefix: `${wk}/` })));
+
+  const SEP = "\u0000";
+  const acc = new Map<string, { surfaceKey: string; model?: string; calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }>();
+  for (const rows of grouped) {
+    for (const r of rows) {
+      const key = `${r.surfaceKey}${SEP}${r.model ?? ""}`;
+      const a = acc.get(key) ?? { surfaceKey: r.surfaceKey, ...(r.model ? { model: r.model } : {}), calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      a.calls += r.events;
+      a.inputTokens += r.inputTokens;
+      a.outputTokens += r.outputTokens;
+      a.cacheReadTokens += r.cacheReadTokens;
+      a.cacheWriteTokens += r.cacheWriteTokens;
+      acc.set(key, a);
+    }
+  }
+
+  const unpriced = new Set<string>();
+  let totalUsd = 0;
+  const rows: UsageWindowRow[] = [...acc.values()]
+    .sort((a, b) => a.surfaceKey.localeCompare(b.surfaceKey) || (a.model ?? "").localeCompare(b.model ?? ""))
+    .map((r) => {
+      const usd = r.model ? estimateCostUsd(r, modelPricing(r.model)) : undefined;
+      if (usd === undefined) unpriced.add(r.model ?? "(unstamped)");
+      else totalUsd += usd;
+      return { ...r, ...(usd !== undefined ? { estimatedUsd: usd } : {}) };
+    });
+
+  return { org, since, workspaceKeys: keys, rows, totalUsd, unpricedModels: [...unpriced].sort() };
 }
 
 export interface SkillsListQuery {

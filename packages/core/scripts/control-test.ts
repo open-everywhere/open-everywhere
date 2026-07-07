@@ -1,6 +1,6 @@
 import "./_register-test-config.js";
 import assert from "node:assert/strict";
-import { spendView, routinesView, auditView, accessView, usageSummaryView, skillsListView } from "../agent/control/views.js";
+import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -109,6 +109,8 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   ok("skills_list: a domain:eng role can list its own domain's skills", skillsOk.skills.length === 1);
   const skillsDenied = await engClient.callTool({ name: "skills_list", arguments: { org: CTL_ORG, domain: "other" } });
   ok("skills_list: a domain:eng role is denied a different domain", skillsDenied.isError === true);
+  const uwDenied = await engClient.callTool({ name: "usage_window", arguments: { sinceIso: "2026-01-01T00:00:00Z", workspaceKeys: ["slack/T1"] } });
+  ok("usage_window: a domain:eng role is denied (org-wide read — admin only, same posture as overrides_list)", uwDenied.isError === true);
 
   await engClient.close();
 }
@@ -143,6 +145,49 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   const spendCleared = await spendView(period);
   const rowCleared = spendCleared.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
   ok("spendView: clearing the override reverts to the (uncapped) config baseline", rowCleared?.usdCap === null && rowCleared?.usdOver === false);
+}
+
+{
+  const UW_ORG = `uw-test-${process.pid}-${Date.now()}`;
+  const t0 = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u1", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, model: "zai/glm-5.2", ts: iso(t0) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u2", principalId: "U2", kind: "channel", inputTokens: 1000, outputTokens: 500, model: "zai/glm-5.2", ts: iso(t0 + 1000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u3", principalId: "U1", kind: "channel", inputTokens: 100, outputTokens: 10, model: "mystery/unpriced-9b", ts: iso(t0 + 2000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u4", principalId: "U1", kind: "channel", inputTokens: 50, outputTokens: 5, ts: iso(t0 + 3000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "discord/G1/CH1", sessionId: "u5", kind: "channel", inputTokens: 2000, outputTokens: 1000, model: "zai/glm-5.2", ts: iso(t0 + 4000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u0", principalId: "U1", kind: "channel", inputTokens: 999999, outputTokens: 999999, model: "zai/glm-5.2", ts: iso(t0 - 86400e3) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TOTHER/C9", sessionId: "u6", kind: "channel", inputTokens: 777, outputTokens: 77, model: "zai/glm-5.2", ts: iso(t0 + 5000) });
+
+  const view = await usageWindowView({ org: UW_ORG, sinceIso: iso(t0 - 1000), workspaceKeys: ["slack/TW1", "discord/G1", "slack/TW1"] });
+  const glmRow = view.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === "zai/glm-5.2");
+  ok("usage_window: groups to (surface, model), summing calls/tokens across principals", glmRow?.calls === 2 && glmRow?.inputTokens === 2000 && glmRow?.outputTokens === 1000);
+  ok("usage_window: priced row carries the exact estimate at its own stamped model's rate", Math.abs((glmRow?.estimatedUsd ?? 0) - 0.0072) < 1e-12);
+  const mysteryRow = view.rows.find((r) => r.model === "mystery/unpriced-9b");
+  ok("usage_window: unpriced model -> tokens shown, estimatedUsd OMITTED (never guessed)", mysteryRow !== undefined && !("estimatedUsd" in mysteryRow) && mysteryRow.inputTokens === 100);
+  ok("usage_window: unpricedModels names the unpriced model", view.unpricedModels.includes("mystery/unpriced-9b"));
+  const unstamped = view.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === undefined);
+  ok("usage_window: unstamped row -> tokens only, bucketed as (unstamped), NO assumed-model fallback", unstamped !== undefined && !("estimatedUsd" in unstamped) && view.unpricedModels.includes("(unstamped)"));
+  const discordRow = view.rows.find((r) => r.surfaceKey === "discord/G1/CH1");
+  ok("usage_window: every requested workspace contributes", discordRow?.calls === 1 && Math.abs((discordRow?.estimatedUsd ?? 0) - 0.0072) < 1e-12);
+  ok("usage_window: totalUsd sums ONLY the priced rows (honest partial)", Math.abs(view.totalUsd - 0.0144) < 1e-12);
+  ok("usage_window: rows older than sinceIso are excluded", !view.rows.some((r) => r.inputTokens > 100000));
+  ok("usage_window: an unrequested workspace is excluded", !view.rows.some((r) => r.surfaceKey.startsWith("slack/TOTHER")));
+  ok("usage_window: duplicate workspaceKeys are deduped (no double count)", view.workspaceKeys.length === 2);
+  ok("usage_window: since echoes the normalised ISO actually filtered on", view.since === iso(t0 - 1000));
+
+  const throws = async (fn: () => Promise<unknown>): Promise<boolean> => {
+    try {
+      await fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  ok("usage_window: unparseable sinceIso is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: "not-a-time", workspaceKeys: ["slack/TW1"] })));
+  ok("usage_window: empty workspaceKeys is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: [] })));
+  ok("usage_window: a surface-grain key (3 segments) is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack/TW1/C1"] })));
+  ok("usage_window: a bare platform (1 segment) is refused", await throws(() => usageWindowView({ org: UW_ORG, sinceIso: iso(t0), workspaceKeys: ["slack"] })));
 }
 
 const server = buildControlServer();

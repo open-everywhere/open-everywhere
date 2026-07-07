@@ -2,17 +2,25 @@
 import assert from "node:assert/strict";
 import { AddressInfo } from "node:net";
 import { SignJWT, exportJWK, generateKeyPair, createLocalJWKSet } from "jose";
+import { createHash } from "node:crypto";
 import {
   genericOidcVerifier,
   githubOAuthVerifier,
   staticTokenVerifier,
   resolveRoles,
   makeAdminAuthenticator,
+  parseServiceTokenEntries,
+  makeServiceTokenAuthenticator,
+  adminAuthenticatorFromEnv,
+  SERVICE_TOKEN_ISSUER,
   roleCoversScope,
   scopeDenial,
   type RoleRule,
 } from "../agent/control/auth.js";
 import { createAdminHttpServer } from "../agent/control/http.js";
+import { CONTROL_TOOL_NAMES } from "../agent/control/server.js";
+import { CONTROL_WRITE_TOOL_NAMES } from "../agent/control/writes.js";
+import { readAudit } from "../agent/audit/audit.js";
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 
@@ -167,4 +175,109 @@ ok("expired token is rejected", (await oidc(await token({ sub: "g-1" }, { expSec
   ok("scopeDenial: non-covering domain role -> a denial message naming the scope", typeof denial === "string" && /C_OTHER/.test(denial));
 }
 
-console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC)\n`);
+{
+  const H = "a".repeat(64);
+  ok("service tokens: unset env -> no entries (mode fully off)", parseServiceTokenEntries(undefined).length === 0);
+  ok("service tokens: blank env -> no entries", parseServiceTokenEntries("   ").length === 0);
+  ok("service tokens: an entry with no colon is dropped", parseServiceTokenEntries(`nocolonhere${H}`).length === 0);
+  ok("service tokens: a short/bad hash is dropped", parseServiceTokenEntries("ci:abc123").length === 0);
+  ok("service tokens: a non-hex hash is dropped", parseServiceTokenEntries(`ci:${"z".repeat(64)}`).length === 0);
+  ok("service tokens: an UPPERCASE name is dropped (names are lowercase-canonical)", parseServiceTokenEntries(`CI:${H}`).length === 0);
+  ok("service tokens: an empty name is dropped", parseServiceTokenEntries(`:${H}`).length === 0);
+  const upper = parseServiceTokenEntries(`ci:${"A".repeat(64)}`);
+  ok("service tokens: uppercase HASH hex is tolerated (normalised down)", upper.length === 1 && upper[0].sha256 === H);
+  const mixed = parseServiceTokenEntries(` e2e-harness:${H} , bad-entry , ci_2:${"b".repeat(64)} `);
+  ok("service tokens: valid entries survive a malformed sibling (dropped, never fatal)", mixed.length === 2 && mixed[0].name === "e2e-harness" && mixed[1].name === "ci_2");
+}
+
+const SVC_SECRET = "svc-token-test-value";
+const SVC_SHA = createHash("sha256").update(SVC_SECRET, "utf-8").digest("hex");
+{
+  const auth = makeServiceTokenAuthenticator([{ name: "e2e-harness", sha256: SVC_SHA }]);
+  const id = await auth(reqWith(SVC_SECRET));
+  ok(
+    "service tokens: a matching token -> svc:<name>, readOnly, admin-read roles",
+    id?.issuer === SERVICE_TOKEN_ISSUER && id?.subject === "svc:e2e-harness" && id?.readOnly === true && id?.roles.includes("admin") === true,
+  );
+  ok("service tokens: a wrong token -> null", (await auth(reqWith("not-the-token"))) === null);
+  ok("service tokens: no bearer -> null", (await auth(reqWith())) === null);
+}
+
+{
+  for (const k of ["OE_ADMIN_OIDC_ISSUER", "OE_ADMIN_OIDC_AUDIENCE", "OE_ADMIN_GITHUB", "OE_ADMIN_STATIC_TOKEN", "OE_ADMIN_ROLE_RULES", "OE_CONTROL_READ_TOKENS"]) delete process.env[k];
+  ok("fromEnv: nothing configured -> null (fail-closed, unchanged)", adminAuthenticatorFromEnv() === null);
+
+  process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SVC_SHA}`;
+  const fromEnv = adminAuthenticatorFromEnv();
+  ok("fromEnv: OE_CONTROL_READ_TOKENS alone arms the authenticator", fromEnv !== null);
+  ok("fromEnv: the service token authenticates as its svc principal", (await fromEnv!(reqWith(SVC_SECRET)))?.subject === "svc:e2e-harness");
+  ok("fromEnv: garbage bearer is still refused", (await fromEnv!(reqWith("garbage"))) === null);
+  delete process.env.OE_CONTROL_READ_TOKENS;
+}
+
+{
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  async function listen(server: import("node:http").Server): Promise<string> {
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+  const mcpClient = async (url: string, bearerTok: string) => {
+    const client = new Client({ name: "svc-test", version: "0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { authorization: `Bearer ${bearerTok}` } } }));
+    return client;
+  };
+
+  const svcName = `svc-test-${process.pid}-${Date.now()}`;
+  process.env.OE_CONTROL_READ_TOKENS = `${svcName}:${SVC_SHA}`;
+  const authenticate = adminAuthenticatorFromEnv();
+  const server = createAdminHttpServer({ authenticate: authenticate!, includeWrites: true });
+  const url = await listen(server);
+
+  const wrong = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: "Bearer wrong-token" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+  });
+  ok("service tokens over HTTP: a wrong token is refused (401)", wrong.status === 401);
+
+  const client = await mcpClient(url, SVC_SECRET);
+  const names = (await client.listTools()).tools.map((t) => t.name).sort();
+  ok("service principal: tools/list is EXACTLY the read views (usage_window included)", JSON.stringify(names) === JSON.stringify([...CONTROL_TOOL_NAMES].sort()));
+  ok("service principal: ZERO write tools registered on an includeWrites mount", CONTROL_WRITE_TOOL_NAMES.every((w) => !names.includes(w)));
+
+  const report = await client.callTool({ name: "spend_report", arguments: {} });
+  ok("service principal: a read view executes", /^\d{4}-\d{2}$/.test(JSON.parse((report.content as { type: string; text: string }[])[0].text).period));
+  const uw = await client.callTool({ name: "usage_window", arguments: { sinceIso: new Date(Date.now() - 3_600_000).toISOString(), workspaceKeys: ["slack/T_NOSUCH"] } });
+  ok("service principal: usage_window is callable (org-wide read via the svc roles)", uw.isError !== true);
+
+  let writeRefused = false;
+  try {
+    const res = await client.callTool({ name: "set_spend_limit", arguments: { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyTokens: 1 } });
+    writeRefused = res.isError === true;
+  } catch {
+    writeRefused = true;
+  }
+  ok("service principal: a write tool call is refused (tool not registered — fail-closed by absence)", writeRefused);
+  await client.close();
+
+  const adminServer = createAdminHttpServer({ authenticate: async () => ({ issuer: "t", subject: "s", emailVerified: false, roles: ["admin"] }), includeWrites: true });
+  const adminUrl = await listen(adminServer);
+  const adminClient = await mcpClient(adminUrl, "anything");
+  const adminNames = (await adminClient.listTools()).tools.map((t) => t.name);
+  ok("contrast: an admin identity on the same mount still gets the write tools", CONTROL_WRITE_TOOL_NAMES.every((w) => adminNames.includes(w)));
+  await adminClient.close();
+  adminServer.close();
+
+  const audited = await readAudit({ principalId: `svc:${svcName}`, limit: 100 });
+  ok("service principal: every call is audited as control.service_call with the service name", audited.length >= 2 && audited.every((e) => e.action === "control.service_call"));
+  ok(
+    "service principal: the audit detail records the JSON-RPC method (and tool when called)",
+    audited.some((e) => (e.detail as { tool?: string } | undefined)?.tool === "spend_report") && audited.some((e) => (e.detail as { method?: string } | undefined)?.method === "tools/list"),
+  );
+
+  server.close();
+  delete process.env.OE_CONTROL_READ_TOKENS;
+}
+
+console.log(`\n✓ control auth: ${n} assertions passed (OIDC verify, identity model, verified-email linking + guardrails, RBAC, read-only service tokens)\n`);

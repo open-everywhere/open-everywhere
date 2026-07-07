@@ -46,6 +46,10 @@ function seg(value: string | undefined, fallback: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 100) : fallback;
 }
 
+export function deploymentOrg(): string {
+  return seg(process.env.OE_ORG, "default");
+}
+
 function authOf(ctx: BindableContext): AuthPrincipal | null {
   return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
 }
@@ -271,7 +275,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     trust = "external";
   }
   return {
-    org: seg(process.env.OE_ORG, "default"),
+    org: deploymentOrg(),
     platform,
     workspace,
     surface,

@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildControlServer } from "./server.js";
-import type { AdminIdentity } from "./auth.js";
+import { SERVICE_TOKEN_ISSUER, type AdminIdentity } from "./auth.js";
+import { appendAudit } from "../audit/audit.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 export interface AdminHttpOptions {
   readonly authenticate?: (req: IncomingMessage) => Promise<AdminIdentity | null>;
@@ -31,12 +33,13 @@ export async function handleControlRequest(
 ): Promise<void> {
   let actor = "local-operator";
   let roles: readonly string[] = ["admin"];
+  let identity: AdminIdentity | null = null;
   if (opts.allowUnauthenticated !== true) {
     if (!opts.authenticate) {
       deny(res, 401, "unauthorized: the remote control plane requires OAuth (RFC 9728) — no authenticator configured");
       return;
     }
-    const identity = await opts.authenticate(req).catch(() => null);
+    identity = await opts.authenticate(req).catch(() => null);
     if (!identity) {
       deny(res, 401, "unauthorized: missing or invalid bearer token");
       return;
@@ -59,7 +62,23 @@ export async function handleControlRequest(
     }
   }
 
-  const server = buildControlServer({ includeWrites: opts.includeWrites, actor, roles });
+  if (identity?.issuer === SERVICE_TOKEN_ISSUER) {
+    const rpc = (typeof body === "object" && body !== null ? body : {}) as { method?: unknown; params?: { name?: unknown } };
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: "control",
+      workspace: "control",
+      principalId: identity.subject,
+      action: "control.service_call",
+      detail: {
+        service: identity.subject,
+        ...(typeof rpc.method === "string" ? { method: rpc.method } : {}),
+        ...(typeof rpc.params?.name === "string" ? { tool: rpc.params.name } : {}),
+      },
+    });
+  }
+
+  const server = buildControlServer({ includeWrites: opts.includeWrites, actor, roles, readOnly: identity?.readOnly === true });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on("close", () => {
     void transport.close();

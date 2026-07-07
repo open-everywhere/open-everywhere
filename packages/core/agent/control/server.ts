@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, skillsListView, memoryListView, memoryReadView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { scopeDenial, siloScopeDenial } from "./auth.js";
 import { getConfig } from "../access/config.js";
+import { deploymentOrg } from "../identity/binding.js";
 
 const SESSION_MODE = z.enum(["channel", "dm", "mpim"]);
 
@@ -28,6 +29,7 @@ export const CONTROL_TOOL_NAMES = [
   "access_preview",
   "overrides_list",
   "usage_summary",
+  "usage_window",
   "skills_list",
   "memory_list",
   "memory_read",
@@ -37,6 +39,7 @@ export interface ControlServerOptions {
   readonly includeWrites?: boolean;
   readonly actor?: string;
   readonly roles?: readonly string[];
+  readonly readOnly?: boolean;
 }
 
 export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
@@ -136,6 +139,27 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
   );
 
   server.registerTool(
+    "usage_window",
+    {
+      title: "Usage window (priced, per surface × model)",
+      description:
+        'Everything the deployment spent since a timestamp across a set of workspaces, grouped by (surfaceKey, model): call count, token sums, an EXACT per-row $ estimate at each row\'s own stamped model rate (spend/pricing.ts), and a total. An unpriced or unstamped row shows tokens with estimatedUsd omitted and its model under unpricedModels — never a guessed figure (deliberately NO assumed-model fallback, unlike usage_summary). Built for the e2e/CI harness pricing a live run via a read-only service token. workspaceKeys entries are exactly "platform/workspace"; sinceIso is any parseable ISO-8601 timestamp; org defaults to the deployment\'s (OE_ORG / "default"). Org-wide — requires the org-wide "admin" role (service tokens carry it). Read-only.',
+      inputSchema: {
+        sinceIso: z.string().min(1),
+        workspaceKeys: z.array(z.string().min(1)).min(1),
+        org: z.string().min(1).optional(),
+      },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const org = args.org ?? deploymentOrg();
+        const denial = scopeDenial(roles, { org });
+        if (denial) throw new Error(denial);
+        return usageWindowView({ sinceIso: args.sinceIso, workspaceKeys: args.workspaceKeys, org });
+      })(),
+  );
+
+  server.registerTool(
     "skills_list",
     {
       title: "List a domain's runtime-authored skills",
@@ -178,7 +202,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
       })(),
   );
 
-  if (opts.includeWrites) registerControlWriteTools(server, opts.actor ?? "unknown", roles);
+  if (opts.includeWrites && opts.readOnly !== true) registerControlWriteTools(server, opts.actor ?? "unknown", roles);
 
   return server;
 }
