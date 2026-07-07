@@ -14,6 +14,8 @@ const silos: MemorySilo[] = [
 
   defineMemorySilo({ name: "e2e-brain", provider: "postgres" }),
 
+  defineMemorySilo({ name: "e2e-b-brain", provider: "postgres" }),
+
 ];
 
 const rawDomains: Domain[] = [
@@ -26,6 +28,13 @@ const rawDomains: Domain[] = [
     channels: ["slack/T0EXAMPLE/C0EXCHAN003", "discord/1300000000000000100/1300000000000000101"],
     memory: "e2e-brain",
     nameDropWake: true,
+    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+  }),
+
+  defineDomain({
+    name: "e2e-b",
+    channels: ["slack/T0EXAMPLE/C0EXCHAN005"],
+    memory: "e2e-b-brain",
     models: { primary: { id: "deepseek/deepseek-v4-flash" } },
   }),
 
