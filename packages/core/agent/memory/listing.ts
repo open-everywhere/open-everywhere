@@ -30,7 +30,7 @@ function accessClause(silo: MemorySilo, readOnly: boolean): string {
   return "read-only — edits are blocked; use `remember` for this channel's own memory";
 }
 
-export function renderMemoryIndex(reads: readonly ResolvedMemory[]): string {
+export function renderMemoryIndex(reads: readonly ResolvedMemory[], failedSilos: readonly string[] = []): string {
   const lines: string[] = [
     "# Memory index",
     "",
@@ -39,18 +39,28 @@ export function renderMemoryIndex(reads: readonly ResolvedMemory[]): string {
     "",
   ];
 
-  if (reads.length === 0) {
+  if (reads.length === 0 && failedSilos.length === 0) {
     lines.push("(No memory is configured for this channel.)", "");
     return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
   }
 
-  lines.push("## Silos — read with file tools");
-  for (const r of reads) {
-    const dir = tierSandboxDir(r.tier);
-    const desc = r.silo.description ? `${r.silo.description} — ` : "";
-    lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly)}. Start with ${code(dir + "/MEMORY.md")}.`);
+  if (reads.length > 0) {
+    lines.push("## Silos — read with file tools");
+    for (const r of reads) {
+      const dir = tierSandboxDir(r.tier);
+      const desc = r.silo.description ? `${r.silo.description} — ` : "";
+      lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly)}. Start with ${code(dir + "/MEMORY.md")}.`);
+    }
+    lines.push("");
   }
-  lines.push("");
+
+  if (failedSilos.length > 0) {
+    lines.push(
+      "## ⚠ Unavailable this session",
+      ...failedSilos.map((name) => `- **${name}** failed to load — its knowledge is MISSING from disk right now, not empty. Say so if asked about anything it might hold; do not answer as if memory were complete.`),
+      "",
+    );
+  }
 
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }

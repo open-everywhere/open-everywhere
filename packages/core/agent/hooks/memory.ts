@@ -88,36 +88,45 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
 
   const baselines = writeBaseline.get();
   let persisted = 0;
+  const failed: string[] = [];
   for (const rm of plan.writes) {
-    const provider = providerById(rm.silo.provider);
-    let files = await provider.readTier(p, rm.tier, rm.silo);
-    let conflicts: string[] = [];
-    if (sandbox) {
-      const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
-      if (Object.keys(fromSandbox).length > 0) {
-        const baseline = baselines[tierId(rm.tier)] ?? {};
-        ({ files, conflicts } = mergePreservingConflicts(files, fromSandbox, baseline, sessionId));
+    try {
+      const provider = providerById(rm.silo.provider);
+      let files = await provider.readTier(p, rm.tier, rm.silo);
+      let conflicts: string[] = [];
+      if (sandbox) {
+        const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
+        if (Object.keys(fromSandbox).length > 0) {
+          const baseline = baselines[tierId(rm.tier)] ?? {};
+          ({ files, conflicts } = mergePreservingConflicts(files, fromSandbox, baseline, sessionId));
+        }
       }
-    }
-    const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
-    persisted += Object.keys(files).length;
-    log(
-      `persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)` +
-        `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}`,
-    );
-    if (sha) {
-      await appendAudit({
-        org: p.org,
-        platform: p.platform,
-        workspace: p.workspace,
-        surface: p.surface,
-        principalId,
-        action: "memory.write",
-        detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(conflicts.length ? { conflicts } : {}) },
-      });
+      const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
+      persisted += Object.keys(files).length;
+      log(
+        `persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)` +
+          `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}`,
+      );
+      if (sha) {
+        await appendAudit({
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          principalId,
+          action: "memory.write",
+          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(conflicts.length ? { conflicts } : {}) },
+        });
+      }
+    } catch (err) {
+      failed.push(rm.silo.name);
+      log(`PERSIST FAILED for ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider} (other silos unaffected): ${String(err)}`);
     }
   }
-  log(`session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}`);
+  log(
+    `session ${sessionId} ${outcome}: ${persisted} file(s) for ${p.key} (${plan.reason}) -> ${storeRoot()}` +
+      `${failed.length ? ` — ${failed.length} silo(s) FAILED to persist: ${failed.join(", ")}` : ""}`,
+  );
 }
 
 function withReadOnlyBanner(files: MemoryFiles, silo: MemorySilo): MemoryFiles {
@@ -164,15 +173,26 @@ export default defineHook({
         }
         const sandbox = await ctx.getSandbox();
         let synced = 0;
+        const okReads: typeof plan.reads[number][] = [];
+        const failedReads: string[] = [];
         for (const rm of plan.reads) {
-          const files = await loadSource(p, rm);
-          await syncTierIntoSandbox(sandbox, rm.tier, files);
-          synced += Object.keys(files).length;
-          if (rm.readOnly) await lock(sandbox, tierSandboxDir(rm.tier));
+          try {
+            const files = await loadSource(p, rm);
+            await syncTierIntoSandbox(sandbox, rm.tier, files);
+            synced += Object.keys(files).length;
+            if (rm.readOnly) await lock(sandbox, tierSandboxDir(rm.tier));
+            okReads.push(rm);
+          } catch (err) {
+            failedReads.push(rm.silo.name);
+            log(`SYNC FAILED for ${tierId(rm.tier)} ← ${rm.silo.name}/${rm.silo.provider} (other silos unaffected): ${String(err)}`);
+          }
         }
-        await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(plan.reads) });
+        await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedReads) });
         await lock(sandbox, "memory/MEMORY.md");
-        log(`synced ${synced} file(s) across [${plan.reads.map((r) => tierId(r.tier)).join(", ")}] for ${p.key} (${plan.reason})`);
+        log(
+          `synced ${synced} file(s) across [${okReads.map((r) => tierId(r.tier)).join(", ")}] for ${p.key} (${plan.reason})` +
+            `${failedReads.length ? ` — ${failedReads.length} silo(s) FAILED to sync: ${failedReads.join(", ")}` : ""}`,
+        );
       } catch (err) {
         log(`session.started sync skipped: ${String(err)}`);
       }

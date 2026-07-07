@@ -188,6 +188,14 @@ const nkb = resolveMemoryPlan(binding("channel", "internal"), partition("C_NKB")
 const nkbIndex = renderMemoryIndex(nkb.reads);
 ok(nkbIndex.includes("source: Notion") && nkbIndex.includes("read-only cache") && nkbIndex.includes("the `notion` skill"), "index: read-only Notion silo → on-disk + update route via its skill");
 
+const partialIndex = renderMemoryIndex(multi.reads, ["notion-kb"]);
+ok(partialIndex.includes("Unavailable this session") && partialIndex.includes("**notion-kb** failed to load"), "index: failed silo → named under an unavailable section");
+ok(partialIndex.includes("MISSING from disk right now, not empty"), "index: failed silo → the missing-vs-empty distinction is spelled out");
+ok(partialIndex.includes("memory/txn/"), "index: surviving silos still listed alongside the failure note");
+const allFailedIndex = renderMemoryIndex([], ["org-brain"]);
+ok(allFailedIndex.includes("Unavailable this session") && !allFailedIndex.includes("No memory is configured"), "index: every silo failed → unavailable note, NOT the no-memory-configured lie");
+ok(!renderMemoryIndex(multi.reads).includes("Unavailable"), "index: no failures → no unavailable section (default unchanged)");
+
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");
 throws(() => assertSilosValid([{ name: "empty" } as MemorySilo]), "validation: a silo with no provider throws");
