@@ -52,6 +52,8 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "notion-connectors", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
 
+  defineBinding({ bundle: "notion-connectors", scope: { level: "workspace", workspace: "1300000000000000100" } }),
+
 ];
 
 assertBundlesValid(bundles);
