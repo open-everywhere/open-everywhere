@@ -6,6 +6,7 @@ import {
   type Binding,
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
+import { loadGrantsOverlay } from "./grants.js";
 
 const bundles: Bundle[] = [
   defineBundle({
@@ -56,13 +57,25 @@ const bindings: Binding[] = [
 
 ];
 
-assertBundlesValid(bundles);
-assertBindingsValid(bindings, bundles);
+const overlay = loadGrantsOverlay();
+const mergedBundles: readonly Bundle[] = [...bundles, ...overlay.bundles];
+const mergedBindings: readonly Binding[] = [...bindings, ...overlay.bindings];
+
+assertBundlesValid(mergedBundles);
+assertBindingsValid(mergedBindings, mergedBundles);
 
 export function loadBundles(): readonly Bundle[] {
-  return bundles;
+  return mergedBundles;
 }
 
 export function loadBindings(): readonly Binding[] {
+  return mergedBindings;
+}
+
+export function loadBaseBundles(): readonly Bundle[] {
+  return bundles;
+}
+
+export function loadBaseBindings(): readonly Binding[] {
   return bindings;
 }
