@@ -22,6 +22,65 @@ const TEST_DRIVER_IDS = new Set(
 const isDriverAllowlisted = (message) =>
   Boolean(message.guildId) && TEST_DRIVER_IDS.has(`${message.guildId}:${message.author.id}`);
 
+const LOG_SHIP_URL = process.env.OE_LOG_SHIP_URL;
+const LOG_SHIP_TOKEN = process.env.OE_LOG_SHIP_TOKEN;
+const LOG_SHIP_TOKEN_HEADER = process.env.OE_LOG_SHIP_TOKEN_HEADER || "authorization";
+const LOG_SHIP_BATCH_MAX = Number(process.env.OE_LOG_SHIP_BATCH_MAX) > 0 ? Number(process.env.OE_LOG_SHIP_BATCH_MAX) : 20;
+const LOG_SHIP_FLUSH_MS = Number(process.env.OE_LOG_SHIP_FLUSH_MS) > 0 ? Number(process.env.OE_LOG_SHIP_FLUSH_MS) : 1000;
+let logQueue = [];
+let logFlushTimer;
+async function flushLogs() {
+  if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = undefined; }
+  if (!LOG_SHIP_URL || logQueue.length === 0) return;
+  const batch = logQueue;
+  logQueue = [];
+  try {
+    const headers = { "content-type": "application/json" };
+    if (LOG_SHIP_TOKEN) headers[LOG_SHIP_TOKEN_HEADER] = LOG_SHIP_TOKEN;
+    await fetch(LOG_SHIP_URL, { method: "POST", headers, body: JSON.stringify(batch) });
+  } catch {
+  }
+}
+function ship(level, message, fields = {}) {
+  if (!LOG_SHIP_URL) return;
+  const err = fields.err;
+  delete fields.err;
+  const record = {
+    ...fields,
+    ts: new Date().toISOString(),
+    level,
+    service: process.env.OE_LOG_SERVICE || "oe-discord-relay",
+    env: process.env.RAILWAY_ENVIRONMENT_NAME || "railway",
+    component: "discord-relay",
+    message,
+  };
+  if (err) record.error = { name: err.name ?? "Error", message: err.message ?? String(err), stack: err.stack };
+  logQueue.push(record);
+  if (logQueue.length > 500) logQueue.splice(0, logQueue.length - 500);
+  if (logQueue.length >= LOG_SHIP_BATCH_MAX) void flushLogs();
+  else if (!logFlushTimer) { logFlushTimer = setTimeout(() => void flushLogs(), LOG_SHIP_FLUSH_MS); logFlushTimer.unref?.(); }
+}
+for (const [name, level] of [["log", "info"], ["warn", "warn"], ["error", "error"]]) {
+  const original = console[name].bind(console);
+  console[name] = (...args) => {
+    try {
+      const errArg = args.find((a) => a instanceof Error);
+      const message = args
+        .map((a) => (typeof a === "string" ? a : a instanceof Error ? a.message : (() => { try { return JSON.stringify(a); } catch { return String(a); } })()))
+        .join(" ")
+        .replace(/^\[oe-discord-relay\]\s*/, "");
+      ship(level, message, errArg ? { err: errArg } : {});
+    } catch {
+    }
+    original(...args);
+  };
+}
+process.on("uncaughtExceptionMonitor", (err, origin) => {
+  ship("error", `uncaught (${origin})`, { err });
+  void flushLogs();
+});
+process.on("beforeExit", () => void flushLogs());
+
 if (!TOKEN) {
   console.error("[oe-discord-relay] DISCORD_BOT_TOKEN is required — exiting.");
   process.exit(1);
@@ -128,11 +187,11 @@ client.on(Events.ShardResume, (id) => console.log(`[oe-discord-relay] shard ${id
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     console.log(`[oe-discord-relay] ${sig} — closing gateway`);
-    client.destroy().finally(() => process.exit(0));
+    client.destroy().finally(() => flushLogs().finally(() => process.exit(0)));
   });
 }
 
 client.login(TOKEN).catch((err) => {
   console.error("[oe-discord-relay] login failed:", err?.message ?? err);
-  process.exit(1);
+  flushLogs().finally(() => process.exit(1));
 });
