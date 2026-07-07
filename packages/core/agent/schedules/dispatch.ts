@@ -235,7 +235,7 @@ export async function dispatchTick(
 }
 
 export default defineSchedule({
-  cron: "* * * * *",
+  cron: "*/10 * * * *",
   async run(args: ScheduleHandlerArgs) {
     await dispatchTick(args);
   },

@@ -16,7 +16,7 @@ const trigger = z.discriminatedUnion("kind", [
       .string()
       .optional()
       .describe('Standard 5-field UTC cron "min hour dom mon dow", e.g. "0 9 * * 1-5" = 9am weekdays. Exactly ONE of cron / everyMinutes.'),
-    everyMinutes: z.number().int().min(1).optional().describe("Run every N minutes from now. Exactly ONE of cron / everyMinutes."),
+    everyMinutes: z.number().int().min(1).optional().describe("Run every N minutes from now. Exactly ONE of cron / everyMinutes. Effective resolution is the dispatcher tick (~10 min): finer cadences fire on the first tick at/after they're due."),
     postPolicy: z
       .enum(["every-run", "only-on-change"])
       .describe(
