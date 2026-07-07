@@ -5,6 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { principalIdOf, resolveAccessFor } from "../access/request.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
+import { emitTelemetry } from "../observability/telemetry.js";
 import {
   MAX_DOMAIN_SKILL_BYTES,
   domainSkillCap,
@@ -68,6 +69,7 @@ export default defineTool({
     const updatedBy = principalIdOf(ctx);
     await putDomainSkill(p.org, domain, name, content, updatedBy, new Date().toISOString());
     await auditToolAction(ctx, already ? "skill.update" : "skill.create", { domain, name });
+    emitTelemetry("oe.feature.used", { "oe.feature": "skill_created", "oe.outcome": "ok" });
 
     const action = already ? "updated" : "created";
     return {

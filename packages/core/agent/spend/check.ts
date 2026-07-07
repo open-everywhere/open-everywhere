@@ -5,6 +5,7 @@ import { usageSummary } from "./usage-events.js";
 import { resolveAssumedModel, rowCostUsd } from "./reporting.js";
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
+import { emitTelemetry } from "../observability/telemetry.js";
 
 export function monthStartISO(nowISO: string): string {
   return `${periodOf(nowISO)}-01T00:00:00.000Z`;
@@ -67,5 +68,7 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
     ? await Promise.all([surfaceTokens(p.org, scopeKey, period), workspaceTokens(p.org, p.workspaceKey, period)])
     : [0, 0];
   const usd = usdCapped ? await scopeUsdSpend(p.org, p.workspaceKey, scopeKey, nowISO) : { surfaceUsd: 0, workspaceUsd: 0 };
-  return checkCap({ mode, surfaceTokens: st, workspaceTokens: wt, surfaceUsd: usd.surfaceUsd, workspaceUsd: usd.workspaceUsd, caps });
+  const verdict = checkCap({ mode, surfaceTokens: st, workspaceTokens: wt, surfaceUsd: usd.surfaceUsd, workspaceUsd: usd.workspaceUsd, caps });
+  if (verdict.over) emitTelemetry("oe.feature.used", { "oe.feature": "spend_cap_hit", "oe.outcome": "ok" });
+  return verdict;
 }

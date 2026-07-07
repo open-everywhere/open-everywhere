@@ -4,6 +4,7 @@ import { confirmChannelInternal, NO_REPLY_SENTINEL } from "../channels/slack-eve
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { wrapUntrusted } from "../access/untrusted.js";
+import { emitTelemetry } from "../observability/telemetry.js";
 import type { WebhookHook } from "./config.js";
 
 export function webhookOrg(): string {
@@ -47,7 +48,10 @@ export async function fireWebhook(
 
   try {
     const verdict = await scopeOverBudget(partition, mode, now.toISOString());
-    if (verdict.over) return { fired: false, reason: verdict.reason ?? "over budget" };
+    if (verdict.over) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "failed" });
+      return { fired: false, reason: verdict.reason ?? "over budget" };
+    }
   } catch {
   }
 
@@ -67,5 +71,6 @@ export async function fireWebhook(
   };
 
   await args.receive(slack, { message: renderWebhookMessage(hook, rawBody), target: { channelId }, auth });
+  emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });
   return { fired: true };
 }

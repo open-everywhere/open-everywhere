@@ -181,4 +181,7 @@ export interface OperationalStore {
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
+
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
 }

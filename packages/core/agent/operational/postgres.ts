@@ -115,6 +115,10 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id)`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts)`,
+  `CREATE TABLE IF NOT EXISTS instance_meta (
+     key   text PRIMARY KEY,
+     value text NOT NULL
+   )`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS expires_at bigint`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS set_by text`,
@@ -674,6 +678,20 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [status, decidedBy, decidedAt, org, id],
       );
       return rows.length > 0;
+    },
+
+    async getMeta(key) {
+      const { rows } = await client.query("SELECT value FROM instance_meta WHERE key = $1", [key]);
+      const r = (rows as { value: string }[])[0];
+      return r ? r.value : null;
+    },
+
+    async setMeta(key, value) {
+      await client.query(
+        `INSERT INTO instance_meta (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+        [key, value],
+      );
     },
   };
 }

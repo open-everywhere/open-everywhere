@@ -6,6 +6,7 @@ import { surfaceTokens, workspaceTokens } from "../spend/store.js";
 import { scopeUsdSpend } from "../spend/check.js";
 import { getProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
+import { telemetryStatusLine } from "../observability/telemetry.js";
 import { domainForChannel } from "../memory/domain.js";
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
@@ -94,12 +95,13 @@ export function renderHelp(): string {
   ].join("\n");
 }
 
-export function renderStatus(info: AppInfo, memoryProviderId: string): string {
+export function renderStatus(info: AppInfo, memoryProviderId: string, telemetryStatus = "unknown"): string {
   return [
     `*Open Everywhere* v${info.version}`,
     `• primary model: \`${info.primaryModel}\``,
     `• utility model: \`${info.utilityModel}\``,
     `• memory provider: \`${memoryProviderId}\``,
+    `• telemetry: \`${telemetryStatus}\``,
   ].join("\n");
 }
 
@@ -271,7 +273,12 @@ export async function runOeCommand(cmd: OeCommand, binding: SurfaceBinding): Pro
         memoryProviderId = getProvider().id;
       } catch {
       }
-      return renderStatus(getAppInfo(), memoryProviderId);
+      let telemetryStatus = "unknown";
+      try {
+        telemetryStatus = telemetryStatusLine();
+      } catch {
+      }
+      return renderStatus(getAppInfo(), memoryProviderId, telemetryStatus);
     }
     case "budget-status": {
       const facts = await computeBudgetStatusFacts(binding);

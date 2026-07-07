@@ -133,6 +133,10 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id);
     CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts);
+    CREATE TABLE IF NOT EXISTS instance_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
   for (const ddl of [
     "ALTER TABLE spend_limit ADD COLUMN expires_at INTEGER",
@@ -649,5 +653,19 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("UPDATE pending_actions SET status = ?, decided_by = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
       .run(status, decidedBy, decidedAt, org, id);
     return info.changes > 0;
+  },
+
+  async getMeta(key) {
+    const row = getDb().prepare("SELECT value FROM instance_meta WHERE key = ?").get(key) as { value: string } | undefined;
+    return row ? row.value : null;
+  },
+
+  async setMeta(key, value) {
+    getDb()
+      .prepare(
+        `INSERT INTO instance_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(key, value);
   },
 };

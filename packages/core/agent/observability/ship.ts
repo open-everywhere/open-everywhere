@@ -1,4 +1,5 @@
 import { surfaceHint } from "../model/surface-hint.js";
+import { emitTelemetry } from "./telemetry.js";
 
 export type LogLevel = "info" | "warn" | "error";
 export type LogFields = Record<string, unknown>;
@@ -224,11 +225,15 @@ export function installConsoleCapture(): void {
 }
 
 export function installProcessCapture(): void {
-  if (processCaptured || !logShipEnabled()) return;
+  if (processCaptured) return;
   processCaptured = true;
   process.on("uncaughtExceptionMonitor", (err, origin) => {
     enqueue(buildRecord("error", "process", `uncaught (${origin})`, { err }));
     void flushLogShip();
+    emitTelemetry("oe.error.uncaught", {
+      "oe.component": "process",
+      "oe.error.name": err instanceof Error ? err.name : "NonError",
+    });
   });
   process.on("beforeExit", () => void flushLogShip());
 }

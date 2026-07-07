@@ -4,6 +4,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { slackForm } from "../channels/slack-events.js";
+import { emitTelemetry } from "../observability/telemetry.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
@@ -101,6 +102,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
 
   if (!messageTs) {
     await store.decidePendingAction(input.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "failed" });
     throw new Error(`requestApproval: failed to post the approval card for "${input.kind}" (${input.scopeKey}) — marked expired, nothing is awaiting a click.`);
   }
 
@@ -112,6 +114,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
     action: "approval.requested",
     detail: { id: row.id, kind: input.kind, scopeKey: input.scopeKey, ...(row.domain ? { domain: row.domain } : {}) },
   });
+  emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "ok" });
 
   return { id: row.id, expiresAt };
 }
@@ -203,6 +206,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     const cas = await store.decidePendingAction(input.org, row.id, "expired", "system", nowIso);
     if (!cas) return { outcome: "expired-race" };
     const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "expired" });
     return { outcome: "expired", row: expiredRow, summaryLines: summaryLinesFor(expiredRow) };
   }
 
@@ -225,6 +229,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
 
   if (status === "rejected") {
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind } });
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
   }
 
@@ -232,10 +237,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     const args = JSON.parse(row.argsJson) as unknown;
     const outcome = await kindDef.execute(args, input.clickerId);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, outcome } });
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.failed", detail: { id: row.id, kind: row.kind, error: message } });
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}` };
   }
 }

@@ -15,6 +15,7 @@ import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
+import { emitTelemetry } from "../observability/telemetry.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:routines] ${msg}`);
@@ -227,8 +228,10 @@ export async function dispatchTick(
         }).catch((err: unknown) => log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`)),
       );
       fired++;
+      emitTelemetry("oe.feature.used", { "oe.feature": "routine_fired", "oe.outcome": "ok" });
     } catch (err) {
       log(`failed to dispatch ${r.id} on ${r.surfaceKey}: ${String(err)}`);
+      emitTelemetry("oe.feature.used", { "oe.feature": "routine_fired", "oe.outcome": "failed" });
     }
   }
   log(`tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${deferred} deferred (cap ${cap})`);

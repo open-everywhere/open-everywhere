@@ -126,6 +126,10 @@ function discordBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding
   ok(status.includes("zai/glm-5.2"), "renderStatus includes the primary model");
   ok(status.includes("deepseek/deepseek-v4-flash"), "renderStatus includes the utility model");
   ok(status.includes("sqlite"), "renderStatus includes the memory provider");
+  ok(status.includes("telemetry: `unknown`"), "renderStatus defaults the telemetry line when the caller omits it");
+
+  const statusWithTelemetry = renderStatus({ version: "1.2.3", primaryModel: "zai/glm-5.2", utilityModel: "deepseek/deepseek-v4-flash" }, "sqlite", "on (default collector)");
+  ok(statusWithTelemetry.includes("telemetry: `on (default collector)`"), "renderStatus includes an explicit telemetry status");
 
   const uncapped = renderBudgetStatus({
     surfaceKey: "discord/G1/C1",
