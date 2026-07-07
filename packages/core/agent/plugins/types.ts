@@ -1,3 +1,5 @@
+import type { SkillPackageDefinition } from "eve/skills";
+
 export interface PluginManifest {
   readonly name: string;
   readonly version?: string;
@@ -74,6 +76,9 @@ export interface ExtractionReport {
 
 export interface ExtractionPlan {
   readonly files: OutputFile[];
+  readonly skillContent: Record<string, SkillPackageDefinition>;
+  readonly pluginName: string;
+  readonly registryEntry: PluginManifestEntry;
   readonly report: ExtractionReport;
 }
 

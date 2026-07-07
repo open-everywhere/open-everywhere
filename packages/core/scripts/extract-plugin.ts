@@ -1,7 +1,22 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, resolve } from "node:path";
 import { parsePluginDir } from "../agent/plugins/parse.js";
-import { extractPlugin } from "../agent/plugins/extract.js";
+import { extractPlugin, renderGeneratedIndex } from "../agent/plugins/extract.js";
+
+const GENERATED_DIR = "agent/plugins/generated";
+const GENERATED_INDEX = "index.ts";
+
+function rewriteGeneratedIndex(root: string): void {
+  const dir = join(root, GENERATED_DIR);
+  mkdirSync(dir, { recursive: true });
+  const slugs = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => extname(f) === ".ts" && f !== GENERATED_INDEX)
+        .map((f) => f.slice(0, -3))
+        .sort()
+    : [];
+  writeFileSync(join(dir, GENERATED_INDEX), renderGeneratedIndex(slugs), "utf-8");
+}
 
 const args = process.argv.slice(2);
 const write = args.includes("--write");
@@ -34,7 +49,8 @@ if (write) {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, f.content, "utf-8");
   }
-  console.log(`\n✓ wrote ${files.length} files under ${root}\n`);
+  rewriteGeneratedIndex(root);
+  console.log(`\n✓ wrote ${files.length} files under ${root} (+ regenerated ${GENERATED_DIR}/${GENERATED_INDEX})\n`);
 } else {
   console.log(`\n(dry run — pass --write to emit ${files.length} files)\n`);
 }

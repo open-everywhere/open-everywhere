@@ -1,4 +1,5 @@
 import type { SkillPackageDefinition } from "eve/skills";
+import { GENERATED_SKILL_CONTENT } from "./generated/index.js";
 
 const NOTION_SCRIPT = `#!/usr/bin/env node
 // GENERATED skill script — "notion-rest" (agent/plugins/skill-content.ts). Self-contained:
@@ -214,6 +215,8 @@ never fabricate a token or ask the human to paste one into the chat.
 `;
 
 export const SKILL_CONTENT: Record<string, SkillPackageDefinition> = {
+  ...GENERATED_SKILL_CONTENT,
+
   "notion-rest": {
     description:
       "Search, read, and append to Notion over its REST API directly (no MCP tool set) — " +
