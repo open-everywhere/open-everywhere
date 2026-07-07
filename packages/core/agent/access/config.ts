@@ -8,6 +8,16 @@ import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
 
+export interface AccessRequestsConfig {
+  readonly adminChannel?: string;
+  readonly configRepo?: string;
+  readonly configBase?: string;
+  readonly grantsPath?: string;
+  readonly dryRun?: boolean;
+  baseBundles(): readonly Bundle[];
+  baseBindings(): readonly Binding[];
+}
+
 export interface AppConfig {
   loadBundles(): readonly Bundle[];
   loadBindings(): readonly Binding[];
@@ -20,6 +30,7 @@ export interface AppConfig {
   domainsForSurface(arg: { workspaceKey: string; surface: string }): readonly string[];
   loadWebhooks?(): readonly WebhookHook[];
   loadSpendBudgets?(): SpendBudgets;
+  loadAccessRequests?(): AccessRequestsConfig | null;
 }
 
 let registered: AppConfig | null = null;

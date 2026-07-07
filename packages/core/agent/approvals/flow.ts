@@ -10,6 +10,7 @@ import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.
 import { markCardPostedThisTurn } from "./card-signal.js";
 import type { PendingActionRow } from "./types.js";
 import "./memory-forget.js";
+import "./access-request.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 

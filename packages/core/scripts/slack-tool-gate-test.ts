@@ -3,6 +3,7 @@ import readSlackThread from "../agent/tools/read_slack_thread.js";
 import clearConnectorOverride from "../agent/tools/clear_connector_override.js";
 import clearSpendLimit from "../agent/tools/clear_spend_limit.js";
 import forget from "../agent/tools/forget.js";
+import requestAccess from "../agent/tools/request_access.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 delete process.env.OE_PLATFORM;
@@ -70,5 +71,6 @@ await assertGate("read_slack_thread", readSlackThread, "Read all replies in a Sl
 await assertGate("clear_connector_override", clearConnectorOverride, "PROPOSE reverting an earlier break-glass connector revoke");
 await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", CARD_PATH_KINDS, NON_CARD_KINDS);
 await assertGate("forget", forget, "PROPOSE forgetting one remembered fact");
+await assertGate("request_access", requestAccess, "PROPOSE widening THIS channel's access");
 
 console.log(`✓ ${passed} slack-tool-gate assertions passed`);
