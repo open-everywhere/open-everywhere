@@ -97,6 +97,35 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
+  const { registerPricingSource, _resetPricingSourceForTest } = await import("../agent/spend/pricing.js");
+  let catalog: Record<string, { inPerMtok: number; outPerMtok: number }> = {};
+  registerPricingSource({
+    priceFor: (id) => catalog[id],
+    ensureReady: async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      catalog = { "test/catalog-only": { inPerMtok: 2, outPerMtok: 4 } };
+    },
+  });
+  await appendUsageEvent({
+    org: "acme",
+    surfaceKey: "slack/T1/C2",
+    sessionId: "s3",
+    principalId: "u1",
+    kind: "channel",
+    model: "test/catalog-only",
+    inputTokens: 1_000_000,
+    outputTokens: 500_000,
+  });
+  const res = await get(goodQuery, SECRET);
+  ok(res.status === 200, "cold-catalog read still 200");
+  const body = (await res.json()) as { rows: { model?: string; estimatedUsd?: number }[]; unpricedModels: string[] };
+  const row = body.rows.find((r) => r.model === "test/catalog-only");
+  ok(Math.abs((row?.estimatedUsd ?? 0) - 4) < 1e-9, "a catalog-only model prices on the FIRST read of a cold instance (the view awaits ensureReady): 1M in @$2 + 0.5M out @$4 = $4");
+  ok(!body.unpricedModels.includes("test/catalog-only"), "…and is not listed under unpricedModels");
+  _resetPricingSourceForTest();
+}
+
+{
   const entries = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
   ok(entries.length > 0, "authenticated read is audited as control.service_call under svc:<name>");
   const detail = entries[0].detail as { view?: string; workspaces?: string };

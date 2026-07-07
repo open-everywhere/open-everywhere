@@ -4,6 +4,7 @@ import {
   pricedModelIds,
   soleConfiguredModel,
   registerPricingSource,
+  ensurePricingFor,
   _resetPricingCacheForTest,
   _resetPricingSourceForTest,
   type ModelPricing,
@@ -102,4 +103,58 @@ ok(modelPricing("minimax/minimax-m2.7") === undefined, "registered source: a thr
 ok(modelPricing("zai/glm-5.2")?.inPerMtok === 1.4, "registered source: a throwing source doesn't disturb built-in lookups for OTHER ids");
 
 _resetPricingSourceForTest();
+
+{
+  await ensurePricingFor(["acme/live-only"]);
+  ok(true, "ensurePricingFor: no source registered resolves without error");
+
+  registerPricingSource({ priceFor: () => undefined });
+  await ensurePricingFor(["acme/live-only"]);
+  ok(true, "ensurePricingFor: a source without ensureReady resolves without error");
+
+  let ensureCalls = 0;
+  registerPricingSource({
+    priceFor: () => undefined,
+    ensureReady: async () => {
+      ensureCalls++;
+    },
+  });
+  await ensurePricingFor(["zai/glm-5.2", undefined]);
+  ok(ensureCalls === 0, "ensurePricingFor: skipped when every id is priced by env/built-in (undefined = unstamped, ignored)");
+
+  let readyResolved = false;
+  registerPricingSource({
+    priceFor: () => undefined,
+    ensureReady: async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      readyResolved = true;
+    },
+  });
+  await ensurePricingFor(["acme/live-only"]);
+  ok(readyResolved, "ensurePricingFor: awaits ensureReady for an id only the source could price");
+
+  registerPricingSource({
+    priceFor: () => undefined,
+    ensureReady: () => new Promise<void>(() => {}),
+  });
+  const t0 = Date.now();
+  await ensurePricingFor(["acme/live-only"], 30);
+  ok(Date.now() - t0 < 5_000, "ensurePricingFor: a hung ensureReady is abandoned at the timeout, never blocks the read");
+
+  registerPricingSource({
+    priceFor: () => undefined,
+    ensureReady: async () => {
+      throw new Error("catalog exploded");
+    },
+  });
+  let ensureThrew = false;
+  try {
+    await ensurePricingFor(["acme/live-only"]);
+  } catch {
+    ensureThrew = true;
+  }
+  ok(!ensureThrew, "ensurePricingFor: a rejecting ensureReady never propagates (fail-soft, same contract as priceFor)");
+  _resetPricingSourceForTest();
+}
+
 console.log(`✓ pricing: ${passed} assertions passed`);

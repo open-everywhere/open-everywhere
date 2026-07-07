@@ -12,7 +12,7 @@ import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/
 import { usageSummary } from "../spend/usage-events.js";
 import type { UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
-import { modelPricing, estimateCostUsd } from "../spend/pricing.js";
+import { modelPricing, estimateCostUsd, ensurePricingFor } from "../spend/pricing.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { listDomainSkills } from "../skills/domain-skills.js";
 import type { DomainSkillRow } from "../operational/store.js";
@@ -260,6 +260,7 @@ export async function usageSummaryView(q: UsageSummaryQuery): Promise<UsageSumma
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
   const all = await usageSummary(q.org, { sinceTs: since, ...(q.surfaceKey && !q.domain ? { surfaceKeyPrefix: q.surfaceKey } : {}) });
   const rows = q.domain ? filterToDomain(all, q.domain, getConfig().loadDomains()) : all;
+  await ensurePricingFor([...rows.map((r) => r.model), q.assumedModelId]);
   const assumed = resolveAssumedModel(q.assumedModelId);
   const priced: UsageSummaryViewRow[] = rows.map((r) => {
     const costUsd = rowCostUsd(r, assumed);
@@ -338,6 +339,8 @@ export async function usageWindowView(q: UsageWindowQuery): Promise<UsageWindowR
       acc.set(key, a);
     }
   }
+
+  await ensurePricingFor([...acc.values()].map((r) => r.model));
 
   const unpriced = new Set<string>();
   let totalUsd = 0;

@@ -48,6 +48,7 @@ export function _resetPricingCacheForTest(): void {
 
 export interface PricingSource {
   priceFor(modelId: string): ModelPricing | undefined;
+  ensureReady?(): Promise<void>;
 }
 
 let pricingSource: PricingSource | null = null;
@@ -58,6 +59,28 @@ export function registerPricingSource(source: PricingSource): void {
 
 export function _resetPricingSourceForTest(): void {
   pricingSource = null;
+}
+
+const ENSURE_READY_TIMEOUT_MS = 3_000;
+
+export async function ensurePricingFor(modelIds: readonly (string | undefined)[], timeoutMs: number = ENSURE_READY_TIMEOUT_MS): Promise<void> {
+  const source = pricingSource;
+  if (!source?.ensureReady) return;
+  const needsSource = modelIds.some((id) => id !== undefined && !envPricingTable()[id] && !BUILT_IN[id]);
+  if (!needsSource) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      source.ensureReady(),
+      new Promise<void>((resolveRace) => {
+        timer = setTimeout(resolveRace, timeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    console.warn(`[open-everywhere:pricing] PricingSource ensureReady failed — affected models will show unpriced: ${String(err)}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export function modelPricing(modelId: string): ModelPricing | undefined {
