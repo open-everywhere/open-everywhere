@@ -26,6 +26,8 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   "oe.turn.failed": Object.freeze(["oe.surface", "oe.error.code"]),
   "oe.error.uncaught": Object.freeze(["oe.component", "oe.error.name"]),
   "oe.feature.used": Object.freeze(["oe.feature", "oe.outcome"]),
+  "wizard.started": Object.freeze(["oe.wizard.version", "oe.wizard.platform"]),
+  "wizard.completed": Object.freeze(["oe.wizard.version", "oe.wizard.platform", "oe.wizard.steps_completed"]),
 });
 
 export const RESOURCE_ATTR_KEYS: readonly string[] = Object.freeze([
@@ -132,6 +134,10 @@ function readTelemetryConfig(): TelemetryConfig {
   return config;
 }
 
+export function resetTelemetryConfigCache(): void {
+  config = undefined;
+}
+
 export function telemetryEnabled(): boolean {
   return readTelemetryConfig().enabled;
 }
@@ -176,7 +182,13 @@ function printBootDisclosureLine(): void {
   rawLog(telemetryEnabled() ? BOOT_LINE_ON : BOOT_LINE_OFF);
 }
 
-async function resolveInstanceAndMaybeEmitFirstBoot(): Promise<void> {
+export interface ResolvedInstance {
+  readonly id: string;
+  readonly ephemeral: boolean;
+  readonly justMinted: boolean;
+}
+
+export async function resolveInstanceId(): Promise<ResolvedInstance> {
   try {
     const store = getOperationalStore();
     const existing = await store.getMeta(INSTANCE_ID_META_KEY);
@@ -185,9 +197,36 @@ async function resolveInstanceAndMaybeEmitFirstBoot(): Promise<void> {
       await store.setMeta(INSTANCE_ID_META_KEY, id);
       await store.setMeta(FIRST_BOOT_PENDING_META_KEY, "1");
       cachedInstance = { id, ephemeral: false };
-      return;
+      return { id, ephemeral: false, justMinted: true };
     }
     cachedInstance = { id: existing, ephemeral: false };
+    return { id: existing, ephemeral: false, justMinted: false };
+  } catch {
+    if (!ephemeralState) {
+      ephemeralState = { id: randomUUID(), pending: true };
+      cachedInstance = { id: ephemeralState.id, ephemeral: true };
+      return { id: ephemeralState.id, ephemeral: true, justMinted: true };
+    }
+    cachedInstance = { id: ephemeralState.id, ephemeral: true };
+    return { id: ephemeralState.id, ephemeral: true, justMinted: false };
+  }
+}
+
+async function resolveInstanceAndMaybeEmitFirstBoot(): Promise<void> {
+  const resolved = await resolveInstanceId();
+  if (resolved.justMinted) return;
+
+  if (resolved.ephemeral) {
+    if (ephemeralState?.pending) {
+      ephemeralState.pending = false;
+      emitTelemetry("oe.instance.first_boot", {});
+    }
+    maybeHeartbeat();
+    return;
+  }
+
+  try {
+    const store = getOperationalStore();
     const pending = await store.getMeta(FIRST_BOOT_PENDING_META_KEY);
     if (pending === "1") {
       await store.setMeta(FIRST_BOOT_PENDING_META_KEY, "0");
@@ -195,17 +234,6 @@ async function resolveInstanceAndMaybeEmitFirstBoot(): Promise<void> {
     }
     maybeHeartbeat();
   } catch {
-    if (!ephemeralState) {
-      ephemeralState = { id: randomUUID(), pending: true };
-      cachedInstance = { id: ephemeralState.id, ephemeral: true };
-      return;
-    }
-    cachedInstance = { id: ephemeralState.id, ephemeral: true };
-    if (ephemeralState.pending) {
-      ephemeralState.pending = false;
-      emitTelemetry("oe.instance.first_boot", {});
-    }
-    maybeHeartbeat();
   }
 }
 

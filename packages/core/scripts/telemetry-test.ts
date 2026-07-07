@@ -192,6 +192,8 @@ function throwingFetch(): typeof fetch {
     "oe.turn.failed": ["oe.surface", "oe.error.code"],
     "oe.error.uncaught": ["oe.component", "oe.error.name"],
     "oe.feature.used": ["oe.feature", "oe.outcome"],
+    "wizard.started": ["oe.wizard.version", "oe.wizard.platform"],
+    "wizard.completed": ["oe.wizard.version", "oe.wizard.platform", "oe.wizard.steps_completed"],
   };
   ok(Object.keys(EVENT_SCHEMA).sort().join(",") === Object.keys(EXPECTED_SCHEMA).sort().join(","), "vocabulary: event NAMES match the plan exactly");
   for (const [event, attrs] of Object.entries(EXPECTED_SCHEMA)) {
@@ -218,7 +220,12 @@ function throwingFetch(): typeof fetch {
   ok(sentKeys.includes("oe.feature") && sentKeys.includes("oe.outcome"), "vocabulary: the allowed attributes still reached the wire");
 
   const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-  const scanRoots = [path.join(repoRoot, "packages/core/agent"), path.join(repoRoot, "packages/adapters/agent"), path.join(repoRoot, "agent")];
+  const scanRoots = [
+    path.join(repoRoot, "packages/core/agent"),
+    path.join(repoRoot, "packages/adapters/agent"),
+    path.join(repoRoot, "agent"),
+    path.join(repoRoot, "packages/create/src"),
+  ];
 
   function walk(dir: string, out: string[]): void {
     let entries: fs.Dirent[];
