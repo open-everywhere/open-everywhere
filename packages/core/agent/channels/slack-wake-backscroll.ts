@@ -1,6 +1,7 @@
-import { linesFromMessages, renderContext, type ContextLine } from "./slack-context.js";
+import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
+import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
 
-export const WAKE_BACKSCROLL_MAX = 10;
+export { WAKE_BACKSCROLL_MAX } from "./context-render.js";
 
 export interface WakeBotIdentity {
   readonly userId?: string;
@@ -58,17 +59,6 @@ export function _resetWakeBotIdentity(): void {
 
 const liveDeps: WakeBackscrollDeps = { request: liveRequest, identity: liveWakeBotIdentity };
 
-function sinceLastAgentReply(lines: readonly ContextLine[]): ContextLine[] {
-  let lastAgent = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].senderType === "agent") {
-      lastAgent = i;
-      break;
-    }
-  }
-  return lastAgent >= 0 ? lines.slice(lastAgent + 1) : [...lines];
-}
-
 export async function fetchWakeBackscroll(input: WakeBackscrollInput, deps: WakeBackscrollDeps = liveDeps): Promise<string[]> {
   try {
     const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
@@ -107,6 +97,6 @@ function extractMessages(res: Record<string, unknown> | undefined): Array<Record
 
 function renderEntry(lines: readonly ContextLine[], source: string): string[] {
   const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
-  const entry = renderContext(capped, source);
+  const entry = renderContext(capped, source, { readMoreHint: READ_MORE_HINT });
   return entry ? [entry] : [];
 }

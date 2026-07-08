@@ -7,7 +7,16 @@ import { domainKeyOf, resolvePartition, type Partition } from "../memory/partiti
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { disengageThread, isStopRequest, isThreadEngaged, markThreadEngaged } from "./engagement.js";
+import {
+  bumpThreadSilentStreak,
+  disengageThread,
+  getThreadEngagement,
+  isStopRequest,
+  isThreadEngaged,
+  markThreadEngaged,
+  WARM_SILENT_LIMIT,
+} from "./engagement.js";
+import { fetchDiscordBackscroll } from "./discord-backscroll.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
@@ -19,6 +28,7 @@ function log(msg: string): void {
 
 export interface DiscordGatewayState {
   channelId: string;
+  guildId?: string;
   originalChannelId?: string;
   originalMessageId?: string;
 }
@@ -434,10 +444,12 @@ export function planCompletion(input: {
 
 export function buildGatewayState(input: {
   readonly replyChannelId: string;
+  readonly guildId?: string;
   readonly original?: { readonly channelId: string; readonly messageId: string };
 }): DiscordGatewayState {
   return {
     channelId: input.replyChannelId,
+    guildId: input.guildId,
     originalChannelId: input.original?.channelId,
     originalMessageId: input.original?.messageId,
   };
@@ -455,8 +467,8 @@ export function takeTurnStatus(state: DiscordGatewayState): {
   return { original };
 }
 
-type DiscordGatewaySend = (
-  message: string,
+export type DiscordGatewaySend = (
+  message: string | { readonly message: string; readonly context?: readonly string[] },
   options: {
     auth: OpenEverywhereDiscordAuth;
     continuationToken: string;
@@ -464,7 +476,7 @@ type DiscordGatewaySend = (
   },
 ) => Promise<unknown>;
 
-async function dispatchTurn(
+export async function dispatchTurn(
   msg: DiscordRelayMessage,
   auth: OpenEverywhereDiscordAuth,
   send: DiscordGatewaySend,
@@ -569,10 +581,11 @@ async function dispatchTurn(
   const dispatchPartition: Partition = threadId ? resolvePartition(ctxFromAuth(surface.auth)) : partition;
 
   if (msg.mentionsBot) {
-    await markThreadEngaged(dispatchPartition, surface.engagementKey, new Date().toISOString());
+    await markThreadEngaged(dispatchPartition, surface.engagementKey, new Date().toISOString(), { participating: true });
   }
   const turnState: DiscordGatewayState = buildGatewayState({
     replyChannelId: surface.state.channelId,
+    guildId: msg.guildId,
     original: statusUx && threadId ? { channelId: msg.channelId, messageId: msg.id } : undefined,
   });
 
@@ -589,15 +602,63 @@ async function dispatchTurn(
     nameDrop && msg.botName
       ? renderNameDropTurn(msg.content, msg.botName, isThreadChannelType(msg.channelType))
       : renderTurn(msg.mentionsBot || isDm, msg.content);
-  await send(turnText, {
-    auth: surface.auth,
-    continuationToken: surface.continuationToken,
-    state: turnState,
-  });
+
+  const context = !isDm && (nameDrop || msg.mentionsBot)
+    ? await fetchDiscordBackscroll({
+        channelId: msg.channelId,
+        triggerMessageId: msg.id,
+        isThread: isThreadChannelType(msg.channelType),
+        botId: msg.botId,
+      }).catch(() => [])
+    : [];
+
+  await send(
+    context.length ? { message: turnText, context } : turnText,
+    {
+      auth: surface.auth,
+      continuationToken: surface.continuationToken,
+      state: turnState,
+    },
+  );
   log(
     `dispatched ${dispatchPartition.surfaceKey} (${isDm ? "dm" : msg.mentionsBot ? "mention" : nameDrop ? "name-drop" : "engaged"}` +
       `${threadId ? ", auto-threaded+👀" : ""})`,
   );
+}
+
+export function engagementCoordsFor(state: DiscordGatewayState): { p: Partition; key: string } | null {
+  if (!state.guildId || !state.channelId) return null;
+  const p = resolvePartition(ctxFromAuth(buildDiscordAuth({ userId: "", guildId: state.guildId, channelId: state.channelId })));
+  return { p, key: state.channelId };
+}
+
+export async function promoteParticipatingOnReply(state: DiscordGatewayState): Promise<void> {
+  try {
+    const coords = engagementCoordsFor(state);
+    if (!coords) return;
+    const rec = await getThreadEngagement(coords.p, coords.key);
+    if (!rec) return;
+    await markThreadEngaged(coords.p, coords.key, new Date().toISOString(), { participating: true });
+  } catch (err) {
+    console.warn(`[open-everywhere:discord-gateway] participating-promote failed: ${String(err)}`);
+  }
+}
+
+export async function maybeShedWarmSurface(state: DiscordGatewayState): Promise<void> {
+  try {
+    const coords = engagementCoordsFor(state);
+    if (!coords) return;
+    const rec = await getThreadEngagement(coords.p, coords.key);
+    if (rec && rec.participating !== true) {
+      const streak = await bumpThreadSilentStreak(coords.p, coords.key);
+      if (streak >= WARM_SILENT_LIMIT) {
+        await disengageThread(coords.p, coords.key);
+        log(`warm surface shed after ${streak} silent turns — disengaged (${coords.p.surfaceKey})`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[open-everywhere:discord-gateway] warm silent-streak bookkeeping failed: ${String(err)}`);
+  }
 }
 
 export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
@@ -681,6 +742,12 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
       } else if (action.kind === "silent" && data.message) {
         log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
+      }
+
+      if (action.kind === "post") {
+        await promoteParticipatingOnReply(channel.state);
+      } else if (action.kind === "silent") {
+        await maybeShedWarmSurface(channel.state);
       }
     },
   },

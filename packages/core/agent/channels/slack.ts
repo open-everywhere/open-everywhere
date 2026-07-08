@@ -22,7 +22,7 @@ import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
-import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY } from "./engagement.js";
+import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
 import { upsertUnderSection } from "../memory/markdown.js";
@@ -38,8 +38,6 @@ import {
   isPinnedStatusMessage,
   type ReactionState,
 } from "../status/status.js";
-
-const WARM_SILENT_LIMIT = 3;
 
 function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
   try {

@@ -1,30 +1,14 @@
 import type { SlackContext } from "eve/channels/slack";
 import { loadThreadContextMessages } from "eve/channels/slack";
 import type { SlackMessage } from "eve/channels/slack";
-import { wrapUntrusted } from "../access/untrusted.js";
+import { MAX_MESSAGES, renderContext, type ContextLine } from "./context-render.js";
 
-const MAX_MESSAGES = 10;
-const MAX_CHARS = 12_000;
+export { renderContext, type ContextLine } from "./context-render.js";
 
-const READ_MORE_HINT =
+export const READ_MORE_HINT =
   "Note: the block above is the most recent messages only, capped for context size — there may " +
   "be older history not shown. If you need it, fetch more with the read_slack_channel or " +
   "read_slack_thread tool.";
-
-type SenderType = "user" | "bot" | "agent" | "unknown";
-
-export interface ContextLine {
-  readonly senderType: SenderType;
-  readonly senderId?: string;
-  readonly ts: string;
-  readonly text: string;
-}
-
-function attribution(l: ContextLine): string {
-  if (l.senderType === "agent") return "[sender_type=agent]";
-  if (l.senderId) return `[sender_type=${l.senderType} sender_id=${l.senderId}]`;
-  return `[sender_type=${l.senderType}]`;
-}
 
 export function linesFromMessages(
   raw: ReadonlyArray<Record<string, unknown>>,
@@ -45,24 +29,6 @@ export function linesFromMessages(
     else lines.push({ senderType: "unknown", ts, text });
   }
   return lines;
-}
-
-export function renderContext(lines: readonly ContextLine[], source: string): string | null {
-  const kept: string[] = [];
-  let chars = 0;
-  for (let i = lines.length - 1; i >= 0 && kept.length < MAX_MESSAGES; i--) {
-    const l = lines[i];
-    const text = l.text.trim();
-    if (!text) continue;
-    const rendered = `${attribution(l)} ${text}`;
-    if (chars + rendered.length > MAX_CHARS && kept.length > 0) break;
-    chars += rendered.length;
-    kept.unshift(rendered);
-  }
-  if (kept.length === 0) return null;
-  const body = `Recent conversation (oldest first), for context:\n${kept.join("\n")}`;
-  const wrapped = wrapUntrusted(body, { source });
-  return kept.length === MAX_MESSAGES ? `${wrapped}\n\n${READ_MORE_HINT}` : wrapped;
 }
 
 let botIdentityCache: Promise<{ userId?: string; botId?: string }> | undefined;
@@ -101,7 +67,7 @@ async function threadContext(ctx: SlackContext, message: SlackMessage): Promise<
       if (m.user) return { senderType: "user" as const, senderId: m.user, ts: m.ts, text: m.markdown || m.text };
       return { senderType: "unknown" as const, ts: m.ts, text: m.markdown || m.text };
     });
-    const entry = renderContext(lines, `slack thread ${message.channelId}/${message.threadTs}`);
+    const entry = renderContext(lines, `slack thread ${message.channelId}/${message.threadTs}`, { readMoreHint: READ_MORE_HINT });
     return entry ? [entry] : [];
   } catch {
     return [];
@@ -121,7 +87,7 @@ async function channelBackscroll(ctx: SlackContext, message: SlackMessage): Prom
     const { userId: meUser, botId: meBot } = await botIdentity(ctx);
     const lines = linesFromMessages(raw, { userId: meUser, botId: meBot });
     lines.reverse();
-    const entry = renderContext(lines, `slack channel ${message.channelId}`);
+    const entry = renderContext(lines, `slack channel ${message.channelId}`, { readMoreHint: READ_MORE_HINT });
     return entry ? [entry] : [];
   } catch {
     return [];

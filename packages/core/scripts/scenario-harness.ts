@@ -45,6 +45,7 @@ export interface FetchScript {
   failNextThreadCreate?: boolean;
   channelInfo?: Record<string, ChannelInfoScript>;
   guildProbeNetworkError?: readonly string[];
+  backscroll?: Record<string, readonly Record<string, unknown>[]>;
 }
 
 export interface FetchCapture {
@@ -99,6 +100,12 @@ export function installFakeDiscordRest(timeline: Timeline, script: FetchScript =
     if ((method === "PUT" || method === "DELETE") && /^\/channels\/[^/]+\/messages\/[^/]+\/reactions\/.+\/@me$/.test(path)) {
       timeline.add(`  → ${method} ${path} ⇒ 204`);
       return new Response(null, { status: 204 });
+    }
+    if (method === "GET" && /^\/channels\/[^/]+\/messages(\?.*)?$/.test(path)) {
+      const cid = path.slice("/channels/".length).split(/[/?]/)[0];
+      const msgs = script.backscroll?.[cid] ?? [];
+      timeline.add(`  → GET ${path} ⇒ 200 (${msgs.length} backscroll msg${msgs.length === 1 ? "" : "s"})`);
+      return new Response(JSON.stringify(msgs), { status: 200 });
     }
     if (method === "GET" && /^\/channels\/[^/]+$/.test(path)) {
       const id = path.slice("/channels/".length);
