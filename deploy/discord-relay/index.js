@@ -98,8 +98,10 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.DirectMessageReactions,
   ],
-  partials: [Partials.Channel, Partials.Message],
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
 
 function toPayload(message) {
@@ -128,6 +130,48 @@ function toPayload(message) {
         : undefined,
     },
   };
+}
+
+function toReactionPayload(verb, reaction, user, message) {
+  return {
+    source: "discord-gateway-relay",
+    event: verb === "added" ? "MESSAGE_REACTION_ADD" : "MESSAGE_REACTION_REMOVE",
+    reaction: {
+      verb,
+      messageId: message?.id ?? reaction.message?.id,
+      channelId: message?.channelId ?? reaction.message?.channelId,
+      guildId: message?.guildId ?? reaction.message?.guildId ?? undefined,
+      channelType: message?.channel?.type ?? reaction.message?.channel?.type,
+      emoji: reaction.emoji?.name ?? "",
+      reactorId: user.id,
+      messageAuthorId: message?.author?.id ?? undefined,
+      botId: client.user?.id,
+    },
+  };
+}
+
+async function handleReaction(verb, reaction, user) {
+  try {
+    if (user.bot) return;
+    if (reaction.partial) await reaction.fetch();
+    const message = reaction.message;
+    if (message?.partial) {
+      try {
+        await message.fetch();
+      } catch {
+      }
+    }
+    const guildId = message?.guildId ?? reaction.message?.guildId ?? undefined;
+    if (GUILD_ALLOWLIST.length && guildId && !GUILD_ALLOWLIST.includes(guildId)) return;
+    if (!INGEST_URL) {
+      const where = guildId ? `guild ${guildId}#${message?.channelId}` : `DM ${message?.channelId}`;
+      console.log(`[oe-discord-relay] reaction ${verb} ${where} @${user.username}: ${reaction.emoji?.name ?? "?"}`);
+      return;
+    }
+    await forward(toReactionPayload(verb, reaction, user, message));
+  } catch (err) {
+    console.warn(`[oe-discord-relay] reaction ${verb} handling error:`, err?.message ?? err);
+  }
 }
 
 async function forward(payload) {
@@ -179,6 +223,9 @@ client.on(Events.MessageCreate, async (message) => {
   }
   await forward(toPayload(message));
 });
+
+client.on(Events.MessageReactionAdd, (reaction, user) => void handleReaction("added", reaction, user));
+client.on(Events.MessageReactionRemove, (reaction, user) => void handleReaction("removed", reaction, user));
 
 client.on(Events.Error, (err) => console.error("[oe-discord-relay] client error:", err?.message ?? err));
 client.on(Events.ShardDisconnect, (_e, id) => console.warn(`[oe-discord-relay] shard ${id} disconnected — discord.js will reconnect`));

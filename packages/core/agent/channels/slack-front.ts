@@ -10,8 +10,12 @@ import {
   parseChannelJoinEvent,
   routeChannelJoinEvent,
   liveChannelJoinDeps,
+  parseSlackReactionEvent,
+  routeReactionEvent,
+  liveReactionDeps,
   bindableFor,
   bindableForJoin,
+  bindableForReaction,
   type SlackEventEnvelope,
   type RouteOutcome,
 } from "./slack-events.js";
@@ -29,6 +33,7 @@ export type FrontDecision =
   | { readonly kind: "forward"; readonly reason: string }
   | { readonly kind: "wake"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope }
+  | { readonly kind: "reaction"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "approval-click"; readonly reason: string; readonly payload: unknown };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
@@ -79,6 +84,9 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
   }
   if (eventType === "member_joined_channel") {
     return { kind: "join", reason: "member_joined_channel — channel-join intro candidate", env };
+  }
+  if (eventType === "reaction_added" || eventType === "reaction_removed") {
+    return { kind: "reaction", reason: `${eventType} — reaction ingestion candidate`, env };
   }
   if (eventType !== "message") {
     return { kind: "forward", reason: `event "${String(eventType)}" — not a message` };
@@ -278,6 +286,28 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       const joinSend = args.send as unknown as Parameters<typeof liveDeps>[0];
       args.waitUntil(
         routeChannelJoinEvent(jev, liveChannelJoinDeps(joinSend)).then(logOutcome("channel-join", jev.channelId, jev.ts)),
+      );
+      return OK();
+    }
+
+    if (decision.kind === "reaction") {
+      const rev = parseSlackReactionEvent(decision.env);
+      if (!rev) return OK();
+
+      const rkey = wakeKey(decision.env, rev.channelId, rev.messageTs);
+      if (dedupe.seen(rkey, now())) return OK();
+      dedupe.mark(rkey, now());
+      try {
+        const org = resolvePartition(bindableForReaction(rev)).org;
+        if (!(await markEventSeen(org, rkey, new Date(now()).toISOString()))) return OK();
+      } catch {
+      }
+
+      const identity = await getBotIdentity();
+      args.waitUntil(
+        routeReactionEvent(rev, liveReactionDeps(identity)).then((o) =>
+          console.log(`[open-everywhere:slack-front] reaction ${rev.channelId}/${rev.messageTs}: ${o.recorded ? "recorded" : "not recorded"} — ${o.reason}`),
+        ),
       );
       return OK();
     }

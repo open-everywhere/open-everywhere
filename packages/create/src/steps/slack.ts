@@ -17,6 +17,7 @@ export function slackManifest(): string {
             "im:history",
             "groups:history",
             "reactions:write",
+            "reactions:read",
             "pins:read",
             "pins:write",
           ],
@@ -25,7 +26,7 @@ export function slackManifest(): string {
       settings: {
         event_subscriptions: {
           request_url: "https://YOUR-DEPLOY-URL/eve/v1/slack",
-          bot_events: ["app_mention", "message.im"],
+          bot_events: ["app_mention", "message.im", "reaction_added", "reaction_removed"],
         },
         org_deploy_enabled: false,
         socket_mode_enabled: false,

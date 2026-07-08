@@ -9,6 +9,14 @@ import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboardi
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { fetchWakeBackscroll } from "./slack-wake-backscroll.js";
+import {
+  buildIngestedReaction,
+  ingestReaction,
+  liveReactionSink,
+  type ReactionSinkDeps,
+  type ReactionIngestOutcome,
+  type ReactionVerb,
+} from "./reaction-ingest.js";
 import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
 
 export interface SlackEventEnvelope {
@@ -722,6 +730,86 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   });
 
   return { deliver: true, reason: "bot added to a confirmed-internal channel — judged intro wake", woke: true };
+}
+
+export interface ParsedSlackReaction {
+  readonly verb: ReactionVerb;
+  readonly reactorId: string;
+  readonly emoji: string;
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly itemUser?: string;
+  readonly teamId?: string;
+}
+
+export function parseSlackReactionEvent(envelope: SlackEventEnvelope): ParsedSlackReaction | null {
+  if (envelope?.type !== "event_callback") return null;
+  const e = envelope.event as (Record<string, unknown> & { type?: string }) | undefined;
+  if (!e) return null;
+  if (e.type !== "reaction_added" && e.type !== "reaction_removed") return null;
+  const item = e.item as Record<string, unknown> | undefined;
+  if (!item || item.type !== "message") return null;
+  const channelId = typeof item.channel === "string" ? item.channel : "";
+  const messageTs = typeof item.ts === "string" ? item.ts : "";
+  const reactorId = typeof e.user === "string" ? e.user : "";
+  const emoji = typeof e.reaction === "string" ? e.reaction : "";
+  if (!channelId || !messageTs || !reactorId || !emoji) return null;
+  return {
+    verb: e.type === "reaction_added" ? "added" : "removed",
+    reactorId,
+    emoji,
+    channelId,
+    messageTs,
+    itemUser: typeof e.item_user === "string" ? e.item_user : undefined,
+    teamId: envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined),
+  };
+}
+
+export function bindableForReaction(ev: ParsedSlackReaction): BindableContext {
+  return {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            team_id: ev.teamId ?? "",
+            channel_id: ev.channelId,
+            channel_type: "",
+          },
+          principalId: ev.reactorId,
+          principalType: "slack-user",
+        },
+      },
+    },
+  } as BindableContext;
+}
+
+export interface SlackReactionRouteDeps {
+  readonly botIdentity: { readonly userId?: string; readonly botId?: string };
+  readonly sink: ReactionSinkDeps;
+}
+
+export async function routeReactionEvent(ev: ParsedSlackReaction, deps: SlackReactionRouteDeps): Promise<ReactionIngestOutcome> {
+  const botUserId = deps.botIdentity.userId;
+  if (botUserId && ev.reactorId === botUserId) {
+    return { recorded: false, onBotReply: false, reason: "reactor is the bot itself — ignored (not feedback)" };
+  }
+  const onBotReply = Boolean(botUserId) && ev.itemUser === botUserId;
+  const p = resolvePartition(bindableForReaction(ev));
+  const reaction = buildIngestedReaction({
+    surface: "slack",
+    verb: ev.verb,
+    reactorId: ev.reactorId,
+    emoji: ev.emoji,
+    target: { channelId: ev.channelId, messageId: ev.messageTs },
+    onBotReply,
+    partition: p,
+  });
+  return ingestReaction(reaction, deps.sink);
+}
+
+export function liveReactionDeps(botIdentity: { readonly userId?: string; readonly botId?: string }): SlackReactionRouteDeps {
+  return { botIdentity, sink: liveReactionSink() };
 }
 
 export function liveChannelJoinDeps(send: WakeSend): ChannelJoinRouteDeps {

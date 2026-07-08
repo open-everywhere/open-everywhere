@@ -356,7 +356,8 @@ registerConfig({
   ok(classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT).kind === "forward", "message.im (DM) → forward");
   ok(classifyEnvelope("payload=%7B%7D", "application/x-www-form-urlencoded").kind === "forward", "urlencoded interaction → forward");
   ok(classifyEnvelope("not json", JSON_CT).kind === "forward", "unparseable → forward (fail-safe)");
-  ok(classifyEnvelope(ev({ type: "reaction_added", channel: "C", ts: "1.1" }), JSON_CT).kind === "forward", "non-message event → forward");
+  ok(classifyEnvelope(ev({ type: "reaction_added", item: { type: "message", channel: "C", ts: "1.1" } }), JSON_CT).kind === "reaction", "reaction_added → reaction (ingestion)");
+  ok(classifyEnvelope(ev({ type: "tokens_revoked" }), JSON_CT).kind === "forward", "unhandled event type → forward");
 
   for (const ct of ["channel", "group", "mpim"]) {
     const d = classifyEnvelope(ev({ type: "message", channel: "C", ts: "1.1", thread_ts: "1.0", channel_type: ct, user: "U1", text: "more" }), JSON_CT);

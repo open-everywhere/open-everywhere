@@ -192,6 +192,8 @@ function throwingFetch(): typeof fetch {
     "oe.turn.failed": ["oe.surface", "oe.error.code"],
     "oe.error.uncaught": ["oe.component", "oe.error.name"],
     "oe.feature.used": ["oe.feature", "oe.outcome"],
+    "oe.reaction.added": ["oe.surface", "oe.on_bot_reply", "oe.emoji_class"],
+    "oe.reaction.removed": ["oe.surface", "oe.on_bot_reply", "oe.emoji_class"],
     "wizard.started": ["oe.wizard.version", "oe.wizard.platform"],
     "wizard.completed": ["oe.wizard.version", "oe.wizard.platform", "oe.wizard.steps_completed"],
   };

@@ -21,6 +21,14 @@ import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
 import { isAllowedDriver } from "../testing/driver-allowlist.js";
+import {
+  buildIngestedReaction,
+  ingestReaction,
+  liveReactionSink,
+  type ReactionSinkDeps,
+  type ReactionIngestOutcome,
+  type ReactionVerb,
+} from "./reaction-ingest.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:discord-gateway] ${msg}`);
@@ -84,6 +92,70 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
     botName: bot ? str(bot["name"]) : undefined,
     botId: bot ? str(bot["id"]) : undefined,
   };
+}
+
+export interface DiscordRelayReaction {
+  readonly verb: ReactionVerb;
+  readonly messageId: string;
+  readonly channelId: string;
+  readonly guildId?: string;
+  readonly channelType?: string;
+  readonly emoji: string;
+  readonly reactorId: string;
+  readonly messageAuthorId?: string;
+  readonly botId?: string;
+}
+
+export function parseRelayReaction(raw: unknown): DiscordRelayReaction | null {
+  if (!isObject(raw)) return null;
+  if (raw["source"] !== "discord-gateway-relay") return null;
+  const ev = raw["event"];
+  if (ev !== "MESSAGE_REACTION_ADD" && ev !== "MESSAGE_REACTION_REMOVE") return null;
+  const r = raw["reaction"];
+  if (!isObject(r)) return null;
+  const messageId = str(r["messageId"]);
+  const channelId = str(r["channelId"]);
+  const reactorId = str(r["reactorId"]);
+  const emoji = str(r["emoji"]);
+  if (!messageId || !channelId || !reactorId || !emoji) return null;
+  return {
+    verb: ev === "MESSAGE_REACTION_ADD" ? "added" : "removed",
+    messageId,
+    channelId,
+    guildId: str(r["guildId"]),
+    channelType: strOrNum(r["channelType"]),
+    emoji,
+    reactorId,
+    messageAuthorId: str(r["messageAuthorId"]),
+    botId: str(r["botId"]),
+  };
+}
+
+export interface DiscordReactionRouteDeps {
+  readonly sink: ReactionSinkDeps;
+}
+
+export async function routeDiscordReaction(rx: DiscordRelayReaction, deps: DiscordReactionRouteDeps): Promise<ReactionIngestOutcome> {
+  if (rx.botId && rx.reactorId === rx.botId) {
+    return { recorded: false, onBotReply: false, reason: "reactor is the bot itself — ignored (not feedback)" };
+  }
+  const onBotReply = Boolean(rx.botId) && rx.messageAuthorId === rx.botId;
+  const auth = buildDiscordAuth({ userId: rx.reactorId, guildId: rx.guildId, channelId: rx.channelId, channelType: rx.channelType });
+  const p = resolvePartition(ctxFromAuth(auth));
+  const reaction = buildIngestedReaction({
+    surface: "discord",
+    verb: rx.verb,
+    reactorId: rx.reactorId,
+    emoji: rx.emoji,
+    target: { channelId: rx.channelId, messageId: rx.messageId },
+    onBotReply,
+    partition: p,
+  });
+  return ingestReaction(reaction, deps.sink);
+}
+
+export function liveDiscordReactionDeps(): DiscordReactionRouteDeps {
+  return { sink: liveReactionSink() };
 }
 
 export interface RelayRejection {
@@ -684,6 +756,16 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       } catch {
         return new Response("invalid json", { status: 400 });
       }
+      const reaction = parseRelayReaction(json);
+      if (reaction) {
+        waitUntil(
+          routeDiscordReaction(reaction, liveDiscordReactionDeps()).then((o) =>
+            log(`reaction ${reaction.channelId}/${reaction.messageId}: ${o.recorded ? "recorded" : "not recorded"} — ${o.reason}`),
+          ),
+        );
+        return new Response("ok", { status: 200 });
+      }
+
       const msg = parseRelayPayload(json);
       if (!msg) return new Response("unrecognized relay payload", { status: 400 });
 
