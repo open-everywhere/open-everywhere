@@ -1,6 +1,7 @@
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
+import type { ModelReasoning } from "../memory/domain.js";
 
 export interface AuditEntry {
   readonly ts: string;
@@ -73,6 +74,24 @@ export interface ConnectorOverrideRow {
 
 export interface ScopedConnectorOverrideRow extends ConnectorOverrideRow {
   readonly scopeKey: string;
+}
+
+export interface DomainModelRow {
+  readonly org: string;
+  readonly domain: string;
+  readonly modelId?: string;
+  readonly reasoning?: ModelReasoning;
+  readonly setBy?: string;
+  readonly updatedAt: string;
+}
+
+export function assertDomainModelPick(pick: { readonly modelId?: string; readonly reasoning?: ModelReasoning }): void {
+  if (pick.modelId == null && pick.reasoning == null) {
+    throw new Error("a domain model pick must set modelId and/or reasoning");
+  }
+  if (pick.modelId != null && pick.modelId.trim().length === 0) {
+    throw new Error("a domain model pick's modelId must be non-blank");
+  }
 }
 
 export interface DomainSkillRow {
@@ -160,6 +179,11 @@ export interface OperationalStore {
   clearConnectorOverride(org: string, scopeKey: string, connector: string): Promise<boolean>;
   connectorOverrides(org: string, scopeKey: string): Promise<ConnectorOverrideRow[]>;
   allConnectorOverrides(org: string): Promise<ScopedConnectorOverrideRow[]>;
+
+  setDomainModel(org: string, domain: string, pick: { readonly modelId?: string; readonly reasoning?: ModelReasoning }, setBy?: string): Promise<void>;
+  clearDomainModel(org: string, domain: string): Promise<boolean>;
+  getDomainModel(org: string, domain: string): Promise<DomainModelRow | null>;
+  domainModels(org: string): Promise<DomainModelRow[]>;
 
   markEngaged(org: string, surfaceKey: string, threadTs: string, at: string): Promise<void>;
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;

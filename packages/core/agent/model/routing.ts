@@ -2,14 +2,15 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ModelRole, ModelRoute, Domain, NamedKnobLayer, DomainMatch, ModelReasoning } from "../memory/domain.js";
-import { modelRouteFor, domainMatchFor, reasoningCeilingFor } from "../memory/domain.js";
+import { modelRouteFor, domainMatchFor, reasoningCeilingFor, domainForChannel, criteriaDomain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { surfaceHint, surfaceHintMatch } from "./surface-hint.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
+import { getOperationalStore } from "../operational/provider.js";
 
 interface RoutingContextStore {
   get(key: unknown): unknown;
@@ -108,10 +109,38 @@ export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
   readonly domains: () => readonly Domain[];
   readonly roles?: () => readonly NamedKnobLayer[];
   readonly modelPolicy?: () => ModelPolicy | undefined;
+  readonly domainModelPick?: (domainName: string) => Promise<DomainModelPick | null>;
   readonly backend: ModelBackend<TModel>;
 }
 
-export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "surfaceMatch" | "domains" | "roles" | "modelPolicy"> = {
+export interface DomainModelPick {
+  readonly modelId?: string;
+  readonly reasoning?: ModelReasoning;
+}
+
+const DOMAIN_MODEL_PICK_TTL_MS = 15_000;
+interface DomainModelPickCacheEntry {
+  readonly value: DomainModelPick | null;
+  readonly expiresAt: number;
+}
+const domainModelPickCache = new Map<string, DomainModelPickCacheEntry>();
+
+export function _resetDomainModelPickCacheForTest(): void {
+  domainModelPickCache.clear();
+}
+
+async function liveDomainModelPick(org: string, domainName: string): Promise<DomainModelPick | null> {
+  const key = `${org} ${domainName}`;
+  const now = Date.now();
+  const cached = domainModelPickCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const row = await getOperationalStore().getDomainModel(org, domainName);
+  const value: DomainModelPick | null = row ? { modelId: row.modelId, reasoning: row.reasoning } : null;
+  domainModelPickCache.set(key, { value, expiresAt: now + DOMAIN_MODEL_PICK_TTL_MS });
+  return value;
+}
+
+export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "surfaceMatch" | "domains" | "roles" | "modelPolicy" | "domainModelPick"> = {
   surfaceKey: async () => {
     const ctx = await readAlsSurfaceContext();
     if (ctx) return domainKeyOf(resolvePartition(ctx));
@@ -132,6 +161,13 @@ export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "surfaceMatch" | "do
   domains: () => getConfig().loadDomains(),
   roles: () => getConfig().loadRoles?.() ?? [],
   modelPolicy: () => getConfig().loadModelPolicy?.(),
+  domainModelPick: async (domainName) => {
+    try {
+      return await liveDomainModelPick(deploymentOrg(), domainName);
+    } catch {
+      return null;
+    }
+  },
 };
 
 export function applyRoute(
@@ -193,6 +229,28 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
       const domains = deps.domains();
       const roles = deps.roles?.() ?? [];
       const rawRoute = modelRouteFor(role, surfaceKey, domains, roles, surfaceMatch);
+      let pickedRoute: ModelRoute = rawRoute;
+      try {
+        const domainName = domainForChannel(surfaceKey, domains)?.name ?? (surfaceMatch ? criteriaDomain(surfaceMatch, domains)?.name : undefined);
+        if (domainName !== undefined) {
+          const pick = await deps.domainModelPick?.(domainName);
+          if (pick && (pick.modelId !== undefined || pick.reasoning !== undefined)) {
+            pickedRoute = {
+              ...rawRoute,
+              ...(pick.modelId !== undefined ? { id: pick.modelId, tier: undefined } : {}),
+              ...(pick.reasoning !== undefined ? { reasoning: pick.reasoning } : {}),
+            };
+            const pickKey = `pick:${role}:${domainName}:${JSON.stringify(pick)}`;
+            if (!applied.has(pickKey)) {
+              applied.add(pickKey);
+              console.log(`[open-everywhere:model-routing] ${role}: domain "${domainName}" runtime pick → ${JSON.stringify(pick)}`);
+            }
+          }
+        }
+      } catch (err) {
+        pickedRoute = rawRoute;
+        warnOnce(`domain model pick lookup failed (${String(err)})`);
+      }
       let policy: ModelPolicy | undefined;
       try {
         policy = deps.modelPolicy?.();
@@ -207,9 +265,9 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
           effectiveCeiling = undefined;
         }
       }
-      const enveloped = applyModelPolicyToRoute(rawRoute, policy, defaults.id, effectiveCeiling);
+      const enveloped = applyModelPolicyToRoute(pickedRoute, policy, defaults.id, effectiveCeiling);
       for (const w of enveloped.warnings) warnOnce(`model policy: ${w}`);
-      const route: ModelRoute = { ...rawRoute, id: enveloped.id, reasoning: enveloped.reasoning };
+      const route: ModelRoute = { ...pickedRoute, id: enveloped.id, reasoning: enveloped.reasoning };
       if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
         const key = `${surfaceKey} ${JSON.stringify(route)}`;
         if (!applied.has(key)) {

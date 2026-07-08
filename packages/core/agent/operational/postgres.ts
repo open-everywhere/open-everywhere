@@ -1,8 +1,9 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
+import type { ModelReasoning } from "../memory/domain.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -98,6 +99,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      updated_at text NOT NULL,
      PRIMARY KEY (org_id, domain, name)
    )`,
+  `CREATE TABLE IF NOT EXISTS domain_model (
+     org_id     text NOT NULL,
+     domain     text NOT NULL,
+     model_id   text,
+     reasoning  text,
+     set_by     text,
+     updated_at text NOT NULL,
+     PRIMARY KEY (org_id, domain)
+   )`,
   `CREATE TABLE IF NOT EXISTS usage_events (
      seq                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
      org_id             text   NOT NULL,
@@ -133,6 +143,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
@@ -144,6 +155,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
+  `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
   `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
@@ -170,6 +182,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY domain_model_org_isolation ON domain_model
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY usage_events_select ON usage_events FOR SELECT
@@ -439,6 +454,53 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async allConnectorOverrides(org) {
       const { rows } = await client.query("SELECT scope_key, connector, granted, reason, set_by FROM connector_override WHERE org_id = $1", [org]);
       return (rows as { scope_key: string; connector: string; granted: boolean; reason: string | null; set_by: string | null }[]).map((r) => ({ scopeKey: r.scope_key, connector: r.connector, granted: r.granted, ...(r.reason ? { reason: r.reason } : {}), ...(r.set_by ? { setBy: r.set_by } : {}) }));
+    },
+
+    async setDomainModel(org, domain, pick, setBy) {
+      assertDomainModelPick(pick);
+      await client.query(
+        `INSERT INTO domain_model (org_id, domain, model_id, reasoning, set_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (org_id, domain) DO UPDATE SET
+           model_id   = excluded.model_id,
+           reasoning  = excluded.reasoning,
+           set_by     = excluded.set_by,
+           updated_at = excluded.updated_at`,
+        [org, domain, pick.modelId ?? null, pick.reasoning ?? null, setBy ?? null, new Date().toISOString()],
+      );
+    },
+
+    async clearDomainModel(org, domain) {
+      const { rows } = await client.query("DELETE FROM domain_model WHERE org_id = $1 AND domain = $2 RETURNING domain", [org, domain]);
+      return rows.length > 0;
+    },
+
+    async getDomainModel(org, domain) {
+      const { rows } = await client.query(
+        "SELECT model_id, reasoning, set_by, updated_at FROM domain_model WHERE org_id = $1 AND domain = $2",
+        [org, domain],
+      );
+      const r = rows[0] as { model_id: string | null; reasoning: string | null; set_by: string | null; updated_at: string } | undefined;
+      if (!r) return null;
+      return {
+        org,
+        domain,
+        ...(r.model_id ? { modelId: r.model_id } : {}),
+        ...(r.reasoning ? { reasoning: r.reasoning as ModelReasoning } : {}),
+        ...(r.set_by ? { setBy: r.set_by } : {}),
+        updatedAt: r.updated_at,
+      };
+    },
+
+    async domainModels(org) {
+      const { rows } = await client.query("SELECT domain, model_id, reasoning, set_by, updated_at FROM domain_model WHERE org_id = $1 ORDER BY domain", [org]);
+      return (rows as { domain: string; model_id: string | null; reasoning: string | null; set_by: string | null; updated_at: string }[]).map((r) => ({
+        org,
+        domain: r.domain,
+        ...(r.model_id ? { modelId: r.model_id } : {}),
+        ...(r.reasoning ? { reasoning: r.reasoning as ModelReasoning } : {}),
+        ...(r.set_by ? { setBy: r.set_by } : {}),
+        updatedAt: r.updated_at,
+      }));
     },
 
     async markEngaged(org, surfaceKey, threadTs, at) {

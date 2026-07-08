@@ -3,8 +3,9 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
+import type { ModelReasoning } from "../memory/domain.js";
 
 function dbPath(): string {
   if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
@@ -115,6 +116,15 @@ function getDb(): DatabaseSync {
       updated_by TEXT,                        -- authoring principalId, when known
       updated_at TEXT NOT NULL,               -- ISO-8601
       PRIMARY KEY (org_id, domain, name)
+    );
+    CREATE TABLE IF NOT EXISTS domain_model (
+      org_id     TEXT NOT NULL,
+      domain     TEXT NOT NULL,
+      model_id   TEXT,                     -- NULL = no modelId component (reasoning-only pick)
+      reasoning  TEXT,                     -- NULL = no reasoning component (modelId-only pick)
+      set_by     TEXT,
+      updated_at TEXT NOT NULL,            -- ISO-8601
+      PRIMARY KEY (org_id, domain)
     );
     CREATE TABLE IF NOT EXISTS usage_events (
       seq                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -452,6 +462,53 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("SELECT scope_key, connector, granted, reason, set_by FROM connector_override WHERE org_id = ?")
       .all(org) as { scope_key: string; connector: string; granted: number; reason: string | null; set_by: string | null }[];
     return rows.map((r) => ({ scopeKey: r.scope_key, connector: r.connector, granted: r.granted === 1, ...(r.reason ? { reason: r.reason } : {}), ...(r.set_by ? { setBy: r.set_by } : {}) }));
+  },
+
+  async setDomainModel(org, domain, pick, setBy) {
+    assertDomainModelPick(pick);
+    getDb()
+      .prepare(
+        `INSERT INTO domain_model (org_id, domain, model_id, reasoning, set_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, domain) DO UPDATE SET
+           model_id   = excluded.model_id,
+           reasoning  = excluded.reasoning,
+           set_by     = excluded.set_by,
+           updated_at = excluded.updated_at`,
+      )
+      .run(org, domain, pick.modelId ?? null, pick.reasoning ?? null, setBy ?? null, new Date().toISOString());
+  },
+
+  async clearDomainModel(org, domain) {
+    return getDb().prepare("DELETE FROM domain_model WHERE org_id = ? AND domain = ?").run(org, domain).changes > 0;
+  },
+
+  async getDomainModel(org, domain) {
+    const row = getDb()
+      .prepare("SELECT model_id, reasoning, set_by, updated_at FROM domain_model WHERE org_id = ? AND domain = ?")
+      .get(org, domain) as { model_id: string | null; reasoning: string | null; set_by: string | null; updated_at: string } | undefined;
+    if (!row) return null;
+    return {
+      org,
+      domain,
+      ...(row.model_id ? { modelId: row.model_id } : {}),
+      ...(row.reasoning ? { reasoning: row.reasoning as ModelReasoning } : {}),
+      ...(row.set_by ? { setBy: row.set_by } : {}),
+      updatedAt: row.updated_at,
+    };
+  },
+
+  async domainModels(org) {
+    const rows = getDb()
+      .prepare("SELECT domain, model_id, reasoning, set_by, updated_at FROM domain_model WHERE org_id = ? ORDER BY domain")
+      .all(org) as { domain: string; model_id: string | null; reasoning: string | null; set_by: string | null; updated_at: string }[];
+    return rows.map((r) => ({
+      org,
+      domain: r.domain,
+      ...(r.model_id ? { modelId: r.model_id } : {}),
+      ...(r.reasoning ? { reasoning: r.reasoning as ModelReasoning } : {}),
+      ...(r.set_by ? { setBy: r.set_by } : {}),
+      updatedAt: r.updated_at,
+    }));
   },
 
   async markEngaged(org, surfaceKey, threadTs, at) {

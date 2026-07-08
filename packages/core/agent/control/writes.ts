@@ -9,6 +9,8 @@ import { providerById } from "../memory/provider.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
 import { deleteDomainSkill } from "../skills/domain-skills.js";
+import { isModelUsable, reasoningRank } from "../model/policy.js";
+import { reasoningCeilingForDomain } from "../memory/domain.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -19,7 +21,19 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "delete_skill",
   "memory_write_file",
   "memory_delete_file",
+  "set_domain_model",
+  "clear_domain_model",
 ] as const;
+
+const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
+  "provider-default",
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
 
 export const MEMORY_WRITE_MAX_BYTES = 64 * 1024;
 
@@ -182,6 +196,70 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, deleted, org: a.org, domain: a.domain, name: a.name });
       } catch (e) {
         return errorResult(`delete_skill failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "set_domain_model",
+    {
+      title: "Set a domain's model / reasoning pick",
+      description:
+        "Runtime SELF-SERVE of a domain's model id and/or reasoning effort — the free CHOICE within the org's model-policy envelope (agent/model/policy.ts is the git-config allow-list/ceiling; this is the per-domain runtime pick layered under it, see docs/deploy/configuration-reference.md \"Model policy\"). Requires a DOMAIN ADMIN of `domain` (or org-wide admin) — the one control-plane write a domain admin, not just an org admin, may make on their own domain. modelId must be usable under the org's model policy (allow-listed and not provider-denied — any id if no policy is configured); reasoning must be at/under the domain's effective reasoning ceiling. At least one of modelId/reasoning is required. Takes effect immediately (no redeploy, no session restart needed); replaces any previous pick for the domain wholesale. clear_domain_model reverts to the git-config route.",
+      inputSchema: {
+        org: z.string().min(1),
+        domain: z.string().min(1),
+        modelId: z.string().min(1).optional(),
+        reasoning: z.enum(REASONING_LEVELS).optional(),
+      },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      if (denial) return errorResult(denial);
+      if (a.modelId == null && a.reasoning == null) {
+        return errorResult("set_domain_model needs modelId and/or reasoning — a pick must set at least one.");
+      }
+      try {
+        const domains = getConfig().loadDomains();
+        const target = domains.find((d) => d.name === a.domain);
+        if (!target) return errorResult(`set_domain_model failed: no domain named "${a.domain}" is configured.`);
+        const policy = getConfig().loadModelPolicy?.();
+        if (a.modelId !== undefined && !isModelUsable(a.modelId, policy)) {
+          return errorResult(`set_domain_model failed: model "${a.modelId}" is not usable under the org model policy (not allow-listed, or its vendor is provider-denied).`);
+        }
+        if (a.reasoning !== undefined && policy) {
+          const rolesCfg = getConfig().loadRoles?.() ?? [];
+          const ceiling = reasoningCeilingForDomain(a.domain, domains, rolesCfg, policy.reasoningCeiling ?? "medium");
+          if (reasoningRank(a.reasoning) > reasoningRank(ceiling)) {
+            return errorResult(`set_domain_model failed: reasoning "${a.reasoning}" exceeds domain "${a.domain}"'s effective reasoning ceiling "${ceiling}".`);
+          }
+        }
+        await store().setDomainModel(a.org, a.domain, { modelId: a.modelId, reasoning: a.reasoning }, actor);
+        const picked = { ...(a.modelId ? { modelId: a.modelId } : {}), ...(a.reasoning ? { reasoning: a.reasoning } : {}) };
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.model.set_domain", detail: { domain: a.domain, ...picked } });
+        return jsonResult({ ok: true, org: a.org, domain: a.domain, ...picked });
+      } catch (e) {
+        return errorResult(`set_domain_model failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "clear_domain_model",
+    {
+      title: "Clear a domain's model pick",
+      description: "Remove a domain's runtime model/reasoning pick (reverts to the git-config route). Requires a domain admin of `domain` (or org-wide admin). Returns cleared=false if no pick was set.",
+      inputSchema: { org: z.string().min(1), domain: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, domain: a.domain });
+      if (denial) return errorResult(denial);
+      try {
+        const cleared = await store().clearDomainModel(a.org, a.domain);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.model.clear_domain", detail: { domain: a.domain, cleared } });
+        return jsonResult({ ok: true, cleared, org: a.org, domain: a.domain });
+      } catch (e) {
+        return errorResult(`clear_domain_model failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

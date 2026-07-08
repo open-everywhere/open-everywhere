@@ -240,5 +240,30 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.listDomainSkills("acme", "eng")).length === 1, "pg: gone after delete");
 }
 
+{
+  ok((await store.getDomainModel("acme", "eng")) === null, "pg: no pick set starts null");
+  await store.setDomainModel("acme", "eng", { modelId: "zai/glm-5.2" }, "U1");
+  let row = await store.getDomainModel("acme", "eng");
+  ok(row?.modelId === "zai/glm-5.2" && row.reasoning === undefined && row.setBy === "U1", "pg: modelId-only pick persists, reasoning absent");
+
+  await store.setDomainModel("acme", "eng", { reasoning: "high" }, "U2");
+  row = await store.getDomainModel("acme", "eng");
+  ok(row !== null && row.modelId === undefined && row.reasoning === "high" && row.setBy === "U2", "pg: a new pick REPLACES the previous one wholesale (modelId dropped, not merged)");
+
+  await store.setDomainModel("acme", "eng", { modelId: "deepseek/deepseek-v4-flash", reasoning: "low" }, "U3");
+  row = await store.getDomainModel("acme", "eng");
+  ok(row?.modelId === "deepseek/deepseek-v4-flash" && row.reasoning === "low", "pg: a pick may carry both components at once");
+
+  ok((await store.getDomainModel("acme", "finance")) === null, "pg: another domain in the same org is isolated");
+  ok((await store.getDomainModel("globex", "eng")) === null, "pg: another org is isolated even for the same domain name");
+  await store.setDomainModel("globex", "eng", { modelId: "globex/own-model" }, "U9");
+  ok((await store.domainModels("acme")).length === 1, "pg: another org's write doesn't leak into this org's list");
+  ok((await store.domainModels("globex"))[0]?.modelId === "globex/own-model", "pg: domainModels lists this org's own row");
+
+  ok((await store.clearDomainModel("acme", "eng")) === true, "pg: clear returns true when a row was removed");
+  ok((await store.clearDomainModel("acme", "eng")) === false, "pg: clear is idempotent (false when absent)");
+  ok((await store.getDomainModel("acme", "eng")) === null, "pg: gone after clear");
+}
+
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills, domain model pick)`);

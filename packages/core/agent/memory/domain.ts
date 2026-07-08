@@ -90,10 +90,10 @@ export interface NamedKnobLayer extends KnobLayer {
   readonly name: string;
 }
 
-function knobLayersFor(
-  channelKey: string,
+function knobLayersForDomain(
   domains: readonly Domain[],
   roles: readonly NamedKnobLayer[],
+  target: Domain | undefined,
   surfaceMatch?: DomainMatch,
 ): KnobLayer[] {
   const layers: KnobLayer[] = [];
@@ -101,7 +101,7 @@ function knobLayersFor(
   if (surfaceMatch === "dm" || surfaceMatch === "public") {
     rungs.push(criteriaDomain(surfaceMatch, domains));
   }
-  rungs.push(domainForChannel(channelKey, domains));
+  rungs.push(target);
   for (const d of rungs) {
     if (!d) continue;
     const role = d.role !== undefined ? roles.find((r) => r.name === d.role) : undefined;
@@ -109,6 +109,15 @@ function knobLayersFor(
     layers.push(d);
   }
   return layers;
+}
+
+function knobLayersFor(
+  channelKey: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[],
+  surfaceMatch?: DomainMatch,
+): KnobLayer[] {
+  return knobLayersForDomain(domains, roles, domainForChannel(channelKey, domains), surfaceMatch);
 }
 
 export function modelRouteFor(
@@ -171,6 +180,20 @@ export function reasoningCeilingFor(
 ): ModelReasoning {
   let ceiling = base;
   for (const d of knobLayersFor(channelKey, domains, roles, surfaceMatch)) {
+    if (d?.reasoningCeiling !== undefined) ceiling = d.reasoningCeiling;
+  }
+  return ceiling;
+}
+
+export function reasoningCeilingForDomain(
+  domainName: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[] = [],
+  base: ModelReasoning,
+): ModelReasoning {
+  const target = domains.find((d) => d.name === domainName);
+  let ceiling = base;
+  for (const d of knobLayersForDomain(domains, roles, target, undefined)) {
     if (d?.reasoningCeiling !== undefined) ceiling = d.reasoningCeiling;
   }
   return ceiling;
