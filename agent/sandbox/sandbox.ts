@@ -1,5 +1,7 @@
 import { defineSandbox } from "eve/sandbox";
 import { vercel } from "eve/sandbox/vercel";
+import { justbash } from "eve/sandbox/just-bash";
+import { docker } from "eve/sandbox/docker";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
@@ -16,13 +18,31 @@ function intFromEnv(name: string, fallback: number): number {
 const TIMEOUT_MS = intFromEnv("OE_SANDBOX_TIMEOUT_MS", 30 * 60 * 1000);
 const SNAPSHOT_EXPIRATION_MS = intFromEnv("OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", 7 * 24 * 60 * 60 * 1000);
 
+const ON_VERCEL = !!process.env.VERCEL;
+
+function selfHostBackend() {
+  const kind = (process.env.OE_SANDBOX_BACKEND ?? "justbash").trim().toLowerCase();
+  if (kind === "docker") {
+    const image = process.env.OE_SANDBOX_IMAGE?.trim();
+    return docker(image ? { image } : {});
+  }
+  return justbash();
+}
+
 export default defineSandbox({
-  backend: vercel({
-    timeout: TIMEOUT_MS,
-    snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
-    keepLastSnapshots: { count: 1, deleteEvicted: true },
-  }),
+  backend: ON_VERCEL
+    ? vercel({
+        timeout: TIMEOUT_MS,
+        snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+        keepLastSnapshots: { count: 1, deleteEvicted: true },
+      })
+    : selfHostBackend(),
   onSession: async ({ ctx, use }) => {
+    if (!ON_VERCEL) {
+      await use();
+      return;
+    }
+    const useSized = use as unknown as (options?: { resources: { vcpus: number } }) => Promise<unknown>;
     let options: { resources: { vcpus: number } } | undefined;
     try {
       const bindable = ctx as BindableContext;
@@ -35,11 +55,11 @@ export default defineSandbox({
       console.warn(`[open-everywhere:sandbox] vcpus preset resolution failed — using default size (${String(err)})`);
     }
     try {
-      await use(options);
+      await useSized(options);
     } catch (err) {
       if (options === undefined) throw err;
       console.warn(`[open-everywhere:sandbox] applying vcpus=${options.resources.vcpus} failed — retrying default size (${String(err)})`);
-      await use();
+      await useSized();
     }
   },
 });

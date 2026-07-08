@@ -8,6 +8,7 @@ import { isEnforced } from "../access/enforcement.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { READ_PERMISSIONS } from "../scm/mint.js";
 import { mintGitReadBroker, mergeGitReadBroker } from "../scm/broker.js";
+import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { checkoutCommand, checkoutCommandBrokered, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
 
@@ -65,7 +66,12 @@ export default defineTool({
       const basePolicy = await compileNetworkPolicy(access, resolveHeaders);
       const { rulesByOwner } = await mintGitReadBroker(app, access.repos);
       if (!rulesByOwner.has(owner)) throw noInstallationError();
-      await sandbox.setNetworkPolicy(mergeGitReadBroker(basePolicy, rulesByOwner));
+      const brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
+      if (useSelfHostEgress()) {
+        await pushEgressPolicy(brokered);
+      } else {
+        await sandbox.setNetworkPolicy(brokered);
+      }
       result = await sandbox.run({ command: checkoutCommandBrokered(input.repo, dir, app.committer()) });
       if (!result.stdout.includes(CHECKOUT_OK)) {
         throw new Error(`clone failed for "${input.repo}": ${(result.stderr || result.stdout || "unknown error").slice(0, 500)}`);

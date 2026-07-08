@@ -8,6 +8,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import { stampEnforcement } from "../access/enforcement.js";
+import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
@@ -81,8 +82,12 @@ export default defineHook({
       if (wantEnforce || compileError) {
         try {
           const applied = await applyEgressPolicy(async () => {
-            const sandbox = await ctx.getSandbox();
-            await sandbox.setNetworkPolicy(policy);
+            if (useSelfHostEgress()) {
+              await pushEgressPolicy(policy, { sessionId: scopeKey });
+            } else {
+              const sandbox = await ctx.getSandbox();
+              await sandbox.setNetworkPolicy(policy);
+            }
           }, allowUnenforced);
           enforced = applied.enforced;
           enforceError = applied.enforceError;

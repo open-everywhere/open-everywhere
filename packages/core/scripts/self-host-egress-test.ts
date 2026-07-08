@@ -1,0 +1,111 @@
+import assert from "node:assert/strict";
+import {
+  useSelfHostEgress,
+  onVercel,
+  egressProxyUrl,
+  postPolicy,
+  type FetchLike,
+  type PushPolicyBody,
+} from "../agent/access/self-host-egress.js";
+import type { SandboxNetworkPolicy } from "eve/sandbox";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+
+function withEnv(patch: Record<string, string | undefined>, fn: () => void): void {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of Object.keys(patch)) saved[k] = process.env[k];
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+{
+  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
+    ok(!onVercel(), "onVercel() false when VERCEL unset");
+    ok(egressProxyUrl() === "http://proxy:8080", "egressProxyUrl reads OE_EGRESS_PROXY_URL");
+    ok(useSelfHostEgress(), "off Vercel + proxy URL → self-host push path");
+  });
+  withEnv({ VERCEL: "1", OE_EGRESS_PROXY_URL: "http://proxy:8080" }, () => {
+    ok(onVercel(), "onVercel() true when VERCEL set");
+    ok(!useSelfHostEgress(), "ON Vercel → NEVER the self-host push path (use setNetworkPolicy)");
+  });
+  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: undefined }, () => {
+    ok(!useSelfHostEgress(), "off Vercel but NO proxy URL → legacy setNetworkPolicy path");
+  });
+  withEnv({ VERCEL: undefined, OE_EGRESS_PROXY_URL: "   " }, () => {
+    ok(!useSelfHostEgress(), "blank proxy URL is treated as unset");
+  });
+}
+
+function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
+  fetch: FetchLike;
+  calls: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[];
+} {
+  const calls: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: res.ok, status: res.status, text: async () => res.text ?? "" };
+  };
+  return { fetch, calls };
+}
+
+{
+  const brokered: SandboxNetworkPolicy = {
+    allow: {
+      "github.com": [{ match: { path: { startsWith: "/acme/" } }, transform: [{ headers: { Authorization: "Basic zzz" } }] }],
+      "api.acme.test": [],
+    },
+  };
+  const { fetch, calls } = fakeFetch({ ok: true, status: 200 });
+  await postPolicy(fetch, "http://proxy:8080/", "sekret", { policy: brokered, sourceIp: "172.20.0.3", sessionId: "s/ws/x" });
+  ok(calls.length === 1, "postPolicy makes exactly one call");
+  ok(calls[0].url === "http://proxy:8080/policy", "trailing slashes are normalised → /policy");
+  ok(calls[0].init.method === "POST", "it is a POST");
+  ok(calls[0].init.headers.authorization === "Bearer sekret", "bearer token is sent when configured");
+  const body = JSON.parse(calls[0].init.body) as PushPolicyBody;
+  ok(JSON.stringify(body.policy) === JSON.stringify(brokered), "the EXACT compiled policy is serialised (broker header rule intact)");
+  ok(body.sourceIp === "172.20.0.3", "explicit sourceIp is forwarded");
+  ok(body.sessionId === "s/ws/x", "sessionId is forwarded");
+
+  const noAuth = fakeFetch({ ok: true, status: 200 });
+  await postPolicy(noAuth.fetch, "http://proxy:8080", undefined, { policy: "deny-all" });
+  ok(noAuth.calls[0].init.headers.authorization === undefined, "no auth header when no token");
+  ok(JSON.parse(noAuth.calls[0].init.body).policy === "deny-all", "string policies ('deny-all') serialise verbatim");
+}
+
+{
+  const rejecting = fakeFetch({ ok: false, status: 403, text: "nope" });
+  let threw: unknown;
+  try {
+    await postPolicy(rejecting.fetch, "http://proxy:8080", undefined, { policy: "deny-all" });
+  } catch (err) {
+    threw = err;
+  }
+  ok(threw instanceof Error && threw.message.includes("HTTP 403"), "non-2xx response THROWS (fail-closed) and names the status");
+
+  const networkErr: FetchLike = async () => {
+    throw new Error("ECONNREFUSED");
+  };
+  let threw2: unknown;
+  try {
+    await postPolicy(networkErr, "http://proxy:8080", undefined, { policy: "deny-all" });
+  } catch (err) {
+    threw2 = err;
+  }
+  ok(threw2 instanceof Error && threw2.message.includes("network"), "a network error THROWS (fail-closed), not swallowed");
+}
+
+console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure)\n`);
