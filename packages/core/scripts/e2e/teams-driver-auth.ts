@@ -3,7 +3,8 @@ import { sleep } from "./poll.js";
 
 const TOKEN_BASE = "https://login.microsoftonline.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
-const SCOPES = "ChannelMessage.Send ChannelMessage.Read.All offline_access";
+const SCOPES =
+  "ChannelMessage.Send ChannelMessage.Read.All Team.ReadBasic.All Channel.ReadBasic.All offline_access";
 
 function die(message: string): never {
   console.error(message);
@@ -75,12 +76,19 @@ async function pollForToken(tenantId: string, clientId: string, device: DeviceCo
   }
 }
 
+const ID_FALLBACK_HINT =
+  "\nTo get E2E_TEAMS_TEAM_ID / E2E_TEAMS_CHANNEL_ID by hand: in Teams, hover the channel →\n" +
+  "  ⋯ → 'Get link to channel'. The link is\n" +
+  "  …/channel/19%3A…%40thread.tacv2/Name?groupId=<GUID>&tenantId=…\n" +
+  "  → groupId (the GUID) is E2E_TEAMS_TEAM_ID; the URL-DECODED 19:…@thread.tacv2 is E2E_TEAMS_CHANNEL_ID.";
+
 async function listTeamsAndChannels(accessToken: string): Promise<void> {
   const auth = { authorization: `Bearer ${accessToken}` };
   try {
     const res = await fetch(`${GRAPH_BASE}/me/joinedTeams`, { headers: auth });
     if (!res.ok) {
-      console.log(`\n(could not list joined teams — http ${res.status}; the refresh token above is still valid. Find the team/channel ids in the Teams client or Graph Explorer.)`);
+      console.log(`\n(could not list joined teams — http ${res.status}; the refresh token above is still valid.)`);
+      console.log(ID_FALLBACK_HINT);
       return;
     }
     const teams = ((await res.json()) as { value?: { id?: string; displayName?: string }[] }).value ?? [];
@@ -104,6 +112,7 @@ async function listTeamsAndChannels(accessToken: string): Promise<void> {
     }
   } catch (err) {
     console.log(`\n(team/channel listing skipped: ${String(err instanceof Error ? err.message : err)} — the refresh token above is still valid.)`);
+    console.log(ID_FALLBACK_HINT);
   }
 }
 
