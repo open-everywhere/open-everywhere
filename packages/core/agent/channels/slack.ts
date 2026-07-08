@@ -22,7 +22,7 @@ import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
-import { markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY } from "./engagement.js";
+import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
 import { upsertUnderSection } from "../memory/markdown.js";
@@ -38,6 +38,8 @@ import {
   isPinnedStatusMessage,
   type ReactionState,
 } from "../status/status.js";
+
+const WARM_SILENT_LIMIT = 3;
 
 function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
   try {
@@ -307,7 +309,7 @@ async function onInbound(
   let context: readonly string[] | undefined;
   if (!isDm) {
     context = await loadConversationContext(ctx, message);
-    await markThreadEngaged(partitionForMessage(message, facts), message.threadTs, new Date().toISOString());
+    await markThreadEngaged(partitionForMessage(message, facts), message.threadTs, new Date().toISOString(), { participating: true });
   }
   return { auth: authFromFacts(message, facts), context };
 }
@@ -365,6 +367,27 @@ const slackMentionChannel = slackChannel({
           }
         }
         try {
+          const { channelId, teamId, threadTs } = channel.state;
+          if (channelId && threadTs) {
+            const p = resolvePartition({
+              channel: { kind: "slack" },
+              session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+            });
+            const rec = await getThreadEngagement(p, threadTs);
+            if (rec && rec.participating !== true) {
+              const streak = await bumpThreadSilentStreak(p, threadTs);
+              if (streak >= WARM_SILENT_LIMIT) {
+                await disengageThread(p, threadTs);
+                console.log(
+                  `[open-everywhere:slack] warm thread shed after ${streak} silent turns — disengaged (${channelId}/${threadTs})`,
+                );
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`[open-everywhere:slack] warm silent-streak bookkeeping failed: ${String(err)}`);
+        }
+        try {
           await channel.thread.startTyping();
         } catch {
         }
@@ -391,7 +414,7 @@ const slackMentionChannel = slackChannel({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
           });
-          await markThreadEngaged(p, threadTs, new Date().toISOString());
+          await markThreadEngaged(p, threadTs, new Date().toISOString(), { participating: true });
         }
       } catch {
       }

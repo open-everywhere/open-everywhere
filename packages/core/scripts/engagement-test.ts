@@ -14,9 +14,12 @@ import {
   turnEffectsFor,
   NO_REPLY_SENTINEL,
   nameDropPattern,
+  buildWakeTriggers,
+  matchWakeTriggers,
   shouldNameDropWake,
   routeNameDropEvent,
   renderNameDropMessage,
+  bindableFor,
   parseChannelJoinEvent,
   routeChannelJoinEvent,
   renderChannelJoinMessage,
@@ -30,6 +33,8 @@ import {
 import { nameDropWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
+import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
+import { resolvePartition } from "../agent/memory/partition.js";
 import { OE_APPROVAL_PREFIX } from "../agent/approvals/flow.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -70,6 +75,37 @@ registerConfig({
   ok((await store.disengage("org1", "slack/T_ENG/C_TXN", "1700.1")) === true, "disengage removes the record");
   ok((await store.getEngagement("org1", "slack/T_ENG/C_TXN", "1700.1")) === null, "thread is gone after disengage");
   ok((await store.disengage("org1", "slack/T_ENG/C_TXN", "1700.1")) === false, "disengage is idempotent (false when absent)");
+}
+
+{
+  const store = getOperationalStore();
+  const sk = "slack/T_ENG/C_WARM";
+  await store.markEngaged("orgW", sk, "w.1", "2026-07-08T10:00:00Z");
+  let row = await store.getEngagement("orgW", sk, "w.1");
+  ok(row !== null && row.participating === false && row.silentStreak === 0, "sqlite: first touch = warm watcher, zero streak");
+
+  ok((await store.bumpSilentStreak("orgW", sk, "w.1")) === 1, "sqlite: bumpSilentStreak → 1");
+  ok((await store.bumpSilentStreak("orgW", sk, "w.1")) === 2, "sqlite: bumpSilentStreak → 2");
+  ok((await store.getEngagement("orgW", sk, "w.1"))!.silentStreak === 2, "sqlite: streak persists");
+
+  await store.markEngaged("orgW", sk, "w.1", "2026-07-08T11:00:00Z");
+  row = await store.getEngagement("orgW", sk, "w.1");
+  ok(row!.participating === false && row!.silentStreak === 2 && row!.lastTurnAt === "2026-07-08T11:00:00Z", "sqlite: warm refresh keeps streak + advances lastTurnAt");
+
+  await store.markEngaged("orgW", sk, "w.1", "2026-07-08T12:00:00Z", { participating: true });
+  row = await store.getEngagement("orgW", sk, "w.1");
+  ok(row!.participating === true && row!.silentStreak === 0, "sqlite: promotion sets participating + resets streak");
+
+  await store.markEngaged("orgW", sk, "w.1", "2026-07-08T13:00:00Z", { participating: false });
+  ok((await store.getEngagement("orgW", sk, "w.1"))!.participating === true, "sqlite: participating never downgraded true→false");
+
+  ok((await store.bumpSilentStreak("orgW", sk, "nope.0")) === 0, "sqlite: bumpSilentStreak on a missing row → 0 (no-op)");
+
+  await store.markEngaged("orgW", sk, "w.2", "2026-07-08T10:00:00Z", { participating: true });
+  ok((await store.getEngagement("orgW", sk, "w.2"))!.participating === true, "sqlite: first touch can start participating");
+
+  const list = await store.listEngagements("orgW");
+  ok(list.length === 2 && list.every((r) => typeof r.participating === "boolean" && typeof r.silentStreak === "number"), "sqlite: listEngagements maps participating + silentStreak");
 }
 
 {
@@ -260,6 +296,31 @@ registerConfig({
 
   await routeMessageEvent(ev({ channel_type: "im" }), deps(true));
   ok(auths[3].is_ext_shared === undefined, "DM engagement never gets a channel trust stamp");
+}
+
+{
+  const states: unknown[] = [];
+  const deps = (rec: { participating: boolean } | null | undefined): MessageRouteDeps => ({
+    isEngaged: async () => true,
+    ...(rec === undefined ? {} : { getEngagement: async () => (rec === null ? null : ({ participating: rec.participating } as never)) }),
+    wake: async ({ state }) => {
+      states.push(state);
+    },
+  });
+  const ev = parseMessageEvent({
+    type: "event_callback",
+    team_id: "T_ENG",
+    event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "and another thing" },
+  })!;
+
+  await routeMessageEvent(ev, deps({ participating: true }));
+  ok((states[0] as { oeUninvited?: boolean }).oeUninvited === false, "participating thread → rolled-in wake is oeUninvited:false (failures go loud)");
+  await routeMessageEvent(ev, deps({ participating: false }));
+  ok((states[1] as { oeUninvited?: boolean }).oeUninvited === true, "warm (non-participating) thread → rolled-in wake stays oeUninvited:true (quiet posture)");
+  await routeMessageEvent(ev, deps(null));
+  ok((states[2] as { oeUninvited?: boolean }).oeUninvited === true, "missing record → uninvited (fail-safe, never assume standing)");
+  await routeMessageEvent(ev, deps(undefined));
+  ok((states[3] as { oeUninvited?: boolean }).oeUninvited === true, "no getEngagement dep → uninvited (fail-safe default)");
 }
 
 {
@@ -528,6 +589,15 @@ registerConfig({
   ok(!re.test("adamant refusal"), "name inside a longer word does NOT match");
   ok(nameDropPattern("Open Everywhere").test("ask open  everywhere about it"), "multi-word name tolerates whitespace runs");
 
+  const triggers = buildWakeTriggers("Ada");
+  ok(triggers.length === 1 && triggers[0].id === "name", "buildWakeTriggers = just the name trigger by default (no invented extras)");
+  const extra = { id: "codename", pattern: /\bnimbus\b/i } as const;
+  const withExtra = buildWakeTriggers("Ada", [extra]);
+  ok(withExtra.length === 2 && withExtra[0].id === "name" && withExtra[1].id === "codename", "extras append AFTER the name trigger, name stays first");
+  ok(matchWakeTriggers("could ada look?", triggers)?.id === "name", "matchWakeTriggers finds the name needle");
+  ok(matchWakeTriggers("ping nimbus about it", withExtra)?.id === "codename", "matchWakeTriggers falls through to a later trigger");
+  ok(matchWakeTriggers("nothing to see here", withExtra) === undefined, "matchWakeTriggers → undefined when nothing matches");
+
   const base = {
     inThread: false,
     authorIsBot: false,
@@ -539,7 +609,7 @@ registerConfig({
     channelConfirmedInternal: true,
   };
   ok(shouldNameDropWake(base).deliver, "top-level human name-drop in an enabled internal channel → deliver");
-  ok(!shouldNameDropWake({ ...base, inThread: true }).deliver, "thread reply → engagement path, not name-drop");
+  ok(shouldNameDropWake({ ...base, inThread: true }).deliver, "in-thread name-drop now delivers (inThread no longer gates)");
   ok(!shouldNameDropWake({ ...base, authorIsBot: true }).deliver, "bot author → never");
   ok(!shouldNameDropWake({ ...base, subtype: "channel_topic" }).deliver, "subtype → never");
   ok(!shouldNameDropWake({ ...base, channelType: "mpim" }).deliver, "group DM → never (channels/groups only)");
@@ -563,23 +633,33 @@ registerConfig({
       team_id: "T_ENG",
       event: { type: "message", channel: "C_TXN", ts: "42.1", user: "U1", channel_type: "channel", text: "can Ada check the deploy?", ...over },
     })!;
-  const calls: Array<{ threadTs: string; message: string; state: unknown; auth: unknown }> = [];
+  const calls: Array<{ threadTs: string; message: string; state: unknown; auth: unknown; context?: readonly string[] }> = [];
+  const latched: Array<{ threadTs: string; participating?: boolean; at: string; order: number }> = [];
   let infoCalls = 0;
+  let step = 0;
   const deps = (enabled: boolean, internal: boolean): NameDropRouteDeps => ({
     enabledFor: () => enabled,
     confirmInternal: async () => {
       infoCalls++;
       return internal;
     },
-    wake: async ({ threadTs, message, state, auth }) => {
-      calls.push({ threadTs, message, state, auth });
+    wake: async ({ threadTs, message, state, auth, context }) => {
+      calls.push({ threadTs, message, state, auth, context });
+      step++;
     },
+    markEngaged: async (_p, threadTs, at, opts) => {
+      latched.push({ threadTs, participating: opts?.participating, at, order: step });
+      step++;
+    },
+    now: () => "2027-03-01T09:00:00Z",
     displayName: async () => "Ada",
   });
 
   let out = await routeNameDropEvent(topLevel(), deps(true, true));
   ok(out.woke && calls.length === 1, "enabled + internal + name → wakes");
   ok(calls[0].threadTs === "42.1", "reply thread is rooted at the triggering message's ts");
+  ok(latched.length === 1 && latched[0].threadTs === "42.1" && latched[0].participating === false, "warm-on-wake latches the triggering message's thread as a non-participating watcher");
+  ok(latched[0].order === 0 && latched[0].at === "2027-03-01T09:00:00Z", "warm latch happens BEFORE the wake (order 0), stamped from the clock seam");
   {
     const a = (calls[0].auth as { attributes: Record<string, string> }).attributes;
     ok(a.is_ext_shared === "false" && a.trust_checked === "true", "name-drop wake auth carries the gate's own internal verdict (session arms trusted)");
@@ -599,8 +679,12 @@ registerConfig({
   out = await routeNameDropEvent(topLevel(), deps(true, false));
   ok(!out.woke && infoCalls === 1 && calls.length === 0, "external/unconfirmed channel → checked once, then fail-closed drop");
 
+  calls.length = 0;
+  latched.length = 0;
+  step = 0;
   out = await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), deps(true, true));
-  ok(!out.woke, "threaded message never enters the name-drop path");
+  ok(out.woke && calls.length === 1 && calls[0].threadTs === "1.1", "in-thread name-drop wakes, rooted on the existing thread_ts");
+  ok(latched.length === 1 && latched[0].threadTs === "1.1" && latched[0].participating === false, "in-thread warm-latch roots on the existing thread too");
 
   ok(renderNameDropMessage(topLevel(), "Ada").includes("can Ada check the deploy?"), "dispatch includes the raw message text");
 
@@ -616,6 +700,47 @@ registerConfig({
     displayName: async () => undefined,
   });
   ok(!out.woke, "display-name lookup failure → no needle → no wake (fail-soft, never a crash)");
+
+  {
+    const contextCalls: Array<{ channelId: string; ts: string; threadTs?: string }> = [];
+    const withBackscroll = (result: readonly string[]): NameDropRouteDeps => ({
+      ...deps(true, true),
+      backscroll: async (input) => {
+        contextCalls.push(input);
+        return result;
+      },
+    });
+
+    calls.length = 0;
+    contextCalls.length = 0;
+    out = await routeNameDropEvent(topLevel(), withBackscroll(["<untrusted>prior chatter</untrusted>"]));
+    ok(out.woke && calls.length === 1, "wake still fires with a backscroll wired");
+    ok(contextCalls.length === 1 && contextCalls[0].channelId === "C_TXN" && contextCalls[0].ts === "42.1" && contextCalls[0].threadTs === undefined, "backscroll fetched for the triggering message (top-level → no threadTs)");
+    ok(
+      Array.isArray((calls[0] as { context?: readonly string[] }).context) && (calls[0] as { context?: readonly string[] }).context![0] === "<untrusted>prior chatter</untrusted>",
+      "the fetched backscroll reaches the wake as the context array",
+    );
+
+    contextCalls.length = 0;
+    await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), withBackscroll(["ctx"]));
+    ok(contextCalls.length === 1 && contextCalls[0].threadTs === "1.1", "in-thread name-drop passes the existing thread_ts to the backscroll fetcher");
+
+    calls.length = 0;
+    out = await routeNameDropEvent(topLevel(), withBackscroll([]));
+    ok(out.woke && calls.length === 1 && (calls[0] as { context?: readonly string[] }).context === undefined, "empty backscroll → wake carries no context (identical to the pre-backscroll payload)");
+
+    calls.length = 0;
+    out = await routeNameDropEvent(topLevel(), { ...deps(true, true), backscroll: async () => { throw new Error("slack down"); } });
+    ok(out.woke && calls.length === 1 && (calls[0] as { context?: readonly string[] }).context === undefined, "a throwing backscroll fetcher → wake still fires with no context");
+
+    calls.length = 0;
+    out = await routeNameDropEvent(topLevel(), deps(true, true));
+    ok(out.woke && (calls[0] as { context?: readonly string[] }).context === undefined, "absent backscroll dep → wake with no context (back-compat)");
+
+    contextCalls.length = 0;
+    await routeNameDropEvent(topLevel({ text: "no bots here" }), withBackscroll(["should-not-fetch"]));
+    ok(contextCalls.length === 0, "no name in text → gate declines BEFORE the backscroll fetch (no wasted API call)");
+  }
 }
 
 {
@@ -768,4 +893,87 @@ registerConfig({
   );
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO + judged-reply sentinel + name-drop wake + channel-join intro)`);
+{
+  const store = getOperationalStore();
+  const secret = "front-thread-secret";
+  const nowMs = 1_700_000_000_000;
+  const prevTok = process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  const inThreadEnv = (threadTs: string, id: string) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: id,
+      event: { type: "message", channel: "C_TXN", ts: "50.1", thread_ts: threadTs, channel_type: "channel", user: "U1", text: "carry on then" },
+    });
+  const mkReq = (body: string) => {
+    const ts = String(Math.floor(nowMs / 1000));
+    const sig = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+  let sends = 0;
+  const waits: Array<Promise<unknown>> = [];
+  const fakeArgs = { send: async () => { sends++; return {}; }, waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+  const handler = buildFrontHandler(async () => new Response("inner"), {
+    signingSecret: secret,
+    now: () => nowMs,
+    markEventSeen: async () => true,
+    getBotIdentity: async () => ({ userId: "UBOT" }),
+  });
+
+  const engagedEv = parseMessageEvent(JSON.parse(inThreadEnv("1.0", "EvENG")))!;
+  const pw = resolvePartition(bindableFor(engagedEv));
+  await store.markEngaged(pw.org, pw.surfaceKey, "1.0", "2026-07-08T10:00:00Z", { participating: false });
+
+  await handler(mkReq(inThreadEnv("1.0", "EvENG")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  await Promise.all(waits);
+  ok(sends === 1, "front: in-thread ENGAGED message → delivery path wakes the session (send called)");
+
+  waits.length = 0;
+  await handler(mkReq(inThreadEnv("2.0", "EvNONE")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+  await Promise.all(waits);
+  ok(sends === 1, "front: in-thread NON-engaged message → trigger-check branch, not delivery (no spurious wake)");
+
+  if (prevTok === undefined) delete process.env.SLACK_BOT_TOKEN;
+  else process.env.SLACK_BOT_TOKEN = prevTok;
+}
+
+{
+  const { DatabaseSync } = await import("node:sqlite");
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const file = join(mkdtempSync(join(tmpdir(), "oe-eng-mig-")), "op.sqlite3");
+
+  const seed = new DatabaseSync(file);
+  seed.exec(
+    `CREATE TABLE thread_engagement (
+       org_id TEXT NOT NULL, surface_key TEXT NOT NULL, thread_ts TEXT NOT NULL,
+       engaged_at TEXT NOT NULL, last_turn_at TEXT NOT NULL,
+       PRIMARY KEY (org_id, surface_key, thread_ts));`,
+  );
+  seed
+    .prepare("INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at) VALUES (?, ?, ?, ?, ?)")
+    .run("orgM", "slack/T/CM", "m.1", "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z");
+  seed.close();
+
+  const prev = process.env.OE_SQLITE_PATH;
+  process.env.OE_SQLITE_PATH = file;
+  _resetOperationalDbForTest();
+  const migStore = getOperationalStore();
+  const row = await migStore.getEngagement("orgM", "slack/T/CM", "m.1");
+  ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z" && row.lastTurnAt === "2026-07-01T00:00:00Z", "sqlite migration: pre-existing row preserved (not dropped)");
+  ok(row!.participating === false && row!.silentStreak === 0, "sqlite migration: new columns backfill to warm/zero for old rows");
+  await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
+  ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "sqlite migration: promotion works on the migrated table");
+
+  if (prev === undefined) delete process.env.OE_SQLITE_PATH;
+  else process.env.OE_SQLITE_PATH = prev;
+  _resetOperationalDbForTest();
+}
+
+console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + migration + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);

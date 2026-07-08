@@ -8,7 +8,7 @@ const MAX_CHARS = 12_000;
 
 type SenderType = "user" | "bot" | "agent" | "unknown";
 
-interface ContextLine {
+export interface ContextLine {
   readonly senderType: SenderType;
   readonly senderId?: string;
   readonly ts: string;
@@ -21,7 +21,28 @@ function attribution(l: ContextLine): string {
   return `[sender_type=${l.senderType}]`;
 }
 
-function renderContext(lines: readonly ContextLine[], source: string): string | null {
+export function linesFromMessages(
+  raw: ReadonlyArray<Record<string, unknown>>,
+  ids: { readonly userId?: string; readonly botId?: string },
+): ContextLine[] {
+  const lines: ContextLine[] = [];
+  for (const m of raw) {
+    if (typeof m.subtype === "string" && m.subtype.length > 0) continue;
+    const text = typeof m.text === "string" ? m.text : "";
+    if (!text) continue;
+    const user = typeof m.user === "string" ? m.user : undefined;
+    const botId = typeof m.bot_id === "string" ? m.bot_id : undefined;
+    const ts = (m.ts as string) ?? "";
+    const isMe = (ids.userId !== undefined && user === ids.userId) || (ids.botId !== undefined && botId === ids.botId);
+    if (isMe) lines.push({ senderType: "agent", ts, text });
+    else if (botId) lines.push({ senderType: "bot", senderId: botId, ts, text });
+    else if (user) lines.push({ senderType: "user", senderId: user, ts, text });
+    else lines.push({ senderType: "unknown", ts, text });
+  }
+  return lines;
+}
+
+export function renderContext(lines: readonly ContextLine[], source: string): string | null {
   const kept: string[] = [];
   let chars = 0;
   for (let i = lines.length - 1; i >= 0 && kept.length < MAX_MESSAGES; i--) {
@@ -92,20 +113,7 @@ async function channelBackscroll(ctx: SlackContext, message: SlackMessage): Prom
     if (!res.ok || !Array.isArray((res as { messages?: unknown }).messages)) return [];
     const raw = (res as unknown as { messages: Array<Record<string, unknown>> }).messages;
     const { userId: meUser, botId: meBot } = await botIdentity(ctx);
-    const lines: ContextLine[] = [];
-    for (const m of raw) {
-      if (typeof m.subtype === "string" && m.subtype.length > 0) continue;
-      const text = typeof m.text === "string" ? m.text : "";
-      if (!text) continue;
-      const user = typeof m.user === "string" ? m.user : undefined;
-      const botId = typeof m.bot_id === "string" ? m.bot_id : undefined;
-      const ts = (m.ts as string) ?? "";
-      const isMe = (meUser !== undefined && user === meUser) || (meBot !== undefined && botId === meBot);
-      if (isMe) lines.push({ senderType: "agent", ts, text });
-      else if (botId) lines.push({ senderType: "bot", senderId: botId, ts, text });
-      else if (user) lines.push({ senderType: "user", senderId: user, ts, text });
-      else lines.push({ senderType: "unknown", ts, text });
-    }
+    const lines = linesFromMessages(raw, { userId: meUser, botId: meBot });
     lines.reverse();
     const entry = renderContext(lines, `slack channel ${message.channelId}`);
     return entry ? [entry] : [];

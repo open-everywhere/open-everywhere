@@ -16,6 +16,7 @@ import {
   type RouteOutcome,
 } from "./slack-events.js";
 import { resolvePartition } from "../memory/partition.js";
+import { isThreadEngaged } from "./engagement.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
 
@@ -300,6 +301,12 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (!ev.threadTs) {
       args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome("name-drop", ev.channelId, ev.ts)));
+      return OK();
+    }
+
+    const engaged = await isThreadEngaged(resolvePartition(bindableFor(ev)), ev.threadTs);
+    if (!engaged) {
+      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome("name-drop-thread", ev.channelId, ev.ts)));
       return OK();
     }
 

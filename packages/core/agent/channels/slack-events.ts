@@ -3,10 +3,12 @@ import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { nameDropWakeEnabled } from "../memory/domain.js";
-import { isThreadEngaged, markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
+import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
+import type { EngagementRow } from "../operational/store.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
+import { fetchWakeBackscroll } from "./slack-wake-backscroll.js";
 import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
 
 export interface SlackEventEnvelope {
@@ -127,6 +129,7 @@ export function turnEffectsFor(
 
 export interface MessageRouteDeps {
   readonly isEngaged: (p: ReturnType<typeof resolvePartition>, threadTs: string) => Promise<boolean>;
+  readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; state?: unknown }) => Promise<void>;
   readonly touch?: (p: ReturnType<typeof resolvePartition>, threadTs: string, atIso: string) => Promise<void>;
   readonly now?: () => string;
@@ -188,12 +191,14 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const confirmable = ev.channelType === "channel" || ev.channelType === "group";
   const internal = confirmable && deps.confirmInternal ? await deps.confirmInternal(ev.channelId).catch(() => false) : false;
   const auth = authForEvent(ev, internal ? { isExternal: false, trustChecked: true } : undefined);
+  const rec = deps.getEngagement ? await deps.getEngagement(p, ev.threadTs!) : null;
+  const uninvited = rec?.participating !== true;
   await deps.wake({
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
     auth,
     message: renderWakeMessage(ev),
-    state: wakeState(ev, ev.threadTs!),
+    state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
   });
   if (deps.touch) await deps.touch(p, ev.threadTs!, deps.now ? deps.now() : new Date().toISOString());
   return { ...decision, woke: true };
@@ -217,6 +222,7 @@ function wakeState(ev: ParsedMessageEvent, threadTs: string, extra?: Record<stri
 export function liveDeps(send: WakeSend): MessageRouteDeps {
   return {
     isEngaged: (p, threadTs) => isThreadEngaged(p, threadTs),
+    getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
     touch: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso),
     confirmInternal: confirmChannelInternal,
     disengage: (p, threadTs) => disengageThread(p, threadTs),
@@ -258,6 +264,19 @@ export function nameDropPattern(name: string): RegExp {
   return new RegExp(`(?:^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu");
 }
 
+export interface WakeTrigger {
+  readonly id: string;
+  readonly pattern: RegExp;
+}
+
+export function buildWakeTriggers(name: string, extra?: readonly WakeTrigger[]): WakeTrigger[] {
+  return [{ id: "name", pattern: nameDropPattern(name) }, ...(extra ?? [])];
+}
+
+export function matchWakeTriggers(text: string, triggers: readonly WakeTrigger[]): WakeTrigger | undefined {
+  return triggers.find((t) => t.pattern.test(text));
+}
+
 export interface NameDropInput {
   readonly inThread: boolean;
   readonly authorIsBot: boolean;
@@ -270,7 +289,6 @@ export interface NameDropInput {
 }
 
 export function shouldNameDropWake(input: NameDropInput): ReplyDecision {
-  if (input.inThread) return { deliver: false, reason: "thread reply — the engagement path owns threads" };
   if (input.subtype) return { deliver: false, reason: `message subtype "${input.subtype}" — not a plain message` };
   if (input.authorIsBot) return { deliver: false, reason: "author is a bot — would self-trigger" };
   if (input.isAppMention) return { deliver: false, reason: "app_mention — the mention path owns it" };
@@ -300,13 +318,16 @@ export function renderNameDropMessage(ev: ParsedMessageEvent, name: string): str
 export interface NameDropRouteDeps {
   readonly enabledFor: (surfaceKey: string) => boolean;
   readonly confirmInternal: (channelId: string) => Promise<boolean>;
-  readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; state?: unknown }) => Promise<void>;
+  readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string }) => Promise<readonly string[]>;
+  readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; context?: readonly string[]; state?: unknown }) => Promise<void>;
   readonly displayName: () => Promise<string | undefined>;
+  readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
+  readonly now?: () => string;
 }
 
 export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropRouteDeps): Promise<RouteOutcome> {
   const name = (await deps.displayName())?.trim();
-  const matched = name && nameDropPattern(name).test(ev.text) ? name : undefined;
+  const matched = name ? matchWakeTriggers(ev.text, buildWakeTriggers(name)) : undefined;
   const base = {
     inThread: Boolean(ev.threadTs),
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
@@ -326,12 +347,23 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const decision = shouldNameDropWake({ ...base, domainEnabled: true, channelConfirmedInternal: internal });
   if (!decision.deliver) return { ...decision, woke: false };
 
+  const rootTs = ev.threadTs ?? ev.ts;
+
+  if (deps.markEngaged) {
+    await deps.markEngaged(p, rootTs, deps.now ? deps.now() : new Date().toISOString(), { participating: false });
+  }
+
+  const context = deps.backscroll
+    ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => [])
+    : [];
+
   await deps.wake({
     channelId: ev.channelId,
-    threadTs: ev.ts,
-    auth: authForEvent({ ...ev, threadTs: ev.ts }, { isExternal: false, trustChecked: true }),
-    message: renderNameDropMessage(ev, matched!),
-    state: wakeState(ev, ev.ts, { oeUninvited: true }),
+    threadTs: rootTs,
+    auth: authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
+    message: renderNameDropMessage(ev, name!),
+    ...(context.length ? { context } : {}),
+    state: wakeState(ev, rootTs, { oeUninvited: true }),
   });
   return { ...decision, woke: true };
 }
@@ -484,8 +516,10 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     enabledFor: (surfaceKey) => nameDropWakeEnabled(surfaceKey, getConfig().loadDomains()),
     confirmInternal: confirmChannelInternal,
     displayName: botDisplayName,
-    async wake({ channelId, threadTs, auth, message, state }) {
-      await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
+    markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, opts),
+    backscroll: (input) => fetchWakeBackscroll(input),
+    async wake({ channelId, threadTs, auth, message, context, state }) {
+      await send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
     },
   };
 }

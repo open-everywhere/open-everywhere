@@ -1,11 +1,30 @@
 import { getOperationalStore } from "../operational/provider.js";
+import type { EngagementRow } from "../operational/store.js";
 import type { Partition } from "../memory/partition.js";
 
-export async function markThreadEngaged(p: Partition, threadTs: string, atIso: string): Promise<void> {
+export async function markThreadEngaged(p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }): Promise<void> {
   try {
-    await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso);
+    await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso, opts);
   } catch (err) {
     console.warn(`[open-everywhere:engagement] markEngaged failed (${p.surfaceKey}/${threadTs}): ${String(err)}`);
+  }
+}
+
+export async function getThreadEngagement(p: Partition, threadTs: string): Promise<EngagementRow | null> {
+  try {
+    return await getOperationalStore().getEngagement(p.org, p.surfaceKey, threadTs);
+  } catch (err) {
+    console.warn(`[open-everywhere:engagement] getEngagement failed (${p.surfaceKey}/${threadTs}): ${String(err)}`);
+    return null;
+  }
+}
+
+export async function bumpThreadSilentStreak(p: Partition, threadTs: string): Promise<number> {
+  try {
+    return await getOperationalStore().bumpSilentStreak(p.org, p.surfaceKey, threadTs);
+  } catch (err) {
+    console.warn(`[open-everywhere:engagement] bumpSilentStreak failed (${p.surfaceKey}/${threadTs}): ${String(err)}`);
+    return 0;
   }
 }
 
