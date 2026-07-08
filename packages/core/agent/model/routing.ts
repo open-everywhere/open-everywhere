@@ -225,6 +225,7 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
   } catch (err) {
     logOnce("warn", `primary: surface unbindable from ctx (${String(err)}) — default model, routing inactive`);
     stampUtilityRoute(null);
+    stampModelCall(defaults.primary.id);
     return null;
   }
 
@@ -239,8 +240,10 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
     route = await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps);
   } catch (err) {
     logOnce("warn", `primary: route resolution failed (${String(err)}) — default model`);
+    stampModelCall(defaults.primary.id);
     return null;
   }
+  stampModelCall(route.id ?? defaults.primary.id);
   if (isNoOpRoute(route, defaults.primary.id)) return null;
   return makeRoutedModel(() => route, defaults.primary, deps.backend);
 }

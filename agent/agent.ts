@@ -44,7 +44,7 @@ export default defineAgent({
   model: defineDynamic({
     fallback: DEFAULT_MODEL,
     events: {
-      "turn.started": gatewayModelResolver(
+      "step.started": gatewayModelResolver(
         { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
         { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
       ),

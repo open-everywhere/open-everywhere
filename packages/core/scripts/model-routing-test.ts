@@ -317,6 +317,28 @@ const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } 
     await m.doGenerate(turnCall);
     ok(calls[0].id === "anthropic/claude-sonnet-5", "model-stamp: a sessionless dispatch still calls the routed model (stamp no-ops, doesn't block)");
   }
+
+  {
+    await contextStorage.run(new ContextContainer(), async () => {
+      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, []));
+      ok(m !== null, "regression: a routed surface returns a wrapped model");
+      ok(readModelStamp() === "anthropic/claude-sonnet-5", "regression: resolvePrimaryModel stamps the routed id at RESOLVE time — the spend hook sees it without the wrapper's doGenerate running");
+    });
+    await contextStorage.run(new ContextContainer(), async () => {
+      const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+      const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, []));
+      ok(m === null, "regression: an unrouted surface returns null (eve uses the static fallback)");
+      ok(readModelStamp() === DEFAULT_ID, "regression: the default/no-op path stamps the default id (row still priced)");
+    });
+    {
+      const { normalizeDynamicRuntimeModelResult } = await import(abs("dist/src/runtime/agent/resolve-model.js"));
+      const wrapper = await contextStorage.run(new ContextContainer(), async () =>
+        resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, [])),
+      );
+      const selection = normalizeDynamicRuntimeModelResult({ fallback: { id: DEFAULT_ID }, result: wrapper });
+      ok(selection.model !== undefined, "regression: the resolver returns a model-INSTANCE selection — the shape eve honors ONLY at step.started (a turn.started wiring silently drops it to the fallback)");
+    }
+  }
 }
 
 console.log(`model-routing: ${passed} assertions passed`);
