@@ -2,15 +2,20 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineDomain, domainMatchFor, modelRouteFor, statusVerbsFor, type Domain } from "../agent/memory/domain.js";
+import type { BindableContext } from "../agent/identity/binding.js";
 import {
   applyRoute,
-  createDomainRoutedModel,
+  createRoutedCompactionModel,
+  makeRoutedModel,
+  resolvePrimaryModel,
+  resolveRoute,
   type ModelBackend,
   type RoutableModel,
   type RoutedCallOptions,
   type RoutingDeps,
 } from "../agent/model/routing.js";
 import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
+import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -21,20 +26,10 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-{
-  const require = createRequire(import.meta.url);
-  const root = dirname(require.resolve("eve/package.json"));
-  const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
-  const keys = await import(abs("dist/src/context/keys.js"));
-  const runtimeKeys = await import(abs("dist/src/runtime/sessions/runtime-context-keys.js"));
-  ok(keys.AuthKey !== undefined, "eve still exports AuthKey (routing's ALS reach)");
-  ok(keys.InitiatorAuthKey !== undefined, "eve still exports InitiatorAuthKey (routing's ALS reach)");
-  ok(runtimeKeys.ChannelKey !== undefined, "eve still exports ChannelKey (routing's ALS reach)");
-}
-
 const C_TXN = "slack/T1/C_TXN";
 const C_OTHER = "slack/T1/C_OTHER";
 const DEFAULT_ID = "zai/glm-5.2";
+const UTILITY_ID = "deepseek/deepseek-v4-flash";
 
 const domains: Domain[] = [
   defineDomain({
@@ -151,124 +146,131 @@ function fakeModel(id: string, calls: FakeCall[]): RoutableModel {
     },
   };
 }
-function fakeDeps(
-  surfaceKey: () => Promise<string | null>,
-  domainList: () => readonly Domain[],
-  calls: FakeCall[],
-  backendMark = false,
-): RoutingDeps {
-  const backend: ModelBackend = {
+function fakeBackend(calls: FakeCall[], backendMark = false): ModelBackend {
+  return {
     model: (id) => fakeModel(id, calls),
-    applyOptions: (route, options, ids) =>
-      backendMark ? { ...options, marked: { route, ids } } : options,
+    applyOptions: (route, options, ids) => (backendMark ? { ...options, marked: { route, ids } } : options),
   };
-  return { surfaceKey, domains: domainList, backend };
+}
+function fakeDeps(domainList: () => readonly Domain[], calls: FakeCall[], backendMark = false): RoutingDeps {
+  return { domains: domainList, backend: fakeBackend(calls, backendMark) };
 }
 
-const calls: FakeCall[] = [];
-const routed = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_TXN, () => domains2, calls, true));
-ok(routed.modelId === DEFAULT_ID && routed.provider === "test", "wrapper reports the default identity");
-await routed.doGenerate(turnCall);
-ok(calls.length === 1 && calls[0].id === "anthropic/claude-sonnet-5", "doGenerate dispatches to the routed inner model");
-{
-  const marked = calls[0].options.marked as { route: { id?: string }; ids: { id: string; defaultId: string } };
-  ok(marked.ids.id === "anthropic/claude-sonnet-5" && marked.ids.defaultId === DEFAULT_ID, "backend.applyOptions receives the route + both ids (vendor mapping seam)");
-}
-await routed.doStream(turnCall);
-ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "doStream dispatches to the routed inner model");
-
-{
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_OTHER, () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })], c));
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "surface in no routed domain → default model");
-}
-
-{
-  const c: FakeCall[] = [];
-  const base = fakeDeps(async () => D_PARTNER, () => dmDomains, c);
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, { ...base, surfaceMatch: async () => "dm" });
-  await m.doGenerate(turnCall);
-  ok(c[0].id === "vendor/dm-model", "wrapper: deps.surfaceMatch()='dm' routes a DM call through the dm criteria domain end-to-end");
-}
-{
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => D_PARTNER, () => dmDomains, c));
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "wrapper: no surfaceMatch dep at all → back-compat, org-only route (dm criteria layer never consulted)");
-}
-{
-  const c: FakeCall[] = [];
-  const base = fakeDeps(async () => D_PARTNER, () => dmDomains, c);
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, {
-    ...base,
-    surfaceMatch: async () => {
-      throw new Error("match resolution exploded");
+function slackChannelCtx(team: string, channel: string): BindableContext {
+  return {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: team, channel_id: channel, channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
     },
-  });
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "wrapper: surfaceMatch() throwing → fail-soft, org-only route, no throw");
+  };
 }
-
-{
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => null, () => domains2, c));
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "null surface (no ALS) → default model, no throw");
-}
-
-{
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel(
-    "primary",
-    { id: DEFAULT_ID },
-    fakeDeps(
-      async () => {
-        throw new Error("als exploded");
+function slackDmCtx(team: string, dmId: string): BindableContext {
+  return {
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: team, channel_id: dmId, channel_type: "im", dm_partner_trust: "internal" },
+          principalId: "U1",
+          principalType: "user",
+        },
       },
-      () => domains2,
-      c,
-    ),
-  );
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "surface lookup failure → default model, no throw (fail-soft)");
+    },
+  };
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel(
-    "primary",
-    { id: DEFAULT_ID },
-    fakeDeps(
-      async () => C_TXN,
-      () => {
-        throw new Error("config not registered");
-      },
-      c,
-    ),
-  );
-  await m.doGenerate(turnCall);
-  ok(c[0].id === DEFAULT_ID, "config failure → default model, no throw (fail-soft)");
+  const deps = fakeDeps(() => domains2, []);
+  const r = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
+  ok(r.id === "anthropic/claude-sonnet-5", "resolveRoute: an explicit channel domain routes its model");
+  const rOther = await resolveRoute("primary", C_OTHER, undefined, DEFAULT_ID, deps);
+  ok(rOther.id === DEFAULT_ID && JSON.stringify(rOther.providers) === JSON.stringify(["fireworks"]), "resolveRoute: an unassigned channel gets the org route (default id + pin)");
+}
+{
+  const deps = fakeDeps(() => dmDomains, []);
+  const r = await resolveRoute("primary", D_PARTNER, "dm", DEFAULT_ID, deps);
+  ok(r.id === "vendor/dm-model" && r.reasoning === "medium", "resolveRoute: surfaceMatch='dm' routes through the dm criteria domain");
+  const rNoMatch = await resolveRoute("primary", D_PARTNER, undefined, DEFAULT_ID, deps);
+  ok(rNoMatch.id === DEFAULT_ID, "resolveRoute: no surfaceMatch → org only (dm criteria layer not consulted)");
+}
+{
+  const threw = fakeDeps(() => {
+    throw new Error("config not registered");
+  }, []);
+  const r = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, threw);
+  ok(JSON.stringify(r) === "{}", "resolveRoute: a throwing domains() → {} (fail-soft, default model)");
 }
 
+{
+  const calls: FakeCall[] = [];
+  const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, fakeBackend(calls, true));
+  ok(m.modelId === DEFAULT_ID && m.provider === "test", "makeRoutedModel: reports the default identity");
+  await m.doGenerate(turnCall);
+  ok(calls.length === 1 && calls[0].id === "anthropic/claude-sonnet-5", "makeRoutedModel: doGenerate dispatches to the baked route's inner model");
+  const marked = calls[0].options.marked as { route: { id?: string }; ids: { id: string; defaultId: string } };
+  ok(marked.ids.id === "anthropic/claude-sonnet-5" && marked.ids.defaultId === DEFAULT_ID, "makeRoutedModel: backend.applyOptions receives the route + both ids (vendor mapping seam)");
+  await m.doStream(turnCall);
+  ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "makeRoutedModel: doStream dispatches to the baked route's inner model");
+}
+{
+  const calls: FakeCall[] = [];
+  const m = makeRoutedModel(() => ({}), { id: DEFAULT_ID }, fakeBackend(calls));
+  await m.doGenerate(turnCall);
+  ok(calls[0].id === DEFAULT_ID, "makeRoutedModel: an empty route dispatches to the default model");
+}
 {
   const made: string[] = [];
-  const c: FakeCall[] = [];
-  const base = fakeDeps(async () => C_TXN, () => domains2, c);
-  const deps: RoutingDeps = {
-    ...base,
-    backend: {
-      ...base.backend,
-      model: (id) => {
-        made.push(id);
-        return fakeModel(id, c);
-      },
+  const calls: FakeCall[] = [];
+  const backend: ModelBackend = {
+    model: (id) => {
+      made.push(id);
+      return fakeModel(id, calls);
     },
+    applyOptions: (_r, o) => o,
   };
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps);
+  const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, backend);
   await m.doGenerate(turnCall);
   await m.doGenerate(turnCall);
-  ok(made.filter((id) => id === "anthropic/claude-sonnet-5").length === 1, "inner model construction memoized per id");
+  ok(made.filter((id) => id === "anthropic/claude-sonnet-5").length === 1, "makeRoutedModel: inner model construction memoized per id");
+}
+
+const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } };
+{
+  const calls: FakeCall[] = [];
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains2, calls));
+  ok(m !== null, "resolvePrimaryModel: a routed surface returns a wrapped model (not null → fallback)");
+  await m!.doGenerate(turnCall);
+  ok(calls[0].id === "anthropic/claude-sonnet-5", "resolvePrimaryModel: routes from ctx.session.auth (no ALS, no surface hint)");
+}
+{
+  const calls: FakeCall[] = [];
+  const m = await resolvePrimaryModel(slackDmCtx("T1", "D_PARTNER"), PRIMARY_UTIL, fakeDeps(() => dmDomains, calls));
+  ok(m !== null, "resolvePrimaryModel: a DM surface routes via the dm criteria domain");
+  await m!.doGenerate(turnCall);
+  ok(calls[0].id === "vendor/dm-model", "resolvePrimaryModel: DM/public criteria routing survives via ctx (no surface hint)");
+}
+{
+  const calls: FakeCall[] = [];
+  const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_OTHER"), PRIMARY_UTIL, fakeDeps(onlyExec, calls));
+  ok(m === null, "resolvePrimaryModel: a surface that routes to nothing → null (static fallback)");
+}
+{
+  const onlyExec = () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })];
+  const m = await resolvePrimaryModel({} as BindableContext, PRIMARY_UTIL, fakeDeps(onlyExec, []));
+  ok(m === null, "resolvePrimaryModel: an identity-less ctx does not throw (fail-soft → null, no matching domain)");
+}
+{
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => {
+    throw new Error("config exploded");
+  }, []));
+  ok(m === null, "resolvePrimaryModel: a throwing config → null, no throw (fail-soft)");
 }
 
 {
@@ -280,48 +282,41 @@ ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "doStream 
   ok(readModelStamp() === null, "model-stamp: read outside a session context -> null (fail-soft)");
   stampModelCall("should-not-throw");
   ok(readModelStamp() === null, "model-stamp: a stamp attempted outside a session is a no-op");
+  ok(readStampedUtilityRoute() === null, "utility-route: read outside a session context -> null (fail-soft)");
 
   await contextStorage.run(new ContextContainer(), async () => {
     ok(readModelStamp() === null, "model-stamp: a fresh session starts unstamped");
-    const c: FakeCall[] = [];
-    const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_TXN, () => domains2, c));
+    ok(readStampedUtilityRoute() === null, "utility-route: a fresh session starts unstamped");
+
+    const calls: FakeCall[] = [];
+    const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, fakeBackend(calls));
     await m.doGenerate(turnCall);
     ok(readModelStamp() === "anthropic/claude-sonnet-5", "model-stamp: dispatch() stamps THIS call's resolved routed id");
 
-    const c2: FakeCall[] = [];
-    const utility = createDomainRoutedModel("utility", { id: DEFAULT_ID }, fakeDeps(async () => C_OTHER, () => domains2, c2));
-    await utility.doGenerate(turnCall);
-    ok(readModelStamp() === DEFAULT_ID, "model-stamp: a later call in the same session overwrites the earlier stamp");
+    await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => domains, calls));
+    ok(readStampedUtilityRoute()?.id === "zai/glm-4.5-air", "utility-route: the primary resolver stamps the per-domain utility route from ctx");
+
+    const cUtil: FakeCall[] = [];
+    const compaction = createRoutedCompactionModel({ id: UTILITY_ID }, fakeBackend(cUtil));
+    await compaction.doGenerate(turnCall);
+    ok(cUtil[0].id === "zai/glm-4.5-air", "compaction: the stamped utility route routes the summarizer per-domain");
   });
 
   await contextStorage.run(new ContextContainer(), async () => {
     ok(readModelStamp() === null, "model-stamp: a DIFFERENT session is unaffected by a previous session's stamp");
+    ok(readStampedUtilityRoute() === null, "utility-route: a DIFFERENT session starts with no stamp");
+    const cUtil: FakeCall[] = [];
+    const compaction = createRoutedCompactionModel({ id: UTILITY_ID }, fakeBackend(cUtil));
+    await compaction.doGenerate(turnCall);
+    ok(cUtil[0].id === UTILITY_ID, "compaction: no stamp → the static utility default (unrouted, fail-soft)");
   });
 
   {
-    const c: FakeCall[] = [];
-    const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_TXN, () => domains2, c));
+    const calls: FakeCall[] = [];
+    const m = makeRoutedModel(() => ({ id: "anthropic/claude-sonnet-5" }), { id: DEFAULT_ID }, fakeBackend(calls));
     await m.doGenerate(turnCall);
-    ok(c[0].id === "anthropic/claude-sonnet-5", "model-stamp: a sessionless dispatch still calls the routed model (stamp no-ops, doesn't block)");
+    ok(calls[0].id === "anthropic/claude-sonnet-5", "model-stamp: a sessionless dispatch still calls the routed model (stamp no-ops, doesn't block)");
   }
-}
-
-{
-  const { liveIdentity } = await import("../agent/model/routing.js");
-  const { setSurfaceHintMatch, surfaceHintMatch } = await import("../agent/model/surface-hint.js");
-
-  setSurfaceHintMatch(undefined);
-  ok(surfaceHintMatch() === undefined, "surface-hint: match slot defaults to undefined");
-  ok((await liveIdentity.surfaceMatch?.()) === undefined, "hosted fallback: no hint stamped → surfaceMatch undefined (org ← explicit only)");
-
-  setSurfaceHintMatch("dm");
-  ok(surfaceHintMatch() === "dm", "surface-hint: setSurfaceHintMatch roundtrips");
-  ok((await liveIdentity.surfaceMatch?.()) === "dm", "hosted fallback: stamped dm hint → surfaceMatch resolves dm without an ALS ctx");
-
-  setSurfaceHintMatch("public");
-  ok((await liveIdentity.surfaceMatch?.()) === "public", "hosted fallback: stamped public hint → surfaceMatch resolves public");
-
-  setSurfaceHintMatch(undefined);
 }
 
 console.log(`model-routing: ${passed} assertions passed`);

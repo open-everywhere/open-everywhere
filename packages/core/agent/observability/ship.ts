@@ -1,5 +1,16 @@
-import { surfaceHint } from "../model/surface-hint.js";
+import { readBindingBridge, bridgedContext } from "../identity/binding-bridge.js";
+import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { emitTelemetry } from "./telemetry.js";
+
+function surfaceKeyForLog(): string | undefined {
+  try {
+    const bridged = readBindingBridge();
+    if (!bridged) return undefined;
+    return domainKeyOf(resolvePartition(bridgedContext(bridged)));
+  } catch {
+    return undefined;
+  }
+}
 
 export type LogLevel = "info" | "warn" | "error";
 export type LogFields = Record<string, unknown>;
@@ -98,7 +109,7 @@ export function buildRecord(
   opts: { fields?: LogFields; err?: unknown; service?: string } = {},
 ): LogRecord {
   const surfaceKey =
-    typeof opts.fields?.surfaceKey === "string" ? (opts.fields.surfaceKey as string) : (surfaceHint() ?? undefined);
+    typeof opts.fields?.surfaceKey === "string" ? (opts.fields.surfaceKey as string) : surfaceKeyForLog();
   const record: LogRecord = {
     ...opts.fields,
     ts: new Date().toISOString(),

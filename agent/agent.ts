@@ -1,7 +1,8 @@
 import { defineAgent } from "eve";
+import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
-import { gatewayRoutedModel } from "@open-everywhere/adapters/agent/model/gateway.js";
+import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
@@ -38,11 +39,19 @@ function readAppVersion(): string {
 registerAppInfo({ version: readAppVersion(), primaryModel: DEFAULT_MODEL, utilityModel: UTILITY_MODEL });
 
 export default defineAgent({
-  model: gatewayRoutedModel("primary", { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS }),
+  model: defineDynamic({
+    fallback: DEFAULT_MODEL,
+    events: {
+      "turn.started": gatewayModelResolver(
+        { id: DEFAULT_MODEL, gateway: GATEWAY_DEFAULTS },
+        { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS },
+      ),
+    },
+  }),
   modelContextWindowTokens: 1_000_000,
   reasoning: "medium",
   compaction: {
-    model: gatewayRoutedModel("utility", { id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
+    model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
     thresholdPercent: 0.5,
   },

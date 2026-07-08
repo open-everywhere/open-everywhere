@@ -17,10 +17,10 @@ const { defineModelPolicy } = await import("../agent/model/policy.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const {
-  createDomainRoutedModel,
+  resolveRoute,
 } = await import("../agent/model/routing.js");
 
-import type { RoutingDeps, ModelBackend, RoutableModel, RoutedCallOptions } from "../agent/model/routing.js";
+import type { RoutingDeps, ModelBackend } from "../agent/model/routing.js";
 import type { Domain, ModelReasoning } from "../agent/memory/domain.js";
 import type { ModelPolicy } from "../agent/model/policy.js";
 
@@ -170,37 +170,15 @@ async function connect(roles: readonly string[], actor = "admin@example.com") {
   });
 }
 
-interface FakeCall {
-  id: string;
-  options: RoutedCallOptions;
-}
-function fakeModel(id: string, calls: FakeCall[]): RoutableModel {
-  return {
-    specificationVersion: "v4",
-    provider: "test",
-    modelId: id,
-    supportedUrls: {},
-    doGenerate: async (options: RoutedCallOptions) => {
-      calls.push({ id, options });
-      return { ok: true };
-    },
-    doStream: async (options: RoutedCallOptions) => {
-      calls.push({ id, options });
-      return { ok: true };
-    },
+function deps(opts: {
+  pick?: (domainName: string) => Promise<{ modelId?: string; reasoning?: ModelReasoning } | null>;
+  policy?: ModelPolicy;
+}): RoutingDeps {
+  const backend: ModelBackend = {
+    model: (id) => ({ specificationVersion: "v4", provider: "test", modelId: id, supportedUrls: {}, doGenerate: async () => ({}), doStream: async () => ({}) }),
+    applyOptions: (_r, o) => o,
   };
-}
-function deps(
-  surfaceKey: string,
-  calls: FakeCall[],
-  opts: {
-    pick?: (domainName: string) => Promise<{ modelId?: string; reasoning?: ModelReasoning } | null>;
-    policy?: ModelPolicy;
-  },
-): RoutingDeps {
-  const backend: ModelBackend = { model: (id) => fakeModel(id, calls), applyOptions: (_r, o) => o };
   return {
-    surfaceKey: async () => surfaceKey,
     domains: () => domains,
     roles: () => [],
     modelPolicy: () => opts.policy,
@@ -208,90 +186,73 @@ function deps(
     backend,
   };
 }
-const turnCall: RoutedCallOptions = { prompt: [], reasoning: "medium" };
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async () => ({ modelId: "deepseek/deepseek-v4-flash" }),
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: an in-envelope pick OVERRIDES the git route's model id", c[0].id === "deepseek/deepseek-v4-flash");
+  ok("resolver: an in-envelope pick OVERRIDES the git route's model id", r.id === "deepseek/deepseek-v4-flash");
 }
 
 {
-  const c: FakeCall[] = [];
   let seen: string | undefined;
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async (name) => {
       seen = name;
       return null;
     },
   }));
-  await m.doGenerate(turnCall);
   ok("resolver: domainModelPick is called with the surface's resolved domain name", seen === "eng");
-  ok("resolver: a null pick leaves the git route unchanged", c[0].id === DEFAULT_ID);
+  ok("resolver: a null pick leaves the git route unchanged", r.id === DEFAULT_ID);
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async () => ({ modelId: "openai/gpt-6" }),
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: an out-of-envelope pick is CLAMPED by the envelope (→ safe fallback, not gpt-6)", c[0].id === "deepseek/deepseek-v4-flash");
+  ok("resolver: an out-of-envelope pick is CLAMPED by the envelope (→ safe fallback, not gpt-6)", r.id === "deepseek/deepseek-v4-flash");
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async () => ({ reasoning: "high" }),
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: a reasoning-only pick keeps the git model id", c[0].id === DEFAULT_ID);
-  ok("resolver: a reasoning pick within the domain ceiling is applied", c[0].options.reasoning === "high");
+  ok("resolver: a reasoning-only pick keeps the git model id", r.id === DEFAULT_ID);
+  ok("resolver: a reasoning pick within the domain ceiling is applied", r.reasoning === "high");
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_FIN, c, {
+  const r = await resolveRoute("primary", C_FIN, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async () => ({ reasoning: "high" }),
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: a reasoning pick above the domain ceiling is CLAMPED (high → low at finance)", c[0].options.reasoning === "low");
+  ok("resolver: a reasoning pick above the domain ceiling is CLAMPED (high → low at finance)", r.reasoning === "low");
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, { policy: POLICY }));
-  await m.doGenerate(turnCall);
-  ok("resolver: no domainModelPick dep → the git route stands (fail-soft absent)", c[0].id === DEFAULT_ID);
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({ policy: POLICY }));
+  ok("resolver: no domainModelPick dep → the git route stands (fail-soft absent)", r.id === DEFAULT_ID);
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     policy: POLICY,
     pick: async () => {
       throw new Error("store exploded");
     },
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: a throwing pick read → the git route stands, no throw (fail-soft)", c[0].id === DEFAULT_ID);
+  ok("resolver: a throwing pick read → the git route stands, no throw (fail-soft)", r.id === DEFAULT_ID);
 }
 
 {
-  const c: FakeCall[] = [];
-  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, deps(C_ENG, c, {
+  const r = await resolveRoute("primary", C_ENG, undefined, DEFAULT_ID, deps({
     pick: async () => ({ modelId: "some/unlisted-model" }),
   }));
-  await m.doGenerate(turnCall);
-  ok("resolver: with no policy, a pick's model id passes through unclamped", c[0].id === "some/unlisted-model");
+  ok("resolver: with no policy, a pick's model id passes through unclamped", r.id === "some/unlisted-model");
 }
 
 rmSync(dir, { recursive: true, force: true });

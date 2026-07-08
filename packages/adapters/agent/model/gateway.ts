@@ -1,8 +1,8 @@
 import { gateway } from "ai";
 import type { ModelRoute } from "@open-everywhere/core/agent/memory/domain.js";
+import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import type { ModelBackend, RoutedCallOptions } from "@open-everywhere/core/agent/model/routing.js";
-import { createDomainRoutedModel, liveIdentity } from "@open-everywhere/core/agent/model/routing.js";
-import type { ModelRole } from "@open-everywhere/core/agent/memory/domain.js";
+import { createRoutedCompactionModel, liveIdentity, resolvePrimaryModel } from "@open-everywhere/core/agent/model/routing.js";
 
 type GatewayModel = ReturnType<typeof gateway>;
 
@@ -40,9 +40,15 @@ export function gatewayModelBackend(defaults?: Record<string, unknown>): ModelBa
   };
 }
 
-export function gatewayRoutedModel(role: ModelRole, defaults: GatewayRoutedDefaults): GatewayModel {
-  return createDomainRoutedModel(role, { id: defaults.id }, {
-    ...liveIdentity,
-    backend: gatewayModelBackend(defaults.gateway),
-  });
+export function gatewayModelResolver(
+  primary: GatewayRoutedDefaults,
+  utility: GatewayRoutedDefaults,
+): (event: unknown, ctx: unknown) => Promise<GatewayModel | null> {
+  const deps = { ...liveIdentity, backend: gatewayModelBackend(primary.gateway) };
+  return (_event, ctx) =>
+    resolvePrimaryModel(ctx as BindableContext, { primary: { id: primary.id }, utility: { id: utility.id } }, deps);
+}
+
+export function gatewayRoutedCompactionModel(defaults: GatewayRoutedDefaults): GatewayModel {
+  return createRoutedCompactionModel({ id: defaults.id }, gatewayModelBackend(defaults.gateway));
 }
