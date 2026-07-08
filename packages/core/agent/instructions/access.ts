@@ -23,6 +23,16 @@ function renderChannelScope(ctx: BindableContext): string {
   );
 }
 
+export function renderNoiseDoctrine(ctx: BindableContext): string {
+  if (channelPlatform(ctx) !== "slack") return "";
+  return (
+    "## Busy threads: react over reply\n" +
+    "In a busy or noisy thread, a single emoji `react` CAN BE your whole response — prefer it " +
+    'over a low-content text reply (a bare "got it" or "on it") that would just add another line. ' +
+    "Reserve full text replies for when you actually have something to say."
+  );
+}
+
 async function surfaceAgentName(ctx: BindableContext): Promise<string | undefined> {
   return channelPlatform(ctx) === "slack" ? botDisplayName() : undefined;
 }
@@ -74,6 +84,7 @@ async function resolve(ctx: BindableContext) {
     assembleAccessInstructions(access) ?? "",
     memoryMd,
     renderChannelScope(ctx),
+    renderNoiseDoctrine(ctx),
   ]
     .filter((s) => s.length > 0)
     .join("\n\n");
