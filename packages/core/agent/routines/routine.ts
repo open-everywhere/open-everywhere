@@ -2,6 +2,7 @@ export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
   | { readonly kind: "interval"; readonly everyMinutes: number }
   | { readonly kind: "watch"; readonly everyMinutes?: number; readonly expr?: string }
+  | { readonly kind: "once"; readonly at: string }
   | {
       readonly kind: "event";
       readonly source: string;
@@ -31,7 +32,7 @@ export interface Routine {
 }
 
 export function isClockScheduled(t: RoutineTrigger): boolean {
-  return t.kind === "cron" || t.kind === "interval" || t.kind === "watch";
+  return t.kind === "cron" || t.kind === "interval" || t.kind === "watch" || t.kind === "once";
 }
 
 export const ROUTINE_MARKER = {
@@ -64,6 +65,8 @@ export function describeTrigger(t: RoutineTrigger): string {
       return t.expr !== undefined
         ? `cron "${t.expr}" (UTC; posts only on change)`
         : `every ${t.everyMinutes} min (posts only on change)`;
+    case "once":
+      return `once at ${t.at} (fires once, then disables)`;
     case "event": {
       const m = t.match ? ` ${JSON.stringify(t.match)}` : "";
       return `on ${t.source} event${m}`;

@@ -140,6 +140,10 @@ function resolveTarget(routine: Routine): DispatchTarget | null {
   }
 }
 
+function onceDisablePatch(r: Routine, now: Date, note: string): Partial<Routine> {
+  return r.trigger.kind === "once" ? { status: "disabled", disabledReason: `once: ${note} at ${now.toISOString()}` } : {};
+}
+
 function partitionOf(r: Routine): Partition {
   const [platform = "", workspace = "", ...rest] = r.surfaceKey.split("/");
   const workspaceKey = `${platform}/${workspace}`;
@@ -195,6 +199,7 @@ export async function dispatchTick(
           lastRunAt: now.toISOString(),
           nextRunAt: next ? next.toISOString() : null,
           lastOutcome: "skipped",
+          ...onceDisablePatch(r, now, "declined (over budget)"),
         });
         continue;
       }
@@ -205,6 +210,7 @@ export async function dispatchTick(
         lastRunAt: now.toISOString(),
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
+        ...onceDisablePatch(r, now, "fired"),
       });
       const slackChannelId = dest.channel === slack && "channelId" in dest.target ? dest.target.channelId : undefined;
       const internal =

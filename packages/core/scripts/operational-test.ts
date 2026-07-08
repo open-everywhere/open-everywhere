@@ -68,6 +68,23 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.removeRoutine("default", "local/dev/alpha", "r-1")) === true, "routine: remove returns true");
   ok((await store.listRoutines("default", "local/dev/alpha")).length === 0, "routine: gone after remove");
   ok((await store.removeRoutine("default", "local/dev/alpha", "r-1")) === false, "routine: removing twice returns false");
+
+  await store.addRoutine(routine("default", "local/dev/gamma", "r-cron", { trigger: { kind: "cron", expr: "0 9 * * *" } }));
+  await store.addRoutine(
+    routine("default", "local/dev/gamma", "r-once", { trigger: { kind: "once", at: "2026-07-08T09:00:00.000Z" }, nextRunAt: "2026-07-08T09:00:00.000Z" }),
+  );
+  const gamma = await store.listRoutines("default", "local/dev/gamma");
+  ok(gamma.length === 2, "routine: a once row round-trips through postgres alongside a pre-existing cron row");
+  const onceRow = gamma.find((r) => r.id === "r-once");
+  ok(onceRow?.trigger.kind === "once" && (onceRow.trigger as { at: string }).at === "2026-07-08T09:00:00.000Z", "routine: postgres round-trips the once trigger's `at` exactly");
+  ok(gamma.find((r) => r.id === "r-cron")?.trigger.kind === "cron", "routine: the pre-existing cron row is untouched by the once addition");
+
+  const onceDisabled = await store.updateRoutine("default", "local/dev/gamma", "r-once", {
+    status: "disabled",
+    disabledReason: "once: fired at 2026-07-08T09:05:00.000Z",
+    nextRunAt: null,
+  });
+  ok(onceDisabled?.status === "disabled" && onceDisabled.trigger.kind === "once", "routine: postgres updateRoutine's generic patch disables a once row without disturbing its trigger");
 }
 
 {

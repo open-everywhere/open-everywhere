@@ -23,7 +23,7 @@ import {
   WATCH_SILENCE_SENTINEL,
   WATCH_STATE_TOOL,
 } from "../agent/routines/watch.js";
-import { routineMarker, ROUTINE_MARKER, describeTrigger, type Routine } from "../agent/routines/routine.js";
+import { routineMarker, ROUTINE_MARKER, describeTrigger, isClockScheduled, type Routine } from "../agent/routines/routine.js";
 import { storedTrigger } from "../agent/tools/create_routine.js";
 
 let passed = 0;
@@ -78,6 +78,7 @@ const wc = computeNextRun({ kind: "watch", expr: "0 9 * * 1-5" }, from);
 ok(wc !== null && wc.toISOString() === "2026-06-25T09:00:00.000Z", "a cron-scheduled only-on-change trigger uses cron math");
 ok(computeNextRun({ kind: "watch" }, from) === null, "a watch with neither cadence nor cron never fires (create_routine refuses it)");
 ok(computeNextRun({ kind: "event", source: "github" }, from) === null, "event has no clock-next");
+ok(computeNextRun({ kind: "once", at: "2026-07-08T09:00:00.000Z" }, from) === null, "once has no clock-next (fixed at creation, never recomputed)");
 
 {
   const st = (t: Parameters<typeof storedTrigger>[0]) => storedTrigger(t);
@@ -85,16 +86,25 @@ ok(computeNextRun({ kind: "event", source: "github" }, from) === null, "event ha
   ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "every-run" })) === '{"kind":"cron","expr":"0 9 * * *"}', "cron + every-run → cron");
   ok(JSON.stringify(st({ kind: "scheduled", everyMinutes: 60, postPolicy: "only-on-change" })) === '{"kind":"watch","everyMinutes":60}', "cadence + only-on-change → watch");
   ok(JSON.stringify(st({ kind: "scheduled", cron: "0 9 * * *", postPolicy: "only-on-change" })) === '{"kind":"watch","expr":"0 9 * * *"}', "cron + only-on-change → cron-scheduled watch (new expressiveness)");
+  ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once (postPolicy omitted entirely — ignored for a one-shot)");
+  ok(JSON.stringify(st({ kind: "scheduled", at: "2027-03-01T09:00:00Z", postPolicy: "every-run" })) === '{"kind":"once","at":"2026-07-08T09:00:00.000Z"}', "at → once EVEN when postPolicy is also given (ignored, not an error)");
   let threw = 0;
   try { st({ kind: "scheduled", postPolicy: "every-run" }); } catch { threw++; }
   try { st({ kind: "scheduled", cron: "0 9 * * *", everyMinutes: 5, postPolicy: "every-run" }); } catch { threw++; }
-  ok(threw === 2, "neither / both of cron+everyMinutes is refused");
+  try { st({ kind: "scheduled", cron: "0 9 * * *", at: "2027-03-01T09:00:00Z" }); } catch { threw++; }
+  try { st({ kind: "scheduled", at: "not-a-real-timestamp" }); } catch { threw++; }
+  try { st({ kind: "scheduled", cron: "0 9 * * *" }); } catch { threw++; }
+  ok(threw === 5, "neither / both / all-three of cron+everyMinutes+at, an invalid `at`, and a missing postPolicy are all refused");
   ok(st({ kind: "event", source: "github", match: { event: "push" } }).kind === "event", "event passes through unchanged");
 }
 
 ok(describeTrigger({ kind: "interval", everyMinutes: 60 }) === "every 60 min (posts every run)", "interval description states the policy");
 ok(describeTrigger({ kind: "watch", everyMinutes: 60 }) === "every 60 min (posts only on change)", "only-on-change description avoids the word watch");
 ok(describeTrigger({ kind: "watch", expr: "0 9 * * 1-5" }).includes("posts only on change"), "cron-scheduled only-on-change described consistently");
+ok(describeTrigger({ kind: "once", at: "2026-07-08T09:00:00.000Z" }) === "once at 2026-07-08T09:00:00.000Z (fires once, then disables)", "once description states the instant and the disable behaviour");
+
+ok(isClockScheduled({ kind: "once", at: "2026-07-08T09:00:00.000Z" }), "once is clock-scheduled (dispatcher evaluates it, same as cron/interval/watch)");
+ok(!isClockScheduled({ kind: "event", source: "github" }), "event stays NOT clock-scheduled");
 
 ok(isDue("2026-06-24T11:59:00Z", from), "past nextRunAt is due");
 ok(!isDue("2026-06-24T12:01:00Z", from), "future nextRunAt is not due");
@@ -198,6 +208,24 @@ ok((await store.getRoutine(p.org, p.surfaceKey, made.id))?.org === "default", "s
 ok((await store.removeRoutine(p as never, made.id)) === true, "store: remove returns true");
 ok((await store.listRoutines(p as never)).length === 0, "store: routine is gone after remove");
 ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing twice returns false");
+
+{
+  const cronRow: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey, trigger: { kind: "cron", expr: "0 9 * * *" } };
+  const intervalRow: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey, trigger: { kind: "interval", everyMinutes: 30 } };
+  const watchRow: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey, trigger: { kind: "watch", everyMinutes: 15 } };
+  const onceRow: Routine = { ...base, id: store.newRoutineId(), surfaceKey: p.surfaceKey, trigger: { kind: "once", at: "2026-07-08T09:00:00.000Z" }, nextRunAt: "2026-07-08T09:00:00.000Z" };
+  for (const r of [cronRow, intervalRow, watchRow, onceRow]) await store.addRoutine(p as never, r);
+
+  const all = await store.listRoutines(p as never);
+  ok(all.length === 4, "store: a once routine round-trips alongside cron/interval/watch on the same surface");
+  const roundTrippedOnce = all.find((r) => r.id === onceRow.id);
+  ok(roundTrippedOnce?.trigger.kind === "once" && (roundTrippedOnce.trigger as { at: string }).at === "2026-07-08T09:00:00.000Z", "store: the once trigger's `at` survives the round-trip exactly");
+  ok(all.find((r) => r.id === cronRow.id)?.trigger.kind === "cron", "store: a pre-existing cron row is untouched by the once addition");
+  ok(all.find((r) => r.id === watchRow.id)?.trigger.kind === "watch", "store: a pre-existing watch row is untouched by the once addition");
+
+  const disabled = await store.updateRoutine(p.org, p.surfaceKey, onceRow.id, { status: "disabled", disabledReason: "once: fired at 2026-07-08T09:05:00.000Z", nextRunAt: null });
+  ok(disabled?.status === "disabled" && disabled.trigger.kind === "once", "store: updateRoutine's generic patch path disables a once row without touching its trigger");
+}
 
 rmSync(dir, { recursive: true, force: true });
 

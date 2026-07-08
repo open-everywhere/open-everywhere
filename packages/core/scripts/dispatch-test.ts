@@ -145,6 +145,40 @@ ok(watchAfter?.lastStateHash === undefined, "dispatch never invents a state hash
   ok(wmsg.startsWith("[routine r-watch] Scheduled fire"), "watch fires get the same temporal preamble ahead of the protocol");
 }
 
+{
+  const onceR: Routine = {
+    id: "r-once",
+    org: "default",
+    surfaceKey: "slack/T1/C1",
+    trigger: { kind: "once", at: "2026-07-02T11:55:00.000Z" },
+    prompt: "check the release notes and summarise",
+    createdAt: "2026-07-02T10:55:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: past,
+    target: { channelId: "C1" },
+  };
+  await store.addRoutine({} as never, onceR);
+  ok((await tick()).includes("r-once"), "a due once routine fires");
+
+  const onceMsg = firedMessages["r-once"] ?? "";
+  ok(
+    onceMsg.startsWith("[routine r-once] Scheduled fire") && onceMsg.includes(onceR.prompt) && !onceMsg.includes(WATCH_STATE_TOOL),
+    "a once fire gets the plain temporal-preamble + prompt (renderScheduledMessage), NOT the watch protocol",
+  );
+
+  const onceAfter = await store.getRoutine("default", "slack/T1/C1", "r-once");
+  ok(onceAfter?.status === "disabled", "a fired once routine DISABLES itself (not deleted — kept for list/audit visibility)");
+  ok(onceAfter?.disabledReason?.includes("once: fired at") === true, "the disable reason carries a fired-at marker");
+  ok(onceAfter?.nextRunAt === null, "a fired once routine's nextRunAt goes to null (no next occurrence, ever)");
+  ok(onceAfter?.trigger.kind === "once" && (onceAfter.trigger as { at: string }).at === "2026-07-02T11:55:00.000Z", "the once trigger's `at` is untouched by firing");
+
+  ok(!(await tick()).includes("r-once"), "a fired once routine never fires again on a later tick");
+
+  const { describeTrigger } = await import("../agent/routines/routine.js");
+  ok(describeTrigger(onceAfter!.trigger) === "once at 2026-07-02T11:55:00.000Z (fires once, then disables)", "describeTrigger renders the once trigger sensibly");
+}
+
 const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
 await opStore.setSpendLimit("default", "slack/T1/C2", "surface", { monthlyTokens: 100 });
 await opStore.recordUsage("default", "slack/T1/C2", "2026-07", { inputTokens: 90, outputTokens: 20 });
@@ -171,6 +205,28 @@ ok(
   cappedAfter?.nextRunAt !== undefined && cappedAfter?.nextRunAt !== null && Date.parse(cappedAfter.nextRunAt) > now.getTime(),
   "a budget decline advances the schedule (retries at its cadence, not every tick)",
 );
+
+{
+  const onceCapped: Routine = {
+    id: "r-once-capped",
+    org: "default",
+    surfaceKey: "slack/T1/C2",
+    trigger: { kind: "once", at: "2026-07-02T11:55:00.000Z" },
+    prompt: "expensive one-shot check",
+    createdAt: "2026-07-02T10:55:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: past,
+    target: { channelId: "C2" },
+  };
+  await store.addRoutine({} as never, onceCapped);
+  ok((await tick()).length === 0, "an over-budget once routine does NOT start a session either");
+  const onceCappedAfter = await store.getRoutine("default", "slack/T1/C2", "r-once-capped");
+  ok(onceCappedAfter?.status === "disabled", "a budget-declined once routine also self-disables (its one shot is used)");
+  ok(onceCappedAfter?.disabledReason?.includes("once: declined") === true, "the disable reason distinguishes a decline from an actual fire");
+  ok(onceCappedAfter?.lastOutcome === "skipped", "a budget-declined once routine still records `skipped`, same as any other kind");
+  ok(onceCappedAfter?.nextRunAt === null, "a budget-declined once routine's nextRunAt is null (never retried — recreate a fresh one-shot instead)");
+}
 
 const testDomains = [defineDomain({ name: "watched", channels: ["slack/T9/C9"] })];
 registerConfig({

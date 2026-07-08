@@ -91,6 +91,7 @@ type Trigger =
   | { kind: "cron"; expr: string }
   | { kind: "interval"; everyMinutes: number }
   | { kind: "watch"; everyMinutes?: number; expr?: string }
+  | { kind: "once"; at: string }
   | { kind: "event"; source: string; match?: Record<string, string> };
 
 export function computeNextRun(trigger: Trigger, from: Date): Date | null {
@@ -102,6 +103,8 @@ export function computeNextRun(trigger: Trigger, from: Date): Date | null {
       return trigger.everyMinutes === undefined ? null : new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
     case "interval":
       return new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
+    case "once":
+      return null;
     case "event":
       return null;
   }
