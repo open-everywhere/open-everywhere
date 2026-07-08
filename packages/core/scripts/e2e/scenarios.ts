@@ -823,4 +823,82 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(stray.length === 0, "an unsigned webhook POST produces NO channel post (hard gate)");
     },
   },
+  {
+    id: "S21",
+    title: "React tool: an explicit ask gets a real emoji reaction (not the code-driven 👀/🛑 status pair)",
+    requires: ["slack"],
+    optional: false,
+    timeoutMs: 180_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const { ts: askTs } = await slack.post(
+        slack.mention('react to this message with the "raised_hands" emoji to confirm you got it — a reaction alone is enough, no need to reply with text.'),
+      );
+      const reactions = await pollUntil(
+        async () => {
+          const names = await slack.reactions(askTs);
+          return names.includes("raised_hands") ? names : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: `a "raised_hands" reaction on ${askTs} (react tool call)` },
+      );
+      ctx.gate(reactions.includes("raised_hands"), 'the react tool added the "raised_hands" reaction (hard gate)');
+    },
+  },
+  {
+    id: "S22",
+    title: "no_reply on off-topic chatter, then a REAL follow-up proves the thread wasn't left broken",
+    requires: ["slack"],
+    optional: false,
+    timeoutMs: 300_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const { ts: rootTs } = await slack.post(slack.mention("what's 6*7? reply with just the number"));
+      await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
+      const { ts: asideTs } = await slack.post("lol I can't believe he said that in standup \u{1F602}", rootTs);
+      const during = await slack.collectRepliesDuring(rootTs, asideTs, SILENCE_WINDOW);
+      ctx.gate(during.length === 0, `no bot message during the ${SILENCE_WINDOW / 1000}s silence window (off-topic aside)`);
+      const { ts: followTs } = await slack.post("ok back to it — what's 100 minus 12?", rootTs);
+      const follow = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT });
+      ctx.gate(follow.text.includes("88"), "the thread still answers correctly after a no_reply turn (hard gate: 88)");
+    },
+  },
+  {
+    id: "S23",
+    title: "One-shot routine: create_routine(\"once\") acks now; the live fire is opt-in (dispatcher ticks every ~10 min)",
+    requires: ["slack"],
+    optional: false,
+    timeoutMs: 900_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const note = factToken("routine");
+      const { ts: askTs } = await slack.post(
+        slack.mention(
+          `create a ONE-SHOT routine (create_routine, trigger "at" a couple of minutes from now — not a recurring cron/interval) that checks back here and posts exactly the word ${note}. Confirm you've scheduled it.`,
+        ),
+      );
+      const ack = await slack.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA("Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?", {
+          mustMatch: [/schedul|check.?in|check back|remind|routine/i],
+        }),
+        ack.text,
+        "one-shot routine creation ack",
+      );
+      if (process.env.E2E_ROUTINES_ALLOW_WAIT !== "1") {
+        ctx.log(
+          "E2E_ROUTINES_ALLOW_WAIT not set — creation-ack-only run; the live fire (needs a ~10min dispatcher tick) is skipped by default, see AUDIT.md",
+        );
+        return;
+      }
+      const fired = await slack.awaitThreadMessage(
+        askTs,
+        { timeoutMs: 720_000, what: `the one-shot routine's fired post quoting "${note}" in thread ${askTs}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== ack.ts && m.text.includes(note)),
+      );
+      ctx.gate(fired.text.includes(note), `the one-shot routine actually fired and posted "${note}" (hard gate)`);
+    },
+  },
 ];
