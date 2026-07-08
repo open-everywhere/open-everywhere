@@ -3,7 +3,7 @@ import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
-import { registerGatewayDreamJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
@@ -24,6 +24,8 @@ const UTILITY_GATEWAY_DEFAULTS = {
 } as const;
 
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+
+registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerPricingSource(gatewayCatalogPricingSource());
 
