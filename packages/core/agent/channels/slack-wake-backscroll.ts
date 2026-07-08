@@ -1,3 +1,4 @@
+import { callSlackApi } from "eve/channels/slack";
 import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
 import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
 
@@ -22,15 +23,8 @@ export interface WakeBackscrollDeps {
 }
 
 const liveRequest: SlackRequester = async (method, params) => {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return undefined;
   try {
-    const res = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(params).toString(),
-    });
-    return (await res.json()) as Record<string, unknown>;
+    return (await callSlackApi({ botToken: undefined, operation: method, body: params })) as Record<string, unknown>;
   } catch {
     return undefined;
   }

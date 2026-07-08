@@ -61,7 +61,7 @@ function fakeSlack(): void {
   globalThis.fetch = (async (url: unknown, init: { body?: unknown }) => {
     const body = init?.body instanceof URLSearchParams ? init.body.toString() : String(init?.body ?? "");
     calls.push({ url: String(url), body });
-    return { json: async () => nextResponse } as Response;
+    return { ok: true, status: 200, json: async () => nextResponse } as Response;
   }) as typeof fetch;
 }
 function restoreFetch(): void {

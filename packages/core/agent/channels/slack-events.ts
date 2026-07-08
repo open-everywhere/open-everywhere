@@ -1,4 +1,4 @@
-import { slackContinuationToken } from "eve/channels/slack";
+import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -381,22 +381,12 @@ let botDisplayNamePromise: Promise<string | undefined> | undefined;
 export function botDisplayName(): Promise<string | undefined> {
   if (!botDisplayNamePromise) {
     botDisplayNamePromise = (async () => {
-      const token = process.env.SLACK_BOT_TOKEN;
-      if (!token) return undefined;
-      const call = async (method: string, body: string) => {
-        const res = await fetch(`https://slack.com/api/${method}`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
-          body,
-        });
-        return (await res.json()) as Record<string, unknown>;
-      };
       try {
-        const auth = await call("auth.test", "");
-        const userId = auth.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
+        const auth = await slackForm("auth.test", "");
+        const userId = auth?.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
         if (!userId) return undefined;
-        const info = await call("users.info", `user=${encodeURIComponent(userId)}`);
-        if (info.ok !== true) return undefined;
+        const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
+        if (info?.ok !== true) return undefined;
         const user = info.user as { profile?: { display_name?: string; real_name?: string }; real_name?: string; name?: string } | undefined;
         const name = user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim() || user?.name?.trim();
         return name || undefined;
@@ -418,15 +408,9 @@ const channelTrustCache = new Map<string, { internal: boolean; meta?: ChannelJoi
 async function channelInternalAndMeta(channelId: string): Promise<{ internal: boolean; meta?: ChannelJoinMeta }> {
   const hit = channelTrustCache.get(channelId);
   if (hit && Date.now() - hit.at < CHANNEL_TRUST_TTL) return { internal: hit.internal, meta: hit.meta };
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) return { internal: false };
   try {
-    const res = await fetch("https://slack.com/api/conversations.info", {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
-      body: `channel=${encodeURIComponent(channelId)}&include_num_members=true`,
-    });
-    const info = await res.json();
+    const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}&include_num_members=true`);
+    if (!info) return { internal: false };
     const facts = channelFactsFromInfo(info);
     const internal = facts.trustChecked === true && facts.isExternal === false;
     const meta = channelJoinMetaFromInfo(channelId, info);
@@ -448,12 +432,11 @@ const TRANSCRIPT_TOTAL_CHARS = 4000;
 export async function slackForm(method: string, body: string, token: string | undefined = process.env.SLACK_BOT_TOKEN): Promise<Record<string, unknown> | undefined> {
   if (!token) return undefined;
   try {
-    const res = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    return (await res.json()) as Record<string, unknown>;
+    return (await callSlackApi({
+      botToken: token,
+      operation: method,
+      body: Object.fromEntries(new URLSearchParams(body)),
+    })) as Record<string, unknown>;
   } catch {
     return undefined;
   }

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
-import { slackContinuationToken } from "eve/channels/slack";
+import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import {
   parseMessageEvent,
   routeMessageEvent,
@@ -179,14 +179,12 @@ let botIdentityPromise: Promise<{ readonly userId?: string; readonly botId?: str
 export function resolveBotIdentity(): Promise<{ readonly userId?: string; readonly botId?: string }> {
   if (!botIdentityPromise) {
     botIdentityPromise = (async () => {
-      const token = process.env.SLACK_BOT_TOKEN;
-      if (!token) return {};
       try {
-        const res = await fetch("https://slack.com/api/auth.test", {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/x-www-form-urlencoded" },
-        });
-        const json = (await res.json()) as { ok?: boolean; user_id?: string; bot_id?: string };
+        const json = (await callSlackApi({ botToken: undefined, operation: "auth.test", body: {} })) as {
+          ok?: boolean;
+          user_id?: string;
+          bot_id?: string;
+        };
         return json.ok ? { userId: json.user_id, botId: json.bot_id } : {};
       } catch {
         return {};

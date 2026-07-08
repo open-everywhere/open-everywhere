@@ -1,3 +1,4 @@
+import { callSlackApi } from "eve/channels/slack";
 import { getConfig } from "../access/config.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -47,18 +48,10 @@ interface SlackReadResponse {
 }
 
 export async function callSlackRead(operation: string, params: Record<string, string | number | boolean>): Promise<SlackReadResponse> {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) {
+  if (!process.env.SLACK_BOT_TOKEN) {
     throw new Error("SLACK_BOT_TOKEN is not set — the Slack read tools need the bot token to call the Web API.");
   }
-  const body = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) body.set(k, String(v));
-  const res = await fetch(`https://slack.com/api/${operation}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-    body,
-  });
-  const json = (await res.json()) as SlackReadResponse;
+  const json = (await callSlackApi({ botToken: undefined, operation, body: params })) as SlackReadResponse;
   if (!json.ok) throw new Error(`Slack ${operation} failed: ${json.error ?? "unknown error"}`);
   return json;
 }
