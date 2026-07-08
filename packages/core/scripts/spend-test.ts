@@ -78,12 +78,14 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
     {
       default: { workspaceMonthlyUsd: 100 },
       perWorkspace: { "slack/T1": { workspaceMonthlyTokens: 1_000_000 } },
+      perDomain: { dm: { surfaceMonthlyUsd: 5 }, public: { surfaceMonthlyUsd: 2 }, "team-txn": { surfaceMonthlyTokens: 100_000 } },
       perSurface: { "slack/T1/C1": { surfaceMonthlyUsd: 5, surfaceMonthlyTokens: 10_000 } },
     },
-    "a well-formed registry with token + USD components validates",
+    "a well-formed registry with token + USD components validates (incl. perDomain)",
   );
   throws({ perWorkspace: { "slack/T1/C1": { workspaceMonthlyUsd: 1 } } }, "platform/workspace", "a perWorkspace key with a surface leg is rejected");
   throws({ perSurface: { "slack/T1": { surfaceMonthlyUsd: 1 } } }, "platform/workspace/surface", "a perSurface key missing its surface leg is rejected");
+  throws({ perDomain: { "": { surfaceMonthlyUsd: 1 } } }, "non-empty domain name", "a perDomain key that's empty/blank is rejected");
   throws({ default: { surfaceMonthlyUSD: 5 } as never }, "unknown field", "a typo'd cap field fails loud (a silent no-op budget is the worst failure mode)");
   throws({ default: {} }, "no cap at all", "an entry that caps nothing is rejected");
   throws({ default: { surfaceMonthlyUsd: -1 } }, "> 0", "a non-positive amount is rejected");
@@ -113,6 +115,58 @@ ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s")
   ok(afterTok.surfaceMonthlyTokens === 5 && afterTok.surfaceMonthlyUsd === 10, "a token-only override leaves the config $ cap in force");
   const wsUsd: SpendLimitRow = { org: "o", scopeKey: "p/w", level: "workspace", monthlyUsd: 250 };
   ok(applyCapOverrides(config, [wsUsd], "p/w", "p/w/s").workspaceMonthlyUsd === 250, "a workspace-level USD override targets the workspace $ component");
+}
+
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { domainNameForScope, resolveCaps } = await import("../agent/spend/caps.js");
+
+  const domains = [
+    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"] }),
+    defineDomain({ name: "dm-layer", match: "dm" }),
+    defineDomain({ name: "public-layer", match: "public" }),
+  ];
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => ({}),
+  });
+
+  ok(domainNameForScope("slack/T1/C_TXN") === "txn", "domainNameForScope: an explicit domain member resolves to that domain's name, even with no mode/trust");
+  ok(domainNameForScope("slack/T1/C_OTHER") === undefined, "domainNameForScope: an unassigned channel with no mode/trust resolves to undefined (no criteria layer to fall back on)");
+  ok(domainNameForScope("slack/T1/C_OTHER", "dm", "internal") === "dm-layer", 'domainNameForScope: mode "dm" + trust "internal" resolves to the dm criteria domain');
+  ok(domainNameForScope("slack/T1/C_OTHER", "dm", "external") === "public-layer", 'domainNameForScope: mode "dm" + trust "external" resolves to the public criteria domain');
+  ok(domainNameForScope("slack/T1/C_OTHER", "channel", "external") === "public-layer", "domainNameForScope: an externally-shared channel resolves to the public criteria domain");
+  ok(domainNameForScope("slack/T1/C_OTHER", "channel", "internal") === undefined, "domainNameForScope: an ordinary internal channel with no explicit domain resolves to undefined (org is not a perDomain layer)");
+  ok(domainNameForScope("slack/T1/C_TXN", "dm", "internal") === "txn", "domainNameForScope: an explicit domain ALWAYS wins over the dm/public criteria layer (channels XOR match)");
+
+  const { registerConfig: reRegister } = await import("../agent/access/config.js");
+  let budgets2: SpendBudgets = {};
+  reRegister({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets2,
+  });
+
+  budgets2 = { default: { surfaceMonthlyUsd: 1 }, perWorkspace: { "slack/T1": { surfaceMonthlyUsd: 2 } }, perDomain: { "dm-layer": { surfaceMonthlyUsd: 3 } }, perSurface: { "slack/T1/C_TXN": { surfaceMonthlyUsd: 4 } } };
+  ok(resolveCaps("slack/T1", "slack/T1/C_TXN", "txn").surfaceMonthlyUsd === 4, "resolveCaps: perSurface wins over everything, even a configured perDomain entry");
+  ok(resolveCaps("slack/T1", "slack/T1/C_OTHER", "dm-layer").surfaceMonthlyUsd === 3, "resolveCaps: perDomain wins over perWorkspace/default when no perSurface entry exists");
+  ok(resolveCaps("slack/T1", "slack/T1/C_OTHER", undefined).surfaceMonthlyUsd === 2, "resolveCaps: no domainName -> falls through to perWorkspace (today's behaviour, unchanged)");
+  ok(resolveCaps("slack/T1", "slack/T1/C_OTHER", "unconfigured-domain").surfaceMonthlyUsd === 2, "resolveCaps: a domainName with no perDomain entry falls through to perWorkspace, same as before");
+  budgets2 = { default: { surfaceMonthlyUsd: 1 }, perDomain: { "dm-layer": { surfaceMonthlyUsd: 3 } } };
+  ok(resolveCaps("slack/T9", "slack/T9/C_X", "dm-layer").surfaceMonthlyUsd === 3, "resolveCaps: perDomain wins over default when no perWorkspace entry exists either");
+  ok(resolveCaps("slack/T9", "slack/T9/C_X", undefined).surfaceMonthlyUsd === 1, "resolveCaps: no domainName -> falls all the way through to default, unchanged");
 }
 
 {
@@ -334,6 +388,52 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
   delete process.env.OE_MODEL_PRICING;
   _resetPricingCacheForTest();
+}
+
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { scopeOverBudget } = await import("../agent/spend/check.js");
+  const store3 = await import("../agent/spend/store.js");
+
+  const domains = [
+    defineDomain({ name: "txn-team", channels: ["slack/T8/C_TXN"] }),
+    defineDomain({ name: "dm-crit", match: "dm" }),
+    defineDomain({ name: "public-crit", match: "public" }),
+  ];
+  let budgets3: SpendBudgets = {};
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets3,
+  });
+
+  const org = "perdomain-org";
+  const wsKey = "slack/T8";
+  const mk = (surface: string) => ({ org, platform: "slack", workspace: "T8", surface, workspaceKey: wsKey, surfaceKey: `${wsKey}/${surface}`, key: `${wsKey}/${surface}` });
+
+  budgets3 = { perDomain: { "txn-team": { surfaceMonthlyTokens: 5 } } };
+  await store3.recordUsage(mk("C_TXN") as never, "2026-07", { inputTokens: 10, outputTokens: 0 });
+  ok((await scopeOverBudget(mk("C_TXN") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain[explicit]: gates an explicit domain's channel exactly like a perSurface entry would");
+  ok(!(await scopeOverBudget(mk("C_OTHER") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain[explicit]: a channel OUTSIDE the domain (no perWorkspace/default either) stays uncapped");
+
+  budgets3 = { perDomain: { "dm-crit": { surfaceMonthlyTokens: 1 }, "public-crit": { surfaceMonthlyTokens: 1 } } };
+  await store3.recordUsage(mk("D_USER1") as never, "2026-07", { inputTokens: 100, outputTokens: 0 });
+  ok(!(await scopeOverBudget(mk("D_USER1") as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, 'perDomain["dm-crit"]: an internal DM stays exempt from blocking even though its own perDomain cap is configured and breached');
+  await store3.recordUsage(mk("C_GUEST") as never, "2026-07", { inputTokens: 100, outputTokens: 0 });
+  ok((await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "external")).over, 'perDomain["public-crit"]: an externally-shared channel (mode "channel", trust "external") IS gated by its criteria-domain cap');
+  ok(!(await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "internal")).over, "perDomain[criteria]: the SAME surface with trust \"internal\" doesn't classify into public-crit, so no perDomain cap applies (and none else is configured)");
+
+  budgets3 = { perDomain: { "txn-team": { surfaceMonthlyTokens: 1 } }, perSurface: { "slack/T8/C_TXN": { surfaceMonthlyTokens: 1_000_000 } } };
+  ok(!(await scopeOverBudget(mk("C_TXN") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain vs perSurface: a perSurface entry wins even though the surface also has a (tighter) perDomain default");
+
+  budgets3 = { default: { surfaceMonthlyTokens: 1_000_000 }, perWorkspace: { [wsKey]: { surfaceMonthlyTokens: 1_000_000 } }, perDomain: { "txn-team": { surfaceMonthlyTokens: 1 } } };
+  ok((await scopeOverBudget(mk("C_TXN") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain vs perWorkspace/default: perDomain wins even though both wider layers are configured (and looser)");
 }
 
 {

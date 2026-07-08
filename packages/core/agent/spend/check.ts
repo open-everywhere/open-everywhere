@@ -1,10 +1,11 @@
-import { effectiveCaps } from "./caps.js";
+import { effectiveCaps, domainNameForScope } from "./caps.js";
 import { checkCap, periodOf, type CapVerdict } from "./spend.js";
 import { surfaceTokens, workspaceTokens } from "./store.js";
 import { usageSummary } from "./usage-events.js";
 import { resolveAssumedModel, rowCostUsd } from "./reporting.js";
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
+import type { Trust } from "../identity/binding.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 
 export function monthStartISO(nowISO: string): string {
@@ -57,9 +58,10 @@ export async function scopeUsdSpend(org: string, workspaceKey: string, surfaceKe
   return { surfaceUsd: bySurface.get(surfaceKey) ?? 0, workspaceUsd };
 }
 
-export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: string): Promise<CapVerdict> {
+export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: string, trust?: Trust): Promise<CapVerdict> {
   const scopeKey = domainKeyOf(p);
-  const caps = await effectiveCaps(p.org, p.workspaceKey, scopeKey);
+  const domainName = domainNameForScope(scopeKey, mode, trust);
+  const caps = await effectiveCaps(p.org, p.workspaceKey, scopeKey, domainName);
   const tokenCapped = caps.surfaceMonthlyTokens != null || caps.workspaceMonthlyTokens != null;
   const usdCapped = caps.surfaceMonthlyUsd != null || caps.workspaceMonthlyUsd != null;
   if (!tokenCapped && !usdCapped) return { over: false };

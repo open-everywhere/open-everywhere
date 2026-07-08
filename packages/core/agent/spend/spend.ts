@@ -81,6 +81,7 @@ export function checkCap(opts: {
 export interface SpendBudgets {
   readonly default?: Caps;
   readonly perWorkspace?: Readonly<Record<string, Caps>>;
+  readonly perDomain?: Readonly<Record<string, Caps>>;
   readonly perSurface?: Readonly<Record<string, Caps>>;
 }
 
@@ -119,6 +120,12 @@ export function assertSpendBudgetsValid(budgets: SpendBudgets): void {
       throw new Error(`spend budget perWorkspace key must be "platform/workspace", got ${JSON.stringify(key)}`);
     }
     assertCapsShape(caps, `perWorkspace["${key}"]`);
+  }
+  for (const [key, caps] of Object.entries(budgets.perDomain ?? {})) {
+    if (!key.trim()) {
+      throw new Error(`spend budget perDomain key must be a non-empty domain name, got ${JSON.stringify(key)}`);
+    }
+    assertCapsShape(caps, `perDomain["${key}"]`);
   }
   for (const [key, caps] of Object.entries(budgets.perSurface ?? {})) {
     const parts = key.split("/");

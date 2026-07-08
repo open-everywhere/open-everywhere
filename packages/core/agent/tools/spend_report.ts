@@ -4,7 +4,7 @@ import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
 import { allLedgers } from "../spend/store.js";
 import { windowTokens, periodOf, type Caps } from "../spend/spend.js";
-import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg } from "../spend/caps.js";
+import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope } from "../spend/caps.js";
 import { workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod, type WorkspaceUsdSpend } from "../spend/check.js";
 import { getConfig } from "../access/config.js";
 import {
@@ -175,7 +175,7 @@ export default defineTool({
 
     const overrideLimits = await activeSpendLimitsForOrg(resolved.org);
     const effCapsForScope = (workspaceKey: string, surfaceKey: string): Caps => {
-      const config = resolveCaps(workspaceKey, surfaceKey);
+      const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
       return overrideLimits.length ? applyCapOverrides(config, overrideLimits, workspaceKey, surfaceKey) : config;
     };
 

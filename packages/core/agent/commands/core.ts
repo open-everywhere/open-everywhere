@@ -1,7 +1,7 @@
 import type { SurfaceBinding } from "../identity/binding.js";
 import { type Caps } from "../spend/spend.js";
 import { periodOf } from "../spend/spend.js";
-import { effectiveCaps } from "../spend/caps.js";
+import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
 import { surfaceTokens, workspaceTokens } from "../spend/store.js";
 import { scopeUsdSpend } from "../spend/check.js";
 import { getProvider } from "../memory/provider.js";
@@ -153,9 +153,10 @@ export async function computeBudgetStatusFacts(binding: SurfaceBinding, deps: Bu
   const surfaceKey = defaultScopeKey(binding, "surface");
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const period = periodOf(nowISO);
+  const domainName = domainNameForScope(surfaceKey, binding.mode, binding.trust);
 
   const [caps, st, wt, usd] = await Promise.all([
-    effectiveCapsFn(binding.org, workspaceKey, surfaceKey),
+    effectiveCapsFn(binding.org, workspaceKey, surfaceKey, domainName),
     surfaceTokensFn(binding.org, surfaceKey, period),
     workspaceTokensFn(binding.org, workspaceKey, period),
     scopeUsdSpendFn(binding.org, workspaceKey, surfaceKey, nowISO),
@@ -195,7 +196,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
   const scopeKey = defaultScopeKey(binding, level);
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
-  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey);
+  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
   const current: CurrentCaps = { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
 
   const input: SetSpendLimitInput = {
@@ -234,7 +235,7 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
   const scopeKey = defaultScopeKey(binding, level);
   const workspaceKey = defaultScopeKey(binding, "workspace");
   const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
-  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey);
+  const caps = await effectiveCapsFn(binding.org, workspaceKey, scopeKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
   const current: CurrentCaps = { tokens: caps.surfaceMonthlyTokens ?? null, usd: caps.surfaceMonthlyUsd ?? null };
 
   const input: ClearSpendLimitInput = {};

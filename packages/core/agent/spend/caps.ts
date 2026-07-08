@@ -2,6 +2,9 @@ import { type Caps, type SpendBudgets } from "./spend.js";
 import type { SpendLimitRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
+import { domainForChannel, domainMatchFor, criteriaDomain, type Domain } from "../memory/domain.js";
+import type { SessionMode } from "../access/resolver.js";
+import type { Trust } from "../identity/binding.js";
 
 function loadBudgets(): SpendBudgets {
   try {
@@ -11,9 +14,32 @@ function loadBudgets(): SpendBudgets {
   }
 }
 
-export function resolveCaps(workspaceKey: string, surfaceKey: string): Caps {
+function loadDomains(): readonly Domain[] {
+  try {
+    return getConfig().loadDomains();
+  } catch {
+    return [];
+  }
+}
+
+export function domainNameForScope(surfaceKey: string, mode?: SessionMode, trust?: Trust): string | undefined {
+  const domains = loadDomains();
+  const explicit = domainForChannel(surfaceKey, domains);
+  if (explicit) return explicit.name;
+  if (mode === undefined || trust === undefined) return undefined;
+  const match = domainMatchFor(mode, trust);
+  return match ? criteriaDomain(match, domains)?.name : undefined;
+}
+
+export function resolveCaps(workspaceKey: string, surfaceKey: string, domainName?: string): Caps {
   const budgets = loadBudgets();
-  return budgets.perSurface?.[surfaceKey] ?? budgets.perWorkspace?.[workspaceKey] ?? budgets.default ?? {};
+  return (
+    budgets.perSurface?.[surfaceKey] ??
+    (domainName !== undefined ? budgets.perDomain?.[domainName] : undefined) ??
+    budgets.perWorkspace?.[workspaceKey] ??
+    budgets.default ??
+    {}
+  );
 }
 
 export function isSpendLimitActive(row: SpendLimitRow, now: number): boolean {
@@ -38,8 +64,8 @@ export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[]
   return { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd };
 }
 
-export async function effectiveCaps(org: string, workspaceKey: string, surfaceKey: string): Promise<Caps> {
-  const config = resolveCaps(workspaceKey, surfaceKey);
+export async function effectiveCaps(org: string, workspaceKey: string, surfaceKey: string, domainName?: string): Promise<Caps> {
+  const config = resolveCaps(workspaceKey, surfaceKey, domainName);
   try {
     const limits = activeSpendLimits(await getOperationalStore().spendLimits(org), Date.now());
     return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;

@@ -1,6 +1,6 @@
 import { allLedgers, spendRoot } from "../spend/store.js";
 import { windowTokens, periodOf, type Caps } from "../spend/spend.js";
-import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg } from "../spend/caps.js";
+import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope } from "../spend/caps.js";
 import { workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod, type WorkspaceUsdSpend } from "../spend/check.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { listAllRoutines, routinesRoot } from "../routines/store.js";
@@ -61,7 +61,7 @@ export async function spendView(period: string = currentPeriod()): Promise<Spend
   const orgs = [...new Set(ledgers.map((l) => l.org))];
   const limitsByOrg = new Map(await Promise.all(orgs.map(async (org) => [org, await activeSpendLimitsForOrg(org)] as const)));
   const effCapsFor = (org: string, workspaceKey: string, surfaceKey: string): Caps => {
-    const config = resolveCaps(workspaceKey, surfaceKey);
+    const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
     const limits = limitsByOrg.get(org) ?? [];
     return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;
   };
@@ -199,7 +199,10 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
   const store = getOperationalStore();
   const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
   const spend: SpendOverrideDriftRow[] = limits.map((l) => {
-    const config = l.level === "surface" ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey) : resolveCaps(l.scopeKey, "");
+    const config =
+      l.level === "surface"
+        ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey, domainNameForScope(l.scopeKey))
+        : resolveCaps(l.scopeKey, "");
     const configCap = (l.level === "surface" ? config.surfaceMonthlyTokens : config.workspaceMonthlyTokens) ?? null;
     const configCapUsd = (l.level === "surface" ? config.surfaceMonthlyUsd : config.workspaceMonthlyUsd) ?? null;
     return {

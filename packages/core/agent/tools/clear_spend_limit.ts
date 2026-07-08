@@ -4,7 +4,7 @@ import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } 
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { effectiveCaps } from "../spend/caps.js";
+import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
 import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
@@ -74,7 +74,7 @@ export default defineDynamic({
     const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
-    const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey);
+    const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
     const current: CurrentCaps = {
       tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
       usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,

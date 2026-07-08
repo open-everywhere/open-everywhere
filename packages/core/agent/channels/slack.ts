@@ -253,9 +253,9 @@ async function onInbound(
 
   try {
     const partition = partitionForMessage(message, facts);
-    const verdict = await scopeOverBudget(partition, mode, new Date().toISOString());
+    const binding = bindFrom(bindableForMessage(message, facts));
+    const verdict = await scopeOverBudget(partition, mode, new Date().toISOString(), binding.trust);
     if (verdict.over) {
-      const binding = bindFrom(bindableForMessage(message, facts));
       const bypass = await capBypassFor({
         org: binding.org,
         principalId: message.author?.userId,
