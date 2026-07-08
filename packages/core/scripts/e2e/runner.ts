@@ -41,6 +41,13 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+function replyTail(reply: string, max = 320): string {
+  const flat = reply.replace(/\s+/g, " ").trim();
+  if (!flat) return `\n    ↳ reply: <empty>`;
+  const shown = flat.length > max ? `${flat.slice(0, max)}…` : flat;
+  return `\n    ↳ reply: ${shown}`;
+}
+
 async function main(): Promise<void> {
   const runStartedIso = new Date().toISOString();
   const report = resolveCapabilities();
@@ -131,12 +138,13 @@ async function main(): Promise<void> {
       },
       async judgePass(rubric: Rubric, reply: string, label: string): Promise<void> {
         const verdict = await judge.grade(rubric, reply);
-        if (verdict.score < rubric.atLeast) throw new GateFailure(`${label} — judge: ${verdict.detail}`);
+        if (verdict.score < rubric.atLeast)
+          throw new GateFailure(`${label} — judge: ${verdict.detail}${replyTail(reply)}`);
         judgedCount++;
       },
       async judgePass3(rubric: Rubric, reply: string, label: string): Promise<void> {
         const verdict = await judge3(judge, rubric, reply);
-        if (!verdict.pass) throw new GateFailure(`${label} — ${verdict.detail}`);
+        if (!verdict.pass) throw new GateFailure(`${label} — ${verdict.detail}${replyTail(reply)}`);
         judgedCount++;
       },
       skip(why: string): never {
