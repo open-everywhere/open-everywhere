@@ -6,6 +6,7 @@ import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
 
 export interface SlackEventEnvelope {
@@ -54,6 +55,10 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
 
 export const NO_REPLY_SENTINEL = "NO_REPLY";
 
+const PREFER_NO_REPLY_TOOL =
+  `If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare ` +
+  `${NO_REPLY_SENTINEL} text — it's audited and unambiguous; the text sentinel still works if you don't.`;
+
 export function isNoReply(message: string): boolean {
   return message.trimStart().startsWith(NO_REPLY_SENTINEL);
 }
@@ -67,7 +72,7 @@ export function renderWakeMessage(ev: ParsedMessageEvent): string {
       `chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise ` +
       `even when it lands right after your reply, and never re-answer a question you already answered. ` +
       `Judge THIS message on its own merits: a run of ${NO_REPLY_SENTINEL} turns above means the earlier ` +
-      `messages weren't for you, not that this one isn't.`,
+      `messages weren't for you, not that this one isn't. ${PREFER_NO_REPLY_TOOL}`,
     "",
     ev.text,
   ].join("\n");
@@ -83,6 +88,18 @@ export function finalMessageAction(finishReason: string, message: string | null)
   if (!message || !message.trim()) return { kind: "silent", reason: "empty final message" };
   if (isNoReply(message)) return { kind: "silent", reason: "NO_REPLY sentinel — judged not warranted" };
   return { kind: "post", text: message };
+}
+
+export function finalMessageActionForTurn(finishReason: string, message: string | null): FinalMessageAction {
+  const action = finalMessageAction(finishReason, message);
+  if (action.kind === "buffer-tool-status") return action;
+  const reason = consumeNoReplyThisTurn();
+  if (reason) return { kind: "silent", reason: `no_reply tool: ${reason}` };
+  return action;
+}
+
+export function isBareStop(action: Extract<FinalMessageAction, { kind: "silent" } | { kind: "post" }>, reactedThisTurn: boolean): boolean {
+  return action.kind === "silent" && action.reason === "empty final message" && !reactedThisTurn;
 }
 
 export type TurnEffects =
@@ -262,8 +279,8 @@ export function renderNameDropMessage(ev: ParsedMessageEvent, name: string): str
     `[name-drop] A top-level channel message said your name ("${name}") without @mentioning you. ` +
       `You were NOT invited into this conversation — reply only if the message is clearly asking for ` +
       `you or requesting something you can directly do. When in doubt, stay out: output exactly ` +
-      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. If you do reply, you will be ` +
-      `following the thread from then on, so make it count.`,
+      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. ${PREFER_NO_REPLY_TOOL} If you ` +
+      `do reply, you will be following the thread from then on, so make it count.`,
     "",
     ev.text,
   ].join("\n");
@@ -595,7 +612,7 @@ export function renderChannelJoinMessage(meta: ChannelJoinMeta, context: Channel
       `instruction someone could give you, fitted to this channel.`,
     "",
     `If this channel clearly shouldn't get even that low-key line, output exactly ${NO_REPLY_SENTINEL} and ` +
-      `nothing else — nothing will be posted.`,
+      `nothing else — nothing will be posted. ${PREFER_NO_REPLY_TOOL}`,
   ].join("\n");
 }
 

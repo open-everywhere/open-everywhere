@@ -4,7 +4,7 @@ import {
   type DiscordCommandInteraction,
 } from "eve/channels/discord";
 import { buildDiscordAuth, threadParentFromRawChannel, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
-import { finalMessageAction } from "./slack-events.js";
+import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 
 function channelTypeFromRaw(raw: Record<string, unknown>): string | undefined {
@@ -40,10 +40,15 @@ const discordInteractionChannel = discordChannel({
   },
   events: {
     "message.completed": async (data, channel) => {
-      const action = finalMessageAction(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind !== "post") {
-        if (action.kind === "silent" && data.message) {
-          console.log(`[open-everywhere:discord] judged silence (NO_REPLY) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
+        if (action.kind === "silent" && action.reason !== "empty final message") {
+          console.log(`[open-everywhere:discord] judged silence (${action.reason}) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
+        }
+        if (action.kind === "silent" && isBareStop(action, false)) {
+          console.warn(
+            `[open-everywhere:discord] BARE STOP — turn ended with no reply and no no_reply (channel ${channel.state.channelId ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
+          );
         }
         return;
       }

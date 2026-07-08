@@ -19,8 +19,9 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageAction, turnEffectsFor, botDisplayName } from "./slack-events.js";
+import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
+import { consumeReactedThisTurn } from "./react-signal.js";
 import { markThreadEngaged, disengageThread, isStopRequest, STOP_ACK_COPY } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -327,16 +328,42 @@ const slackMentionChannel = slackChannel({
       await refreshTypingStatus(channel);
     },
     "message.completed": async (data, channel) => {
-      const action = finalMessageAction(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") {
         return;
       }
       const cardPostedThisTurn = consumeCardPostedThisTurn();
+      const reactedThisTurn = consumeReactedThisTurn();
       if (action.kind === "silent") {
         (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
         console.log(
-          `[open-everywhere:slack] judged silence (NO_REPLY) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
+          `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
+        if (isBareStop(action, reactedThisTurn)) {
+          const channelId = channel.state.channelId ?? undefined;
+          const threadTs = channel.state.threadTs ?? undefined;
+          console.warn(
+            `[open-everywhere:slack] BARE STOP — turn ended with no reply, no react, and no no_reply ` +
+              `(${channelId ?? "?"}/${threadTs ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
+          );
+          try {
+            const p = resolvePartition({
+              channel: { kind: "slack" },
+              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+            });
+            await getOperationalStore().appendAudit({
+              ts: new Date().toISOString(),
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              action: "turn.bare_stop",
+              detail: { threadTs },
+            });
+          } catch (err) {
+            console.warn(`[open-everywhere:slack] bare-stop audit write failed: ${String(err)}`);
+          }
+        }
         try {
           await channel.thread.startTyping();
         } catch {

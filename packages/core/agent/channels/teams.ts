@@ -1,6 +1,6 @@
 import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
-import { finalMessageAction } from "./slack-events.js";
+import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 
 export default teamsChannel({
   onMessage: (_ctx, message) => {
@@ -22,10 +22,15 @@ export default teamsChannel({
   },
   events: {
     "message.completed": async (data, channel) => {
-      const action = finalMessageAction(data.finishReason, data.message);
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind !== "post") {
-        if (action.kind === "silent" && data.message) {
-          console.log(`[open-everywhere:teams] judged silence (NO_REPLY) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);
+        if (action.kind === "silent" && action.reason !== "empty final message") {
+          console.log(`[open-everywhere:teams] judged silence (${action.reason}) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);
+        }
+        if (action.kind === "silent" && isBareStop(action, false)) {
+          console.warn(
+            `[open-everywhere:teams] BARE STOP — turn ended with no reply and no no_reply (conversation ${channel.state.conversationId ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
+          );
         }
         return;
       }
