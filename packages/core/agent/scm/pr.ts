@@ -9,7 +9,7 @@ export interface PrOutcome {
   updated: boolean;
 }
 
-function headers(token: string): Record<string, string> {
+export function prApiHeaders(token: string): Record<string, string> {
   return {
     authorization: `Bearer ${token}`,
     accept: "application/vnd.github+json",
@@ -32,7 +32,7 @@ export async function createOrUpdatePullRequest(opts: {
 
   const res = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls`, {
     method: "POST",
-    headers: headers(opts.token),
+    headers: prApiHeaders(opts.token),
     body: JSON.stringify({ title: opts.title, body: opts.body, head: opts.head, base: opts.base }),
   });
   if (res.ok) {
@@ -45,7 +45,7 @@ export async function createOrUpdatePullRequest(opts: {
     const owner = opts.repo.slice(0, opts.repo.indexOf("/"));
     const q = await fetchFn(
       `${apiBase}/repos/${opts.repo}/pulls?head=${encodeURIComponent(`${owner}:${opts.head}`)}&state=open`,
-      { method: "GET", headers: headers(opts.token) },
+      { method: "GET", headers: prApiHeaders(opts.token) },
     );
     if (q.ok) {
       const list = (await q.json()) as { html_url: string; number: number }[];
