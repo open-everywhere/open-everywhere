@@ -11,7 +11,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const GATEWAY_DEFAULTS = {
-  only: ["fireworks"],
   zeroDataRetention: true,
   caching: "auto",
 } as const;
@@ -20,7 +19,6 @@ const DEFAULT_MODEL = "zai/glm-5.2";
 const UTILITY_MODEL = "deepseek/deepseek-v4-flash";
 const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
 const UTILITY_GATEWAY_DEFAULTS = {
-  only: ["fireworks"],
   caching: "auto",
 } as const;
 

@@ -34,12 +34,12 @@ const gw = (o: RoutedCallOptions): AnyOpts => (o.providerOptions as AnyOpts).gat
 
 {
   const o = applyGatewayOptions({ id: IDS_CHANGED.id, providers: ["anthropic"] }, turnCall, IDS_CHANGED);
-  ok(JSON.stringify(gw(o).only) === JSON.stringify(["anthropic"]), "route providers → gateway `only` pin");
+  ok(JSON.stringify(gw(o).order) === JSON.stringify(["anthropic"]), "route providers → gateway `order` pin");
 }
 
 {
   const o = applyGatewayOptions({ providers: ["zai"] }, turnCall, IDS_SAME);
-  ok(JSON.stringify(gw(o).only) === JSON.stringify(["zai"]), "pin-only route replaces the pin on the default model");
+  ok(JSON.stringify(gw(o).order) === JSON.stringify(["zai"]) && gw(o).only === undefined, "providers route sets `order` and strips the inherited `only` on the default model");
 }
 
 {
@@ -62,7 +62,7 @@ const gw = (o: RoutedCallOptions): AnyOpts => (o.providerOptions as AnyOpts).gat
 {
   const backend = gatewayModelBackend({ ...STATIC_GATEWAY });
   const o = backend.applyOptions({ providers: ["zai"] }, { prompt: [] }, IDS_SAME);
-  ok(JSON.stringify(gw(o).only) === JSON.stringify(["zai"]), "backend.applyOptions applies the gateway mapping with its defaults");
+  ok(JSON.stringify(gw(o).order) === JSON.stringify(["zai"]), "backend.applyOptions applies the gateway mapping with its defaults");
   const m = backend.model(DEFAULT_ID);
   ok(m.modelId === DEFAULT_ID && typeof m.doStream === "function", "backend.model resolves a gateway model");
 }

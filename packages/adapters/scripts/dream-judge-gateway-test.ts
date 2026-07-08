@@ -55,7 +55,7 @@ registerConfig({
   ok(gw.only === undefined && gw.zeroDataRetention === true, "settings: id change strips the pin, posture keys survive");
 
   const pinned = dreamCallSettings({ providers: ["zai"] }, DEFAULTS);
-  eq((pinned.providerOptions?.gateway as Record<string, unknown>).only, ["zai"], "settings: route providers → gateway `only` pin");
+  eq((pinned.providerOptions?.gateway as Record<string, unknown>).order, ["zai"], "settings: route providers → gateway `order` preference");
 }
 
 {

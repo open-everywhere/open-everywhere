@@ -26,8 +26,8 @@ export function applyGatewayOptions(
     for (const k of PIN_KEYS) delete gatewayOpts[k];
   }
   if (route.providers !== undefined) {
-    gatewayOpts = { ...(gatewayOpts ?? {}), only: [...route.providers] };
-    delete gatewayOpts["order"];
+    gatewayOpts = { ...(gatewayOpts ?? {}), order: [...route.providers] };
+    delete gatewayOpts["only"];
   }
   if (gatewayOpts === undefined) return options;
   return { ...options, providerOptions: { ...options.providerOptions, gateway: gatewayOpts } };

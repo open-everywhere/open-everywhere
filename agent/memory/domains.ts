@@ -22,21 +22,21 @@ const rawDomains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true, admins: ["U0EXOWNER", "U0EXUSER002", "300000000000000104"] }),
 
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly",
-    models: { primary: { id: "deepseek/deepseek-v4-flash", providers: ["fireworks"] } } }),
+    models: { primary: { id: "deepseek/deepseek-v4-flash" } } }),
 
   defineDomain({
     name: "e2e",
     channels: ["slack/T0EXAMPLE/C0EXCHAN003", "discord/1300000000000000100/1300000000000000101"],
     memory: "e2e-brain",
     nameDropWake: true,
-    models: { primary: { id: "deepseek/deepseek-v4-flash", providers: ["fireworks"] } },
+    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
   }),
 
   defineDomain({
     name: "e2e-b",
     channels: ["slack/T0EXAMPLE/C0EXCHAN005"],
     memory: "e2e-b-brain",
-    models: { primary: { id: "deepseek/deepseek-v4-flash", providers: ["fireworks"] } },
+    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
   }),
 
 ];
