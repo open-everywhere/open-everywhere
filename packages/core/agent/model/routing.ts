@@ -5,7 +5,7 @@ import type { ModelRole, ModelRoute, Domain, NamedKnobLayer, DomainMatch } from 
 import { modelRouteFor, domainMatchFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
-import { surfaceHint } from "./surface-hint.js";
+import { surfaceHint, surfaceHintMatch } from "./surface-hint.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
 
@@ -116,13 +116,15 @@ export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "surfaceMatch" | "do
   },
   surfaceMatch: async () => {
     const ctx = await readAlsSurfaceContext();
-    if (!ctx) return undefined;
-    try {
-      const binding = bindFrom(ctx);
-      return domainMatchFor(binding.mode, binding.trust);
-    } catch {
-      return undefined;
+    if (ctx) {
+      try {
+        const binding = bindFrom(ctx);
+        return domainMatchFor(binding.mode, binding.trust);
+      } catch {
+        return undefined;
+      }
     }
+    return surfaceHintMatch();
   },
   domains: () => getConfig().loadDomains(),
   roles: () => getConfig().loadRoles?.() ?? [],

@@ -306,4 +306,22 @@ ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "doStream 
   }
 }
 
+{
+  const { liveIdentity } = await import("../agent/model/routing.js");
+  const { setSurfaceHintMatch, surfaceHintMatch } = await import("../agent/model/surface-hint.js");
+
+  setSurfaceHintMatch(undefined);
+  ok(surfaceHintMatch() === undefined, "surface-hint: match slot defaults to undefined");
+  ok((await liveIdentity.surfaceMatch?.()) === undefined, "hosted fallback: no hint stamped → surfaceMatch undefined (org ← explicit only)");
+
+  setSurfaceHintMatch("dm");
+  ok(surfaceHintMatch() === "dm", "surface-hint: setSurfaceHintMatch roundtrips");
+  ok((await liveIdentity.surfaceMatch?.()) === "dm", "hosted fallback: stamped dm hint → surfaceMatch resolves dm without an ALS ctx");
+
+  setSurfaceHintMatch("public");
+  ok((await liveIdentity.surfaceMatch?.()) === "public", "hosted fallback: stamped public hint → surfaceMatch resolves public");
+
+  setSurfaceHintMatch(undefined);
+}
+
 console.log(`model-routing: ${passed} assertions passed`);
