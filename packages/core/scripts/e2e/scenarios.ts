@@ -30,6 +30,8 @@ export interface ScenarioContext {
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
   readonly webhook?: WebhookDriver;
+  readonly notion?: SlackDriver;
+  readonly notionQuery?: string;
   readonly judge: ReplyJudge;
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
@@ -899,6 +901,31 @@ export const SCENARIOS: readonly Scenario[] = [
         (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== ack.ts && m.text.includes(note)),
       );
       ctx.gate(fired.text.includes(note), `the one-shot routine actually fired and posted "${note}" (hard gate)`);
+    },
+  },
+  {
+    id: "S24",
+    title: "Notion connector: search/read via the bound connector (optional — not provisioned on any deployment yet)",
+    requires: ["slack", "notion"],
+    optional: true,
+    timeoutMs: 180_000,
+    judged: true,
+    run: async (ctx) => {
+      const notion = ctx.notion!;
+      const query = ctx.notionQuery ?? "team handbook";
+      const { ts: askTs } = await notion.post(
+        notion.mention(`search Notion for "${query}" and tell me what you find — a page title plus a short summary is enough. If nothing matches, just say so plainly; don't guess.`),
+      );
+      const reply = await notion.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA(
+          "Is the reply a sane response to a Notion search request — either naming a real-sounding page/summary, " +
+            "or an honest 'nothing found' — with no error, exception, or tool-failure text?",
+          { mustNotMatch: [/error|exception|traceback/i] },
+        ),
+        reply.text,
+        "Notion search reply is sane (found-or-honest-miss, never an error)",
+      );
     },
   },
 ];

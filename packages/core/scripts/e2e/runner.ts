@@ -1,6 +1,7 @@
 import {
   resolveCapabilities,
   resolveDiscord,
+  resolveNotion,
   resolveSlack,
   resolveSlackChannelB,
   resolveSlackPrivate,
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
   const syntheticDm = resolveSyntheticDm();
   const slackUser2 = resolveSlackUser2();
   const webhook = resolveWebhook();
+  const notion = resolveNotion();
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
@@ -62,6 +64,7 @@ async function main(): Promise<void> {
   const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
+  const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
@@ -119,6 +122,8 @@ async function main(): Promise<void> {
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
       webhook: webhookDriver,
+      notion: notionDriver,
+      notionQuery: notion.ok ? notion.cfg.query : undefined,
       judge,
       gate(cond: boolean, label: string): void {
         if (!cond) throw new GateFailure(label);

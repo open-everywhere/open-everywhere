@@ -25,6 +25,7 @@ const {
   resolveSyntheticDm,
   resolveSlackUser2,
   resolveWebhook,
+  resolveNotion,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -72,6 +73,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     !webhookMiss.ok && webhookMiss.missing.includes(ENV.webhookSecret) && webhookMiss.missing.includes(ENV.targetUrl),
     "webhook capability misses E2E_WEBHOOK_SECRET + E2E_TARGET_URL",
   );
+  const notionMiss = resolveNotion(empty);
+  ok(!notionMiss.ok && notionMiss.missing.join(",") === ENV.notionChannel, "notion add-on misses exactly E2E_NOTION_CHANNEL");
 
   const caps = resolveCapabilities(empty);
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
@@ -95,7 +98,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
       capsBase.missing.slackChannelB.join(",") === ENV.slackChannelB &&
       capsBase.missing.syntheticDm.join(",") === ENV.slackDmChannel &&
       capsBase.missing.slackUser2.join(",") === ENV.slackUser2Id &&
-      capsBase.missing.webhook.join(",") === ENV.webhookSecret,
+      capsBase.missing.webhook.join(",") === ENV.webhookSecret &&
+      capsBase.missing.notion.join(",") === ENV.notionChannel,
     "base env: each add-on capability names only ITS missing var (base vars not repeated)",
   );
   const full = {
@@ -105,9 +109,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.slackDmChannel]: "D0DM",
     [ENV.slackUser2Id]: "U2NONADMIN",
     [ENV.webhookSecret]: "hook-secret",
+    [ENV.notionChannel]: "C0NOTION",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 8, "full env: all eight capabilities live");
+  ok(capsFull.available.size === 9, "full env: all nine capabilities live");
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
@@ -119,6 +124,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   );
   const webhookCfgOverride = resolveWebhook({ ...full, [ENV.webhookHookId]: "custom-hook" });
   ok(webhookCfgOverride.ok && webhookCfgOverride.cfg.hookId === "custom-hook", "E2E_WEBHOOK_HOOK_ID overrides the default hook id");
+  const notionCfg = resolveNotion(full);
+  ok(notionCfg.ok && notionCfg.cfg.channel === "C0NOTION" && notionCfg.cfg.query === "team handbook", "notion cfg defaults E2E_NOTION_QUERY to \"team handbook\"");
+  const notionCfgOverride = resolveNotion({ ...full, [ENV.notionQuery]: "onboarding" });
+  ok(notionCfgOverride.ok && notionCfgOverride.cfg.query === "onboarding", "E2E_NOTION_QUERY overrides the default query");
   const syn = resolveSynthetic(full);
   ok(syn.ok && syn.cfg.targetUrl === "https://oe.example.test", "target URL trailing slash is stripped");
   ok(syn.ok && syn.cfg.org === "default", "E2E_ORG unset: synthetic org defaults to \"default\" (single-org fixture)");
@@ -129,14 +138,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  ok(SCENARIOS.length === 23, "pack has all twenty-three scenarios S1–S23");
+  ok(SCENARIOS.length === 24, "pack has all twenty-four scenarios S1–S24");
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   ok(
-    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23",
-    "scenario ids are S1..S23 in order",
+    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24",
+    "scenario ids are S1..S24 in order",
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -147,7 +156,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 900_000, `${s.id} budget is within the re-derived 120–900s envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
-  ok(optional.join(",") === "S8,S9,S10", "exactly the plan's stretch scenarios are optional (S11–S23 are core coverage)");
+  ok(optional.join(",") === "S8,S9,S10,S24", "the plan's stretch scenarios PLUS the gated Notion leg are optional (S11–S23 are core coverage)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
   ok(unjudged.join(",") === "S3,S6,S10,S15,S21,S22", "S3/S6/S10/S15/S21/S22 are fully deterministic — no judge (plan §5)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
@@ -163,10 +172,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(req("S19") === "slack+synthetic", "S19 requires slack + synthetic (forged admin mention)");
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
   ok(req("S21") === "slack" && req("S22") === "slack" && req("S23") === "slack", "S21/S22/S23 (the trio pack) need only the base slack driver");
+  ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -176,13 +186,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     syntheticDm: [ENV.slackDmChannel],
     slackUser2: [ENV.slackUser2Id],
     webhook: [ENV.webhookSecret],
+    notion: [ENV.notionChannel],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -192,6 +203,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     syntheticDm: [],
     slackUser2: [],
     webhook: [],
+    notion: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "S1 runs when its capability is live");
   ok(
@@ -201,6 +213,17 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, true) === undefined,
     "S8 runs with E2E_INCLUDE_OPTIONAL=1",
+  );
+  const allButNotion = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook"] as const);
+  const s24CapMissing = skipReason(SCENARIOS.find((s) => s.id === "S24")!, allButNotion, missing, true);
+  ok(s24CapMissing === `missing notion driver (set ${ENV.notionChannel})`, "S24 skip names exactly E2E_NOTION_CHANNEL when the notion capability is absent (even with E2E_INCLUDE_OPTIONAL=1)");
+  ok(
+    skipReason(SCENARIOS.find((s) => s.id === "S24")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
+    "S24 stays skipped without E2E_INCLUDE_OPTIONAL=1 even with the notion capability live",
+  );
+  ok(
+    skipReason(SCENARIOS.find((s) => s.id === "S24")!, all, noneMissing, true) === undefined,
+    "S24 runs once BOTH the notion capability is live AND E2E_INCLUDE_OPTIONAL=1 is set",
   );
   const slackOnly = new Set(["slack"] as const);
   const s7reason = skipReason(SCENARIOS.find((s) => s.id === "S7")!, slackOnly, missing, false);

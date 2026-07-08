@@ -17,6 +17,8 @@ export const ENV = {
   webhookSecret: "E2E_WEBHOOK_SECRET",
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
+  notionChannel: "E2E_NOTION_CHANNEL",
+  notionQuery: "E2E_NOTION_QUERY",
 } as const;
 
 export type Capability =
@@ -27,7 +29,8 @@ export type Capability =
   | "slackChannelB"
   | "syntheticDm"
   | "slackUser2"
-  | "webhook";
+  | "webhook"
+  | "notion";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -61,6 +64,11 @@ export interface WebhookConfig {
   readonly targetUrl: string;
   readonly secret: string;
   readonly hookId: string;
+}
+
+export interface NotionConfig {
+  readonly channel: string;
+  readonly query: string;
 }
 
 export interface SyntheticDmConfig {
@@ -136,6 +144,13 @@ export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> 
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), secret: values[1], hookId } };
 }
 
+export function resolveNotion(env: Env = process.env): Resolved<NotionConfig> {
+  const { values, missing } = need(env, [ENV.notionChannel]);
+  if (missing.length > 0) return { ok: false, missing };
+  const query = env[ENV.notionQuery]?.trim() || "team handbook";
+  return { ok: true, cfg: { channel: values[0], query } };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -151,6 +166,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const syntheticDm = resolveSyntheticDm(env);
   const slackUser2 = resolveSlackUser2(env);
   const webhook = resolveWebhook(env);
+  const notion = resolveNotion(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -160,6 +176,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (syntheticDm.ok) available.add("syntheticDm");
   if (slackUser2.ok) available.add("slackUser2");
   if (webhook.ok) available.add("webhook");
+  if (notion.ok) available.add("notion");
   return {
     available,
     missing: {
@@ -171,6 +188,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
       webhook: webhook.ok ? [] : webhook.missing,
+      notion: notion.ok ? [] : notion.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };
