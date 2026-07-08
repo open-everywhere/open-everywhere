@@ -1,12 +1,12 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ModelRole, ModelRoute, Domain, NamedKnobLayer } from "../memory/domain.js";
-import { modelRouteFor } from "../memory/domain.js";
+import type { ModelRole, ModelRoute, Domain, NamedKnobLayer, DomainMatch } from "../memory/domain.js";
+import { modelRouteFor, domainMatchFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
 import { surfaceHint } from "./surface-hint.js";
-import type { BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { stampModelCall } from "./model-stamp.js";
 
 interface RoutingContextStore {
@@ -102,16 +102,27 @@ export interface ModelBackend<TModel extends RoutableModel = RoutableModel> {
 
 export interface RoutingDeps<TModel extends RoutableModel = RoutableModel> {
   readonly surfaceKey: () => Promise<string | null>;
+  readonly surfaceMatch?: () => Promise<DomainMatch | undefined>;
   readonly domains: () => readonly Domain[];
   readonly roles?: () => readonly NamedKnobLayer[];
   readonly backend: ModelBackend<TModel>;
 }
 
-export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "domains" | "roles"> = {
+export const liveIdentity: Pick<RoutingDeps, "surfaceKey" | "surfaceMatch" | "domains" | "roles"> = {
   surfaceKey: async () => {
     const ctx = await readAlsSurfaceContext();
     if (ctx) return domainKeyOf(resolvePartition(ctx));
     return surfaceHint();
+  },
+  surfaceMatch: async () => {
+    const ctx = await readAlsSurfaceContext();
+    if (!ctx) return undefined;
+    try {
+      const binding = bindFrom(ctx);
+      return domainMatchFor(binding.mode, binding.trust);
+    } catch {
+      return undefined;
+    }
   },
   domains: () => getConfig().loadDomains(),
   roles: () => getConfig().loadRoles?.() ?? [],
@@ -166,8 +177,14 @@ export function createDomainRoutedModel<TModel extends RoutableModel>(
       }
       return {};
     }
+    let surfaceMatch: DomainMatch | undefined;
     try {
-      const route = modelRouteFor(role, surfaceKey, deps.domains(), deps.roles?.() ?? []);
+      surfaceMatch = await deps.surfaceMatch?.();
+    } catch {
+      surfaceMatch = undefined;
+    }
+    try {
+      const route = modelRouteFor(role, surfaceKey, deps.domains(), deps.roles?.() ?? [], surfaceMatch);
       if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
         const key = `${surfaceKey} ${JSON.stringify(route)}`;
         if (!applied.has(key)) {

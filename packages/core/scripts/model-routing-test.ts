@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { defineDomain, modelRouteFor, type Domain } from "../agent/memory/domain.js";
+import { defineDomain, domainMatchFor, modelRouteFor, statusVerbsFor, type Domain } from "../agent/memory/domain.js";
 import {
   applyRoute,
   createDomainRoutedModel,
@@ -70,6 +70,51 @@ ok(JSON.stringify(repinned.providers) === JSON.stringify(["anthropic"]), "a rout
 
 ok(modelRouteFor("primary", C_TXN, [defineDomain({ name: "txn", channels: [C_TXN] })]).id === undefined, "domain without models + no org → empty route");
 
+ok(domainMatchFor("dm", "internal") === "dm", "internal DM partner classifies to the dm criteria layer");
+ok(domainMatchFor("dm", "external") === "public", "external DM partner classifies to the public criteria layer");
+ok(domainMatchFor("channel", "external") === "public", "an externally-shared/guest channel classifies to public");
+ok(domainMatchFor("channel", "internal") === undefined, "a normal internal channel classifies to no criteria layer");
+ok(domainMatchFor("mpim", "internal") === undefined, "a group chat classifies to no criteria layer (execution-only, mirrors resolve.ts's mpim → NONE)");
+ok(domainMatchFor("mpim", "external") === undefined, "a group chat classifies to no criteria layer regardless of trust");
+
+const D_PARTNER = "slack/T1/D_PARTNER";
+const dmDomains: Domain[] = [
+  defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID, reasoning: "medium" } } }),
+  defineDomain({ name: "dm", match: "dm", models: { primary: { id: "vendor/dm-model" } } }),
+];
+{
+  const r = modelRouteFor("primary", D_PARTNER, dmDomains, [], "dm");
+  ok(r.id === "vendor/dm-model" && r.reasoning === "medium", "a DM surface (surfaceMatch=dm) picks up the dm criteria domain's model, inheriting org's reasoning");
+}
+{
+  const r = modelRouteFor("primary", D_PARTNER, dmDomains, [], undefined);
+  ok(r.id === DEFAULT_ID && r.reasoning === "medium", "the same channel key WITHOUT surfaceMatch=dm does not see the dm criteria route (org only)");
+}
+{
+  const withExplicit: Domain[] = [
+    ...dmDomains,
+    defineDomain({ name: "explicit", channels: [D_PARTNER], models: { primary: { id: "vendor/explicit-model" } } }),
+  ];
+  const r = modelRouteFor("primary", D_PARTNER, withExplicit, [], "dm");
+  ok(r.id === "vendor/explicit-model", "an explicit domain still overrides the dm criteria layer");
+}
+{
+  const pubDomains: Domain[] = [
+    defineDomain({ name: "org", match: "org", models: { primary: { id: DEFAULT_ID } } }),
+    defineDomain({ name: "public", match: "public", models: { primary: { id: "vendor/public-model" } } }),
+  ];
+  const r = modelRouteFor("primary", "slack/T1/C_GUEST", pubDomains, [], "public");
+  ok(r.id === "vendor/public-model", "an external surface (surfaceMatch=public) picks up the public criteria domain's model");
+  ok(modelRouteFor("primary", "slack/T1/C_GUEST", pubDomains, [], undefined).id === DEFAULT_ID, "the same channel without surfaceMatch=public falls back to org only");
+}
+
+{
+  const domains = [defineDomain({ name: "team", channels: [C_TXN], statusVerbs: ["Reviewing"] })];
+  const withoutParam = statusVerbsFor(C_TXN, domains);
+  const withUndefinedMatch = statusVerbsFor(C_TXN, domains, [], undefined);
+  ok(JSON.stringify(withoutParam) === JSON.stringify(withUndefinedMatch), "statusVerbsFor: an explicit undefined surfaceMatch reproduces the no-arg call exactly");
+}
+
 const turnCall: RoutedCallOptions = { prompt: [], reasoning: "medium" };
 {
   const r = applyRoute({}, turnCall, DEFAULT_ID);
@@ -137,6 +182,32 @@ ok(calls.length === 2 && calls[1].id === "anthropic/claude-sonnet-5", "doStream 
   const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => C_OTHER, () => [defineDomain({ name: "exec", channels: [C_TXN], models: { primary: { id: "anthropic/claude-sonnet-5" } } })], c));
   await m.doGenerate(turnCall);
   ok(c[0].id === DEFAULT_ID, "surface in no routed domain → default model");
+}
+
+{
+  const c: FakeCall[] = [];
+  const base = fakeDeps(async () => D_PARTNER, () => dmDomains, c);
+  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, { ...base, surfaceMatch: async () => "dm" });
+  await m.doGenerate(turnCall);
+  ok(c[0].id === "vendor/dm-model", "wrapper: deps.surfaceMatch()='dm' routes a DM call through the dm criteria domain end-to-end");
+}
+{
+  const c: FakeCall[] = [];
+  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, fakeDeps(async () => D_PARTNER, () => dmDomains, c));
+  await m.doGenerate(turnCall);
+  ok(c[0].id === DEFAULT_ID, "wrapper: no surfaceMatch dep at all → back-compat, org-only route (dm criteria layer never consulted)");
+}
+{
+  const c: FakeCall[] = [];
+  const base = fakeDeps(async () => D_PARTNER, () => dmDomains, c);
+  const m = createDomainRoutedModel("primary", { id: DEFAULT_ID }, {
+    ...base,
+    surfaceMatch: async () => {
+      throw new Error("match resolution exploded");
+    },
+  });
+  await m.doGenerate(turnCall);
+  ok(c[0].id === DEFAULT_ID, "wrapper: surfaceMatch() throwing → fail-soft, org-only route, no throw");
 }
 
 {

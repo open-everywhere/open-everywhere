@@ -1,3 +1,6 @@
+import type { SessionMode } from "../access/resolver.js";
+import type { Trust } from "../identity/binding.js";
+
 export type DomainMatch = "org" | "public" | "dm";
 
 export type ModelReasoning =
@@ -59,6 +62,13 @@ export function criteriaDomain(match: DomainMatch, domains: readonly Domain[]): 
   return domains.find((d) => d.match === match);
 }
 
+export function domainMatchFor(mode: SessionMode, trust: Trust): DomainMatch | undefined {
+  if (mode === "mpim") return undefined;
+  if (mode === "dm") return trust === "internal" ? "dm" : "public";
+  if (trust === "external") return "public";
+  return undefined;
+}
+
 export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain[]): boolean {
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.nameDropWake === true;
@@ -75,9 +85,19 @@ export interface NamedKnobLayer extends KnobLayer {
   readonly name: string;
 }
 
-function knobLayersFor(channelKey: string, domains: readonly Domain[], roles: readonly NamedKnobLayer[]): KnobLayer[] {
+function knobLayersFor(
+  channelKey: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[],
+  surfaceMatch?: DomainMatch,
+): KnobLayer[] {
   const layers: KnobLayer[] = [];
-  for (const d of [criteriaDomain("org", domains), domainForChannel(channelKey, domains)]) {
+  const rungs: (Domain | undefined)[] = [criteriaDomain("org", domains)];
+  if (surfaceMatch === "dm" || surfaceMatch === "public") {
+    rungs.push(criteriaDomain(surfaceMatch, domains));
+  }
+  rungs.push(domainForChannel(channelKey, domains));
+  for (const d of rungs) {
     if (!d) continue;
     const role = d.role !== undefined ? roles.find((r) => r.name === d.role) : undefined;
     if (role) layers.push(role);
@@ -91,8 +111,9 @@ export function modelRouteFor(
   channelKey: string,
   domains: readonly Domain[],
   roles: readonly NamedKnobLayer[] = [],
+  surfaceMatch?: DomainMatch,
 ): ModelRoute {
-  const layers = knobLayersFor(channelKey, domains, roles);
+  const layers = knobLayersFor(channelKey, domains, roles, surfaceMatch);
   let route: ModelRoute = {};
   for (const d of layers) {
     const r = d?.models?.[role];
@@ -123,8 +144,9 @@ export function statusVerbsFor(
   channelKey: string,
   domains: readonly Domain[],
   roles: readonly NamedKnobLayer[] = [],
+  surfaceMatch?: DomainMatch,
 ): readonly string[] {
-  const layers = knobLayersFor(channelKey, domains, roles);
+  const layers = knobLayersFor(channelKey, domains, roles, surfaceMatch);
   let verbs = [...DEFAULT_STATUS_VERBS];
   for (const d of layers) {
     const own = (d?.statusVerbs ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
