@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { fetchWakeBackscroll, WAKE_BACKSCROLL_MAX, type SlackRequester, type WakeBackscrollDeps } from "../agent/channels/slack-wake-backscroll.js";
-import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -83,6 +83,7 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   ok(out[0].indexOf("oldest") < out[0].indexOf("middle") && out[0].indexOf("middle") < out[0].indexOf("newest"), "rendered oldest-first");
   ok(!out[0].includes("joined"), "system subtype messages are dropped");
   ok(!out[0].includes("sender_type=user sender_id=UA] \n") && out[0].split("sender_type").length - 1 === 3, "empty-text messages are dropped (3 attributed lines, not 4)");
+  ok(!out[0].includes("read_slack_channel"), "only 3 lines rendered (below the cap) → no 'fetch more' hint");
 }
 
 {
@@ -92,6 +93,9 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   const kept = out[0].split("\n").filter((l) => l.includes("sender_type=")).length;
   ok(kept === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX lines (${WAKE_BACKSCROLL_MAX})`);
   ok(out[0].includes("m12") && out[0].includes("m3") && !out[0].includes("m2") && !out[0].includes("m0"), "cap keeps the most-recent N, drops the oldest");
+  const untrustedEnd = out[0].indexOf(UNTRUSTED_CLOSE);
+  ok(out[0].includes("read_slack_channel") && out[0].includes("read_slack_thread"), "hitting the cap names both read tools");
+  ok(untrustedEnd > -1 && out[0].indexOf("read_slack_channel") > untrustedEnd, "the hint is appended AFTER the untrusted-wrapped block");
 }
 
 {

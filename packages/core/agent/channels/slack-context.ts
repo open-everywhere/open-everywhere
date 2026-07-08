@@ -3,8 +3,13 @@ import { loadThreadContextMessages } from "eve/channels/slack";
 import type { SlackMessage } from "eve/channels/slack";
 import { wrapUntrusted } from "../access/untrusted.js";
 
-const MAX_MESSAGES = 50;
+const MAX_MESSAGES = 10;
 const MAX_CHARS = 12_000;
+
+const READ_MORE_HINT =
+  "Note: the block above is the most recent messages only, capped for context size — there may " +
+  "be older history not shown. If you need it, fetch more with the read_slack_channel or " +
+  "read_slack_thread tool.";
 
 type SenderType = "user" | "bot" | "agent" | "unknown";
 
@@ -56,7 +61,8 @@ export function renderContext(lines: readonly ContextLine[], source: string): st
   }
   if (kept.length === 0) return null;
   const body = `Recent conversation (oldest first), for context:\n${kept.join("\n")}`;
-  return wrapUntrusted(body, { source });
+  const wrapped = wrapUntrusted(body, { source });
+  return kept.length === MAX_MESSAGES ? `${wrapped}\n\n${READ_MORE_HINT}` : wrapped;
 }
 
 let botIdentityCache: Promise<{ userId?: string; botId?: string }> | undefined;
