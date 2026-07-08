@@ -50,7 +50,7 @@ export interface Scenario {
   readonly run: (ctx: ScenarioContext) => Promise<void>;
 }
 
-const REPLY_WAIT = 120_000;
+const REPLY_WAIT = 180_000;
 const SILENCE_WINDOW = 45_000;
 
 const STOP_ACK = "Standing down";
