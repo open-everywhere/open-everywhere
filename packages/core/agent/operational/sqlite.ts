@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
@@ -58,7 +58,7 @@ function getDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS spend_limit (
       org_id        TEXT NOT NULL,
       scope_key     TEXT NOT NULL,
-      level         TEXT NOT NULL,            -- "surface" | "workspace"
+      level         TEXT NOT NULL,            -- "surface" | "workspace" | "domain" (free-text, no CHECK)
       monthly_tokens INTEGER NOT NULL,        -- -1 = no token component (legacy NOT NULL; see setSpendLimit)
       monthly_usd   REAL,                     -- NULL = no USD component
       expires_at    INTEGER,                  -- epoch ms; NULL = no auto-expiry
@@ -425,7 +425,7 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => ({
       org,
       scopeKey: r.scope_key,
-      level: r.level as "surface" | "workspace",
+      level: r.level as CapLevel,
       ...(r.monthly_tokens >= 0 ? { monthlyTokens: r.monthly_tokens } : {}),
       ...(r.monthly_usd != null ? { monthlyUsd: r.monthly_usd } : {}),
       ...(r.expires_at != null ? { expiresAt: r.expires_at } : {}),

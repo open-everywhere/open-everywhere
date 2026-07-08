@@ -1,7 +1,7 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
@@ -40,7 +40,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS spend_limit (
      org_id         text   NOT NULL,
      scope_key      text   NOT NULL,
-     level          text   NOT NULL,
+     level          text   NOT NULL,          -- "surface" | "workspace" | "domain" (free-text, no CHECK)
      monthly_tokens bigint NOT NULL,          -- -1 = no token component (matches the SQLite encoding)
      monthly_usd    double precision,         -- NULL = no USD component
      expires_at     bigint,                  -- epoch ms; NULL = no auto-expiry
@@ -421,7 +421,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as { scope_key: string; level: string; monthly_tokens: number; monthly_usd: number | null; expires_at: number | null; reason: string | null; set_by: string | null }[]).map((r) => ({
         org,
         scopeKey: r.scope_key,
-        level: r.level as "surface" | "workspace",
+        level: r.level as CapLevel,
         ...(Number(r.monthly_tokens) >= 0 ? { monthlyTokens: Number(r.monthly_tokens) } : {}),
         ...(r.monthly_usd != null ? { monthlyUsd: Number(r.monthly_usd) } : {}),
         ...(r.expires_at != null ? { expiresAt: Number(r.expires_at) } : {}),

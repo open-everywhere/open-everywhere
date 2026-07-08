@@ -14,7 +14,11 @@ export function actionKind(kind: string): ActionKind<any> | undefined {
 }
 
 export function whereFromScope(org: string, scopeKey: string): { org: string; platform: string; workspace: string; surface?: string } {
-  const [platform, workspace, surface] = scopeKey.split("/");
+  const parts = scopeKey.split("/");
+  if (parts.length === 1) {
+    return { org, platform: "domain", workspace: parts[0] || "unknown" };
+  }
+  const [platform, workspace, surface] = parts;
   return { org, platform: platform || "unknown", workspace: workspace || "unknown", ...(surface ? { surface } : {}) };
 }
 

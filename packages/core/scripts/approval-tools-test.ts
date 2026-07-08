@@ -4,6 +4,8 @@ import { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
 import { planRevokeConnector } from "../agent/tools/revoke_connector.js";
 import { planClearConnectorOverride } from "../agent/tools/clear_connector_override.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
+import { registerConfig } from "../agent/access/config.js";
+import { defineDomain } from "../agent/memory/domain.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -223,6 +225,49 @@ throwsWith(
 {
   const plan = planClearSpendLimit(discordDmBinding(), { level: "workspace", scopeKey: "discord/G777" }, uncapped, null);
   ok(plan.args.scopeKey === "discord/G777", "planClearSpendLimit ALLOWS an explicit scopeKey from a DM");
+}
+
+throwsWith(
+  () => defaultScopeKey(slackBinding(), "domain"),
+  "has no default here",
+  "defaultScopeKey: level:\"domain\" throws when this channel isn't a member of any domain (no config registered)",
+);
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [defineDomain({ name: "eng", channels: ["slack/T123/C456"] })],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+ok(defaultScopeKey(slackBinding(), "domain") === "eng", 'defaultScopeKey: level:"domain" defaults to the CURRENT channel\'s own domain name');
+{
+  const plan = planSetSpendLimit(slackBinding(), { monthlyTokens: 100, reason: "domain budget", level: "domain" }, uncapped, "eng");
+  ok(plan.args.level === "domain", "planSetSpendLimit accepts level:\"domain\"");
+  ok(plan.args.scopeKey === "eng", 'planSetSpendLimit defaults scopeKey to the domain name for level:"domain"');
+}
+{
+  const plan = planSetSpendLimit(slackBinding(), { monthlyUsd: 5, reason: "x", level: "domain", scopeKey: "sales" }, uncapped, "sales");
+  ok(plan.args.level === "domain" && plan.args.scopeKey === "sales", "planSetSpendLimit honours an explicit domain scopeKey");
+}
+{
+  const plan = planClearSpendLimit(slackBinding(), { level: "domain" }, uncapped, "eng");
+  ok(plan.args.level === "domain" && plan.args.scopeKey === "eng", 'planClearSpendLimit defaults scopeKey to the domain name for level:"domain"');
+}
+throwsWith(
+  () => planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { monthlyTokens: 1, reason: "x", level: "domain" }, uncapped, null),
+  "never be enforced against THIS conversation",
+  'planSetSpendLimit refuses a DM-defaulted level:"domain" scope',
+);
+throwsWith(
+  () => planClearSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { level: "domain" }, uncapped, null),
+  "never be enforced against THIS conversation",
+  'planClearSpendLimit refuses a DM-defaulted level:"domain" scope',
+);
+{
+  const plan = planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { monthlyTokens: 1, reason: "x", level: "domain", scopeKey: "eng" }, uncapped, "eng");
+  ok(plan.args.scopeKey === "eng", 'planSetSpendLimit ALLOWS an explicit domain scopeKey from a DM (the escape hatch)');
 }
 
 ok(rosterStanding(["admin"], null) === true, "rosterStanding: org admin bypasses everywhere (no covering domain needed)");

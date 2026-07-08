@@ -146,6 +146,16 @@ const store = makeOperationalPostgresStore(client);
   ok(await store.setSpendLimit("default", "slack/T1/C1", "surface", { monthlyUsd: 0 }).then(() => false, () => true), "setSpendLimit rejects a non-positive USD limit");
   ok((await store.clearSpendLimit("default", "slack/T1/C1", "surface")) === true && (await store.spendLimits("default")).length === 1, "clearSpendLimit removes one");
 
+  await store.setSpendLimit("default", "eng", "domain", { monthlyTokens: 4000 });
+  const domainLimits = await store.spendLimits("default");
+  const domainRow = domainLimits.find((l) => l.scopeKey === "eng" && l.level === "domain");
+  ok(domainRow?.monthlyTokens === 4000, "setSpendLimit round-trips a domain-level override, scoped by domain name");
+  ok(domainLimits.some((l) => l.level === "workspace" && l.scopeKey === "slack/T1"), "a domain-level override coexists with the earlier workspace-level one at a DIFFERENT scopeKey (no key collision)");
+  await store.setSpendLimit("default", "eng", "domain", { monthlyUsd: 99 });
+  ok((await store.spendLimits("default")).find((l) => l.scopeKey === "eng" && l.level === "domain")?.monthlyUsd === 99, "setSpendLimit upserts a domain-level override the same way surface/workspace do");
+  ok((await store.clearSpendLimit("default", "eng", "domain")) === true, "clearSpendLimit removes a domain-level override");
+  ok((await store.spendLimits("default")).every((l) => !(l.scopeKey === "eng" && l.level === "domain")), "the cleared domain-level override is gone");
+
   await store.setConnectorOverride("default", "slack/T1/C1", "notion", true);
   await store.setConnectorOverride("default", "slack/T1/C1", "linear", false);
   const ov = await store.connectorOverrides("default", "slack/T1/C1");

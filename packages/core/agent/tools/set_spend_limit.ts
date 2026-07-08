@@ -10,7 +10,7 @@ import { requestApproval, type RequestApprovalDeps } from "../approvals/flow.js"
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { postDiscordApprovalCard } from "../approvals/discord-flow.js";
 
-const LEVELS = ["surface", "workspace"] as const;
+const LEVELS = ["surface", "workspace", "domain"] as const;
 type Level = (typeof LEVELS)[number];
 
 export function approvalPostDeps(platform: string): RequestApprovalDeps {
@@ -52,7 +52,16 @@ export interface SpendSetPlan {
 
 export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   const workspaceKey = `${binding.platform}/${binding.workspace}`;
-  return level === "workspace" ? workspaceKey : `${workspaceKey}/${binding.domainSurface ?? binding.surface}`;
+  if (level === "workspace") return workspaceKey;
+  const surfaceKey = `${workspaceKey}/${binding.domainSurface ?? binding.surface}`;
+  if (level === "surface") return surfaceKey;
+  const domainName = domainNameForScope(surfaceKey, binding.mode, binding.trust);
+  if (!domainName) {
+    throw new Error(
+      `defaultScopeKey: level:"domain" has no default here — this channel isn't an explicit member of any domain, and doesn't classify into a dm/public criteria domain either. Pass scopeKey explicitly (the domain's name).`,
+    );
+  }
+  return domainName;
 }
 
 export function assertScopableFromHere(tool: string, binding: SurfaceBinding, level: Level, explicitScopeKey: string | undefined): void {
@@ -60,6 +69,11 @@ export function assertScopableFromHere(tool: string, binding: SurfaceBinding, le
   if (level === "surface") {
     throw new Error(
       `${tool}: this is a DM, and DM usage is never gated (caps guard shared channels/servers), so a cap scoped here would never be enforced. Pass scopeKey for the channel or server you mean — e.g. "discord/<serverId>/<channelId>" or "slack/<teamId>/<channelId>"; the ⛔ decline message in an over-budget channel shows its exact keys.`,
+    );
+  }
+  if (level === "domain") {
+    throw new Error(
+      `${tool}: this is a DM, and DM usage is never gated (caps guard shared channels/servers), so a domain-level cap defaulted from here would never be enforced against THIS conversation — and the domain it'd classify into (the dm/public criteria layer) spans every DM like it, not just this one. Pass scopeKey explicitly (the domain's name) — the ⛔ decline message in an over-budget channel shows it.`,
     );
   }
   if (binding.platform === "discord") {
@@ -105,16 +119,19 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one; an org admin, or a domain admin whose domain covers this scope, must click Approve before it takes effect. At least one of monthlyTokens/monthlyUsd is required. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, and a Discord DM belongs to no server — the defaults would target the wrong scope); an over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, a Discord DM belongs to no server, and a DM\'s default domain would span every DM like it — the defaults would target the wrong scope); an over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
     reason: z.string().min(1).describe("Why you're proposing this — shown on the approval card."),
-    level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace / Discord server).'),
+    level: z
+      .enum(LEVELS)
+      .optional()
+      .describe('"surface" (default — this channel/DM only), "workspace" (the whole Slack workspace / Discord server), or "domain" (this channel\'s memory domain — ORG ADMIN approval only).'),
     scopeKey: z
       .string()
       .optional()
-      .describe('Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace. Defaults to this surface\'s own scope.'),
+      .describe('Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace, or a domain\'s own name for level:"domain". Defaults to this surface\'s own scope.'),
   }),
   outputSchema: z.object({
     requested: z.boolean(),
@@ -127,9 +144,11 @@ export default defineTool({
     const binding = bindFrom(ctx);
     const level = input.level ?? "surface";
     const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
-    const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
+    const domain = level === "domain" ? scopeKey : (domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null);
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
-    const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
+    const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
+    const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, binding.mode, binding.trust);
+    const caps = await effectiveCaps(binding.org, workspaceKey, capsSurfaceArg, capsDomainArg);
     const current: CurrentCaps = {
       tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
       usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,

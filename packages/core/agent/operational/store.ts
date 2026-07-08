@@ -39,7 +39,7 @@ export interface OverrideMeta {
   readonly setBy?: string;
 }
 
-export type CapLevel = "surface" | "workspace";
+export type CapLevel = "surface" | "workspace" | "domain";
 export interface SpendLimitRow extends OverrideMeta {
   readonly org: string;
   readonly scopeKey: string;

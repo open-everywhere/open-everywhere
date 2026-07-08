@@ -270,6 +270,33 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_ENG_ADMIN") === true, "clickerMayDecide: the FROZEN domain's own admin covers it");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_RANDOM_MEMBER") === false, "clickerMayDecide: a non-admin does not cover an explicit domain either");
+
+  const domainCapRow = (level: "domain" | "surface" | "workspace") =>
+    row({
+      id: "p-domain-cap",
+      kind: "spend.set",
+      argsJson: JSON.stringify({ org: "default", scopeKey: "eng", level, monthlyTokens: 5000, currentCap: null }),
+      domain: "eng",
+    });
+  ok(clickerMayDecide(domainCapRow("domain"), "U_ENG_ADMIN") === false, "clickerMayDecide: eng's OWN domain admin is REFUSED for a domain-level spend cap on eng, despite row.domain === \"eng\"");
+  ok(clickerMayDecide(domainCapRow("domain"), "U_RANDOM_MEMBER") === false, "clickerMayDecide: a plain member is (still) refused for a domain-level spend cap");
+  ok(clickerMayDecide(domainCapRow("domain"), "U_ORG_ADMIN") === true, "clickerMayDecide: the ORG admin CAN decide a domain-level spend cap");
+  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN") === true, "clickerMayDecide: eng's domain admin STILL covers a surface-level spend cap (the refusal is level-specific, not blanket)");
+  const domainClearRow = row({
+    id: "p-domain-clear",
+    kind: "spend.clear",
+    argsJson: JSON.stringify({ org: "default", scopeKey: "eng", level: "domain", currentCap: null }),
+    domain: "eng",
+  });
+  ok(clickerMayDecide(domainClearRow, "U_ENG_ADMIN") === false, "clickerMayDecide: eng's domain admin is REFUSED for a domain-level spend.clear too");
+  ok(clickerMayDecide(domainClearRow, "U_ORG_ADMIN") === true, "clickerMayDecide: org admin can still decide a domain-level spend.clear");
+  const nonSpendRow = row({
+    id: "p-non-spend",
+    kind: "connector.revoke",
+    argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C_ENG", connector: "notion", level: "domain" }),
+    domain: "eng",
+  });
+  ok(clickerMayDecide(nonSpendRow, "U_ENG_ADMIN") === true, "clickerMayDecide: the domain-level spend carve-out is scoped to spend.set/spend.clear only — a connector.revoke row's domain admin is unaffected even with a same-shaped argsJson");
 }
 
 {

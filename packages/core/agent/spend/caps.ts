@@ -50,15 +50,24 @@ export function activeSpendLimits(limits: readonly SpendLimitRow[], now: number)
   return limits.filter((l) => isSpendLimitActive(l, now));
 }
 
-export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[], workspaceKey: string, surfaceKey: string): Caps {
+export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[], workspaceKey: string, surfaceKey: string, domainName?: string): Caps {
   let { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd } = config;
+  for (const l of limits) {
+    if (l.level === "workspace" && l.scopeKey === workspaceKey) {
+      if (l.monthlyTokens != null) workspaceMonthlyTokens = l.monthlyTokens;
+      if (l.monthlyUsd != null) workspaceMonthlyUsd = l.monthlyUsd;
+    }
+  }
+  for (const l of limits) {
+    if (l.level === "domain" && domainName !== undefined && l.scopeKey === domainName) {
+      if (l.monthlyTokens != null) surfaceMonthlyTokens = l.monthlyTokens;
+      if (l.monthlyUsd != null) surfaceMonthlyUsd = l.monthlyUsd;
+    }
+  }
   for (const l of limits) {
     if (l.level === "surface" && l.scopeKey === surfaceKey) {
       if (l.monthlyTokens != null) surfaceMonthlyTokens = l.monthlyTokens;
       if (l.monthlyUsd != null) surfaceMonthlyUsd = l.monthlyUsd;
-    } else if (l.level === "workspace" && l.scopeKey === workspaceKey) {
-      if (l.monthlyTokens != null) workspaceMonthlyTokens = l.monthlyTokens;
-      if (l.monthlyUsd != null) workspaceMonthlyUsd = l.monthlyUsd;
     }
   }
   return { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd };
@@ -68,7 +77,7 @@ export async function effectiveCaps(org: string, workspaceKey: string, surfaceKe
   const config = resolveCaps(workspaceKey, surfaceKey, domainName);
   try {
     const limits = activeSpendLimits(await getOperationalStore().spendLimits(org), Date.now());
-    return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey) : config;
+    return limits.length ? applyCapOverrides(config, limits, workspaceKey, surfaceKey, domainName) : config;
   } catch {
     return config;
   }

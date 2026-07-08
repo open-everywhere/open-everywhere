@@ -9,7 +9,7 @@ import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalC
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 
-const LEVELS = ["surface", "workspace"] as const;
+const LEVELS = ["surface", "workspace", "domain"] as const;
 type Level = (typeof LEVELS)[number];
 
 export interface ClearSpendLimitInput {
@@ -54,13 +54,16 @@ export default defineDynamic({
       if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
       return defineTool({
   description:
-    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config); an org admin, or a domain admin whose domain covers this scope, must click Approve. level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override instead. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, and a Discord DM belongs to no server — the defaults would target the wrong scope). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, a Discord DM belongs to no server, and a DM\'s default domain would span every DM like it — the defaults would target the wrong scope). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
-    level: z.enum(LEVELS).optional().describe('"surface" (default — this channel/DM only) or "workspace" (the whole Slack workspace / Discord server).'),
+    level: z
+      .enum(LEVELS)
+      .optional()
+      .describe('"surface" (default — this channel/DM only), "workspace" (the whole Slack workspace / Discord server), or "domain" (this channel\'s memory domain — ORG ADMIN approval only).'),
     scopeKey: z
       .string()
       .optional()
-      .describe('Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace. Defaults to this surface\'s own scope.'),
+      .describe('Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace, or a domain\'s own name for level:"domain". Defaults to this surface\'s own scope.'),
   }),
   outputSchema: z.object({
     requested: z.boolean(),
@@ -72,9 +75,11 @@ export default defineDynamic({
     const binding = bindFrom(ctx);
     const level = input.level ?? "surface";
     const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
-    const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
+    const domain = level === "domain" ? scopeKey : (domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null);
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
-    const caps = await effectiveCaps(binding.org, workspaceKey, level === "surface" ? scopeKey : workspaceKey, domainNameForScope(scopeKey, binding.mode, binding.trust));
+    const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
+    const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, binding.mode, binding.trust);
+    const caps = await effectiveCaps(binding.org, workspaceKey, capsSurfaceArg, capsDomainArg);
     const current: CurrentCaps = {
       tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
       usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,

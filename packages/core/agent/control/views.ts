@@ -10,7 +10,7 @@ import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audi
 import { getConfig } from "../access/config.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
-import type { UsageSummaryRow } from "../operational/store.js";
+import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
 import { modelPricing, estimateCostUsd, ensurePricingFor } from "../spend/pricing.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -168,7 +168,7 @@ export async function auditView(filter: AuditFilter = {}): Promise<AuditView> {
 
 export interface SpendOverrideDriftRow {
   readonly scopeKey: string;
-  readonly level: "surface" | "workspace";
+  readonly level: CapLevel;
   readonly monthlyTokens?: number;
   readonly monthlyUsd?: number;
   readonly configCap: number | null;
@@ -200,11 +200,13 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
   const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
   const spend: SpendOverrideDriftRow[] = limits.map((l) => {
     const config =
-      l.level === "surface"
-        ? resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey, domainNameForScope(l.scopeKey))
-        : resolveCaps(l.scopeKey, "");
-    const configCap = (l.level === "surface" ? config.surfaceMonthlyTokens : config.workspaceMonthlyTokens) ?? null;
-    const configCapUsd = (l.level === "surface" ? config.surfaceMonthlyUsd : config.workspaceMonthlyUsd) ?? null;
+      l.level === "workspace"
+        ? resolveCaps(l.scopeKey, "")
+        : l.level === "domain"
+          ? resolveCaps("", "", l.scopeKey)
+          : resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey, domainNameForScope(l.scopeKey));
+    const configCap = (l.level === "workspace" ? config.workspaceMonthlyTokens : config.surfaceMonthlyTokens) ?? null;
+    const configCapUsd = (l.level === "workspace" ? config.workspaceMonthlyUsd : config.surfaceMonthlyUsd) ?? null;
     return {
       scopeKey: l.scopeKey,
       level: l.level,

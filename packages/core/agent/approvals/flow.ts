@@ -120,9 +120,20 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   return { id: row.id, expiresAt };
 }
 
+function isDomainLevelSpendCap(row: PendingActionRow): boolean {
+  if (row.kind !== "spend.set" && row.kind !== "spend.clear") return false;
+  try {
+    const args = JSON.parse(row.argsJson) as { level?: unknown };
+    return args.level === "domain";
+  } catch {
+    return false;
+  }
+}
+
 export function clickerMayDecide(row: PendingActionRow, clickerId: string): boolean {
   const domains = getConfig().loadDomains();
   if (criteriaDomain("org", domains)?.admins?.includes(clickerId) === true) return true;
+  if (isDomainLevelSpendCap(row)) return false;
   if (!row.domain) return false;
   const explicit = domains.find((d) => d.name === row.domain);
   return explicit?.admins?.includes(clickerId) === true;

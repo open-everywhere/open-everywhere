@@ -118,6 +118,31 @@ ok(applyCapOverrides(baseline, activeSpendLimits([sticky], NOW), "p/w", "p/w/s")
 }
 
 {
+  const config = { surfaceMonthlyTokens: 1000, workspaceMonthlyTokens: 5000 };
+  const domainRow: SpendLimitRow = { org: "o", scopeKey: "eng", level: "domain", monthlyTokens: 200 };
+
+  const withDomain = applyCapOverrides(config, [domainRow], "p/w", "p/w/s1", "eng");
+  ok(withDomain.surfaceMonthlyTokens === 200, "a domain-level override applies to the surface-shaped token field for any surface classified into that domain");
+  const otherSurface = applyCapOverrides(config, [domainRow], "p/w", "p/w/s2", "eng");
+  ok(otherSurface.surfaceMonthlyTokens === 200, "…and applies uniformly to every surface in the same domain (not tied to one surfaceKey)");
+  ok(applyCapOverrides(config, [domainRow], "p/w", "p/w/s1", "sales").surfaceMonthlyTokens === 1000, "a domain-level override does NOT apply when the surface classifies into a DIFFERENT domain");
+  ok(applyCapOverrides(config, [domainRow], "p/w", "p/w/s1").surfaceMonthlyTokens === 1000, "a domain-level override never applies with no domainName to match on (omitted arg = pre-domain-level behaviour)");
+
+  const wsRow: SpendLimitRow = { org: "o", scopeKey: "p/w", level: "workspace", monthlyTokens: 50 };
+  const surfaceRow: SpendLimitRow = { org: "o", scopeKey: "p/w/s1", level: "surface", monthlyTokens: 9 };
+  const wsAndDomain = applyCapOverrides(config, [wsRow, domainRow], "p/w", "p/w/s1", "eng");
+  ok(wsAndDomain.workspaceMonthlyTokens === 50 && wsAndDomain.surfaceMonthlyTokens === 200, "domain overlays the surface field independently of an active workspace override (different fields, no clash)");
+  const domainAndSurface = applyCapOverrides(config, [domainRow, surfaceRow], "p/w", "p/w/s1", "eng");
+  ok(domainAndSurface.surfaceMonthlyTokens === 9, "surface-row (narrowest) wins over an active domain-row on the SAME surface field");
+  const allThree = applyCapOverrides(config, [wsRow, domainRow, surfaceRow], "p/w", "p/w/s1", "eng");
+  ok(allThree.surfaceMonthlyTokens === 9 && allThree.workspaceMonthlyTokens === 50, "all three levels active at once: surface wins the surface field, workspace still owns its own field");
+
+  const domainUsd: SpendLimitRow = { org: "o", scopeKey: "eng", level: "domain", monthlyUsd: 12.5 };
+  const afterDomainUsd = applyCapOverrides({ surfaceMonthlyTokens: 1000, surfaceMonthlyUsd: 3 }, [domainUsd], "p/w", "p/w/s1", "eng");
+  ok(afterDomainUsd.surfaceMonthlyUsd === 12.5 && afterDomainUsd.surfaceMonthlyTokens === 1000, "a USD-only domain override replaces the surface $ field and leaves the token field in force");
+}
+
+{
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");
   const { domainNameForScope, resolveCaps } = await import("../agent/spend/caps.js");
