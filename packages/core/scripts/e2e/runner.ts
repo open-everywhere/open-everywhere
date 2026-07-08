@@ -8,10 +8,12 @@ import {
   resolveSlackUser2,
   resolveSynthetic,
   resolveSyntheticDm,
+  resolveTeams,
   resolveWebhook,
 } from "./env.js";
 import { SlackDriver } from "./slack-driver.js";
 import { DiscordDriver } from "./discord-driver.js";
+import { TeamsDriver } from "./teams-driver.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
@@ -53,6 +55,7 @@ async function main(): Promise<void> {
   const report = resolveCapabilities();
   const slack = resolveSlack();
   const discord = resolveDiscord();
+  const teams = resolveTeams();
   const synthetic = resolveSynthetic();
   const judge = resolveJudge();
 
@@ -65,6 +68,7 @@ async function main(): Promise<void> {
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
+  const teamsDriver = teams.ok ? new TeamsDriver(teams.cfg) : undefined;
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
@@ -122,6 +126,7 @@ async function main(): Promise<void> {
     const ctx: ScenarioContext = {
       slack: slackDriver,
       discord: discordDriver,
+      teams: teamsDriver,
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,

@@ -19,6 +19,12 @@ export const ENV = {
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
+  teamsTenantId: "E2E_TEAMS_TENANT_ID",
+  teamsClientId: "E2E_TEAMS_CLIENT_ID",
+  teamsRefreshToken: "E2E_TEAMS_REFRESH_TOKEN",
+  teamsTeamId: "E2E_TEAMS_TEAM_ID",
+  teamsChannelId: "E2E_TEAMS_CHANNEL_ID",
+  teamsBotAppId: "E2E_TEAMS_BOT_APP_ID",
 } as const;
 
 export type Capability =
@@ -30,7 +36,8 @@ export type Capability =
   | "syntheticDm"
   | "slackUser2"
   | "webhook"
-  | "notion";
+  | "notion"
+  | "teams";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -42,6 +49,15 @@ export interface DiscordDriverConfig {
   readonly token: string;
   readonly channel: string;
   readonly botUserId: string;
+}
+
+export interface TeamsDriverConfig {
+  readonly tenantId: string;
+  readonly clientId: string;
+  readonly refreshToken: string;
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly botAppId: string;
 }
 
 export interface SyntheticConfig {
@@ -106,6 +122,22 @@ export function resolveDiscord(env: Env = process.env): Resolved<DiscordDriverCo
   return { ok: true, cfg: { token: values[0], channel: values[1], botUserId: values[2] } };
 }
 
+export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig> {
+  const { values, missing } = need(env, [
+    ENV.teamsTenantId,
+    ENV.teamsClientId,
+    ENV.teamsRefreshToken,
+    ENV.teamsTeamId,
+    ENV.teamsChannelId,
+    ENV.teamsBotAppId,
+  ]);
+  if (missing.length > 0) return { ok: false, missing };
+  return {
+    ok: true,
+    cfg: { tenantId: values[0], clientId: values[1], refreshToken: values[2], teamId: values[3], channelId: values[4], botAppId: values[5] },
+  };
+}
+
 export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel]);
   if (missing.length > 0) return { ok: false, missing };
@@ -160,6 +192,7 @@ export interface CapabilityReport {
 export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slack = resolveSlack(env);
   const discord = resolveDiscord(env);
+  const teams = resolveTeams(env);
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
@@ -170,6 +203,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
+  if (teams.ok) available.add("teams");
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
@@ -182,6 +216,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
     missing: {
       slack: slack.ok ? [] : slack.missing,
       discord: discord.ok ? [] : discord.missing,
+      teams: teams.ok ? [] : teams.missing,
       synthetic: synthetic.ok ? [] : synthetic.missing,
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,

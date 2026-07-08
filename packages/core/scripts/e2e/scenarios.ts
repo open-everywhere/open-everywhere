@@ -1,6 +1,7 @@
 import type { Capability, SlackUser2Config } from "./env.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
+import type { TeamsDriver } from "./teams-driver.js";
 import { APPROVAL_PREFIX, type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
@@ -23,6 +24,7 @@ export class GateFailure extends Error {
 export interface ScenarioContext {
   readonly slack?: SlackDriver;
   readonly discord?: DiscordDriver;
+  readonly teams?: TeamsDriver;
   readonly synthetic?: SyntheticSlack;
   readonly slackPrivate?: SlackDriver;
   readonly slackB?: SlackDriver;
@@ -925,6 +927,25 @@ export const SCENARIOS: readonly Scenario[] = [
         ),
         reply.text,
         "Notion search reply is sane (found-or-honest-miss, never an error)",
+      );
+    },
+  },
+  {
+    id: "ST1",
+    title: "Teams channel @mention wake + relevant reply",
+    requires: ["teams"],
+    optional: false,
+    timeoutMs: REPLY_WAIT * 2,
+    judged: true,
+    run: async (ctx) => {
+      const teams = ctx.teams!;
+      const driven = await teams.postMention("summarize what this channel is for in one line");
+      const reply = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply.text.trim().length > 0, "bot replied in the message's reply chain (Graph-posted mention woke the bot end-to-end)");
+      await ctx.judgePass(
+        closedQA("Is the reply a relevant, non-empty one-line-ish response (not an error)?", { mustMatch: [/.{10,}/] }),
+        reply.text,
+        "ST1 relevance",
       );
     },
   },

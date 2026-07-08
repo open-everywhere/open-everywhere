@@ -19,6 +19,7 @@ const {
   ENV,
   resolveSlack,
   resolveDiscord,
+  resolveTeams,
   resolveSynthetic,
   resolveSlackPrivate,
   resolveSlackChannelB,
@@ -57,6 +58,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(!slack.ok && slack.missing.includes(ENV.slackUserToken), "missing list names E2E_SLACK_USER_TOKEN");
   const discord = resolveDiscord(empty);
   ok(!discord.ok && discord.missing.includes(ENV.discordDriverToken), "missing list names E2E_DISCORD_DRIVER_TOKEN");
+  const teams = resolveTeams(empty);
+  ok(!teams.ok && teams.missing.length === 6, "empty env: teams half reports all six missing vars");
+  ok(!teams.ok && teams.missing.includes(ENV.teamsRefreshToken) && teams.missing.includes(ENV.teamsBotAppId), "missing list names E2E_TEAMS_REFRESH_TOKEN + E2E_TEAMS_BOT_APP_ID");
   const synthetic = resolveSynthetic(empty);
   ok(!synthetic.ok && synthetic.missing.includes(ENV.slackSigningSecret), "missing list names SLACK_SIGNING_SECRET");
 
@@ -110,9 +114,26 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.slackUser2Id]: "U2NONADMIN",
     [ENV.webhookSecret]: "hook-secret",
     [ENV.notionChannel]: "C0NOTION",
+    [ENV.teamsTenantId]: "tenant-1",
+    [ENV.teamsClientId]: "client-1",
+    [ENV.teamsRefreshToken]: "refresh-1",
+    [ENV.teamsTeamId]: "team-1",
+    [ENV.teamsChannelId]: "19:chan@thread.tacv2",
+    [ENV.teamsBotAppId]: "bot-app-1",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 9, "full env: all nine capabilities live");
+  ok(capsFull.available.size === 10, "full env: all ten capabilities live");
+  const teamsCfg = resolveTeams(full);
+  ok(
+    teamsCfg.ok &&
+      teamsCfg.cfg.tenantId === "tenant-1" &&
+      teamsCfg.cfg.clientId === "client-1" &&
+      teamsCfg.cfg.refreshToken === "refresh-1" &&
+      teamsCfg.cfg.teamId === "team-1" &&
+      teamsCfg.cfg.channelId === "19:chan@thread.tacv2" &&
+      teamsCfg.cfg.botAppId === "bot-app-1",
+    "teams cfg carries all six fields (tenant/client/refresh/team/channel/botApp)",
+  );
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);
@@ -138,14 +159,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  ok(SCENARIOS.length === 24, "pack has all twenty-four scenarios S1–S24");
+  ok(SCENARIOS.length === 25, "pack has all twenty-five scenarios (S1–S24 + ST1)");
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   ok(
-    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24",
-    "scenario ids are S1..S24 in order",
+    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24,ST1",
+    "scenario ids are S1..S24 then ST1 in order",
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -173,10 +194,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
   ok(req("S21") === "slack" && req("S22") === "slack" && req("S23") === "slack", "S21/S22/S23 (the trio pack) need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
+  ok(req("ST1") === "teams", "ST1 requires only the teams driver");
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -187,13 +209,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     slackUser2: [ENV.slackUser2Id],
     webhook: [ENV.webhookSecret],
     notion: [ENV.notionChannel],
+    teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -204,6 +227,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     slackUser2: [],
     webhook: [],
     notion: [],
+    teams: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "S1 runs when its capability is live");
   ok(
@@ -228,6 +252,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const slackOnly = new Set(["slack"] as const);
   const s7reason = skipReason(SCENARIOS.find((s) => s.id === "S7")!, slackOnly, missing, false);
   ok(s7reason?.includes("discord") === true && s7reason.includes(ENV.discordDriverToken), "S7 skip names the discord vars specifically");
+  const st1reason = skipReason(SCENARIOS.find((s) => s.id === "ST1")!, slackOnly, missing, false);
+  ok(st1reason?.includes("teams") === true && st1reason.includes(ENV.teamsRefreshToken), "ST1 skip names the teams vars specifically");
+  ok(skipReason(SCENARIOS.find((s) => s.id === "ST1")!, all, noneMissing, false) === undefined, "ST1 runs when the teams capability is live");
   const baseOnly = new Set(["slack", "discord", "synthetic"] as const);
   const s11 = skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false);
   ok(s11 === `missing slackPrivate driver (set ${ENV.slackPrivateChannel})`, "S11 skip names exactly E2E_SLACK_PRIVATE_CHANNEL");
