@@ -58,11 +58,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, scope_key, connector)
    )`,
   `CREATE TABLE IF NOT EXISTS thread_engagement (
-     org_id       text NOT NULL,
-     surface_key  text NOT NULL,
-     thread_ts    text NOT NULL,
-     engaged_at   text NOT NULL,
-     last_turn_at text NOT NULL,
+     org_id        text    NOT NULL,
+     surface_key   text    NOT NULL,
+     thread_ts     text    NOT NULL,
+     engaged_at    text    NOT NULL,
+     last_turn_at  text    NOT NULL,
+     participating boolean NOT NULL DEFAULT false, -- true = invited participant; false = warm watcher
+     silent_streak integer NOT NULL DEFAULT 0,     -- consecutive silent woken turns since last engage/participation
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
   `CREATE TABLE IF NOT EXISTS event_dedupe (
@@ -135,6 +137,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE spend_limit ADD COLUMN IF NOT EXISTS monthly_usd double precision`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS reason text`,
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS set_by text`,
+  `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS participating boolean NOT NULL DEFAULT false`,
+  `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS silent_streak integer NOT NULL DEFAULT 0`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -503,21 +507,35 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
-    async markEngaged(org, surfaceKey, threadTs, at) {
+    async markEngaged(org, surfaceKey, threadTs, at, opts) {
       await client.query(
-        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at) VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (org_id, surface_key, thread_ts) DO UPDATE SET last_turn_at = excluded.last_turn_at`,
-        [org, surfaceKey, threadTs, at, at],
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak)
+         VALUES ($1, $2, $3, $4, $5, $6, 0)
+         ON CONFLICT (org_id, surface_key, thread_ts) DO UPDATE SET
+           last_turn_at  = excluded.last_turn_at,
+           participating = thread_engagement.participating OR excluded.participating,
+           silent_streak = CASE WHEN excluded.participating THEN 0 ELSE thread_engagement.silent_streak END`,
+        [org, surfaceKey, threadTs, at, at, opts?.participating ?? false],
       );
+    },
+
+    async bumpSilentStreak(org, surfaceKey, threadTs) {
+      const { rows } = await client.query(
+        `UPDATE thread_engagement SET silent_streak = silent_streak + 1
+         WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3 RETURNING silent_streak`,
+        [org, surfaceKey, threadTs],
+      );
+      const r = (rows as { silent_streak: number }[])[0];
+      return r ? Number(r.silent_streak) : 0;
     },
 
     async getEngagement(org, surfaceKey, threadTs) {
       const { rows } = await client.query(
-        "SELECT engaged_at, last_turn_at FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
+        "SELECT engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
         [org, surfaceKey, threadTs],
       );
-      const r = (rows as { engaged_at: string; last_turn_at: string }[])[0];
-      return r ? { org, surfaceKey, threadTs, engagedAt: r.engaged_at, lastTurnAt: r.last_turn_at } : null;
+      const r = (rows as { engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number }[])[0];
+      return r ? { org, surfaceKey, threadTs, engagedAt: r.engaged_at, lastTurnAt: r.last_turn_at, participating: r.participating, silentStreak: Number(r.silent_streak) } : null;
     },
 
     async disengage(org, surfaceKey, threadTs) {
@@ -529,13 +547,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async listEngagements(org) {
-      const { rows } = await client.query("SELECT surface_key, thread_ts, engaged_at, last_turn_at FROM thread_engagement WHERE org_id = $1", [org]);
-      return (rows as { surface_key: string; thread_ts: string; engaged_at: string; last_turn_at: string }[]).map((r) => ({
+      const { rows } = await client.query("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = $1", [org]);
+      return (rows as { surface_key: string; thread_ts: string; engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
         threadTs: r.thread_ts,
         engagedAt: r.engaged_at,
         lastTurnAt: r.last_turn_at,
+        participating: r.participating,
+        silentStreak: Number(r.silent_streak),
       }));
     },
 

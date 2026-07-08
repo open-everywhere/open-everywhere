@@ -219,6 +219,54 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const sk = "slack/T/CW";
+  await store.markEngaged("acme", sk, "w.1", "2026-07-08T10:00:00Z");
+  let row = await store.getEngagement("acme", sk, "w.1");
+  ok(row !== null && row.participating === false && row.silentStreak === 0, "pg: first touch = warm watcher, zero streak");
+
+  ok((await store.bumpSilentStreak("acme", sk, "w.1")) === 1, "pg: bumpSilentStreak → 1");
+  ok((await store.bumpSilentStreak("acme", sk, "w.1")) === 2, "pg: bumpSilentStreak → 2");
+
+  await store.markEngaged("acme", sk, "w.1", "2026-07-08T11:00:00Z");
+  row = await store.getEngagement("acme", sk, "w.1");
+  ok(row!.participating === false && row!.silentStreak === 2 && row!.lastTurnAt === "2026-07-08T11:00:00Z", "pg: warm refresh keeps streak + advances lastTurnAt");
+
+  await store.markEngaged("acme", sk, "w.1", "2026-07-08T12:00:00Z", { participating: true });
+  row = await store.getEngagement("acme", sk, "w.1");
+  ok(row!.participating === true && row!.silentStreak === 0, "pg: promotion sets participating + resets streak");
+
+  await store.markEngaged("acme", sk, "w.1", "2026-07-08T13:00:00Z", { participating: false });
+  ok((await store.getEngagement("acme", sk, "w.1"))!.participating === true, "pg: participating never downgraded true→false");
+
+  ok((await store.bumpSilentStreak("acme", sk, "missing.0")) === 0, "pg: bumpSilentStreak on a missing row → 0 (no-op)");
+
+  await store.markEngaged("acme", sk, "w.2", "2026-07-08T10:00:00Z", { participating: true });
+  ok((await store.getEngagement("acme", sk, "w.2"))!.participating === true, "pg: first touch can start participating");
+}
+
+{
+  const oldDb = new PGlite();
+  const oldClient: PgClient = { query: (text, params) => oldDb.query(text, params ? [...params] : undefined) };
+  await oldClient.query(
+    `CREATE TABLE thread_engagement (
+       org_id text NOT NULL, surface_key text NOT NULL, thread_ts text NOT NULL,
+       engaged_at text NOT NULL, last_turn_at text NOT NULL,
+       PRIMARY KEY (org_id, surface_key, thread_ts))`,
+  );
+  await oldClient.query(
+    `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at)
+     VALUES ('orgM', 'slack/T/CM', 'm.1', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')`,
+  );
+  await initOperationalSchema(oldClient);
+  const migStore = makeOperationalPostgresStore(oldClient);
+  const row = await migStore.getEngagement("orgM", "slack/T/CM", "m.1");
+  ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z", "pg migration: pre-existing row preserved (not dropped)");
+  ok(row!.participating === false && row!.silentStreak === 0, "pg migration: new columns backfill to warm/zero for old rows");
+  await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
+  ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "pg migration: promotion works on the migrated table");
+}
+
+{
   const TTL = 10 * 60_000;
   ok(await store.markEventSeen("acme", "Ev123", "2026-06-30T10:00:00Z", TTL), "pg: first sighting returns true");
   ok(!(await store.markEventSeen("acme", "Ev123", "2026-06-30T10:00:05Z", TTL)), "pg: duplicate within TTL returns false");

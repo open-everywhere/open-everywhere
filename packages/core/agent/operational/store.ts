@@ -151,6 +151,8 @@ export interface EngagementRow {
   readonly threadTs: string;
   readonly engagedAt: string;
   readonly lastTurnAt: string;
+  readonly participating: boolean;
+  readonly silentStreak: number;
 }
 
 export interface OperationalStore {
@@ -185,7 +187,8 @@ export interface OperationalStore {
   getDomainModel(org: string, domain: string): Promise<DomainModelRow | null>;
   domainModels(org: string): Promise<DomainModelRow[]>;
 
-  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string): Promise<void>;
+  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string, opts?: { participating?: boolean }): Promise<void>;
+  bumpSilentStreak(org: string, surfaceKey: string, threadTs: string): Promise<number>;
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
   disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   listEngagements(org: string): Promise<EngagementRow[]>;
