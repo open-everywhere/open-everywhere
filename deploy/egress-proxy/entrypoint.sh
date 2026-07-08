@@ -17,8 +17,6 @@ while [ $i -lt 50 ]; do
 done
 
 cp /opt/oe-egress/squid.conf "$SQUID_CONF"
-mkdir -p /etc/squid/conf.d
-rm -f /etc/squid/conf.d/tier-b.conf
 
 if [ "$MITM" = "1" ]; then
   echo "[oe-egress] Tier B (MITM) enabled — generating CA + initialising cert DB."
@@ -26,13 +24,16 @@ if [ "$MITM" = "1" ]; then
   sed -i \
     "s#^http_port 3128\$#http_port 3128 ssl-bump generate-host-certificates=on dynamic_cert_mem_cache_size=4MB tls-cert=${OE_EGRESS_CA_DIR:-/opt/oe-egress/ca}/oe-egress-ca.crt tls-key=${OE_EGRESS_CA_DIR:-/opt/oe-egress/ca}/oe-egress-ca.key#" \
     "$SQUID_CONF"
-  cp /opt/oe-egress/tier-b.conf /etc/squid/conf.d/tier-b.conf
+  cat /opt/oe-egress/tier-b.conf >> "$SQUID_CONF"
   rm -rf /var/lib/squid/ssl_db
   /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB || true
   chown -R squid:squid /var/lib/squid 2>/dev/null || true
 else
   echo "[oe-egress] Tier A (SNI/CONNECT host allow-deny, no decryption)."
 fi
+
+chown -R squid:squid /var/lib/squid 2>/dev/null || true
+chown squid:squid /dev/stdout /dev/stderr 2>/dev/null || true
 
 squid -N -f "$SQUID_CONF" -z 2>/dev/null || true
 
