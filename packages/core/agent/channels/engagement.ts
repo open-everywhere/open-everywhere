@@ -50,7 +50,9 @@ export interface ReplyDecision {
 }
 
 export function shouldDeliverReply(input: ReplyDeliveryInput): ReplyDecision {
-  if (input.subtype) return { deliver: false, reason: `message subtype "${input.subtype}" — not a plain reply` };
+  if (input.subtype && input.subtype !== "message_changed") {
+    return { deliver: false, reason: `message subtype "${input.subtype}" — not a plain reply` };
+  }
   if (input.authorIsBot) return { deliver: false, reason: "author is a bot — would self-trigger" };
   if (input.isAppMention) return { deliver: false, reason: "app_mention — handled by the mention path" };
   if (!input.inThread) return { deliver: false, reason: "not a thread reply — engagement is per-thread" };

@@ -90,6 +90,9 @@ registerConfig({
   ok(!shouldDeliverReply({ ...base, inThread: false }).deliver, "not in a thread → drop");
   ok(!shouldDeliverReply({ ...base, isEngaged: false }).deliver, "not engaged → drop");
   ok(/subtype/.test(shouldDeliverReply({ ...base, subtype: "x", authorIsBot: true }).reason), "first disqualifier wins (subtype before bot)");
+  ok(shouldDeliverReply({ ...base, subtype: "message_changed" }).deliver, "message_changed subtype → still delivers (edit wake)");
+  ok(!shouldDeliverReply({ ...base, subtype: "message_changed", isEngaged: false }).deliver, "message_changed still needs an engaged thread");
+  ok(!shouldDeliverReply({ ...base, subtype: "message_changed", authorIsBot: true }).deliver, "message_changed still drops a bot author");
 }
 
 {
@@ -106,6 +109,25 @@ registerConfig({
   ok(parseMessageEvent(env({ type: "message", ts: "5.5" }) as never) === null, "missing channel → null");
   ok(parseMessageEvent({ type: "url_verification" } as never) === null, "non-event_callback → null");
   ok(parseMessageEvent(env({ type: "reaction_added", channel: "C", ts: "6.6" })) === null, "non-message event → null");
+
+  const edited = parseMessageEvent(
+    env({
+      type: "message",
+      subtype: "message_changed",
+      channel: "C_TXN",
+      ts: "7.7",
+      hidden: true,
+      message: { type: "message", user: "U1", text: "edited text", ts: "2.2", thread_ts: "1.1" },
+      previous_message: { type: "message", user: "U1", text: "original text", ts: "2.2", thread_ts: "1.1" },
+    }),
+  );
+  ok(
+    edited !== null && edited.subtype === "message_changed" && edited.text === "edited text" && edited.threadTs === "1.1" && edited.userId === "U1" && edited.ts === "7.7",
+    "message_changed unwraps the nested post-edit message, keeps the edit-notice ts",
+  );
+
+  const editedNoInner = parseMessageEvent(env({ type: "message", subtype: "message_changed", channel: "C_TXN", ts: "8.8" }));
+  ok(editedNoInner !== null && editedNoInner.text === "" && editedNoInner.userId === undefined, "message_changed with no nested message degrades gracefully");
 }
 
 {
@@ -155,6 +177,29 @@ registerConfig({
 
   out = await routeMessageEvent(ev({ thread_ts: undefined }), deps(true));
   ok(!out.woke && /thread/.test(out.reason), "no thread_ts → not delivered");
+
+  {
+    const editEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "C_TXN",
+        ts: "10.1",
+        message: { type: "message", user: "U1", text: "actually, more please", ts: "9.9", thread_ts: "1.1" },
+      },
+    })!;
+    woke.length = 0;
+    out = await routeMessageEvent(editEv, deps(true));
+    ok(out.woke && woke.length === 1, "message_changed edit in an engaged thread wakes it");
+    ok(/\(edited message\)/.test(woke[0]) && /EDIT of an earlier message/.test(woke[0]), "the wake message is framed as an edit");
+    ok(/actually, more please/.test(woke[0]), "the wake message carries the post-edit text");
+
+    woke.length = 0;
+    out = await routeMessageEvent(editEv, deps(false));
+    ok(!out.woke && woke.length === 0, "message_changed edit in a NOT-engaged thread still doesn't wake");
+  }
 
   {
     const disengaged: string[] = [];

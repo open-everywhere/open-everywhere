@@ -34,19 +34,23 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const e = envelope.event as (Record<string, unknown> & { type?: string }) | undefined;
   if (!e) return null;
   if (e.type !== "message" && e.type !== "app_mention") return null;
+  const subtype = typeof e.subtype === "string" ? e.subtype : undefined;
+  const inner = subtype === "message_changed" && e.message && typeof e.message === "object"
+    ? (e.message as Record<string, unknown>)
+    : e;
   const channelId = typeof e.channel === "string" ? e.channel : "";
   const ts = typeof e.ts === "string" ? e.ts : "";
   if (!channelId || !ts) return null;
-  const threadTs = typeof e.thread_ts === "string" ? e.thread_ts : undefined;
-  const text = typeof e.text === "string" ? e.text : "";
+  const threadTs = typeof inner.thread_ts === "string" ? inner.thread_ts : undefined;
+  const text = typeof inner.text === "string" ? inner.text : "";
   return {
     channelId,
     ts,
     threadTs,
     teamId: envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined),
-    userId: typeof e.user === "string" ? e.user : undefined,
-    botId: typeof e.bot_id === "string" ? e.bot_id : undefined,
-    subtype: typeof e.subtype === "string" ? e.subtype : undefined,
+    userId: typeof inner.user === "string" ? inner.user : undefined,
+    botId: typeof inner.bot_id === "string" ? inner.bot_id : undefined,
+    subtype,
     channelType: typeof e.channel_type === "string" ? e.channel_type : undefined,
     text,
     isAppMention: e.type === "app_mention",
@@ -64,9 +68,16 @@ export function isNoReply(message: string): boolean {
 }
 
 export function renderWakeMessage(ev: ParsedMessageEvent): string {
+  const isEdit = ev.subtype === "message_changed";
   return [
-    `[thread-follow] You were not mentioned — this reply reached you because you follow this thread. ` +
-      `Reply only if it warrants a response from you: it's addressed to you, asks you something, or moves ` +
+    `[thread-follow]${isEdit ? " (edited message)" : ""} You were not mentioned — this reply reached you ` +
+      `because you follow this thread.` +
+      (isEdit
+        ? ` This is an EDIT of an earlier message in this thread, shown here as its post-edit text — most ` +
+          `edits are trivial (typo/formatting fixes) and don't warrant a reply; only respond if the edit ` +
+          `changed what's being asked of you or introduced something that now needs your attention.`
+        : "") +
+      ` Reply only if it warrants a response from you: it's addressed to you, asks you something, or moves ` +
       `the task you're working on. If the humans are talking among themselves and your reply would be ` +
       `noise, output exactly ${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. Social ` +
       `chatter between humans — thanks, greetings, sign-offs ("cheers!", "see you tomorrow") — is noise ` +
