@@ -7,6 +7,7 @@ import type { MemorySilo } from "../memory/silo.js";
 import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
+import type { ModelPolicy } from "../model/policy.js";
 
 export interface AccessRequestsConfig {
   readonly adminChannel?: string;
@@ -31,6 +32,7 @@ export interface AppConfig {
   loadWebhooks?(): readonly WebhookHook[];
   loadSpendBudgets?(): SpendBudgets;
   loadAccessRequests?(): AccessRequestsConfig | null;
+  loadModelPolicy?(): ModelPolicy | undefined;
 }
 
 let registered: AppConfig | null = null;

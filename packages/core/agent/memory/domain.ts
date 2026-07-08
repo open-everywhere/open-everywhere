@@ -12,10 +12,13 @@ export type ModelReasoning =
   | "high"
   | "xhigh";
 
+export type ModelTier = "high" | "medium" | "low";
+
 export interface ModelRoute {
   readonly id?: string;
   readonly providers?: readonly string[];
   readonly reasoning?: ModelReasoning;
+  readonly tier?: ModelTier;
 }
 
 export interface ModelRoutes {
@@ -38,6 +41,7 @@ export interface Domain {
   readonly bundle?: string;
   readonly nameDropWake?: boolean;
   readonly models?: ModelRoutes;
+  readonly reasoningCeiling?: ModelReasoning;
   readonly statusVerbs?: readonly string[];
   readonly statusVerbsMode?: "extend" | "replace";
   readonly role?: string;
@@ -79,6 +83,7 @@ interface KnobLayer {
   readonly statusVerbs?: readonly string[];
   readonly statusVerbsMode?: "extend" | "replace";
   readonly models?: ModelRoutes;
+  readonly reasoningCeiling?: ModelReasoning;
 }
 
 export interface NamedKnobLayer extends KnobLayer {
@@ -119,7 +124,8 @@ export function modelRouteFor(
     const r = d?.models?.[role];
     if (!r) continue;
     route = {
-      id: r.id ?? route.id,
+      id: r.id !== undefined ? r.id : r.tier !== undefined ? undefined : route.id,
+      tier: r.tier !== undefined ? r.tier : r.id !== undefined ? undefined : route.tier,
       providers: r.providers ?? (r.id !== undefined && r.id !== route.id ? undefined : route.providers),
       reasoning: r.reasoning ?? route.reasoning,
     };
@@ -154,6 +160,20 @@ export function statusVerbsFor(
     verbs = d?.statusVerbsMode === "replace" ? own : [...verbs, ...own.filter((v) => !verbs.includes(v))];
   }
   return verbs.length > 0 ? verbs : DEFAULT_STATUS_VERBS;
+}
+
+export function reasoningCeilingFor(
+  channelKey: string,
+  domains: readonly Domain[],
+  roles: readonly NamedKnobLayer[] = [],
+  surfaceMatch: DomainMatch | undefined,
+  base: ModelReasoning,
+): ModelReasoning {
+  let ceiling = base;
+  for (const d of knobLayersFor(channelKey, domains, roles, surfaceMatch)) {
+    if (d?.reasoningCeiling !== undefined) ceiling = d.reasoningCeiling;
+  }
+  return ceiling;
 }
 
 export function assertChannelExclusivity(domains: readonly Domain[]): void {

@@ -1,4 +1,5 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
+import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
 import { loadProviders } from "../access/providers.js";
 import { loadAccessRequests } from "../access/access-requests.js";
@@ -8,6 +9,7 @@ import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js"
 import { loadRoles } from "../roles/roles.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
+import { loadModelPolicy } from "../model/policy.js";
 import "../identity/trusted-surfaces.js";
 
 registerConfig({
@@ -23,4 +25,7 @@ registerConfig({
   loadWebhooks,
   loadSpendBudgets,
   loadAccessRequests,
+  loadModelPolicy,
 });
+
+assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
