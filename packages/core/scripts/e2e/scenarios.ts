@@ -449,7 +449,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const miss = await b.awaitThreadReply(missTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(
         !miss.text.toLowerCase().includes(colour.toLowerCase()),
-        "channel-B recall MISSES (hard gate: the taught token is absent)",
+        `channel-B recall MISSES (hard gate: the taught token is absent) — reply: "${miss.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
       await ctx.judgePass(
         closedQA("Does the reply say it doesn't know / decline, rather than invent a colour?", {
@@ -462,7 +462,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const hit = await a.awaitThreadReply(hitTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(
         hit.text.toLowerCase().includes(colour.toLowerCase()),
-        "channel-A recall HITS (hard gate: the taught token is present)",
+        `channel-A recall HITS (hard gate: expected the taught token "${colour}") — reply: "${hit.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
       );
       await ctx.judgePass(
         factuality(colour, `Does the reply give the taught colour ${colour}?`, { mustMatch: [colour] }),
