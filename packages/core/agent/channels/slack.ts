@@ -19,7 +19,7 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop } from "./slack-events.js";
+import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, type SupervisorReplyTarget } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
@@ -317,6 +317,20 @@ const slackMentionChannel = slackChannel({
   onAppMention: (ctx, message) => onInbound(ctx, message, false),
   onDirectMessage: (ctx, message) => onInbound(ctx, message, true),
   events: {
+    "turn.started": async (_data, channel, ctx) => {
+      if (isSupervisorReplyTurn(channel.state)) {
+        const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+        const channelId = typeof attrs?.channel_id === "string" ? attrs.channel_id : undefined;
+        const threadTs = typeof attrs?.thread_ts === "string" ? attrs.thread_ts : undefined;
+        (channel.state as unknown as Record<string, unknown>).oeReplyTarget = channelId
+          ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
+          : undefined;
+      }
+      channel.state.pendingToolCallMessage = null;
+      channel.state.lastReasoningTypingAtMs = null;
+      channel.state.lastReasoningTypingStatus = null;
+      await channel.thread.startTyping("Working...");
+    },
     "reasoning.appended": async (_data, channel) => {
       const now = Date.now();
       const last = channel.state.lastReasoningTypingAtMs;
@@ -396,6 +410,41 @@ const slackMentionChannel = slackChannel({
         return;
       }
       (channel.state as unknown as Record<string, unknown>).oeSilentTurn = false;
+      if (isSupervisorReplyTurn(channel.state)) {
+        const target = (channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined;
+        const channelId = channel.state.channelId ?? undefined;
+        const teamId = channel.state.teamId;
+        const partition = channelId
+          ? resolvePartition({
+              channel: { kind: "slack" },
+              session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+            })
+          : undefined;
+        await deliverSupervisorReply({
+          postText: effects.postText,
+          text: action.text,
+          target,
+          async post(cid, tts, text) {
+            const body = new URLSearchParams({ channel: cid, text });
+            if (tts) body.set("thread_ts", tts);
+            await slackForm("chat.postMessage", body.toString());
+          },
+          async resolveOwnerToken() {
+            if (!partition) return undefined;
+            try {
+              return (await getOperationalStore().getChannelSession(partition.org, partition.surfaceKey))?.token;
+            } catch {
+              return undefined;
+            }
+          },
+          async bind(tts, ownerToken) {
+            if (!partition) return;
+            await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken });
+          },
+        });
+        (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
+        return;
+      }
       if (effects.postText) {
         await channel.thread.post(action.text);
       } else {

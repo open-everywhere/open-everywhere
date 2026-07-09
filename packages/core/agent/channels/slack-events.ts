@@ -649,6 +649,77 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
   };
 }
 
+export interface SupervisorReplyTarget {
+  readonly channelId?: string;
+  readonly threadTs?: string;
+}
+
+export interface SupervisorReplyPlan {
+  readonly post: { readonly channel: string; readonly threadTs?: string } | null;
+  readonly bindThread: boolean;
+  readonly reason: string;
+}
+
+export function planSupervisorReply(target: SupervisorReplyTarget | undefined): SupervisorReplyPlan {
+  const channel = typeof target?.channelId === "string" && target.channelId.length > 0 ? target.channelId : undefined;
+  if (!channel) return { post: null, bindThread: false, reason: "no reply target — fail safe, post nothing" };
+  const threadTs = typeof target?.threadTs === "string" && target.threadTs.length > 0 ? target.threadTs : undefined;
+  return {
+    post: threadTs ? { channel, threadTs } : { channel },
+    bindThread: Boolean(threadTs),
+    reason: threadTs ? "threaded supervisor reply — post into the thread and bind it" : "top-level supervisor reply — post to the channel, no bind",
+  };
+}
+
+export function isSupervisorReplyTurn(state: unknown): boolean {
+  return (state as Record<string, unknown> | undefined)?.oeSupervisor === true;
+}
+
+export interface SupervisorReplyDeps {
+  readonly postText: boolean;
+  readonly text: string;
+  readonly target: SupervisorReplyTarget | undefined;
+  readonly post: (channelId: string, threadTs: string | undefined, text: string) => Promise<void>;
+  readonly resolveOwnerToken: () => Promise<string | undefined>;
+  readonly bind: (threadTs: string, ownerToken: string) => Promise<void>;
+}
+
+export interface SupervisorReplyResult {
+  readonly posted: boolean;
+  readonly bound: boolean;
+  readonly reason: string;
+}
+
+export async function deliverSupervisorReply(deps: SupervisorReplyDeps): Promise<SupervisorReplyResult> {
+  const plan = planSupervisorReply(deps.target);
+  if (!plan.post) {
+    console.warn("[open-everywhere:slack] supervisor reply had no resolvable target — posting NOTHING (fail safe)");
+    return { posted: false, bound: false, reason: plan.reason };
+  }
+  let posted = false;
+  if (deps.postText) {
+    await deps.post(plan.post.channel, plan.post.threadTs, deps.text);
+    posted = true;
+  } else {
+    console.log(
+      `[open-everywhere:slack] supervisor reply: card already posted this turn — suppressing the redundant text (${plan.post.channel}/${plan.post.threadTs ?? "top-level"})`,
+    );
+  }
+  let bound = false;
+  if (plan.bindThread && plan.post.threadTs) {
+    const ownerToken = await deps.resolveOwnerToken();
+    if (ownerToken) {
+      await deps.bind(plan.post.threadTs, ownerToken);
+      bound = true;
+    } else {
+      console.warn(
+        `[open-everywhere:slack] supervisor reply: could not resolve the supervisor token — thread left unbound (${plan.post.channel}/${plan.post.threadTs})`,
+      );
+    }
+  }
+  return { posted, bound, reason: plan.reason };
+}
+
 export interface ParsedChannelJoinEvent {
   readonly channelId: string;
   readonly ts: string;
