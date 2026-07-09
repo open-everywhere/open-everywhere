@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { fetchWakeBackscroll, WAKE_BACKSCROLL_MAX, type SlackRequester, type WakeBackscrollDeps } from "../agent/channels/slack-wake-backscroll.js";
+import {
+  fetchWakeBackscroll,
+  fetchWakeEnvelopeBackscroll,
+  FIRST_WAKE_BACKSCROLL_WINDOW_HOURS,
+  WAKE_BACKSCROLL_MAX,
+  type SlackRequester,
+  type WakeBackscrollDeps,
+} from "../agent/channels/slack-wake-backscroll.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 
 let n = 0;
@@ -116,4 +123,39 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   ok(out.length === 1 && out[0].includes("hi"), "a failing identity resolver still yields context (own-post attribution just degrades)");
 }
 
-console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft)`);
+{
+  ok(FIRST_WAKE_BACKSCROLL_WINDOW_HOURS === 24, "default first-wake window is 24h");
+
+  const rec: { method?: string; params?: Record<string, string> } = {};
+  const messages: Msg[] = [
+    { ts: "9.0", user: "UC", text: "newest" },
+    { ts: "8.0", user: "UB", text: "middle" },
+    { ts: "6.0", bot_id: "BBOT", text: "own post" },
+  ];
+  let out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "10.0" }, deps(stub("conversations.history", messages, rec)));
+  ok(rec.method === "conversations.history" && rec.params?.latest === "10.0" && rec.params?.inclusive === "false", "windowed fetch still bounds by latest/inclusive like the string-context fetcher");
+  const expectedOldest = String(10.0 - FIRST_WAKE_BACKSCROLL_WINDOW_HOURS * 3600);
+  ok(rec.params?.oldest === expectedOldest, `oldest = latest - ${FIRST_WAKE_BACKSCROLL_WINDOW_HOURS}h (a rolling TIME window, not a fixed message count)`);
+
+  ok(out.length === 3, "returns one entry per message (not a rolled-up context string)");
+  ok(out.every((m) => m.trust === "peer" && m.trigger === undefined), "every backscroll entry is trust=peer with no trigger flag");
+  ok(out[0].body === "own post" && out[1].body === "middle" && out[2].body === "newest", "oldest-first order (conversations.history is newest-first on the wire)");
+  ok(out[0].from === "agent" && out[0].author === "unknown", "the bot's own post maps to from:agent, no foreign author id");
+  ok(out[1].from === "human" && out[1].author === "UB", "a human message maps to from:human with its user id as author");
+  ok(out.every((m) => typeof m.sentAt === "string" && !Number.isNaN(Date.parse(m.sentAt))), "sentAt is a valid ISO-8601 string");
+
+  const rec2: { method?: string; params?: Record<string, string> } = {};
+  await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "10.0", windowHours: 1 }, deps(stub("conversations.history", messages, rec2)));
+  ok(rec2.params?.oldest === String(10.0 - 3600), "a custom windowHours narrows the oldest bound accordingly");
+
+  const many: Msg[] = Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `m${12 - i}` }));
+  out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", many)));
+  ok(out.length === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX entries (${WAKE_BACKSCROLL_MAX}) even though the window held 13`);
+  ok(out[0].body === "m3" && out[out.length - 1].body === "m12", "cap keeps the most-recent N, drops the oldest, order preserved");
+
+  ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => { throw new Error("slack down"); }))).length === 0, "a throwing requester → empty (never fails the first wake)");
+  ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => ({ ok: false, error: "not_in_channel" })))).length === 0, "a not-ok response → empty");
+  ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => undefined))).length === 0, "undefined response (no token) → empty");
+}
+
+console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + T1.5 envelope-shaped windowed backscroll)`);

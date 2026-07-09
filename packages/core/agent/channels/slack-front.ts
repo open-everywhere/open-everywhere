@@ -15,7 +15,7 @@ import {
   liveReactionDeps,
   routeSupervisorEvent,
   liveSupervisorDeps,
-  supervisorToken,
+  supervisorFifoKey,
   bindableFor,
   bindableForJoin,
   bindableForReaction,
@@ -342,7 +342,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         ambient = false;
       }
       if (ambient) {
-        const supKey = supervisorToken(ev.channelId, 1);
+        const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
           fifo.enqueue(supKey, () =>
             routeSupervisorEvent(ev, liveSupervisorDeps(send)).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),

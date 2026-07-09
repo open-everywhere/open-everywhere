@@ -23,6 +23,10 @@ import {
   routeSupervisorEvent,
   supervisorToken,
   supervisorSentinel,
+  supervisorFifoKey,
+  shouldRotate,
+  SUPERVISOR_ROTATE_QUIET_GAP_MS,
+  SUPERVISOR_ROTATE_TURN_BUDGET,
   confirmChannelInternalWithMeta,
   liveSupervisorDeps,
   bindableFor,
@@ -45,6 +49,7 @@ import { resolvePartition } from "../agent/memory/partition.js";
 import { OE_APPROVAL_PREFIX } from "../agent/approvals/flow.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -862,6 +867,12 @@ registerConfig({
   ok(supervisorToken("C_SUP", 1) === "C_SUP:oe-sup:g1", "supervisorToken → ${channelId}:oe-sup:g${generation}");
   ok(supervisorToken("C_SUP", 3) === "C_SUP:oe-sup:g3", "supervisorToken carries the generation");
 
+  ok(supervisorFifoKey("C_SUP") === "C_SUP:oe-sup", "supervisorFifoKey → ${channelId}:oe-sup");
+  ok(
+    supervisorToken("C_SUP", 1) !== supervisorToken("C_SUP", 2) && supervisorFifoKey("C_SUP") === supervisorFifoKey("C_SUP"),
+    "unlike supervisorToken (generation-bearing), the FIFO key is identical across generations",
+  );
+
   const gbase = { authorIsBot: false, isAppMention: false, subtype: undefined as string | undefined, channelType: "channel", channelConfirmedInternal: true };
   ok(shouldSupervisorWake(gbase).deliver, "internal channel, plain message → wakes");
   ok(shouldSupervisorWake({ ...gbase, subtype: "message_changed" }).deliver, "a message_changed EDIT still wakes (supervisor notices edits)");
@@ -890,7 +901,7 @@ registerConfig({
     },
     getOrCreateSession: async (_org, _sk, channelId) => {
       getOrCreateCalls++;
-      return { token: supervisorToken(channelId, 1), generation: 1 };
+      return { token: supervisorToken(channelId, 1), generation: 1, freshGeneration: false };
     },
     touchSession: async () => {
       touchCalls++;
@@ -957,6 +968,105 @@ registerConfig({
 }
 
 {
+  const base = { lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5 };
+  ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, low turn count → no rotate");
+  ok(shouldRotate(base, "2026-03-25T21:52:00Z"), "quiet gap over the default 24h → rotate");
+  ok(!shouldRotate(base, "2026-07-09T11:00:00Z"), "quiet gap just under 24h → no rotate");
+  ok(
+    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1 }, "2026-07-08T12:00:01Z"),
+    "turnCount OVER the default budget → rotate even with a fresh wake",
+  );
+  ok(
+    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET }, "2026-07-08T12:00:01Z"),
+    "turnCount AT (not over) the budget → no rotate",
+  );
+  ok(shouldRotate(base, "not-a-real-timestamp"), "unparseable `now` → fail-safe rotate");
+  ok(shouldRotate({ lastWakeAt: "not-a-real-timestamp", turnCount: 0 }, "2026-07-08T12:00:01Z"), "unparseable lastWakeAt → fail-safe rotate");
+  ok(shouldRotate(base, "2026-07-08T12:00:01Z", { turnBudget: 4 }), "a custom turnBudget below the current turnCount → rotate");
+  ok(shouldRotate(base, "2026-07-08T13:00:00Z", { quietGapMs: 1000 }), "a custom quietGapMs smaller than the elapsed gap → rotate");
+  ok(SUPERVISOR_ROTATE_QUIET_GAP_MS === 24 * 3_600_000, "default quiet-gap threshold is 24h");
+  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 1500, "default turn-budget threshold is 1500");
+}
+
+{
+  const store = getOperationalStore();
+  const org = "org-rot-test";
+  const surfaceKey = "slack/T_ROT/C_ROT";
+  const channelId = "C_ROT";
+  const rotDeps = liveSupervisorDeps(async () => ({}));
+
+  let s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:00:00Z");
+  ok(s.generation === 1 && s.freshGeneration === true && s.token === supervisorToken(channelId, 1), "no existing row → mints generation 1, freshGeneration true");
+
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:05:00Z");
+  ok(s.generation === 1 && s.freshGeneration === false && s.token === supervisorToken(channelId, 1), "resumed within budget/gap → same generation, freshGeneration false");
+
+  for (let i = 0; i <= SUPERVISOR_ROTATE_TURN_BUDGET; i++) {
+    await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:06:00Z");
+  }
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:07:00Z");
+  ok(s.generation === 2 && s.freshGeneration === true && s.token === supervisorToken(channelId, 2), "turn budget exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
+
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:00Z");
+  ok(s.generation === 3 && s.freshGeneration === true && s.token === supervisorToken(channelId, 3), "quiet gap over 24h → rotates again to generation 3");
+
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:01Z");
+  ok(s.generation === 3 && s.freshGeneration === false, "resuming the just-rotated generation immediately → freshGeneration false");
+}
+
+{
+  const supEv = (over: Record<string, unknown> = {}) =>
+    parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_SUP", ts: "77.7", user: "U1", channel_type: "channel", text: "deploy looks green", ...over },
+    })!;
+  const backscrollCalls: Array<{ channelId: string; ts: string }> = [];
+  const fakeBackscrollEntries: WakeMessageInput[] = [
+    { from: "human", author: "U_OLD", id: "10.0", sentAt: "2026-07-01T00:00:00.000Z", trust: "peer", body: "earlier chatter" },
+  ];
+  const wakes2: Array<{ token: string; message: string }> = [];
+  const supDepsFresh = (fresh: boolean): SupervisorRouteDeps => ({
+    confirmInternalWithMeta: async () => ({ internal: true, memberCount: 5 }),
+    getOrCreateSession: async (_o, _s, channelId) => ({
+      token: supervisorToken(channelId, fresh ? 2 : 1),
+      generation: fresh ? 2 : 1,
+      freshGeneration: fresh,
+    }),
+    touchSession: async () => {},
+    fetchBackscroll: async (input) => {
+      backscrollCalls.push(input);
+      return fakeBackscrollEntries;
+    },
+    wake: async (input) => {
+      wakes2.push(input);
+    },
+    now: () => "2026-01-14T02:00:00Z",
+  });
+
+  backscrollCalls.length = 0;
+  wakes2.length = 0;
+  let out2 = await routeSupervisorEvent(supEv(), supDepsFresh(true));
+  ok(out2.woke && backscrollCalls.length === 1, "freshGeneration wake → fetchBackscroll IS called");
+  ok(wakes2[0].message.includes("earlier chatter"), "first-wake envelope carries the backscroll entry's body");
+  const triggerIdx = wakes2[0].message.indexOf('trigger="true"');
+  const backscrollIdx = wakes2[0].message.indexOf("earlier chatter");
+  ok(triggerIdx > -1 && backscrollIdx > -1 && backscrollIdx < triggerIdx, "backscroll sibling renders BEFORE the trigger message (oldest-first, ending at the trigger)");
+
+  backscrollCalls.length = 0;
+  wakes2.length = 0;
+  out2 = await routeSupervisorEvent(supEv(), supDepsFresh(false));
+  ok(out2.woke && backscrollCalls.length === 0, "non-fresh (ongoing generation) wake → fetchBackscroll is NOT called");
+  ok(!wakes2[0].message.includes("earlier chatter"), "an ongoing-generation wake carries no backscroll");
+
+  backscrollCalls.length = 0;
+  wakes2.length = 0;
+  const { fetchBackscroll: _drop, ...noFetchDeps } = supDepsFresh(true);
+  out2 = await routeSupervisorEvent(supEv(), noFetchDeps);
+  ok(out2.woke && wakes2.length === 1 && !wakes2[0].message.includes("earlier chatter"), "absent fetchBackscroll dep on a fresh generation → wake still fires, no backscroll (back-compat)");
+}
+
+{
   const secret = "sup-front-secret";
   const nowMs = 1_700_000_000_000;
   const prevTok = process.env.SLACK_BOT_TOKEN;
@@ -1009,10 +1119,10 @@ registerConfig({
   ok(r.fifo.keys.length === 0 && r.sends === 0, "flag OFF: top-level → name-drop path (no supervisor FIFO enqueue, no send) — byte-identical to today");
 
   r = await runFront(true, topEnv("EvON1"));
-  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorToken("C_TXN", 1), "flag ON: top-level → supervisor branch, enqueued on the supervisor token (the FIFO key)");
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "flag ON: top-level → supervisor branch, enqueued on the generation-independent FIFO key");
 
   r = await runFront(true, topEnv("EvON2", { thread_ts: "80.0" }));
-  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorToken("C_TXN", 1), "flag ON: unengaged in-thread → supervisor branch too (unowned traffic)");
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "flag ON: unengaged in-thread → supervisor branch too (unowned traffic)");
 
   ok(r.sends === 0, "flag ON but unconfirmable channel → supervisor branch taken, but the wake fails closed (no send)");
 

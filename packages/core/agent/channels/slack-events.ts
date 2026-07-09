@@ -4,12 +4,12 @@ import { bindFrom, slackMode, type BindableContext } from "../identity/binding.j
 import { getConfig } from "../access/config.js";
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
-import type { EngagementRow } from "../operational/store.js";
+import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
-import { fetchWakeBackscroll } from "./slack-wake-backscroll.js";
+import { fetchWakeBackscroll, fetchWakeEnvelopeBackscroll } from "./slack-wake-backscroll.js";
 import { renderWakeEnvelope, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import {
   buildIngestedReaction,
@@ -106,7 +106,7 @@ function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit
 export function renderWakeMessage(
   ev: ParsedMessageEvent,
   now: () => string = () => new Date().toISOString(),
-  opts?: { readonly memberCount?: number },
+  opts?: { readonly memberCount?: number; readonly backscroll?: readonly WakeMessageInput[] },
 ): string {
   const isEdit = ev.subtype === "message_changed";
   return [
@@ -130,7 +130,7 @@ export function renderWakeMessage(
       currentTime: now(),
       channel: { id: ev.channelId, type: ev.channelType, memberCount: opts?.memberCount },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
-      messages: [triggerMessage(ev, { trust: "peer", isEdit })],
+      messages: [...(opts?.backscroll ?? []), triggerMessage(ev, { trust: "peer", isEdit })],
     }),
   ].join("\n");
 }
@@ -570,6 +570,29 @@ export function supervisorToken(channelId: string, generation: number): string {
   return slackContinuationToken(channelId, supervisorSentinel(generation));
 }
 
+export function supervisorFifoKey(channelId: string): string {
+  return `${channelId}:oe-sup`;
+}
+
+export const SUPERVISOR_ROTATE_QUIET_GAP_MS =
+  (Number(process.env.OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS) || 24) * 3_600_000;
+
+export const SUPERVISOR_ROTATE_TURN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TURN_BUDGET) || 1500;
+
+export function shouldRotate(
+  row: Pick<ChannelSessionRow, "lastWakeAt" | "turnCount">,
+  now: string,
+  opts: { readonly quietGapMs?: number; readonly turnBudget?: number } = {},
+): boolean {
+  const turnBudget = opts.turnBudget ?? SUPERVISOR_ROTATE_TURN_BUDGET;
+  if (row.turnCount > turnBudget) return true;
+  const quietGapMs = opts.quietGapMs ?? SUPERVISOR_ROTATE_QUIET_GAP_MS;
+  const lastWakeAtMs = Date.parse(row.lastWakeAt);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(lastWakeAtMs) || !Number.isFinite(nowMs)) return true;
+  return nowMs - lastWakeAtMs > quietGapMs;
+}
+
 export interface SupervisorWakeInput {
   readonly authorIsBot: boolean;
   readonly isAppMention: boolean;
@@ -594,8 +617,14 @@ export function shouldSupervisorWake(input: SupervisorWakeInput): ReplyDecision 
 
 export interface SupervisorRouteDeps {
   readonly confirmInternalWithMeta: (channelId: string) => Promise<{ internal: boolean; memberCount?: number }>;
-  readonly getOrCreateSession: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number }>;
+  readonly getOrCreateSession: (
+    org: string,
+    surfaceKey: string,
+    channelId: string,
+    atIso: string,
+  ) => Promise<{ token: string; generation: number; freshGeneration: boolean }>;
   readonly touchSession?: (org: string, surfaceKey: string, atIso: string) => Promise<void>;
+  readonly fetchBackscroll?: (input: { channelId: string; ts: string }) => Promise<readonly WakeMessageInput[]>;
   readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown }) => Promise<void>;
   readonly now?: () => string;
 }
@@ -620,10 +649,14 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
+  const backscroll = session.freshGeneration && deps.fetchBackscroll
+    ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts }).catch(() => [] as readonly WakeMessageInput[])
+    : [];
+
   await deps.wake({
     token: session.token,
     auth: authForEvent(ev, { isExternal: false, trustChecked: true }),
-    message: renderWakeMessage(ev, deps.now, { memberCount }),
+    message: renderWakeMessage(ev, deps.now, { memberCount, backscroll }),
     state: wakeState(ev, supervisorSentinel(session.generation), { oeSupervisor: true, oeUninvited: true }),
   });
   if (deps.touchSession) await deps.touchSession(p.org, p.surfaceKey, atIso);
@@ -636,12 +669,20 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const existing = await store.getChannelSession(org, surfaceKey);
-      if (existing) return { token: existing.token, generation: existing.generation };
-      const token = supervisorToken(channelId, 1);
-      const row = await store.rotateChannelSession(org, surfaceKey, token, atIso);
-      return { token: row.token, generation: row.generation };
+      if (!existing) {
+        const token = supervisorToken(channelId, 1);
+        const row = await store.rotateChannelSession(org, surfaceKey, token, atIso);
+        return { token: row.token, generation: row.generation, freshGeneration: true };
+      }
+      if (shouldRotate(existing, atIso)) {
+        const token = supervisorToken(channelId, existing.generation + 1);
+        const row = await store.rotateChannelSession(org, surfaceKey, token, atIso);
+        return { token: row.token, generation: row.generation, freshGeneration: true };
+      }
+      return { token: existing.token, generation: existing.generation, freshGeneration: false };
     },
     touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, surfaceKey, atIso),
+    fetchBackscroll: (input) => fetchWakeEnvelopeBackscroll(input),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, state }) {
       await send({ message }, { auth, continuationToken: token, state });

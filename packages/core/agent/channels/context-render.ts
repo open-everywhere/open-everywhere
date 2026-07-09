@@ -42,6 +42,25 @@ export function renderContext(
   return kept.length === MAX_MESSAGES && opts.readMoreHint ? `${wrapped}\n\n${opts.readMoreHint}` : wrapped;
 }
 
+export function capLines(
+  lines: readonly ContextLine[],
+  opts: { readonly maxMessages?: number; readonly maxChars?: number } = {},
+): ContextLine[] {
+  const maxMessages = opts.maxMessages ?? MAX_MESSAGES;
+  const maxChars = opts.maxChars ?? MAX_CHARS;
+  const kept: ContextLine[] = [];
+  let chars = 0;
+  for (let i = lines.length - 1; i >= 0 && kept.length < maxMessages; i--) {
+    const l = lines[i];
+    const text = l.text.trim();
+    if (!text) continue;
+    if (chars + text.length > maxChars && kept.length > 0) break;
+    chars += text.length;
+    kept.unshift(l);
+  }
+  return kept;
+}
+
 export function sinceLastAgentReply(lines: readonly ContextLine[]): ContextLine[] {
   let lastAgent = -1;
   for (let i = lines.length - 1; i >= 0; i--) {

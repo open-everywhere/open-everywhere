@@ -1,6 +1,7 @@
 import { callSlackApi } from "eve/channels/slack";
 import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
-import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
+import { renderContext, sinceLastAgentReply, capLines, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
+import type { WakeMessageInput } from "./wake-envelope.js";
 
 export { WAKE_BACKSCROLL_MAX } from "./context-render.js";
 
@@ -93,4 +94,53 @@ function renderEntry(lines: readonly ContextLine[], source: string): string[] {
   const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
   const entry = renderContext(capped, source, { readMoreHint: READ_MORE_HINT });
   return entry ? [entry] : [];
+}
+
+export const FIRST_WAKE_BACKSCROLL_WINDOW_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_WINDOW_HOURS) || 24;
+
+const WINDOW_FETCH_LIMIT = 200;
+
+function tsToIso(ts: string): string {
+  const seconds = Number.parseFloat(ts);
+  return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : new Date(0).toISOString();
+}
+
+export interface WakeEnvelopeBackscrollInput {
+  readonly channelId: string;
+  readonly ts: string;
+  readonly windowHours?: number;
+}
+
+export async function fetchWakeEnvelopeBackscroll(
+  input: WakeEnvelopeBackscrollInput,
+  deps: WakeBackscrollDeps = liveDeps,
+): Promise<WakeMessageInput[]> {
+  try {
+    const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
+    const windowHours = input.windowHours ?? FIRST_WAKE_BACKSCROLL_WINDOW_HOURS;
+    const latestSeconds = Number.parseFloat(input.ts);
+    const oldest = Number.isFinite(latestSeconds) ? String(latestSeconds - windowHours * 3600) : undefined;
+    const res = await deps.request("conversations.history", {
+      channel: input.channelId,
+      latest: input.ts,
+      inclusive: "false",
+      limit: String(WINDOW_FETCH_LIMIT),
+      ...(oldest ? { oldest } : {}),
+    });
+    const raw = extractMessages(res);
+    if (!raw) return [];
+    const lines = linesFromMessages(raw, ids);
+    lines.reverse();
+    const capped = capLines(lines, { maxMessages: WAKE_BACKSCROLL_MAX });
+    return capped.map((l) => ({
+      from: l.senderType === "agent" ? "agent" : "human",
+      author: l.senderId ?? "unknown",
+      id: l.ts,
+      sentAt: tsToIso(l.ts),
+      trust: "peer" as const,
+      body: l.text,
+    }));
+  } catch {
+    return [];
+  }
 }
