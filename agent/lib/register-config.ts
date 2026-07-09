@@ -11,6 +11,16 @@ import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
 import { loadModelPolicy } from "../model/policy.js";
 import "../identity/trusted-surfaces.js";
+import postFile from "@open-everywhere/core/agent/tools/post_file.js";
+import { setScreenshotPoster } from "@open-everywhere/core/agent/tools/browser_qa.js";
+setScreenshotPoster((input, ctx) =>
+  Promise.resolve(
+    postFile.execute(
+      input as Parameters<typeof postFile.execute>[0],
+      ctx as Parameters<typeof postFile.execute>[1],
+    ),
+  ),
+);
 
 registerConfig({
   loadBundles,
