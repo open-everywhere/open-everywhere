@@ -5,6 +5,7 @@ import { getConfig } from "../access/config.js";
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow } from "../operational/store.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
@@ -102,7 +103,11 @@ function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit
   };
 }
 
-export function renderWakeMessage(ev: ParsedMessageEvent, now: () => string = () => new Date().toISOString()): string {
+export function renderWakeMessage(
+  ev: ParsedMessageEvent,
+  now: () => string = () => new Date().toISOString(),
+  opts?: { readonly memberCount?: number },
+): string {
   const isEdit = ev.subtype === "message_changed";
   return [
     `[thread-follow]${isEdit ? " (edited message)" : ""} You were not mentioned — this reply reached you ` +
@@ -123,7 +128,7 @@ export function renderWakeMessage(ev: ParsedMessageEvent, now: () => string = ()
     renderWakeEnvelope({
       reason: isEdit ? "message-edited" : "channel-activity",
       currentTime: now(),
-      channel: { id: ev.channelId, type: ev.channelType },
+      channel: { id: ev.channelId, type: ev.channelType, memberCount: opts?.memberCount },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
       messages: [triggerMessage(ev, { trust: "peer", isEdit })],
     }),
@@ -462,6 +467,11 @@ export async function confirmChannelInternal(channelId: string): Promise<boolean
   return (await channelInternalAndMeta(channelId)).internal;
 }
 
+export async function confirmChannelInternalWithMeta(channelId: string): Promise<{ internal: boolean; memberCount?: number }> {
+  const { internal, meta } = await channelInternalAndMeta(channelId);
+  return { internal, memberCount: meta?.memberCount };
+}
+
 const TRANSCRIPT_MESSAGES = 50;
 const TRANSCRIPT_LINE_CHARS = 240;
 const TRANSCRIPT_TOTAL_CHARS = 4000;
@@ -548,6 +558,93 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     backscroll: (input) => fetchWakeBackscroll(input),
     async wake({ channelId, threadTs, auth, message, context, state }) {
       await send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
+    },
+  };
+}
+
+export function supervisorSentinel(generation: number): string {
+  return `oe-sup:g${generation}`;
+}
+
+export function supervisorToken(channelId: string, generation: number): string {
+  return slackContinuationToken(channelId, supervisorSentinel(generation));
+}
+
+export interface SupervisorWakeInput {
+  readonly authorIsBot: boolean;
+  readonly isAppMention: boolean;
+  readonly subtype?: string;
+  readonly channelType?: string;
+  readonly channelConfirmedInternal: boolean;
+}
+
+export function shouldSupervisorWake(input: SupervisorWakeInput): ReplyDecision {
+  const isEdit = input.subtype === "message_changed";
+  if (input.subtype && !isEdit) return { deliver: false, reason: `message subtype "${input.subtype}" — not a plain message` };
+  if (input.authorIsBot) return { deliver: false, reason: "author is a bot — relay is Phase 2, dropped here" };
+  if (input.isAppMention) return { deliver: false, reason: "app_mention — the mention path owns it" };
+  if (input.channelType !== "channel" && input.channelType !== "group") {
+    return { deliver: false, reason: `channel_type "${String(input.channelType)}" — supervisor is channels/groups only` };
+  }
+  if (!input.channelConfirmedInternal) {
+    return { deliver: false, reason: "channel not confirmed internal — fail closed (externally shared or unverifiable)" };
+  }
+  return { deliver: true, reason: "ambient supervisor enabled internal channel — judged wake" };
+}
+
+export interface SupervisorRouteDeps {
+  readonly confirmInternalWithMeta: (channelId: string) => Promise<{ internal: boolean; memberCount?: number }>;
+  readonly getOrCreateSession: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number }>;
+  readonly touchSession?: (org: string, surfaceKey: string, atIso: string) => Promise<void>;
+  readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown }) => Promise<void>;
+  readonly now?: () => string;
+}
+
+export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
+  const base = {
+    authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
+    isAppMention: ev.isAppMention,
+    subtype: ev.subtype,
+    channelType: ev.channelType,
+  };
+  const pre = shouldSupervisorWake({ ...base, channelConfirmedInternal: true });
+  if (!pre.deliver) return { ...pre, woke: false };
+
+  const { internal, memberCount } = await deps
+    .confirmInternalWithMeta(ev.channelId)
+    .catch(() => ({ internal: false, memberCount: undefined as number | undefined }));
+  const decision = shouldSupervisorWake({ ...base, channelConfirmedInternal: internal });
+  if (!decision.deliver) return { ...decision, woke: false };
+
+  const p = resolvePartition(bindableFor(ev));
+  const atIso = deps.now ? deps.now() : new Date().toISOString();
+  const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
+
+  await deps.wake({
+    token: session.token,
+    auth: authForEvent(ev, { isExternal: false, trustChecked: true }),
+    message: renderWakeMessage(ev, deps.now, { memberCount }),
+    state: wakeState(ev, supervisorSentinel(session.generation), { oeSupervisor: true, oeUninvited: true }),
+  });
+  if (deps.touchSession) await deps.touchSession(p.org, p.surfaceKey, atIso);
+  return { ...decision, woke: true };
+}
+
+export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
+  return {
+    confirmInternalWithMeta: confirmChannelInternalWithMeta,
+    async getOrCreateSession(org, surfaceKey, channelId, atIso) {
+      const store = getOperationalStore();
+      const existing = await store.getChannelSession(org, surfaceKey);
+      if (existing) return { token: existing.token, generation: existing.generation };
+      const token = supervisorToken(channelId, 1);
+      const row = await store.rotateChannelSession(org, surfaceKey, token, atIso);
+      return { token: row.token, generation: row.generation };
+    },
+    touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, surfaceKey, atIso),
+    now: () => new Date().toISOString(),
+    async wake({ token, auth, message, state }) {
+      await send({ message }, { auth, continuationToken: token, state });
     },
   };
 }

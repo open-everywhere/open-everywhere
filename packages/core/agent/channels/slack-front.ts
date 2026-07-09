@@ -13,6 +13,9 @@ import {
   parseSlackReactionEvent,
   routeReactionEvent,
   liveReactionDeps,
+  routeSupervisorEvent,
+  liveSupervisorDeps,
+  supervisorToken,
   bindableFor,
   bindableForJoin,
   bindableForReaction,
@@ -21,6 +24,8 @@ import {
 } from "./slack-events.js";
 import { resolvePartition } from "../memory/partition.js";
 import { isThreadEngaged } from "./engagement.js";
+import { ambientSupervisorEnabled } from "../memory/domain.js";
+import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
 
@@ -205,6 +210,7 @@ export interface FrontOptions {
   readonly getBotIdentity?: () => Promise<{ readonly userId?: string; readonly botId?: string }>;
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
+  readonly ambientEnabledFor?: (surfaceKey: string) => boolean;
   readonly handleApprovalPayload?: (payload: unknown) => Promise<boolean>;
 }
 
@@ -245,6 +251,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
   const handleApproval = opts.handleApprovalPayload ?? liveHandleApprovalPayload;
+  const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
 
   return async (req: Request, args: RouteHandlerArgs): Promise<Response> => {
     const rawBody = await req.text();
@@ -327,14 +334,33 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     const send = args.send as unknown as Parameters<typeof liveDeps>[0];
 
+    const scheduleUnownedWake = (label: string): void => {
+      let ambient = false;
+      try {
+        ambient = ambientEnabledFor(resolvePartition(bindableFor(ev)).surfaceKey);
+      } catch {
+        ambient = false;
+      }
+      if (ambient) {
+        const supKey = supervisorToken(ev.channelId, 1);
+        args.waitUntil(
+          fifo.enqueue(supKey, () =>
+            routeSupervisorEvent(ev, liveSupervisorDeps(send)).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
+          ),
+        );
+        return;
+      }
+      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
+    };
+
     if (!ev.threadTs) {
-      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome("name-drop", ev.channelId, ev.ts)));
+      scheduleUnownedWake("name-drop");
       return OK();
     }
 
     const engaged = await isThreadEngaged(resolvePartition(bindableFor(ev)), ev.threadTs);
     if (!engaged) {
-      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome("name-drop-thread", ev.channelId, ev.ts)));
+      scheduleUnownedWake("name-drop-thread");
       return OK();
     }
 

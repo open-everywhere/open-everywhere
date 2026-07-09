@@ -19,6 +19,12 @@ import {
   shouldNameDropWake,
   routeNameDropEvent,
   renderNameDropMessage,
+  shouldSupervisorWake,
+  routeSupervisorEvent,
+  supervisorToken,
+  supervisorSentinel,
+  confirmChannelInternalWithMeta,
+  liveSupervisorDeps,
   bindableFor,
   parseChannelJoinEvent,
   routeChannelJoinEvent,
@@ -28,6 +34,7 @@ import {
   JOIN_ACK_TEXT,
   type MessageRouteDeps,
   type NameDropRouteDeps,
+  type SupervisorRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
@@ -848,6 +855,186 @@ registerConfig({
     await routeNameDropEvent(topLevel({ text: "no bots here" }), withBackscroll(["should-not-fetch"]));
     ok(contextCalls.length === 0, "no name in text → gate declines BEFORE the backscroll fetch (no wasted API call)");
   }
+}
+
+{
+  ok(supervisorSentinel(1) === "oe-sup:g1", "supervisorSentinel(1) → oe-sup:g1 (the non-empty re-anchor sentinel)");
+  ok(supervisorToken("C_SUP", 1) === "C_SUP:oe-sup:g1", "supervisorToken → ${channelId}:oe-sup:g${generation}");
+  ok(supervisorToken("C_SUP", 3) === "C_SUP:oe-sup:g3", "supervisorToken carries the generation");
+
+  const gbase = { authorIsBot: false, isAppMention: false, subtype: undefined as string | undefined, channelType: "channel", channelConfirmedInternal: true };
+  ok(shouldSupervisorWake(gbase).deliver, "internal channel, plain message → wakes");
+  ok(shouldSupervisorWake({ ...gbase, subtype: "message_changed" }).deliver, "a message_changed EDIT still wakes (supervisor notices edits)");
+  ok(!shouldSupervisorWake({ ...gbase, subtype: "channel_join" }).deliver, "system subtype → dropped");
+  ok(!shouldSupervisorWake({ ...gbase, authorIsBot: true }).deliver, "bot author → dropped (relay is Phase 2)");
+  ok(!shouldSupervisorWake({ ...gbase, isAppMention: true }).deliver, "@mention → dropped (eve's own turn owns it)");
+  ok(!shouldSupervisorWake({ ...gbase, channelType: "im" }).deliver, "DM → dropped (channels/groups only)");
+  ok(!shouldSupervisorWake({ ...gbase, channelType: "mpim" }).deliver, "group DM → dropped");
+  ok(shouldSupervisorWake({ ...gbase, channelType: "group" }).deliver, "private group → wakes");
+  ok(!shouldSupervisorWake({ ...gbase, channelConfirmedInternal: false }).deliver, "unconfirmed/external channel → fail closed");
+
+  const supEv = (over: Record<string, unknown> = {}) =>
+    parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_SUP", ts: "77.7", user: "U1", channel_type: "channel", text: "deploy looks green", ...over },
+    })!;
+  const wakes: Array<{ token: string; auth: unknown; message: string; state: unknown }> = [];
+  let confirmCalls = 0;
+  let getOrCreateCalls = 0;
+  let touchCalls = 0;
+  const supDeps = (internal: boolean, memberCount: number | undefined, over: Partial<SupervisorRouteDeps> = {}): SupervisorRouteDeps => ({
+    confirmInternalWithMeta: async () => {
+      confirmCalls++;
+      return { internal, memberCount };
+    },
+    getOrCreateSession: async (_org, _sk, channelId) => {
+      getOrCreateCalls++;
+      return { token: supervisorToken(channelId, 1), generation: 1 };
+    },
+    touchSession: async () => {
+      touchCalls++;
+    },
+    wake: async (input) => {
+      wakes.push(input);
+    },
+    now: () => "2026-01-14T02:00:00Z",
+    ...over,
+  });
+
+  let out = await routeSupervisorEvent(supEv(), supDeps(true, 12));
+  ok(out.woke && wakes.length === 1, "internal channel → supervisor wake fires");
+  ok(wakes[0].token === "C_SUP:oe-sup:g1", "wake targets the supervisor token (NOT a thread token)");
+  ok((wakes[0].state as { threadTs?: string }).threadTs === "oe-sup:g1", "state.threadTs seeded to the NON-EMPTY sentinel (re-anchor immunity)");
+  ok((wakes[0].state as { oeSupervisor?: boolean }).oeSupervisor === true, "state.oeSupervisor=true flags the session for T1.4 reply targeting");
+  ok((wakes[0].state as { oeUninvited?: boolean }).oeUninvited === true, "state.oeUninvited=true keeps a NO_REPLY/error turn quiet");
+  ok((wakes[0].state as { channelId?: string }).channelId === "C_SUP", "state carries channelId (the session must know where to post)");
+  {
+    const a = (wakes[0].auth as { attributes: Record<string, string> }).attributes;
+    ok(a.is_ext_shared === "false" && a.trust_checked === "true", "wake auth STAMPED with the internal verdict (unstamped = external downgrade — the live-bitten bug)");
+  }
+  ok(wakes[0].message.includes('<wake reason="channel-activity"'), "envelope reason is channel-activity");
+  ok(wakes[0].message.includes('trust="peer"'), "envelope trigger message is trust=peer (default-observe)");
+  ok(wakes[0].message.includes('member-count="12"'), "member count threaded into the envelope's <channel member-count>");
+  ok(getOrCreateCalls === 1 && touchCalls === 1, "session created-or-fetched once, and touched after the wake");
+
+  wakes.length = 0;
+  const editEv = parseMessageEvent({
+    type: "event_callback",
+    team_id: "T_ENG",
+    event: {
+      type: "message",
+      subtype: "message_changed",
+      channel: "C_SUP",
+      ts: "78.0",
+      channel_type: "channel",
+      message: { type: "message", user: "U1", ts: "77.7", text: "deploy looks RED now" },
+      previous_message: { text: "deploy looks green" },
+    },
+  })!;
+  out = await routeSupervisorEvent(editEv, supDeps(true, 12));
+  ok(out.woke && wakes[0].message.includes('reason="message-edited"'), "an edit wakes with reason=message-edited");
+
+  wakes.length = 0;
+  confirmCalls = 0;
+  getOrCreateCalls = 0;
+  out = await routeSupervisorEvent(supEv(), supDeps(false, undefined));
+  ok(!out.woke && wakes.length === 0, "external/unconfirmable channel → no supervisor wake (fail-closed)");
+  ok(confirmCalls === 1 && getOrCreateCalls === 0, "external channel is confirmed once, then NO session row is minted");
+
+  confirmCalls = 0;
+  getOrCreateCalls = 0;
+  out = await routeSupervisorEvent(supEv({ bot_id: "B999" }), supDeps(true, 12));
+  ok(!out.woke && confirmCalls === 0, "bot-authored message → dropped before the internal confirmation");
+  out = await routeSupervisorEvent(supEv({ channel_type: "im" }), supDeps(true, 12));
+  ok(!out.woke && confirmCalls === 0, "DM → dropped before the internal confirmation");
+  out = await routeSupervisorEvent(supEv({ subtype: "channel_join" }), supDeps(true, 12));
+  ok(!out.woke && confirmCalls === 0, "system subtype → dropped before the internal confirmation");
+
+  ok(typeof liveSupervisorDeps === "function", "liveSupervisorDeps is exported for the front-route wiring");
+  const meta = await confirmChannelInternalWithMeta("C_UNVERIFIABLE");
+  ok(meta.internal === false && meta.memberCount === undefined, "confirmChannelInternalWithMeta fail-closed with no bot token (internal:false, no count)");
+}
+
+{
+  const secret = "sup-front-secret";
+  const nowMs = 1_700_000_000_000;
+  const prevTok = process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+  const topEnv = (id: string, over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: id,
+      event: { type: "message", channel: "C_TXN", ts: "90.1", channel_type: "channel", user: "U1", text: "how's the deploy looking", ...over },
+    });
+  const mkReq = (body: string) => {
+    const ts = String(Math.floor(nowMs / 1000));
+    const sig = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+
+  class SpyFifo extends ThreadFifo {
+    readonly keys: string[] = [];
+    override enqueue(key: string, run: () => Promise<void>): Promise<void> {
+      this.keys.push(key);
+      return super.enqueue(key, run);
+    }
+  }
+
+  const runFront = async (ambient: boolean, body: string, opts: { dedupe?: EventDedupe } = {}) => {
+    const fifo = new SpyFifo();
+    let sends = 0;
+    const waits: Array<Promise<unknown>> = [];
+    const fakeArgs = { send: async () => { sends++; return {}; }, waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const handler = buildFrontHandler(async () => new Response("inner"), {
+      signingSecret: secret,
+      now: () => nowMs,
+      markEventSeen: async () => true,
+      getBotIdentity: async () => ({ userId: "UBOT" }),
+      ambientEnabledFor: () => ambient,
+      fifo,
+      ...(opts.dedupe ? { dedupe: opts.dedupe } : {}),
+    });
+    const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
+    await Promise.all(waits);
+    return { fifo, sends, res };
+  };
+
+  let r = await runFront(false, topEnv("EvOFF1"));
+  ok(r.fifo.keys.length === 0 && r.sends === 0, "flag OFF: top-level → name-drop path (no supervisor FIFO enqueue, no send) — byte-identical to today");
+
+  r = await runFront(true, topEnv("EvON1"));
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorToken("C_TXN", 1), "flag ON: top-level → supervisor branch, enqueued on the supervisor token (the FIFO key)");
+
+  r = await runFront(true, topEnv("EvON2", { thread_ts: "80.0" }));
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorToken("C_TXN", 1), "flag ON: unengaged in-thread → supervisor branch too (unowned traffic)");
+
+  ok(r.sends === 0, "flag ON but unconfirmable channel → supervisor branch taken, but the wake fails closed (no send)");
+
+  const dedupe = new EventDedupe();
+  r = await runFront(true, topEnv("EvDUP"), { dedupe });
+  const first = r.fifo.keys.length;
+  const r2 = await (async () => {
+    const fifo = new SpyFifo();
+    const waits: Array<Promise<unknown>> = [];
+    const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const handler = buildFrontHandler(async () => new Response("inner"), {
+      signingSecret: secret, now: () => nowMs, markEventSeen: async () => true,
+      getBotIdentity: async () => ({ userId: "UBOT" }), ambientEnabledFor: () => true, fifo, dedupe,
+    });
+    await handler(mkReq(topEnv("EvDUP")), fakeArgs as unknown as Parameters<typeof handler>[1]);
+    await Promise.all(waits);
+    return fifo.keys.length;
+  })();
+  ok(first === 1 && r2 === 0, "dedupe: a redelivered event (same event_id) does NOT double-enqueue the supervisor");
+
+  if (prevTok === undefined) delete process.env.SLACK_BOT_TOKEN;
+  else process.env.SLACK_BOT_TOKEN = prevTok;
 }
 
 {
