@@ -2,6 +2,7 @@ import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
+import { githubVisibility, githubTrust } from "../channels/github-identity.js";
 import { discordMode, discordVisibility } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { isVouchedInternal } from "./trust.js";
@@ -182,6 +183,34 @@ const bindTeams: Mapper = (ctx) => {
   };
 };
 
+const bindGitHub: Mapper = (ctx) => {
+  const a = authOf(ctx)?.attributes;
+  const owner = attr(a, ["owner"]);
+  const repo = attr(a, ["repo"]);
+  const repoPrivate = attr(a, ["repo_private", "repoPrivate"]);
+  const conversationKind = attr(a, ["conversation_kind", "conversationKind"]);
+  const issueNumber = attr(a, ["issue_number", "issueNumber"]);
+  const pullRequestNumber = attr(a, ["pull_request_number", "pullRequestNumber"]);
+  const isPr = conversationKind === "pull_request" || conversationKind === "review_thread";
+  const anchor =
+    isPr && pullRequestNumber
+      ? { pullRequestNumber: Number(pullRequestNumber) }
+      : issueNumber
+        ? { issueNumber: Number(issueNumber) }
+        : pullRequestNumber
+          ? { pullRequestNumber: Number(pullRequestNumber) }
+          : undefined;
+  return {
+    workspace: owner,
+    surface: repo,
+    mode: "channel",
+    visibility: githubVisibility(repoPrivate),
+    trust: githubTrust(repoPrivate, attr(a, ["author_association", "authorAssociation"])),
+    principalId: authPrincipalId(ctx) ?? attr(a, ["user_login", "userLogin", "user_id", "userId"]),
+    target: owner && repo && anchor ? { owner, repo, ...anchor } : undefined,
+  };
+};
+
 const bindDiscord: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -242,6 +271,7 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
   slack: bindSlack,
   linear: bindLinear,
   teams: bindTeams,
+  github: bindGitHub,
   discord: bindDiscord,
   telegram: bindTelegram,
 };
