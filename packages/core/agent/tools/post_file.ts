@@ -1,9 +1,10 @@
 import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import type { Approval } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
+import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -101,12 +102,41 @@ interface ResolvedFile {
   readonly caption?: string;
 }
 
-async function hostHtmlArtifact(_file: ResolvedFile): Promise<string> {
-  throw new Error(
-    "post_file: HTML artifacts must be hosted (Vercel Blob) and posted as a URL, not raw-uploaded — " +
-      "that delivery path is not wired yet. Post a screenshot/PNG of the rendered page instead, or " +
-      "share a link to an already-hosted URL. (See the hostHtmlArtifact seam in post_file.ts.)",
-  );
+async function postTextToSlack(ctx: BindableContext, text: string): Promise<void> {
+  const binding = bindFrom(ctx);
+  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+  if (!channelId) {
+    throw new Error("post_file: couldn't resolve this Slack channel's id — try again from a real channel or DM.");
+  }
+  const body: Record<string, string> = { channel: channelId, text };
+  if (binding.threadTs) body.thread_ts = binding.threadTs;
+  await callSlackRead("chat.postMessage", body);
+}
+
+async function postTextToDiscord(ctx: BindableContext, text: string): Promise<void> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error("post_file: DISCORD_BOT_TOKEN is not set — the bot token is required to post to Discord.");
+  }
+  const binding = bindFrom(ctx);
+  const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+  if (!channelId) {
+    throw new Error("post_file: couldn't resolve this Discord channel's id — try again from a real channel or DM.");
+  }
+  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: { authorization: `Bot ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ content: text }),
+  });
+  if (!res.ok) {
+    throw new Error(`post_file: Discord create-message (text) failed (HTTP ${res.status}) for channel ${channelId}.`);
+  }
+}
+
+async function postLinkToSurface(ctx: BindableContext, platform: string, urls: readonly string[], comment: string | undefined): Promise<void> {
+  const text = [comment, ...urls].filter((s): s is string => Boolean(s)).join("\n");
+  if (platform === "slack") await postTextToSlack(ctx, text);
+  else await postTextToDiscord(ctx, text);
 }
 
 async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<void> {
@@ -117,9 +147,6 @@ async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFi
   }
   const uploaded: Array<{ id: string; title: string }> = [];
   for (const file of files) {
-    if (isHtmlArtifact(file.contentType)) {
-      throw new Error("post_file: internal — HTML artifacts must route through hostHtmlArtifact, not Slack upload.");
-    }
     const res = await callSlackRead("files.getUploadURLExternal", { filename: file.filename, length: file.bytes.byteLength });
     const uploadUrl = typeof res.upload_url === "string" ? res.upload_url : undefined;
     const fileId = typeof res.file_id === "string" ? res.file_id : undefined;
@@ -172,6 +199,39 @@ async function postFilesToDiscord(ctx: BindableContext, files: readonly Resolved
 
 const MAX_FILES = 10;
 
+const inputSchema = z.object({
+  files: z
+    .array(
+      z.object({
+        source: z
+          .union([
+            z.object({ path: z.string().min(1) }).describe("A local filesystem path readable by the agent runtime."),
+            z.object({ url: z.string().min(1) }).describe("An http(s) URL to fetch the file bytes from."),
+            z.object({ base64: z.string().min(1) }).describe("Base64-encoded file bytes (optionally a data: URL)."),
+          ])
+          .describe("Where the file's bytes come from — exactly one of path / url / base64."),
+        filename: z.string().min(1).describe("The name the file is posted under (its extension drives contentType inference)."),
+        contentType: z.string().min(1).optional().describe("MIME type; inferred from the filename when omitted."),
+        caption: z.string().min(1).optional().describe("Optional per-file caption/title."),
+      }),
+    )
+    .min(1)
+    .max(MAX_FILES)
+    .describe("One or more files to post (max 10)."),
+  comment: z.string().min(1).optional().describe("Optional text posted alongside the files."),
+});
+type PostFileInput = z.infer<typeof inputSchema>;
+
+function inputFileIsHtml(f: PostFileInput["files"][number]): boolean {
+  return isHtmlArtifact(f.contentType ?? inferContentType(f.filename));
+}
+
+const approvalPolicy: Approval<PostFileInput> = (approvalCtx) => {
+  const files = approvalCtx.toolInput?.files ?? [];
+  const willPublish = resolveBlobHosting().enabled && files.some(inputFileIsHtml);
+  return willPublish ? "user-approval" : "not-applicable";
+};
+
 export default defineTool({
   description:
     "Post one or more FILES/artifacts (screenshots, images, docs, data) to the current conversation " +
@@ -180,31 +240,11 @@ export default defineTool({
     "bytes) and a `filename`; `contentType` is inferred from the filename if omitted. Add an " +
     "optional `comment` to post alongside the files, and a per-file `caption`. Works on Slack and " +
     "Discord today; on other surfaces it returns a clear 'not supported here' error so you can fall " +
-    "back to a text reply. HTML pages are not raw-uploaded — post a screenshot of the rendered page " +
-    "instead.",
-  inputSchema: z.object({
-    files: z
-      .array(
-        z.object({
-          source: z
-            .union([
-              z.object({ path: z.string().min(1) }).describe("A local filesystem path readable by the agent runtime."),
-              z.object({ url: z.string().min(1) }).describe("An http(s) URL to fetch the file bytes from."),
-              z.object({ base64: z.string().min(1) }).describe("Base64-encoded file bytes (optionally a data: URL)."),
-            ])
-            .describe("Where the file's bytes come from — exactly one of path / url / base64."),
-          filename: z.string().min(1).describe("The name the file is posted under (its extension drives contentType inference)."),
-          contentType: z.string().min(1).optional().describe("MIME type; inferred from the filename when omitted."),
-          caption: z.string().min(1).optional().describe("Optional per-file caption/title."),
-        }),
-      )
-      .min(1)
-      .max(MAX_FILES)
-      .describe("One or more files to post (max 10)."),
-    comment: z.string().min(1).optional().describe("Optional text posted alongside the files."),
-  }),
-  outputSchema: z.object({ posted: z.boolean(), count: z.number(), platform: z.string() }),
-  approval: never(),
+    "back to a text reply. HTML pages: if this org has opted in to Blob hosting they're published " +
+    "to a public URL (approval-gated); otherwise the raw `.html` is attached as a downloadable file.",
+  inputSchema,
+  outputSchema: z.object({ posted: z.boolean(), count: z.number(), platform: z.string(), urls: z.array(z.string()).optional() }),
+  approval: approvalPolicy,
   async execute(input, ctx) {
     const platform = bindFrom(ctx as BindableContext).platform;
     if (platform !== "slack" && platform !== "discord") {
@@ -221,21 +261,32 @@ export default defineTool({
       resolved.push({ bytes, filename: f.filename, contentType, caption: f.caption });
     }
 
+    const hosting = resolveBlobHosting();
+    const toAttach: ResolvedFile[] = [];
+    const hostedUrls: string[] = [];
     for (const file of resolved) {
-      if (isHtmlArtifact(file.contentType)) await hostHtmlArtifact(file);
+      if (isHtmlArtifact(file.contentType) && hosting.enabled) {
+        hostedUrls.push(await hostHtmlArtifact(file, { publicPrefix: hosting.publicPrefix }));
+      } else {
+        toAttach.push(file);
+      }
     }
 
-    if (platform === "slack") {
-      await postFilesToSlack(ctx as BindableContext, resolved, input.comment);
-    } else {
-      await postFilesToDiscord(ctx as BindableContext, resolved, input.comment);
+    if (toAttach.length > 0) {
+      if (platform === "slack") await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
+      else await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
+    }
+    if (hostedUrls.length > 0) {
+      await postLinkToSurface(ctx as BindableContext, platform, hostedUrls, toAttach.length > 0 ? undefined : input.comment);
     }
 
     await auditToolAction(ctx, `${platform}.post_file`, {
       count: resolved.length,
       filenames: resolved.map((f) => f.filename),
       hasComment: Boolean(input.comment),
+      hosted: hostedUrls.length,
+      attached: toAttach.length,
     });
-    return { posted: true, count: resolved.length, platform };
+    return { posted: true, count: resolved.length, platform, ...(hostedUrls.length > 0 ? { urls: hostedUrls } : {}) };
   },
 });

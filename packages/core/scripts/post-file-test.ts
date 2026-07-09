@@ -19,6 +19,25 @@ const postFile = (await import("../agent/tools/post_file.js")).default as unknow
 };
 const { inferContentType, assertSafeFetchUrl } = await import("../agent/tools/post_file.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { registerConfig } = await import("../agent/access/config.js");
+const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
+const { setBlobPutter, assertBlobUrl, hostHtmlArtifact } = await import("../agent/blob/hosting.js");
+
+const approvalOf = (postFile as unknown as { approval: (ctx: { toolInput: unknown }) => unknown }).approval;
+
+function registerBlobConfig(enabled: boolean, publicPrefix?: string): void {
+  registerConfig({
+    loadBundles: () => [defineBundle({ name: "org-default", instructions: "test" })],
+    loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadBlobHosting: () => ({ enabled, ...(publicPrefix ? { publicPrefix } : {}) }),
+  });
+}
+registerBlobConfig(false);
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));
@@ -141,13 +160,27 @@ await inSession(async () => {
   }
 });
 
-await inSession(async () => {
-  await assert.rejects(
-    () => postFile.execute({ files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] }, slackCtx("111.222")),
-    /not wired yet|must be hosted/,
-    "post_file: an HTML artifact fails loud rather than raw-uploading",
-  );
-});
+ok(assertBlobUrl("https://abc.public.blob.vercel-storage.com/x.html").hostname.endsWith(".blob.vercel-storage.com"), "assertBlobUrl: a real Blob host is allowed");
+const rejectsBlob = (u: string, label: string) => {
+  let threw = false;
+  try {
+    assertBlobUrl(u);
+  } catch {
+    threw = true;
+  }
+  ok(threw, label);
+};
+rejectsBlob("http://abc.public.blob.vercel-storage.com/x.html", "assertBlobUrl: non-https Blob URL rejected");
+rejectsBlob("https://evil.example.com/x.html", "assertBlobUrl: off-host (non-Blob) URL rejected");
+rejectsBlob("https://blob.vercel-storage.com.evil.com/x", "assertBlobUrl: look-alike suffix host rejected");
+
+setBlobPutter(async () => ({ url: "https://evil.example.com/leaked.html" }));
+await assert.rejects(
+  () => hostHtmlArtifact({ bytes: new Uint8Array([1]), filename: "p.html", contentType: "text/html" }),
+  /non-Blob URL/,
+  "hostHtmlArtifact: rejects a non-Blob URL returned by the putter",
+);
+setBlobPutter(undefined);
 
 await inSession(async () => {
   await assert.rejects(
@@ -205,4 +238,73 @@ await inSession(async () => {
 });
 restoreFetch();
 
-console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, SSRF, surface dispatch, audit)\n`);
+calls = [];
+registerBlobConfig(false);
+setBlobPutter(async () => {
+  throw new Error("blob putter must NOT be called when the org has not opted in");
+});
+fakeNet();
+await inSession(async () => {
+  const res = await postFile.execute(
+    { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }], comment: "the page" },
+    slackCtx("111.222"),
+  );
+  ok(res.posted === true && (res as { urls?: string[] }).urls === undefined, "post_file(html, opt-out): attaches (no hosted urls returned)");
+  const getUrl = calls.find((c) => c.url.endsWith("/api/files.getUploadURLExternal"));
+  ok(!!getUrl, "post_file(html, opt-out): the .html is uploaded as a file (getUploadURLExternal called)");
+  ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html, opt-out): the attachment keeps the .html filename");
+  ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
+  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] } }) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
+});
+restoreFetch();
+setBlobPutter(undefined);
+
+calls = [];
+registerBlobConfig(true);
+let putArgs: { pathname: string; contentType: string; byteLen: number } | undefined;
+const BLOB_URL = "https://store123.public.blob.vercel-storage.com/public-artifacts/page-abc123.html";
+setBlobPutter(async (args: { pathname: string; body: Uint8Array; contentType: string }) => {
+  putArgs = { pathname: args.pathname, contentType: args.contentType, byteLen: args.body.byteLength };
+  return { url: BLOB_URL };
+});
+fakeNet();
+await inSession(async () => {
+  const res = await postFile.execute(
+    { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }], comment: "rendered page" },
+    slackCtx("111.222"),
+  );
+  ok(res.posted === true && JSON.stringify((res as { urls?: string[] }).urls) === JSON.stringify([BLOB_URL]), "post_file(html, opt-in): returns the hosted Blob URL");
+  ok(!!putArgs && putArgs.pathname.startsWith("public-artifacts/") && putArgs.contentType === "text/html", "post_file(html, opt-in): writes under the reserved public prefix with text/html");
+  ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in): the HTML is NOT raw-uploaded as a file");
+  const msg = calls.find((c) => c.url.endsWith("/api/chat.postMessage"));
+  ok(!!msg, "post_file(html, opt-in): posts a text message with the URL");
+  const text = new URLSearchParams(msg!.body).get("text") ?? "";
+  ok(text.includes(BLOB_URL) && text.includes("rendered page"), "post_file(html, opt-in): the message carries the Blob URL + the comment");
+  ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "post_file(html, opt-in): the link posts into the current thread");
+  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] } }) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
+  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "shot.png" }] } }) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
+  const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
+  ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
+});
+restoreFetch();
+setBlobPutter(undefined);
+
+calls = [];
+registerBlobConfig(true);
+setBlobPutter(async () => {
+  throw new Error("blob store exploded");
+});
+fakeNet();
+await inSession(async () => {
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] }, slackCtx("111.222")),
+    /blob store exploded/,
+    "post_file(html, opt-in, write fails): fails loud (no silent attach fallback)",
+  );
+  ok(!calls.some((c) => c.url.endsWith("/api/files.getUploadURLExternal")), "post_file(html, opt-in, write fails): did not silently fall back to a raw upload");
+});
+restoreFetch();
+setBlobPutter(undefined);
+registerBlobConfig(false);
+
+console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, SSRF, surface dispatch, blob-hosting opt-in, audit)\n`);

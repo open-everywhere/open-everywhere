@@ -10,6 +10,7 @@ import { loadRoles } from "../roles/roles.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
 import { loadModelPolicy } from "../model/policy.js";
+import { loadBlobHosting } from "../blob/hosting.js";
 import "../identity/trusted-surfaces.js";
 import postFile from "@open-everywhere/core/agent/tools/post_file.js";
 import { setScreenshotPoster } from "@open-everywhere/core/agent/tools/browser_qa.js";
@@ -36,6 +37,7 @@ registerConfig({
   loadSpendBudgets,
   loadAccessRequests,
   loadModelPolicy,
+  loadBlobHosting,
 });
 
 assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());

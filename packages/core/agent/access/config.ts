@@ -8,6 +8,7 @@ import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
 import type { ModelPolicy } from "../model/policy.js";
+import type { BlobHostingConfig } from "../blob/hosting.js";
 
 export interface AccessRequestsConfig {
   readonly adminChannel?: string;
@@ -33,6 +34,7 @@ export interface AppConfig {
   loadSpendBudgets?(): SpendBudgets;
   loadAccessRequests?(): AccessRequestsConfig | null;
   loadModelPolicy?(): ModelPolicy | undefined;
+  loadBlobHosting?(): BlobHostingConfig | undefined;
 }
 
 let registered: AppConfig | null = null;
