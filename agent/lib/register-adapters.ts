@@ -2,6 +2,8 @@ import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentia
 import { registerGitHubMemory } from "@open-everywhere/core/agent/memory/github.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
+import { setBlobPutter } from "@open-everywhere/core/agent/blob/hosting.js";
+import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
 import { loadBundles } from "../access/bundles.js";
 
 registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
@@ -16,3 +18,5 @@ if (
 ) {
   await registerNeon();
 }
+
+setBlobPutter(vercelBlobPutter);
