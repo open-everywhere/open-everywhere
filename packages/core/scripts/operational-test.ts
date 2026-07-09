@@ -245,6 +245,69 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const sk = "slack/T/CO";
+
+  await store.markEngaged("acme", sk, "o.1", "2026-07-09T10:00:00Z");
+  let row = await store.getEngagement("acme", sk, "o.1");
+  ok(row !== null && row.kind === "thread" && row.ownerToken === undefined, "pg: default first touch → kind 'thread', no ownerToken");
+
+  await store.markEngaged("acme", sk, "o.2", "2026-07-09T10:00:00Z", { kind: "spawned", ownerToken: "T:C_OWN:o.2" });
+  row = await store.getEngagement("acme", sk, "o.2");
+  ok(row !== null && row.kind === "spawned" && row.ownerToken === "T:C_OWN:o.2", "pg: first touch can set kind:'spawned' + an ownerToken together");
+
+  await store.markEngaged("acme", sk, "o.1", "2026-07-09T11:00:00Z", { ownerToken: "T:oe-sup:1" });
+  row = await store.getEngagement("acme", sk, "o.1");
+  ok(row !== null && row.ownerToken === "T:oe-sup:1", "pg: a refresh carrying ownerToken sets it on an existing row");
+
+  await store.markEngaged("acme", sk, "o.1", "2026-07-11T12:00:00Z", { participating: true });
+  row = await store.getEngagement("acme", sk, "o.1");
+  ok(row !== null && row.ownerToken === "T:oe-sup:1" && row.participating === true, "pg: a refresh omitting ownerToken never clears the existing owner");
+
+  await store.markEngaged("acme", sk, "o.1", "2026-03-25T21:52:00Z", { kind: "spawned" });
+  row = await store.getEngagement("acme", sk, "o.1");
+  ok(row !== null && row.kind === "thread", "pg: kind is immutable after first touch — a later call can't flip it");
+
+  const list = await store.listEngagements("acme");
+  ok(list.find((r) => r.surfaceKey === sk && r.threadTs === "o.2")?.ownerToken === "T:C_OWN:o.2", "pg: listEngagements maps ownerToken when present");
+  ok(list.every((r) => r.kind === "thread" || r.kind === "spawned"), "pg: listEngagements maps kind for every row");
+}
+
+{
+  const sk = "slack/T/CSUP";
+
+  ok((await store.getChannelSession("acme", sk)) === null, "pg: no session minted yet → null");
+
+  const gen1 = await store.rotateChannelSession("acme", sk, "T:oe-sup:1", "2026-07-09T10:00:00Z");
+  ok(gen1.generation === 1 && gen1.token === "T:oe-sup:1" && gen1.turnCount === 0, "pg: first rotation mints generation 1");
+  let row = await store.getChannelSession("acme", sk);
+  ok(
+    row !== null && row.generation === 1 && row.token === "T:oe-sup:1" && row.createdAt === "2026-07-09T10:00:00Z" && row.lastWakeAt === "2026-07-09T10:00:00Z",
+    "pg: getChannelSession reads back the freshly-minted row",
+  );
+
+  await store.touchChannelSession("acme", sk, "2026-07-09T10:05:00Z");
+  row = await store.getChannelSession("acme", sk);
+  ok(row !== null && row.turnCount === 1 && row.lastWakeAt === "2026-07-09T10:05:00Z" && row.generation === 1, "pg: touchChannelSession bumps turnCount + lastWakeAt, leaves generation alone");
+
+  await store.touchChannelSession("acme", sk, "2026-07-09T10:10:00Z");
+  row = await store.getChannelSession("acme", sk);
+  ok(row !== null && row.turnCount === 2, "pg: touchChannelSession accumulates across calls");
+
+  const gen2 = await store.rotateChannelSession("acme", sk, "T:oe-sup:2", "2026-07-09T11:00:00Z");
+  ok(gen2.generation === 2 && gen2.token === "T:oe-sup:2" && gen2.turnCount === 0, "pg: rotation mints generation 2, resets turnCount");
+  row = await store.getChannelSession("acme", sk);
+  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.createdAt === "2026-07-09T11:00:00Z", "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
+
+  ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
+  await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");
+  ok((await store.getChannelSession("acme", sk))!.generation === 2, "pg: another org's rotation doesn't disturb this org's row");
+
+  ok((await store.getChannelSession("acme", "slack/T/CNOSUP")) === null, "pg: sanity — no row for an untouched surface");
+  await store.touchChannelSession("acme", "slack/T/CNOSUP", "2026-03-25T21:52:00Z");
+  ok((await store.getChannelSession("acme", "slack/T/CNOSUP")) === null, "pg: touchChannelSession on a surface with no session is a no-op");
+}
+
+{
   const oldDb = new PGlite();
   const oldClient: PgClient = { query: (text, params) => oldDb.query(text, params ? [...params] : undefined) };
   await oldClient.query(
@@ -262,8 +325,15 @@ const store = makeOperationalPostgresStore(client);
   const row = await migStore.getEngagement("orgM", "slack/T/CM", "m.1");
   ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z", "pg migration: pre-existing row preserved (not dropped)");
   ok(row!.participating === false && row!.silentStreak === 0, "pg migration: new columns backfill to warm/zero for old rows");
+  ok(row!.kind === "thread" && row!.ownerToken === undefined, "pg migration: owner_token/kind backfill to 'thread'/absent for a pre-T1.1 row");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "pg migration: promotion works on the migrated table");
+  await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T02:00:00Z", { ownerToken: "T:oe-sup:1" });
+  ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.ownerToken === "T:oe-sup:1", "pg migration: ownerToken can be set on a migrated pre-T1.1 row");
+
+  ok((await migStore.getChannelSession("orgM", "slack/T/CM")) === null, "pg migration: channel_session table exists and starts empty on a migrated DB");
+  const rotated = await migStore.rotateChannelSession("orgM", "slack/T/CM", "T:oe-sup:1", "2026-07-01T03:00:00Z");
+  ok(rotated.generation === 1, "pg migration: channel_session rotation works on a migrated DB");
 }
 
 {
@@ -324,4 +394,4 @@ const store = makeOperationalPostgresStore(client);
 }
 
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills, domain model pick)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);

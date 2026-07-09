@@ -85,6 +85,16 @@ function getDb(): DatabaseSync {
       silent_streak INTEGER NOT NULL DEFAULT 0, -- consecutive silent woken turns since last engage/participation
       PRIMARY KEY (org_id, surface_key, thread_ts)
     );
+    CREATE TABLE IF NOT EXISTS channel_session (
+      org_id       TEXT    NOT NULL,
+      surface_key  TEXT    NOT NULL,          -- the channel (platform/workspace/surface)
+      token        TEXT    NOT NULL,          -- caller-minted continuation token for the CURRENT generation
+      generation   INTEGER NOT NULL,          -- 1 on first mint, +1 on every rotation
+      created_at   TEXT    NOT NULL,          -- ISO-8601, reset on rotation
+      last_wake_at TEXT    NOT NULL,          -- ISO-8601, bumped by touchChannelSession, reset on rotation
+      turn_count   INTEGER NOT NULL DEFAULT 0, -- bumped by touchChannelSession, reset to 0 on rotation
+      PRIMARY KEY (org_id, surface_key)
+    );
     CREATE TABLE IF NOT EXISTS event_dedupe (
       org_id  TEXT NOT NULL,
       key     TEXT NOT NULL,                  -- Slack event_id (or channel:ts fallback)
@@ -161,6 +171,9 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE thread_engagement ADD COLUMN participating INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE thread_engagement ADD COLUMN silent_streak INTEGER NOT NULL DEFAULT 0",
+
+    "ALTER TABLE thread_engagement ADD COLUMN owner_token TEXT",
+    "ALTER TABLE thread_engagement ADD COLUMN kind TEXT NOT NULL DEFAULT 'thread'",
   ]) {
     try {
       handle.exec(ddl);
@@ -518,16 +531,19 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async markEngaged(org, surfaceKey, threadTs, at, opts) {
     const participating = opts?.participating ? 1 : 0;
+    const ownerToken = opts?.ownerToken ?? null;
+    const kind = opts?.kind ?? "thread";
     getDb()
       .prepare(
-        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak)
-         VALUES (?, ?, ?, ?, ?, ?, 0)
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
          ON CONFLICT(org_id, surface_key, thread_ts) DO UPDATE SET
            last_turn_at  = excluded.last_turn_at,
            participating = MAX(participating, excluded.participating),
-           silent_streak = CASE WHEN excluded.participating = 1 THEN 0 ELSE silent_streak END`,
+           silent_streak = CASE WHEN excluded.participating = 1 THEN 0 ELSE silent_streak END,
+           owner_token   = COALESCE(excluded.owner_token, owner_token)`,
       )
-      .run(org, surfaceKey, threadTs, at, at, participating);
+      .run(org, surfaceKey, threadTs, at, at, participating, ownerToken, kind);
   },
 
   async bumpSilentStreak(org, surfaceKey, threadTs) {
@@ -542,10 +558,22 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getEngagement(org, surfaceKey, threadTs) {
     const row = getDb()
-      .prepare("SELECT engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = ? AND surface_key = ? AND thread_ts = ?")
-      .get(org, surfaceKey, threadTs) as { engaged_at: string; last_turn_at: string; participating: number; silent_streak: number } | undefined;
+      .prepare("SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = ? AND surface_key = ? AND thread_ts = ?")
+      .get(org, surfaceKey, threadTs) as
+      | { engaged_at: string; last_turn_at: string; participating: number; silent_streak: number; owner_token: string | null; kind: string | null }
+      | undefined;
     return row
-      ? { org, surfaceKey, threadTs, engagedAt: row.engaged_at, lastTurnAt: row.last_turn_at, participating: row.participating === 1, silentStreak: row.silent_streak }
+      ? {
+          org,
+          surfaceKey,
+          threadTs,
+          engagedAt: row.engaged_at,
+          lastTurnAt: row.last_turn_at,
+          participating: row.participating === 1,
+          silentStreak: row.silent_streak,
+          ...(row.owner_token ? { ownerToken: row.owner_token } : {}),
+          kind: (row.kind as "thread" | "spawned" | null) ?? "thread",
+        }
       : null;
   },
 
@@ -555,9 +583,64 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async listEngagements(org) {
     const rows = getDb()
-      .prepare("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = ?")
-      .all(org) as { surface_key: string; thread_ts: string; engaged_at: string; last_turn_at: string; participating: number; silent_streak: number }[];
-    return rows.map((r) => ({ org, surfaceKey: r.surface_key, threadTs: r.thread_ts, engagedAt: r.engaged_at, lastTurnAt: r.last_turn_at, participating: r.participating === 1, silentStreak: r.silent_streak }));
+      .prepare("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = ?")
+      .all(org) as {
+      surface_key: string;
+      thread_ts: string;
+      engaged_at: string;
+      last_turn_at: string;
+      participating: number;
+      silent_streak: number;
+      owner_token: string | null;
+      kind: string | null;
+    }[];
+    return rows.map((r) => ({
+      org,
+      surfaceKey: r.surface_key,
+      threadTs: r.thread_ts,
+      engagedAt: r.engaged_at,
+      lastTurnAt: r.last_turn_at,
+      participating: r.participating === 1,
+      silentStreak: r.silent_streak,
+      ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
+      kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
+    }));
+  },
+
+  async getChannelSession(org, surfaceKey) {
+    const row = getDb()
+      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .get(org, surfaceKey) as { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number } | undefined;
+    return row
+      ? { org, surfaceKey, token: row.token, generation: row.generation, createdAt: row.created_at, lastWakeAt: row.last_wake_at, turnCount: row.turn_count }
+      : null;
+  },
+
+  async rotateChannelSession(org, surfaceKey, newToken, at) {
+    const handle = getDb();
+    const existing = handle.prepare("SELECT generation FROM channel_session WHERE org_id = ? AND surface_key = ?").get(org, surfaceKey) as
+      | { generation: number }
+      | undefined;
+    const generation = (existing?.generation ?? 0) + 1;
+    handle
+      .prepare(
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count)
+         VALUES (?, ?, ?, ?, ?, ?, 0)
+         ON CONFLICT(org_id, surface_key) DO UPDATE SET
+           token        = excluded.token,
+           generation   = excluded.generation,
+           created_at   = excluded.created_at,
+           last_wake_at = excluded.last_wake_at,
+           turn_count   = 0`,
+      )
+      .run(org, surfaceKey, newToken, generation, at, at);
+    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0 };
+  },
+
+  async touchChannelSession(org, surfaceKey, at) {
+    getDb()
+      .prepare("UPDATE channel_session SET last_wake_at = ?, turn_count = turn_count + 1 WHERE org_id = ? AND surface_key = ?")
+      .run(at, org, surfaceKey);
   },
 
   async listDomainSkills(org, domain) {

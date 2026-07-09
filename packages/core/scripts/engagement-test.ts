@@ -109,6 +109,74 @@ registerConfig({
 }
 
 {
+  const store = getOperationalStore();
+  const sk = "slack/T_ENG/C_OWN";
+
+  await store.markEngaged("orgO", sk, "o.1", "2026-07-09T10:00:00Z");
+  let row = await store.getEngagement("orgO", sk, "o.1");
+  ok(row !== null && row.kind === "thread" && row.ownerToken === undefined, "sqlite: default first touch → kind 'thread', no ownerToken");
+
+  await store.markEngaged("orgO", sk, "o.2", "2026-07-09T10:00:00Z", { kind: "spawned", ownerToken: "T_ENG:C_OWN:o.2" });
+  row = await store.getEngagement("orgO", sk, "o.2");
+  ok(row !== null && row.kind === "spawned" && row.ownerToken === "T_ENG:C_OWN:o.2", "sqlite: first touch can set kind:'spawned' + an ownerToken together");
+
+  await store.markEngaged("orgO", sk, "o.1", "2026-07-09T11:00:00Z", { ownerToken: "T_ENG:oe-sup:1" });
+  row = await store.getEngagement("orgO", sk, "o.1");
+  ok(row !== null && row.ownerToken === "T_ENG:oe-sup:1", "sqlite: a refresh carrying ownerToken sets it on an existing row");
+
+  await store.markEngaged("orgO", sk, "o.1", "2026-07-11T12:00:00Z", { participating: true });
+  row = await store.getEngagement("orgO", sk, "o.1");
+  ok(row !== null && row.ownerToken === "T_ENG:oe-sup:1" && row.participating === true, "sqlite: a refresh omitting ownerToken never clears the existing owner");
+
+  await store.markEngaged("orgO", sk, "o.1", "2026-03-25T21:52:00Z", { kind: "spawned" });
+  row = await store.getEngagement("orgO", sk, "o.1");
+  ok(row !== null && row.kind === "thread", "sqlite: kind is immutable after first touch — a later call can't flip it");
+
+  const list = await store.listEngagements("orgO");
+  ok(
+    list.length === 2 && list.every((r) => (r.kind === "thread" || r.kind === "spawned")),
+    "sqlite: listEngagements maps kind for every row",
+  );
+  ok(list.find((r) => r.threadTs === "o.2")?.ownerToken === "T_ENG:C_OWN:o.2", "sqlite: listEngagements maps ownerToken when present");
+}
+
+{
+  const store = getOperationalStore();
+  const sk = "slack/T_ENG/C_SUP";
+
+  ok((await store.getChannelSession("orgS", sk)) === null, "sqlite: no session minted yet → null");
+
+  const gen1 = await store.rotateChannelSession("orgS", sk, "T_ENG:oe-sup:1", "2026-07-09T10:00:00Z");
+  ok(gen1.generation === 1 && gen1.token === "T_ENG:oe-sup:1" && gen1.turnCount === 0, "sqlite: first rotation mints generation 1");
+  let row = await store.getChannelSession("orgS", sk);
+  ok(
+    row !== null && row.generation === 1 && row.token === "T_ENG:oe-sup:1" && row.createdAt === "2026-07-09T10:00:00Z" && row.lastWakeAt === "2026-07-09T10:00:00Z",
+    "sqlite: getChannelSession reads back the freshly-minted row",
+  );
+
+  await store.touchChannelSession("orgS", sk, "2026-07-09T10:05:00Z");
+  row = await store.getChannelSession("orgS", sk);
+  ok(row !== null && row.turnCount === 1 && row.lastWakeAt === "2026-07-09T10:05:00Z" && row.generation === 1, "sqlite: touchChannelSession bumps turnCount + lastWakeAt, leaves generation alone");
+
+  await store.touchChannelSession("orgS", sk, "2026-07-09T10:10:00Z");
+  row = await store.getChannelSession("orgS", sk);
+  ok(row !== null && row.turnCount === 2, "sqlite: touchChannelSession accumulates across calls");
+
+  const gen2 = await store.rotateChannelSession("orgS", sk, "T_ENG:oe-sup:2", "2026-07-09T11:00:00Z");
+  ok(gen2.generation === 2 && gen2.token === "T_ENG:oe-sup:2" && gen2.turnCount === 0, "sqlite: rotation mints generation 2, resets turnCount");
+  row = await store.getChannelSession("orgS", sk);
+  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.createdAt === "2026-07-09T11:00:00Z", "sqlite: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
+
+  ok((await store.getChannelSession("orgOther", sk)) === null, "sqlite: channel session is org-isolated");
+  await store.rotateChannelSession("orgOther", sk, "T_ENG:oe-sup:1", "2026-07-11T12:00:00Z");
+  ok((await store.getChannelSession("orgS", sk))!.generation === 2, "sqlite: another org's rotation doesn't disturb this org's row");
+
+  ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: sanity — no row for an untouched surface");
+  await store.touchChannelSession("orgS", "slack/T_ENG/C_NOSUP", "2026-03-25T21:52:00Z");
+  ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: touchChannelSession on a surface with no session is a no-op");
+}
+
+{
   for (const t of ["stop", "Stop.", "stand down", "STAND DOWN", "stop following", "you can stop now", "that's all thanks", "disengage", "leave this thread", "please stop"]) {
     ok(isStopRequest(t), `stop verb: "${t}"`);
   }
@@ -969,12 +1037,19 @@ registerConfig({
   const row = await migStore.getEngagement("orgM", "slack/T/CM", "m.1");
   ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z" && row.lastTurnAt === "2026-07-01T00:00:00Z", "sqlite migration: pre-existing row preserved (not dropped)");
   ok(row!.participating === false && row!.silentStreak === 0, "sqlite migration: new columns backfill to warm/zero for old rows");
+  ok(row!.kind === "thread" && row!.ownerToken === undefined, "sqlite migration: owner_token/kind backfill to 'thread'/absent for a pre-T1.1 row");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "sqlite migration: promotion works on the migrated table");
+  await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T02:00:00Z", { ownerToken: "T:oe-sup:1" });
+  ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.ownerToken === "T:oe-sup:1", "sqlite migration: ownerToken can be set on a migrated pre-T1.1 row");
+
+  ok((await migStore.getChannelSession("orgM", "slack/T/CM")) === null, "sqlite migration: channel_session table exists and starts empty on a migrated DB");
+  const rotated = await migStore.rotateChannelSession("orgM", "slack/T/CM", "T:oe-sup:1", "2026-07-01T03:00:00Z");
+  ok(rotated.generation === 1, "sqlite migration: channel_session rotation works on a migrated DB");
 
   if (prev === undefined) delete process.env.OE_SQLITE_PATH;
   else process.env.OE_SQLITE_PATH = prev;
   _resetOperationalDbForTest();
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + migration + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);
+console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);

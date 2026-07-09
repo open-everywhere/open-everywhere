@@ -153,6 +153,18 @@ export interface EngagementRow {
   readonly lastTurnAt: string;
   readonly participating: boolean;
   readonly silentStreak: number;
+  readonly ownerToken?: string;
+  readonly kind: "thread" | "spawned";
+}
+
+export interface ChannelSessionRow {
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly token: string;
+  readonly generation: number;
+  readonly createdAt: string;
+  readonly lastWakeAt: string;
+  readonly turnCount: number;
 }
 
 export interface OperationalStore {
@@ -187,11 +199,15 @@ export interface OperationalStore {
   getDomainModel(org: string, domain: string): Promise<DomainModelRow | null>;
   domainModels(org: string): Promise<DomainModelRow[]>;
 
-  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string, opts?: { participating?: boolean }): Promise<void>;
+  markEngaged(org: string, surfaceKey: string, threadTs: string, at: string, opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned" }): Promise<void>;
   bumpSilentStreak(org: string, surfaceKey: string, threadTs: string): Promise<number>;
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
   disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   listEngagements(org: string): Promise<EngagementRow[]>;
+
+  getChannelSession(org: string, surfaceKey: string): Promise<ChannelSessionRow | null>;
+  rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string): Promise<ChannelSessionRow>;
+  touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(org: string, domain: string, name: string, content: string, updatedBy: string | undefined, updatedAt: string): Promise<void>;

@@ -4,7 +4,12 @@ import type { Partition } from "../memory/partition.js";
 
 export const WARM_SILENT_LIMIT = 3;
 
-export async function markThreadEngaged(p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }): Promise<void> {
+export async function markThreadEngaged(
+  p: Partition,
+  threadTs: string,
+  atIso: string,
+  opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned" },
+): Promise<void> {
   try {
     await getOperationalStore().markEngaged(p.org, p.surfaceKey, threadTs, atIso, opts);
   } catch (err) {

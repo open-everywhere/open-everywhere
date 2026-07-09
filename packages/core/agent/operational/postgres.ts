@@ -67,6 +67,16 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      silent_streak integer NOT NULL DEFAULT 0,     -- consecutive silent woken turns since last engage/participation
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
+  `CREATE TABLE IF NOT EXISTS channel_session (
+     org_id       text    NOT NULL,
+     surface_key  text    NOT NULL,
+     token        text    NOT NULL,
+     generation   integer NOT NULL,
+     created_at   text    NOT NULL,
+     last_wake_at text    NOT NULL,
+     turn_count   integer NOT NULL DEFAULT 0,
+     PRIMARY KEY (org_id, surface_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS event_dedupe (
      org_id  text NOT NULL,
      key     text NOT NULL,
@@ -139,12 +149,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE connector_override ADD COLUMN IF NOT EXISTS set_by text`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS participating boolean NOT NULL DEFAULT false`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS silent_streak integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS owner_token text`,
+  `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'thread'`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE spend_limit ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE connector_override ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
@@ -157,6 +170,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS spend_limit_org_isolation ON spend_limit`,
   `DROP POLICY IF EXISTS connector_override_org_isolation ON connector_override`,
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
+  `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
@@ -180,6 +194,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY thread_engagement_org_isolation ON thread_engagement
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY channel_session_org_isolation ON channel_session
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
@@ -509,13 +526,14 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async markEngaged(org, surfaceKey, threadTs, at, opts) {
       await client.query(
-        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak)
-         VALUES ($1, $2, $3, $4, $5, $6, 0)
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8)
          ON CONFLICT (org_id, surface_key, thread_ts) DO UPDATE SET
            last_turn_at  = excluded.last_turn_at,
            participating = thread_engagement.participating OR excluded.participating,
-           silent_streak = CASE WHEN excluded.participating THEN 0 ELSE thread_engagement.silent_streak END`,
-        [org, surfaceKey, threadTs, at, at, opts?.participating ?? false],
+           silent_streak = CASE WHEN excluded.participating THEN 0 ELSE thread_engagement.silent_streak END,
+           owner_token   = COALESCE(excluded.owner_token, thread_engagement.owner_token)`,
+        [org, surfaceKey, threadTs, at, at, opts?.participating ?? false, opts?.ownerToken ?? null, opts?.kind ?? "thread"],
       );
     },
 
@@ -531,11 +549,23 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getEngagement(org, surfaceKey, threadTs) {
       const { rows } = await client.query(
-        "SELECT engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
+        "SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
         [org, surfaceKey, threadTs],
       );
-      const r = (rows as { engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number }[])[0];
-      return r ? { org, surfaceKey, threadTs, engagedAt: r.engaged_at, lastTurnAt: r.last_turn_at, participating: r.participating, silentStreak: Number(r.silent_streak) } : null;
+      const r = (rows as { engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number; owner_token: string | null; kind: string | null }[])[0];
+      return r
+        ? {
+            org,
+            surfaceKey,
+            threadTs,
+            engagedAt: r.engaged_at,
+            lastTurnAt: r.last_turn_at,
+            participating: r.participating,
+            silentStreak: Number(r.silent_streak),
+            ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
+            kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
+          }
+        : null;
     },
 
     async disengage(org, surfaceKey, threadTs) {
@@ -547,8 +577,20 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async listEngagements(org) {
-      const { rows } = await client.query("SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak FROM thread_engagement WHERE org_id = $1", [org]);
-      return (rows as { surface_key: string; thread_ts: string; engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number }[]).map((r) => ({
+      const { rows } = await client.query(
+        "SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = $1",
+        [org],
+      );
+      return (rows as {
+        surface_key: string;
+        thread_ts: string;
+        engaged_at: string;
+        last_turn_at: string;
+        participating: boolean;
+        silent_streak: number;
+        owner_token: string | null;
+        kind: string | null;
+      }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
         threadTs: r.thread_ts,
@@ -556,7 +598,48 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         lastTurnAt: r.last_turn_at,
         participating: r.participating,
         silentStreak: Number(r.silent_streak),
+        ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
+        kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
       }));
+    },
+
+    async getChannelSession(org, surfaceKey) {
+      const { rows } = await client.query(
+        "SELECT token, generation, created_at, last_wake_at, turn_count FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        [org, surfaceKey],
+      );
+      const r = (rows as { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number }[])[0];
+      return r
+        ? { org, surfaceKey, token: r.token, generation: Number(r.generation), createdAt: r.created_at, lastWakeAt: r.last_wake_at, turnCount: Number(r.turn_count) }
+        : null;
+    },
+
+    async rotateChannelSession(org, surfaceKey, newToken, at) {
+      const { rows: existingRows } = await client.query(
+        "SELECT generation FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        [org, surfaceKey],
+      );
+      const existing = (existingRows as { generation: number }[])[0];
+      const generation = (existing ? Number(existing.generation) : 0) + 1;
+      await client.query(
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count)
+         VALUES ($1, $2, $3, $4, $5, $6, 0)
+         ON CONFLICT (org_id, surface_key) DO UPDATE SET
+           token        = excluded.token,
+           generation   = excluded.generation,
+           created_at   = excluded.created_at,
+           last_wake_at = excluded.last_wake_at,
+           turn_count   = 0`,
+        [org, surfaceKey, newToken, generation, at, at],
+      );
+      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0 };
+    },
+
+    async touchChannelSession(org, surfaceKey, at) {
+      await client.query(
+        "UPDATE channel_session SET last_wake_at = $1, turn_count = turn_count + 1 WHERE org_id = $2 AND surface_key = $3",
+        [at, org, surfaceKey],
+      );
     },
 
     async listDomainSkills(org, domain) {
