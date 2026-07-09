@@ -40,6 +40,8 @@ export interface Domain {
   readonly includeOrg?: "readonly" | "inherit";
   readonly bundle?: string;
   readonly nameDropWake?: boolean;
+  readonly ambientSupervisor?: boolean;
+  readonly awarenessWake?: boolean;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
   readonly statusVerbs?: readonly string[];
@@ -77,6 +79,18 @@ export function nameDropWakeEnabled(channelKey: string, domains: readonly Domain
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.nameDropWake === true;
   return criteriaDomain("org", domains)?.nameDropWake === true;
+}
+
+export function ambientSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  const explicit = domainForChannel(channelKey, domains);
+  if (explicit) return explicit.ambientSupervisor === true;
+  return criteriaDomain("org", domains)?.ambientSupervisor === true;
+}
+
+export function awarenessWakeEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  const explicit = domainForChannel(channelKey, domains);
+  if (explicit) return explicit.awarenessWake === true;
+  return criteriaDomain("org", domains)?.awarenessWake === true;
 }
 
 interface KnobLayer {

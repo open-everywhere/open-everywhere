@@ -30,7 +30,7 @@ import {
   type NameDropRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
-import { nameDropWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
+import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
@@ -695,6 +695,26 @@ registerConfig({
   ok(!nameDropWakeEnabled("slack/T1/C_OUT", domains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
   ok(nameDropWakeEnabled("slack/T1/C_UNASSIGNED", domains), "unassigned channel → org pseudo-domain's flag");
   ok(!nameDropWakeEnabled("slack/T1/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
+
+  const ambientDomains = [
+    defineDomain({ name: "ambient-on", channels: ["slack/T2/C_ON"], ambientSupervisor: true }),
+    defineDomain({ name: "ambient-off", channels: ["slack/T2/C_OFF"] }),
+    defineDomain({ name: "org-ambient", match: "org", ambientSupervisor: true }),
+  ];
+  ok(ambientSupervisorEnabled("slack/T2/C_ON", ambientDomains), "explicit domain with the flag → on");
+  ok(!ambientSupervisorEnabled("slack/T2/C_OFF", ambientDomains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
+  ok(ambientSupervisorEnabled("slack/T2/C_UNASSIGNED", ambientDomains), "unassigned channel → org pseudo-domain's flag");
+  ok(!ambientSupervisorEnabled("slack/T2/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
+
+  const awarenessDomains = [
+    defineDomain({ name: "aware-on", channels: ["slack/T3/C_ON"], awarenessWake: true }),
+    defineDomain({ name: "aware-off", channels: ["slack/T3/C_OFF"] }),
+    defineDomain({ name: "org-aware", match: "org", awarenessWake: true }),
+  ];
+  ok(awarenessWakeEnabled("slack/T3/C_ON", awarenessDomains), "explicit domain with the flag → on");
+  ok(!awarenessWakeEnabled("slack/T3/C_OFF", awarenessDomains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
+  ok(awarenessWakeEnabled("slack/T3/C_UNASSIGNED", awarenessDomains), "unassigned channel → org pseudo-domain's flag");
+  ok(!awarenessWakeEnabled("slack/T3/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
 
   const topLevel = (over: Record<string, unknown> = {}) =>
     parseMessageEvent({
