@@ -9,6 +9,7 @@ import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboardi
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { fetchWakeBackscroll } from "./slack-wake-backscroll.js";
+import { renderWakeEnvelope, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import {
   buildIngestedReaction,
   ingestReaction,
@@ -36,6 +37,7 @@ export interface ParsedMessageEvent {
   readonly subtype?: string;
   readonly channelType?: string;
   readonly text: string;
+  readonly previousText?: string;
   readonly isAppMention: boolean;
 }
 
@@ -48,6 +50,9 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const inner = subtype === "message_changed" && e.message && typeof e.message === "object"
     ? (e.message as Record<string, unknown>)
     : e;
+  const previousMessage = subtype === "message_changed" && e.previous_message && typeof e.previous_message === "object"
+    ? (e.previous_message as Record<string, unknown>)
+    : undefined;
   const channelId = typeof e.channel === "string" ? e.channel : "";
   const ts = typeof e.ts === "string" ? e.ts : "";
   if (!channelId || !ts) return null;
@@ -63,6 +68,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     subtype,
     channelType: typeof e.channel_type === "string" ? e.channel_type : undefined,
     text,
+    previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
     isAppMention: e.type === "app_mention",
   };
 }
@@ -77,7 +83,26 @@ export function isNoReply(message: string): boolean {
   return message.trimStart().startsWith(NO_REPLY_SENTINEL);
 }
 
-export function renderWakeMessage(ev: ParsedMessageEvent): string {
+function slackTsToIso(ts: string): string {
+  const seconds = Number.parseFloat(ts);
+  return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : new Date(0).toISOString();
+}
+
+function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit: boolean }): WakeMessageInput {
+  return {
+    from: "human",
+    author: ev.userId ?? "unknown",
+    id: ev.ts,
+    sentAt: slackTsToIso(ev.ts),
+    trust: opts.trust,
+    trigger: true,
+    edited: opts.isEdit || undefined,
+    previousBody: opts.isEdit ? ev.previousText : undefined,
+    body: ev.text,
+  };
+}
+
+export function renderWakeMessage(ev: ParsedMessageEvent, now: () => string = () => new Date().toISOString()): string {
   const isEdit = ev.subtype === "message_changed";
   return [
     `[thread-follow]${isEdit ? " (edited message)" : ""} You were not mentioned — this reply reached you ` +
@@ -95,7 +120,13 @@ export function renderWakeMessage(ev: ParsedMessageEvent): string {
       `Judge THIS message on its own merits: a run of ${NO_REPLY_SENTINEL} turns above means the earlier ` +
       `messages weren't for you, not that this one isn't. ${PREFER_NO_REPLY_TOOL}`,
     "",
-    ev.text,
+    renderWakeEnvelope({
+      reason: isEdit ? "message-edited" : "channel-activity",
+      currentTime: now(),
+      channel: { id: ev.channelId, type: ev.channelType },
+      thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
+      messages: [triggerMessage(ev, { trust: "peer", isEdit })],
+    }),
   ].join("\n");
 }
 
@@ -205,7 +236,7 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     channelId: ev.channelId,
     threadTs: ev.threadTs!,
     auth,
-    message: renderWakeMessage(ev),
+    message: renderWakeMessage(ev, deps.now),
     state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
   });
   if (deps.touch) await deps.touch(p, ev.threadTs!, deps.now ? deps.now() : new Date().toISOString());
@@ -311,7 +342,7 @@ export function shouldNameDropWake(input: NameDropInput): ReplyDecision {
   return { deliver: true, reason: "name-dropped in an enabled internal channel — judged wake" };
 }
 
-export function renderNameDropMessage(ev: ParsedMessageEvent, name: string): string {
+export function renderNameDropMessage(ev: ParsedMessageEvent, name: string, now: () => string = () => new Date().toISOString()): string {
   return [
     `[name-drop] A top-level channel message said your name ("${name}") without @mentioning you. ` +
       `You were NOT invited into this conversation — reply only if the message is clearly asking for ` +
@@ -319,7 +350,13 @@ export function renderNameDropMessage(ev: ParsedMessageEvent, name: string): str
       `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. ${PREFER_NO_REPLY_TOOL} If you ` +
       `do reply, you will be following the thread from then on, so make it count.`,
     "",
-    ev.text,
+    renderWakeEnvelope({
+      reason: "channel-activity",
+      currentTime: now(),
+      channel: { id: ev.channelId, type: ev.channelType },
+      thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
+      messages: [triggerMessage(ev, { trust: "peer", isEdit: false })],
+    }),
   ].join("\n");
 }
 
@@ -369,7 +406,7 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     channelId: ev.channelId,
     threadTs: rootTs,
     auth: authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
-    message: renderNameDropMessage(ev, name!),
+    message: renderNameDropMessage(ev, name!, deps.now),
     ...(context.length ? { context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
   });

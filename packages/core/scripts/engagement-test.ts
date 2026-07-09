@@ -229,9 +229,13 @@ registerConfig({
     edited !== null && edited.subtype === "message_changed" && edited.text === "edited text" && edited.threadTs === "1.1" && edited.userId === "U1" && edited.ts === "7.7",
     "message_changed unwraps the nested post-edit message, keeps the edit-notice ts",
   );
+  ok(edited !== null && edited.previousText === "original text", "message_changed captures previous_message.text as previousText");
 
   const editedNoInner = parseMessageEvent(env({ type: "message", subtype: "message_changed", channel: "C_TXN", ts: "8.8" }));
   ok(editedNoInner !== null && editedNoInner.text === "" && editedNoInner.userId === undefined, "message_changed with no nested message degrades gracefully");
+  ok(editedNoInner !== null && editedNoInner.previousText === undefined, "message_changed with no previous_message → previousText undefined");
+
+  ok(reply !== null && reply.previousText === undefined, "a plain reply has no previousText");
 }
 
 {
@@ -292,6 +296,7 @@ registerConfig({
         channel: "C_TXN",
         ts: "10.1",
         message: { type: "message", user: "U1", text: "actually, more please", ts: "9.9", thread_ts: "1.1" },
+        previous_message: { type: "message", user: "U1", text: "actually, mroe please", ts: "9.9", thread_ts: "1.1" },
       },
     })!;
     woke.length = 0;
@@ -299,6 +304,9 @@ registerConfig({
     ok(out.woke && woke.length === 1, "message_changed edit in an engaged thread wakes it");
     ok(/\(edited message\)/.test(woke[0]) && /EDIT of an earlier message/.test(woke[0]), "the wake message is framed as an edit");
     ok(/actually, more please/.test(woke[0]), "the wake message carries the post-edit text");
+    ok(woke[0].includes('reason="message-edited"'), "the envelope's reason is message-edited on an edit wake");
+    ok(woke[0].includes('trust="peer"'), "the envelope's trigger message is trust=peer on the engaged-thread wake path");
+    ok(woke[0].includes("<previous-body>") && /actually, mroe please/.test(woke[0]), "the envelope carries the pre-edit text as <previous-body>");
 
     woke.length = 0;
     out = await routeMessageEvent(editEv, deps(false));
@@ -615,6 +623,12 @@ registerConfig({
   ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
   ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
   ok(/social\s+chatter/i.test(wakeMsg) && /never re-answer/i.test(wakeMsg), "wake message names social chatter as noise and forbids re-answering");
+  ok(wakeMsg.includes('<wake reason="channel-activity"'), "wake message body is the envelope, reason=channel-activity for a plain (non-edit) wake");
+  ok(wakeMsg.includes('trust="peer"'), "wake envelope's trigger message is trust=peer");
+  ok(wakeMsg.includes('trigger="true"'), "wake envelope's sole message carries trigger=true");
+  ok(wakeMsg.includes('<thread ts="1.1"'), "wake envelope nests under <thread> for an in-thread wake");
+  ok(!wakeMsg.includes('mention="true"'), "wake envelope never sets mention=true — this path is never an @mention");
+  ok(renderWakeMessage(ev, () => "2026-07-11T12:00:00Z").includes('current-time="2026-07-11T12:00:00Z"'), "renderWakeMessage's now() seam controls the envelope's current-time");
 
   const woke: string[] = [];
   const deps: MessageRouteDeps = {
@@ -756,6 +770,9 @@ registerConfig({
   ok(calls[0].message.includes("[name-drop]") && calls[0].message.includes(NO_REPLY_SENTINEL), "name-drop dispatch carries the judge instruction + sentinel");
   ok((calls[0].state as { channelId?: string }).channelId === "C_TXN", "wake passes channel state (new session must know where to post)");
   ok((calls[0].state as { oeUninvited?: boolean }).oeUninvited === true, "name-drop wake state carries oeUninvited → failures stay quiet until a reply posts");
+  ok(calls[0].message.includes('<wake reason="channel-activity"'), "name-drop envelope reason is channel-activity");
+  ok(calls[0].message.includes('trust="peer"'), "name-drop envelope trigger message is trust=peer");
+  ok(!calls[0].message.includes("<thread "), "top-level name-drop (no existing thread) has no <thread> wrapper");
 
   calls.length = 0;
   infoCalls = 0;
@@ -774,6 +791,7 @@ registerConfig({
   out = await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), deps(true, true));
   ok(out.woke && calls.length === 1 && calls[0].threadTs === "1.1", "in-thread name-drop wakes, rooted on the existing thread_ts");
   ok(latched.length === 1 && latched[0].threadTs === "1.1" && latched[0].participating === false, "in-thread warm-latch roots on the existing thread too");
+  ok(calls[0].message.includes('<thread ts="1.1">'), "in-thread name-drop's envelope nests under <thread ts=the existing thread_ts>");
 
   ok(renderNameDropMessage(topLevel(), "Ada").includes("can Ada check the deploy?"), "dispatch includes the raw message text");
 
