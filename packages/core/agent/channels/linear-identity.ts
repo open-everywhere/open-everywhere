@@ -15,6 +15,17 @@ export interface LinearIdentityInput {
   readonly isPrivate?: boolean;
 }
 
+export interface LinearTeamFacts {
+  readonly isPrivate?: boolean;
+}
+
+export function teamFactsFromTeam(data: unknown): LinearTeamFacts {
+  const team = (data as { team?: Record<string, unknown> } | null)?.team;
+  if (!team || typeof team !== "object") return {};
+  const isPrivate = typeof team["private"] === "boolean" ? (team["private"] as boolean) : undefined;
+  return { isPrivate };
+}
+
 export function buildLinearAuth(input: LinearIdentityInput): OpenEverywhereLinearAuth {
   const attributes: Record<string, string> = { agent_session_id: input.agentSessionId };
   if (input.organizationId) attributes.organization_id = input.organizationId;

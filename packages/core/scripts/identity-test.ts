@@ -9,7 +9,8 @@ import {
   channelFactsFromRaw,
   partnerFactsFromInfo,
 } from "../agent/channels/slack-identity.js";
-import { buildLinearAuth } from "../agent/channels/linear-identity.js";
+import { buildLinearAuth, teamFactsFromTeam } from "../agent/channels/linear-identity.js";
+import { enrichTeamPrivacy } from "../agent/channels/linear.js";
 import { buildGitHubAuth, githubBotMentioned, githubVisibility, githubTrust } from "../agent/channels/github-identity.js";
 
 let passed = 0;
@@ -21,7 +22,10 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST"]) {
+for (const k of [
+  "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
+  "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN",
+]) {
   delete process.env[k];
 }
 
@@ -224,6 +228,17 @@ const gaBot = buildGitHubAuth({ owner: "acme", repo: "widgets", actorLogin: "dep
 ok(gaBot.principalType === "service", "buildGitHubAuth: Bot actor -> service principal");
 const gaSparse = buildGitHubAuth({ owner: "acme", repo: "widgets", actorLogin: "u" });
 ok(gaSparse.attributes.repo_private === undefined && gaSparse.attributes.issue_number === undefined && gaSparse.attributes.author_association === undefined, "buildGitHubAuth: omits unknown facts (no false claims)");
+ok(teamFactsFromTeam({ team: { private: true } }).isPrivate === true, "teamFactsFromTeam: private team -> true");
+ok(teamFactsFromTeam({ team: { private: false } }).isPrivate === false, "teamFactsFromTeam: public team -> false");
+ok(teamFactsFromTeam({ team: null }).isPrivate === undefined, "teamFactsFromTeam: null team (unknown/no access) -> undefined");
+ok(teamFactsFromTeam({}).isPrivate === undefined, "teamFactsFromTeam: absent team -> undefined");
+ok(teamFactsFromTeam(null).isPrivate === undefined, "teamFactsFromTeam: null data -> undefined");
+ok(teamFactsFromTeam({ team: { private: "true" } }).isPrivate === undefined, "teamFactsFromTeam: non-boolean private -> undefined (fail closed)");
+
+const laPriv = buildLinearAuth({ agentSessionId: "AS1", organizationId: "ORG1", teamId: "TEAM5", isPrivate: true });
+ok(bindFrom(linearCtx(laPriv.attributes)).visibility === "private", "enrich: private team -> visibility private (surface-tier)");
+const laPub = buildLinearAuth({ agentSessionId: "AS1", organizationId: "ORG1", teamId: "TEAM5", isPrivate: false });
+ok(bindFrom(linearCtx(laPub.attributes)).visibility === "public", "enrich: public team -> visibility public (feeds workspace brain)");
 
 ok(slackTrust("true", "true", "channel") === "external", "slackTrust: is_ext_shared=true -> external");
 ok(slackTrust("false", "true", "channel") === "internal", "slackTrust: checked + not shared -> internal");
@@ -313,5 +328,38 @@ ok(normalizePlatform("discord-gateway") === "discord", "platform: the explicit a
 ok(normalizePlatform("slack") === "slack", "platform: a bare platform passes through unchanged");
 ok(normalizePlatform("slackish") === "slackish", "platform: prefix rule needs the hyphen — no substring false-positives");
 ok(normalizePlatform("linear-bot") === "linear", "platform: linear-* slug collapses via the prefix rule");
+
+const CREDS = { accessToken: "test-token" } as const;
+function fakeFetch(body: unknown, status = 200): typeof fetch {
+  return (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
+}
+const explodingFetch = (async () => {
+  throw new Error("network must not be reached when the token is missing");
+}) as unknown as typeof fetch;
+
+await (async () => {
+  ok(
+    (await enrichTeamPrivacy("TEAM5", { api: { fetch: fakeFetch({ data: { team: { private: true } } }) }, credentials: CREDS })) === true,
+    "enrichTeamPrivacy: private team -> true",
+  );
+  ok(
+    (await enrichTeamPrivacy("TEAM5", { api: { fetch: fakeFetch({ data: { team: { private: false } } }) }, credentials: CREDS })) === false,
+    "enrichTeamPrivacy: public team -> false",
+  );
+  ok((await enrichTeamPrivacy(undefined, { api: { fetch: explodingFetch }, credentials: CREDS })) === undefined, "enrichTeamPrivacy: no teamId -> undefined (no call)");
+  ok(
+    (await enrichTeamPrivacy("TEAM5", { api: { fetch: fakeFetch({ data: null }, 500) }, credentials: CREDS })) === undefined,
+    "enrichTeamPrivacy: HTTP error -> undefined (fail closed)",
+  );
+  ok(
+    (await enrichTeamPrivacy("TEAM5", { api: { fetch: fakeFetch({ errors: [{ message: "no access" }] }) }, credentials: CREDS })) === undefined,
+    "enrichTeamPrivacy: GraphQL errors -> undefined (fail closed)",
+  );
+  ok(
+    (await enrichTeamPrivacy("TEAM5", { api: { fetch: fakeFetch({ data: { team: null } }) }, credentials: CREDS })) === undefined,
+    "enrichTeamPrivacy: null team in 200 body -> undefined (fail closed)",
+  );
+  ok((await enrichTeamPrivacy("TEAM5", { api: { fetch: explodingFetch } })) === undefined, "enrichTeamPrivacy: missing token -> undefined (fail closed, no network)");
+})();
 
 console.log(`✓ identity: ${passed} assertions passed`);
