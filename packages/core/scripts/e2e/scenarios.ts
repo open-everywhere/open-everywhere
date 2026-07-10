@@ -1165,4 +1165,81 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(bogus.status === 200, "webhook gate: a signed replay for an unfetchable comment id is acked fail-soft (200, no post)");
     },
   },
+  {
+    id: "F-ART",
+    title: "Artifacts: post_file PNG + HTML-attach fallback + describe_image (attachment trusted fetch, sec-15 live twin)",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 600_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const { ts: pngTs } = await slack.post(
+        slack.mention("create a tiny simple PNG image (any small chart or shape is fine) and post it here as a file attachment using post_file."),
+      );
+      const pngReply = await slack.awaitFileReply(pngTs, { timeoutMs: REPLY_WAIT, filetype: "png" });
+      ctx.gate((pngReply.files ?? []).some((f) => f.filetype === "png"), "post_file: a bot reply carries a PNG file attachment (files[] filetype=png)");
+
+      const { ts: htmlTs } = await slack.post(
+        slack.mention("now post a small self-contained HTML artifact (a one-paragraph page) here as a file using post_file. Attach it, don't publish a public URL."),
+      );
+      if (process.env.E2E_BLOB_PUBLISH === "1") {
+        ctx.log("E2E_BLOB_PUBLISH=1 — the Blob publish path (world-readable URL + approval) is opt-in; gating on the html attachment either way");
+      }
+      const htmlReply = await slack.awaitFileReply(htmlTs, { timeoutMs: REPLY_WAIT, filetype: "html" });
+      ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment (the safe attach fallback)");
+
+      const pngBytes = Uint8Array.from(
+        Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYPgPAAEDAQCk/pXbAAAAAElFTkSuQmCC", "base64"),
+      );
+      const { ts: describeTs } = await slack.post("(e2e F-ART) describe_image anchor");
+      await slack.uploadImage({
+        filename: "probe.png",
+        bytes: pngBytes,
+        threadTs: describeTs,
+        initialComment: slack.mention("what's in the attached image? Describe it briefly."),
+      });
+      const describeReply = await slack.awaitThreadReply(describeTs, { timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA("Does the reply describe the attached image (any sane description) without an error/tool-failure?", {
+          mustMatch: [/.{10,}/],
+          mustNotMatch: [/error|exception|traceback|couldn.?t (?:fetch|read|open)/i],
+        }),
+        describeReply.text,
+        "describe_image: the agent trusted-fetches + describes the attachment (sec-15 live twin)",
+      );
+
+      if (process.env.E2E_BROWSER_QA !== "1") {
+        ctx.log("browser_qa leg skipped — set E2E_BROWSER_QA=1 to run the (expensive, sandbox-only) self-screenshot leg");
+      }
+    },
+  },
+  {
+    id: "F-EDIT",
+    title: "Message-EDIT wake (<previous-body>): an xoxp edit of an engaged message wakes an edit-aware reply (live GLM-on-envelope probe)",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 420_000,
+    judged: true,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const { ts: rootTs } = await slack.post(slack.mention("I'm planning a small event for 20 people. Acknowledge and stand by."));
+      await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
+      const before = "actually the headcount is 20";
+      const after = "actually the headcount is 50 (edited)";
+      const { ts: editTs } = await slack.post(before, rootTs);
+      const firstReply = await slack.awaitThreadReply(rootTs, { afterTs: editTs, timeoutMs: REPLY_WAIT });
+      await slack.update(editTs, after);
+      const editReply = await slack.awaitThreadReply(rootTs, { afterTs: firstReply.ts, timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA("Does the reply acknowledge the headcount CHANGED (to 50), rather than ignoring the edit?", { mustMatch: [/50|chang|updat|edit|revis/i] }),
+        editReply.text,
+        "edit-wake: the agent wakes on the message edit and acknowledges the change (live wake-envelope probe)",
+      );
+    },
+  },
 ];

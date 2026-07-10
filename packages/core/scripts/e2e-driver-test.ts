@@ -166,11 +166,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN", "J-NOT",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit coverage)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
   for (const s of SCENARIOS) {
