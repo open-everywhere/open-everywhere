@@ -176,7 +176,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
 
   const realFetch = globalThis.fetch;
   let gql: Array<{ query?: string; variables?: { input?: { issueId?: string; parentId?: string; body?: string } } }> = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     if (String(input).includes("api.linear.app")) {
       const parsed = JSON.parse(String(init?.body ?? "{}")) as (typeof gql)[number];
       gql.push(parsed);
