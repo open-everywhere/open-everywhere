@@ -31,6 +31,7 @@ export interface NormalizedWake {
   readonly platform: string;
   readonly reason: WakeReason;
   readonly addressing: WakeAddressing;
+  readonly containerNoun?: string;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
   readonly handoff?: WakeHandoff;
@@ -83,10 +84,10 @@ function threadFollowPreamble(isEdit: boolean, hasHandoff: boolean): string {
   );
 }
 
-function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean): string {
+function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNoun = "channel"): string {
   return (
     `[channel-watch]${isEdit ? " (edited message)" : ""} You were not mentioned — this message reached ` +
-    `you because you are this channel's standing session: you see its activity so you can watch, ` +
+    `you because you are this ${containerNoun}'s standing session: you see its activity so you can watch, ` +
     `remember, and step in only where you add something.` +
     (isEdit
       ? ` This is an EDIT of an earlier message, shown here as its post-edit text — most edits are ` +
@@ -141,7 +142,7 @@ function judgedPreamble(nw: NormalizedWake): string {
     case "thread-follow":
       return threadFollowPreamble(isEdit, hasHandoff);
     case "channel-watch":
-      return channelWatchPreamble(isEdit, hasHandoff);
+      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun);
     case "name-drop": {
       if (!nw.nameDrop) throw new Error("renderWake: name-drop addressing requires a nameDrop field");
       return nameDropPreamble(nw.nameDrop.botName, nw.nameDrop.followUp);
