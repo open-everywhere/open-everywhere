@@ -166,11 +166,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit coverage)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
   for (const s of SCENARIOS) {
@@ -200,6 +200,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(nonSlack.join(",") === "J-GH,J-LIN,J-NOT,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)");
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,ST1", "the smoke lane is exactly J1 (slack wake+reply) + ST1 (teams)");
+  ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC", "the security suite is exactly F-SEC (tainted-remember/SSRF/injection probes)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
   ok(unjudged.join(",") === "S6,S10,S15,J-NOT", "S6/S10/S15/J-NOT are fully deterministic — no judge (plan §5; J-NOT's gates are all hard: route status + audited silence + reply-targeting)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
