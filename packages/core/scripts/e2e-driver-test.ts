@@ -28,6 +28,7 @@ const {
   resolveWebhook,
   resolveNotion,
   resolveGithub,
+  resolveLinear,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -164,13 +165,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH adds the github surface)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN add github/linear)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -195,7 +196,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "ST1")!.surface === "teams", "ST1 is the teams surface");
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
-  ok(nonSlack.join(",") === "J-GH,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)");
+  ok(nonSlack.join(",") === "J-GH,J-LIN,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)/J-LIN(linear)");
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,ST1", "the smoke lane is exactly J1 (slack wake+reply) + ST1 (teams)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
@@ -218,7 +219,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -231,13 +232,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     notion: [ENV.notionChannel],
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
     github: [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue],
+    linear: [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -250,6 +252,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     notion: [],
     teams: [],
     github: [],
+    linear: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -359,6 +362,38 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(ev.action === "created" && comment.user?.type === "User", "forged issue_comment is action=created with a User-typed (not Bot) author");
   ok((comment.body ?? "").startsWith("@open-everywhere"), "forged comment body carries the @slug mention (githubBotMentioned wakes on it)");
   ok((ev.repository as { full_name?: string }).full_name === "o/r", "forged event names the repo full_name");
+}
+
+{
+  const linMiss = resolveLinear({});
+  ok(!linMiss.ok && linMiss.missing.length === 4 && linMiss.missing.includes(ENV.linearApiKey), "linear half reports its four required vars missing in an empty env");
+  const linBase = resolveLinear({
+    [ENV.linearApiKey]: "lin_api_x",
+    [ENV.linearTeamId]: "team-uuid",
+    [ENV.linearAppUserId]: "app-user-uuid",
+    [ENV.linearAgentHandle]: "OpenEverywhere",
+  });
+  ok(linBase.ok && linBase.cfg.appUserId === "app-user-uuid" && linBase.cfg.agentHandle === "OpenEverywhere", "linear cfg carries appUserId (self-loop) + agentHandle (literal mention)");
+  ok(linBase.ok && linBase.cfg.webhookSecret === undefined, "linear forge var absent unless set (the forge leg self-skips)");
+  const linForge = resolveLinear({
+    [ENV.linearApiKey]: "lin_api_x",
+    [ENV.linearTeamId]: "team-uuid",
+    [ENV.linearAppUserId]: "app-user-uuid",
+    [ENV.linearAgentHandle]: "OpenEverywhere",
+    [ENV.linearWebhookSecret]: "lin-whsec",
+  });
+  ok(linForge.ok && linForge.cfg.webhookSecret === "lin-whsec", "linear cfg carries the optional forge secret when present");
+
+  const { signLinearBody, buildAgentSessionEvent } = await import("./e2e/linear-driver.js");
+  const { signLinearWebhookBody } = await import("../../../node_modules/eve/dist/src/public/channels/linear/verify.js");
+  const secret = "lin-e2e-secret";
+  const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_009_900_000 });
+  ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches eve's own signLinearWebhookBody (hex, no prefix)");
+  ok(!/^sha256=/.test(signLinearBody(secret, raw)), "the linear signature carries NO sha256= prefix (unlike github/notion)");
+  const ev = buildAgentSessionEvent({ action: "created", organizationId: "org1", sessionId: "s1", issueId: "i1", issueIdentifier: "OE-1", teamId: "t1", creatorId: "u1", nowMs: 1_720_009_900_000 });
+  ok(ev.type === "AgentSessionEvent" && ev.webhookTimestamp === 1_720_009_900_000, "forged AgentSessionEvent carries the type + the ±60s webhookTimestamp field");
+  const session = ev.agentSession as { issue?: { team?: { id?: string } }; creator?: { id?: string } };
+  ok(session.issue?.team?.id === "t1" && session.creator?.id === "u1", "forged event nests issue.team.id + creator.id (enrichTeamPrivacy + creator read them)");
 }
 
 {

@@ -32,6 +32,12 @@ export const ENV = {
   githubIssue: "E2E_GITHUB_ISSUE",
   githubWebhookSecret: "E2E_GITHUB_WEBHOOK_SECRET",
   githubInstallationId: "E2E_GITHUB_INSTALLATION_ID",
+
+  linearApiKey: "E2E_LINEAR_API_KEY",
+  linearTeamId: "E2E_LINEAR_TEAM_ID",
+  linearAppUserId: "E2E_LINEAR_APP_USER_ID",
+  linearAgentHandle: "E2E_LINEAR_AGENT_HANDLE",
+  linearWebhookSecret: "E2E_LINEAR_WEBHOOK_SECRET",
 } as const;
 
 export type Capability =
@@ -45,7 +51,8 @@ export type Capability =
   | "webhook"
   | "notion"
   | "teams"
-  | "github";
+  | "github"
+  | "linear";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -108,6 +115,14 @@ export interface GithubDriverConfig {
   readonly issue: string;
   readonly webhookSecret?: string;
   readonly installationId?: string;
+}
+
+export interface LinearDriverConfig {
+  readonly apiKey: string;
+  readonly teamId: string;
+  readonly appUserId: string;
+  readonly agentHandle: string;
+  readonly webhookSecret?: string;
 }
 
 export type Resolved<T> =
@@ -211,6 +226,13 @@ export function resolveGithub(env: Env = process.env): Resolved<GithubDriverConf
   };
 }
 
+export function resolveLinear(env: Env = process.env): Resolved<LinearDriverConfig> {
+  const { values, missing } = need(env, [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle]);
+  if (missing.length > 0) return { ok: false, missing };
+  const webhookSecret = env[ENV.linearWebhookSecret]?.trim();
+  return { ok: true, cfg: { apiKey: values[0], teamId: values[1], appUserId: values[2], agentHandle: values[3], ...(webhookSecret ? { webhookSecret } : {}) } };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -229,6 +251,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const webhook = resolveWebhook(env);
   const notion = resolveNotion(env);
   const github = resolveGithub(env);
+  const linear = resolveLinear(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -241,6 +264,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (webhook.ok) available.add("webhook");
   if (notion.ok) available.add("notion");
   if (github.ok) available.add("github");
+  if (linear.ok) available.add("linear");
   return {
     available,
     missing: {
@@ -255,6 +279,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       webhook: webhook.ok ? [] : webhook.missing,
       notion: notion.ok ? [] : notion.missing,
       github: github.ok ? [] : github.missing,
+      linear: linear.ok ? [] : linear.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

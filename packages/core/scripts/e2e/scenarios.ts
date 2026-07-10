@@ -3,6 +3,7 @@ import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
+import type { LinearDriver } from "./linear-driver.js";
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
@@ -38,6 +39,7 @@ export interface ScenarioContext {
   readonly notion?: SlackDriver;
   readonly notionQuery?: string;
   readonly github?: GithubDriver;
+  readonly linear?: LinearDriver;
   readonly targetUrl?: string;
   readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
   readonly judge: ReplyJudge;
@@ -1026,6 +1028,77 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(bad.status === 401, "forge: an unsigned delivery is rejected (401)");
       } else {
         ctx.log("forge leg skipped — set E2E_GITHUB_WEBHOOK_SECRET + E2E_GITHUB_INSTALLATION_ID + E2E_TARGET_URL to run it");
+      }
+    },
+  },
+  {
+    id: "J-LIN",
+    title: "Linear ambient: @mention reply w/ self-attribution + literal-mention, self-loop, assign wake, reply-targeting across two issues, forge (TODO(linear-ambient-e2e))",
+    requires: ["linear"],
+    surface: "linear",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_500_000,
+    judged: true,
+    run: async (ctx) => {
+      const lin = ctx.linear!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const issueA = await lin.createIssue(`(e2e) J-LIN discussion A ${factToken("lin")}`);
+      try {
+        const markerA = factToken("lina");
+        const bodyA = lin.mention(`summarise this issue in one line. Include the token ${markerA}.`);
+        ctx.gate(lin.bodyMentionsAgent(bodyA), "assertion (b): the @mention comment body literally contains @<DisplayName>");
+        const beforeA = new Set((await lin.comments(issueA.id)).map((c) => c.id));
+        const askAId = await lin.comment(issueA.id, bodyA);
+        const storedAsk = (await lin.comments(issueA.id)).find((c) => c.id === askAId);
+        ctx.gate(storedAsk !== undefined && lin.bodyMentionsAgent(storedAsk.body), "assertion (b): the STORED comment body (read back) contains the literal @<DisplayName>");
+        const replyA = await lin.awaitAppReply(issueA.id, beforeA.add(askAId), { timeoutMs: REPLY_WAIT });
+        ctx.gate(replyA.userId === lin.appUserId, "assertion (a): the app's reply comment comes back attributed to comment.user.id === viewer.id (self-loop guard evidence)");
+        await ctx.judgePass(closedQA(`Does the reply quote ${markerA}?`, { mustMatch: [markerA] }), replyA.body, "mention: reply quotes the run token");
+
+        await sleep(SILENCE_WINDOW);
+        const afterReply = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.id !== replyA.id && c.createdAt > replyA.createdAt);
+        ctx.gate(afterReply.length === 0, "self-loop: the app's own reply comment did NOT re-dispatch a second reply (the guard held)");
+
+        const issueB = await lin.createIssue(`(e2e) J-LIN discussion B ${factToken("lin")}`);
+        try {
+          const markerB = factToken("linb");
+          const beforeB = new Set((await lin.comments(issueB.id)).map((c) => c.id));
+          const askBId = await lin.comment(issueB.id, lin.mention(`what is this issue's identifier? Include the token ${markerB}.`));
+          const replyB = await lin.awaitAppReply(issueB.id, beforeB.add(askBId), { timeoutMs: REPLY_WAIT });
+          ctx.gate(replyB.userId === lin.appUserId, "reply-targeting: issue B gets its OWN app-authored reply (not just the first discussion) — the reply-targeting fix, live");
+          const leakedToA = (await lin.comments(issueA.id)).some((c) => lin.isAppComment(c) && c.body.includes(markerB));
+          ctx.gate(!leakedToA, "reply-targeting: issue B's answer did NOT leak into issue A (hard gate — the bug's exact signature)");
+        } finally {
+          await lin.archive(issueB.id);
+        }
+
+        const beforeAssign = new Set((await lin.comments(issueA.id)).map((c) => c.id));
+        const assigned = await lin.assign(issueA.id, lin.appUserId);
+        ctx.gate(assigned, "assign: issueUpdate assigneeId=<app> succeeded");
+        const assignReply = await lin.awaitAppReply(issueA.id, beforeAssign, { timeoutMs: REPLY_WAIT });
+        ctx.gate(assignReply.userId === lin.appUserId, "assign: assigning the issue to the agent wakes an app-authored reply");
+
+        await lin.comment(issueA.id, "just a note for the humans — no agent needed here, thanks");
+        if (ctx.auditRead) {
+          const rows = await ctx.auditRead({ sinceIso: runStart, platform: "linear", actions: ["linear.no_reply"] });
+          ctx.gate(rows.length > 0, "audited silence: a linear.no_reply row exists for the run (positive assertion of judged silence)");
+        } else {
+          await sleep(SILENCE_WINDOW);
+          const strays = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.createdAt > assignReply.createdAt);
+          ctx.gate(strays.length === 0, "audited silence (fallback): the off-topic note drew NO app reply within the silence window");
+        }
+      } finally {
+        await lin.archive(issueA.id);
+      }
+
+      if (lin.canForge && ctx.targetUrl) {
+        const good = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: "e2e-org", sessionId: "forged-session", issueId: "forged-issue", issueIdentifier: "OE-0", creatorId: "e2e-user" });
+        ctx.gate(good.status === 200, "forge: a valid Linear-Signature AgentSessionEvent is accepted (200)");
+        const bad = await lin.forgeAgentSession(ctx.targetUrl, { action: "created", organizationId: "e2e-org", sessionId: "forged-session", issueId: "forged-issue", issueIdentifier: "OE-0", creatorId: "e2e-user" }, { signed: false });
+        ctx.gate(bad.status === 401, "forge: an unsigned AgentSessionEvent is rejected (401)");
+      } else {
+        ctx.log("forge leg skipped — set E2E_LINEAR_WEBHOOK_SECRET + E2E_TARGET_URL to run it");
       }
     },
   },
