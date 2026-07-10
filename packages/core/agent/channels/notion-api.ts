@@ -108,7 +108,8 @@ export interface NotionComment {
   readonly discussion_id?: string;
   readonly parent?: { readonly type?: string; readonly page_id?: string; readonly block_id?: string };
   readonly rich_text?: ReadonlyArray<NotionRichText>;
-  readonly created_by?: { readonly id?: string; readonly object?: string };
+  readonly created_by?: { readonly id?: string; readonly object?: string; readonly type?: string };
+  readonly created_time?: string;
 }
 
 export async function retrieveComment(commentId: string, opts: NotionCallOpts): Promise<NotionComment> {
