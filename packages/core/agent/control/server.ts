@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView, pendingActionsView } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { scopeDenial, siloScopeDenial } from "./auth.js";
 import { getConfig } from "../access/config.js";
@@ -33,6 +33,7 @@ export const CONTROL_TOOL_NAMES = [
   "skills_list",
   "memory_list",
   "memory_read",
+  "pending_actions_list",
 ] as const;
 
 export interface ControlServerOptions {
@@ -200,6 +201,17 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         if (denial) throw new Error(denial);
         return memoryReadView(args);
       })(),
+  );
+
+  server.registerTool(
+    "pending_actions_list",
+    {
+      title: "List pending approvals awaiting a decision",
+      description:
+        "The approvals decide-queue: every action still awaiting an admin decision for an org — the id (feed it to decide_pending_action), the proposed action kind + who may decide it (policy), a code-rendered human summary of the FROZEN args (never the raw arg blob), the target scope/domain, who requested it, and its age + expiry. Row-filtered by role like memory_list — a domain:<name> role sees only pendings in its own domain; \"admin\" sees all. Read-only (a row past its TTL shows expired:true, it isn't decided here).",
+      inputSchema: { org: z.string().min(1) },
+    },
+    (args) => jsonTool(() => pendingActionsView(args.org, roles))(),
   );
 
   if (opts.includeWrites && opts.readOnly !== true) registerControlWriteTools(server, opts.actor ?? "unknown", roles);

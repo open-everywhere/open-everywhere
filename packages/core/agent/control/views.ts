@@ -20,8 +20,10 @@ import { providerById } from "../memory/provider.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
 import { sourceLabel } from "../memory/listing.js";
-import { siloCoveringDomains } from "./auth.js";
+import { siloCoveringDomains, roleCoversScope } from "./auth.js";
 import type { MemorySilo } from "../memory/silo.js";
+import { actionKind, summarizeFrozenRow } from "../approvals/actions.js";
+import type { ApproverPolicy } from "../approvals/types.js";
 
 const currentPeriod = (): string => new Date().toISOString().slice(0, 7);
 
@@ -466,6 +468,49 @@ export async function memoryReadView(q: MemoryReadQuery): Promise<MemoryReadResu
     throw new Error(`"${q.relPath}" is not a file in silo "${q.silo}" (have: ${have}).`);
   }
   return { org: q.org, silo: q.silo, relPath: q.relPath, content, bytes: byteSize(content) };
+}
+
+export interface PendingActionListRow {
+  readonly id: string;
+  readonly kind: string;
+  readonly policy: ApproverPolicy;
+  readonly domain: string | null;
+  readonly scopeKey: string;
+  readonly summary: readonly string[];
+  readonly requestedBy: string;
+  readonly requestedAt: string;
+  readonly expiresAt: string;
+  readonly ageSeconds: number;
+  readonly expired: boolean;
+}
+export interface PendingActionsView {
+  readonly org: string;
+  readonly now: string;
+  readonly pending: readonly PendingActionListRow[];
+}
+
+export async function pendingActionsView(org: string, roles: readonly string[], now: number = Date.now()): Promise<PendingActionsView> {
+  const rows = await getOperationalStore().listPendingActions(org);
+  const domains = getConfig().loadDomains();
+  const isAdmin = roles.includes("admin");
+  const pending: PendingActionListRow[] = [];
+  for (const row of rows) {
+    if (!isAdmin && !roleCoversScope(roles, { org, surfaceKey: row.scopeKey, domain: row.domain ?? undefined }, domains)) continue;
+    pending.push({
+      id: row.id,
+      kind: row.kind,
+      policy: actionKind(row.kind)?.policy ?? "admin",
+      domain: row.domain,
+      scopeKey: row.scopeKey,
+      summary: summarizeFrozenRow(row),
+      requestedBy: row.requestedBy,
+      requestedAt: row.createdAt,
+      expiresAt: row.expiresAt,
+      ageSeconds: Math.max(0, Math.round((now - Date.parse(row.createdAt)) / 1000)),
+      expired: Date.parse(row.expiresAt) <= now,
+    });
+  }
+  return { org, now: new Date(now).toISOString(), pending };
 }
 
 export interface AccessQuery {

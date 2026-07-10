@@ -1,7 +1,7 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import type { CapLevel } from "../operational/store.js";
-import type { ActionKind } from "./types.js";
+import type { ActionKind, PendingActionRow } from "./types.js";
 
 const REGISTRY = new Map<string, ActionKind<any>>();
 
@@ -11,6 +11,16 @@ export function registerActionKind(k: ActionKind<any>): void {
 
 export function actionKind(kind: string): ActionKind<any> | undefined {
   return REGISTRY.get(kind);
+}
+
+export function summarizeFrozenRow(row: PendingActionRow): string[] {
+  const kindDef = actionKind(row.kind);
+  if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];
+  try {
+    return kindDef.summarize(JSON.parse(row.argsJson));
+  } catch {
+    return ["(failed to render this pending's summary)"];
+  }
 }
 
 export function whereFromScope(org: string, scopeKey: string): { org: string; platform: string; workspace: string; surface?: string } {

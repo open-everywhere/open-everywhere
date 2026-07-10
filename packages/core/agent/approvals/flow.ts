@@ -123,7 +123,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   return { id: row.id, expiresAt };
 }
 
-function isDomainLevelSpendCap(row: PendingActionRow): boolean {
+export function isDomainLevelSpendCap(row: PendingActionRow): boolean {
   if (row.kind !== "spend.set" && row.kind !== "spend.clear") return false;
   try {
     const args = JSON.parse(row.argsJson) as { level?: unknown };

@@ -226,6 +226,7 @@ export interface OperationalStore {
 
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
+  listPendingActions(org: string): Promise<readonly PendingActionRow[]>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
 

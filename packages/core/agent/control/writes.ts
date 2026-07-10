@@ -11,6 +11,8 @@ import { controlPartition } from "../memory/partition.js";
 import { deleteDomainSkill } from "../skills/domain-skills.js";
 import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
+import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
+import { whereFromScope as approvalWhereFromScope } from "../approvals/actions.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -23,6 +25,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "memory_delete_file",
   "set_domain_model",
   "clear_domain_model",
+  "decide_pending_action",
 ] as const;
 
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
@@ -175,6 +178,65 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, cancelled, org: a.org, surfaceKey: a.surfaceKey, id: a.id });
       } catch (e) {
         return errorResult(`cancel_routine failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "decide_pending_action",
+    {
+      title: "Decide a pending approval (approve / deny)",
+      description:
+        "Out-of-band twin of the Slack/Discord approval-card click: approve or deny a pending action by id (pending_actions_list for the ids + summaries) without a chat button — for a headless consumer or an admin driving the MCP. Approve EXECUTES the frozen args; deny rejects them. Reuses the ONE cross-surface decide core (approvals/flow.ts) — same CAS-decide, so a double-decide is safe (returns outcome:\"already-decided\", not an error) and approve semantics can never drift from the click path. RBAC: a control role must cover the pending's frozen scope (org \"admin\", or a covering \"domain:<name>\"); a DOMAIN-LEVEL spend cap is org-admin-only (a domain admin must never raise their own budget). The control identity is recorded as the decider.",
+      inputSchema: { org: z.string().min(1), id: z.string().min(1), decision: z.enum(["approve", "deny"]) },
+    },
+    async (a) => {
+      try {
+        const row = await store().getPendingAction(a.org, a.id);
+        if (!row) {
+          return errorResult(`decide_pending_action: no pending action "${a.id}" in org "${a.org}" (already decided and aged out, wrong org, or never existed).`);
+        }
+        const denial = isDomainLevelSpendCap(row)
+          ? roles.includes("admin")
+            ? null
+            : `forbidden: a domain-level spend cap is org-admin-only (have: ${roles.length ? roles.join(", ") : "none"}; need "admin").`
+          : scopeDenial(roles, { org: a.org, surfaceKey: row.scopeKey, domain: row.domain ?? undefined });
+        if (denial) return errorResult(denial);
+
+        const res = await resolveApprovalClick({
+          org: a.org,
+          id: a.id,
+          decision: a.decision === "approve" ? "approve" : "reject",
+          clickerId: actor,
+          platformAdmin: () => true,
+        });
+
+        switch (res.outcome) {
+          case "unknown":
+            return errorResult(`decide_pending_action: pending action "${a.id}" is no longer known (decided and aged out between read and decide).`);
+          case "unregistered-kind":
+            return errorResult(`decide_pending_action: pending action "${a.id}" has no registered ActionKind ("${row.kind}") — cannot decide.`);
+          case "denied":
+            return errorResult(`decide_pending_action: not authorized to decide "${a.id}".`);
+          case "not-pending":
+          case "lost-race":
+            return jsonResult({ ok: true, outcome: "already-decided", org: a.org, id: a.id });
+          case "expired":
+          case "expired-race":
+            return jsonResult({ ok: true, outcome: "expired", org: a.org, id: a.id });
+          case "decided": {
+            await appendAudit({
+              ...approvalWhereFromScope(a.org, row.scopeKey),
+              principalId: actor,
+              action: "admin.approval.decide",
+              detail: { id: a.id, kind: row.kind, decision: res.row.status, outcome: res.outcomeLine },
+            });
+            return jsonResult({ ok: true, outcome: "decided", org: a.org, id: a.id, kind: row.kind, decision: res.row.status, decidedBy: res.row.decidedBy, result: res.outcomeLine });
+          }
+        }
+        return errorResult(`decide_pending_action: unexpected resolution for "${a.id}".`);
+      } catch (e) {
+        return errorResult(`decide_pending_action failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );
