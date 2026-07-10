@@ -321,6 +321,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
+  const { buildAuditQuery, hasAuditRow } = await import("./e2e/audit-read.js");
+  const q = new URLSearchParams(buildAuditQuery({ sinceIso: "2026-03-13T23:30:00.000Z", actions: ["notion.no_reply", "notion.replied"], platform: "notion", limit: 50 }));
+  ok(q.get("since") === "2026-03-13T23:30:00.000Z", "audit query carries the since lower bound");
+  ok(q.get("actions") === "notion.no_reply,notion.replied", "audit query joins the actions filter as CSV");
+  ok(q.get("platform") === "notion" && q.get("limit") === "50", "audit query carries platform + limit");
+  const bare = new URLSearchParams(buildAuditQuery({ sinceIso: "2026-03-13T23:30:00.000Z" }));
+  ok(bare.get("since") !== null && !bare.has("actions") && !bare.has("platform"), "audit query omits absent optional filters");
+  const rows = [
+    { ts: "2026-03-14T00:30:00Z", org: "o", platform: "notion", workspace: "w", action: "notion.no_reply", detail: { discussionId: "d1" } },
+    { ts: "2026-03-14T00:31:00Z", org: "o", platform: "notion", workspace: "w", action: "notion.replied", detail: { discussionId: "d2" } },
+  ];
+  ok(hasAuditRow(rows, "notion.no_reply"), "hasAuditRow finds an audited-silence row by action");
+  ok(hasAuditRow(rows, "notion.replied", (e) => (e.detail as { discussionId?: string }).discussionId === "d2"), "hasAuditRow supports a predicate (right-discussion reply-target gate)");
+  ok(!hasAuditRow(rows, "notion.replied", (e) => (e.detail as { discussionId?: string }).discussionId === "d1"), "hasAuditRow rejects when the predicate misses (wrong discussion)");
+}
+
+{
   const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("./e2e/slack-driver.js");
   const upd = new URLSearchParams(buildChatUpdateBody({ channel: "C1", ts: "1.2", text: "edited" }));
   ok(upd.get("channel") === "C1" && upd.get("ts") === "1.2" && upd.get("text") === "edited", "chat.update body carries channel + ts + new text");

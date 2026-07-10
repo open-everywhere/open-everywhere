@@ -22,9 +22,9 @@ delete process.env.OE_CONTROL_READ_TOKENS;
 const prevPricing = process.env.OE_MODEL_PRICING;
 process.env.OE_MODEL_PRICING = JSON.stringify({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 
-const { handleUsageWindowRead, CONTROL_READ_USAGE_PATH } = await import("../agent/control/read-route.js");
+const { handleUsageWindowRead, handleAuditWindowRead, CONTROL_READ_USAGE_PATH, CONTROL_READ_AUDIT_PATH } = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
-const { readAudit } = await import("../agent/audit/audit.js");
+const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
 const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
 _resetPricingCacheForTest();
 
@@ -133,11 +133,53 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
+  function getAudit(query: string, token?: string): Promise<Response> {
+    return handleAuditWindowRead(
+      new Request(`https://oe.example${CONTROL_READ_AUDIT_PATH}${query}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      }),
+    );
+  }
+  const sinceQ = `?since=${encodeURIComponent(new Date(Date.now() - 3_600_000).toISOString())}`;
+
+  ok((await getAudit(sinceQ)).status === 401, "audit: configured + no bearer → 401");
+  ok((await getAudit(sinceQ, "not-the-token")).status === 401, "audit: wrong token → 401");
+  ok((await getAudit("", SECRET)).status === 400, "audit: missing since → 400");
+  ok((await getAudit("?since=not-a-date", SECRET)).status === 400, "audit: unparseable since → 400");
+
+  await appendAudit({ org: "acme", platform: "notion", workspace: "ws1", action: "notion.no_reply", detail: { reason: "off-topic" } });
+  await appendAudit({ org: "acme", platform: "notion", workspace: "ws1", action: "notion.replied", detail: { chars: 42 } });
+  await appendAudit({ org: "acme", platform: "github", workspace: "ownerX", action: "github.dispatched", detail: {} });
+
+  const all = await getAudit(sinceQ, SECRET);
+  ok(all.status === 200, "audit: configured + bearer + valid since → 200");
+  ok((all.headers.get("content-type") ?? "").includes("application/json"), "audit 200 is JSON");
+  const body = (await all.json()) as { entries: { action: string; platform: string }[]; capped: boolean };
+  const seededActions = new Set(body.entries.map((e) => e.action));
+  ok(seededActions.has("notion.no_reply") && seededActions.has("notion.replied") && seededActions.has("github.dispatched"), "audit window returns the seeded rows");
+
+  const one = (await (await getAudit(`${sinceQ}&actions=notion.no_reply`, SECRET)).json()) as { entries: { action: string }[] };
+  ok(one.entries.length > 0 && one.entries.every((e) => e.action === "notion.no_reply"), "audit actions=notion.no_reply returns only audited-silence rows");
+  const many = (await (await getAudit(`${sinceQ}&actions=notion.no_reply,github.dispatched`, SECRET)).json()) as { entries: { action: string }[] };
+  const manyActions = new Set(many.entries.map((e) => e.action));
+  ok(manyActions.has("notion.no_reply") && manyActions.has("github.dispatched") && !manyActions.has("notion.replied"), "audit actions=<csv> keeps only the named actions (in-process match)");
+
+  const gh = (await (await getAudit(`${sinceQ}&platform=github`, SECRET)).json()) as { entries: { platform: string }[] };
+  ok(gh.entries.length > 0 && gh.entries.every((e) => e.platform === "github"), "audit platform=github narrows to the github surface");
+  const capped = (await (await getAudit(`${sinceQ}&limit=1`, SECRET)).json()) as { entries: unknown[]; capped: boolean };
+  ok(capped.entries.length === 1 && capped.capped === true, "audit limit=1 caps the result and reports capped:true");
+
+  const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
+  ok(svc.some((e) => (e.detail as { view?: string }).view === "audit"), "audit read is self-audited as control.service_call view=audit");
+}
+
+{
   const channel = (await import("../agent/channels/control-read.js")).default as unknown as {
     routes: { method: string; path: string }[];
   };
-  ok(channel.routes.length === 1 && channel.routes[0].method === "GET", "the channel mounts exactly one GET route");
-  ok(channel.routes[0].path === CONTROL_READ_USAGE_PATH, "…at /control/v1/usage");
+  ok(channel.routes.length === 2 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly two GET routes (usage + audit)");
+  ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
+  ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {
