@@ -310,8 +310,8 @@ export class ScenarioDriver {
         requestIp: null,
       },
     );
-    this.timeline.add(`  ⇠ ${res.status} ${await res.text()}`);
     for (const p of background) await p;
+    this.timeline.add(`  ⇠ ${res.status} ${await res.text()}`);
   }
 
   async event(continuationToken: string, name: string, data?: unknown): Promise<void> {
