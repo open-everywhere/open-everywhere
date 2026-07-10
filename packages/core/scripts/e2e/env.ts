@@ -38,6 +38,15 @@ export const ENV = {
   linearAppUserId: "E2E_LINEAR_APP_USER_ID",
   linearAgentHandle: "E2E_LINEAR_AGENT_HANDLE",
   linearWebhookSecret: "E2E_LINEAR_WEBHOOK_SECRET",
+
+  notionDriverKey: "E2E_NOTION_DRIVER_KEY",
+  notionAmbientPageId: "E2E_NOTION_PAGE_ID",
+  notionAmbientWebhookSecret: "E2E_NOTION_WEBHOOK_SECRET",
+  notionBotUserId: "E2E_NOTION_BOT_USER_ID",
+  notionWorkspaceId: "E2E_NOTION_WORKSPACE_ID",
+  notionAnchorOnTopic: "E2E_NOTION_ANCHOR_ONTOPIC",
+  notionAnchorOnTopic2: "E2E_NOTION_ANCHOR_ONTOPIC2",
+  notionAnchorOffTopic: "E2E_NOTION_ANCHOR_OFFTOPIC",
 } as const;
 
 export type Capability =
@@ -52,7 +61,8 @@ export type Capability =
   | "notion"
   | "teams"
   | "github"
-  | "linear";
+  | "linear"
+  | "notionAmbient";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -123,6 +133,17 @@ export interface LinearDriverConfig {
   readonly appUserId: string;
   readonly agentHandle: string;
   readonly webhookSecret?: string;
+}
+
+export interface NotionAmbientConfig {
+  readonly driverKey: string;
+  readonly pageId: string;
+  readonly webhookSecret: string;
+  readonly botUserId: string;
+  readonly workspaceId: string;
+  readonly anchorOnTopic: string;
+  readonly anchorOnTopic2: string;
+  readonly anchorOffTopic: string;
 }
 
 export type Resolved<T> =
@@ -233,6 +254,24 @@ export function resolveLinear(env: Env = process.env): Resolved<LinearDriverConf
   return { ok: true, cfg: { apiKey: values[0], teamId: values[1], appUserId: values[2], agentHandle: values[3], ...(webhookSecret ? { webhookSecret } : {}) } };
 }
 
+export function resolveNotionAmbient(env: Env = process.env): Resolved<NotionAmbientConfig> {
+  const { values, missing } = need(env, [
+    ENV.notionDriverKey,
+    ENV.notionAmbientPageId,
+    ENV.notionAmbientWebhookSecret,
+    ENV.notionBotUserId,
+    ENV.notionWorkspaceId,
+    ENV.notionAnchorOnTopic,
+    ENV.notionAnchorOnTopic2,
+    ENV.notionAnchorOffTopic,
+  ]);
+  if (missing.length > 0) return { ok: false, missing };
+  return {
+    ok: true,
+    cfg: { driverKey: values[0], pageId: values[1], webhookSecret: values[2], botUserId: values[3], workspaceId: values[4], anchorOnTopic: values[5], anchorOnTopic2: values[6], anchorOffTopic: values[7] },
+  };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -252,6 +291,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const notion = resolveNotion(env);
   const github = resolveGithub(env);
   const linear = resolveLinear(env);
+  const notionAmbient = resolveNotionAmbient(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -265,6 +305,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (notion.ok) available.add("notion");
   if (github.ok) available.add("github");
   if (linear.ok) available.add("linear");
+  if (notionAmbient.ok) available.add("notionAmbient");
   return {
     available,
     missing: {
@@ -280,6 +321,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       notion: notion.ok ? [] : notion.missing,
       github: github.ok ? [] : github.missing,
       linear: linear.ok ? [] : linear.missing,
+      notionAmbient: notionAmbient.ok ? [] : notionAmbient.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

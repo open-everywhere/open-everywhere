@@ -4,6 +4,7 @@ import {
   resolveGithub,
   resolveLinear,
   resolveNotion,
+  resolveNotionAmbient,
   resolveSlack,
   resolveSlackChannelB,
   resolveSlackPrivate,
@@ -18,6 +19,7 @@ import { DiscordDriver } from "./discord-driver.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { GithubDriver } from "./github-driver.js";
 import { LinearDriver } from "./linear-driver.js";
+import { NotionDriver } from "./notion-driver.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
@@ -72,6 +74,7 @@ async function main(): Promise<void> {
   const notion = resolveNotion();
   const github = resolveGithub();
   const linear = resolveLinear();
+  const notionAmbient = resolveNotionAmbient();
 
   const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
@@ -80,6 +83,7 @@ async function main(): Promise<void> {
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const githubDriver = github.ok ? new GithubDriver(github.cfg) : undefined;
   const linearDriver = linear.ok ? new LinearDriver(linear.cfg) : undefined;
+  const notionAmbientDriver = notionAmbient.ok ? new NotionDriver(notionAmbient.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
   const teamsDriver = teams.ok ? new TeamsDriver(teams.cfg) : undefined;
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
@@ -185,6 +189,7 @@ async function main(): Promise<void> {
       notionQuery: notion.ok ? notion.cfg.query : undefined,
       github: githubDriver,
       linear: linearDriver,
+      notionAmbient: notionAmbientDriver,
       targetUrl: auditTarget || undefined,
       auditRead,
       judge,

@@ -4,6 +4,7 @@ import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
 import type { LinearDriver } from "./linear-driver.js";
+import type { NotionDriver } from "./notion-driver.js";
 import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
@@ -40,6 +41,7 @@ export interface ScenarioContext {
   readonly notionQuery?: string;
   readonly github?: GithubDriver;
   readonly linear?: LinearDriver;
+  readonly notionAmbient?: NotionDriver;
   readonly targetUrl?: string;
   readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
   readonly judge: ReplyJudge;
@@ -1100,6 +1102,67 @@ export const SCENARIOS: readonly Scenario[] = [
       } else {
         ctx.log("forge leg skipped — set E2E_LINEAR_WEBHOOK_SECRET + E2E_TARGET_URL to run it");
       }
+    },
+  },
+  {
+    id: "J-NOT",
+    title: "Notion ambient: forge-replay on-topic anchor → reply; reply-targeting across two discussions; off-topic → audited silence; self-loop; webhook gates (TODO(notion-ambient-e2e))",
+    requires: ["notionAmbient"],
+    surface: "notion",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      const not = ctx.notionAmbient!;
+      if (!ctx.targetUrl) ctx.skip("J-NOT needs E2E_TARGET_URL to forge the signed comment.created replay");
+      const target = ctx.targetUrl!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const disc1 = await not.discussionOf(not.anchorOnTopic);
+      const disc2 = await not.discussionOf(not.anchorOnTopic2);
+      ctx.gate(disc1 !== undefined && disc2 !== undefined, "anchors resolve to real discussions on the page (human fixtures present)");
+      ctx.gate(disc1 !== disc2, "the two on-topic anchors are in DIFFERENT discussions (the reply-targeting probe needs two)");
+
+      const sig1Time = new Date().toISOString();
+      const f1 = await not.forgeCommentCreated(target, not.anchorOnTopic);
+      ctx.gate(f1.status === 200, "on-topic: the signed comment.created replay is accepted (200)");
+      const reply1 = await not.awaitBotReplyIn(disc1!, sig1Time, { timeoutMs: REPLY_WAIT });
+      ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the anchor's OWN discussion (discussion 1)");
+
+      const sig2Time = new Date().toISOString();
+      const f2 = await not.forgeCommentCreated(target, not.anchorOnTopic2);
+      ctx.gate(f2.status === 200, "reply-targeting: the second anchor's replay is accepted (200)");
+      const reply2 = await not.awaitBotReplyIn(disc2!, sig2Time, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply2.discussionId === disc2, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
+
+      const sigOffTime = new Date().toISOString();
+      const fOff = await not.forgeCommentCreated(target, not.anchorOffTopic);
+      ctx.gate(fOff.status === 200, "off-topic: the replay is accepted (200)");
+      if (ctx.auditRead) {
+        const rows = await pollUntil(
+          async () => {
+            const r = await ctx.auditRead!({ sinceIso: runStart, platform: "notion", actions: ["notion.no_reply"] });
+            return r.length > 0 ? r : undefined;
+          },
+          { timeoutMs: REPLY_WAIT, what: "a notion.no_reply audit row for the off-topic anchor (audited silence)" },
+        );
+        ctx.gate(rows.length > 0, "audited silence: a notion.no_reply row exists for the off-topic anchor (positive assertion)");
+      } else {
+        await sleep(SILENCE_WINDOW);
+        const discOff = await not.discussionOf(not.anchorOffTopic);
+        const strays = (await not.pageComments()).filter((c) => not.isBotComment(c) && c.discussionId === discOff && c.createdTime > sigOffTime);
+        ctx.gate(strays.length === 0, "audited silence (fallback): the off-topic anchor drew NO bot reply within the silence window");
+      }
+
+      await sleep(SILENCE_WINDOW);
+      const disc1BotReplies = (await not.pageComments()).filter((c) => not.isBotComment(c) && c.discussionId === disc1 && c.createdTime > sig1Time);
+      ctx.gate(disc1BotReplies.length === 1, "self-loop: discussion 1 has exactly ONE bot reply — the bot's own comment did not re-dispatch (loop guard held)");
+
+      const unsigned = await not.forgeCommentCreated(target, not.anchorOnTopic, { signed: false });
+      ctx.gate(unsigned.status === 401 || unsigned.status === 403, "webhook gate: an unsigned comment.created replay is rejected (401/403)");
+      const bogus = await not.forgeCommentCreated(target, "00000000-0000-0000-0000-000000000000");
+      ctx.gate(bogus.status === 200, "webhook gate: a signed replay for an unfetchable comment id is acked fail-soft (200, no post)");
     },
   },
 ];

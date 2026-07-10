@@ -29,6 +29,7 @@ const {
   resolveNotion,
   resolveGithub,
   resolveLinear,
+  resolveNotionAmbient,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -165,13 +166,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH", "J-LIN", "J-NOT",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN add github/linear)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -196,11 +197,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "ST1")!.surface === "teams", "ST1 is the teams surface");
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
-  ok(nonSlack.join(",") === "J-GH,J-LIN,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)/J-LIN(linear)");
+  ok(nonSlack.join(",") === "J-GH,J-LIN,J-NOT,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)");
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,ST1", "the smoke lane is exactly J1 (slack wake+reply) + ST1 (teams)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S6,S10,S15", "S6/S10/S15 are fully deterministic — no judge (plan §5; S3/S21/S22 folded into judged J1)");
+  ok(unjudged.join(",") === "S6,S10,S15,J-NOT", "S6/S10/S15/J-NOT are fully deterministic — no judge (plan §5; J-NOT's gates are all hard: route status + audited silence + reply-targeting)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("S12") === "slack+slackChannelB", "S12 requires slack + slackChannelB");
@@ -219,7 +220,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -233,13 +234,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
     github: [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue],
     linear: [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle],
+    notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionAmbientWebhookSecret, ENV.notionBotUserId, ENV.notionWorkspaceId, ENV.notionAnchorOnTopic, ENV.notionAnchorOnTopic2, ENV.notionAnchorOffTopic],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -253,6 +255,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     teams: [],
     github: [],
     linear: [],
+    notionAmbient: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -394,6 +397,35 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(ev.type === "AgentSessionEvent" && ev.webhookTimestamp === 1_720_009_900_000, "forged AgentSessionEvent carries the type + the ±60s webhookTimestamp field");
   const session = ev.agentSession as { issue?: { team?: { id?: string } }; creator?: { id?: string } };
   ok(session.issue?.team?.id === "t1" && session.creator?.id === "u1", "forged event nests issue.team.id + creator.id (enrichTeamPrivacy + creator read them)");
+}
+
+{
+  const notMiss = resolveNotionAmbient({});
+  ok(!notMiss.ok && notMiss.missing.length === 8 && notMiss.missing.includes(ENV.notionDriverKey), "notionAmbient half reports its eight required vars missing in an empty env");
+  const notFull = resolveNotionAmbient({
+    [ENV.notionDriverKey]: "secret_x",
+    [ENV.notionAmbientPageId]: "page-uuid",
+    [ENV.notionAmbientWebhookSecret]: "verif-token",
+    [ENV.notionBotUserId]: "bot-user-uuid",
+    [ENV.notionWorkspaceId]: "ws-uuid",
+    [ENV.notionAnchorOnTopic]: "c-ontopic-1",
+    [ENV.notionAnchorOnTopic2]: "c-ontopic-2",
+    [ENV.notionAnchorOffTopic]: "c-offtopic",
+  });
+  ok(notFull.ok && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic", "notionAmbient cfg carries the three anchor ids (two on-topic + one off-topic)");
+  ok(notFull.ok && notFull.cfg.botUserId === "bot-user-uuid" && notFull.cfg.workspaceId === "ws-uuid", "notionAmbient cfg carries bot user id (self-loop) + workspace id (envelope)");
+
+  const { signNotionBody, buildCommentCreatedEvent } = await import("./e2e/notion-driver.js");
+  const { verifyNotionSignature } = await import("../agent/channels/notion-api.js");
+  const secret = "notion-verif-token";
+  const raw = JSON.stringify(buildCommentCreatedEvent({ workspaceId: "ws", commentId: "c1", pageId: "p1" }));
+  const sig = signNotionBody(secret, raw);
+  ok(sig.startsWith("sha256="), 'notion signature carries the "sha256=" prefix');
+  ok(verifyNotionSignature(secret, raw, sig), "a signed notion forge body verifies against the real verifyNotionSignature");
+  ok(!verifyNotionSignature(secret, raw + "x", sig), "a tampered notion body fails verification");
+  ok(!verifyNotionSignature("wrong", raw, sig), "the wrong notion secret fails verification");
+  const ev = buildCommentCreatedEvent({ workspaceId: "ws9", commentId: "cX", pageId: "pY" });
+  ok(ev.type === "comment.created" && (ev.entity as { id?: string }).id === "cX" && (ev.data as { page_id?: string }).page_id === "pY", "forged comment.created is signal-only (entity.id + data.page_id, no text/author)");
 }
 
 {
