@@ -25,6 +25,13 @@ export const ENV = {
   teamsTeamId: "E2E_TEAMS_TEAM_ID",
   teamsChannelId: "E2E_TEAMS_CHANNEL_ID",
   teamsBotAppId: "E2E_TEAMS_BOT_APP_ID",
+
+  githubDriverToken: "E2E_GITHUB_DRIVER_TOKEN",
+  githubRepo: "E2E_GITHUB_REPO",
+  githubAppSlug: "E2E_GITHUB_APP_SLUG",
+  githubIssue: "E2E_GITHUB_ISSUE",
+  githubWebhookSecret: "E2E_GITHUB_WEBHOOK_SECRET",
+  githubInstallationId: "E2E_GITHUB_INSTALLATION_ID",
 } as const;
 
 export type Capability =
@@ -37,7 +44,8 @@ export type Capability =
   | "slackUser2"
   | "webhook"
   | "notion"
-  | "teams";
+  | "teams"
+  | "github";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -91,6 +99,15 @@ export interface SyntheticDmConfig {
   readonly targetUrl: string;
   readonly signingSecret: string;
   readonly dmChannel: string;
+}
+
+export interface GithubDriverConfig {
+  readonly token: string;
+  readonly repo: string;
+  readonly appSlug: string;
+  readonly issue: string;
+  readonly webhookSecret?: string;
+  readonly installationId?: string;
 }
 
 export type Resolved<T> =
@@ -183,6 +200,17 @@ export function resolveNotion(env: Env = process.env): Resolved<NotionConfig> {
   return { ok: true, cfg: { channel: values[0], query } };
 }
 
+export function resolveGithub(env: Env = process.env): Resolved<GithubDriverConfig> {
+  const { values, missing } = need(env, [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue]);
+  if (missing.length > 0) return { ok: false, missing };
+  const webhookSecret = env[ENV.githubWebhookSecret]?.trim();
+  const installationId = env[ENV.githubInstallationId]?.trim();
+  return {
+    ok: true,
+    cfg: { token: values[0], repo: values[1], appSlug: values[2], issue: values[3], ...(webhookSecret ? { webhookSecret } : {}), ...(installationId ? { installationId } : {}) },
+  };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -200,6 +228,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slackUser2 = resolveSlackUser2(env);
   const webhook = resolveWebhook(env);
   const notion = resolveNotion(env);
+  const github = resolveGithub(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -211,6 +240,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (slackUser2.ok) available.add("slackUser2");
   if (webhook.ok) available.add("webhook");
   if (notion.ok) available.add("notion");
+  if (github.ok) available.add("github");
   return {
     available,
     missing: {
@@ -224,6 +254,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
       webhook: webhook.ok ? [] : webhook.missing,
       notion: notion.ok ? [] : notion.missing,
+      github: github.ok ? [] : github.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

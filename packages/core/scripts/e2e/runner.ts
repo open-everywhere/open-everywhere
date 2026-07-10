@@ -1,6 +1,7 @@
 import {
   resolveCapabilities,
   resolveDiscord,
+  resolveGithub,
   resolveNotion,
   resolveSlack,
   resolveSlackChannelB,
@@ -14,11 +15,13 @@ import {
 import { SlackDriver } from "./slack-driver.js";
 import { DiscordDriver } from "./discord-driver.js";
 import { TeamsDriver } from "./teams-driver.js";
+import { GithubDriver } from "./github-driver.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, fetchRunUsage, renderCostReport } from "./cost.js";
+import { fetchAudit } from "./audit-read.js";
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -65,8 +68,14 @@ async function main(): Promise<void> {
   const slackUser2 = resolveSlackUser2();
   const webhook = resolveWebhook();
   const notion = resolveNotion();
+  const github = resolveGithub();
+
+  const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
+  const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
+  const auditRead = auditTarget && auditToken ? (opts: Parameters<typeof fetchAudit>[2]) => fetchAudit(auditTarget, auditToken, opts) : undefined;
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
+  const githubDriver = github.ok ? new GithubDriver(github.cfg) : undefined;
   const discordDriver = discord.ok ? new DiscordDriver(discord.cfg) : undefined;
   const teamsDriver = teams.ok ? new TeamsDriver(teams.cfg) : undefined;
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
@@ -170,6 +179,9 @@ async function main(): Promise<void> {
       webhook: webhookDriver,
       notion: notionDriver,
       notionQuery: notion.ok ? notion.cfg.query : undefined,
+      github: githubDriver,
+      targetUrl: auditTarget || undefined,
+      auditRead,
       judge,
       gate(cond: boolean, label: string): void {
         if (!cond) throw new GateFailure(label);

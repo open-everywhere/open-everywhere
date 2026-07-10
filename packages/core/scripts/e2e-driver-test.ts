@@ -27,6 +27,7 @@ const {
   resolveSlackUser2,
   resolveWebhook,
   resolveNotion,
+  resolveGithub,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -163,13 +164,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1", "J-GH",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH adds the github surface)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -192,10 +193,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "S7")!.surface === "discord", "S7 is the discord surface");
   ok(SCENARIOS.find((s) => s.id === "S8")!.surface === "cross", "S8 (Slack→Discord recall) is the cross surface");
   ok(SCENARIOS.find((s) => s.id === "ST1")!.surface === "teams", "ST1 is the teams surface");
-  ok(
-    SCENARIOS.filter((s) => s.surface === "slack").length === SCENARIOS.length - 3,
-    "every other scenario is a slack-surface scenario (all but S7/S8/ST1)",
-  );
+  ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
+  const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
+  ok(nonSlack.join(",") === "J-GH,S7,S8,ST1", "the non-slack scenarios are exactly S7(discord)/S8(cross)/ST1(teams)/J-GH(github)");
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,ST1", "the smoke lane is exactly J1 (slack wake+reply) + ST1 (teams)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
@@ -218,7 +218,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -230,13 +230,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     webhook: [ENV.webhookSecret],
     notion: [ENV.notionChannel],
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
+    github: [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -248,6 +249,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     webhook: [],
     notion: [],
     teams: [],
+    github: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -318,6 +320,45 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const wrapped = legGate((cond, label) => seen.push(`${cond}|${label}`), "teardown");
   wrapped(true, "cleared the override");
   ok(seen[0] === "true|teardown: cleared the override", "legGate prefixes the gate label with the leg name");
+}
+
+{
+  const empty = {};
+  const ghMiss = resolveGithub(empty);
+  ok(!ghMiss.ok && ghMiss.missing.length === 4 && ghMiss.missing.includes(ENV.githubDriverToken), "github half reports its four required vars missing in an empty env");
+  const ghBase = resolveGithub({
+    [ENV.githubDriverToken]: "ghp_x",
+    [ENV.githubRepo]: "acme/scratch",
+    [ENV.githubAppSlug]: "open-everywhere",
+    [ENV.githubIssue]: "7",
+  });
+  ok(ghBase.ok && ghBase.cfg.repo === "acme/scratch" && ghBase.cfg.appSlug === "open-everywhere" && ghBase.cfg.issue === "7", "github cfg carries repo/appSlug/issue");
+  ok(ghBase.ok && ghBase.cfg.webhookSecret === undefined && ghBase.cfg.installationId === undefined, "github forge vars are absent unless set (the forge leg self-skips)");
+  const ghForge = resolveGithub({
+    [ENV.githubDriverToken]: "ghp_x",
+    [ENV.githubRepo]: "acme/scratch",
+    [ENV.githubAppSlug]: "open-everywhere",
+    [ENV.githubIssue]: "7",
+    [ENV.githubWebhookSecret]: "whsec",
+    [ENV.githubInstallationId]: "12345",
+  });
+  ok(ghForge.ok && ghForge.cfg.webhookSecret === "whsec" && ghForge.cfg.installationId === "12345", "github cfg carries the optional forge vars when present");
+
+  const { signGithubBody, buildIssueCommentEvent } = await import("./e2e/github-forge.js");
+  const { verifyGithubSignature } = await import("../agent/routines/events.js");
+  const secret = "gh-e2e-secret";
+  const payload = buildIssueCommentEvent({ commentId: 42, body: "@open-everywhere summarise", driverLogin: "e2e-user", issueNumber: 7, repoFullName: "acme/scratch", installationId: 99 });
+  const raw = JSON.stringify(payload);
+  const sig = signGithubBody(secret, raw);
+  ok(sig.startsWith("sha256="), 'github signature carries the "sha256=" prefix');
+  ok(verifyGithubSignature(secret, raw, sig), "a signed github forge body verifies against the real verifyGithubSignature");
+  ok(!verifyGithubSignature(secret, raw + "x", sig), "a tampered github body fails verification");
+  ok(!verifyGithubSignature("wrong", raw, sig), "the wrong github secret fails verification");
+  const ev = buildIssueCommentEvent({ commentId: 1, body: "@open-everywhere hi", driverLogin: "u", issueNumber: 3, repoFullName: "o/r", installationId: 5 });
+  const comment = ev.comment as { user?: { type?: string }; body?: string };
+  ok(ev.action === "created" && comment.user?.type === "User", "forged issue_comment is action=created with a User-typed (not Bot) author");
+  ok((comment.body ?? "").startsWith("@open-everywhere"), "forged comment body carries the @slug mention (githubBotMentioned wakes on it)");
+  ok((ev.repository as { full_name?: string }).full_name === "o/r", "forged event names the repo full_name");
 }
 
 {

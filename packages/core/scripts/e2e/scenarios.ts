@@ -2,6 +2,8 @@ import type { Capability, SlackUser2Config } from "./env.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
+import type { GithubDriver } from "./github-driver.js";
+import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
@@ -35,6 +37,9 @@ export interface ScenarioContext {
   readonly webhook?: WebhookDriver;
   readonly notion?: SlackDriver;
   readonly notionQuery?: string;
+  readonly github?: GithubDriver;
+  readonly targetUrl?: string;
+  readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
   readonly judge: ReplyJudge;
   gate(cond: boolean, label: string): void;
   judgePass(rubric: Rubric, reply: string, label: string): Promise<void>;
@@ -948,6 +953,80 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.text,
         "ST1 relevance",
       );
+    },
+  },
+  {
+    id: "J-GH",
+    title: "GitHub ambient: @mention reply + eyes + mention-gate + resume + reply-targeting across two issues + forge (TODO(github-ambient-e2e))",
+    requires: ["github"],
+    surface: "github",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_500_000,
+    judged: true,
+    run: async (ctx) => {
+      const gh = ctx.github!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const markerA = factToken("gh");
+      const askId = await gh.comment(gh.fixtureIssue, gh.mention(`summarise this issue in one line. Include the token ${markerA} in your reply.`));
+      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply.body.trim().length > 0, "mention: a <slug>[bot] reply appears on the fixture issue (real-remote wake end-to-end)");
+      await ctx.judgePass(
+        closedQA(`Does the reply quote ${markerA} (proving it answered THIS comment)?`, { mustMatch: [markerA] }),
+        reply.body,
+        "mention: reply quotes the run token",
+      );
+      try {
+        const eyes = await pollUntil(
+          async () => {
+            const r = await gh.reactions(askId);
+            return r.includes("eyes") ? r : undefined;
+          },
+          { timeoutMs: 60_000, what: "the eyes reaction on the trigger comment" },
+        );
+        ctx.gate(eyes.includes("eyes"), "mention: the trigger comment got the eyes pickup reaction");
+      } catch (err) {
+        ctx.log(`eyes reaction not observed within budget (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
+      }
+
+      const noteId = await gh.comment(gh.fixtureIssue, "just a note for the humans — no bot needed here");
+      await sleep(SILENCE_WINDOW);
+      const afterNote = (await gh.comments(gh.fixtureIssue)).filter((c) => gh.isBotComment(c) && c.id > noteId);
+      ctx.gate(afterNote.length === 0, "mention-gate: a non-mention comment gets NO bot reply (silence window)");
+
+      const followId = await gh.comment(gh.fixtureIssue, gh.mention("and roughly how many comments does it have now? one line."));
+      const resume = await gh.awaitBotReply(gh.fixtureIssue, followId, { timeoutMs: REPLY_WAIT });
+      ctx.gate(resume.id > followId, "resume: a second @mention gets a fresh reply (session resumed on the stable issue continuation)");
+
+      const issueB = await gh.createIssue(`(e2e) reply-targeting probe ${factToken("probe")}`, "second discussion for the reply-targeting gate");
+      try {
+        const markerB = factToken("ghb");
+        const askBId = await gh.comment(issueB, gh.mention(`what number issue is this? Include the token ${markerB}.`));
+        const replyB = await gh.awaitBotReply(issueB, askBId, { timeoutMs: REPLY_WAIT });
+        ctx.gate(replyB.body.trim().length > 0, "reply-targeting: the SECOND issue gets its OWN bot reply (not just the first) — the reply-targeting fix, live");
+        const leakedToA = (await gh.comments(gh.fixtureIssue)).some((c) => gh.isBotComment(c) && c.body.includes(markerB));
+        ctx.gate(!leakedToA, "reply-targeting: issue B's answer did NOT leak into issue A (hard gate — the bug's exact signature)");
+      } finally {
+        await gh.closeIssue(issueB);
+      }
+
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso: runStart, platform: "github", actions: ["github.no_reply"] });
+        ctx.gate(rows.length > 0, "audited silence: a github.no_reply row exists for the run (positive assertion of judged silence)");
+      }
+
+      if (gh.canForge && ctx.targetUrl) {
+        const forgeMarker = factToken("ghforge");
+        const forgeBody = gh.mention(`forged-path probe ${forgeMarker}`);
+        const forgeId = await gh.comment(gh.fixtureIssue, forgeBody);
+        const good = await gh.forgeIssueComment(ctx.targetUrl, { commentId: forgeId, body: forgeBody, driverLogin: "e2e-driver", issueNumber: gh.fixtureIssue, repoFullName: gh.repo });
+        ctx.gate(good.status === 200, "forge: a signed issue_comment.created is accepted (200)");
+        const bad = await gh.forgeIssueComment(ctx.targetUrl, { commentId: forgeId, body: forgeBody, driverLogin: "e2e-driver", issueNumber: gh.fixtureIssue, repoFullName: gh.repo }, { signed: false });
+        ctx.gate(bad.status === 401, "forge: an unsigned delivery is rejected (401)");
+      } else {
+        ctx.log("forge leg skipped — set E2E_GITHUB_WEBHOOK_SECRET + E2E_GITHUB_INSTALLATION_ID + E2E_TARGET_URL to run it");
+      }
     },
   },
 ];
