@@ -5,6 +5,7 @@ import { DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { buildMode3Report, formatMode3Report, type Mode3Report } from "../memory/dream/mode3.js";
 import { slackForm } from "../channels/slack-events.js";
 import { tidyOrgs } from "./tidy.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/mode3] ${msg}`);
@@ -76,10 +77,17 @@ export async function mode3Tick(
       continue;
     }
     try {
-      const body = new URLSearchParams();
-      body.set("channel", channel);
-      body.set("text", formatMode3Report(report));
-      const res = await post("chat.postMessage", body.toString());
+      const text = formatMode3Report(report);
+      const res = await postOnce({
+        org,
+        key: outboundKey({ surface: "dream", channel, action: "dream.mode3-digest", payload: text }),
+        run: async () => {
+          const body = new URLSearchParams();
+          body.set("channel", channel);
+          body.set("text", text);
+          return await post("chat.postMessage", body.toString());
+        },
+      });
       if (res?.ok === true) posted++;
       else log(`org ${org}: admin-channel post did not confirm ok (${JSON.stringify(res)})`);
     } catch (err) {

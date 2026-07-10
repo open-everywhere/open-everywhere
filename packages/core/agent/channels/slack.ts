@@ -15,6 +15,7 @@ import {
 } from "./slack-identity.js";
 import { resolvePartition, type Partition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
@@ -425,9 +426,15 @@ const slackMentionChannel = slackChannel({
           text: action.text,
           target,
           async post(cid, tts, text) {
-            const body = new URLSearchParams({ channel: cid, text });
-            if (tts) body.set("thread_ts", tts);
-            await slackForm("chat.postMessage", body.toString());
+            await postOnce({
+              org: partition?.org,
+              key: outboundKey({ surface: "slack", channel: cid, threadTs: tts, action: "slack.supervisor-reply", payload: text }),
+              run: async () => {
+                const body = new URLSearchParams({ channel: cid, text });
+                if (tts) body.set("thread_ts", tts);
+                await slackForm("chat.postMessage", body.toString());
+              },
+            });
           },
           async resolveOwnerToken() {
             if (!partition) return undefined;

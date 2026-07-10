@@ -7,6 +7,7 @@ import { nameDropWakeEnabled } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
@@ -1164,7 +1165,11 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   let context: ChannelJoinContext = {};
   if (!broadcasty) {
     try {
-      await deps.ack(ev.channelId, ev.ts, JOIN_ACK_TEXT);
+      await postOnce({
+        org: p.org,
+        key: outboundKey({ surface: "slack", channel: ev.channelId, threadTs: ev.ts, action: "slack.channel-join-ack", payload: JOIN_ACK_TEXT }),
+        run: () => deps.ack(ev.channelId, ev.ts, JOIN_ACK_TEXT),
+      });
     } catch {
     }
     const [transcript, inviterName] = await Promise.all([

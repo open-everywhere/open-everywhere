@@ -6,6 +6,7 @@ import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 import { oeFetch } from "../access/host-egress.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -239,12 +240,40 @@ export default defineTool({
       }
     }
 
+    const binding = bindFrom(ctx as BindableContext);
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
+
     if (toAttach.length > 0) {
-      if (platform === "slack") await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
-      else await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
+      await postOnce({
+        org: binding.org,
+        key: outboundKey({
+          surface: platform,
+          channel: channelId,
+          threadTs: binding.threadTs,
+          action: `${platform}.post_file.attach`,
+          stableId: callId,
+          payload: `${input.comment ?? ""} ${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
+        }),
+        run: async () => {
+          if (platform === "slack") await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
+          else await postFilesToDiscord(ctx as BindableContext, toAttach, input.comment);
+        },
+      });
     }
     if (hostedUrls.length > 0) {
-      await postLinkToSurface(ctx as BindableContext, platform, hostedUrls, toAttach.length > 0 ? undefined : input.comment);
+      await postOnce({
+        org: binding.org,
+        key: outboundKey({
+          surface: platform,
+          channel: channelId,
+          threadTs: binding.threadTs,
+          action: `${platform}.post_file.link`,
+          stableId: callId,
+          payload: `${toAttach.length > 0 ? "" : (input.comment ?? "")} ${hostedUrls.join(",")}`,
+        }),
+        run: () => postLinkToSurface(ctx as BindableContext, platform, hostedUrls, toAttach.length > 0 ? undefined : input.comment),
+      });
     }
 
     await auditToolAction(ctx, `${platform}.post_file`, {
