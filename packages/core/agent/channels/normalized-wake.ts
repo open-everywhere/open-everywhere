@@ -22,6 +22,8 @@ export type NormalizedWakeTrigger = {
 
 export type WakeAddressing = "direct" | "thread-follow" | "channel-watch" | "name-drop";
 
+export type WakeEngagementTier = "aggressive" | "neutral" | "reserved";
+
 export interface WakeLocus {
   readonly channel: WakeChannelMeta;
   readonly thread?: WakeThreadMeta;
@@ -32,6 +34,7 @@ export interface NormalizedWake {
   readonly reason: WakeReason;
   readonly addressing: WakeAddressing;
   readonly containerNoun?: string;
+  readonly engagementTier?: WakeEngagementTier;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
   readonly handoff?: WakeHandoff;
@@ -84,7 +87,32 @@ function threadFollowPreamble(isEdit: boolean, hasHandoff: boolean): string {
   );
 }
 
-function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNoun = "channel"): string {
+function engagementTierLine(tier: WakeEngagementTier | undefined, containerNoun: string): string {
+  switch (tier) {
+    case "reserved":
+      return (
+        ` Calibration for this ${containerNoun}: RESERVED — the operator set a deliberately HIGHER bar ` +
+        `here. This is a space where an unneeded reply reads as noise or spam, so on any doubt stay ` +
+        `silent; step in only when your reply is clearly wanted or prevents concrete harm.`
+      );
+    case "aggressive":
+      return (
+        ` Calibration for this ${containerNoun}: FORWARD — the operator opted this ${containerNoun} into ` +
+        `a more present teammate. When you genuinely have something to contribute — an answer, a caught ` +
+        `mistake, information the conversation is missing — lean toward saying it rather than staying ` +
+        `silent. Social chatter and messages that need nothing from you are still noise.`
+      );
+    case "neutral":
+    case undefined:
+      return "";
+    default: {
+      const _exhaustive: never = tier;
+      throw new Error(`renderWake: unknown engagement tier ${String(_exhaustive)}`);
+    }
+  }
+}
+
+function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNoun = "channel", tier?: WakeEngagementTier): string {
   return (
     `[channel-watch]${isEdit ? " (edited message)" : ""} You were not mentioned — this message reached ` +
     `you because you are this ${containerNoun}'s standing session: you see its activity so you can watch, ` +
@@ -104,6 +132,7 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
     `never re-answer a question you already answered. Judge THIS message on its own merits: a run of ` +
     `${NO_REPLY_SENTINEL} turns above means the earlier messages weren't for you, not that this one ` +
     `isn't. ${PREFER_NO_REPLY_TOOL}` +
+    engagementTierLine(tier, containerNoun) +
     handoffLine(hasHandoff)
   );
 }
@@ -142,7 +171,7 @@ function judgedPreamble(nw: NormalizedWake): string {
     case "thread-follow":
       return threadFollowPreamble(isEdit, hasHandoff);
     case "channel-watch":
-      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun);
+      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun, nw.engagementTier);
     case "name-drop": {
       if (!nw.nameDrop) throw new Error("renderWake: name-drop addressing requires a nameDrop field");
       return nameDropPreamble(nw.nameDrop.botName, nw.nameDrop.followUp);

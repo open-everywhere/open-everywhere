@@ -3,7 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { getConfig } from "../access/config.js";
-import { ambientSupervisorEnabled } from "../memory/domain.js";
+import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
@@ -130,6 +130,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         resolveBotUserId: async () => (await botUser()).id,
         resolveBotName: async () => (await botUser()).name,
         ambientEnabled: notionAmbientEnabled,
+        engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
         dispatch,
       });
 

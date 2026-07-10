@@ -3,7 +3,7 @@ import { resolvePartition, type Partition } from "../memory/partition.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
-import { nameDropWakeEnabled } from "../memory/domain.js";
+import { nameDropWakeEnabled, engagementTierFor } from "../memory/domain.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -16,7 +16,7 @@ import type { ContextLine } from "./context-render.js";
 import { classifySessionSendError } from "./session-death.js";
 import { generateHandoffNote } from "../model/rotation-handoff.js";
 import { type WakeAttachment, type WakeMessageInput, type WakeParticipant, type WakeTrust } from "./wake-envelope.js";
-import { renderWake, mkMessageTrigger, NO_REPLY_SENTINEL, PREFER_NO_REPLY_TOOL, type NormalizedWake } from "./normalized-wake.js";
+import { renderWake, mkMessageTrigger, NO_REPLY_SENTINEL, PREFER_NO_REPLY_TOOL, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 export { NO_REPLY_SENTINEL, PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
@@ -211,6 +211,7 @@ export interface SlackWakeOpts {
   readonly triggerAuthorHandle?: string;
   readonly participants?: readonly WakeParticipant[];
   readonly mode?: "supervisor";
+  readonly engagementTier?: WakeEngagementTier;
 }
 
 function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch", opts?: SlackWakeOpts): NormalizedWake {
@@ -225,6 +226,7 @@ function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts?.participants,
+    engagementTier: opts?.engagementTier,
     handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts?.backscroll,
     trigger: mkMessageTrigger(
@@ -832,6 +834,7 @@ export interface SupervisorRouteDeps {
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
+  readonly engagementTier?: (surfaceKey: string) => WakeEngagementTier;
 }
 
 export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
@@ -859,6 +862,12 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
     : [];
 
   const auth = authForEvent(ev, { isExternal: false, trustChecked: true });
+  let engagementTier: WakeEngagementTier | undefined;
+  try {
+    engagementTier = deps.engagementTier?.(p.surfaceKey);
+  } catch {
+    engagementTier = undefined;
+  }
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
     const trigger = displayNameOpts(names.triggerAuthor);
@@ -867,6 +876,7 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
       auth,
       message: renderWakeMessage(ev, deps.now, {
         mode: "supervisor",
+        engagementTier,
         memberCount,
         backscroll: applyResolvedNames(bs, names.participants),
         handoffNote: handoffNote ?? undefined,
@@ -915,6 +925,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
   return {
     confirmInternalWithMeta: confirmChannelInternalWithMeta,
     resolveProfile: liveResolveProfile,
+    engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const existing = await store.getChannelSession(org, surfaceKey);

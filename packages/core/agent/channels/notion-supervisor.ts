@@ -1,4 +1,4 @@
-import { renderWake, mkMessageTrigger, type NormalizedWake } from "./normalized-wake.js";
+import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
@@ -47,6 +47,7 @@ export interface NotionSupervisorWakeInput {
   readonly threadComments?: readonly NotionWakeMessage[];
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
+  readonly engagementTier?: WakeEngagementTier;
 }
 
 function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
@@ -73,6 +74,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
     reason: input.addressing === "direct" ? "mention" : "channel-activity",
     addressing: input.addressing,
     containerNoun: "doc",
+    engagementTier: judged ? input.engagementTier : undefined,
     locus: { channel: { id: input.pageId }, thread: { ts: input.discussionId } },
     backscroll,
     handoff,
@@ -120,6 +122,7 @@ export interface NotionSupervisorDispatch {
   readonly auth: OpenEverywhereNotionAuth;
   readonly trigger: NotionWakeMessage;
   readonly threadComments: readonly NotionWakeMessage[];
+  readonly engagementTier?: WakeEngagementTier;
 }
 
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
@@ -134,6 +137,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       discussionId: d.discussionId,
       trigger: d.trigger,
       threadComments: d.threadComments,
+      engagementTier: d.engagementTier,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

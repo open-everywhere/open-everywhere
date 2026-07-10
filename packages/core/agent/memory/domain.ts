@@ -3,6 +3,8 @@ import type { Trust } from "../identity/binding.js";
 
 export type DomainMatch = "org" | "public" | "dm";
 
+export type EngagementTier = "aggressive" | "neutral" | "reserved";
+
 export type ModelReasoning =
   | "provider-default"
   | "none"
@@ -43,6 +45,7 @@ export interface Domain {
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly awarenessWake?: boolean;
+  readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
   readonly statusVerbs?: readonly string[];
@@ -92,6 +95,19 @@ export function awarenessWakeEnabled(channelKey: string, domains: readonly Domai
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.awarenessWake === true;
   return criteriaDomain("org", domains)?.awarenessWake === true;
+}
+
+const PLATFORM_ENGAGEMENT_TIER_DEFAULTS: Readonly<Record<string, EngagementTier>> = {
+  github: "reserved",
+};
+
+export function engagementTierFor(channelKey: string, domains: readonly Domain[]): EngagementTier {
+  const explicit = domainForChannel(channelKey, domains)?.engagementTier;
+  if (explicit) return explicit;
+  const org = criteriaDomain("org", domains)?.engagementTier;
+  if (org) return org;
+  const platform = channelKey.split("/")[0] ?? "";
+  return PLATFORM_ENGAGEMENT_TIER_DEFAULTS[platform] ?? "neutral";
 }
 
 interface KnobLayer {

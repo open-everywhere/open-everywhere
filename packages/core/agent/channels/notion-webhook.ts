@@ -34,6 +34,7 @@ export interface HandleNotionDeliveryDeps {
   readonly resolveBotUserId: () => Promise<string | undefined>;
   readonly resolveBotName?: () => Promise<string | undefined>;
   readonly ambientEnabled: (surfaceKey: string) => boolean;
+  readonly engagementTier?: (surfaceKey: string) => "aggressive" | "neutral" | "reserved";
   readonly fetch?: FetchLike;
   readonly version?: string;
   readonly dispatch: (d: NotionSupervisorDispatch) => Promise<void>;
@@ -136,6 +137,13 @@ export async function handleNotionDelivery(
     principalId: comment.created_by?.id,
   });
 
+  let engagementTier: "aggressive" | "neutral" | "reserved" | undefined;
+  try {
+    engagementTier = deps.engagementTier?.(surfaceKey);
+  } catch {
+    engagementTier = undefined;
+  }
+
   await deps.dispatch({
     surfaceKey,
     addressing: classification.addressing,
@@ -145,6 +153,7 @@ export async function handleNotionDelivery(
     auth,
     trigger,
     threadComments,
+    engagementTier,
   });
 
   return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing };

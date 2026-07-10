@@ -42,7 +42,7 @@ import {
   type SupervisorRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
-import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
+import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
@@ -774,6 +774,20 @@ registerConfig({
   ok(!ambientSupervisorEnabled("slack/T2/C_OFF", ambientDomains), "explicit domain WITHOUT the flag → off (no fall-through to org)");
   ok(ambientSupervisorEnabled("slack/T2/C_UNASSIGNED", ambientDomains), "unassigned channel → org pseudo-domain's flag");
   ok(!ambientSupervisorEnabled("slack/T2/C_ANY", [defineDomain({ name: "o", match: "org" })]), "org without the flag → off (default)");
+
+  const tierDomains = [
+    defineDomain({ name: "tier-set", channels: ["slack/T4/C_RES", "github/acme/widgets"], engagementTier: "reserved" }),
+    defineDomain({ name: "tier-unset", channels: ["slack/T4/C_PLAIN", "github/acme/plain"] }),
+    defineDomain({ name: "org-tier", match: "org", engagementTier: "aggressive" }),
+  ];
+  ok(engagementTierFor("slack/T4/C_RES", tierDomains) === "reserved", "explicit domain tier wins");
+  ok(engagementTierFor("slack/T4/C_PLAIN", tierDomains) === "aggressive", "explicit domain WITHOUT a tier inherits the org tier (tuning knob, falls through)");
+  ok(engagementTierFor("slack/T4/C_UNASSIGNED", tierDomains) === "aggressive", "unassigned channel → org pseudo-domain's tier");
+  ok(engagementTierFor("slack/T4/C_ANY", []) === "neutral", "no config anywhere → platform default (slack: neutral)");
+  ok(engagementTierFor("github/acme/other", []) === "reserved", "no config → GitHub defaults RESERVED (collaborative human space, higher bar)");
+  ok(engagementTierFor("github/acme/widgets", tierDomains) === "reserved", "explicit tier on a github repo stays reserved");
+  ok(engagementTierFor("github/acme/plain", tierDomains) === "aggressive", "a github repo in a tier-less domain inherits org over the platform default (org is the operator's word)");
+  ok(engagementTierFor("notion/ws-1/page-1", []) === "neutral", "notion platform default is neutral");
 
   const awarenessDomains = [
     defineDomain({ name: "aware-on", channels: ["slack/T3/C_ON"], awarenessWake: true }),
