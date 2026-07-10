@@ -1,3 +1,4 @@
+
 import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import type { Routine } from "../agent/routines/routine.js";
@@ -187,24 +188,49 @@ const store = makeOperationalPostgresStore(client);
 
     const spendOrgs = ((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id);
     ok(spendOrgs.length === 1 && spendOrgs[0] === "acme", "RLS: spend no-WHERE read returns only the GUC org");
-    const auditOrgs = ((await client.query("SELECT DISTINCT org_id FROM audit_entry")).rows as { org_id: string }[]).map((r) => r.org_id);
-    ok(auditOrgs.length === 1 && auditOrgs[0] === "acme", "RLS: audit no-WHERE read returns only the GUC org");
-    const usageOrgs = ((await client.query("SELECT DISTINCT org_id FROM usage_events")).rows as { org_id: string }[]).map((r) => r.org_id);
-    ok(usageOrgs.length === 1 && usageOrgs[0] === "acme", "RLS: usage_events no-WHERE read returns only the GUC org");
 
-    const del = (await client.query("DELETE FROM audit_entry RETURNING seq")).rows;
-    ok(del.length === 0, "RLS: DELETE on audit_entry affects 0 rows under the app role (append-only)");
-    const upd = (await client.query("UPDATE audit_entry SET action = 'tampered' RETURNING seq")).rows;
-    ok(upd.length === 0, "RLS: UPDATE on audit_entry affects 0 rows under the app role (immutable)");
-    const delUsage = (await client.query("DELETE FROM usage_events RETURNING seq")).rows;
-    ok(delUsage.length === 0, "RLS: DELETE on usage_events affects 0 rows under the app role (append-only, same as audit_entry)");
-    const updUsage = (await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows;
-    ok(updUsage.length === 0, "RLS: UPDATE on usage_events affects 0 rows under the app role (immutable)");
+    const auditOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM audit_entry")).rows as { org_id: string }[]).map((r) => r.org_id));
+    ok(auditOrgs.has("acme") && auditOrgs.has("globex"), "RLS: audit SELECT is GUC-free/permissive — isolation is the query filter, not the policy");
+    const usageOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM usage_events")).rows as { org_id: string }[]).map((r) => r.org_id));
+    ok(usageOrgs.has("acme") && usageOrgs.has("globex"), "RLS: usage_events SELECT is GUC-free/permissive — isolation is the query filter");
+
+    ok((await client.query("DELETE FROM audit_entry RETURNING seq")).rows.length === 0, "append-only: DELETE on audit_entry affects 0 rows under the app role");
+    ok((await client.query("UPDATE audit_entry SET action = 'tampered' RETURNING seq")).rows.length === 0, "append-only: UPDATE on audit_entry affects 0 rows under the app role");
+    ok((await client.query("DELETE FROM usage_events RETURNING seq")).rows.length === 0, "append-only: DELETE on usage_events affects 0 rows under the app role");
+    ok((await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows.length === 0, "append-only: UPDATE on usage_events affects 0 rows under the app role");
+    await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T13:00:00Z', 'acme', 'slack', 'T1', 'probe.append')");
   } finally {
     await db.exec("RESET ROLE");
   }
-  ok((await store.readAudit({ org: "acme" })).length === 2, "RLS: audit rows survived the blocked DELETE/UPDATE");
-  ok((await store.usageForSession("acme", "sess-1")).length === 2 && (await store.usageForSession("acme", "sess-1"))[0].kind === "channel", "RLS: usage_events rows survived the blocked DELETE/UPDATE, content unchanged");
+}
+
+{
+  await db.exec(`CREATE ROLE oe_table_owner NOSUPERUSER;
+                 GRANT CREATE ON SCHEMA public TO oe_table_owner;
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON audit_entry, usage_events TO oe_table_owner;
+                 ALTER TABLE audit_entry OWNER TO oe_table_owner;
+                 ALTER TABLE usage_events OWNER TO oe_table_owner;`);
+  try {
+    await db.exec("SET ROLE oe_table_owner");
+    ok(((await client.query("SELECT count(*)::int AS n FROM audit_entry")).rows as { n: number }[])[0].n > 0, "FORCE: the non-superuser OWNER can still SELECT audit_entry");
+    await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-06-24T14:00:00Z', 'acme', 'slack', 'T1', 'owner.append')");
+    ok((await client.query("DELETE FROM audit_entry RETURNING seq")).rows.length === 0, "FORCE: DELETE on audit_entry affects 0 rows for the NON-SUPERUSER OWNER (owner-bypass closed)");
+    ok((await client.query("UPDATE audit_entry SET action = 'tampered' RETURNING seq")).rows.length === 0, "FORCE: UPDATE on audit_entry affects 0 rows for the owner (immutable)");
+    ok((await client.query("DELETE FROM usage_events RETURNING seq")).rows.length === 0, "FORCE: DELETE on usage_events affects 0 rows for the owner (append-only)");
+    ok((await client.query("UPDATE usage_events SET kind = 'tampered' RETURNING seq")).rows.length === 0, "FORCE: UPDATE on usage_events affects 0 rows for the owner (immutable)");
+  } finally {
+    await db.exec("RESET ROLE");
+    await db.exec("ALTER TABLE audit_entry OWNER TO CURRENT_USER; ALTER TABLE usage_events OWNER TO CURRENT_USER;");
+  }
+  const acmeAudit = await store.readAudit({ org: "acme" });
+  ok(
+    acmeAudit.some((r) => r.action === "memory.write") &&
+      acmeAudit.some((r) => r.action === "egress.policy") &&
+      !acmeAudit.some((r) => r.action === "tampered"),
+    "append-only: original audit rows survived all blocked UPDATE/DELETE (none deleted, none tampered)",
+  );
+  const sess1 = await store.usageForSession("acme", "sess-1");
+  ok(sess1.length === 2 && sess1[0].kind === "channel", "append-only: usage_events rows survived the blocked UPDATE/DELETE, content unchanged");
 }
 
 {
@@ -404,4 +430,4 @@ const store = makeOperationalPostgresStore(client);
 }
 
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit append-only, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);

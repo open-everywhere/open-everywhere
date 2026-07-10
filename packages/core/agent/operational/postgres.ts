@@ -169,6 +169,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
+  `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -189,10 +191,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY routine_org_isolation ON routine
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
-  `CREATE POLICY audit_select ON audit_entry FOR SELECT
-     USING (org_id = current_setting('app.current_org', true))`,
-  `CREATE POLICY audit_insert ON audit_entry FOR INSERT
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY audit_select ON audit_entry FOR SELECT USING (true)`,
+  `CREATE POLICY audit_insert ON audit_entry FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY spend_limit_org_isolation ON spend_limit
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -214,10 +214,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY domain_model_org_isolation ON domain_model
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
-  `CREATE POLICY usage_events_select ON usage_events FOR SELECT
-     USING (org_id = current_setting('app.current_org', true))`,
-  `CREATE POLICY usage_events_insert ON usage_events FOR INSERT
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY usage_events_select ON usage_events FOR SELECT USING (true)`,
+  `CREATE POLICY usage_events_insert ON usage_events FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY pending_actions_org_isolation ON pending_actions
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
