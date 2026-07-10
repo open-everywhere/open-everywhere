@@ -173,7 +173,8 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 {
   ok(renderTurn(true, "do the thing") === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input)");
   const woke = renderTurn(false, "chatter");
-  ok(woke.includes(NO_REPLY_SENTINEL) && woke.endsWith("chatter"), "render: non-direct wake carries the NO_REPLY judge preamble + content");
+  ok(woke.includes(NO_REPLY_SENTINEL), "render: non-direct wake carries the NO_REPLY judge preamble");
+  ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES the untrusted body (P0-3), never raw pass-through");
 }
 
 {
@@ -547,7 +548,7 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
   ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
   ok(turn.includes("NOT following this channel"), "name-drop turn (base channel): honest that a reply does not engage");
-  ok(turn.endsWith("Test Slack Bot help"), "name-drop turn: the human's message rides last, unmodified");
+  ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: the body rides FENCED as untrusted data (P0-3)");
   const threadTurn = renderNameDropTurn("help", "Bot", true);
   ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
   ok(threadTurn.includes('"stop"'), "name-drop turn (thread): names the stop verb as the undo");

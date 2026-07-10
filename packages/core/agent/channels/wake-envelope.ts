@@ -1,4 +1,4 @@
-import { wrapUntrusted } from "../access/untrusted.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 
 export type WakeReason = "channel-activity" | "dispatch" | "message-edited";
 
@@ -79,9 +79,9 @@ function renderMessage(m: WakeMessageInput): string {
     attr("sent-at", m.sentAt) +
     attr("thread-session-id", m.ownerToken);
 
-  const body = wrapUntrusted(escapeXml(m.body), { source: "slack-message" });
+  const body = ingestUntrusted(escapeXml(m.body), { source: "slack-message" });
   const previousBody = m.previousBody
-    ? `\n<previous-body>\n${indent(wrapUntrusted(escapeXml(m.previousBody), { source: "slack-message-previous" }), 2)}\n</previous-body>`
+    ? `\n<previous-body>\n${indent(ingestUntrusted(escapeXml(m.previousBody), { source: "slack-message-previous" }), 2)}\n</previous-body>`
     : "";
 
   return `<message${attrs}>\n${indent(body, 2)}${previousBody}\n</message>`;

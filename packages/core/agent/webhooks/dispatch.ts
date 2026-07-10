@@ -3,7 +3,7 @@ import slack from "../channels/slack.js";
 import { confirmChannelInternal, NO_REPLY_SENTINEL } from "../channels/slack-events.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
-import { wrapUntrusted } from "../access/untrusted.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import type { WebhookHook } from "./config.js";
 
@@ -19,7 +19,7 @@ export function renderWebhookMessage(hook: WebhookHook, rawBody: string): string
     "",
     hook.instruction,
     "",
-    wrapUntrusted(rawBody, { source: `webhook:${hook.id}` }),
+    ingestUntrusted(rawBody, { source: `webhook:${hook.id}` }),
   ].join("\n");
 }
 

@@ -1,3 +1,5 @@
+import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
+
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
 export const UNTRUSTED_CLOSE = "</untrusted_external_data>";
 
@@ -31,4 +33,16 @@ export function untrustedModelOutput(
   opts: UntrustedOpts = {},
 ): { type: "text"; value: string } {
   return { type: "text", value: wrapUntrusted(content, opts) };
+}
+
+export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
+  markUntrustedIngestedThisTurn();
+  return wrapUntrusted(content, opts);
+}
+
+export function ingestUntrustedModelOutput(
+  content: string,
+  opts: UntrustedOpts = {},
+): { type: "text"; value: string } {
+  return { type: "text", value: ingestUntrusted(content, opts) };
 }

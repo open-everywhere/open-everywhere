@@ -7,6 +7,7 @@ import { domainKeyOf, resolvePartition, type Partition } from "../memory/partiti
 import { nameDropWakeEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 import {
   bumpThreadSilentStreak,
   disengageThread,
@@ -240,7 +241,7 @@ export function renderTurn(direct: boolean, content: string): string {
       `themselves and your reply would be noise, output exactly ${NO_REPLY_SENTINEL} and nothing ` +
       `else — nothing will be posted.`,
     "",
-    content,
+    ingestUntrusted(content, { source: "discord-message" }),
   ].join("\n");
 }
 
@@ -256,7 +257,7 @@ export function renderNameDropTurn(content: string, botName: string, followsThre
       `for you or requesting something you can directly do. When in doubt, stay out: output exactly ` +
       `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. ${followUps}`,
     "",
-    content,
+    ingestUntrusted(content, { source: "discord-message" }),
   ].join("\n");
 }
 

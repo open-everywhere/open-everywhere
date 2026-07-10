@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Routine } from "./routine.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 
 export interface NormalizedEvent {
   readonly source: string;
@@ -62,10 +63,8 @@ export function matchesEvent(routine: Routine, ev: NormalizedEvent): boolean {
 }
 
 export function eventPrompt(routine: Routine, ev: NormalizedEvent): string {
-  const lines = [`<github_event>`, ev.summary];
-  if (ev.url) lines.push(ev.url);
-  lines.push(`</github_event>`);
-  return `${routine.prompt}\n\n${lines.join("\n")}`;
+  const body = [ev.summary, ev.url].filter((s): s is string => Boolean(s)).join("\n");
+  return `${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
 }
 
 export function verifyGithubSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {

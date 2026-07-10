@@ -59,7 +59,10 @@ const clockRoutine: Routine = { ...eventRoutine(), trigger: { kind: "interval", 
 ok(!matchesEvent(clockRoutine, pr!), "non-event routine never matches an event");
 
 const prompt = eventPrompt(eventRoutine(), pr!);
-ok(prompt.includes("Summarise the PR") && prompt.includes("<github_event>") && prompt.includes("pull/42"), "eventPrompt embeds instruction + event context");
+ok(
+  prompt.includes("Summarise the PR") && prompt.includes("<untrusted_external_data") && prompt.includes("pull/42"),
+  "eventPrompt embeds instruction + FENCES the attacker-controlled event body as untrusted data (P0-3)",
+);
 
 const secret = "s3cr3t";
 const body = JSON.stringify(prPayload);
