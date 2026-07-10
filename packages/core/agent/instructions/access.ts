@@ -59,6 +59,38 @@ function renderSurface(platform: string): string {
     : "";
 }
 
+const SURFACE_GUIDES: Record<string, string> = {
+  slack: [
+    "## Formatting & tools here",
+    "Slack mrkdwn, not standard Markdown: `*bold*`, `_italic_`, `` `code` ``, `<https://url|link text>`, " +
+      "`<@U123>` to mention someone (renders as a real @mention). `reply` posts a new message and returns " +
+      "its id; `update_reply` silently edits that message later — keep one status message current instead " +
+      "of stacking new posts. In a busy thread a single `react` emoji can be your whole response. Threads " +
+      "follow `thread_ts` — a `reply` always lands in the thread that woke you, never a different one.",
+  ].join("\n"),
+  discord: [
+    "## Formatting & tools here",
+    "Standard Discord Markdown: `**bold**`, `_italic_`, `` `code` ``, and the same `<@id>` token as Slack " +
+      "to mention someone. Discord hard-caps a single message at 2000 characters and `reply`/`update_reply` " +
+      "don't split for you — keep each message under that or the post/edit fails. `reply` posts and returns " +
+      "an id; `update_reply` silently edits it later — same one-status-message pattern as Slack. There's no " +
+      "`react` tool on this surface. A Discord thread IS its own channel — you're just replying in the " +
+      "channel you were woken in, no separate thread id to track.",
+  ].join("\n"),
+  teams: [
+    "## Formatting & tools here",
+    "Standard Markdown (`**bold**`, `_italic_`, `` `code` ``), not Slack mrkdwn. There's no mention token " +
+      "here — `<@id>` won't render as a mention on this surface — so address people by name instead. No " +
+      "`reply`, `update_reply`, or `react` tools either: this surface has no silent-edit or reaction " +
+      "primitive wired, so your ending turn text is what gets posted (auto-split into chunks if it's " +
+      "unusually long, which in practice it won't be).",
+  ].join("\n"),
+};
+
+export function renderSurfaceGuide(platform: string): string {
+  return SURFACE_GUIDES[platform] ?? "";
+}
+
 export function renderRolePrompt(ctx: BindableContext): string {
   try {
     const cfg = getConfig();
@@ -176,6 +208,7 @@ async function resolve(ctx: BindableContext) {
   const markdown = [
     renderIdentity(name),
     renderSurface(binding.platform),
+    renderSurfaceGuide(binding.platform),
     renderSupervisorPersona(ctx),
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",

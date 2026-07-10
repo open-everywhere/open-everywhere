@@ -1,4 +1,5 @@
 import { assembleAccessInstructions } from "../agent/access/instructions.js";
+import { renderSurfaceGuide } from "../agent/instructions/access.js";
 import type { EffectiveAccess } from "../agent/access/resolver.js";
 
 let passed = 0;
@@ -62,5 +63,27 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
   ok(md!.includes("`notion-tools`"), "granted plugins are listed");
   ok(md!.includes("`notion-tools__search`"), "granted skills are listed");
 }
+
+{
+  const md = renderSurfaceGuide("slack");
+  ok(md.includes("mrkdwn") && md.includes("`<@U123>`"), "slack guide names mrkdwn + the mention token");
+  ok(md.includes("update_reply") && md.includes("react"), "slack guide names its reply/update_reply/react primitives");
+  ok(!md.includes("2000 characters"), "slack guide doesn't carry Discord's char cap");
+}
+
+{
+  const md = renderSurfaceGuide("discord");
+  ok(md.includes("**bold**") && md.includes("2000 characters"), "discord guide names Markdown bold + the 2000-char cap");
+  ok(md.includes("update_reply") && md.includes("no `react` tool"), "discord guide has update_reply but states there's no react tool");
+}
+
+{
+  const md = renderSurfaceGuide("teams");
+  ok(md.includes("**bold**") && md.includes("not Slack mrkdwn"), "teams guide is plain Markdown, explicitly not Slack mrkdwn");
+  ok(md.includes("No `reply`, `update_reply`, or `react` tools"), "teams guide states it has none of the reply-family tools");
+}
+
+ok(renderSurfaceGuide("telegram") === "", "an unlisted platform (e.g. telegram) renders no surface guide");
+ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
 console.log(`✓ instructions: ${passed} assertions passed`);
