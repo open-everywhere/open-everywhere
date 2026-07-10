@@ -17,6 +17,7 @@ import {
 } from "../agent/model/routing.js";
 import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
 import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
+import { renderSupervisorPersona } from "../agent/instructions/access.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -293,6 +294,19 @@ ok(!isSupervisorSession(slackChannelCtx("T1", "C_TXN")), "isSupervisorSession: a
 ok(!isSupervisorSession(slackDmCtx("T1", "D_PARTNER")), "isSupervisorSession: a DM ctx is NOT a supervisor session");
 ok(isSupervisorSession({ channel: { kind: "slack", continuationToken: "oe-sup:g12" } } as BindableContext), "isSupervisorSession: the bare sentinel form also matches");
 ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:1720000000.0001" } } as BindableContext), "isSupervisorSession: a real thread continuation token does NOT match");
+
+{
+  const persona = renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3));
+  ok(persona.startsWith("## This channel"), "renderSupervisorPersona: renders the Draft A block for a supervisor session");
+  ok(
+    persona.includes("standing session for this channel") && persona.includes("### Trust grades"),
+    "renderSupervisorPersona: carries the standing-session identity + the trust-grades section",
+  );
+  ok(!/\bSlack\b/.test(persona), "renderSupervisorPersona: never names the surface (renderSurface injects it)");
+  ok(!persona.includes("reply` posts mid-turn"), "renderSupervisorPersona: OMITS the ships-with-T1.6 reply-tool paragraph");
+  ok(renderSupervisorPersona(slackChannelCtx("T1", "C_TXN")) === "", "renderSupervisorPersona: renders NOTHING for an ordinary channel session");
+  ok(renderSupervisorPersona(slackDmCtx("T1", "D_PARTNER")) === "", "renderSupervisorPersona: renders NOTHING for a DM session");
+}
 
 const supDomains: Domain[] = [
   defineDomain({

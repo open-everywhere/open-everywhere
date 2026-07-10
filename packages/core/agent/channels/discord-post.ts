@@ -1,0 +1,35 @@
+const API = "https://discord.com/api/v10";
+
+function botHeaders(token: string): Record<string, string> {
+  return { authorization: `Bot ${token}`, "content-type": "application/json" };
+}
+
+function botToken(): string {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error("DISCORD_BOT_TOKEN is not set — the reply tools need the bot token to post to Discord.");
+  }
+  return token;
+}
+
+export async function discordPostMessage(channelId: string, content: string): Promise<string> {
+  const res = await fetch(`${API}/channels/${channelId}/messages`, {
+    method: "POST",
+    headers: botHeaders(botToken()),
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Discord create-message failed (${res.status}) for channel ${channelId}`);
+  const body = (await res.json()) as { id?: unknown };
+  const id = typeof body?.id === "string" ? body.id : undefined;
+  if (!id) throw new Error(`Discord create-message returned no message id for channel ${channelId}`);
+  return id;
+}
+
+export async function discordEditMessage(channelId: string, messageId: string, content: string): Promise<void> {
+  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+    method: "PATCH",
+    headers: botHeaders(botToken()),
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error(`Discord edit-message failed (${res.status}) for channel ${channelId} / message ${messageId}`);
+}

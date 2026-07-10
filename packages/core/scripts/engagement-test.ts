@@ -966,6 +966,13 @@ registerConfig({
     ok(a.is_ext_shared === "false" && a.trust_checked === "true", "wake auth STAMPED with the internal verdict (unstamped = external downgrade — the live-bitten bug)");
   }
   ok(wakes[0].message.includes('<wake reason="channel-activity"'), "envelope reason is channel-activity");
+  ok(wakes[0].message.includes("[channel-watch]"), "supervisor wake uses the [channel-watch] framing");
+  ok(!wakes[0].message.includes("[thread-follow]"), "supervisor wake does NOT reuse the [thread-follow] framing");
+  ok(wakes[0].message.includes("you are this channel's standing session"), "supervisor preamble states the true standing-session identity");
+  ok(
+    wakes[0].message.includes("never re-answer a question you already answered"),
+    "the byte-identical live-tuned failure-mode sentences carry over to the supervisor preamble",
+  );
   ok(wakes[0].message.includes('trust="peer"'), "envelope trigger message is trust=peer (default-observe)");
   ok(wakes[0].message.includes('member-count="12"'), "member count threaded into the envelope's <channel member-count>");
   ok(getOrCreateCalls === 1 && touchCalls === 1, "session created-or-fetched once, and touched after the wake");

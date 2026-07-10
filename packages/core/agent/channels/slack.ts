@@ -23,6 +23,7 @@ import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, type SupervisorReplyTarget } from "./slack-events.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
+import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -349,12 +350,13 @@ const slackMentionChannel = slackChannel({
       }
       const cardPostedThisTurn = consumeCardPostedThisTurn();
       const reactedThisTurn = consumeReactedThisTurn();
+      const repliedThisTurn = consumeRepliedThisTurn();
       if (action.kind === "silent") {
         (channel.state as unknown as Record<string, unknown>).oeSilentTurn = true;
         console.log(
           `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
-        if (isBareStop(action, reactedThisTurn)) {
+        if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
           const channelId = channel.state.channelId ?? undefined;
           const threadTs = channel.state.threadTs ?? undefined;
           console.warn(
