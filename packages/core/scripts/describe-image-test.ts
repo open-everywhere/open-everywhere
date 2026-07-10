@@ -10,6 +10,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 import describeImage, { inferImageMime } from "../agent/tools/describe_image.js";
 import { registerImageDescriber, _resetImageDescriberForTest, type ImageDescriber } from "../agent/model/vision.js";
 import { parseSlackFiles } from "../agent/channels/slack-events.js";
+import { registerSlackAttachment, resolveSlackAttachment, _resetSlackAttachmentsForTest } from "../agent/channels/slack-attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -118,6 +119,19 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
     ok(untrustedIngestedThisTurn() === true, "success toModelOutput: TAINTS the turn (a durable write later this turn is now gated — P0-4)");
   });
   _resetImageDescriberForTest();
+}
+
+{
+  _resetSlackAttachmentsForTest();
+  registerSlackAttachment("F_KNOWN", { urlPrivate: "https://files.slack.com/files-pri/T/F_KNOWN/a.png", mimeType: "image/png", teamId: "T1" });
+  const rec = resolveSlackAttachment("F_KNOWN");
+  ok(rec?.urlPrivate === "https://files.slack.com/files-pri/T/F_KNOWN/a.png" && rec?.mimeType === "image/png", "registry: a registered file id resolves to its event url_private + mime");
+  ok(resolveSlackAttachment("F_NOPE") === undefined, "registry: an unregistered file id resolves to undefined (→ fail closed)");
+  registerImageDescriber({ describe: async () => ({ description: "should never run" }) });
+  const out = await tool.execute({ source: { slackFileId: "F_NOPE" } }, ctx);
+  ok(out.ok === false && /no Slack attachment with id "F_NOPE"/.test(out.message ?? ""), "describe_image: unknown slackFileId → fail-closed (no fetch, no describe), never a guessed description");
+  _resetImageDescriberForTest();
+  _resetSlackAttachmentsForTest();
 }
 
 rmSync(tmp, { recursive: true, force: true });

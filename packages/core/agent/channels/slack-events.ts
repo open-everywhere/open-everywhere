@@ -14,6 +14,7 @@ import { fetchWakeBackscroll, fetchWakeEnvelopeBackscroll } from "./slack-wake-b
 import { classifySessionSendError } from "./session-death.js";
 import { generateHandoffNote } from "../model/rotation-handoff.js";
 import { renderWakeEnvelope, type WakeAttachment, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
+import { registerSlackAttachment } from "./slack-attachments.js";
 import {
   buildIngestedReaction,
   ingestReaction,
@@ -79,11 +80,16 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   if (!channelId || !ts) return null;
   const threadTs = typeof inner.thread_ts === "string" ? inner.thread_ts : undefined;
   const text = typeof inner.text === "string" ? inner.text : "";
+  const teamId = envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined);
+  const attachments = parseSlackFiles(inner.files);
+  for (const a of attachments) {
+    if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, teamId });
+  }
   return {
     channelId,
     ts,
     threadTs,
-    teamId: envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined),
+    teamId,
     userId: typeof inner.user === "string" ? inner.user : undefined,
     botId: typeof inner.bot_id === "string" ? inner.bot_id : undefined,
     subtype,
@@ -91,7 +97,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     text,
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
     isAppMention: e.type === "app_mention",
-    attachments: parseSlackFiles(inner.files),
+    attachments,
   };
 }
 
