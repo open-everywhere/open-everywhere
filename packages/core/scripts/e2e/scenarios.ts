@@ -2,10 +2,11 @@ import type { Capability, SlackUser2Config } from "./env.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
-import { APPROVAL_PREFIX, type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
+import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
+import { approveButton, factToken } from "./journey.js";
 
 export class ScenarioSkip extends Error {
   constructor(reason: string) {
@@ -71,19 +72,8 @@ function closedQA(criteria: string, fallback: Rubric["fallback"]): Rubric {
   return { kind: "closedQA", criteria, atLeast: 1, fallback };
 }
 
-function factToken(stem: string): string {
-  return `${stem}-${Date.now() % 100_000}`;
-}
-
 function factuality(expected: string, criteria: string, fallback: Rubric["fallback"]): Rubric {
   return { kind: "factuality", expected, criteria, atLeast: 0.6, fallback };
-}
-
-function approveButton(m: SlackMessage): { pendingId: string; org: string } | undefined {
-  const prefix = `${APPROVAL_PREFIX}approve:`;
-  const btn = m.actions?.find((a) => a.actionId.startsWith(prefix));
-  if (!btn) return undefined;
-  return { pendingId: btn.actionId.slice(prefix.length), org: btn.value ?? "" };
 }
 
 export function skipReason(

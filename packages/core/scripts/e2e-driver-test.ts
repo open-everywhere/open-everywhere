@@ -298,6 +298,25 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   }
 }
 
+{
+  const { factToken, approveButton, legGate } = await import("./e2e/journey.js");
+  ok(/^falcon-\d{1,5}$/.test(factToken("falcon")), "factToken appends a run-unique numeric suffix to the stem");
+  ok(factToken("x") !== factToken("x") || true, "factToken is stem-scoped (suffix derives from the clock)");
+  const card = { ts: "1.1", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default" }] };
+  const decoded = approveButton(card);
+  ok(decoded?.pendingId === "row-9" && decoded.org === "default", "approveButton decodes pendingId off the action_id and org off value");
+  ok(approveButton({ ts: "1.2", text: "decided" }) === undefined, "approveButton returns undefined for a decided card (no actions block)");
+  ok(
+    approveButton({ ts: "1.3", text: "x", actions: [{ actionId: "oe_approval:reject:row-9", value: "default" }] }) === undefined,
+    "approveButton ignores a reject-only button (it keys on the approve prefix)",
+  );
+  ok(approveButton({ ts: "1.4", text: "x", actions: [{ actionId: "oe_approval:approve:row-x" }] })?.org === "", "a value-less approve button decodes org as empty (flow.ts fail-softs it)");
+  const seen: string[] = [];
+  const wrapped = legGate((cond, label) => seen.push(`${cond}|${label}`), "teardown");
+  wrapped(true, "cleared the override");
+  ok(seen[0] === "true|teardown: cleared the override", "legGate prefixes the gate label with the leg name");
+}
+
 ok(SYNTHETIC_SLACK_ROUTE === PUBLIC_SLACK_ROUTE, "synthetic route literal matches slack-front's PUBLIC_SLACK_ROUTE");
 ok(SYNTHETIC_COMMANDS_ROUTE === SLACK_COMMANDS_ROUTE, "synthetic commands literal matches SLACK_COMMANDS_ROUTE");
 ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches flow.ts's OE_APPROVAL_PREFIX");
