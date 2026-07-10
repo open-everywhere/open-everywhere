@@ -10,7 +10,7 @@ export type WakeReason =
 
 export type WakeTrust = "principal" | "peer" | "relay";
 
-export type WakeMessageSender = "human" | "agent" | "self" | "system";
+export type WakeMessageSender = "human" | "agent" | "self" | "system" | "bot";
 
 export interface WakeChannelMeta {
   readonly id: string;

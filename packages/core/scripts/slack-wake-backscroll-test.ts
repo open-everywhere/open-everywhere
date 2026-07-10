@@ -161,8 +161,11 @@ const routing = (
   ok(hist?.params.oldest === String(T + HOUR_S - RAW_FETCH_REACHBACK_HOURS * HOUR_S), `raw fetch reachback floor = latest - ${RAW_FETCH_REACHBACK_HOURS}h (covers a weekend spine gap)`);
 
   const bodies = out.map((m) => m.body);
-  ok(!bodies.includes("a foreign bot post"), "VISIBILITY GATE: a foreign bot's message is NOT surfaced (a live wake drops bot authors)");
-  ok(!bodies.includes("orphan message"), "VISIBILITY GATE: an unattributable (no author) message is NOT surfaced (fail closed)");
+  ok(bodies.includes("a foreign bot post"), "VISIBILITY GATE: an ATTRIBUTABLE foreign bot's message IS surfaced (marked awareness)");
+  const foreignBot = out.find((m) => m.body === "a foreign bot post");
+  ok(foreignBot?.from === "bot" && foreignBot?.author === "BFOREIGN" && foreignBot?.authorId === "BFOREIGN", "the foreign bot message is tagged from=bot with its bot id as author");
+  ok(foreignBot?.trigger === undefined && foreignBot?.trust === "peer", "the foreign bot message is CONTEXT-ONLY (never a trigger)");
+  ok(!bodies.includes("orphan message"), "VISIBILITY GATE: an unattributable (no author) message is STILL NOT surfaced (fail closed)");
   ok(bodies.includes("my own spine post"), "the bot's OWN prior post IS surfaced (tagged self)");
   ok(bodies.includes("older-burst-1") && bodies.includes("spine-newest"), "spine + the in-36h older burst both surface");
 
@@ -203,7 +206,8 @@ const routing = (
 {
   ok(isBackscrollVisible({ senderType: "agent", ts: "1.0", text: "x" }), "gate: the bot's own posts (agent) are visible");
   ok(isBackscrollVisible({ senderType: "user", senderId: "U1", ts: "1.0", text: "x" }), "gate: identifiable humans are visible");
-  ok(!isBackscrollVisible({ senderType: "bot", senderId: "B1", ts: "1.0", text: "x" }), "gate: foreign bots are NOT visible (relay is Phase 2)");
+  ok(isBackscrollVisible({ senderType: "bot", senderId: "B1", ts: "1.0", text: "x" }), "gate: ATTRIBUTABLE foreign bots ARE visible now (marked awareness → from=bot)");
+  ok(!isBackscrollVisible({ senderType: "bot", ts: "1.0", text: "x" }), "gate: a foreign bot with NO bot id is dropped (unattributable → fail closed)");
   ok(!isBackscrollVisible({ senderType: "unknown", ts: "1.0", text: "x" }), "gate: unattributable senders are NOT visible (fail closed)");
 }
 

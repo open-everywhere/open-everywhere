@@ -108,7 +108,11 @@ const MAX_THREADS_ENRICHED = 8;
 const THREAD_REPLIES_LIMIT = 100;
 
 export function isBackscrollVisible(line: ContextLine): boolean {
-  return line.senderType === "agent" || line.senderType === "user";
+  return (
+    line.senderType === "agent" ||
+    line.senderType === "user" ||
+    (line.senderType === "bot" && line.senderId !== undefined)
+  );
 }
 
 export interface WakeEnvelopeBackscrollInput {
@@ -186,7 +190,7 @@ function normalizeOne(
     id: line.ts,
     ms: seconds * 1000,
     authorId: line.senderId,
-    isSelf: line.senderType === "agent",
+    sender: line.senderType === "agent" ? "self" : line.senderType === "bot" ? "bot" : "human",
     type,
     threadId,
     text: line.text,

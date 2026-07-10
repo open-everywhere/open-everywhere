@@ -299,6 +299,24 @@ const countOccurrences = (haystack: string, needle: string): number =>
 }
 
 {
+  const input: WakeEnvelopeInput = {
+    reason: "channel-activity",
+    currentTime: "2026-03-24T18:54:30Z",
+    channel: { id: "C9", type: "channel" },
+    messages: [
+      { from: "bot", author: "BFOREIGN", authorId: "BFOREIGN", id: "1.0", sentAt: "2026-03-24T17:52:00Z", trust: "peer", type: "channel", body: "a live run succeeded" },
+      { from: "human", author: "Rowan", authorId: "U1", id: "2.0", sentAt: "2026-03-24T18:54:30Z", trust: "peer", trigger: true, body: "nice" },
+    ],
+  };
+  const out = renderWakeEnvelope(input);
+  ok(out.includes('from="bot"'), "a foreign-bot backscroll message renders from=\"bot\" (clearly bot-flagged, distinct from from=\"agent\")");
+  ok(out.includes('author="BFOREIGN" author-id="BFOREIGN"'), "the foreign-bot message carries its bot id as author + author-id");
+  ok(out.includes("a live run succeeded"), "the foreign-bot message body still renders (marked awareness — not dropped)");
+  ok(out.indexOf("a live run succeeded") < out.indexOf("nice"), "the bot message is backscroll context, before the trigger");
+  ok(out.indexOf('from="bot"') < out.indexOf('trigger="true"'), "the bot message never carries the trigger (context-only)");
+}
+
+{
   const base = {
     reason: "channel-activity" as const,
     currentTime: "2026-03-26T08:52:00Z",
