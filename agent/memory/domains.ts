@@ -19,7 +19,9 @@ const silos: MemorySilo[] = [
 ];
 
 const rawDomains: Domain[] = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true, admins: ["U0EXOWNER", "U0EXUSER002", "300000000000000104"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true,
+    admins: ["U0EXOWNER", "U0EXUSER002", "300000000000000104"],
+    models: { supervisor: { id: "deepseek/deepseek-v4-flash", reasoning: "low" } } }),
 
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly",
     models: { primary: { id: "deepseek/deepseek-v4-flash" } } }),

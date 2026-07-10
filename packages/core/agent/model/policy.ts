@@ -168,10 +168,12 @@ export function assertRoutesWithinPolicy(domains: readonly Domain[], roles: read
   for (const d of domains) {
     checkRoute(d.models?.primary, `domain "${d.name}" primary route`);
     checkRoute(d.models?.utility, `domain "${d.name}" utility route`);
+    checkRoute(d.models?.supervisor, `domain "${d.name}" supervisor route`);
   }
   for (const r of roles) {
     checkRoute(r.models?.primary, `role "${r.name}" primary route`);
     checkRoute(r.models?.utility, `role "${r.name}" utility route`);
+    checkRoute(r.models?.supervisor, `role "${r.name}" supervisor route`);
   }
   if (bad.length > 0) {
     throw new Error("open-everywhere: model route(s) outside the org model-policy envelope:\n" + bad.join("\n") + "\n(agent/model/policy.ts / docs/deploy/configuration-reference.md)");

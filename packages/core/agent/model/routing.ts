@@ -118,11 +118,15 @@ export async function resolveRoute(
   surfaceMatch: DomainMatch | undefined,
   defaultId: string,
   deps: RoutingDeps,
+  fallbackRole?: ModelRole,
 ): Promise<ModelRoute> {
   try {
     const domains = deps.domains();
     const roles = deps.roles?.() ?? [];
-    const rawRoute = modelRouteFor(role, surfaceKey, domains, roles, surfaceMatch);
+    let rawRoute = modelRouteFor(role, surfaceKey, domains, roles, surfaceMatch);
+    if (fallbackRole !== undefined && routeUnset(rawRoute)) {
+      rawRoute = modelRouteFor(fallbackRole, surfaceKey, domains, roles, surfaceMatch);
+    }
     let pickedRoute: ModelRoute = rawRoute;
     try {
       const domainName = domainForChannel(surfaceKey, domains)?.name ?? (surfaceMatch ? criteriaDomain(surfaceMatch, domains)?.name : undefined);
@@ -170,6 +174,17 @@ export async function resolveRoute(
 
 function isNoOpRoute(route: ModelRoute, defaultId: string): boolean {
   return (route.id ?? defaultId) === defaultId && route.reasoning === undefined && route.providers === undefined && route.tier === undefined;
+}
+
+function routeUnset(route: ModelRoute): boolean {
+  return route.id === undefined && route.tier === undefined && route.providers === undefined && route.reasoning === undefined;
+}
+
+const SUPERVISOR_TOKEN_RE = /(?:^|:)oe-sup:g\d+$/;
+
+export function isSupervisorSession(ctx: BindableContext): boolean {
+  const token = ctx.channel?.continuationToken;
+  return typeof token === "string" && SUPERVISOR_TOKEN_RE.test(token);
 }
 
 export function makeRoutedModel<TModel extends RoutableModel>(
@@ -235,9 +250,12 @@ export async function resolvePrimaryModel<TModel extends RoutableModel>(
     stampUtilityRoute(null);
   }
 
+  const supervisor = isSupervisorSession(ctx);
   let route: ModelRoute;
   try {
-    route = await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps);
+    route = supervisor
+      ? await resolveRoute("supervisor", surfaceKey, surfaceMatch, defaults.primary.id, deps, "primary")
+      : await resolveRoute("primary", surfaceKey, surfaceMatch, defaults.primary.id, deps);
   } catch (err) {
     logOnce("warn", `primary: route resolution failed (${String(err)}) — default model`);
     stampModelCall(defaults.primary.id);

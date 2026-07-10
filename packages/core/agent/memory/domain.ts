@@ -24,6 +24,7 @@ export interface ModelRoute {
 export interface ModelRoutes {
   readonly primary?: ModelRoute;
   readonly utility?: ModelRoute;
+  readonly supervisor?: ModelRoute;
 }
 
 export type ModelRole = keyof ModelRoutes;

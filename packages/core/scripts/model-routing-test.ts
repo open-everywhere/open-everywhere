@@ -6,6 +6,7 @@ import type { BindableContext } from "../agent/identity/binding.js";
 import {
   applyRoute,
   createRoutedCompactionModel,
+  isSupervisorSession,
   makeRoutedModel,
   resolvePrimaryModel,
   resolveRoute,
@@ -170,6 +171,20 @@ function slackChannelCtx(team: string, channel: string): BindableContext {
     },
   };
 }
+function slackSupervisorCtx(team: string, channel: string, gen: number): BindableContext {
+  return {
+    channel: { kind: "slack", continuationToken: `${channel}:oe-sup:g${gen}` },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: team, channel_id: channel, channel_type: "channel", is_private: "false", trust_checked: "true" },
+          principalId: "U1",
+          principalType: "user",
+        },
+      },
+    },
+  };
+}
 function slackDmCtx(team: string, dmId: string): BindableContext {
   return {
     channel: { kind: "slack" },
@@ -271,6 +286,51 @@ const PRIMARY_UTIL = { primary: { id: DEFAULT_ID }, utility: { id: UTILITY_ID } 
     throw new Error("config exploded");
   }, []));
   ok(m === null, "resolvePrimaryModel: a throwing config → null, no throw (fail-soft)");
+}
+
+ok(isSupervisorSession(slackSupervisorCtx("T1", "C_TXN", 3)), "isSupervisorSession: a ctx with the oe-sup:g<n> continuation token is a supervisor session");
+ok(!isSupervisorSession(slackChannelCtx("T1", "C_TXN")), "isSupervisorSession: an ordinary channel ctx (no supervisor token) is NOT a supervisor session");
+ok(!isSupervisorSession(slackDmCtx("T1", "D_PARTNER")), "isSupervisorSession: a DM ctx is NOT a supervisor session");
+ok(isSupervisorSession({ channel: { kind: "slack", continuationToken: "oe-sup:g12" } } as BindableContext), "isSupervisorSession: the bare sentinel form also matches");
+ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:1720000000.0001" } } as BindableContext), "isSupervisorSession: a real thread continuation token does NOT match");
+
+const supDomains: Domain[] = [
+  defineDomain({
+    name: "org",
+    match: "org",
+    models: { primary: { id: DEFAULT_ID, reasoning: "medium" }, supervisor: { id: UTILITY_ID, reasoning: "low" } },
+  }),
+  defineDomain({ name: "txn", channels: [C_TXN], models: { primary: { reasoning: "high" } } }),
+];
+{
+  const calls: FakeCall[] = [];
+  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 3), PRIMARY_UTIL, fakeDeps(() => supDomains, calls));
+  ok(m !== null, "supervisor session: returns a wrapped model");
+  await m!.doGenerate(turnCall);
+  ok(calls[0].id === UTILITY_ID, "supervisor session resolves the `supervisor` ModelRole (deepseek-v4-flash), NOT the channel's primary (glm-5.2)");
+  ok(calls[0].options.reasoning === "low", "supervisor route carries its own reasoning (low)");
+}
+{
+  const calls: FakeCall[] = [];
+  const m = await resolvePrimaryModel(slackChannelCtx("T1", "C_TXN"), PRIMARY_UTIL, fakeDeps(() => supDomains, calls));
+  ok(m !== null, "non-supervisor turn in a supervisor-routed channel: returns a wrapped model");
+  await m!.doGenerate(turnCall);
+  ok(calls[0].id === DEFAULT_ID, "NON-supervisor turn still resolves `primary` (glm-5.2) — supervisor routing does NOT leak onto thread/turn sessions");
+  ok(calls[0].options.reasoning === "high", "the non-supervisor turn keeps the channel's primary reasoning (high), untouched by the supervisor route");
+}
+{
+  const calls: FakeCall[] = [];
+  const m = await resolvePrimaryModel(slackSupervisorCtx("T1", "C_TXN", 1), PRIMARY_UTIL, fakeDeps(() => domains2, calls));
+  ok(m !== null, "supervisor session, no supervisor route: returns a wrapped model via the primary fallback");
+  await m!.doGenerate(turnCall);
+  ok(calls[0].id === "anthropic/claude-sonnet-5", "supervisor route UNSET → falls back to the channel's `primary` route (exec → sonnet); the role is inert until configured");
+}
+{
+  const deps = fakeDeps(() => domains2, []);
+  const rFallback = await resolveRoute("supervisor", C_TXN, undefined, DEFAULT_ID, deps, "primary");
+  ok(rFallback.id === "anthropic/claude-sonnet-5", "resolveRoute: an unset `supervisor` role with fallbackRole='primary' resolves the primary route");
+  const rNoFallback = await resolveRoute("supervisor", C_TXN, undefined, DEFAULT_ID, deps);
+  ok(rNoFallback.id === undefined && rNoFallback.reasoning === undefined, "resolveRoute: an unset `supervisor` role with NO fallbackRole stays unrouted (id undefined → caller's default applies)");
 }
 
 {
