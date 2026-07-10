@@ -17,7 +17,8 @@ const postFile = (await import("../agent/tools/post_file.js")).default as unknow
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean } };
   readonly execute: (input: unknown, ctx: unknown) => Promise<{ posted: boolean; count: number; platform: string }>;
 };
-const { inferContentType, assertSafeFetchUrl } = await import("../agent/tools/post_file.js");
+const { inferContentType } = await import("../agent/tools/post_file.js");
+const { assertSafeFetchUrl, setHostEgressLookup } = await import("../agent/access/host-egress.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
@@ -68,24 +69,32 @@ ok(inferContentType("page.html") === "text/html", "inferContentType: .html → t
 ok(inferContentType("mystery") === "application/octet-stream", "inferContentType: no extension → octet-stream");
 ok(inferContentType("weird.zzz") === "application/octet-stream", "inferContentType: unknown extension → octet-stream");
 
-ok(assertSafeFetchUrl("https://example.com/a.png").hostname === "example.com", "SSRF: a normal https host is allowed");
-const rejects = (u: string, label: string) => {
+setHostEgressLookup(async (h) => (h === "example.com" ? ["93.184.216.34"] : []));
+const safe = await assertSafeFetchUrl("https://example.com/a.png");
+ok(safe.url.hostname === "example.com", "SSRF: a normal https host (public IP) is allowed");
+ok(safe.dispatcher !== undefined, "SSRF: returns a connection-pinned dispatcher (closes the rebind TOCTOU window)");
+setHostEgressLookup(undefined);
+const rejects = async (u: string, label: string) => {
   let threw = false;
   try {
-    assertSafeFetchUrl(u);
+    await assertSafeFetchUrl(u);
   } catch {
     threw = true;
   }
   ok(threw, label);
 };
-rejects("ftp://example.com/x", "SSRF: non-http(s) scheme rejected");
-rejects("http://localhost/x", "SSRF: localhost rejected");
-rejects("http://127.0.0.1/x", "SSRF: loopback IP rejected");
-rejects("http://10.1.2.3/x", "SSRF: private-A IP rejected");
-rejects("http://192.168.0.1/x", "SSRF: private-C IP rejected");
-rejects("http://172.16.5.5/x", "SSRF: private-B IP rejected");
-rejects("http://169.254.169.254/latest/meta-data", "SSRF: cloud-metadata link-local IP rejected");
-rejects("http://metadata.google.internal/x", "SSRF: GCP metadata host rejected");
+await rejects("ftp://example.com/x", "SSRF: non-http(s) scheme rejected");
+await rejects("http://localhost/x", "SSRF: localhost rejected");
+await rejects("http://127.0.0.1/x", "SSRF: loopback IP rejected");
+await rejects("http://10.1.2.3/x", "SSRF: private-A IP rejected");
+await rejects("http://192.168.0.1/x", "SSRF: private-C IP rejected");
+await rejects("http://172.16.5.5/x", "SSRF: private-B IP rejected");
+await rejects("http://100.64.0.1/x", "SSRF: CGNAT IP rejected");
+await rejects("http://169.254.169.254/latest/meta-data", "SSRF: cloud-metadata link-local IP rejected");
+await rejects("http://metadata.google.internal/x", "SSRF: GCP metadata host rejected");
+setHostEgressLookup(async () => ["169.254.169.254"]);
+await rejects("https://rebind.attacker.test/latest/meta-data", "SSRF: DNS-rebind to metadata IP refused after resolution");
+setHostEgressLookup(undefined);
 
 function slackCtx(threadTs?: string) {
   return {

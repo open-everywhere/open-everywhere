@@ -5,6 +5,7 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
+import { oeFetch } from "../access/host-egress.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
   png: "image/png",
@@ -40,50 +41,16 @@ function isHtmlArtifact(contentType: string): boolean {
   return contentType === "text/html";
 }
 
-const PRIVATE_HOST_PATTERNS: readonly RegExp[] = [
-  /^localhost$/i,
-  /\.localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  /^\[::1\]$/,
-  /^f[cd][0-9a-f]{2}:/i,
-  /^fe80:/i,
-  /^metadata\.google\.internal$/i,
-];
-
-export function assertSafeFetchUrl(raw: string): URL {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error(`post_file: "${raw}" is not a valid URL.`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`post_file: only http(s) URLs may be fetched — got "${url.protocol}".`);
-  }
-  const host = url.hostname;
-  if (PRIVATE_HOST_PATTERNS.some((re) => re.test(host))) {
-    throw new Error(`post_file: refusing to fetch an internal/loopback/link-local host ("${host}").`);
-  }
-  return url;
-}
-
 type FileSource = { readonly path: string } | { readonly url: string } | { readonly base64: string };
 
-async function resolveBytes(source: FileSource): Promise<Uint8Array> {
+async function resolveBytes(source: FileSource, ctx: BindableContext): Promise<Uint8Array> {
   if ("base64" in source) {
     const comma = source.base64.indexOf(",");
     const body = source.base64.startsWith("data:") && comma >= 0 ? source.base64.slice(comma + 1) : source.base64;
     return new Uint8Array(Buffer.from(body, "base64"));
   }
   if ("url" in source) {
-    const url = assertSafeFetchUrl(source.url);
-    const res = await fetch(url);
+    const res = await oeFetch(ctx, source.url);
     if (!res.ok) throw new Error(`post_file: fetching "${source.url}" failed (HTTP ${res.status}).`);
     return new Uint8Array(await res.arrayBuffer());
   }
@@ -257,7 +224,7 @@ export default defineTool({
     const resolved: ResolvedFile[] = [];
     for (const f of input.files) {
       const contentType = f.contentType ?? inferContentType(f.filename);
-      const bytes = await resolveBytes(f.source as FileSource);
+      const bytes = await resolveBytes(f.source as FileSource, ctx as BindableContext);
       resolved.push({ bytes, filename: f.filename, contentType, caption: f.caption });
     }
 
