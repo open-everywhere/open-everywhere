@@ -10,9 +10,11 @@ export interface LinearIdentityInput {
   readonly teamId?: string;
   readonly issueId?: string;
   readonly issueIdentifier?: string;
-  readonly agentSessionId: string;
+  readonly agentSessionId?: string;
   readonly principalId?: string;
   readonly isPrivate?: boolean;
+  readonly commentId?: string;
+  readonly parentCommentId?: string;
 }
 
 export interface LinearTeamFacts {
@@ -27,12 +29,15 @@ export function teamFactsFromTeam(data: unknown): LinearTeamFacts {
 }
 
 export function buildLinearAuth(input: LinearIdentityInput): OpenEverywhereLinearAuth {
-  const attributes: Record<string, string> = { agent_session_id: input.agentSessionId };
+  const attributes: Record<string, string> = {};
+  if (input.agentSessionId) attributes.agent_session_id = input.agentSessionId;
   if (input.organizationId) attributes.organization_id = input.organizationId;
   if (input.teamId) attributes.team_id = input.teamId;
   if (input.issueId) attributes.issue_id = input.issueId;
   if (input.issueIdentifier) attributes.issue_identifier = input.issueIdentifier;
   if (typeof input.isPrivate === "boolean") attributes.is_private = String(input.isPrivate);
+  if (input.commentId) attributes.comment_id = input.commentId;
+  if (input.parentCommentId) attributes.parent_comment_id = input.parentCommentId;
   return {
     authenticator: "linear",
     principalId: input.principalId ?? "",
