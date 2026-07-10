@@ -25,7 +25,7 @@ eq(capabilitiesForPlatform("teams"), { midTurnPost: false, silentEdit: false, re
 eq(capabilitiesForPlatform("telegram"), { midTurnPost: false, silentEdit: false, reactions: false }, "telegram");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: false, silentEdit: false, reactions: false }, "linear");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, silentEdit: false, reactions: false }, "github");
-eq(capabilitiesForPlatform("notion"), { midTurnPost: false, silentEdit: false, reactions: false }, "notion (pre-Part-2)");
+eq(capabilitiesForPlatform("notion"), { midTurnPost: true, silentEdit: false, reactions: false }, "notion");
 
 eq(capabilitiesForPlatform("local"), { midTurnPost: false, silentEdit: false, reactions: false }, "local → NONE");
 eq(capabilitiesForPlatform("nope"), { midTurnPost: false, silentEdit: false, reactions: false }, "unknown platform → NONE");

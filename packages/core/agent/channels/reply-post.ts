@@ -1,21 +1,28 @@
 import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
+import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { slackForm } from "./slack-events.js";
 import { discordPostMessage, discordEditMessage } from "./discord-post.js";
+import { createCommentReply } from "./notion-api.js";
 
-export interface ReplyTarget {
-  readonly platform: "slack" | "discord";
-  readonly channelId: string;
-  readonly threadTs?: string;
-}
+export type ReplyTarget =
+  | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
+  | { readonly platform: "discord"; readonly channelId: string }
+  | { readonly platform: "notion"; readonly discussionId: string };
 
 export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
   const platform = channelPlatform(ctx);
-  if (platform !== "slack" && platform !== "discord") return null;
+  if (!capabilitiesForPlatform(platform).midTurnPost) return null;
   const binding = bindFrom(ctx);
+  if (platform === "notion") {
+    const discussionId = typeof binding.target?.discussionId === "string" ? binding.target.discussionId : undefined;
+    return discussionId ? { platform: "notion", discussionId } : null;
+  }
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) return null;
-  const threadTs = platform === "slack" ? binding.threadTs : undefined;
-  return { platform, channelId, threadTs };
+  if (platform === "slack") {
+    return { platform: "slack", channelId, threadTs: binding.threadTs };
+  }
+  return { platform: "discord", channelId };
 }
 
 export async function postReply(target: ReplyTarget, text: string): Promise<string> {
@@ -29,7 +36,14 @@ export async function postReply(target: ReplyTarget, text: string): Promise<stri
     }
     return ts;
   }
-  return discordPostMessage(target.channelId, text);
+  if (target.platform === "discord") {
+    return discordPostMessage(target.channelId, text);
+  }
+  const apiKey = process.env.NOTION_API_KEY;
+  if (!apiKey || apiKey.length === 0) {
+    throw new Error("reply couldn't post to Notion — NOTION_API_KEY is not set.");
+  }
+  return createCommentReply({ discussionId: target.discussionId, text, apiKey });
 }
 
 export async function editReply(target: ReplyTarget, id: string, text: string): Promise<void> {
@@ -40,5 +54,9 @@ export async function editReply(target: ReplyTarget, id: string, text: string): 
     }
     return;
   }
-  await discordEditMessage(target.channelId, id, text);
+  if (target.platform === "discord") {
+    await discordEditMessage(target.channelId, id, text);
+    return;
+  }
+  throw new Error("update_reply isn't available on Notion — it has no silent-edit primitive.");
 }

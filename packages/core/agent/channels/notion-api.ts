@@ -141,7 +141,7 @@ export async function listBlockComments(blockId: string, opts: NotionCallOpts): 
 
 export async function createCommentReply(
   args: { discussionId: string; text: string } & NotionCallOpts,
-): Promise<void> {
+): Promise<string> {
   const f = args.fetch ?? (globalThis.fetch as FetchLike);
   const res = await f(`${NOTION_API_BASE}/v1/comments`, {
     method: "POST",
@@ -149,6 +149,8 @@ export async function createCommentReply(
     body: JSON.stringify({ discussion_id: args.discussionId, rich_text: richTextChunks(args.text) }),
   });
   if (!res.ok) throw new Error(`createCommentReply failed: ${res.status} ${await safeText(res)}`);
+  const body = (await res.json().catch(() => ({}))) as { id?: unknown };
+  return typeof body.id === "string" ? body.id : "";
 }
 
 export function richTextChunks(text: string): Array<{ type: "text"; text: { content: string } }> {

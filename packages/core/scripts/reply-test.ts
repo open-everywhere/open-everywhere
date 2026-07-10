@@ -11,6 +11,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
+process.env.NOTION_API_KEY = "ntn-test-key";
 
 const reply = (await import("../agent/tools/reply.js")).default;
 const updateReply = (await import("../agent/tools/update_reply.js")).default;
@@ -40,6 +41,7 @@ interface FetchCall {
 let calls: FetchCall[] = [];
 let slackResponse: Record<string, unknown> = { ok: true, ts: "9999.0001" };
 let discordResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "d-9001" } };
+let notionResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "notion-comment-1" } };
 const realFetch = globalThis.fetch;
 function fakeHttp(): void {
   globalThis.fetch = (async (url: unknown, init: { body?: unknown; method?: string }) => {
@@ -48,6 +50,9 @@ function fakeHttp(): void {
     calls.push({ url: u, method: init?.method ?? "GET", body });
     if (u.includes("discord.com")) {
       return { ok: discordResponse.status >= 200 && discordResponse.status < 300, status: discordResponse.status, json: async () => discordResponse.body } as Response;
+    }
+    if (u.includes("api.notion.com")) {
+      return { ok: notionResponse.status >= 200 && notionResponse.status < 300, status: notionResponse.status, json: async () => notionResponse.body } as Response;
     }
     return { ok: true, status: 200, json: async () => slackResponse } as Response;
   }) as typeof fetch;
@@ -89,6 +94,24 @@ function discordCtx(channelId: string | undefined) {
     },
   };
 }
+function notionCtx(discussionId: string | undefined) {
+  return {
+    channel: { kind: "notion" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            workspace_id: "W1",
+            page_id: "P1",
+            ...(discussionId ? { discussion_id: discussionId } : {}),
+          },
+          principalId: "U3",
+          principalType: "notion-user",
+        },
+      },
+    },
+  };
+}
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 interface ArmedTool {
@@ -104,17 +127,29 @@ ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a 
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
 ok(armReply(reply, { channel: { kind: "teams" } }) === null, "reply is hidden on Teams (no silent-edit primitive)");
 ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on Telegram");
+ok(armReply(reply, { channel: { kind: "notion" } }) !== null, "reply arms on a Notion session (mid-turn post via createCommentReply)");
 ok(armReply(updateReply, { channel: { kind: "slack" } }) !== null, "update_reply arms on a Slack session");
 ok(armReply(updateReply, { channel: { kind: "discord" } }) !== null, "update_reply arms on a Discord session");
 ok(armReply(updateReply, { channel: { kind: "teams" } }) === null, "update_reply is hidden on Teams");
+ok(armReply(updateReply, { channel: { kind: "notion" } }) === null, "update_reply is hidden on Notion (no silent-edit primitive)");
+
+{
+  const notionArmed = armReply(reply, { channel: { kind: "notion" } });
+  ok(notionArmed !== null && /FINAL/.test(notionArmed.description) && !/edit a status message with/.test(notionArmed.description), "reply: Notion description says posts are FINAL, no update_reply");
+  const slackArmed = armReply(reply, { channel: { kind: "slack" } });
+  ok(slackArmed !== null && /`update_reply` to silently edit/.test(slackArmed.description), "reply: Slack description points at update_reply for silent status edits");
+}
 
 {
   const slackTarget = resolveReplyTarget(slackCtx("C1", "111.222") as never);
   ok(slackTarget?.platform === "slack" && slackTarget.channelId === "C1" && slackTarget.threadTs === "111.222", "resolveReplyTarget: slack carries channel + thread");
   const slackTop = resolveReplyTarget(slackCtx("C1") as never);
-  ok(slackTop?.threadTs === undefined, "resolveReplyTarget: a top-level slack trigger has no threadTs (posts top-level)");
+  ok(slackTop?.platform === "slack" && slackTop.threadTs === undefined, "resolveReplyTarget: a top-level slack trigger has no threadTs (posts top-level)");
   const discordTarget = resolveReplyTarget(discordCtx("D1") as never);
-  ok(discordTarget?.platform === "discord" && discordTarget.channelId === "D1" && discordTarget.threadTs === undefined, "resolveReplyTarget: discord carries channel, never a threadTs");
+  ok(discordTarget?.platform === "discord" && discordTarget.channelId === "D1" && (discordTarget as { threadTs?: string }).threadTs === undefined, "resolveReplyTarget: discord carries channel, never a threadTs");
+  const notionTarget = resolveReplyTarget(notionCtx("disc-1") as never);
+  ok(notionTarget?.platform === "notion" && (notionTarget as { discussionId: string }).discussionId === "disc-1", "resolveReplyTarget: notion carries the discussion id (the reply anchor)");
+  ok(resolveReplyTarget(notionCtx(undefined) as never) === null, "resolveReplyTarget: a discussion-less notion ctx → null (no anchor to post to)");
   ok(resolveReplyTarget({ channel: { kind: "teams" } } as never) === null, "resolveReplyTarget: off-surface → null");
   ok(resolveReplyTarget(slackCtx(undefined) as never) === null, "resolveReplyTarget: a channel-less slack ctx → null");
 }
@@ -194,6 +229,28 @@ await inSession(async () => {
   ok(calls.length === 1 && calls[0].method === "PATCH" && calls[0].url.includes("/channels/D1/messages/d-42"), "update_reply: on Discord PATCHes /channels/{id}/messages/{messageId} (silent edit)");
 });
 restoreHttp();
+
+calls = [];
+notionResponse = { status: 200, body: { id: "notion-comment-42" } };
+fakeHttp();
+await inSession(async () => {
+  const armed = armReply(reply, notionCtx("disc-1"))!;
+  const res = await armed.execute({ text: "notion answer" }, notionCtx("disc-1"));
+  ok(res.posted === true && res.id === "notion-comment-42", "reply: on Notion returns the created comment id");
+  ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("api.notion.com") && calls[0].url.endsWith("/v1/comments"), "reply: on Notion POSTs to /v1/comments");
+  const payload = JSON.parse(calls[0].body) as { discussion_id?: string; rich_text?: Array<{ text?: { content?: string } }> };
+  ok(payload.discussion_id === "disc-1", "reply: on Notion posts into the SAME discussion (the thread it was woken on)");
+  ok(payload.rich_text?.[0]?.text?.content === "notion answer", "reply: on Notion carries the model text as rich text");
+  const audit = await readAudit({ org: "default", action: "reply.post" });
+  ok(audit.some((r) => r.detail?.platform === "notion" && r.detail?.id === "notion-comment-42"), "reply: audits a reply.post row stamped platform=notion");
+});
+restoreHttp();
+
+await inSession(async () => {
+  const armed = armReply(reply, notionCtx(undefined))!;
+  await assert.rejects(() => armed.execute({ text: "x" }, notionCtx(undefined)), /couldn't resolve/, "reply: a Notion ctx with no discussion id throws an honest error");
+  n++;
+});
 
 calls = [];
 slackResponse = { ok: false, error: "channel_not_found" };

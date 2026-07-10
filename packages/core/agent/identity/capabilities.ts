@@ -15,7 +15,7 @@ const MANIFESTS: Readonly<Record<string, CapabilityManifest>> = {
   linear: { midTurnPost: false, silentEdit: false, reactions: false },
   github: { midTurnPost: false, silentEdit: false, reactions: false },
   telegram: { midTurnPost: false, silentEdit: false, reactions: false },
-  notion: { midTurnPost: false, silentEdit: false, reactions: false },
+  notion: { midTurnPost: true, silentEdit: false, reactions: false },
 };
 
 export function capabilitiesForPlatform(platform: string | undefined): CapabilityManifest {

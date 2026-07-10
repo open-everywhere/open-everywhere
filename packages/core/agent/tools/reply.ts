@@ -9,16 +9,24 @@ import { auditToolAction } from "../audit/tool-action.js";
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
-      return defineTool({
-        description:
-          "Post a message into this conversation NOW, without ending your turn. Posting is an " +
+      const caps = capabilitiesFor(ctx as BindableContext);
+      if (!caps.midTurnPost) return null;
+      const description = caps.silentEdit
+        ? "Post a message into this conversation NOW, without ending your turn. Posting is an " +
           "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
           "you're done. A reply NOTIFIES the channel — use it for an answer, a question, a " +
           "result, or a blocker, never for a mere progress tick (edit a status message with " +
           "`update_reply` for that). Returns the posted message's `id` — pass it to " +
           "`update_reply` to silently edit this message later (e.g. a live status you keep " +
-          "current). Posts into the conversation that woke you; you can't target another channel.",
+          "current). Posts into the conversation that woke you; you can't target another channel."
+        : "Post a message into this conversation NOW, without ending your turn. Posting is an " +
+          "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
+          "you're done. A reply NOTIFIES the thread — use it for an answer, a question, a " +
+          "result, or a blocker. Posts here are FINAL (no silent edit on this surface, so there " +
+          "is no `update_reply`) — send fewer, curated messages rather than a running status. " +
+          "Posts into the conversation that woke you; you can't target another place.";
+      return defineTool({
+        description,
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
         }),
@@ -27,7 +35,7 @@ export default defineDynamic({
           const target = resolveReplyTarget(ctx);
           if (!target) {
             throw new Error(
-              "reply couldn't resolve this conversation's channel — try again from a real Slack/Discord channel or thread, not a synthetic context.",
+              "reply couldn't resolve this conversation — try again from a real channel, thread, or discussion, not a synthetic context.",
             );
           }
           const id = await postReply(target, input.text);
