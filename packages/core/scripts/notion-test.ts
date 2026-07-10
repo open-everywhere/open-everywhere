@@ -1,5 +1,10 @@
 
 import { createHmac } from "node:crypto";
+import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import {
   verifyNotionSignature,
   parseVerificationHandshake,
@@ -234,5 +239,60 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (a: NotionDispatchArgs) => Pro
 ok(notionEventType({ event_type: "comment.created" }) === "comment.created", "notionEventType tolerates the event_type spelling");
 ok(commentIdFromEvent({ entity: { id: COMMENT, type: "comment" } }) === COMMENT, "commentIdFromEvent reads entity.id");
 ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "commentIdFromEvent ignores non-comment entities");
+
+{
+  const dir = join(tmpdir(), `open-everywhere-notion-no-reply-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  process.env.NOTION_API_KEY = "ntn_test_key";
+
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+  const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+  const { markNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
+
+  const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
+    const c = new ContextContainer();
+    c.set(SessionKey, { sessionId: "notion-no-reply-test", auth: null, turn: 1, parent: undefined });
+    return contextStorage.run(c, fn);
+  };
+
+  const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
+    adapter: Record<string, (data: { finishReason: string; message: string | null }, ctx: unknown) => Promise<void>>;
+  };
+
+  const realFetch = globalThis.fetch;
+  let posts: Array<{ body: { discussion_id?: string } }> = [];
+  globalThis.fetch = (async (input: string, init?: RequestInit) => {
+    if ((init?.method ?? "GET").toUpperCase() === "POST" && String(input).endsWith("/v1/comments")) {
+      posts.push({ body: JSON.parse(String(init?.body ?? "{}")) });
+      return new Response(JSON.stringify({ id: "reply-1" }), { status: 200 });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const state = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: WS };
+
+    await inSession(() => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "here is your answer" }, { state }));
+    ok(posts.length === 1, "notion message.completed: an ordinary completion posts the reply");
+    ok(posts[0]!.body.discussion_id === DISCUSSION, "notion message.completed: posts into the triggering discussion");
+
+    posts = [];
+    await inSession(() => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "NO_REPLY — nothing to add" }, { state }));
+    ok(posts.length === 0, "notion message.completed: the NO_REPLY sentinel still suppresses the reply");
+
+    posts = [];
+    await inSession(async () => {
+      markNoReplyThisTurn("nothing_to_add");
+      await notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "actually let me add one more thing" }, { state });
+    });
+    ok(posts.length === 0, "notion message.completed: the no_reply TOOL route suppresses the reply (regression for the isNoReply-only bug)");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
 
 console.log(`\n✓ notion: ${passed} assertions passed`);

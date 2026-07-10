@@ -1,7 +1,7 @@
 import { defineChannel, POST } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
-import { isNoReply } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./slack-events.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
 import { handleNotionDelivery, type NotionDispatchArgs } from "./notion-webhook.js";
 
@@ -110,8 +110,9 @@ export default defineChannel<NotionState, { state: NotionState }>({
   ],
   events: {
     async "message.completed"(data, channel) {
-      const message = data.message;
-      if (data.finishReason === "tool-calls" || !message || isNoReply(message)) return;
+      const action = finalMessageActionForTurn(data.finishReason, data.message);
+      if (action.kind !== "post") return;
+      const message = action.text;
       const discussionId = channel.state.discussionId;
       const apiKey = notionApiKey();
       if (!discussionId || !apiKey) {
