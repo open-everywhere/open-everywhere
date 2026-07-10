@@ -42,7 +42,7 @@ import {
   type SupervisorRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
-import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
+import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
 import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
@@ -788,6 +788,18 @@ registerConfig({
   ok(engagementTierFor("github/acme/widgets", tierDomains) === "reserved", "explicit tier on a github repo stays reserved");
   ok(engagementTierFor("github/acme/plain", tierDomains) === "aggressive", "a github repo in a tier-less domain inherits org over the platform default (org is the operator's word)");
   ok(engagementTierFor("notion/ws-1/page-1", []) === "neutral", "notion platform default is neutral");
+
+  const composedKeys = ["slack/T9/C_PAY", "github/acme/payments", "notion/ws-9/page-pay", "linear/org-9/team-pay"];
+  const composed = defineDomain({ name: "payments", channels: composedKeys, memory: "payments-brain", ambientSupervisor: true, engagementTier: "reserved" });
+  for (const key of composedKeys) {
+    ok(ambientSupervisorEnabled(key, [composed]), `cross-surface domain: ambient ON for ${key.split("/")[0]}`);
+    ok(engagementTierFor(key, [composed]) === "reserved", `cross-surface domain: explicit tier applies to ${key.split("/")[0]}`);
+  }
+  ok(domainForChannel("github/acme/payments", [composed])?.memory === "payments-brain", "cross-surface domain: the GitHub repo shares the domain's silo");
+  ok(domainForChannel("notion/ws-9/page-pay", [composed])?.memory === "payments-brain", "cross-surface domain: the Notion doc shares the same silo");
+  const composedNoTier = defineDomain({ name: "pay2", channels: ["slack/T9/C_PAY2", "github/acme/pay2"], ambientSupervisor: true });
+  ok(engagementTierFor("github/acme/pay2", [composedNoTier]) === "reserved", "composed domain w/o tier: the GitHub member platform-defaults reserved");
+  ok(engagementTierFor("slack/T9/C_PAY2", [composedNoTier]) === "neutral", "composed domain w/o tier: the Slack member stays neutral");
 
   const awarenessDomains = [
     defineDomain({ name: "aware-on", channels: ["slack/T3/C_ON"], awarenessWake: true }),
