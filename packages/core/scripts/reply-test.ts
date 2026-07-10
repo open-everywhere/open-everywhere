@@ -12,6 +12,10 @@ delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
 process.env.NOTION_API_KEY = "ntn-test-key";
+process.env.TELEGRAM_BOT_TOKEN = "telegram-test-token";
+process.env.MICROSOFT_APP_ID = "teams-app-id";
+process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
+process.env.LINEAR_API_KEY = "linear-test-key";
 
 const reply = (await import("../agent/tools/reply.js")).default;
 const updateReply = (await import("../agent/tools/update_reply.js")).default;
@@ -38,23 +42,29 @@ interface FetchCall {
   readonly method: string;
   readonly body: string;
 }
+const TEAMS_SERVICE_URL = "https://smba.test.local";
 let calls: FetchCall[] = [];
 let slackResponse: Record<string, unknown> = { ok: true, ts: "9999.0001" };
 let discordResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "d-9001" } };
 let notionResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "notion-comment-1" } };
+let telegramResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { ok: true, result: { message_id: 0, chat: { id: 0, type: "supergroup" } } } };
+let teamsResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "" } };
+let linearResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "" } } } } };
 const realFetch = globalThis.fetch;
+const resp = (status: number, body: unknown): Response =>
+  ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) }) as unknown as Response;
 function fakeHttp(): void {
   globalThis.fetch = (async (url: unknown, init: { body?: unknown; method?: string }) => {
     const u = String(url);
     const body = init?.body instanceof URLSearchParams ? init.body.toString() : String(init?.body ?? "");
     calls.push({ url: u, method: init?.method ?? "GET", body });
-    if (u.includes("discord.com")) {
-      return { ok: discordResponse.status >= 200 && discordResponse.status < 300, status: discordResponse.status, json: async () => discordResponse.body } as Response;
-    }
-    if (u.includes("api.notion.com")) {
-      return { ok: notionResponse.status >= 200 && notionResponse.status < 300, status: notionResponse.status, json: async () => notionResponse.body } as Response;
-    }
-    return { ok: true, status: 200, json: async () => slackResponse } as Response;
+    if (u.includes("discord.com")) return resp(discordResponse.status, discordResponse.body);
+    if (u.includes("api.notion.com")) return resp(notionResponse.status, notionResponse.body);
+    if (u.includes("api.telegram.org")) return resp(telegramResponse.status, telegramResponse.body);
+    if (u.includes("login.microsoftonline.com")) return resp(200, { token_type: "Bearer", expires_in: 3600, access_token: "teams-connector-token" });
+    if (u.includes("smba.test.local")) return resp(teamsResponse.status, teamsResponse.body);
+    if (u.includes("api.linear.app")) return resp(linearResponse.status, linearResponse.body);
+    return resp(200, slackResponse);
   }) as typeof fetch;
 }
 function restoreHttp(): void {
@@ -112,6 +122,61 @@ function notionCtx(discussionId: string | undefined) {
     },
   };
 }
+function telegramCtx(chatId: string | undefined, messageThreadId?: number) {
+  return {
+    channel: { kind: "telegram" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            ...(chatId ? { chat_id: chatId } : {}),
+            chat_type: "supergroup",
+            ...(messageThreadId !== undefined ? { message_thread_id: String(messageThreadId) } : {}),
+          },
+          principalId: "U4",
+          principalType: "telegram-user",
+        },
+      },
+    },
+  };
+}
+function teamsCtx(conversationId: string | undefined, serviceUrl: string | null = TEAMS_SERVICE_URL) {
+  const svc = serviceUrl === null ? undefined : serviceUrl;
+  return {
+    channel: { kind: "teams" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            tenant_id: "TEN1",
+            ...(conversationId ? { conversation_id: conversationId } : {}),
+            ...(svc ? { service_url: svc } : {}),
+            scope: "channel",
+          },
+          principalId: "U5",
+          principalType: "teams-user",
+        },
+      },
+    },
+  };
+}
+function linearCtx(agentSessionId: string | undefined) {
+  return {
+    channel: { kind: "linear" },
+    session: {
+      auth: {
+        current: {
+          attributes: {
+            organization_id: "ORG1",
+            ...(agentSessionId ? { agent_session_id: agentSessionId } : {}),
+          },
+          principalId: "LU1",
+          principalType: "linear-user",
+        },
+      },
+    },
+  };
+}
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 interface ArmedTool {
@@ -125,13 +190,18 @@ const armReply = (react: unknown, ctx: unknown): ArmedTool | null =>
 ok(armReply(reply, { channel: { kind: "slack" } }) !== null, "reply arms on a Slack session");
 ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a Discord session");
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
-ok(armReply(reply, { channel: { kind: "teams" } }) === null, "reply is hidden on Teams (no silent-edit primitive)");
-ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on Telegram");
 ok(armReply(reply, { channel: { kind: "notion" } }) !== null, "reply arms on a Notion session (mid-turn post via createCommentReply)");
+ok(armReply(reply, { channel: { kind: "telegram" } }) !== null, "reply arms on a Telegram session (mid-turn post via sendTelegramMessage)");
+ok(armReply(reply, { channel: { kind: "teams" } }) !== null, "reply arms on a Teams session (mid-turn post via sendTeamsActivity)");
+ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
+ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
+ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
 ok(armReply(updateReply, { channel: { kind: "slack" } }) !== null, "update_reply arms on a Slack session");
 ok(armReply(updateReply, { channel: { kind: "discord" } }) !== null, "update_reply arms on a Discord session");
-ok(armReply(updateReply, { channel: { kind: "teams" } }) === null, "update_reply is hidden on Teams");
 ok(armReply(updateReply, { channel: { kind: "notion" } }) === null, "update_reply is hidden on Notion (no silent-edit primitive)");
+ok(armReply(updateReply, { channel: { kind: "telegram" } }) === null, "update_reply is hidden on Telegram (no silent-edit primitive armed)");
+ok(armReply(updateReply, { channel: { kind: "teams" } }) === null, "update_reply is hidden on Teams (no silent-edit primitive armed)");
+ok(armReply(updateReply, { channel: { kind: "linear" } }) === null, "update_reply is hidden on Linear (no silent-edit primitive)");
 
 {
   const notionArmed = armReply(reply, { channel: { kind: "notion" } });
@@ -150,7 +220,25 @@ ok(armReply(updateReply, { channel: { kind: "notion" } }) === null, "update_repl
   const notionTarget = resolveReplyTarget(notionCtx("disc-1") as never);
   ok(notionTarget?.platform === "notion" && (notionTarget as { discussionId: string }).discussionId === "disc-1", "resolveReplyTarget: notion carries the discussion id (the reply anchor)");
   ok(resolveReplyTarget(notionCtx(undefined) as never) === null, "resolveReplyTarget: a discussion-less notion ctx → null (no anchor to post to)");
-  ok(resolveReplyTarget({ channel: { kind: "teams" } } as never) === null, "resolveReplyTarget: off-surface → null");
+
+  const tgTarget = resolveReplyTarget(telegramCtx("-100123", 7) as never);
+  ok(tgTarget?.platform === "telegram" && (tgTarget as { chatId: string }).chatId === "-100123" && (tgTarget as { messageThreadId?: number }).messageThreadId === 7, "resolveReplyTarget: telegram carries the RAW chat id + forum topic");
+  const tgPlain = resolveReplyTarget(telegramCtx("999") as never);
+  ok(tgPlain?.platform === "telegram" && (tgPlain as { messageThreadId?: number }).messageThreadId === undefined, "resolveReplyTarget: a non-forum telegram chat carries no messageThreadId");
+  ok(resolveReplyTarget(telegramCtx(undefined) as never) === null, "resolveReplyTarget: a chat-less telegram ctx → null");
+
+  const teamsTarget = resolveReplyTarget(teamsCtx("conv-1") as never);
+  ok(teamsTarget?.platform === "teams" && (teamsTarget as { conversationId: string }).conversationId === "conv-1" && (teamsTarget as { serviceUrl: string }).serviceUrl === TEAMS_SERVICE_URL, "resolveReplyTarget: teams carries the serviceUrl + conversation id (the captured reference)");
+  ok(resolveReplyTarget(teamsCtx("conv-1", null) as never) === null, "resolveReplyTarget: a teams ctx with no serviceUrl → null (can't cold-address)");
+  ok(resolveReplyTarget(teamsCtx(undefined) as never) === null, "resolveReplyTarget: a conversation-less teams ctx → null");
+
+  ok(resolveReplyTarget({ channel: { kind: "github" } } as never) === null, "resolveReplyTarget: github → null (midTurnPost gate is false)");
+
+  const linTarget = resolveReplyTarget(linearCtx("as-1") as never);
+  ok(linTarget?.platform === "linear" && (linTarget as { agentSessionId: string }).agentSessionId === "as-1", "resolveReplyTarget: linear carries the agent session id (the reply anchor)");
+  ok(resolveReplyTarget(linearCtx(undefined) as never) === null, "resolveReplyTarget: a session-less linear ctx → null");
+
+  ok(resolveReplyTarget({ channel: { kind: "local" } } as never) === null, "resolveReplyTarget: an unwired surface → null");
   ok(resolveReplyTarget(slackCtx(undefined) as never) === null, "resolveReplyTarget: a channel-less slack ctx → null");
 }
 
@@ -249,6 +337,62 @@ restoreHttp();
 await inSession(async () => {
   const armed = armReply(reply, notionCtx(undefined))!;
   await assert.rejects(() => armed.execute({ text: "x" }, notionCtx(undefined)), /couldn't resolve/, "reply: a Notion ctx with no discussion id throws an honest error");
+  n++;
+});
+
+calls = [];
+telegramResponse = { status: 200, body: { ok: true, result: { message_id: 555, chat: { id: -100123, type: "supergroup" } } } };
+fakeHttp();
+await inSession(async () => {
+  const armed = armReply(reply, telegramCtx("-100123", 7))!;
+  const res = await armed.execute({ text: "telegram answer" }, telegramCtx("-100123", 7));
+  ok(res.posted === true && res.id === "555", "reply: on Telegram returns the sent message id");
+  ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("api.telegram.org") && calls[0].url.includes("/sendMessage"), "reply: on Telegram POSTs to the Bot API sendMessage");
+  const payload = JSON.parse(calls[0].body) as { chat_id?: unknown; text?: string; message_thread_id?: number };
+  ok(String(payload.chat_id) === "-100123" && payload.text === "telegram answer", "reply: on Telegram posts into the SAME chat with the model text");
+  ok(payload.message_thread_id === 7, "reply: on Telegram carries the forum topic it was woken on");
+  const audit = await readAudit({ org: "default", action: "reply.post" });
+  ok(audit.some((r) => r.detail?.platform === "telegram" && r.detail?.id === "555"), "reply: audits a reply.post row stamped platform=telegram");
+});
+restoreHttp();
+
+calls = [];
+teamsResponse = { status: 200, body: { id: "teams-activity-1" } };
+fakeHttp();
+await inSession(async () => {
+  const armed = armReply(reply, teamsCtx("conv-1"))!;
+  const res = await armed.execute({ text: "teams answer" }, teamsCtx("conv-1"));
+  ok(res.posted === true && res.id === "teams-activity-1", "reply: on Teams returns the sent activity id");
+  const activityCall = calls.find((c) => c.url.includes("smba.test.local") && c.url.includes("/v3/conversations/") && c.url.includes("/activities"));
+  ok(activityCall !== undefined && activityCall.method === "POST", "reply: on Teams POSTs a message activity to the captured conversation reference");
+  ok(activityCall!.url.includes("conv-1"), "reply: on Teams posts into the SAME conversation it was woken on");
+  const payload = JSON.parse(activityCall!.body) as { type?: string; text?: string };
+  ok(payload.type === "message" && payload.text === "teams answer", "reply: on Teams sends a message activity carrying the model text");
+  const audit = await readAudit({ org: "default", action: "reply.post" });
+  ok(audit.some((r) => r.detail?.platform === "teams" && r.detail?.id === "teams-activity-1"), "reply: audits a reply.post row stamped platform=teams");
+});
+restoreHttp();
+
+calls = [];
+linearResponse = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "linear-act-1" } } } } };
+fakeHttp();
+await inSession(async () => {
+  const armed = armReply(reply, linearCtx("as-1"))!;
+  const res = await armed.execute({ text: "linear answer" }, linearCtx("as-1"));
+  ok(res.posted === true && res.id === "linear-act-1", "reply: on Linear returns the created activity id");
+  const gqlCall = calls.find((c) => c.url.includes("api.linear.app"));
+  ok(gqlCall !== undefined && gqlCall.method === "POST", "reply: on Linear POSTs the AgentActivityCreate mutation");
+  const payload = JSON.parse(gqlCall!.body) as { variables?: { input?: { agentSessionId?: string; content?: { body?: string; type?: string } } } };
+  ok(payload.variables?.input?.agentSessionId === "as-1", "reply: on Linear posts onto the SAME agent session it was woken on");
+  ok(payload.variables?.input?.content?.type === "response" && payload.variables?.input?.content?.body === "linear answer", "reply: on Linear posts a `response` activity carrying the model text (no stop signal, so the session stays open)");
+  const audit = await readAudit({ org: "default", action: "reply.post" });
+  ok(audit.some((r) => r.detail?.platform === "linear" && r.detail?.id === "linear-act-1"), "reply: audits a reply.post row stamped platform=linear");
+});
+restoreHttp();
+
+await inSession(async () => {
+  const armed = armReply(reply, linearCtx(undefined))!;
+  await assert.rejects(() => armed.execute({ text: "x" }, linearCtx(undefined)), /couldn't resolve/, "reply: a Linear ctx with no agent session id throws an honest error");
   n++;
 });
 

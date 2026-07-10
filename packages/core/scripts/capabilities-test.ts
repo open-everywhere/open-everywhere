@@ -21,9 +21,9 @@ function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): v
 
 eq(capabilitiesForPlatform("slack"), { midTurnPost: true, silentEdit: true, reactions: true }, "slack");
 eq(capabilitiesForPlatform("discord"), { midTurnPost: true, silentEdit: true, reactions: false }, "discord");
-eq(capabilitiesForPlatform("teams"), { midTurnPost: false, silentEdit: false, reactions: false }, "teams");
-eq(capabilitiesForPlatform("telegram"), { midTurnPost: false, silentEdit: false, reactions: false }, "telegram");
-eq(capabilitiesForPlatform("linear"), { midTurnPost: false, silentEdit: false, reactions: false }, "linear");
+eq(capabilitiesForPlatform("teams"), { midTurnPost: true, silentEdit: false, reactions: false }, "teams");
+eq(capabilitiesForPlatform("telegram"), { midTurnPost: true, silentEdit: false, reactions: false }, "telegram");
+eq(capabilitiesForPlatform("linear"), { midTurnPost: true, silentEdit: false, reactions: false }, "linear");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, silentEdit: false, reactions: false }, "github");
 eq(capabilitiesForPlatform("notion"), { midTurnPost: true, silentEdit: false, reactions: false }, "notion");
 
@@ -36,6 +36,7 @@ ok(capabilitiesFor(ctxFor("slack")).reactions === true, "capabilitiesFor: bare '
 ok(capabilitiesFor(ctxFor("channel:slack")).reactions === true, "capabilitiesFor: namespaced 'channel:slack' resolves the slack manifest");
 ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "capabilitiesFor: namespaced 'channel:discord' resolves the discord manifest");
 ok(capabilitiesFor(ctxFor("discord-gateway")).silentEdit === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
-ok(capabilitiesFor(ctxFor("teams")).midTurnPost === false, "capabilitiesFor: teams honours no optional verb");
+ok(capabilitiesFor(ctxFor("teams")).midTurnPost === true, "capabilitiesFor: teams honours mid-turn post (sendTeamsActivity)");
+ok(capabilitiesFor(ctxFor("github")).midTurnPost === false, "capabilitiesFor: github honours no optional verb (no public proactive comment seam)");
 
 console.log(`✓ ${passed} capabilities assertions passed`);
