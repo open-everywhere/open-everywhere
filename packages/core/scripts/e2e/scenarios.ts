@@ -10,7 +10,7 @@ import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
-import { approveButton, factToken } from "./journey.js";
+import { approveButton, awaitCard, awaitDecided, driveDecide, factToken } from "./journey.js";
 
 export class ScenarioSkip extends Error {
   constructor(reason: string) {
@@ -182,31 +182,85 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S4",
-    title: "Memory remember → recall",
-    requires: ["slack"],
+    id: "J2",
+    title: "Slack memory journey: remember→fresh-thread recall, cross-domain silo isolation, forget decide (absorbs S4/S12)",
+    requires: ["slack", "slackChannelB"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 300_000,
+    timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
-      const slack = ctx.slack!;
-      const { ts: rememberTs } = await slack.post(slack.mention("remember: our deploy day is Thursday"));
-      const ack = await slack.awaitThreadReply(rememberTs, { timeoutMs: REPLY_WAIT });
+      const a = ctx.slack!;
+      const b = ctx.slackB!;
+      const colour = factToken("topaz");
+
+      const { ts: teachTs } = await a.post(a.mention("remember: our deploy day is Thursday"));
+      const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
         closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
-        ack.text,
-        "remember acknowledgement",
+        ack1.text,
+        "remember: deploy-day stored (was S4)",
       );
-      const { ts: recallTs } = await slack.post(slack.mention("which day do we deploy?"));
-      const recall = await slack.awaitThreadReply(recallTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(recall.threadTs === recallTs, "recall reply lands in its own fresh thread");
+      const { ts: teach2Ts } = await a.post(`also remember: the deploy token colour is ${colour}`, teachTs);
+      const ack2 = await a.awaitThreadReply(teachTs, { afterTs: teach2Ts, timeoutMs: REPLY_WAIT });
+      await ctx.judgePass(
+        closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
+        ack2.text,
+        "remember: deploy-token-colour stored (was S12)",
+      );
+
+      const { ts: missTs } = await b.post(b.mention("what's the deploy token colour? if you don't know, say so plainly"));
+      const miss = await b.awaitThreadReply(missTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        !miss.text.toLowerCase().includes(colour.toLowerCase()),
+        `cross-domain: channel-B recall MISSES (hard gate: the taught token is absent) — reply: "${miss.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply say it doesn't know / decline, rather than invent a colour?", { mustNotMatch: [colour] }),
+        miss.text,
+        "cross-domain: channel-B declines cleanly (was S12)",
+      );
+
+      const { ts: dayTs } = await a.post(a.mention("which day do we deploy?"));
+      const day = await a.awaitThreadReply(dayTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(day.threadTs === dayTs, "freshness: deploy-day recall lands in its OWN fresh thread (was S4)");
       await ctx.judgePass(
         factuality("Thursday", "Does the reply say the deploy day is Thursday?", { mustMatch: ["thursday"] }),
-        recall.text,
-        "recall factuality",
+        day.text,
+        "freshness: deploy-day recalled from the silo across threads (was S4)",
       );
+      const { ts: hitTs } = await a.post(a.mention("what's the deploy token colour?"));
+      const hit = await a.awaitThreadReply(hitTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(hit.threadTs === hitTs, "freshness: colour recall lands in its OWN fresh thread (silo, not thread ctx)");
+      ctx.gate(
+        hit.text.toLowerCase().includes(colour.toLowerCase()),
+        `same-domain: channel-A recall HITS (hard gate: expected the taught token "${colour}") — reply: "${hit.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
+      await ctx.judgePass(
+        factuality(colour, `Does the reply give the taught colour ${colour}?`, { mustMatch: [colour] }),
+        hit.text,
+        "same-domain: colour recalled from the silo across threads (was S12)",
+      );
+
+      if (ctx.synthetic) {
+        try {
+          await driveDecide({
+            slack: a,
+            synthetic: ctx.synthetic,
+            gate: ctx.gate,
+            log: ctx.log,
+            ask: `forget the stored fact about the deploy token colour ${colour} — it was test data`,
+            leg: "forget-teardown",
+            decision: "approve",
+            timeoutMs: REPLY_WAIT,
+          });
+        } catch (err) {
+          ctx.log(`forget teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+        }
+      } else {
+        ctx.log("forget teardown: synthetic capability absent — no forget card driven (the memory assertions above are already gated)");
+      }
     },
   },
   {
@@ -439,11 +493,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const { ts: forgetTs } = await priv.post(
           priv.mention(`forget the stored fact about our team mascot for ${batch} — it was test data`),
         );
-        const card = await priv.awaitThreadMessage(
-          forgetTs,
-          { timeoutMs: REPLY_WAIT, what: `a memory.forget approval card in thread ${forgetTs}` },
-          (msgs) => msgs.find((m) => priv.isBotReply(m) && approveButton(m) !== undefined),
-        );
+        const card = await awaitCard(priv, forgetTs, REPLY_WAIT);
         const btn = approveButton(card)!;
         if (ctx.synthetic) {
           const clicked = await ctx.synthetic.click({
@@ -460,52 +510,6 @@ export const SCENARIOS: readonly Scenario[] = [
       } catch (err) {
         ctx.log(`teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
       }
-    },
-  },
-  {
-    id: "S12",
-    title: "Silo isolation: channel A's brain never answers in channel B",
-    requires: ["slack", "slackChannelB"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 420_000,
-    judged: true,
-    run: async (ctx) => {
-      const a = ctx.slack!;
-      const b = ctx.slackB!;
-      const colour = factToken("topaz");
-      const { ts: teachTs } = await a.post(a.mention(`remember: the deploy token colour is ${colour}`));
-      const ack = await a.awaitThreadReply(teachTs, { timeoutMs: REPLY_WAIT });
-      await ctx.judgePass(
-        closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
-        ack.text,
-        "remember acknowledgement",
-      );
-      const { ts: missTs } = await b.post(b.mention("what's the deploy token colour? if you don't know, say so plainly"));
-      const miss = await b.awaitThreadReply(missTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(
-        !miss.text.toLowerCase().includes(colour.toLowerCase()),
-        `channel-B recall MISSES (hard gate: the taught token is absent) — reply: "${miss.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
-      );
-      await ctx.judgePass(
-        closedQA("Does the reply say it doesn't know / decline, rather than invent a colour?", {
-          mustNotMatch: [colour],
-        }),
-        miss.text,
-        "cross-domain recall declines cleanly",
-      );
-      const { ts: hitTs } = await a.post(a.mention("what's the deploy token colour?"));
-      const hit = await a.awaitThreadReply(hitTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(
-        hit.text.toLowerCase().includes(colour.toLowerCase()),
-        `channel-A recall HITS (hard gate: expected the taught token "${colour}") — reply: "${hit.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
-      );
-      await ctx.judgePass(
-        factuality(colour, `Does the reply give the taught colour ${colour}?`, { mustMatch: [colour] }),
-        hit.text,
-        "same-domain recall factuality",
-      );
     },
   },
   {

@@ -165,12 +165,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
-    "J1", "S4", "S5", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
+    "J1", "J2", "S5", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
   for (const s of SCENARIOS) {
@@ -205,7 +205,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(unjudged.join(",") === "S6,S10,S15,J-NOT,J-SUP", "S6/S10/S15/J-NOT/J-SUP are fully deterministic — no judge (all hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
-  ok(req("S12") === "slack+slackChannelB", "S12 requires slack + slackChannelB");
+  ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
   ok(req("S13") === "slack+syntheticDm" && req("S14") === "slack+syntheticDm", "S13/S14 require slack + syntheticDm");
   ok(
     req("S15") === "slack+synthetic+slackUser2" && req("S16") === "slack+synthetic+slackUser2",
@@ -289,8 +289,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const baseOnly = new Set(["slack", "discord", "synthetic"] as const);
   const s11 = skipReason(SCENARIOS.find((s) => s.id === "S11")!, baseOnly, missing, false);
   ok(s11 === `missing slackPrivate driver (set ${ENV.slackPrivateChannel})`, "S11 skip names exactly E2E_SLACK_PRIVATE_CHANNEL");
-  const s12 = skipReason(SCENARIOS.find((s) => s.id === "S12")!, baseOnly, missing, false);
-  ok(s12?.includes(ENV.slackChannelB) === true && s12.includes("slackChannelB"), "S12 skip names E2E_SLACK_CHANNEL_B");
+  const j2 = skipReason(SCENARIOS.find((s) => s.id === "J2")!, baseOnly, missing, false);
+  ok(j2?.includes(ENV.slackChannelB) === true && j2.includes("slackChannelB"), "J2 skip names E2E_SLACK_CHANNEL_B");
   for (const id of ["S13", "S14"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r?.includes(ENV.slackDmChannel) === true && r.includes("syntheticDm"), `${id} skip names E2E_SLACK_DM_CHANNEL`);
@@ -304,7 +304,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(skipReason(SCENARIOS.find((s) => s.id === "S19")!, baseOnly, missing, false) === undefined, "S19 runs with base caps alone (slack+synthetic, no add-on fixture)");
   const s20 = skipReason(SCENARIOS.find((s) => s.id === "S20")!, baseOnly, missing, false);
   ok(s20 === `missing webhook driver (set ${ENV.webhookSecret})`, "S20 skip names exactly E2E_WEBHOOK_SECRET");
-  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S23"]) {
+  for (const id of ["S11", "J2", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
   }
   for (const id of ["J1", "S23"]) {
