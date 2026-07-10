@@ -160,6 +160,34 @@ const countOccurrences = (haystack: string, needle: string): number =>
 }
 
 {
+  const input: WakeEnvelopeInput = {
+    reason: "channel-activity",
+    currentTime: "2026-03-25T21:52:00Z",
+    channel: { id: "C0EXCHAN012", type: "channel", memberCount: 5 },
+    messages: [
+      {
+        from: "human",
+        author: "Rowan Hale",
+        id: "1774473520.000100",
+        sentAt: "2026-03-25T21:51:59Z",
+        trust: "peer",
+        trigger: true,
+        attachments: [
+          { kind: "image", id: "F123", name: `dash "board".png`, mimeType: "image/png", url: "https://files.slack.test/F123" },
+          { kind: "file", id: "F456", name: "spec.pdf", mimeType: "application/pdf" },
+        ],
+        body: "here's the screenshot and the spec",
+      },
+    ],
+  };
+  const out = renderWakeEnvelope(input);
+  ok(out.includes(`<attachment kind="image" id="F123" name="dash &quot;board&quot;.png" mimetype="image/png" url="https://files.slack.test/F123"/>`), "attachments: image reference renders with escaped name + kind/id/mimetype/url");
+  ok(out.includes(`<attachment kind="file" id="F456" name="spec.pdf" mimetype="application/pdf"/>`), "attachments: non-image file renders kind=file (referenced, not describable) with no url when absent");
+  ok(out.indexOf("here's the screenshot") < out.indexOf("<attachment"), "attachments: rendered AFTER the message body (a filename can't be mistaken for message text)");
+  ok(out.indexOf("<attachment") < out.indexOf("</message>"), "attachments: nested inside the <message> element");
+}
+
+{
   const base = {
     reason: "channel-activity" as const,
     currentTime: "2026-03-26T08:52:00Z",

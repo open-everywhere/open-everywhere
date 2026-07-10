@@ -4,6 +4,7 @@ const policy: ModelPolicy = defineModelPolicy({
   allow: [
     { id: "zai/glm-5.2", tier: "high" },
     { id: "deepseek/deepseek-v4-flash", tier: "low" },
+    { id: "alibaba/qwen3-vl-instruct", tier: "low" },
   ],
 
   reasoningCeiling: "medium",

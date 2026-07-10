@@ -11,7 +11,7 @@ import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboardi
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { fetchWakeBackscroll, fetchWakeEnvelopeBackscroll } from "./slack-wake-backscroll.js";
-import { renderWakeEnvelope, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
+import { renderWakeEnvelope, type WakeAttachment, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
 import {
   buildIngestedReaction,
   ingestReaction,
@@ -41,6 +41,23 @@ export interface ParsedMessageEvent {
   readonly text: string;
   readonly previousText?: string;
   readonly isAppMention: boolean;
+  readonly attachments?: readonly WakeAttachment[];
+}
+
+export function parseSlackFiles(files: unknown): WakeAttachment[] {
+  if (!Array.isArray(files)) return [];
+  const out: WakeAttachment[] = [];
+  for (const f of files) {
+    if (typeof f !== "object" || f === null) continue;
+    const o = f as Record<string, unknown>;
+    const mimeType = typeof o["mimetype"] === "string" ? o["mimetype"] : undefined;
+    const id = typeof o["id"] === "string" ? o["id"] : undefined;
+    const name = typeof o["name"] === "string" ? o["name"] : typeof o["title"] === "string" ? (o["title"] as string) : undefined;
+    const url = typeof o["url_private"] === "string" ? o["url_private"] : undefined;
+    if (id === undefined && name === undefined && url === undefined) continue;
+    out.push({ kind: mimeType?.startsWith("image/") ? "image" : "file", id, name, mimeType, url });
+  }
+  return out;
 }
 
 export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEvent | null {
@@ -72,6 +89,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
     text,
     previousText: typeof previousMessage?.text === "string" ? previousMessage.text : undefined,
     isAppMention: e.type === "app_mention",
+    attachments: parseSlackFiles(inner.files),
   };
 }
 
@@ -100,6 +118,7 @@ function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit
     trigger: true,
     edited: opts.isEdit || undefined,
     previousBody: opts.isEdit ? ev.previousText : undefined,
+    attachments: ev.attachments && ev.attachments.length > 0 ? ev.attachments : undefined,
     body: ev.text,
   };
 }

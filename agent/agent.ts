@@ -4,8 +4,11 @@ import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
+import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
+import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -25,6 +28,15 @@ const UTILITY_GATEWAY_DEFAULTS = {
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+
+const VISION_MODEL = "alibaba/qwen3-vl-instruct";
+if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
+  throw new Error(
+    `open-everywhere: vision model "${VISION_MODEL}" is not allowed by the org model policy — ` +
+      "add it to agent/model/policy.ts's allow-list (or point VISION_MODEL at an allow-listed model).",
+  );
+}
+registerGatewayImageDescriber({ id: VISION_MODEL, gateway: { zeroDataRetention: true } });
 
 registerPricingSource(gatewayCatalogPricingSource());
 

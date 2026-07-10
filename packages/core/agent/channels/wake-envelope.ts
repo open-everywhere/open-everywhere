@@ -17,6 +17,14 @@ export interface WakeThreadMeta {
   readonly sessionOwner?: string;
 }
 
+export interface WakeAttachment {
+  readonly kind: "image" | "file";
+  readonly id?: string;
+  readonly name?: string;
+  readonly mimeType?: string;
+  readonly url?: string;
+}
+
 export interface WakeMessageInput {
   readonly from: WakeMessageSender;
   readonly author: string;
@@ -29,6 +37,7 @@ export interface WakeMessageInput {
   readonly edited?: boolean;
   readonly previousBody?: string;
   readonly ownerToken?: string;
+  readonly attachments?: readonly WakeAttachment[];
   readonly body: string;
 }
 
@@ -83,8 +92,11 @@ function renderMessage(m: WakeMessageInput): string {
   const previousBody = m.previousBody
     ? `\n<previous-body>\n${indent(ingestUntrusted(escapeXml(m.previousBody), { source: "slack-message-previous" }), 2)}\n</previous-body>`
     : "";
+  const attachments = (m.attachments ?? [])
+    .map((a) => `\n<attachment${attr("kind", a.kind)}${attr("id", a.id)}${attr("name", a.name)}${attr("mimetype", a.mimeType)}${attr("url", a.url)}/>`)
+    .join("");
 
-  return `<message${attrs}>\n${indent(body, 2)}${previousBody}\n</message>`;
+  return `<message${attrs}>\n${indent(body, 2)}${previousBody}${attachments}\n</message>`;
 }
 
 function renderChannelOpen(c: WakeChannelMeta): string {
