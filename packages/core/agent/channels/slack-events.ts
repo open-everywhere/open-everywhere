@@ -11,7 +11,8 @@ import { postOnce, outboundKey } from "../operational/post-once.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
-import { fetchWakeBackscroll, fetchWakeEnvelopeBackscroll } from "./slack-wake-backscroll.js";
+import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
+import type { ContextLine } from "./context-render.js";
 import { classifySessionSendError } from "./session-death.js";
 import { generateHandoffNote } from "../model/rotation-handoff.js";
 import { type WakeAttachment, type WakeMessageInput, type WakeParticipant, type WakeTrust } from "./wake-envelope.js";
@@ -509,7 +510,14 @@ export function renderNameDropMessage(
 export function slackNameDropWake(
   ev: ParsedMessageEvent,
   name: string,
-  opts?: { readonly triggerAuthorName?: string; readonly triggerAuthorHandle?: string; readonly participants?: readonly WakeParticipant[] },
+  opts?: {
+    readonly triggerAuthorName?: string;
+    readonly triggerAuthorHandle?: string;
+    readonly participants?: readonly WakeParticipant[];
+    readonly contextLines?: readonly ContextLine[];
+    readonly contextSource?: string;
+    readonly readMoreHint?: string;
+  },
 ): NormalizedWake {
   return {
     platform: "slack",
@@ -521,6 +529,9 @@ export function slackNameDropWake(
     },
     participants: opts?.participants,
     nameDrop: { botName: name, followUp: "follows-on-reply" },
+    contextLines: opts?.contextLines,
+    contextSource: opts?.contextSource,
+    readMoreHint: opts?.readMoreHint,
     trigger: mkMessageTrigger(
       triggerMessage(ev, { trust: "peer", isEdit: false, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
     ),
@@ -530,7 +541,7 @@ export function slackNameDropWake(
 export interface NameDropRouteDeps {
   readonly enabledFor: (surfaceKey: string) => boolean;
   readonly confirmInternal: (channelId: string) => Promise<boolean>;
-  readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string }) => Promise<readonly string[]>;
+  readonly backscroll?: (input: { channelId: string; ts: string; threadTs?: string }) => Promise<WakeBackscrollLines | null>;
   readonly wake: (input: { channelId: string; threadTs: string; auth: unknown; message: string; context?: readonly string[]; state?: unknown }) => Promise<void>;
   readonly displayName: () => Promise<string | undefined>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
@@ -566,23 +577,31 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     await deps.markEngaged(p, rootTs, deps.now ? deps.now() : new Date().toISOString(), { participating: false });
   }
 
-  const context = deps.backscroll
-    ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => [])
-    : [];
+  const bs = deps.backscroll
+    ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => null)
+    : null;
 
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const triggerName = displayNameOpts(names.triggerAuthor);
+
+  const rendered = renderWake(
+    slackNameDropWake(ev, name!, {
+      triggerAuthorName: triggerName.authorName,
+      triggerAuthorHandle: triggerName.authorHandle,
+      participants: names.participants,
+      contextLines: bs?.lines,
+      contextSource: bs?.source,
+      readMoreHint: bs?.readMoreHint,
+    }),
+    deps.now,
+  );
 
   await deps.wake({
     channelId: ev.channelId,
     threadTs: rootTs,
     auth: authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
-    message: renderNameDropMessage(ev, name!, deps.now, {
-      triggerAuthorName: triggerName.authorName,
-      triggerAuthorHandle: triggerName.authorHandle,
-      participants: names.participants,
-    }),
-    ...(context.length ? { context } : {}),
+    message: rendered.message,
+    ...(rendered.context ? { context: rendered.context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
   });
   return { ...decision, woke: true };
@@ -735,7 +754,7 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     displayName: botDisplayName,
     resolveProfile: liveResolveProfile,
     markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, opts),
-    backscroll: (input) => fetchWakeBackscroll(input),
+    backscroll: (input) => fetchWakeBackscrollLines(input),
     async wake({ channelId, threadTs, auth, message, context, state }) {
       await send({ message, context }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
     },

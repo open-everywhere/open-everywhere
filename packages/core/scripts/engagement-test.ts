@@ -51,6 +51,8 @@ import { OE_APPROVAL_PREFIX } from "../agent/approvals/flow.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
+import { renderContext } from "../agent/channels/context-render.js";
+import type { WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -863,31 +865,37 @@ registerConfig({
 
   {
     const contextCalls: Array<{ channelId: string; ts: string; threadTs?: string }> = [];
-    const withBackscroll = (result: readonly string[]): NameDropRouteDeps => ({
+    const withBackscroll = (result: WakeBackscrollLines | null): NameDropRouteDeps => ({
       ...deps(true, true),
       backscroll: async (input) => {
         contextCalls.push(input);
         return result;
       },
     });
+    const priorLines: WakeBackscrollLines = {
+      lines: [{ senderType: "user", senderId: "U9", ts: "40.0", text: "prior chatter" }],
+      source: "slack channel C_TXN",
+      readMoreHint: "fetch more with read_slack_channel",
+    };
 
     calls.length = 0;
     contextCalls.length = 0;
-    out = await routeNameDropEvent(topLevel(), withBackscroll(["<untrusted>prior chatter</untrusted>"]));
+    out = await routeNameDropEvent(topLevel(), withBackscroll(priorLines));
     ok(out.woke && calls.length === 1, "wake still fires with a backscroll wired");
     ok(contextCalls.length === 1 && contextCalls[0].channelId === "C_TXN" && contextCalls[0].ts === "42.1" && contextCalls[0].threadTs === undefined, "backscroll fetched for the triggering message (top-level → no threadTs)");
     ok(
-      Array.isArray((calls[0] as { context?: readonly string[] }).context) && (calls[0] as { context?: readonly string[] }).context![0] === "<untrusted>prior chatter</untrusted>",
-      "the fetched backscroll reaches the wake as the context array",
+      Array.isArray((calls[0] as { context?: readonly string[] }).context) &&
+        (calls[0] as { context?: readonly string[] }).context![0] === renderContext(priorLines.lines, priorLines.source, { readMoreHint: priorLines.readMoreHint }),
+      "the fetched backscroll reaches the wake as a renderContext-wrapped context block (W3: wrapping happens inside renderWake, not in the plumbing)",
     );
 
     contextCalls.length = 0;
-    await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), withBackscroll(["ctx"]));
+    await routeNameDropEvent(topLevel({ thread_ts: "1.1" }), withBackscroll(priorLines));
     ok(contextCalls.length === 1 && contextCalls[0].threadTs === "1.1", "in-thread name-drop passes the existing thread_ts to the backscroll fetcher");
 
     calls.length = 0;
-    out = await routeNameDropEvent(topLevel(), withBackscroll([]));
-    ok(out.woke && calls.length === 1 && (calls[0] as { context?: readonly string[] }).context === undefined, "empty backscroll → wake carries no context (identical to the pre-backscroll payload)");
+    out = await routeNameDropEvent(topLevel(), withBackscroll(null));
+    ok(out.woke && calls.length === 1 && (calls[0] as { context?: readonly string[] }).context === undefined, "null backscroll → wake carries no context (identical to the pre-backscroll payload)");
 
     calls.length = 0;
     out = await routeNameDropEvent(topLevel(), { ...deps(true, true), backscroll: async () => { throw new Error("slack down"); } });
@@ -898,7 +906,7 @@ registerConfig({
     ok(out.woke && (calls[0] as { context?: readonly string[] }).context === undefined, "absent backscroll dep → wake with no context (back-compat)");
 
     contextCalls.length = 0;
-    await routeNameDropEvent(topLevel({ text: "no bots here" }), withBackscroll(["should-not-fetch"]));
+    await routeNameDropEvent(topLevel({ text: "no bots here" }), withBackscroll(priorLines));
     ok(contextCalls.length === 0, "no name in text → gate declines BEFORE the backscroll fetch (no wasted API call)");
   }
 }

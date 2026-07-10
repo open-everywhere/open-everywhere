@@ -55,7 +55,13 @@ export function _resetWakeBotIdentity(): void {
 
 const liveDeps: WakeBackscrollDeps = { request: liveRequest, identity: liveWakeBotIdentity };
 
-export async function fetchWakeBackscroll(input: WakeBackscrollInput, deps: WakeBackscrollDeps = liveDeps): Promise<string[]> {
+export interface WakeBackscrollLines {
+  readonly lines: readonly ContextLine[];
+  readonly source: string;
+  readonly readMoreHint: string;
+}
+
+export async function fetchWakeBackscrollLines(input: WakeBackscrollInput, deps: WakeBackscrollDeps = liveDeps): Promise<WakeBackscrollLines | null> {
   try {
     const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
     if (input.threadTs) {
@@ -65,10 +71,10 @@ export async function fetchWakeBackscroll(input: WakeBackscrollInput, deps: Wake
         limit: "100",
       });
       const raw = extractMessages(res);
-      if (!raw) return [];
+      if (!raw) return null;
       const priorRaw = raw.filter((m) => (typeof m.ts === "string" ? m.ts : "") !== input.ts);
       const lines = sinceLastAgentReply(linesFromMessages(priorRaw, ids));
-      return renderEntry(lines, `slack thread ${input.channelId}/${input.threadTs}`);
+      return cappedEntry(lines, `slack thread ${input.channelId}/${input.threadTs}`);
     }
     const res = await deps.request("conversations.history", {
       channel: input.channelId,
@@ -77,13 +83,20 @@ export async function fetchWakeBackscroll(input: WakeBackscrollInput, deps: Wake
       limit: String(WAKE_BACKSCROLL_MAX),
     });
     const raw = extractMessages(res);
-    if (!raw) return [];
+    if (!raw) return null;
     const lines = linesFromMessages(raw, ids);
     lines.reverse();
-    return renderEntry(lines, `slack channel ${input.channelId}`);
+    return cappedEntry(lines, `slack channel ${input.channelId}`);
   } catch {
-    return [];
+    return null;
   }
+}
+
+export async function fetchWakeBackscroll(input: WakeBackscrollInput, deps: WakeBackscrollDeps = liveDeps): Promise<string[]> {
+  const res = await fetchWakeBackscrollLines(input, deps);
+  if (!res) return [];
+  const entry = renderContext(res.lines, res.source, { readMoreHint: res.readMoreHint });
+  return entry ? [entry] : [];
 }
 
 function extractMessages(res: Record<string, unknown> | undefined): Array<Record<string, unknown>> | undefined {
@@ -91,10 +104,10 @@ function extractMessages(res: Record<string, unknown> | undefined): Array<Record
   return res.messages as Array<Record<string, unknown>>;
 }
 
-function renderEntry(lines: readonly ContextLine[], source: string): string[] {
+function cappedEntry(lines: readonly ContextLine[], source: string): WakeBackscrollLines | null {
   const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
-  const entry = renderContext(capped, source, { readMoreHint: READ_MORE_HINT });
-  return entry ? [entry] : [];
+  if (capped.length === 0) return null;
+  return { lines: capped, source, readMoreHint: READ_MORE_HINT };
 }
 
 export const RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
