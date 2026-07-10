@@ -8,6 +8,7 @@ import {
   resolveSlack,
   resolveSlackChannelB,
   resolveSlackPrivate,
+  resolveSlackSupervisor,
   resolveSlackUser2,
   resolveSynthetic,
   resolveSyntheticDm,
@@ -68,6 +69,7 @@ async function main(): Promise<void> {
 
   const slackPrivate = resolveSlackPrivate();
   const slackChannelB = resolveSlackChannelB();
+  const slackSupervisor = resolveSlackSupervisor();
   const syntheticDm = resolveSyntheticDm();
   const slackUser2 = resolveSlackUser2();
   const webhook = resolveWebhook();
@@ -89,6 +91,7 @@ async function main(): Promise<void> {
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
+  const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
@@ -181,6 +184,7 @@ async function main(): Promise<void> {
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,
+      slackSupervisor: slackSupervisorDriver,
       syntheticDm: syntheticDmForge,
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,

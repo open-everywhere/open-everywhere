@@ -33,6 +33,7 @@ export interface ScenarioContext {
   readonly synthetic?: SyntheticSlack;
   readonly slackPrivate?: SlackDriver;
   readonly slackB?: SlackDriver;
+  readonly slackSupervisor?: SlackDriver;
   readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
@@ -1320,6 +1321,42 @@ export const SCENARIOS: readonly Scenario[] = [
         injOk.text,
         "injection: the session shrugged off the override and answers normally",
       );
+    },
+  },
+  {
+    id: "J-SUP",
+    title: "Ambient supervisor smoke: plain non-mention → in-channel reply; no self-loop; off-topic → silence (THE pending live-smoke gate)",
+    requires: ["slack", "slackSupervisor"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 600_000,
+    judged: false,
+    run: async (ctx) => {
+      const sup = ctx.slackSupervisor!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const marker = factToken("sup");
+      const { ts: askTs } = await sup.post(`Quick question for whoever's around — what's a good one-line summary of what this channel is for? (ref ${marker})`);
+      const reply = await sup.awaitChannelMessage(askTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply.text.trim().length > 0, "supervisor: a plain non-mention answerable message drew an in-channel bot reply (the channel-watch judge woke)");
+
+      await sleep(SILENCE_WINDOW);
+      const afterReply = (await sup.history(reply.ts)).filter((m) => sup.isBotReply(m));
+      ctx.gate(afterReply.length === 0, "supervisor self-loop: the bot's own post did NOT wake another reply (no runaway)");
+
+      const { ts: noiseTs } = await sup.post("lol did everyone see the game last night");
+      if (ctx.auditRead) {
+        try {
+          const rows = await ctx.auditRead({ sinceIso: runStart, platform: "slack", actions: ["slack.no_reply"] });
+          ctx.log(`supervisor audited silence: ${rows.length} slack.no_reply row(s) in the run window`);
+        } catch (err) {
+          ctx.log(`audit read unavailable (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
+        }
+      }
+      await sleep(SILENCE_WINDOW);
+      const noiseReplies = (await sup.history(noiseTs)).filter((m) => sup.isBotReply(m));
+      ctx.gate(noiseReplies.length === 0, "supervisor: an off-topic aside drew NO in-channel reply within the silence window");
     },
   },
 ];

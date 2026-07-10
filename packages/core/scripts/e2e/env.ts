@@ -16,6 +16,7 @@ export const ENV = {
   includeOptional: "E2E_INCLUDE_OPTIONAL",
   webhookSecret: "E2E_WEBHOOK_SECRET",
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
+  slackSupervisorChannel: "E2E_SLACK_SUPERVISOR_CHANNEL",
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
@@ -59,6 +60,7 @@ export type Capability =
   | "slackUser2"
   | "webhook"
   | "notion"
+  | "slackSupervisor"
   | "teams"
   | "github"
   | "linear"
@@ -210,6 +212,12 @@ export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtr
   return { ok: true, cfg: { channel: values[0] } };
 }
 
+export function resolveSlackSupervisor(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
+  const { values, missing } = need(env, [ENV.slackSupervisorChannel]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
 export function resolveSlackUser2(env: Env = process.env): Resolved<SlackUser2Config> {
   const { values, missing } = need(env, [ENV.slackUser2Id]);
   if (missing.length > 0) return { ok: false, missing };
@@ -285,6 +293,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
+  const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
   const slackUser2 = resolveSlackUser2(env);
   const webhook = resolveWebhook(env);
@@ -299,6 +308,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
+  if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");
   if (slackUser2.ok) available.add("slackUser2");
   if (webhook.ok) available.add("webhook");
@@ -315,6 +325,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       synthetic: synthetic.ok ? [] : synthetic.missing,
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
+      slackSupervisor: slackSupervisor.ok ? [] : slackSupervisor.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
       webhook: webhook.ok ? [] : webhook.missing,
