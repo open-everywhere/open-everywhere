@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { channelPlatform, bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { capabilitiesFor } from "../identity/capabilities.js";
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
@@ -10,7 +11,7 @@ const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      if (!capabilitiesFor(ctx as BindableContext).reactions) return null;
       return defineTool({
         description:
           'React to a message with a Slack emoji, instead of (or as) your reply. In a busy or ' +

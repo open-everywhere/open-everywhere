@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { channelPlatform, type BindableContext } from "../identity/binding.js";
+import { type BindableContext } from "../identity/binding.js";
+import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply } from "../channels/reply-post.js";
 import { markRepliedThisTurn } from "../channels/reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
@@ -8,8 +9,7 @@ import { auditToolAction } from "../audit/tool-action.js";
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      const platform = channelPlatform(ctx as BindableContext);
-      if (platform !== "slack" && platform !== "discord") return null;
+      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
       return defineTool({
         description:
           "Post a message into this conversation NOW, without ending your turn. Posting is an " +
