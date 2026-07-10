@@ -139,6 +139,83 @@ export async function listBlockComments(blockId: string, opts: NotionCallOpts): 
   return Array.isArray(body.results) ? body.results : [];
 }
 
+export interface NotionBlock {
+  readonly id?: string;
+  readonly type?: string;
+  readonly has_children?: boolean;
+  readonly [key: string]: unknown;
+}
+
+export function blockPlainText(block: NotionBlock): string {
+  const t = typeof block.type === "string" ? block.type : undefined;
+  if (!t) return "";
+  const inner = block[t];
+  if (!inner || typeof inner !== "object") return "";
+  const rich = (inner as { rich_text?: unknown }).rich_text;
+  return richTextToPlainText(Array.isArray(rich) ? (rich as NotionRichText[]) : undefined);
+}
+
+export async function getBlockChildren(
+  blockId: string,
+  opts: NotionCallOpts & { readonly startCursor?: string; readonly pageSize?: number },
+): Promise<{ readonly blocks: NotionBlock[]; readonly nextCursor?: string }> {
+  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
+  const qs = new URLSearchParams({ page_size: String(opts.pageSize ?? 100) });
+  if (opts.startCursor) qs.set("start_cursor", opts.startCursor);
+  const res = await f(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}/children?${qs.toString()}`, {
+    method: "GET",
+    headers: notionHeaders(opts),
+  });
+  if (!res.ok) throw new Error(`getBlockChildren ${blockId} failed: ${res.status} ${await safeText(res)}`);
+  const body = (await res.json()) as { results?: NotionBlock[]; has_more?: boolean; next_cursor?: string | null };
+  return {
+    blocks: Array.isArray(body.results) ? body.results : [],
+    nextCursor: body.has_more && body.next_cursor ? body.next_cursor : undefined,
+  };
+}
+
+export async function readNotionPage(
+  pageId: string,
+  opts: NotionCallOpts & { readonly maxBlocks?: number; readonly maxChars?: number },
+): Promise<{ readonly text: string; readonly blockCount: number; readonly truncated: boolean }> {
+  const maxBlocks = opts.maxBlocks ?? 200;
+  const maxChars = opts.maxChars ?? 20_000;
+  const lines: string[] = [];
+  let chars = 0;
+  let blockCount = 0;
+  let truncated = false;
+  let cursor: string | undefined;
+  do {
+    const { blocks, nextCursor } = await getBlockChildren(pageId, { ...opts, startCursor: cursor });
+    let stop = false;
+    for (const b of blocks) {
+      if (blockCount >= maxBlocks) {
+        truncated = true;
+        stop = true;
+        break;
+      }
+      blockCount += 1;
+      const text = blockPlainText(b);
+      if (!text) continue;
+      if (chars + text.length > maxChars && lines.length > 0) {
+        truncated = true;
+        stop = true;
+        break;
+      }
+      chars += text.length;
+      lines.push(text);
+    }
+    if (stop) {
+      cursor = undefined;
+    } else if (nextCursor) {
+      cursor = nextCursor;
+    } else {
+      cursor = undefined;
+    }
+  } while (cursor);
+  return { text: lines.join("\n"), blockCount, truncated };
+}
+
 export async function createCommentReply(
   args: { discussionId: string; text: string } & NotionCallOpts,
 ): Promise<string> {

@@ -17,8 +17,12 @@ import {
   createCommentReply,
   retrieveBotUser,
   notionContinuationToken,
+  blockPlainText,
+  getBlockChildren,
+  readNotionPage,
   type FetchLike,
   type NotionComment,
+  type NotionBlock,
 } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery, type NotionDispatchArgs } from "../agent/channels/notion-webhook.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
@@ -293,6 +297,44 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   } finally {
     globalThis.fetch = realFetch;
   }
+}
+
+{
+  const para: NotionBlock = { id: "b1", type: "paragraph", paragraph: { rich_text: [{ type: "text", plain_text: "hello " }, { type: "text", plain_text: "world" }] } };
+  const heading: NotionBlock = { id: "b2", type: "heading_1", heading_1: { rich_text: [{ type: "text", plain_text: "A Title" }] } };
+  const divider: NotionBlock = { id: "b3", type: "divider", divider: {} };
+  ok(blockPlainText(para) === "hello world", "blockPlainText flattens a paragraph's rich_text");
+  ok(blockPlainText(heading) === "A Title", "blockPlainText flattens a heading by its own type key");
+  ok(blockPlainText(divider) === "", "blockPlainText returns empty for a text-less block (divider)");
+  ok(blockPlainText({ id: "b4" } as NotionBlock) === "", "blockPlainText tolerates a typeless block");
+
+  const oneFetch: FetchLike = async () => new Response(JSON.stringify({ results: [para], has_more: true, next_cursor: "cur-2" }), { status: 200 });
+  const firstPage = await getBlockChildren(PAGE, { apiKey: "ntn_key", fetch: oneFetch });
+  ok(firstPage.blocks.length === 1 && firstPage.nextCursor === "cur-2", "getBlockChildren returns blocks + the next cursor when has_more");
+  const lastFetch: FetchLike = async () => new Response(JSON.stringify({ results: [para], has_more: false }), { status: 200 });
+  ok((await getBlockChildren(PAGE, { apiKey: "ntn_key", fetch: lastFetch })).nextCursor === undefined, "getBlockChildren yields no cursor on the last page");
+
+  const pages: Record<string, { results: NotionBlock[]; has_more: boolean; next_cursor?: string }> = {
+    "": { results: [heading, para], has_more: true, next_cursor: "cur-2" },
+    "cur-2": { results: [{ id: "b5", type: "paragraph", paragraph: { rich_text: [{ type: "text", plain_text: "second page" }] } }], has_more: false },
+  };
+  const pagedFetch: FetchLike = async (input) => {
+    const u = new URL(input);
+    const cur = u.searchParams.get("start_cursor") ?? "";
+    return new Response(JSON.stringify(pages[cur]), { status: 200 });
+  };
+  const read = await readNotionPage(PAGE, { apiKey: "ntn_key", fetch: pagedFetch });
+  ok(read.text === "A Title\nhello world\nsecond page", "readNotionPage paginates + joins flattened blocks oldest-first");
+  ok(read.blockCount === 3 && read.truncated === false, "readNotionPage counts blocks and is not truncated when everything fits");
+
+  const manyFetch: FetchLike = async () => new Response(JSON.stringify({ results: [para, heading], has_more: true, next_cursor: "more" }), { status: 200 });
+  const capped = await readNotionPage(PAGE, { apiKey: "ntn_key", fetch: manyFetch, maxBlocks: 1 });
+  ok(capped.blockCount === 1 && capped.truncated === true, "readNotionPage stops at maxBlocks and reports truncated");
+
+  const bigBlock: NotionBlock = { id: "b6", type: "paragraph", paragraph: { rich_text: [{ type: "text", plain_text: "x".repeat(50) }] } };
+  const bigFetch: FetchLike = async () => new Response(JSON.stringify({ results: [bigBlock, bigBlock, bigBlock], has_more: false }), { status: 200 });
+  const charCapped = await readNotionPage(PAGE, { apiKey: "ntn_key", fetch: bigFetch, maxChars: 60 });
+  ok(charCapped.truncated === true && charCapped.text.length <= 50, "readNotionPage stops at maxChars (keeps at least the first block) and reports truncated");
 }
 
 console.log(`\n✓ notion: ${passed} assertions passed`);
