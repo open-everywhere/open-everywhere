@@ -648,135 +648,115 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S17",
-    title: "Access-request: propose renders a real in-vocabulary card (tap+PR loop opt-in)",
-    requires: ["slack", "synthetic", "slackUser2"],
+    id: "J4",
+    title: "Slack access-request journey: propose card (tap+PR opt-in), DM refusal, out-of-vocab refusal (absorbs S17/S18)",
+    requires: ["slack", "syntheticDm"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 360_000,
+    timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
-      const synthetic = ctx.synthetic!;
-      const user2 = ctx.slackUser2!.userId;
+      const dm = ctx.dm!;
+      const forge = ctx.syntheticDm!;
+      const { userId, teamId } = await slack.identity();
+
       const { ts: askTs } = await slack.post(
         slack.mention(
           "this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST",
         ),
       );
-      const card = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `an access.request card (oe_approval buttons) in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
-      );
+      const card = await awaitCard(slack, askTs, REPLY_WAIT);
       const btn = approveButton(card)!;
-      ctx.gate(btn.pendingId.length > 0, "access-request card carries a real pending id");
-      ctx.gate(btn.org.length > 0, "access-request card carries the org in its button value");
+      ctx.gate(btn.pendingId.length > 0, "S17: access-request card carries a real pending id");
+      ctx.gate(btn.org.length > 0, "S17: access-request card carries the org in its button value");
       await ctx.judgePass(
         closedQA("Does the card describe widening a connection to add POST access, naming the e2e-fixture connection?", {
           mustMatch: [/post/i],
         }),
         card.text,
-        "access-request card legibility",
+        "S17: access-request card legibility",
       );
 
       if (process.env.E2E_ACCESS_ALLOW_SEND !== "1") {
-        ctx.log("E2E_ACCESS_ALLOW_SEND not set — propose-only run; the card is left to expire on its TTL (no tap, no PR risk)");
-        return;
+        ctx.log("S17: E2E_ACCESS_ALLOW_SEND not set — propose-only run; the card is left to expire on its TTL (no tap, no PR risk)");
+      } else if (!ctx.synthetic || !ctx.slackUser2) {
+        ctx.log("S17: E2E_ACCESS_ALLOW_SEND set but synthetic/slackUser2 absent — cannot forge the member tap; skipping the PR leg");
+      } else {
+        const synthetic = ctx.synthetic;
+        const user2 = ctx.slackUser2.userId;
+        const sent = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId, userId: user2 });
+        ctx.log(`${sent.label}: non-admin member tap ${btn.pendingId} as ${user2} → ${sent.status}`);
+        ctx.gate(sent.status === 200, "S17: member tap acked 200");
+        const decided = await awaitDecided(slack, askTs, card.ts, REPLY_WAIT);
+        ctx.gate(true, "S17: non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
+
+        if (/dry-run/i.test(decided.text)) {
+          ctx.log("S17: dry-run confirmed (OE_ACCESS_DRY_RUN=1 on the deployment) — validated, no PR, nothing to tear down");
+        } else {
+          const prMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
+          ctx.gate(prMatch !== null, "S17: live outcome names a real PR URL (github.com/<repo>/pull/<n>)");
+          const [, repo, prNumberStr] = prMatch!;
+          ctx.log(`S17: live PR opened: ${repo}#${prNumberStr}`);
+
+          const threadNote = await slack.awaitThreadMessage(
+            askTs,
+            { timeoutMs: REPLY_WAIT, what: `the requesting-thread "sent" note in thread ${askTs}` },
+            (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== card.ts && m.text.includes(prNumberStr)),
+          );
+          ctx.gate(threadNote.text.toLowerCase().includes("access request sent"), "S17: requesting thread gets the PR-sent note");
+
+          const adminNote = await pollUntil(
+            async () => (await slack.history(askTs)).find((m) => slack.isBotReply(m) && m.text.includes(prNumberStr)),
+            { timeoutMs: REPLY_WAIT, what: `the admin-channel PR notification (top-level) naming PR #${prNumberStr}` },
+          );
+          ctx.gate(adminNote.text.toLowerCase().includes("access request"), "S17: admin-channel notification names the access request + PR link");
+
+          try {
+            const { execSync } = await import("node:child_process");
+            const token = execSync("gh auth token", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+            const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumberStr}`, {
+              method: "PATCH",
+              headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/vnd.github+json" },
+              body: JSON.stringify({ state: "closed" }),
+            });
+            ctx.log(`S17 teardown: closed PR ${repo}#${prNumberStr} via the operator's gh token → ${res.status}`);
+          } catch (err) {
+            ctx.log(
+              `S17 teardown (best-effort) could not close the PR automatically: ${String(err instanceof Error ? err.message : err)} — close ${repo}#${prNumberStr} by hand`,
+            );
+          }
+        }
       }
-
-      const sent = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, userId: user2 });
-      ctx.log(`${sent.label}: non-admin member tap ${btn.pendingId} as ${user2} → ${sent.status}`);
-      ctx.gate(sent.status === 200, "member tap acked 200");
-      const decided = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `card ${card.ts} re-rendered decided (actions block gone)` },
-        (msgs) => msgs.find((m) => m.ts === card.ts && approveButton(m) === undefined),
-      );
-      ctx.gate(true, "non-admin member tap DECIDES the card (buttons removed) — member-policy coverage");
-
-      if (/dry-run/i.test(decided.text)) {
-        ctx.log("dry-run confirmed (OE_ACCESS_DRY_RUN=1 on the deployment) — validated, no PR, nothing to tear down");
-        return;
-      }
-
-      const prMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
-      ctx.gate(prMatch !== null, "live outcome names a real PR URL (github.com/<repo>/pull/<n>)");
-      const [, repo, prNumberStr] = prMatch!;
-      ctx.log(`live PR opened: ${repo}#${prNumberStr}`);
-
-      const threadNote = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `the requesting-thread "sent" note in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.ts !== card.ts && m.text.includes(prNumberStr)),
-      );
-      ctx.gate(threadNote.text.toLowerCase().includes("access request sent"), "requesting thread gets the PR-sent note");
-
-      const adminNote = await pollUntil(
-        async () => (await slack.history(askTs)).find((m) => slack.isBotReply(m) && m.text.includes(prNumberStr)),
-        { timeoutMs: REPLY_WAIT, what: `the admin-channel PR notification (top-level) naming PR #${prNumberStr}` },
-      );
-      ctx.gate(adminNote.text.toLowerCase().includes("access request"), "admin-channel notification names the access request + PR link");
-
-      try {
-        const { execSync } = await import("node:child_process");
-        const token = execSync("gh auth token", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-        const res = await fetch(`https://api.github.com/repos/${repo}/pulls/${prNumberStr}`, {
-          method: "PATCH",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/vnd.github+json" },
-          body: JSON.stringify({ state: "closed" }),
-        });
-        ctx.log(`teardown: closed PR ${repo}#${prNumberStr} via the operator's gh token → ${res.status}`);
-      } catch (err) {
-        ctx.log(
-          `teardown (best-effort) could not close the PR automatically: ${String(err instanceof Error ? err.message : err)} — close ${repo}#${prNumberStr} by hand`,
-        );
-      }
-    },
-  },
-  {
-    id: "S18",
-    title: "Access-request negative: a DM ask and an out-of-vocabulary host ask both refuse (no card, either way)",
-    requires: ["slack", "syntheticDm"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 300_000,
-    judged: true,
-    run: async (ctx) => {
-      const dm = ctx.dm!;
-      const forge = ctx.syntheticDm!;
-      const pub = ctx.slack!;
-      const { userId, teamId } = await ctx.slack!.identity();
 
       const dmAsk = "can you widen this channel's access to add POST to a connection here?";
       const { ts: dmTs } = await dm.post(dmAsk);
       const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
-      ctx.gate(sentDm.status === 200, "synthetic DM ask acked 200");
+      ctx.gate(sentDm.status === 200, "S18: synthetic DM ask acked 200");
       const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(dmReply.text.trim().length > 0, "agent replied to the DM access ask");
-      ctx.gate(approveButton(dmReply) === undefined, "NO access-request card is posted from a DM (hard gate)");
+      ctx.gate(dmReply.text.trim().length > 0, "S18: agent replied to the DM access ask");
+      ctx.gate(approveButton(dmReply) === undefined, "S18: NO access-request card is posted from a DM (hard gate)");
       await ctx.judgePass(
         closedQA("Does the reply decline to request access from a DM, rather than posting a request card?", {
           mustMatch: [/channel|admin|dm|direct message|from here|can.?t|cannot|unable|not able/i],
         }),
         dmReply.text,
-        "DM access-ask refusal quality",
+        "S18: DM access-ask refusal quality",
       );
 
-      const { ts: hostTs } = await pub.post(
-        pub.mention("can we get access to a brand new host, https://totally-new-example-service.test — please add it as a new connection"),
+      const { ts: hostTs } = await slack.post(
+        slack.mention("can we get access to a brand new host, https://totally-new-example-service.test — please add it as a new connection"),
       );
-      const hostReply = await pub.awaitThreadReply(hostTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(approveButton(hostReply) === undefined, "NO access-request card is posted for an out-of-vocabulary host ask (hard gate)");
+      const hostReply = await slack.awaitThreadReply(hostTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(approveButton(hostReply) === undefined, "S18: NO access-request card is posted for an out-of-vocabulary host ask (hard gate)");
       await ctx.judgePass(
         closedQA(
           "Does the reply decline to grant/request a brand-new host connection and point to an admin/manual PR instead of offering a request card?",
           { mustMatch: [/admin|manual|hand|can.?t|cannot|unable/i] },
         ),
         hostReply.text,
-        "out-of-vocabulary refusal quality",
+        "S18: out-of-vocabulary refusal quality",
       );
     },
   },
