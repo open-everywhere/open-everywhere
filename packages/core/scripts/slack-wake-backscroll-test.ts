@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import {
   fetchWakeBackscroll,
   fetchWakeEnvelopeBackscroll,
-  FIRST_WAKE_BACKSCROLL_WINDOW_HOURS,
+  fetchSlackBackscrollWindow,
+  isBackscrollVisible,
+  RAW_FETCH_REACHBACK_HOURS,
   WAKE_BACKSCROLL_MAX,
   type SlackRequester,
   type WakeBackscrollDeps,
@@ -123,39 +125,98 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   ok(out.length === 1 && out[0].includes("hi"), "a failing identity resolver still yields context (own-post attribution just degrades)");
 }
 
+const HOUR_S = 3600;
+const routing = (
+  history: Msg[],
+  replies: Record<string, Msg[]> = {},
+  rec?: { calls: Array<{ method: string; params: Record<string, string> }> },
+): SlackRequester => {
+  return async (method: string, params: Record<string, string>) => {
+    rec?.calls.push({ method, params });
+    if (method === "conversations.history") return { ok: true, messages: history };
+    if (method === "conversations.replies") {
+      const root = params.ts;
+      return { ok: true, messages: replies[root] ?? [] };
+    }
+    return { ok: false, error: "unexpected_method" };
+  };
+};
+
 {
-  ok(FIRST_WAKE_BACKSCROLL_WINDOW_HOURS === 24, "default first-wake window is 24h");
-
-  const rec: { method?: string; params?: Record<string, string> } = {};
-  const messages: Msg[] = [
-    { ts: "9.0", user: "UC", text: "newest" },
-    { ts: "8.0", user: "UB", text: "middle" },
-    { ts: "6.0", bot_id: "BBOT", text: "own post" },
+  const T = 200 * HOUR_S;
+  const s = (h: number) => `${(T - h * HOUR_S).toFixed(3)}`;
+  const history: Msg[] = [
+    { ts: s(0.5), user: "UB", text: "spine-newest" },
+    { ts: s(0.7), bot_id: "BFOREIGN", text: "a foreign bot post" },
+    { ts: s(0.9), ts_note: "no author", text: "orphan message" },
+    { ts: s(1.0), bot_id: "BBOT", text: "my own spine post" },
+    { ts: s(30), user: "UB", text: "older-burst-1" },
+    { ts: s(30.2), user: "UC", text: "older-burst-2" },
   ];
-  let out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "10.0" }, deps(stub("conversations.history", messages, rec)));
-  ok(rec.method === "conversations.history" && rec.params?.latest === "10.0" && rec.params?.inclusive === "false", "windowed fetch still bounds by latest/inclusive like the string-context fetcher");
-  const expectedOldest = String(10.0 - FIRST_WAKE_BACKSCROLL_WINDOW_HOURS * 3600);
-  ok(rec.params?.oldest === expectedOldest, `oldest = latest - ${FIRST_WAKE_BACKSCROLL_WINDOW_HOURS}h (a rolling TIME window, not a fixed message count)`);
+  const rec = { calls: [] as Array<{ method: string; params: Record<string, string> }> };
+  const out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: `${T + HOUR_S}` }, deps(routing(history, {}, rec)));
 
-  ok(out.length === 3, "returns one entry per message (not a rolled-up context string)");
+  const hist = rec.calls.find((c) => c.method === "conversations.history");
+  ok(hist?.params.inclusive === "false" && hist?.params.latest === `${T + HOUR_S}`, "adapter fetches conversations.history strictly older than the trigger");
+  ok(hist?.params.oldest === String(T + HOUR_S - RAW_FETCH_REACHBACK_HOURS * HOUR_S), `raw fetch reachback floor = latest - ${RAW_FETCH_REACHBACK_HOURS}h (covers a weekend spine gap)`);
+
+  const bodies = out.map((m) => m.body);
+  ok(!bodies.includes("a foreign bot post"), "VISIBILITY GATE: a foreign bot's message is NOT surfaced (a live wake drops bot authors)");
+  ok(!bodies.includes("orphan message"), "VISIBILITY GATE: an unattributable (no author) message is NOT surfaced (fail closed)");
+  ok(bodies.includes("my own spine post"), "the bot's OWN prior post IS surfaced (tagged self)");
+  ok(bodies.includes("older-burst-1") && bodies.includes("spine-newest"), "spine + the in-36h older burst both surface");
+
+  ok(out[0].sentAt <= out[out.length - 1].sentAt, "entries are oldest-first");
+  const sids = new Set(out.map((m) => m.sessionId));
+  ok(sids.size === 2 && !sids.has(undefined), "two idle-gap clusters → each message carries its cluster sessionId (multi-cluster)");
+  const self = out.find((m) => m.body === "my own spine post");
+  ok(self?.from === "self" && self?.author === "unknown" && self?.authorId === undefined, "own post → from=self, no foreign author id");
+  const human = out.find((m) => m.body === "older-burst-1");
+  ok(human?.from === "human" && human?.author === "UB" && human?.authorId === "UB", "a human message → from=human with the raw id in author/author-id (name resolved later by the route)");
   ok(out.every((m) => m.trust === "peer" && m.trigger === undefined), "every backscroll entry is trust=peer with no trigger flag");
-  ok(out[0].body === "own post" && out[1].body === "middle" && out[2].body === "newest", "oldest-first order (conversations.history is newest-first on the wire)");
-  ok(out[0].from === "self" && out[0].author === "unknown", "the bot's OWN post maps to from:self (distinct from another bot's from:agent), no foreign author id");
-  ok(out[1].from === "human" && out[1].author === "UB" && out[1].authorId === "UB", "a human message maps to from:human, raw user id in both author (unresolved) and author-id");
-  ok(out.every((m) => typeof m.sentAt === "string" && !Number.isNaN(Date.parse(m.sentAt))), "sentAt is a valid ISO-8601 string");
+  ok(out.every((m) => m.type === "channel"), "top-level messages are tagged type=channel");
+}
 
-  const rec2: { method?: string; params?: Record<string, string> } = {};
-  await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "10.0", windowHours: 1 }, deps(stub("conversations.history", messages, rec2)));
-  ok(rec2.params?.oldest === String(10.0 - 3600), "a custom windowHours narrows the oldest bound accordingly");
+{
+  const T = 200 * HOUR_S;
+  const s = (h: number) => `${(T - h * HOUR_S).toFixed(3)}`;
+  const rootTs = s(1.0);
+  const history: Msg[] = [
+    { ts: s(0.5), user: "UB", text: "top-level after" },
+    { ts: rootTs, user: "UA", text: "thread root", thread_ts: rootTs, reply_count: 2 },
+  ];
+  const replies: Record<string, Msg[]> = {
+    [rootTs]: [
+      { ts: rootTs, user: "UA", text: "thread root", thread_ts: rootTs },
+      { ts: s(0.8), user: "UC", text: "reply one", thread_ts: rootTs },
+      { ts: s(0.7), user: "UD", text: "reply two", thread_ts: rootTs },
+    ],
+  };
+  const rec = { calls: [] as Array<{ method: string; params: Record<string, string> }> };
+  const out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: `${T + HOUR_S}` }, deps(routing(history, replies, rec)));
+  ok(rec.calls.some((c) => c.method === "conversations.replies" && c.params.ts === rootTs), "a thread root with replies triggers a conversations.replies enrichment fetch");
+  const reply = out.find((m) => m.body === "reply one");
+  ok(reply?.type === "thread" && reply?.threadRoot === rootTs, "an in-window thread reply is tagged type=thread + threadRoot=<root ts>");
+  ok(out.filter((m) => m.body === "thread root").length === 1, "the thread root is not double-counted (history + replies deduped by id)");
+}
 
-  const many: Msg[] = Array.from({ length: 13 }, (_, i) => ({ ts: `${13 - i}.0`, user: "UA", text: `m${12 - i}` }));
-  out = await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "99.0" }, deps(stub("conversations.history", many)));
-  ok(out.length === WAKE_BACKSCROLL_MAX, `capped at WAKE_BACKSCROLL_MAX entries (${WAKE_BACKSCROLL_MAX}) even though the window held 13`);
-  ok(out[0].body === "m3" && out[out.length - 1].body === "m12", "cap keeps the most-recent N, drops the oldest, order preserved");
+{
+  ok(isBackscrollVisible({ senderType: "agent", ts: "1.0", text: "x" }), "gate: the bot's own posts (agent) are visible");
+  ok(isBackscrollVisible({ senderType: "user", senderId: "U1", ts: "1.0", text: "x" }), "gate: identifiable humans are visible");
+  ok(!isBackscrollVisible({ senderType: "bot", senderId: "B1", ts: "1.0", text: "x" }), "gate: foreign bots are NOT visible (relay is Phase 2)");
+  ok(!isBackscrollVisible({ senderType: "unknown", ts: "1.0", text: "x" }), "gate: unattributable senders are NOT visible (fail closed)");
+}
+
+{
+  const T = 100 * HOUR_S;
+  const history: Msg[] = [{ ts: `${T - 1800}`, user: "UA", text: "hello" }];
+  const window = await fetchSlackBackscrollWindow({ channelId: "C", ts: `${T}` }, deps(routing(history)));
+  ok(window.length === 1 && window[0].text === "hello" && typeof window[0].ms === "number", "fetchSlackBackscrollWindow returns NormalizedMessage[] (the neutral-core seam)");
 
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => { throw new Error("slack down"); }))).length === 0, "a throwing requester → empty (never fails the first wake)");
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => ({ ok: false, error: "not_in_channel" })))).length === 0, "a not-ok response → empty");
   ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "1.0" }, deps(async () => undefined))).length === 0, "undefined response (no token) → empty");
+  ok((await fetchWakeEnvelopeBackscroll({ channelId: "C", ts: "not-a-number" }, deps(routing([{ ts: "1.0", user: "UA", text: "hi" }])))).length === 0, "an unparseable trigger ts → empty (fail-soft)");
 }
 
-console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + T1.5 envelope-shaped windowed backscroll)`);
+console.log(`✓ slack-wake-backscroll: ${n} assertions passed (since-last-agent slice + cold-thread + top-level + N cap + subtype/empty skip + untrusted wrap + fail-soft + supervisor cluster-aware adapter: visibility gate + thread enrichment + session grouping)`);

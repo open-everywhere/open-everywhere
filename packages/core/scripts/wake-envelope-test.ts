@@ -257,6 +257,48 @@ const countOccurrences = (haystack: string, needle: string): number =>
 }
 
 {
+  const input: WakeEnvelopeInput = {
+    reason: "channel-activity",
+    currentTime: "2026-03-24T18:54:30Z",
+    channel: { id: "C9", type: "channel", memberCount: 6 },
+    messages: [
+      { from: "human", author: "Rowan", authorId: "U1", id: "10.1", sentAt: "2026-03-26T01:57:00Z", trust: "peer", type: "channel", sessionId: "s1", body: "older cluster A" },
+      { from: "self", author: "Open Everywhere", id: "10.2", sentAt: "2026-03-26T02:09:00Z", trust: "peer", type: "channel", sessionId: "s1", body: "my earlier reply" },
+      { from: "human", author: "Rowan", authorId: "U1", id: "20.1", sentAt: "2026-03-26T08:38:00Z", trust: "peer", type: "channel", sessionId: "s2", body: "spine first" },
+      { from: "human", author: "Ada", authorId: "U2", id: "20.2", sentAt: "2026-03-26T09:04:00Z", trust: "peer", type: "thread", threadRoot: "20.1", sessionId: "s2", body: "a threaded reply" },
+      { from: "human", author: "Rowan", authorId: "U1", id: "30.0", sentAt: "2026-03-24T18:54:30Z", trust: "principal", mention: true, trigger: true, body: "what is next" },
+    ],
+  };
+  const out = renderWakeEnvelope(input);
+  ok(countOccurrences(out, "<session ") === 2, "two clusters → two <session> groups");
+  ok(out.includes('<session start="2026-03-26T01:57:00Z" end="2026-03-26T02:09:00Z" messages="2">'), "a session carries start=oldest, end=newest, messages=count");
+  ok(out.includes('<session start="2026-03-26T08:38:00Z" end="2026-03-26T09:04:00Z" messages="2">'), "the spine session's start/end span its own messages");
+  ok(out.indexOf("older cluster A") < out.indexOf("spine first"), "sessions render oldest-group-first");
+  ok(out.indexOf("<session") < out.indexOf("older cluster A") && out.indexOf("my earlier reply") < out.indexOf("</session>"), "messages nest INSIDE their <session> element");
+  ok(out.includes('type="thread" thread="20.1"'), "a thread backscroll message renders type=thread + thread=<root ts>");
+  ok(out.includes('type="channel"'), "top-level backscroll messages render type=channel");
+  ok(out.includes('from="self"'), "the bot's own backscroll message renders from=self");
+  ok(out.lastIndexOf("</session>") < out.indexOf("what is next"), "the standalone trigger renders AFTER the session groups (spec: append the live trigger)");
+  ok(countOccurrences(out, 'trigger="true"') === 1 && out.indexOf('trigger="true"') > out.lastIndexOf("</session>"), "exactly one trigger, and it is not inside any session group");
+  ok(!/what is next[\s\S]*<session/.test(out), "no session group appears after the trigger");
+}
+
+{
+  const input: WakeEnvelopeInput = {
+    reason: "channel-activity",
+    currentTime: "2026-03-24T18:54:30Z",
+    channel: { id: "C9", type: "channel" },
+    messages: [
+      { from: "human", author: "Rowan", authorId: "U1", id: "1.0", sentAt: "2026-03-24T17:52:00Z", trust: "peer", type: "channel", body: "flat backscroll" },
+      { from: "human", author: "Rowan", authorId: "U1", id: "2.0", sentAt: "2026-03-24T18:54:30Z", trust: "peer", trigger: true, body: "trigger" },
+    ],
+  };
+  const out = renderWakeEnvelope(input);
+  ok(!out.includes("<session"), "untagged backscroll → NO <session> wrapper (flat render preserved)");
+  ok(out.includes("flat backscroll") && out.indexOf("flat backscroll") < out.indexOf("trigger"), "flat backscroll still renders oldest-first before the trigger");
+}
+
+{
   const base = {
     reason: "channel-activity" as const,
     currentTime: "2026-03-26T08:52:00Z",

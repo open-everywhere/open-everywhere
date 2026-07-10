@@ -1,6 +1,7 @@
 import { callSlackApi } from "eve/channels/slack";
 import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
-import { renderContext, sinceLastAgentReply, capLines, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
+import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
+import { clusterBackscroll, type NormalizedMessage } from "./backscroll-cluster.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 
 export { WAKE_BACKSCROLL_MAX } from "./context-render.js";
@@ -96,19 +97,140 @@ function renderEntry(lines: readonly ContextLine[], source: string): string[] {
   return entry ? [entry] : [];
 }
 
-export const FIRST_WAKE_BACKSCROLL_WINDOW_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_WINDOW_HOURS) || 24;
+export const RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
 
-const WINDOW_FETCH_LIMIT = 200;
+const RAW_FETCH_PAGE_LIMIT = 200;
 
-function tsToIso(ts: string): string {
-  const seconds = Number.parseFloat(ts);
-  return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : new Date(0).toISOString();
+const RAW_FETCH_MAX_PAGES = 3;
+
+const MAX_THREADS_ENRICHED = 8;
+
+const THREAD_REPLIES_LIMIT = 100;
+
+export function isBackscrollVisible(line: ContextLine): boolean {
+  return line.senderType === "agent" || line.senderType === "user";
 }
 
 export interface WakeEnvelopeBackscrollInput {
   readonly channelId: string;
   readonly ts: string;
-  readonly windowHours?: number;
+  readonly reachbackHours?: number;
+}
+
+function extractCursor(res: Record<string, unknown> | undefined): string | undefined {
+  const meta = res?.response_metadata as { next_cursor?: unknown } | undefined;
+  const cursor = meta?.next_cursor;
+  return typeof cursor === "string" && cursor.length > 0 ? cursor : undefined;
+}
+
+async function fetchChannelWindow(
+  request: SlackRequester,
+  channelId: string,
+  latest: string,
+  oldest: string,
+): Promise<Array<Record<string, unknown>>> {
+  const all: Array<Record<string, unknown>> = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < RAW_FETCH_MAX_PAGES; page++) {
+    const res = await request("conversations.history", {
+      channel: channelId,
+      latest,
+      inclusive: "false",
+      oldest,
+      limit: String(RAW_FETCH_PAGE_LIMIT),
+      ...(cursor ? { cursor } : {}),
+    });
+    const msgs = extractMessages(res);
+    if (!msgs) break;
+    all.push(...msgs);
+    cursor = extractCursor(res);
+    if (!cursor) break;
+  }
+  return all;
+}
+
+async function fetchThreadReplies(
+  request: SlackRequester,
+  channelId: string,
+  channelMsgs: ReadonlyArray<Record<string, unknown>>,
+): Promise<Array<{ root: string; msgs: Array<Record<string, unknown>> }>> {
+  const roots: string[] = [];
+  for (const m of channelMsgs) {
+    if (roots.length >= MAX_THREADS_ENRICHED) break;
+    const ts = typeof m.ts === "string" ? m.ts : undefined;
+    const threadTs = typeof m.thread_ts === "string" ? m.thread_ts : undefined;
+    const replyCount = typeof m.reply_count === "number" ? m.reply_count : 0;
+    if (ts && replyCount > 0 && (!threadTs || threadTs === ts)) roots.push(ts);
+  }
+  const out: Array<{ root: string; msgs: Array<Record<string, unknown>> }> = [];
+  for (const root of roots) {
+    const res = await request("conversations.replies", { channel: channelId, ts: root, limit: String(THREAD_REPLIES_LIMIT) });
+    const msgs = extractMessages(res);
+    if (msgs) out.push({ root, msgs });
+  }
+  return out;
+}
+
+function normalizeOne(
+  m: Record<string, unknown>,
+  ids: WakeBotIdentity,
+  type: "channel" | "thread",
+  threadId: string | undefined,
+): NormalizedMessage | undefined {
+  const [line] = linesFromMessages([m], ids);
+  if (!line) return undefined;
+  if (!isBackscrollVisible(line)) return undefined;
+  const seconds = Number.parseFloat(line.ts);
+  if (!Number.isFinite(seconds)) return undefined;
+  return {
+    id: line.ts,
+    ms: seconds * 1000,
+    authorId: line.senderId,
+    isSelf: line.senderType === "agent",
+    type,
+    threadId,
+    text: line.text,
+  };
+}
+
+export async function fetchSlackBackscrollWindow(
+  input: WakeEnvelopeBackscrollInput,
+  deps: WakeBackscrollDeps = liveDeps,
+): Promise<NormalizedMessage[]> {
+  try {
+    const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
+    const latestSeconds = Number.parseFloat(input.ts);
+    if (!Number.isFinite(latestSeconds)) return [];
+    const reachbackHours = input.reachbackHours ?? RAW_FETCH_REACHBACK_HOURS;
+    const oldestSeconds = latestSeconds - reachbackHours * 3600;
+    const oldest = String(oldestSeconds);
+
+    const channelMsgs = await fetchChannelWindow(deps.request, input.channelId, input.ts, oldest);
+    if (channelMsgs.length === 0) return [];
+    const threadGroups = await fetchThreadReplies(deps.request, input.channelId, channelMsgs);
+
+    const seen = new Set<string>();
+    const out: NormalizedMessage[] = [];
+    const add = (n: NormalizedMessage | undefined) => {
+      if (n && !seen.has(n.id)) {
+        seen.add(n.id);
+        out.push(n);
+      }
+    };
+    for (const m of channelMsgs) add(normalizeOne(m, ids, "channel", undefined));
+    for (const g of threadGroups) {
+      for (const m of g.msgs) {
+        const ts = typeof m.ts === "string" ? m.ts : "";
+        if (ts === g.root) continue;
+        const secs = Number.parseFloat(ts);
+        if (Number.isFinite(secs) && secs < oldestSeconds) continue;
+        add(normalizeOne(m, ids, "thread", g.root));
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchWakeEnvelopeBackscroll(
@@ -116,31 +238,10 @@ export async function fetchWakeEnvelopeBackscroll(
   deps: WakeBackscrollDeps = liveDeps,
 ): Promise<WakeMessageInput[]> {
   try {
-    const ids = await deps.identity().catch(() => ({} as WakeBotIdentity));
-    const windowHours = input.windowHours ?? FIRST_WAKE_BACKSCROLL_WINDOW_HOURS;
-    const latestSeconds = Number.parseFloat(input.ts);
-    const oldest = Number.isFinite(latestSeconds) ? String(latestSeconds - windowHours * 3600) : undefined;
-    const res = await deps.request("conversations.history", {
-      channel: input.channelId,
-      latest: input.ts,
-      inclusive: "false",
-      limit: String(WINDOW_FETCH_LIMIT),
-      ...(oldest ? { oldest } : {}),
-    });
-    const raw = extractMessages(res);
-    if (!raw) return [];
-    const lines = linesFromMessages(raw, ids);
-    lines.reverse();
-    const capped = capLines(lines, { maxMessages: WAKE_BACKSCROLL_MAX });
-    return capped.map((l) => ({
-      from: l.senderType === "agent" ? ("self" as const) : l.senderType === "bot" ? ("agent" as const) : ("human" as const),
-      author: l.senderId ?? "unknown",
-      authorId: l.senderId,
-      id: l.ts,
-      sentAt: tsToIso(l.ts),
-      trust: "peer" as const,
-      body: l.text,
-    }));
+    const window = await fetchSlackBackscrollWindow(input, deps);
+    if (window.length === 0) return [];
+    const nowMs = Number.parseFloat(input.ts) * 1000;
+    return clusterBackscroll(window, nowMs);
   } catch {
     return [];
   }

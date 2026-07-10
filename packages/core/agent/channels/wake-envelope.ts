@@ -44,6 +44,9 @@ export interface WakeMessageInput {
   readonly edited?: boolean;
   readonly previousBody?: string;
   readonly ownerToken?: string;
+  readonly type?: "channel" | "thread";
+  readonly threadRoot?: string;
+  readonly sessionId?: string;
   readonly attachments?: readonly WakeAttachment[];
   readonly body: string;
 }
@@ -107,6 +110,8 @@ function renderMessage(m: WakeMessageInput): string {
     attr("handle", m.handle) +
     attr("id", m.id) +
     attr("sent-at", m.sentAt) +
+    attr("type", m.type) +
+    attr("thread", m.threadRoot) +
     attr("thread-session-id", m.ownerToken);
 
   const body = ingestUntrusted(escapeXml(m.body), { source: "slack-message" });
@@ -118,6 +123,33 @@ function renderMessage(m: WakeMessageInput): string {
     .join("");
 
   return `<message${attrs}>\n${indent(body, 2)}${previousBody}${attachments}\n</message>`;
+}
+
+function renderSession(group: readonly WakeMessageInput[]): string {
+  const start = group[0]?.sentAt;
+  const end = group[group.length - 1]?.sentAt;
+  const inner = group.map((m) => renderMessage(m)).join("\n");
+  return `<session${attr("start", start)}${attr("end", end)}${attr("messages", String(group.length))}>\n${indent(inner, 2)}\n</session>`;
+}
+
+function renderMessages(messages: readonly WakeMessageInput[]): string {
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const sid = messages[i].sessionId;
+    if (sid === undefined) {
+      blocks.push(renderMessage(messages[i]));
+      i += 1;
+      continue;
+    }
+    const group: WakeMessageInput[] = [];
+    while (i < messages.length && messages[i].sessionId === sid) {
+      group.push(messages[i]);
+      i += 1;
+    }
+    blocks.push(renderSession(group));
+  }
+  return blocks.join("\n");
 }
 
 function renderParticipants(ps: readonly WakeParticipant[]): string {
@@ -151,7 +183,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     throw new Error("renderWakeEnvelope: the trigger message must be last (backscroll ends at the trigger)");
   }
 
-  const messagesXml = input.messages.map((m) => renderMessage(m)).join("\n");
+  const messagesXml = renderMessages(input.messages);
   const channelOpen = renderChannelOpen(input.channel);
 
   const participantsXml =
