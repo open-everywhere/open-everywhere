@@ -178,6 +178,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(optional.join(",") === "S8,S9,S10,S24", "the plan's stretch scenarios PLUS the gated Notion leg are optional (S11–S23 are core coverage)");
+
+  const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
+  const KNOWN_SUITES = new Set(["core", "extended", "security"]);
+  for (const s of SCENARIOS) {
+    ok(KNOWN_SURFACES.has(s.surface), `${s.id} declares a known surface (got "${s.surface}")`);
+    ok(KNOWN_SUITES.has(s.suite), `${s.id} declares a known suite (got "${s.suite}")`);
+    ok((s.suite === "extended") === s.optional, `${s.id}: suite==="extended" iff optional (${s.suite}/${s.optional})`);
+  }
+  ok(SCENARIOS.find((s) => s.id === "S7")!.surface === "discord", "S7 is the discord surface");
+  ok(SCENARIOS.find((s) => s.id === "S8")!.surface === "cross", "S8 (Slack→Discord recall) is the cross surface");
+  ok(SCENARIOS.find((s) => s.id === "ST1")!.surface === "teams", "ST1 is the teams surface");
+  ok(
+    SCENARIOS.filter((s) => s.surface === "slack").length === SCENARIOS.length - 3,
+    "every other scenario is a slack-surface scenario (all but S7/S8/ST1)",
+  );
+  const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
+  ok(smoke.join(",") === "S1,ST1", "the smoke lane is exactly S1 (slack wake+reply) + ST1 (teams)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
   ok(unjudged.join(",") === "S3,S6,S10,S15,S21,S22", "S3/S6/S10/S15/S21/S22 are fully deterministic — no judge (plan §5)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");

@@ -108,13 +108,47 @@ async function main(): Promise<void> {
     console.log(`selective run: ${[...only].join(", ")}`);
   }
 
+  const suiteRaw = (process.env.E2E_SUITE ?? "").trim().toLowerCase();
+  const KNOWN_SUITES = new Set(["", "smoke", "core", "full"]);
+  if (!KNOWN_SUITES.has(suiteRaw)) {
+    console.error(`✗ E2E_SUITE="${suiteRaw}" is not one of: smoke, core, full`);
+    process.exit(1);
+  }
+  const suiteSel = suiteRaw || "core";
+  const effectiveIncludeOptional = report.includeOptional || suiteSel === "full";
+  const surfaceFilter = new Set(
+    (process.env.E2E_SURFACES ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
+  const unknownSurfaces = [...surfaceFilter].filter((s) => !KNOWN_SURFACES.has(s));
+  if (unknownSurfaces.length > 0) {
+    console.error(`✗ E2E_SURFACES names unknown surface(s): ${unknownSurfaces.join(", ")} (known: ${[...KNOWN_SURFACES].join(", ")})`);
+    process.exit(1);
+  }
+  if (suiteSel !== "core" || surfaceFilter.size > 0) {
+    console.log(`suite=${suiteSel}${surfaceFilter.size > 0 ? `; surfaces=${[...surfaceFilter].join(",")}` : ""}`);
+  }
+
   for (const scenario of SCENARIOS) {
     if (only.size > 0 && !only.has(scenario.id.toUpperCase())) {
       skipped++;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (filtered by --only)`);
       continue;
     }
-    const reason = skipReason(scenario, report.available, report.missing, report.includeOptional);
+    if (suiteSel === "smoke" && scenario.smoke !== true) {
+      skipped++;
+      console.log(`– ${scenario.id} ${scenario.title}: skipped (not in the E2E_SUITE=smoke set)`);
+      continue;
+    }
+    if (surfaceFilter.size > 0 && !surfaceFilter.has(scenario.surface)) {
+      skipped++;
+      console.log(`– ${scenario.id} ${scenario.title}: skipped (surface ${scenario.surface} not in E2E_SURFACES)`);
+      continue;
+    }
+    const reason = skipReason(scenario, report.available, report.missing, effectiveIncludeOptional);
     if (reason !== undefined) {
       skipped++;
       console.log(`– ${scenario.id} ${scenario.title}: skipped (${reason})`);
