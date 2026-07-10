@@ -165,12 +165,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
-    "J1", "J2", "S5", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
-    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
+    "J1", "J2", "J3", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
+    "S17", "S18", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
   for (const s of SCENARIOS) {
@@ -202,18 +202,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
   ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC", "the security suite is exactly F-SEC (tainted-remember/SSRF/injection probes)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S6,S10,S15,J-NOT,J-SUP", "S6/S10/S15/J-NOT/J-SUP are fully deterministic — no judge (all hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S6,S10,J-NOT,J-SUP", "S6/S10/J-NOT/J-SUP are fully deterministic — no judge (S15's deterministic legs folded into judged J3; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
   ok(req("S13") === "slack+syntheticDm" && req("S14") === "slack+syntheticDm", "S13/S14 require slack + syntheticDm");
-  ok(
-    req("S15") === "slack+synthetic+slackUser2" && req("S16") === "slack+synthetic+slackUser2",
-    "S15/S16 require slack + synthetic + slackUser2",
-  );
+  ok(req("J3") === "slack+synthetic+slackUser2", "J3 (governance journey) requires slack + synthetic + slackUser2 (union of S5/S19 synthetic + S15/S16 non-admin identity)");
   ok(req("S17") === "slack+synthetic+slackUser2", "S17 requires slack + synthetic + slackUser2 (the member-tap leg)");
   ok(req("S18") === "slack+syntheticDm", "S18 requires slack + syntheticDm (DM leg + in-channel out-of-vocab leg)");
-  ok(req("S19") === "slack+synthetic", "S19 requires slack + synthetic (forged admin mention)");
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
   ok(req("J1") === "slack" && req("S23") === "slack", "J1 (core journey) + S23 need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
@@ -295,16 +291,15 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r?.includes(ENV.slackDmChannel) === true && r.includes("syntheticDm"), `${id} skip names E2E_SLACK_DM_CHANNEL`);
   }
-  for (const id of ["S15", "S16", "S17"]) {
+  for (const id of ["J3", "S17"]) {
     const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, missing, false);
     ok(r === `missing slackUser2 driver (set ${ENV.slackUser2Id})`, `${id} skip names exactly E2E_SLACK_USER2_ID`);
   }
   const s18 = skipReason(SCENARIOS.find((s) => s.id === "S18")!, baseOnly, missing, false);
   ok(s18?.includes(ENV.slackDmChannel) === true && s18.includes("syntheticDm"), "S18 skip names E2E_SLACK_DM_CHANNEL");
-  ok(skipReason(SCENARIOS.find((s) => s.id === "S19")!, baseOnly, missing, false) === undefined, "S19 runs with base caps alone (slack+synthetic, no add-on fixture)");
   const s20 = skipReason(SCENARIOS.find((s) => s.id === "S20")!, baseOnly, missing, false);
   ok(s20 === `missing webhook driver (set ${ENV.webhookSecret})`, "S20 skip names exactly E2E_WEBHOOK_SECRET");
-  for (const id of ["S11", "J2", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S23"]) {
+  for (const id of ["S11", "J2", "J3", "S13", "S14", "S17", "S18", "S20", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
   }
   for (const id of ["J1", "S23"]) {

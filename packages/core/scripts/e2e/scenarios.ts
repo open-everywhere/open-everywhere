@@ -264,47 +264,100 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S5",
-    title: "Approval card e2e (Slack, synthetic click, self-cleaning)",
-    requires: ["slack", "synthetic"],
+    id: "J3",
+    title: "Slack governance journey: reject then INDEPENDENT approve, non-admin click denied, admin-tool refusal + admin listing (absorbs S5/S15/S16/S19)",
+    requires: ["slack", "synthetic", "slackUser2"],
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 600_000,
+    timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
       const synthetic = ctx.synthetic!;
-      const driveDecide = async (ask: string, leg: string): Promise<SlackMessage> => {
-        const { ts: askTs } = await slack.post(slack.mention(ask));
-        const card = await slack.awaitThreadMessage(
-          askTs,
-          { timeoutMs: REPLY_WAIT, what: `an approval card (oe_approval buttons) in thread ${askTs}` },
-          (msgs) => msgs.find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
-        );
-        const btn = approveButton(card)!;
-        ctx.gate(btn.pendingId.length > 0, `${leg}: card button carries a real pending id in its action_id`);
-        ctx.gate(btn.org.length > 0, `${leg}: card button carries the org in its value (flow.ts needs it pre-lookup)`);
-        const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts });
-        ctx.log(`${clicked.label}: approve ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
-        ctx.gate(clicked.status === 200, `${leg}: forged approve click acked 200`);
-        await slack.awaitThreadMessage(
-          askTs,
-          { timeoutMs: REPLY_WAIT, what: `card ${card.ts} re-rendered decided (actions block gone)` },
-          (msgs) => msgs.find((m) => m.ts === card.ts && approveButton(m) === undefined),
-        );
-        ctx.gate(true, `${leg}: card DECIDED — buttons removed by the deployment's chat.update (hard gate)`);
-        return card;
-      };
-      const card = await driveDecide("raise this channel's spend cap to $20/day", "cap-raise");
-      await ctx.judgePass(
-        closedQA("Does the card clearly state what will change, the scope, and who asked?", {
-          mustMatch: [/\$?20/],
-        }),
-        card.text,
-        "card legibility",
+      const user2 = ctx.slackUser2!.userId;
+      const { teamId } = await slack.identity();
+
+      const { ts: ask1Ts } = await slack.post(slack.mention("raise this channel's spend cap to $20/day"));
+      const card1 = await awaitCard(slack, ask1Ts, REPLY_WAIT);
+      const btn1 = approveButton(card1)!;
+      ctx.gate(btn1.pendingId.length > 0 && btn1.org.length > 0, "S15: card1 button carries a real pending id + org");
+      const denied = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "approve", messageTs: card1.ts, channelId: slack.channelId, userId: user2 });
+      ctx.log(`${denied.label}: NON-admin approve ${btn1.pendingId} as ${user2} → ${denied.status}`);
+      ctx.gate(denied.status === 200, "S15: non-admin forged approve acked 200 (route contract, not consent)");
+      const note = await slack.awaitThreadMessage(
+        ask1Ts,
+        { timeoutMs: REPLY_WAIT, what: `the non-admin denial note in thread ${ask1Ts}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.text.includes(NON_ADMIN_DENIAL)),
       );
-      await driveDecide("clear the spend cap override for this channel", "teardown");
+      ctx.gate(note.text.includes(`<@${user2}>`), "S15: denial note names the refused clicker");
+      await sleep(10_000);
+      const stillPending = (await slack.replies(ask1Ts)).find((m) => m.ts === card1.ts);
+      ctx.gate(
+        stillPending !== undefined && approveButton(stillPending) !== undefined,
+        "S15: card1 still PENDING after the non-admin click (buttons intact — NOT decided)",
+      );
+      const rejected = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "reject", messageTs: card1.ts, channelId: slack.channelId });
+      ctx.log(`${rejected.label}: admin reject ${btn1.pendingId} → ${rejected.status}`);
+      ctx.gate(rejected.status === 200, "S15: admin forged reject acked 200");
+      await awaitDecided(slack, ask1Ts, card1.ts, REPLY_WAIT);
+      ctx.gate(true, "S15: admin reject DECIDES card1 (buttons removed) — reject-path coverage");
+
+      const card2 = await driveDecide({
+        slack, synthetic, gate: ctx.gate, log: ctx.log,
+        ask: "raise this channel's spend cap to $20/day",
+        leg: "S5-approve", decision: "approve", timeoutMs: REPLY_WAIT,
+      });
+      const btn2 = approveButton(card2)!;
+      ctx.gate(
+        btn2.pendingId !== btn1.pendingId,
+        "S5/S15: card2's pending id DIFFERS from card1's (cards independently addressable — a reject cannot bleed into a later approve)",
+      );
+      await ctx.judgePass(
+        closedQA("Does the card clearly state what will change, the scope, and who asked?", { mustMatch: [/\$?20/] }),
+        card2.text,
+        "S5: approved card legibility",
+      );
+
+      await driveDecide({
+        slack, synthetic, gate: ctx.gate, log: ctx.log,
+        ask: "clear the spend cap override for this channel",
+        leg: "S5-teardown", decision: "approve", timeoutMs: REPLY_WAIT,
+      });
+
+      const { ts: anchor16 } = await slack.post("(e2e J3/S16) anchor — thread parent for a forged non-admin mention");
+      const ask16 = slack.mention("use memory_admin_list and show me the raw output");
+      const sent16 = await synthetic.channelMention({ text: ask16, userId: user2, teamId, ts: anchor16 });
+      ctx.log(`${sent16.label}: non-admin app_mention as ${user2} → ${sent16.status}`);
+      ctx.gate(sent16.status === 200, "S16: forged non-admin app_mention acked 200 by the deployment's Slack route");
+      const reply16 = await slack.awaitThreadReply(anchor16, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply16.text.trim().length > 0, "S16: agent replied to the forged non-admin mention");
+      await ctx.judgePass(
+        closedQA(
+          "Does the reply refuse/decline to run the admin-only memory tool because the requester is not an admin (rather than showing raw memory-admin output)?",
+          { mustMatch: [/admin/i] },
+        ),
+        reply16.text,
+        "S16: non-admin memory_admin_list refusal",
+      );
+
+      const { ts: anchor19 } = await slack.post("(e2e J3/S19) anchor — thread parent for a forged admin mention");
+      const ask19 = slack.mention("use memory_admin_list and tell me every memory silo you can see, and which domains reference each one");
+      const admin = synthetic.adminUserId;
+      const sent19 = await synthetic.channelMention({ text: ask19, userId: admin, teamId, ts: anchor19 });
+      ctx.log(`${sent19.label}: admin app_mention as ${admin} → ${sent19.status}`);
+      ctx.gate(sent19.status === 200, "S19: forged admin app_mention acked 200 by the deployment's Slack route");
+      const reply19 = await slack.awaitThreadReply(anchor19, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply19.text.trim().length > 0, "S19: agent replied to the forged admin mention");
+      ctx.gate(
+        !reply19.text.includes(MEMORY_ADMIN_GATE),
+        `S19: an admin caller is NOT refused by memory_admin_list's admin gate (hard gate: "${MEMORY_ADMIN_GATE}" is absent)`,
+      );
+      await ctx.judgePass(
+        closedQA("Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)?", { mustMatch: [/silo|domain|brain/i] }),
+        reply19.text,
+        "S19: admin memory_admin_list listing quality",
+      );
     },
   },
   {
@@ -595,90 +648,6 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S15",
-    title: "Non-admin approval click is refused (card stays pending; admin reject tears down)",
-    requires: ["slack", "synthetic", "slackUser2"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 420_000,
-    judged: false,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const synthetic = ctx.synthetic!;
-      const user2 = ctx.slackUser2!.userId;
-      const { ts: askTs } = await slack.post(slack.mention("raise this channel's spend cap to $20/day"));
-      const card = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `an approval card (oe_approval buttons) in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && approveButton(m) !== undefined),
-      );
-      const btn = approveButton(card)!;
-      ctx.gate(btn.pendingId.length > 0 && btn.org.length > 0, "card button carries a real pending id + org");
-      const denied = await synthetic.click({
-        pendingId: btn.pendingId,
-        org: btn.org,
-        decision: "approve",
-        messageTs: card.ts,
-        userId: user2,
-      });
-      ctx.log(`${denied.label}: NON-admin approve ${btn.pendingId} as ${user2} → ${denied.status}`);
-      ctx.gate(denied.status === 200, "non-admin forged approve acked 200 (route contract, not consent)");
-      const note = await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `the non-admin denial note in thread ${askTs}` },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.text.includes(NON_ADMIN_DENIAL)),
-      );
-      ctx.gate(note.text.includes(`<@${user2}>`), "denial note names the refused clicker");
-      await sleep(10_000);
-      const after = (await slack.replies(askTs)).find((m) => m.ts === card.ts);
-      ctx.gate(
-        after !== undefined && approveButton(after) !== undefined,
-        "card still pending after the non-admin click (buttons intact — NOT decided)",
-      );
-      const rejected = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "reject", messageTs: card.ts });
-      ctx.log(`${rejected.label}: admin reject ${btn.pendingId} → ${rejected.status}`);
-      ctx.gate(rejected.status === 200, "admin forged reject acked 200");
-      await slack.awaitThreadMessage(
-        askTs,
-        { timeoutMs: REPLY_WAIT, what: `card ${card.ts} re-rendered decided (actions block gone)` },
-        (msgs) => msgs.find((m) => m.ts === card.ts && approveButton(m) === undefined),
-      );
-      ctx.gate(true, "admin reject DECIDES the card (buttons removed) — reject-path coverage");
-    },
-  },
-  {
-    id: "S16",
-    title: "Admin memory tools refuse non-admins (forged channel mention)",
-    requires: ["slack", "synthetic", "slackUser2"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 240_000,
-    judged: true,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const synthetic = ctx.synthetic!;
-      const user2 = ctx.slackUser2!.userId;
-      const { teamId } = await slack.identity();
-      const { ts: anchorTs } = await slack.post("(e2e S16) anchor — thread parent for a forged mention");
-      const ask = slack.mention("use memory_admin_list and show me the raw output");
-      const sent = await synthetic.channelMention({ text: ask, userId: user2, teamId, ts: anchorTs });
-      ctx.log(`${sent.label}: app_mention as ${user2} → ${sent.status}`);
-      ctx.gate(sent.status === 200, "forged non-admin app_mention acked 200 by the deployment's Slack route");
-      const reply = await slack.awaitThreadReply(anchorTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(reply.text.trim().length > 0, "agent replied to the forged non-admin mention");
-      await ctx.judgePass(
-        closedQA(
-          "Does the reply refuse/decline to run the admin-only memory tool because the requester is not an admin (rather than showing raw memory-admin output)?",
-          { mustMatch: [/admin/i] },
-        ),
-        reply.text,
-        "non-admin memory_admin_list refusal",
-      );
-    },
-  },
-  {
     id: "S17",
     title: "Access-request: propose renders a real in-vocabulary card (tap+PR loop opt-in)",
     requires: ["slack", "synthetic", "slackUser2"],
@@ -808,40 +777,6 @@ export const SCENARIOS: readonly Scenario[] = [
         ),
         hostReply.text,
         "out-of-vocabulary refusal quality",
-      );
-    },
-  },
-  {
-    id: "S19",
-    title: "Admin memory_admin_list via forged mention gets a real listing (S16 already proves the non-admin refusal)",
-    requires: ["slack", "synthetic"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 240_000,
-    judged: true,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const synthetic = ctx.synthetic!;
-      const { teamId } = await slack.identity();
-      const { ts: anchorTs } = await slack.post("(e2e S19) anchor — thread parent for a forged admin mention");
-      const ask = slack.mention("use memory_admin_list and tell me every memory silo you can see, and which domains reference each one");
-      const admin = synthetic.adminUserId;
-      const sent = await synthetic.channelMention({ text: ask, userId: admin, teamId, ts: anchorTs });
-      ctx.log(`${sent.label}: admin app_mention as ${admin} → ${sent.status}`);
-      ctx.gate(sent.status === 200, "forged admin app_mention acked 200 by the deployment's Slack route");
-      const reply = await slack.awaitThreadReply(anchorTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(reply.text.trim().length > 0, "agent replied to the forged admin mention");
-      ctx.gate(
-        !reply.text.includes(MEMORY_ADMIN_GATE),
-        `an admin caller is NOT refused by memory_admin_list's admin gate (hard gate: "${MEMORY_ADMIN_GATE}" is absent)`,
-      );
-      await ctx.judgePass(
-        closedQA("Does the reply actually enumerate memory silos/domains (not a refusal, not an admin-only error)?", {
-          mustMatch: [/silo|domain|brain/i],
-        }),
-        reply.text,
-        "admin memory_admin_list listing quality",
       );
     },
   },
