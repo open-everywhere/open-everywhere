@@ -6,7 +6,7 @@ import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
-import { handleNotionDelivery, type NotionSessionState } from "./notion-webhook.js";
+import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
   handleNotionSupervisorDispatch,
   notionSupervisorToken,
@@ -158,25 +158,34 @@ export default defineChannel<NotionState, { state: NotionState }>({
     }),
   ],
   events: {
+    "turn.started"(_data, channel, ctx) {
+      const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+      const s = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+      const discussionId = s(attrs?.discussion_id);
+      channel.state.oeReplyTarget = discussionId
+        ? ({ discussionId, pageId: s(attrs?.page_id), workspaceId: s(attrs?.workspace_id) } satisfies NotionReplyTarget)
+        : undefined;
+    },
     async "message.completed"(data, channel) {
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
-      const discussionId = channel.state.discussionId;
+      const target = channel.state.oeReplyTarget;
+      const discussionId = target?.discussionId;
       if (action.kind === "silent") {
         await appendAudit({
           org: deploymentOrg(),
           platform: "notion",
-          workspace: channel.state.workspaceId ?? "unknown",
-          surface: channel.state.pageId ?? discussionId ?? "unknown",
+          workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
+          surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
           action: "notion.no_reply",
-          detail: { discussionId, reason: action.reason },
+          detail: { discussionId: discussionId ?? channel.state.discussionId, reason: action.reason },
         });
         return;
       }
       const message = action.text;
       const apiKey = notionApiKey();
       if (!discussionId || !apiKey) {
-        log(`reply not posted — ${!apiKey ? "NOTION_API_KEY unset" : "no discussion_id on session state"}`);
+        log(`reply not posted — ${!apiKey ? "NOTION_API_KEY unset" : "no per-turn discussion target (turn.started snapshot empty)"}`);
         return;
       }
       try {
@@ -184,8 +193,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         await appendAudit({
           org: deploymentOrg(),
           platform: "notion",
-          workspace: channel.state.workspaceId ?? "unknown",
-          surface: channel.state.pageId ?? discussionId,
+          workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
+          surface: target?.pageId ?? channel.state.pageId ?? discussionId,
           action: "notion.replied",
           detail: { discussionId, chars: message.length },
         });

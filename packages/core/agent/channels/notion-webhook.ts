@@ -14,10 +14,17 @@ import {
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
 
+export interface NotionReplyTarget {
+  readonly discussionId: string;
+  readonly pageId?: string;
+  readonly workspaceId?: string;
+}
+
 export interface NotionSessionState {
   readonly discussionId: string | null;
   readonly pageId: string | null;
   readonly workspaceId: string | null;
+  oeReplyTarget?: NotionReplyTarget;
 }
 
 export interface HandleNotionDeliveryDeps {

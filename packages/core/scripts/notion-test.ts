@@ -265,15 +265,18 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   const { SessionKey } = await import(abs("dist/src/context/keys.js"));
   const { markNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
 
-  const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
+  const inSession = <T>(fn: () => Promise<T>, attributes?: Record<string, string>): Promise<T> => {
     const c = new ContextContainer();
-    c.set(SessionKey, { sessionId: "notion-no-reply-test", auth: null, turn: 1, parent: undefined });
+    const auth = attributes ? { current: { attributes }, initiator: null } : null;
+    c.set(SessionKey, { sessionId: "notion-no-reply-test", auth, turn: 1, parent: undefined });
     return contextStorage.run(c, fn);
   };
 
   const notionChannel = (await import("../agent/channels/notion.js")).default as unknown as {
-    adapter: Record<string, (data: { finishReason: string; message: string | null }, ctx: unknown) => Promise<void>>;
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
+  const turnStarted = (ctx: unknown) => notionChannel.adapter["turn.started"]!({}, ctx);
+  const completed = (message: string | null, ctx: unknown) => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
 
   const realFetch = globalThis.fetch;
   let posts: Array<{ body: { discussion_id?: string } }> = [];
@@ -287,13 +290,38 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
 
   try {
     const state = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: WS };
+    const attrs = { discussion_id: DISCUSSION, page_id: PAGE, workspace_id: WS };
 
-    await inSession(() => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "here is your answer" }, { state }));
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await completed("here is your answer", ctx);
+    }, attrs);
     ok(posts.length === 1, "notion message.completed: an ordinary completion posts the reply");
     ok(posts[0]!.body.discussion_id === DISCUSSION, "notion message.completed: posts into the triggering discussion");
 
     posts = [];
-    await inSession(() => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "NO_REPLY — nothing to add" }, { state }));
+    await inSession(async () => {
+      const ctx = { state: { ...state, discussionId: "stale-first-discussion" } };
+      await turnStarted(ctx);
+      await completed("answering the second discussion", ctx);
+    }, { ...attrs, discussion_id: "fresh-second-discussion" });
+    ok(posts.length === 1 && posts[0]!.body.discussion_id === "fresh-second-discussion", "notion reply-targeting: the per-turn auth snapshot beats the stale seeded state (resume bug)");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state: { ...state } };
+      await turnStarted(ctx);
+      await completed("this must not post", ctx);
+    });
+    ok(posts.length === 0, "notion reply-targeting: no auth target ⇒ posts NOTHING (fail safe, stale seed ignored)");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
+      await completed("NO_REPLY — nothing to add", ctx);
+    }, attrs);
     ok(posts.length === 0, "notion message.completed: the NO_REPLY sentinel still suppresses the reply");
     const { readAudit } = await import("../agent/audit/audit.js");
     const silences = await readAudit({ action: "notion.no_reply" });
@@ -301,9 +329,11 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
 
     posts = [];
     await inSession(async () => {
+      const ctx = { state };
+      await turnStarted(ctx);
       markNoReplyThisTurn("nothing_to_add");
-      await notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "actually let me add one more thing" }, { state });
-    });
+      await completed("actually let me add one more thing", ctx);
+    }, attrs);
     ok(posts.length === 0, "notion message.completed: the no_reply TOOL route suppresses the reply (regression for the isNoReply-only bug)");
   } finally {
     globalThis.fetch = realFetch;
