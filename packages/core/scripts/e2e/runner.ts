@@ -24,7 +24,7 @@ import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
-import { buildCostReport, fetchRunUsage, renderCostReport } from "./cost.js";
+import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
 import { fetchAudit } from "./audit-read.js";
 
 class TimeoutError extends Error {
@@ -244,10 +244,24 @@ async function main(): Promise<void> {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  let modelRoutingFailed = false;
   if (costTarget && readToken && workspaces.length > 0) {
     try {
       const rows = await fetchRunUsage(costTarget, readToken, runStartedIso, workspaces);
       for (const line of renderCostReport(buildCostReport(rows))) console.log(line);
+      const expectModels = (process.env.E2E_EXPECT_MODELS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (expectModels.length > 0) {
+        const check = checkExpectedModels(rows, expectModels);
+        if (check.ok) {
+          console.log(`✓ model routing: the e2e workspaces used only expected model(s) [${check.seen.join(", ")}]`);
+        } else {
+          modelRoutingFailed = true;
+          console.error(`✗ model routing: unexpected model(s) [${check.unexpected.join(", ")}] appeared (expected only [${expectModels.join(", ")}]; saw [${check.seen.join(", ")}])`);
+        }
+      }
     } catch (err) {
       console.log(`e2e run cost: unavailable (${String(err instanceof Error ? err.message : err)})`);
     }
@@ -258,7 +272,7 @@ async function main(): Promise<void> {
   }
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;
-  if (failed > 0) {
+  if (failed > 0 || modelRoutingFailed) {
     console.error(`✗ e2e driver pack: ${summary}`);
     process.exit(1);
   }

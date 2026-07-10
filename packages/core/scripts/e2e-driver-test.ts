@@ -681,6 +681,15 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(lines[lines.length - 1].startsWith("e2e run cost: $2.0000"), "total line renders the priced sum");
   ok(lines[lines.length - 1].includes("test/unpriced"), "total line names what it could NOT price");
   ok(lines[0].includes("3 calls") && lines[0].includes("1000000in/500000out"), "slice line shows calls + tokens");
+
+  const { checkExpectedModels } = await import("./e2e/cost.js");
+  const ok1 = checkExpectedModels(rows, ["test/model-a", "test/unpriced"]);
+  ok(!ok1.ok && ok1.unexpected.join(",") === "(unstamped)", "checkExpectedModels flags an unstamped row when it's not in the expected set");
+  const ok2 = checkExpectedModels(rows, ["test/model-a", "test/unpriced", "(unstamped)"]);
+  ok(ok2.ok && ok2.unexpected.length === 0, "checkExpectedModels passes when every stamped/unstamped model is expected");
+  ok(ok2.seen.join(",") === "(unstamped),test/model-a,test/unpriced", "checkExpectedModels reports the distinct model set it saw (sorted)");
+  const ok3 = checkExpectedModels(rows, ["test/model-a"]);
+  ok(!ok3.ok && ok3.unexpected.includes("test/unpriced"), "checkExpectedModels flags an unexpected routed model (the routing-regression catch)");
 }
 
 rmSync(dir, { recursive: true, force: true });

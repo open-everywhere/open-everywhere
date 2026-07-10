@@ -68,6 +68,16 @@ export async function fetchRunUsage(
   return parsed.rows;
 }
 
+export function checkExpectedModels(
+  rows: readonly UsageWindowWireRow[],
+  expected: readonly string[],
+): { ok: boolean; seen: readonly string[]; unexpected: readonly string[] } {
+  const expectedSet = new Set(expected);
+  const seen = [...new Set(rows.map((r) => r.model ?? "(unstamped)"))].sort();
+  const unexpected = seen.filter((m) => !expectedSet.has(m));
+  return { ok: unexpected.length === 0, seen, unexpected };
+}
+
 const fmtUsd = (v: number): string => `$${v.toFixed(4)}`;
 
 export function renderCostReport(report: RunCostReport): string[] {
