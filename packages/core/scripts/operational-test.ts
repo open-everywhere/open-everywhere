@@ -279,24 +279,34 @@ const store = makeOperationalPostgresStore(client);
 
   const gen1 = await store.rotateChannelSession("acme", sk, "T:oe-sup:1", "2026-07-09T10:00:00Z");
   ok(gen1.generation === 1 && gen1.token === "T:oe-sup:1" && gen1.turnCount === 0, "pg: first rotation mints generation 1");
+  ok(gen1.inputTokensTotal === 0 && gen1.firstWakeAt === null && gen1.handoffNote === null, "pg: fresh generation starts counter=0, first_wake_at=NULL, no note");
   let row = await store.getChannelSession("acme", sk);
   ok(
     row !== null && row.generation === 1 && row.token === "T:oe-sup:1" && row.createdAt === "2026-07-09T10:00:00Z" && row.lastWakeAt === "2026-07-09T10:00:00Z",
     "pg: getChannelSession reads back the freshly-minted row",
   );
 
+  await store.bumpChannelSessionUsage("acme", sk, "T:oe-sup:1", 1000);
+  await store.bumpChannelSessionUsage("acme", sk, "T:oe-sup:1", 500);
+  await store.bumpChannelSessionUsage("acme", sk, "T:oe-sup:WRONG", 9_999_999);
+  row = await store.getChannelSession("acme", sk);
+  ok(row !== null && row.inputTokensTotal === 1500, "pg: bumpChannelSessionUsage accumulates + a mismatched token is a no-op (token guard)");
+
   await store.touchChannelSession("acme", sk, "2026-07-09T10:05:00Z");
   row = await store.getChannelSession("acme", sk);
   ok(row !== null && row.turnCount === 1 && row.lastWakeAt === "2026-07-09T10:05:00Z" && row.generation === 1, "pg: touchChannelSession bumps turnCount + lastWakeAt, leaves generation alone");
+  ok(row !== null && row.firstWakeAt === "2026-07-09T10:05:00Z", "pg: touchChannelSession stamps first_wake_at on the first delivered wake");
 
   await store.touchChannelSession("acme", sk, "2026-07-09T10:10:00Z");
   row = await store.getChannelSession("acme", sk);
   ok(row !== null && row.turnCount === 2, "pg: touchChannelSession accumulates across calls");
+  ok(row !== null && row.firstWakeAt === "2026-07-09T10:05:00Z", "pg: a later touch does NOT move first_wake_at (COALESCE, set once)");
 
-  const gen2 = await store.rotateChannelSession("acme", sk, "T:oe-sup:2", "2026-07-09T11:00:00Z");
+  const gen2 = await store.rotateChannelSession("acme", sk, "T:oe-sup:2", "2026-07-09T11:00:00Z", "OPEN: sign-off pending");
   ok(gen2.generation === 2 && gen2.token === "T:oe-sup:2" && gen2.turnCount === 0, "pg: rotation mints generation 2, resets turnCount");
+  ok(gen2.inputTokensTotal === 0 && gen2.firstWakeAt === null && gen2.handoffNote === "OPEN: sign-off pending", "pg: rotation resets counter/first_wake_at and stores the handoff note");
   row = await store.getChannelSession("acme", sk);
-  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.createdAt === "2026-07-09T11:00:00Z", "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields)");
+  ok(row !== null && row.generation === 2 && row.turnCount === 0 && row.inputTokensTotal === 0 && row.createdAt === "2026-07-09T11:00:00Z" && row.handoffNote === "OPEN: sign-off pending", "pg: getChannelSession reflects the rotated generation (no stale gen-1 fields; note persisted)");
 
   ok((await store.getChannelSession("globex", sk)) === null, "pg: channel session is org-isolated");
   await store.rotateChannelSession("globex", sk, "T:oe-sup:1", "2026-07-11T12:00:00Z");

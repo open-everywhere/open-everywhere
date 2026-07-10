@@ -41,11 +41,17 @@ export interface WakeMessageInput {
   readonly body: string;
 }
 
+export interface WakeHandoff {
+  readonly note: string;
+  readonly fromGeneration: number;
+}
+
 export interface WakeEnvelopeInput {
   readonly reason: WakeReason;
   readonly currentTime: string;
   readonly channel: WakeChannelMeta;
   readonly thread?: WakeThreadMeta;
+  readonly handoff?: WakeHandoff;
   readonly messages: readonly WakeMessageInput[];
 }
 
@@ -108,6 +114,11 @@ function renderThreadOpen(t: WakeThreadMeta): string {
   return `<thread${attr("ts", t.ts)}${attr("session-owner", t.sessionOwner)}>`;
 }
 
+function renderHandoff(h: WakeHandoff): string {
+  const body = ingestUntrusted(escapeXml(h.note), { source: "rotation-handoff" });
+  return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(body, 2)}\n</handoff-note>`;
+}
+
 export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   if (input.messages.length === 0) {
     throw new Error("renderWakeEnvelope: at least one message is required");
@@ -123,9 +134,10 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   const messagesXml = input.messages.map((m) => renderMessage(m)).join("\n");
   const channelOpen = renderChannelOpen(input.channel);
 
+  const handoffXml = input.handoff ? indent(renderHandoff(input.handoff), 2) + "\n" : "";
   const channelBody = input.thread
-    ? `${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
-    : indent(messagesXml, 2);
+    ? `${handoffXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
+    : `${handoffXml}${indent(messagesXml, 2)}`;
 
   const lines = [
     `<wake${attr("reason", input.reason)}${attr("current-time", input.currentTime)}>`,

@@ -5,6 +5,7 @@ import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import type { DreamCompletion, DreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
 import { judgeFromCompletion, registerDreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
 import { facetJudgeFromCompletion, registerFailureFacetJudge } from "@open-everywhere/core/agent/memory/dream/mode3.js";
+import { registerHandoffCompletion } from "@open-everywhere/core/agent/model/rotation-handoff.js";
 import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 
@@ -63,4 +64,8 @@ export function registerGatewayDreamJudge(defaults: GatewayRoutedDefaults): void
 
 export function registerGatewayFailureFacetJudge(defaults: GatewayRoutedDefaults): void {
   registerFailureFacetJudge(facetJudgeFromCompletion(gatewayDreamCompletion(defaults)));
+}
+
+export function registerGatewayHandoffCompletion(defaults: GatewayRoutedDefaults): void {
+  registerHandoffCompletion(gatewayDreamCompletion(defaults));
 }

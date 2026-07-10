@@ -86,13 +86,16 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, surface_key, thread_ts)
     );
     CREATE TABLE IF NOT EXISTS channel_session (
-      org_id       TEXT    NOT NULL,
-      surface_key  TEXT    NOT NULL,          -- the channel (platform/workspace/surface)
-      token        TEXT    NOT NULL,          -- caller-minted continuation token for the CURRENT generation
-      generation   INTEGER NOT NULL,          -- 1 on first mint, +1 on every rotation
-      created_at   TEXT    NOT NULL,          -- ISO-8601, reset on rotation
-      last_wake_at TEXT    NOT NULL,          -- ISO-8601, bumped by touchChannelSession, reset on rotation
-      turn_count   INTEGER NOT NULL DEFAULT 0, -- bumped by touchChannelSession, reset to 0 on rotation
+      org_id             TEXT    NOT NULL,
+      surface_key        TEXT    NOT NULL,          -- the channel (platform/workspace/surface)
+      token              TEXT    NOT NULL,          -- caller-minted continuation token for the CURRENT generation
+      generation         INTEGER NOT NULL,          -- 1 on first mint, +1 on every rotation
+      created_at         TEXT    NOT NULL,          -- ISO-8601, reset on rotation
+      last_wake_at       TEXT    NOT NULL,          -- ISO-8601, bumped by touchChannelSession, reset on rotation
+      turn_count         INTEGER NOT NULL DEFAULT 0, -- bumped by touchChannelSession, reset to 0 on rotation (BACKSTOP trigger)
+      input_tokens_total INTEGER,                    -- measured cumulative input+cacheRead this generation (§2 #551); NULL = unknown ⇒ rotate
+      first_wake_at      TEXT,                        -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
+      handoff_note       TEXT,                        -- rolling distilled channel state for the next generation (§5); NULL = none
       PRIMARY KEY (org_id, surface_key)
     );
     CREATE TABLE IF NOT EXISTS event_dedupe (
@@ -174,6 +177,10 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE thread_engagement ADD COLUMN owner_token TEXT",
     "ALTER TABLE thread_engagement ADD COLUMN kind TEXT NOT NULL DEFAULT 'thread'",
+
+    "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
+    "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
+    "ALTER TABLE channel_session ADD COLUMN handoff_note TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -609,38 +616,56 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async getChannelSession(org, surfaceKey) {
     const row = getDb()
-      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count FROM channel_session WHERE org_id = ? AND surface_key = ?")
-      .get(org, surfaceKey) as { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number } | undefined;
+      .prepare("SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note FROM channel_session WHERE org_id = ? AND surface_key = ?")
+      .get(org, surfaceKey) as
+      | { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number; input_tokens_total: number | null; first_wake_at: string | null; handoff_note: string | null }
+      | undefined;
     return row
-      ? { org, surfaceKey, token: row.token, generation: row.generation, createdAt: row.created_at, lastWakeAt: row.last_wake_at, turnCount: row.turn_count }
+      ? {
+          org, surfaceKey, token: row.token, generation: row.generation, createdAt: row.created_at,
+          lastWakeAt: row.last_wake_at, turnCount: row.turn_count,
+          inputTokensTotal: row.input_tokens_total == null ? null : Number(row.input_tokens_total),
+          firstWakeAt: row.first_wake_at ?? null,
+          handoffNote: row.handoff_note ?? null,
+        }
       : null;
   },
 
-  async rotateChannelSession(org, surfaceKey, newToken, at) {
+  async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
     const handle = getDb();
     const existing = handle.prepare("SELECT generation FROM channel_session WHERE org_id = ? AND surface_key = ?").get(org, surfaceKey) as
       | { generation: number }
       | undefined;
     const generation = (existing?.generation ?? 0) + 1;
+    const note = handoffNote ?? null;
     handle
       .prepare(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count)
-         VALUES (?, ?, ?, ?, ?, ?, 0)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL, ?)
          ON CONFLICT(org_id, surface_key) DO UPDATE SET
-           token        = excluded.token,
-           generation   = excluded.generation,
-           created_at   = excluded.created_at,
-           last_wake_at = excluded.last_wake_at,
-           turn_count   = 0`,
+           token              = excluded.token,
+           generation         = excluded.generation,
+           created_at         = excluded.created_at,
+           last_wake_at       = excluded.last_wake_at,
+           turn_count         = 0,
+           input_tokens_total = 0,
+           first_wake_at      = NULL,
+           handoff_note       = excluded.handoff_note`,
       )
-      .run(org, surfaceKey, newToken, generation, at, at);
-    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0 };
+      .run(org, surfaceKey, newToken, generation, at, at, note);
+    return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
   },
 
   async touchChannelSession(org, surfaceKey, at) {
     getDb()
-      .prepare("UPDATE channel_session SET last_wake_at = ?, turn_count = turn_count + 1 WHERE org_id = ? AND surface_key = ?")
-      .run(at, org, surfaceKey);
+      .prepare("UPDATE channel_session SET last_wake_at = ?, turn_count = turn_count + 1, first_wake_at = COALESCE(first_wake_at, ?) WHERE org_id = ? AND surface_key = ?")
+      .run(at, at, org, surfaceKey);
+  },
+
+  async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
+    getDb()
+      .prepare("UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + ? WHERE org_id = ? AND surface_key = ? AND token = ?")
+      .run(delta, org, surfaceKey, token);
   },
 
   async listDomainSkills(org, domain) {

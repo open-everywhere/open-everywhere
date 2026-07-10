@@ -27,6 +27,7 @@ import {
   shouldRotate,
   SUPERVISOR_ROTATE_QUIET_GAP_MS,
   SUPERVISOR_ROTATE_TURN_BUDGET,
+  SUPERVISOR_ROTATE_TOKEN_BUDGET,
   confirmChannelInternalWithMeta,
   liveSupervisorDeps,
   bindableFor,
@@ -968,24 +969,55 @@ registerConfig({
 }
 
 {
-  const base = { lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5 };
-  ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, low turn count → no rotate");
+  const base = { lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: 1_000 };
+  ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, low turn count, low token count → no rotate");
   ok(shouldRotate(base, "2026-03-25T21:52:00Z"), "quiet gap over the default 24h → rotate");
   ok(!shouldRotate(base, "2026-07-09T11:00:00Z"), "quiet gap just under 24h → no rotate");
+
   ok(
-    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1 }, "2026-07-08T12:00:01Z"),
-    "turnCount OVER the default budget → rotate even with a fresh wake",
+    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET }, "2026-07-08T12:00:01Z"),
+    "inputTokensTotal AT the token budget → rotate (primary trigger, >=)",
   );
   ok(
-    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET }, "2026-07-08T12:00:01Z"),
-    "turnCount AT (not over) the budget → no rotate",
+    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET - 1 }, "2026-07-08T12:00:01Z"),
+    "inputTokensTotal just under the token budget → no rotate",
   );
+
+  ok(
+    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 0, inputTokensTotal: null }, "2026-07-08T12:00:01Z"),
+    "NULL inputTokensTotal (pre-migration) → fail-safe rotate",
+  );
+
+  ok(
+    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    "turnCount OVER the backstop → rotate even with a zero token counter + fresh wake",
+  );
+  ok(
+    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    "turnCount AT (not over) the backstop → no rotate",
+  );
+
   ok(shouldRotate(base, "not-a-real-timestamp"), "unparseable `now` → fail-safe rotate");
-  ok(shouldRotate({ lastWakeAt: "not-a-real-timestamp", turnCount: 0 }, "2026-07-08T12:00:01Z"), "unparseable lastWakeAt → fail-safe rotate");
+  ok(shouldRotate({ lastWakeAt: "not-a-real-timestamp", turnCount: 0, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"), "unparseable lastWakeAt → fail-safe rotate");
   ok(shouldRotate(base, "2026-07-08T12:00:01Z", { turnBudget: 4 }), "a custom turnBudget below the current turnCount → rotate");
+  ok(shouldRotate(base, "2026-07-08T12:00:01Z", { tokenBudget: 500 }), "a custom tokenBudget below the current token count → rotate");
   ok(shouldRotate(base, "2026-07-08T13:00:00Z", { quietGapMs: 1000 }), "a custom quietGapMs smaller than the elapsed gap → rotate");
   ok(SUPERVISOR_ROTATE_QUIET_GAP_MS === 24 * 3_600_000, "default quiet-gap threshold is 24h");
-  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 1500, "default turn-budget threshold is 1500");
+  ok(SUPERVISOR_ROTATE_TOKEN_BUDGET === 4_000_000, "default token-budget threshold is 4M");
+  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 150, "default turn-budget backstop is 150 (was 1500)");
+}
+
+{
+  const WALL = 40_000_000;
+  const projectedCumulativeInput = (turnBudget: number, k: number, prefix: number, g: number): number =>
+    k * (prefix * turnBudget + (g * turnBudget * turnBudget) / 2);
+  const cCostModel = (n: number) => projectedCumulativeInput(n, 2, 10_500, 1_000);
+  const cH11 = (n: number) => projectedCumulativeInput(n, 2, 10_500, 500);
+  ok(cCostModel(SUPERVISOR_ROTATE_TURN_BUDGET) < WALL, `backstop ${SUPERVISOR_ROTATE_TURN_BUDGET}: C=${Math.round(cCostModel(SUPERVISOR_ROTATE_TURN_BUDGET))} < 40M (cost-model g=1000)`);
+  ok(cH11(SUPERVISOR_ROTATE_TURN_BUDGET) < WALL, `backstop ${SUPERVISOR_ROTATE_TURN_BUDGET}: C=${Math.round(cH11(SUPERVISOR_ROTATE_TURN_BUDGET))} < 40M (H11 g=500)`);
+  ok(cCostModel(300) >= WALL, `300 FAILS the wall under g=1000 (C=${Math.round(cCostModel(300))} ≥ 40M) — why the backstop is not 300`);
+  ok(cH11(300) >= WALL, `300 FAILS the wall under H11 g=500 (C=${Math.round(cH11(300))} ≥ 40M)`);
+  ok(cCostModel(1500) >= WALL, `1500 (the old default) FAILS the wall (C=${Math.round(cCostModel(1500))} ≥ 40M)`);
 }
 
 {
@@ -998,20 +1030,36 @@ registerConfig({
   let s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:00:00Z");
   ok(s.generation === 1 && s.freshGeneration === true && s.token === supervisorToken(channelId, 1), "no existing row → mints generation 1, freshGeneration true");
 
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:04:00Z");
+  ok(s.generation === 1 && s.freshGeneration === true, "resume BEFORE any delivered wake (first_wake_at NULL) → still freshGeneration true (H7c self-heal)");
+
+  await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:04:30Z");
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:05:00Z");
-  ok(s.generation === 1 && s.freshGeneration === false && s.token === supervisorToken(channelId, 1), "resumed within budget/gap → same generation, freshGeneration false");
+  ok(s.generation === 1 && s.freshGeneration === false && s.token === supervisorToken(channelId, 1), "resumed within budget/gap after a delivered wake → same generation, freshGeneration false");
 
   for (let i = 0; i <= SUPERVISOR_ROTATE_TURN_BUDGET; i++) {
     await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:06:00Z");
   }
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:07:00Z");
-  ok(s.generation === 2 && s.freshGeneration === true && s.token === supervisorToken(channelId, 2), "turn budget exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
+  ok(s.generation === 2 && s.freshGeneration === true && s.token === supervisorToken(channelId, 2), "turn backstop exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:00Z");
   ok(s.generation === 3 && s.freshGeneration === true && s.token === supervisorToken(channelId, 3), "quiet gap over 24h → rotates again to generation 3");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:01Z");
-  ok(s.generation === 3 && s.freshGeneration === false, "resuming the just-rotated generation immediately → freshGeneration false");
+  ok(s.generation === 3 && s.freshGeneration === true, "resuming the just-rotated generation before its first delivered wake → freshGeneration true (H7c)");
+
+  await store.touchChannelSession(org, surfaceKey, "2026-07-03T00:00:02Z");
+  const gen3Token = supervisorToken(channelId, 3);
+  await store.bumpChannelSessionUsage(org, surfaceKey, gen3Token, SUPERVISOR_ROTATE_TOKEN_BUDGET);
+  s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:05:00Z");
+  ok(s.generation === 4 && s.freshGeneration === true && s.token === supervisorToken(channelId, 4), "token budget exceeded → rotates to generation 4 (primary trigger), fresh counter reset to 0");
+  const gen4Row = await store.getChannelSession(org, surfaceKey);
+  ok(gen4Row !== null && gen4Row.inputTokensTotal === 0 && gen4Row.firstWakeAt === null, "rotation resets input_tokens_total to 0 and first_wake_at to NULL");
+
+  await store.bumpChannelSessionUsage(org, surfaceKey, gen3Token, 999_999);
+  const afterStragglerBump = await store.getChannelSession(org, surfaceKey);
+  ok(afterStragglerBump !== null && afterStragglerBump.inputTokensTotal === 0, "a straggler bump under a retired generation's token is a no-op (token guard)");
 }
 
 {

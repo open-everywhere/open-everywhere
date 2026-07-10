@@ -68,13 +68,16 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
   `CREATE TABLE IF NOT EXISTS channel_session (
-     org_id       text    NOT NULL,
-     surface_key  text    NOT NULL,
-     token        text    NOT NULL,
-     generation   integer NOT NULL,
-     created_at   text    NOT NULL,
-     last_wake_at text    NOT NULL,
-     turn_count   integer NOT NULL DEFAULT 0,
+     org_id             text    NOT NULL,
+     surface_key        text    NOT NULL,
+     token              text    NOT NULL,
+     generation         integer NOT NULL,
+     created_at         text    NOT NULL,
+     last_wake_at       text    NOT NULL,
+     turn_count         integer NOT NULL DEFAULT 0,
+     input_tokens_total bigint,               -- measured cumulative input+cacheRead for this generation (§2 #551); NULL = unknown ⇒ rotate
+     first_wake_at      text,                 -- ISO-8601 of the first delivered wake (H7c); NULL = none yet ⇒ still fresh
+     handoff_note       text,                 -- rolling distilled channel state for the next generation (§5); NULL = none
      PRIMARY KEY (org_id, surface_key)
    )`,
   `CREATE TABLE IF NOT EXISTS event_dedupe (
@@ -151,6 +154,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS silent_streak integer NOT NULL DEFAULT 0`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS owner_token text`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'thread'`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS input_tokens_total bigint`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
+  `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS handoff_note text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -605,40 +611,60 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getChannelSession(org, surfaceKey) {
       const { rows } = await client.query(
-        "SELECT token, generation, created_at, last_wake_at, turn_count FROM channel_session WHERE org_id = $1 AND surface_key = $2",
+        "SELECT token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note FROM channel_session WHERE org_id = $1 AND surface_key = $2",
         [org, surfaceKey],
       );
-      const r = (rows as { token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number }[])[0];
+      const r = (rows as {
+        token: string; generation: number; created_at: string; last_wake_at: string; turn_count: number;
+        input_tokens_total: string | number | null; first_wake_at: string | null; handoff_note: string | null;
+      }[])[0];
       return r
-        ? { org, surfaceKey, token: r.token, generation: Number(r.generation), createdAt: r.created_at, lastWakeAt: r.last_wake_at, turnCount: Number(r.turn_count) }
+        ? {
+            org, surfaceKey, token: r.token, generation: Number(r.generation), createdAt: r.created_at,
+            lastWakeAt: r.last_wake_at, turnCount: Number(r.turn_count),
+            inputTokensTotal: r.input_tokens_total == null ? null : Number(r.input_tokens_total),
+            firstWakeAt: r.first_wake_at ?? null,
+            handoffNote: r.handoff_note ?? null,
+          }
         : null;
     },
 
-    async rotateChannelSession(org, surfaceKey, newToken, at) {
+    async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
       const { rows: existingRows } = await client.query(
         "SELECT generation FROM channel_session WHERE org_id = $1 AND surface_key = $2",
         [org, surfaceKey],
       );
       const existing = (existingRows as { generation: number }[])[0];
       const generation = (existing ? Number(existing.generation) : 0) + 1;
+      const note = handoffNote ?? null;
       await client.query(
-        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count)
-         VALUES ($1, $2, $3, $4, $5, $6, 0)
+        `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, 0, NULL, $7)
          ON CONFLICT (org_id, surface_key) DO UPDATE SET
-           token        = excluded.token,
-           generation   = excluded.generation,
-           created_at   = excluded.created_at,
-           last_wake_at = excluded.last_wake_at,
-           turn_count   = 0`,
-        [org, surfaceKey, newToken, generation, at, at],
+           token              = excluded.token,
+           generation         = excluded.generation,
+           created_at         = excluded.created_at,
+           last_wake_at       = excluded.last_wake_at,
+           turn_count         = 0,
+           input_tokens_total = 0,
+           first_wake_at      = NULL,
+           handoff_note       = excluded.handoff_note`,
+        [org, surfaceKey, newToken, generation, at, at, note],
       );
-      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0 };
+      return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
     },
 
     async touchChannelSession(org, surfaceKey, at) {
       await client.query(
-        "UPDATE channel_session SET last_wake_at = $1, turn_count = turn_count + 1 WHERE org_id = $2 AND surface_key = $3",
+        "UPDATE channel_session SET last_wake_at = $1, turn_count = turn_count + 1, first_wake_at = COALESCE(first_wake_at, $1) WHERE org_id = $2 AND surface_key = $3",
         [at, org, surfaceKey],
+      );
+    },
+
+    async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
+      await client.query(
+        "UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + $4 WHERE org_id = $1 AND surface_key = $2 AND token = $3",
+        [org, surfaceKey, token, delta],
       );
     },
 

@@ -165,6 +165,9 @@ export interface ChannelSessionRow {
   readonly createdAt: string;
   readonly lastWakeAt: string;
   readonly turnCount: number;
+  readonly inputTokensTotal: number | null;
+  readonly firstWakeAt: string | null;
+  readonly handoffNote: string | null;
 }
 
 export interface OperationalStore {
@@ -206,8 +209,9 @@ export interface OperationalStore {
   listEngagements(org: string): Promise<EngagementRow[]>;
 
   getChannelSession(org: string, surfaceKey: string): Promise<ChannelSessionRow | null>;
-  rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string): Promise<ChannelSessionRow>;
+  rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string, handoffNote?: string): Promise<ChannelSessionRow>;
   touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
+  bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<void>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(org: string, domain: string, name: string, content: string, updatedBy: string | undefined, updatedAt: string): Promise<void>;

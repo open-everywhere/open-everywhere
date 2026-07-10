@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { periodOf, emptyWindow, addUsage, windowTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
 import type { SpendLimitRow } from "../agent/operational/store.js";
+import { turnKind } from "../agent/hooks/spend.js";
+import type { BindableContext } from "../agent/identity/binding.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -519,4 +521,20 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 rmSync(dir, { recursive: true, force: true });
+{
+  const chanCtx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T", channel_id: "C", channel_type: "channel" }, principalId: "U", principalType: "slack-user" } } },
+  } as unknown as BindableContext;
+  const dmCtx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T", channel_id: "D", channel_type: "im" }, principalId: "U", principalType: "slack-user" } } },
+  } as unknown as BindableContext;
+  ok(turnKind(chanCtx, "C:oe-sup:g3") === "supervisor", "supervisor-shaped continuationToken → kind 'supervisor'");
+  ok(turnKind(chanCtx, "C:1720000000.1234") === "channel", "an ordinary thread token → kind 'channel' (not supervisor)");
+  ok(turnKind(chanCtx) === "channel", "no continuationToken → falls back to the surface mode (channel)");
+  ok(turnKind(dmCtx, "D:1720000000.1234") === "dm", "a DM token → kind 'dm' (unchanged)");
+  ok(turnKind(chanCtx, undefined) === "channel", "undefined token → channel (no false supervisor tag)");
+}
+
 console.log(`✓ spend: ${passed} assertions passed`);

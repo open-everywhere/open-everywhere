@@ -3,7 +3,7 @@ import { defineDynamic } from "eve/tools";
 import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
-import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge, registerGatewayHandoffCompletion } from "@open-everywhere/adapters/agent/model/dream-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
@@ -25,9 +25,13 @@ const UTILITY_GATEWAY_DEFAULTS = {
   caching: "auto",
 } as const;
 
+const SESSION_INPUT_TOKEN_BUDGET = Number(process.env.OE_SESSION_INPUT_TOKEN_BUDGET) || 30_000_000;
+
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+
+registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 const VISION_MODEL = "alibaba/qwen3-vl-instruct";
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
@@ -63,6 +67,7 @@ export default defineAgent({
   }),
   modelContextWindowTokens: 1_000_000,
   reasoning: "medium",
+  limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET },
   compaction: {
     model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,

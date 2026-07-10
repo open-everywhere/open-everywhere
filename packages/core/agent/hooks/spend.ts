@@ -6,12 +6,18 @@ import { periodOf, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
+import { getOperationalStore } from "../operational/provider.js";
 
-export function turnKind(ctx: BindableContext): string {
+function isSupervisorToken(token: unknown): token is string {
+  return typeof token === "string" && token.includes(":oe-sup:g");
+}
+
+export function turnKind(ctx: BindableContext, continuationToken?: unknown): string {
   try {
     const auth = ctx.session?.auth;
     const attrs = auth?.current?.attributes ?? auth?.initiator?.attributes;
     if (routineMarker(attrs)) return "routine";
+    if (isSupervisorToken(continuationToken)) return "supervisor";
     return bindFrom(ctx).mode === "dm" ? "dm" : "channel";
   } catch {
     return "channel";
@@ -37,7 +43,7 @@ export default defineHook({
           surfaceKey: domainKeyOf(p),
           sessionId: ctx.session.id,
           principalId: bindFrom(ctx).principalId,
-          kind: turnKind(ctx),
+          kind: turnKind(ctx, ctx.channel?.continuationToken),
           model: readModelStamp() ?? undefined,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
@@ -46,6 +52,16 @@ export default defineHook({
         });
       } catch (err) {
         console.warn(`[open-everywhere:usage] event append skipped: ${String(err)}`);
+      }
+
+      const token = ctx.channel?.continuationToken;
+      if (isSupervisorToken(token)) {
+        try {
+          const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+          if (delta > 0) await getOperationalStore().bumpChannelSessionUsage(p.org, domainKeyOf(p), token, delta);
+        } catch (err) {
+          console.warn(`[open-everywhere:spend] supervisor token counter bump skipped: ${String(err)}`);
+        }
       }
     },
   },

@@ -28,6 +28,7 @@ import { ambientSupervisorEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
+import { buildRecord, enqueue as enqueueLogRecord, flushLogShip } from "../observability/ship.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -160,12 +161,18 @@ export class EventDedupe {
 export class ThreadFifo {
   private readonly tails = new Map<string, Promise<void>>();
 
+  constructor(private readonly onFailure?: (key: string, err: unknown) => void) {}
+
   enqueue(key: string, run: () => Promise<void>): Promise<void> {
     const prev = this.tails.get(key) ?? Promise.resolve();
     const next = prev
       .then(() => run())
       .catch((err) => {
         console.warn(`[open-everywhere:slack-front] wake delivery failed (${key}): ${String(err)}`);
+        try {
+          this.onFailure?.(key, err);
+        } catch {
+        }
       });
     this.tails.set(key, next);
     void next.finally(() => {
@@ -243,9 +250,36 @@ const logOutcome =
     );
   };
 
+export function recordWakeFailure(key: string, err: unknown): void {
+  const channelId = key.split(":")[0] ?? key;
+  try {
+    enqueueLogRecord(buildRecord("error", "wake", "supervisor/thread wake delivery failed", { fields: { fifoKey: key, channelId }, err }));
+    void flushLogShip();
+  } catch {
+  }
+  void (async () => {
+    try {
+      const p = resolvePartition({
+        channel: { kind: "slack" },
+        session: { auth: { current: { attributes: { team_id: "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
+      } as Parameters<typeof resolvePartition>[0]);
+      await getOperationalStore().appendAudit({
+        ts: new Date().toISOString(),
+        org: p.org,
+        platform: p.platform,
+        workspace: p.workspace,
+        surface: p.surface,
+        action: "surface.wake_failed",
+        detail: { fifoKey: key, message: String(err instanceof Error ? err.message : err).slice(0, 500) },
+      });
+    } catch {
+    }
+  })();
+}
+
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
   const dedupe = opts.dedupe ?? new EventDedupe();
-  const fifo = opts.fifo ?? new ThreadFifo();
+  const fifo = opts.fifo ?? new ThreadFifo(recordWakeFailure);
   const getBotIdentity = opts.getBotIdentity ?? resolveBotIdentity;
   const now = opts.now ?? (() => Date.now());
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
