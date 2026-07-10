@@ -122,11 +122,11 @@ export async function retrieveComment(commentId: string, opts: NotionCallOpts): 
   return (await res.json()) as NotionComment;
 }
 
-export async function retrieveBotUser(opts: NotionCallOpts): Promise<{ id?: string; type?: string }> {
+export async function retrieveBotUser(opts: NotionCallOpts): Promise<{ id?: string; type?: string; name?: string }> {
   const f = opts.fetch ?? (globalThis.fetch as FetchLike);
   const res = await f(`${NOTION_API_BASE}/v1/users/me`, { method: "GET", headers: notionHeaders(opts) });
   if (!res.ok) throw new Error(`retrieveBotUser failed: ${res.status} ${await safeText(res)}`);
-  return (await res.json()) as { id?: string; type?: string };
+  return (await res.json()) as { id?: string; type?: string; name?: string };
 }
 
 export async function listBlockComments(blockId: string, opts: NotionCallOpts): Promise<NotionComment[]> {

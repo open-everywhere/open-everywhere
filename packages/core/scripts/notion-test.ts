@@ -110,7 +110,7 @@ function makeFetch(opts: MockOpts): FetchLike {
       return new Response(JSON.stringify({ results: opts.listResults ?? [] }), { status: 200 });
     }
     if (method === "GET" && input.endsWith("/v1/users/me")) {
-      return new Response(JSON.stringify({ id: BOT, type: "bot" }), { status: 200 });
+      return new Response(JSON.stringify({ id: BOT, type: "bot", name: "Aria" }), { status: 200 });
     }
     if (method === "POST" && input.endsWith("/v1/comments")) {
       opts.onPost?.(JSON.parse(String(init?.body ?? "{}")));
@@ -245,6 +245,7 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
 {
   const u = await retrieveBotUser({ apiKey: "ntn_key", fetch: makeFetch({ comment: triggerMention }) });
   ok(u.id === BOT, "retrieveBotUser resolves the integration's own user id (GET /v1/users/me)");
+  ok(u.name === "Aria", "retrieveBotUser also captures the bot's display name (the name-drop judge input, Step 4)");
 }
 
 ok(notionEventType({ event_type: "comment.created" }) === "comment.created", "notionEventType tolerates the event_type spelling");

@@ -26,18 +26,22 @@ function notionApiKey(): string | undefined {
   return k && k.length > 0 ? k : undefined;
 }
 
-let botUserCache: Promise<string | undefined> | undefined;
-function resolveBotUserId(apiKey: string): () => Promise<string | undefined> {
+let botUserCache: Promise<{ id?: string; name?: string }> | undefined;
+function resolveBotUser(apiKey: string): () => Promise<{ id?: string; name?: string }> {
   return () => {
-    const override = process.env.NOTION_BOT_USER_ID;
-    if (override && override.length > 0) return Promise.resolve(override);
     if (!botUserCache) {
-      botUserCache = retrieveBotUser({ apiKey })
-        .then((u) => u.id)
-        .catch((err) => {
-          log(`could not resolve bot user id (GET /v1/users/me failed): ${String(err)}`);
-          return undefined;
-        });
+      const overrideId = process.env.NOTION_BOT_USER_ID;
+      const overrideName = process.env.NOTION_BOT_NAME;
+      const named = (u: { id?: string; name?: string }) => ({ id: u.id, name: overrideName && overrideName.length > 0 ? overrideName : u.name });
+      botUserCache =
+        overrideId && overrideId.length > 0
+          ? Promise.resolve(named({ id: overrideId }))
+          : retrieveBotUser({ apiKey })
+              .then(named)
+              .catch((err) => {
+                log(`could not resolve bot user (GET /v1/users/me failed): ${String(err)}`);
+                return {};
+              });
     }
     return botUserCache;
   };
@@ -104,6 +108,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
       const apiKey = notionApiKey();
+      const botUser = resolveBotUser(apiKey ?? "");
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
         await handleNotionSupervisorDispatch(d, liveNotionSupervisorDeps(send as unknown as SendFn));
@@ -122,7 +127,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         secret: process.env.NOTION_WEBHOOK_SECRET,
         allowUnverified: process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK === "1",
         apiKey,
-        resolveBotUserId: resolveBotUserId(apiKey ?? ""),
+        resolveBotUserId: async () => (await botUser()).id,
+        resolveBotName: async () => (await botUser()).name,
         ambientEnabled: notionAmbientEnabled,
         dispatch,
       });
