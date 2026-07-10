@@ -317,6 +317,21 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(seen[0] === "true|teardown: cleared the override", "legGate prefixes the gate label with the leg name");
 }
 
+{
+  const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("./e2e/slack-driver.js");
+  const upd = new URLSearchParams(buildChatUpdateBody({ channel: "C1", ts: "1.2", text: "edited" }));
+  ok(upd.get("channel") === "C1" && upd.get("ts") === "1.2" && upd.get("text") === "edited", "chat.update body carries channel + ts + new text");
+  const up1 = new URLSearchParams(buildUploadUrlBody({ filename: "probe.png", length: 128 }));
+  ok(up1.get("filename") === "probe.png" && up1.get("length") === "128", "files.getUploadURLExternal body carries filename + byte length");
+  const done = new URLSearchParams(buildCompleteUploadBody({ fileId: "F123", title: "probe", channel: "C1", threadTs: "1.5", initialComment: "<@U> what's in this?" }));
+  ok(done.get("channel_id") === "C1" && done.get("thread_ts") === "1.5", "files.completeUploadExternal body carries channel_id + thread_ts");
+  ok(done.get("initial_comment") === "<@U> what's in this?", "…and the initial_comment (the mention asking about the image)");
+  const files = JSON.parse(done.get("files") ?? "[]") as { id: string; title: string }[];
+  ok(files.length === 1 && files[0].id === "F123" && files[0].title === "probe", "…and files as a JSON [{id,title}] array (Slack's contract)");
+  const noThread = new URLSearchParams(buildCompleteUploadBody({ fileId: "F1", title: "t", channel: "C1" }));
+  ok(!noThread.has("thread_ts") && !noThread.has("initial_comment"), "optional thread_ts / initial_comment are omitted when absent");
+}
+
 ok(SYNTHETIC_SLACK_ROUTE === PUBLIC_SLACK_ROUTE, "synthetic route literal matches slack-front's PUBLIC_SLACK_ROUTE");
 ok(SYNTHETIC_COMMANDS_ROUTE === SLACK_COMMANDS_ROUTE, "synthetic commands literal matches SLACK_COMMANDS_ROUTE");
 ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches flow.ts's OE_APPROVAL_PREFIX");

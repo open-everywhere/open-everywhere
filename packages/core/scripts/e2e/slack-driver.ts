@@ -6,6 +6,13 @@ export interface SlackMessageAction {
   readonly value?: string;
 }
 
+export interface SlackFile {
+  readonly id?: string;
+  readonly name?: string;
+  readonly filetype?: string;
+  readonly mimetype?: string;
+}
+
 export interface SlackMessage {
   readonly ts: string;
   readonly threadTs?: string;
@@ -13,6 +20,7 @@ export interface SlackMessage {
   readonly botId?: string;
   readonly text: string;
   readonly actions?: readonly SlackMessageAction[];
+  readonly files?: readonly SlackFile[];
 }
 
 interface SlackApiMessage {
@@ -22,6 +30,7 @@ interface SlackApiMessage {
   bot_id?: string;
   text?: string;
   blocks?: readonly { type?: string; elements?: readonly { action_id?: string; value?: string }[] }[];
+  files?: readonly { id?: string; name?: string; filetype?: string; mimetype?: string }[];
 }
 
 function toMessage(m: SlackApiMessage): SlackMessage {
@@ -30,6 +39,7 @@ function toMessage(m: SlackApiMessage): SlackMessage {
     .flatMap((b) => b.elements ?? [])
     .filter((e): e is { action_id: string; value?: string } => typeof e.action_id === "string")
     .map((e) => ({ actionId: e.action_id, value: e.value }));
+  const files = (m.files ?? []).map((f) => ({ id: f.id, name: f.name, filetype: f.filetype, mimetype: f.mimetype }));
   return {
     ts: m.ts ?? "",
     threadTs: m.thread_ts,
@@ -37,7 +47,32 @@ function toMessage(m: SlackApiMessage): SlackMessage {
     botId: m.bot_id,
     text: m.text ?? "",
     actions: actions.length > 0 ? actions : undefined,
+    files: files.length > 0 ? files : undefined,
   };
+}
+
+export function buildChatUpdateBody(input: { channel: string; ts: string; text: string }): string {
+  return new URLSearchParams({ channel: input.channel, ts: input.ts, text: input.text }).toString();
+}
+
+export function buildUploadUrlBody(input: { filename: string; length: number }): string {
+  return new URLSearchParams({ filename: input.filename, length: String(input.length) }).toString();
+}
+
+export function buildCompleteUploadBody(input: {
+  fileId: string;
+  title: string;
+  channel: string;
+  threadTs?: string;
+  initialComment?: string;
+}): string {
+  const params: Record<string, string> = {
+    files: JSON.stringify([{ id: input.fileId, title: input.title }]),
+    channel_id: input.channel,
+  };
+  if (input.threadTs) params.thread_ts = input.threadTs;
+  if (input.initialComment) params.initial_comment = input.initialComment;
+  return new URLSearchParams(params).toString();
 }
 
 function tsAfter(ts: string, floor: string): boolean {
@@ -95,6 +130,39 @@ export class SlackDriver {
     const ts = typeof json.ts === "string" ? json.ts : undefined;
     if (!ts) throw new Error("slack chat.postMessage returned no ts");
     return { ts };
+  }
+
+  async update(ts: string, text: string): Promise<void> {
+    await this.api("chat.update", { channel: this.cfg.channel, ts, text });
+  }
+
+  async uploadImage(input: { filename: string; bytes: Uint8Array; title?: string; threadTs?: string; initialComment?: string }): Promise<void> {
+    const title = input.title ?? input.filename;
+    const step1 = await this.api("files.getUploadURLExternal", Object.fromEntries(new URLSearchParams(buildUploadUrlBody({ filename: input.filename, length: input.bytes.byteLength }))));
+    const uploadUrl = typeof step1.upload_url === "string" ? step1.upload_url : "";
+    const fileId = typeof step1.file_id === "string" ? step1.file_id : "";
+    if (!uploadUrl || !fileId) throw new Error("slack files.getUploadURLExternal returned no upload_url/file_id");
+    const put = await fetch(uploadUrl, { method: "POST", body: input.bytes });
+    if (!put.ok) throw new Error(`slack file byte upload failed: http ${put.status}`);
+    await this.api(
+      "files.completeUploadExternal",
+      Object.fromEntries(new URLSearchParams(buildCompleteUploadBody({ fileId, title, channel: this.cfg.channel, threadTs: input.threadTs, initialComment: input.initialComment }))),
+    );
+  }
+
+  async awaitFileReply(rootTs: string, opts: { timeoutMs: number; filetype?: string; afterTs?: string }): Promise<SlackMessage> {
+    const floor = opts.afterTs ?? rootTs;
+    return pollUntil(
+      async () =>
+        (await this.replies(rootTs)).find(
+          (m) =>
+            this.isBotReply(m) &&
+            tsAfter(m.ts, floor) &&
+            (m.files?.length ?? 0) > 0 &&
+            (opts.filetype === undefined || (m.files ?? []).some((f) => f.filetype === opts.filetype)),
+        ),
+      { timeoutMs: opts.timeoutMs, what: `a bot reply carrying a ${opts.filetype ?? "file"} attachment in thread ${rootTs}` },
+    );
   }
 
   async replies(rootTs: string): Promise<readonly SlackMessage[]> {
