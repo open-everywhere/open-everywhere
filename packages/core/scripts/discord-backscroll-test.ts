@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import {
   fetchDiscordBackscroll,
+  fetchDiscordBackscrollWindow,
+  fetchDiscordWakeEnvelopeBackscroll,
+  isDiscordBackscrollVisible,
   linesFromDiscordMessages,
+  snowflakeToMs,
   type DiscordRequester,
   type DiscordBackscrollDeps,
 } from "../agent/channels/discord-backscroll.js";
@@ -125,4 +129,133 @@ const deps = (request: DiscordRequester): DiscordBackscrollDeps => ({ request })
   ok(linesFromDiscordMessages([{ id: "1", type: 7, content: "x", author: { id: "U", bot: false } }], BOT).length === 0, "linesFromDiscordMessages drops a system type");
 }
 
-console.log(`✓ discord-backscroll: ${n} assertions passed (before=<trigger> + since-last-agent slice + cold-thread + base last-N + N cap + system/empty skip + agent self-attribution + untrusted wrap + no-hint + fail-soft)`);
+const DISCORD_EPOCH = 1_420_070_400_000;
+const sf = (ms: number): string => String((BigInt(Math.round(ms) - DISCORD_EPOCH) << 22n));
+const mts = (ms: number, authorId: string | undefined, content: string, bot = false): Msg => ({
+  id: sf(ms),
+  type: 0,
+  content,
+  timestamp: new Date(ms).toISOString(),
+  author: authorId === undefined ? { bot } : { id: authorId, bot },
+});
+
+const T = Date.UTC(2024, 5, 1, 12, 0, 0);
+const HOUR = 3_600_000;
+function pagingStub(pages: Msg[][], rec?: { calls: number }): DiscordRequester {
+  let i = 0;
+  return async (_channelId, _query) => {
+    if (rec) rec.calls++;
+    return i < pages.length ? pages[i++] : [];
+  };
+}
+
+{
+  const ms = T;
+  ok(snowflakeToMs(sf(ms)) === ms, "snowflakeToMs decodes the creation time encoded in the id");
+  ok(snowflakeToMs("not-a-snowflake") === undefined, "snowflakeToMs → undefined for a non-numeric id");
+  ok(snowflakeToMs("0") === undefined, "snowflakeToMs → undefined for a non-positive id");
+}
+
+{
+  ok(isDiscordBackscrollVisible({ senderType: "agent", ts: "1", text: "x" }), "gate: the bot's own posts (agent) are visible");
+  ok(isDiscordBackscrollVisible({ senderType: "user", senderId: "U1", ts: "1", text: "x" }), "gate: identifiable humans are visible");
+  ok(isDiscordBackscrollVisible({ senderType: "bot", senderId: "B1", ts: "1", text: "x" }), "gate: ATTRIBUTABLE foreign bots are visible (marked awareness → from=bot)");
+  ok(!isDiscordBackscrollVisible({ senderType: "bot", ts: "1", text: "x" }), "gate: a foreign bot with NO id is dropped (unattributable → fail closed)");
+  ok(!isDiscordBackscrollVisible({ senderType: "unknown", ts: "1", text: "x" }), "gate: unattributable senders are NOT visible (fail closed)");
+}
+
+{
+  const messages: Msg[] = [
+    mts(T, "UH", "human newest"),
+    mts(T - HOUR, "OTHERBOT", "another bot", true),
+    mts(T - 2 * HOUR, BOT, "my own post", true),
+    { id: sf(T - 3 * HOUR), type: 0, content: "no author id", author: { bot: false } },
+    { id: sf(T - 4 * HOUR), type: 7, content: "UD joined", author: { id: "UD", bot: false } },
+  ];
+  const window = await fetchDiscordBackscrollWindow(
+    { channelId: "CH", triggerMessageId: sf(T + HOUR), isThread: false, botId: BOT },
+    deps(pagingStub([messages])),
+  );
+  ok(window.length === 3, "base window: 3 visible NormalizedMessages (unknown + system dropped)");
+  ok(window.every((m) => m.type === "channel" && m.threadId === undefined), "base window: every message tagged type=channel, no threadId");
+  ok(window.every((m) => typeof m.ms === "number" && m.ms > DISCORD_EPOCH), "base window: each carries a real epoch ms");
+  const byText = Object.fromEntries(window.map((m) => [m.text, m]));
+  ok(byText["human newest"].sender === "human" && byText["human newest"].authorId === "UH", "human → sender=human with author id");
+  ok(byText["another bot"].sender === "bot" && byText["another bot"].authorId === "OTHERBOT", "attributable foreign bot → sender=bot with id");
+  ok(byText["my own post"].sender === "self" && byText["my own post"].authorId === undefined, "the bot's own post → sender=self, no author id");
+}
+
+{
+  const messages = [mts(T, "UA", "in thread")];
+  const window = await fetchDiscordBackscrollWindow(
+    { channelId: "TH", triggerMessageId: sf(T + HOUR), isThread: true, botId: BOT },
+    deps(pagingStub([messages])),
+  );
+  ok(window.length === 1 && window[0].type === "thread" && window[0].threadId === "TH", "thread window: type=thread, threadId=the thread's own channel id");
+}
+
+{
+  const messages = [mts(T, "UB", "third"), mts(T - HOUR, "UA", "second"), mts(T - 2 * HOUR, BOT, "first", true)];
+  const out = await fetchDiscordWakeEnvelopeBackscroll(
+    { channelId: "CH", triggerMessageId: sf(T + HOUR), isThread: false, botId: BOT },
+    deps(pagingStub([messages])),
+  );
+  ok(out.length === 3, "single-cluster envelope backscroll: all 3 messages");
+  ok(out.every((m) => m.sessionId === undefined), "single cluster → NO sessionId (renders flat)");
+  ok(out.every((m) => m.trust === "peer" && !m.trigger), "backscroll messages are trust=peer and never the trigger");
+  ok(out[0].body === "first" && out[2].body === "third", "emitted oldest-first (core sorts by ms)");
+  ok(out[0].from === "self" && out[1].from === "human", "sender kinds map onto envelope `from` (self/human/bot)");
+}
+
+{
+  const messages = [
+    mts(T, "UB", "recent-2"),
+    mts(T - HOUR, "UA", "recent-1"),
+    mts(T - 30 * HOUR, "UB", "older-2"),
+    mts(T - 31 * HOUR, "UA", "older-1"),
+  ];
+  const out = await fetchDiscordWakeEnvelopeBackscroll(
+    { channelId: "CH", triggerMessageId: sf(T + HOUR), isThread: false, botId: BOT },
+    deps(pagingStub([messages])),
+  );
+  ok(out.length === 4, "multi-cluster: all 4 messages selected (spine + one bolted cluster)");
+  const ids = new Set(out.map((m) => m.sessionId));
+  ok(!ids.has(undefined) && ids.size === 2, "an idle gap produced TWO distinct <session> ids (none undefined)");
+  ok(out[0].body === "older-1" && out[3].body === "recent-2", "oldest cluster renders first, newest last");
+}
+
+{
+  const rec = { calls: 0 };
+  const page1 = Array.from({ length: 100 }, (_, k) => mts(T - k * 60_000, "UA", `p1-${k}`));
+  const page2 = [mts(T - 200 * 60_000, "UA", "p2-only")];
+  const window = await fetchDiscordBackscrollWindow(
+    { channelId: "CH", triggerMessageId: sf(T + HOUR), isThread: false, botId: BOT },
+    deps(pagingStub([page1, page2], rec)),
+  );
+  ok(rec.calls === 2, "a full page triggers a second fetch; the short page ends pagination");
+  ok(window.some((m) => m.text === "p2-only") && window.length === 101, "both pages normalized + deduped (101 messages)");
+}
+
+{
+  const rec = { calls: 0 };
+  const page1 = Array.from({ length: 100 }, (_, k) => mts(T - k * 60_000, "UA", `f-${k}`));
+  const window = await fetchDiscordBackscrollWindow(
+    { channelId: "CH", triggerMessageId: sf(T), isThread: false, botId: BOT, reachbackHours: 1 },
+    deps(pagingStub([page1, page1], rec)),
+  );
+  ok(rec.calls === 1, "pagination stops once a page reaches past the reachback floor");
+  ok(window.every((m) => m.ms >= T - 1 * HOUR), "messages older than the reachback floor are excluded from the window");
+}
+
+{
+  const throwing = deps(async () => {
+    throw new Error("discord down");
+  });
+  ok((await fetchDiscordBackscrollWindow({ channelId: "CH", triggerMessageId: sf(T), isThread: false, botId: BOT }, throwing)).length === 0, "window: throwing requester → [] (never fails the wake)");
+  ok((await fetchDiscordWakeEnvelopeBackscroll({ channelId: "CH", triggerMessageId: sf(T), isThread: false, botId: BOT }, throwing)).length === 0, "envelope backscroll: throwing requester → []");
+  ok((await fetchDiscordBackscrollWindow({ channelId: "CH", triggerMessageId: sf(T), isThread: false }, deps(async () => undefined))).length === 0, "window: undefined response (no token) → []");
+  ok((await fetchDiscordBackscrollWindow({ channelId: "CH", triggerMessageId: sf(T), isThread: false }, deps(async () => ({ not: "an array" })))).length === 0, "window: non-array junk → []");
+  ok((await fetchDiscordWakeEnvelopeBackscroll({ channelId: "CH", triggerMessageId: sf(T), isThread: false }, deps(pagingStub([[]])))).length === 0, "envelope backscroll: empty history → []");
+}
+
+console.log(`✓ discord-backscroll: ${n} assertions passed (flat name-drop path + neutral-core window/envelope adapter: snowflake time + visibility gate + sender mapping + thread tagging + single/multi cluster <session> + pagination + reachback floor + fail-soft)`);
