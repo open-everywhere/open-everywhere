@@ -13,7 +13,7 @@ import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { fetchWakeBackscroll, fetchWakeEnvelopeBackscroll } from "./slack-wake-backscroll.js";
 import { classifySessionSendError } from "./session-death.js";
 import { generateHandoffNote } from "../model/rotation-handoff.js";
-import { renderWakeEnvelope, type WakeAttachment, type WakeMessageInput, type WakeTrust } from "./wake-envelope.js";
+import { renderWakeEnvelope, type WakeAttachment, type WakeMessageInput, type WakeParticipant, type WakeTrust } from "./wake-envelope.js";
 import { registerSlackAttachment } from "./slack-attachments.js";
 import {
   buildIngestedReaction,
@@ -116,10 +116,16 @@ function slackTsToIso(ts: string): string {
   return Number.isFinite(seconds) ? new Date(seconds * 1000).toISOString() : new Date(0).toISOString();
 }
 
-function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit: boolean }): WakeMessageInput {
+function triggerMessage(
+  ev: ParsedMessageEvent,
+  opts: { trust: WakeTrust; isEdit: boolean; authorName?: string; authorHandle?: string },
+): WakeMessageInput {
+  const rawId = ev.userId ?? undefined;
   return {
     from: "human",
-    author: ev.userId ?? "unknown",
+    author: opts.authorName ?? rawId ?? "unknown",
+    authorId: rawId,
+    handle: opts.authorHandle,
     id: ev.ts,
     sentAt: slackTsToIso(ev.ts),
     trust: opts.trust,
@@ -131,6 +137,64 @@ function triggerMessage(ev: ParsedMessageEvent, opts: { trust: WakeTrust; isEdit
   };
 }
 
+export type ResolveProfile = (userId: string) => Promise<{ name?: string; handle?: string } | undefined>;
+
+interface ResolvedWakeNames {
+  readonly triggerAuthor?: { name?: string; handle?: string };
+  readonly participants?: readonly WakeParticipant[];
+}
+
+async function resolveWakeNames(
+  triggerUserId: string | undefined,
+  backscroll: readonly WakeMessageInput[] | undefined,
+  resolve: ResolveProfile | undefined,
+): Promise<ResolvedWakeNames> {
+  if (!resolve) return {};
+  const ids = new Set<string>();
+  if (triggerUserId) ids.add(triggerUserId);
+  for (const m of backscroll ?? []) if (m.authorId) ids.add(m.authorId);
+  if (ids.size === 0) return {};
+  const resolved = new Map<string, { name?: string; handle?: string }>();
+  await Promise.all(
+    [...ids].map(async (id) => {
+      try {
+        const profile = await resolve(id);
+        if (profile && (profile.name || profile.handle)) resolved.set(id, profile);
+      } catch {
+      }
+    }),
+  );
+  const participants: WakeParticipant[] = [...resolved.entries()].map(([id, p]) => ({ id, name: p.name, handle: p.handle }));
+  return {
+    triggerAuthor: triggerUserId ? resolved.get(triggerUserId) : undefined,
+    participants: participants.length > 0 ? participants : undefined,
+  };
+}
+
+function displayNameOpts(profile: { name?: string; handle?: string } | undefined): {
+  readonly authorName?: string;
+  readonly authorHandle?: string;
+} {
+  if (!profile) return {};
+  const authorName = profile.name ?? profile.handle;
+  const authorHandle = profile.handle && profile.handle !== authorName ? profile.handle : undefined;
+  return { authorName, authorHandle };
+}
+
+function applyResolvedNames(
+  messages: readonly WakeMessageInput[],
+  participants: readonly WakeParticipant[] | undefined,
+): readonly WakeMessageInput[] {
+  if (!participants || participants.length === 0) return messages;
+  const byId = new Map(participants.map((p) => [p.id, p] as const));
+  return messages.map((m) => {
+    const p = m.authorId ? byId.get(m.authorId) : undefined;
+    if (!p) return m;
+    const { authorName, authorHandle } = displayNameOpts(p);
+    return { ...m, author: authorName ?? m.author, handle: authorHandle };
+  });
+}
+
 export function renderWakeMessage(
   ev: ParsedMessageEvent,
   now: () => string = () => new Date().toISOString(),
@@ -139,6 +203,9 @@ export function renderWakeMessage(
     readonly backscroll?: readonly WakeMessageInput[];
     readonly handoffNote?: string;
     readonly handoffFromGeneration?: number;
+    readonly triggerAuthorName?: string;
+    readonly triggerAuthorHandle?: string;
+    readonly participants?: readonly WakeParticipant[];
   },
 ): string {
   const isEdit = ev.subtype === "message_changed";
@@ -164,12 +231,16 @@ export function renderWakeMessage(
         : ""),
     "",
     renderWakeEnvelope({
-      reason: isEdit ? "message-edited" : "channel-activity",
+      reason: isEdit ? "message-edited" : ev.threadTs ? "thread-activity" : "channel-activity",
       currentTime: now(),
       channel: { id: ev.channelId, type: ev.channelType, memberCount: opts?.memberCount },
+      participants: opts?.participants,
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
       handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
-      messages: [...(opts?.backscroll ?? []), triggerMessage(ev, { trust: "peer", isEdit })],
+      messages: [
+        ...(opts?.backscroll ?? []),
+        triggerMessage(ev, { trust: "peer", isEdit, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      ],
     }),
   ].join("\n");
 }
@@ -221,6 +292,7 @@ export interface MessageRouteDeps {
   readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
   readonly deathNotice?: (channelId: string, threadTs: string) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly resolveProfile?: ResolveProfile;
 }
 
 export interface RouteOutcome extends ReplyDecision {
@@ -278,12 +350,18 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const auth = authForEvent(ev, internal ? { isExternal: false, trustChecked: true } : undefined);
   const rec = deps.getEngagement ? await deps.getEngagement(p, ev.threadTs!) : null;
   const uninvited = rec?.participating !== true;
+  const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
+  const trigger = displayNameOpts(names.triggerAuthor);
   try {
     await deps.wake({
       channelId: ev.channelId,
       threadTs: ev.threadTs!,
       auth,
-      message: renderWakeMessage(ev, deps.now),
+      message: renderWakeMessage(ev, deps.now, {
+        triggerAuthorName: trigger.authorName,
+        triggerAuthorHandle: trigger.authorHandle,
+        participants: names.participants,
+      }),
       state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
     });
   } catch (err) {
@@ -335,6 +413,7 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
     touch: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso),
     confirmInternal: confirmChannelInternal,
+    resolveProfile: liveResolveProfile,
     disengage: (p, threadTs) => disengageThread(p, threadTs),
     async stopAck(channelId, threadTs) {
       try {
@@ -423,7 +502,12 @@ export function shouldNameDropWake(input: NameDropInput): ReplyDecision {
   return { deliver: true, reason: "name-dropped in an enabled internal channel — judged wake" };
 }
 
-export function renderNameDropMessage(ev: ParsedMessageEvent, name: string, now: () => string = () => new Date().toISOString()): string {
+export function renderNameDropMessage(
+  ev: ParsedMessageEvent,
+  name: string,
+  now: () => string = () => new Date().toISOString(),
+  opts?: { readonly triggerAuthorName?: string; readonly triggerAuthorHandle?: string; readonly participants?: readonly WakeParticipant[] },
+): string {
   return [
     `[name-drop] A top-level channel message said your name ("${name}") without @mentioning you. ` +
       `You were NOT invited into this conversation — reply only if the message is clearly asking for ` +
@@ -432,11 +516,14 @@ export function renderNameDropMessage(ev: ParsedMessageEvent, name: string, now:
       `do reply, you will be following the thread from then on, so make it count.`,
     "",
     renderWakeEnvelope({
-      reason: "channel-activity",
+      reason: ev.threadTs ? "thread-activity" : "channel-activity",
       currentTime: now(),
       channel: { id: ev.channelId, type: ev.channelType },
+      participants: opts?.participants,
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
-      messages: [triggerMessage(ev, { trust: "peer", isEdit: false })],
+      messages: [
+        triggerMessage(ev, { trust: "peer", isEdit: false, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      ],
     }),
   ].join("\n");
 }
@@ -449,6 +536,7 @@ export interface NameDropRouteDeps {
   readonly displayName: () => Promise<string | undefined>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string, opts?: { participating?: boolean }) => Promise<void>;
   readonly now?: () => string;
+  readonly resolveProfile?: ResolveProfile;
 }
 
 export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropRouteDeps): Promise<RouteOutcome> {
@@ -483,11 +571,18 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     ? await deps.backscroll({ channelId: ev.channelId, ts: ev.ts, threadTs: ev.threadTs }).catch(() => [])
     : [];
 
+  const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
+  const triggerName = displayNameOpts(names.triggerAuthor);
+
   await deps.wake({
     channelId: ev.channelId,
     threadTs: rootTs,
     auth: authForEvent({ ...ev, threadTs: rootTs }, { isExternal: false, trustChecked: true }),
-    message: renderNameDropMessage(ev, name!, deps.now),
+    message: renderNameDropMessage(ev, name!, deps.now, {
+      triggerAuthorName: triggerName.authorName,
+      triggerAuthorHandle: triggerName.authorHandle,
+      participants: names.participants,
+    }),
     ...(context.length ? { context } : {}),
     state: wakeState(ev, rootTs, { oeUninvited: true }),
   });
@@ -594,19 +689,28 @@ export async function fetchChannelTranscript(channelId: string): Promise<string 
   return res ? transcriptFromHistory(res) : undefined;
 }
 
-const userNameCache = new Map<string, Promise<string | undefined>>();
-export function fetchUserDisplayName(userId: string): Promise<string | undefined> {
-  let p = userNameCache.get(userId);
+const userProfileCache = new Map<string, Promise<{ name?: string; handle?: string } | undefined>>();
+export function fetchUserProfileNames(userId: string): Promise<{ name?: string; handle?: string } | undefined> {
+  let p = userProfileCache.get(userId);
   if (!p) {
     p = (async () => {
       const info = await slackForm("users.info", `user=${encodeURIComponent(userId)}`);
       if (info?.ok !== true) return undefined;
       const user = info.user as { profile?: { display_name?: string; real_name?: string }; real_name?: string; name?: string } | undefined;
-      return user?.profile?.display_name?.trim() || user?.profile?.real_name?.trim() || user?.real_name?.trim() || user?.name?.trim() || undefined;
+      const handle = user?.profile?.display_name?.trim() || undefined;
+      const name = user?.profile?.real_name?.trim() || user?.real_name?.trim() || user?.name?.trim() || undefined;
+      return { name, handle };
     })();
-    userNameCache.set(userId, p);
+    userProfileCache.set(userId, p);
   }
   return p;
+}
+
+export const liveResolveProfile: ResolveProfile = (id) => fetchUserProfileNames(id);
+
+export async function fetchUserDisplayName(userId: string): Promise<string | undefined> {
+  const p = await fetchUserProfileNames(userId);
+  return p?.handle || p?.name || undefined;
 }
 
 const channelNameCache = new Map<string, Promise<string | undefined>>();
@@ -630,6 +734,7 @@ export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {
     enabledFor: (surfaceKey) => nameDropWakeEnabled(surfaceKey, getConfig().loadDomains()),
     confirmInternal: confirmChannelInternal,
     displayName: botDisplayName,
+    resolveProfile: liveResolveProfile,
     markEngaged: (p, threadTs, atIso, opts) => markThreadEngaged(p, threadTs, atIso, opts),
     backscroll: (input) => fetchWakeBackscroll(input),
     async wake({ channelId, threadTs, auth, message, context, state }) {
@@ -708,6 +813,7 @@ export interface SupervisorRouteDeps {
   readonly forceRotate?: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
+  readonly resolveProfile?: ResolveProfile;
 }
 
 export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
@@ -735,18 +841,24 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
     : [];
 
   const auth = authForEvent(ev, { isExternal: false, trustChecked: true });
-  const doWake = (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) =>
-    deps.wake({
+  const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) => {
+    const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
+    const trigger = displayNameOpts(names.triggerAuthor);
+    return deps.wake({
       token,
       auth,
       message: renderWakeMessage(ev, deps.now, {
         memberCount,
-        backscroll: bs,
+        backscroll: applyResolvedNames(bs, names.participants),
         handoffNote: handoffNote ?? undefined,
         handoffFromGeneration: generation - 1,
+        triggerAuthorName: trigger.authorName,
+        triggerAuthorHandle: trigger.authorHandle,
+        participants: names.participants,
       }),
       state: wakeState(ev, supervisorSentinel(generation), { oeSupervisor: true, oeUninvited: true }),
     });
+  };
 
   try {
     await doWake(session.token, session.generation, backscroll, session.freshGeneration ? session.handoffNote : undefined);
@@ -783,6 +895,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
   };
   return {
     confirmInternalWithMeta: confirmChannelInternalWithMeta,
+    resolveProfile: liveResolveProfile,
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
       const existing = await store.getChannelSession(org, surfaceKey);

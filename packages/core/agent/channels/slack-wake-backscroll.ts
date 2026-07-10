@@ -133,8 +133,9 @@ export async function fetchWakeEnvelopeBackscroll(
     lines.reverse();
     const capped = capLines(lines, { maxMessages: WAKE_BACKSCROLL_MAX });
     return capped.map((l) => ({
-      from: l.senderType === "agent" ? "agent" : "human",
+      from: l.senderType === "agent" ? ("self" as const) : l.senderType === "bot" ? ("agent" as const) : ("human" as const),
       author: l.senderId ?? "unknown",
+      authorId: l.senderId,
       id: l.ts,
       sentAt: tsToIso(l.ts),
       trust: "peer" as const,

@@ -1,10 +1,16 @@
 import { ingestUntrusted } from "../access/untrusted.js";
 
-export type WakeReason = "channel-activity" | "dispatch" | "message-edited";
+export type WakeReason =
+  | "channel-activity"
+  | "thread-activity"
+  | "mention"
+  | "dm"
+  | "dispatch"
+  | "message-edited";
 
 export type WakeTrust = "principal" | "peer" | "relay";
 
-export type WakeMessageSender = "human" | "agent";
+export type WakeMessageSender = "human" | "agent" | "self" | "system";
 
 export interface WakeChannelMeta {
   readonly id: string;
@@ -29,6 +35,7 @@ export interface WakeMessageInput {
   readonly from: WakeMessageSender;
   readonly author: string;
   readonly authorId?: string;
+  readonly handle?: string;
   readonly id: string;
   readonly sentAt: string;
   readonly trust: WakeTrust;
@@ -46,10 +53,17 @@ export interface WakeHandoff {
   readonly fromGeneration: number;
 }
 
+export interface WakeParticipant {
+  readonly id: string;
+  readonly name?: string;
+  readonly handle?: string;
+}
+
 export interface WakeEnvelopeInput {
   readonly reason: WakeReason;
   readonly currentTime: string;
   readonly channel: WakeChannelMeta;
+  readonly participants?: readonly WakeParticipant[];
   readonly thread?: WakeThreadMeta;
   readonly handoff?: WakeHandoff;
   readonly messages: readonly WakeMessageInput[];
@@ -90,6 +104,7 @@ function renderMessage(m: WakeMessageInput): string {
     boolAttr("edited", edited) +
     attr("author", m.author) +
     attr("author-id", m.authorId) +
+    attr("handle", m.handle) +
     attr("id", m.id) +
     attr("sent-at", m.sentAt) +
     attr("thread-session-id", m.ownerToken);
@@ -103,6 +118,11 @@ function renderMessage(m: WakeMessageInput): string {
     .join("");
 
   return `<message${attrs}>\n${indent(body, 2)}${previousBody}${attachments}\n</message>`;
+}
+
+function renderParticipants(ps: readonly WakeParticipant[]): string {
+  const rows = ps.map((p) => `<participant${attr("id", p.id)}${attr("name", p.name)}${attr("handle", p.handle)}/>`).join("\n");
+  return `<participants>\n${indent(rows, 2)}\n</participants>`;
 }
 
 function renderChannelOpen(c: WakeChannelMeta): string {
@@ -134,10 +154,12 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
   const messagesXml = input.messages.map((m) => renderMessage(m)).join("\n");
   const channelOpen = renderChannelOpen(input.channel);
 
+  const participantsXml =
+    input.participants && input.participants.length > 0 ? indent(renderParticipants(input.participants), 2) + "\n" : "";
   const handoffXml = input.handoff ? indent(renderHandoff(input.handoff), 2) + "\n" : "";
   const channelBody = input.thread
-    ? `${handoffXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
-    : `${handoffXml}${indent(messagesXml, 2)}`;
+    ? `${participantsXml}${handoffXml}${indent(renderThreadOpen(input.thread), 2)}\n${indent(messagesXml, 4)}\n${indent("</thread>", 2)}`
+    : `${participantsXml}${handoffXml}${indent(messagesXml, 2)}`;
 
   const lines = [
     `<wake${attr("reason", input.reason)}${attr("current-time", input.currentTime)}>`,

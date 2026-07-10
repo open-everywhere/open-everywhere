@@ -636,7 +636,7 @@ registerConfig({
   ok(wakeMsg.includes(NO_REPLY_SENTINEL) && wakeMsg.includes("what do you reckon, Dave?"), "wake message = judge instruction + raw reply");
   ok(wakeMsg.includes("[thread-follow]"), "wake message is marked as a thread-follow dispatch");
   ok(/social\s+chatter/i.test(wakeMsg) && /never re-answer/i.test(wakeMsg), "wake message names social chatter as noise and forbids re-answering");
-  ok(wakeMsg.includes('<wake reason="channel-activity"'), "wake message body is the envelope, reason=channel-activity for a plain (non-edit) wake");
+  ok(wakeMsg.includes('<wake reason="thread-activity"'), "wake message body is the envelope, reason=thread-activity for an engaged-thread (non-edit) wake");
   ok(wakeMsg.includes('trust="peer"'), "wake envelope's trigger message is trust=peer");
   ok(wakeMsg.includes('trigger="true"'), "wake envelope's sole message carries trigger=true");
   ok(wakeMsg.includes('<thread ts="1.1"'), "wake envelope nests under <thread> for an in-thread wake");
@@ -658,6 +658,46 @@ registerConfig({
   ok(isNoReply("NO_REPLY — they're talking among themselves"), "half-compliant rationale after the sentinel → still silent (never post the private judgment)");
   ok(!isNoReply("I checked — NO_REPLY is the sentinel we use"), "sentinel mid-message is a genuine reply, not silence");
   ok(!isNoReply("Sure, here's the summary…"), "ordinary reply → posts");
+
+  {
+    const nameEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "what's the status?" },
+    })!;
+    const named: string[] = [];
+    const outNamed = await routeMessageEvent(nameEv, {
+      isEngaged: async () => true,
+      resolveProfile: async (id) => (id === "U1" ? { name: "Rowan Hale", handle: "rowan" } : undefined),
+      wake: async ({ message }) => {
+        named.push(message);
+      },
+    });
+    ok(outNamed.woke && named.length === 1, "a resolver-equipped engaged-thread wake still fires");
+    ok(named[0].includes('author="Rowan Hale"') && named[0].includes('author-id="U1"'), "resolved name renders in author; the raw id stays in author-id for @-tagging");
+    ok(named[0].includes('handle="rowan"'), "the self-set handle renders when it differs from the real name");
+    ok(named[0].includes('<participant id="U1" name="Rowan Hale" handle="rowan"/>'), "the trigger author appears in the <participants> block");
+    const safe: string[] = [];
+    const outSafe = await routeMessageEvent(nameEv, {
+      isEngaged: async () => true,
+      resolveProfile: async () => {
+        throw new Error("users.info down");
+      },
+      wake: async ({ message }) => {
+        safe.push(message);
+      },
+    });
+    ok(outSafe.woke && safe.length === 1, "a THROWING name resolver still fires the wake (name resolution never blocks a wake)");
+    ok(safe[0].includes('author="U1"') && !safe[0].includes("<participants>"), "fail-safe: the raw id renders and no participants block when every lookup fails");
+    const none: string[] = [];
+    await routeMessageEvent(nameEv, {
+      isEngaged: async () => true,
+      wake: async ({ message }) => {
+        none.push(message);
+      },
+    });
+    ok(none[0].includes('author="U1"') && !none[0].includes("<participants>"), "no resolver injected → raw id + no participants block (unchanged legacy behaviour)");
+  }
 
   ok(finalMessageAction("tool-calls", "Checking the repo…").kind === "buffer-tool-status", "tool-calls finish → buffer for typing status");
   ok(finalMessageAction("stop", null).kind === "silent", "empty final message → silent (default behaviour preserved)");
@@ -962,6 +1002,28 @@ registerConfig({
   ok(!out.woke && confirmCalls === 0, "DM → dropped before the internal confirmation");
   out = await routeSupervisorEvent(supEv({ subtype: "channel_join" }), supDeps(true, 12));
   ok(!out.woke && confirmCalls === 0, "system subtype → dropped before the internal confirmation");
+
+  wakes.length = 0;
+  {
+    const bs = [
+      { from: "self" as const, author: "B0BOT", authorId: undefined, id: "70.0", sentAt: "2026-07-09T11:00:00Z", trust: "peer" as const, body: "my own prior post" },
+      { from: "human" as const, author: "U2", authorId: "U2", id: "71.0", sentAt: "2026-07-09T11:30:00Z", trust: "peer" as const, body: "a teammate chimed in" },
+    ];
+    out = await routeSupervisorEvent(
+      supEv(),
+      supDeps(true, 12, {
+        getOrCreateSession: async (_o, _s, channelId) => ({ token: supervisorToken(channelId, 1), generation: 1, freshGeneration: true }),
+        fetchBackscroll: async () => bs,
+        resolveProfile: async (id) => (id === "U1" ? { name: "Rowan Hale" } : id === "U2" ? { name: "Ada Lovelace", handle: "ada" } : undefined),
+      }),
+    );
+    ok(out.woke && wakes.length === 1, "a first-wake supervisor delivery fires with backscroll + resolver");
+    ok(wakes[0].message.includes('<participant id="U1" name="Rowan Hale"/>'), "the trigger author (U1) is named in the participants block");
+    ok(wakes[0].message.includes('<participant id="U2" name="Ada Lovelace" handle="ada"/>'), "a backscroll author (U2) is named in the participants block");
+    ok(wakes[0].message.includes('author="Ada Lovelace"') && wakes[0].message.includes('author-id="U2"'), "the backscroll author's name renders in author, raw id kept in author-id");
+    ok(wakes[0].message.includes('author="Rowan Hale"'), "the trigger author's resolved name renders");
+    ok(wakes[0].message.includes('from="self"'), "the bot's own backscroll post is labelled from=self");
+  }
 
   ok(typeof liveSupervisorDeps === "function", "liveSupervisorDeps is exported for the front-route wiring");
   const meta = await confirmChannelInternalWithMeta("C_UNVERIFIABLE");

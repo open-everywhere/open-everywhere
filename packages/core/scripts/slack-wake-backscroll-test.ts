@@ -140,8 +140,8 @@ const deps = (request: SlackRequester): WakeBackscrollDeps => ({ request, identi
   ok(out.length === 3, "returns one entry per message (not a rolled-up context string)");
   ok(out.every((m) => m.trust === "peer" && m.trigger === undefined), "every backscroll entry is trust=peer with no trigger flag");
   ok(out[0].body === "own post" && out[1].body === "middle" && out[2].body === "newest", "oldest-first order (conversations.history is newest-first on the wire)");
-  ok(out[0].from === "agent" && out[0].author === "unknown", "the bot's own post maps to from:agent, no foreign author id");
-  ok(out[1].from === "human" && out[1].author === "UB", "a human message maps to from:human with its user id as author");
+  ok(out[0].from === "self" && out[0].author === "unknown", "the bot's OWN post maps to from:self (distinct from another bot's from:agent), no foreign author id");
+  ok(out[1].from === "human" && out[1].author === "UB" && out[1].authorId === "UB", "a human message maps to from:human, raw user id in both author (unresolved) and author-id");
   ok(out.every((m) => typeof m.sentAt === "string" && !Number.isNaN(Date.parse(m.sentAt))), "sentAt is a valid ISO-8601 string");
 
   const rec2: { method?: string; params?: Record<string, string> } = {};
