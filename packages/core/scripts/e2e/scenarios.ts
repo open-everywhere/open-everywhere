@@ -93,85 +93,82 @@ export function skipReason(
 
 export const SCENARIOS: readonly Scenario[] = [
   {
-    id: "S1",
-    title: "Slack mention → thread → continuity",
+    id: "J1",
+    title: "Slack core journey: wake+continuity, reply/update_reply silent edit, react, no_reply silence+revive, stop (absorbs S1/S2/S3/S21/S22)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
     smoke: true,
     optional: false,
-    timeoutMs: 300_000,
+    timeoutMs: 1_500_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
       const { ts: rootTs } = await slack.post(slack.mention("what's 17*23? reply with just the number"));
       const reply1 = await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
-      ctx.gate(reply1.threadTs === rootTs, "turn-1 reply lands in the thread under the driven ts");
-      await ctx.judgePass(
-        closedQA("Does the reply give 391?", { mustMatch: ["391"] }),
-        reply1.text,
-        "turn-1 arithmetic",
-      );
-      const { ts: followTs } = await slack.post("now add 100", rootTs);
-      const reply2 = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(reply2.ts !== reply1.ts, "follow-up got a fresh reply without re-mention");
+      ctx.gate(reply1.threadTs === rootTs, "wake: turn-1 reply lands in the thread under the driven ts");
+      await ctx.judgePass(closedQA("Does the reply give 391?", { mustMatch: ["391"] }), reply1.text, "wake: turn-1 arithmetic");
+      const { ts: follow1 } = await slack.post("now add 100", rootTs);
+      const reply2 = await slack.awaitThreadReply(rootTs, { afterTs: follow1, timeoutMs: REPLY_WAIT });
+      ctx.gate(reply2.ts !== reply1.ts, "continuity: follow-up got a fresh reply without re-mention");
       await ctx.judgePass(
         closedQA("Does the reply give 491, proving it kept the thread's context?", { mustMatch: ["491"] }),
         reply2.text,
-        "turn-2 continuity",
+        "continuity: turn-2",
       );
-    },
-  },
-  {
-    id: "S2",
-    title: "Judged silence on noise (+ canary)",
-    requires: ["slack"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 360_000,
-    judged: true,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const { ts: rootTs } = await slack.post(slack.mention("quick one: what's 2+2?"));
-      await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
-      const { ts: noiseTs } = await slack.post("thanks Sara, see you at standup \u{1F44B}", rootTs);
-      const during = await slack.collectRepliesDuring(rootTs, noiseTs, SILENCE_WINDOW);
-      ctx.gate(during.length === 0, `no bot message during the ${SILENCE_WINDOW / 1000}s silence window`);
-      const { ts: canaryTs } = await slack.post(slack.mention("quick check — still with me?"), rootTs);
-      const canary = await slack.awaitThreadReply(rootTs, { afterTs: canaryTs, timeoutMs: REPLY_WAIT });
-      await ctx.judgePass3(
-        closedQA(
-          "Is this a brief, sane acknowledgement (not an apology for the silence, not an answer to the standup message)?",
-          { mustNotMatch: ["standup", /sorry|apolog/i] },
+
+      const alpha = factToken("alpha");
+      const bravo = factToken("bravo");
+      const { ts: editAskTs } = await slack.post(
+        slack.mention(
+          `post a reply that says exactly ${alpha} — then, using update_reply, silently EDIT that same message so it says exactly ${bravo} instead. Do not post a second message.`,
         ),
-        canary.text,
-        "canary reply quality",
       );
-    },
-  },
-  {
-    id: "S3",
-    title: "Stop verb (fully deterministic)",
-    requires: ["slack"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 480_000,
-    judged: false,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const { ts: rootTs } = await slack.post(slack.mention("hey — what's the capital of France?"));
-      await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
+      const alphaMsg = await slack.awaitThreadMessage(
+        editAskTs,
+        { timeoutMs: REPLY_WAIT, what: `a bot reply containing ${alpha}` },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && m.text.includes(alpha)),
+      );
+      const edited = await slack.awaitThreadMessage(
+        editAskTs,
+        { timeoutMs: REPLY_WAIT, what: `message ts ${alphaMsg.ts} silently edited ${alpha}→${bravo}` },
+        (msgs) => msgs.find((m) => m.ts === alphaMsg.ts && m.text.includes(bravo) && !m.text.includes(alpha)),
+      );
+      ctx.gate(edited.ts === alphaMsg.ts, "reply/update_reply: the SAME message mutated in place (silent edit, no new post)");
+
+      const { ts: reactAskTs } = await slack.post(
+        slack.mention('react to THIS message with the "raised_hands" emoji to confirm — a reaction alone is enough, no text reply needed.'),
+      );
+      const names = await pollUntil(
+        async () => {
+          const n = await slack.reactions(reactAskTs);
+          return n.includes("raised_hands") ? n : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: `a "raised_hands" reaction on ${reactAskTs} (react tool call)` },
+      );
+      ctx.gate(names.includes("raised_hands"), 'react: the react tool added "raised_hands" (hard gate)');
+
+      const { ts: asideTs } = await slack.post("lol I can't believe he said that in standup \u{1F602}", rootTs);
+      const during = await slack.collectRepliesDuring(rootTs, asideTs, SILENCE_WINDOW);
+      ctx.gate(during.length === 0, `no_reply: no bot message during the ${SILENCE_WINDOW / 1000}s silence window (off-topic aside)`);
+      const { ts: aliveTs } = await slack.post("ok back to it — what's 100 minus 12?", rootTs);
+      const alive = await slack.awaitThreadReply(rootTs, { afterTs: aliveTs, timeoutMs: REPLY_WAIT });
+      ctx.gate(alive.text.includes("88"), "no_reply: the thread still answers correctly after a silent turn (hard gate: 88)");
+      await ctx.judgePass3(
+        closedQA("Is this a direct answer (88) with no apology for the earlier silence?", { mustNotMatch: [/sorry|apolog/i] }),
+        alive.text,
+        "no_reply: recovery reply quality (not an apology for the silence)",
+      );
+
       const { ts: stopTs } = await slack.post("stop", rootTs);
       const ack = await slack.awaitThreadReply(rootTs, { afterTs: stopTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(ack.text.includes(STOP_ACK), `stop acknowledgement contains "${STOP_ACK}" (exact-string gate)`);
-      const { ts: afterStopTs } = await slack.post("and the capital of Spain?", rootTs);
+      ctx.gate(ack.text.includes(STOP_ACK), `stop: acknowledgement contains "${STOP_ACK}" (exact-string gate)`);
+      const { ts: afterStopTs } = await slack.post("and what's 5 plus 5?", rootTs);
       const silent = await slack.collectRepliesDuring(rootTs, afterStopTs, SILENCE_WINDOW);
-      ctx.gate(silent.length === 0, "a further thread message gets NO reply after stop");
-      const { ts: reviveTs } = await slack.post(slack.mention("ok, back — capital of Spain?"), rootTs);
+      ctx.gate(silent.length === 0, "stop: a further thread message gets NO reply after stop");
+      const { ts: reviveTs } = await slack.post(slack.mention("ok, back — what's 5 plus 5?"), rootTs);
       await slack.awaitThreadReply(rootTs, { afterTs: reviveTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(true, "a re-mention revives the thread");
+      ctx.gate(true, "stop: a re-mention revives the thread");
     },
   },
   {
@@ -863,51 +860,6 @@ export const SCENARIOS: readonly Scenario[] = [
       await sleep(20_000);
       const stray = (await slack.history(badAnchorTs)).filter((m) => slack.isBotReply(m) && m.text.includes(badNote));
       ctx.gate(stray.length === 0, "an unsigned webhook POST produces NO channel post (hard gate)");
-    },
-  },
-  {
-    id: "S21",
-    title: "React tool: an explicit ask gets a real emoji reaction (not the code-driven 👀/🛑 status pair)",
-    requires: ["slack"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 180_000,
-    judged: false,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const { ts: askTs } = await slack.post(
-        slack.mention('react to this message with the "raised_hands" emoji to confirm you got it — a reaction alone is enough, no need to reply with text.'),
-      );
-      const reactions = await pollUntil(
-        async () => {
-          const names = await slack.reactions(askTs);
-          return names.includes("raised_hands") ? names : undefined;
-        },
-        { timeoutMs: REPLY_WAIT, what: `a "raised_hands" reaction on ${askTs} (react tool call)` },
-      );
-      ctx.gate(reactions.includes("raised_hands"), 'the react tool added the "raised_hands" reaction (hard gate)');
-    },
-  },
-  {
-    id: "S22",
-    title: "no_reply on off-topic chatter, then a REAL follow-up proves the thread wasn't left broken",
-    requires: ["slack"],
-    surface: "slack",
-    suite: "core",
-    optional: false,
-    timeoutMs: 300_000,
-    judged: false,
-    run: async (ctx) => {
-      const slack = ctx.slack!;
-      const { ts: rootTs } = await slack.post(slack.mention("what's 6*7? reply with just the number"));
-      await slack.awaitThreadReply(rootTs, { timeoutMs: REPLY_WAIT });
-      const { ts: asideTs } = await slack.post("lol I can't believe he said that in standup \u{1F602}", rootTs);
-      const during = await slack.collectRepliesDuring(rootTs, asideTs, SILENCE_WINDOW);
-      ctx.gate(during.length === 0, `no bot message during the ${SILENCE_WINDOW / 1000}s silence window (off-topic aside)`);
-      const { ts: followTs } = await slack.post("ok back to it — what's 100 minus 12?", rootTs);
-      const follow = await slack.awaitThreadReply(rootTs, { afterTs: followTs, timeoutMs: REPLY_WAIT });
-      ctx.gate(follow.text.includes("88"), "the thread still answers correctly after a no_reply turn (hard gate: 88)");
     },
   },
   {

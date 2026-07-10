@@ -159,12 +159,15 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  ok(SCENARIOS.length === 25, "pack has all twenty-five scenarios (S1–S24 + ST1)");
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
+  const EXPECTED_IDS = new Set([
+    "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
+    "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "ST1",
+  ]);
   ok(
-    ids.join(",") === "S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24,ST1",
-    "scenario ids are S1..S24 then ST1 in order",
+    ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "syntheticDm", "slackUser2", "webhook", "notion", "teams"]);
   for (const s of SCENARIOS) {
@@ -174,7 +177,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
       s.requires.length > 0 && s.requires.every((c) => KNOWN.has(c)),
       `${s.id} requires only known capabilities`,
     );
-    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 900_000, `${s.id} budget is within the re-derived 120–900s envelope`);
+    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 1_800_000, `${s.id} budget is within the 120s–30min envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(optional.join(",") === "S8,S9,S10,S24", "the plan's stretch scenarios PLUS the gated Notion leg are optional (S11–S23 are core coverage)");
@@ -194,9 +197,9 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     "every other scenario is a slack-surface scenario (all but S7/S8/ST1)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
-  ok(smoke.join(",") === "S1,ST1", "the smoke lane is exactly S1 (slack wake+reply) + ST1 (teams)");
+  ok(smoke.join(",") === "J1,ST1", "the smoke lane is exactly J1 (slack wake+reply) + ST1 (teams)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S3,S6,S10,S15,S21,S22", "S3/S6/S10/S15/S21/S22 are fully deterministic — no judge (plan §5)");
+  ok(unjudged.join(",") === "S6,S10,S15", "S6/S10/S15 are fully deterministic — no judge (plan §5; S3/S21/S22 folded into judged J1)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("S12") === "slack+slackChannelB", "S12 requires slack + slackChannelB");
@@ -209,7 +212,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(req("S18") === "slack+syntheticDm", "S18 requires slack + syntheticDm (DM leg + in-channel out-of-vocab leg)");
   ok(req("S19") === "slack+synthetic", "S19 requires slack + synthetic (forged admin mention)");
   ok(req("S20") === "slack+webhook", "S20 requires slack + webhook");
-  ok(req("S21") === "slack" && req("S22") === "slack" && req("S23") === "slack", "S21/S22/S23 (the trio pack) need only the base slack driver");
+  ok(req("J1") === "slack" && req("S23") === "slack", "J1 (core journey) + S23 need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
   ok(req("ST1") === "teams", "ST1 requires only the teams driver");
 }
@@ -246,7 +249,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     notion: [],
     teams: [],
   } as const;
-  ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "S1 runs when its capability is live");
+  ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
     skipReason(SCENARIOS.find((s) => s.id === "S8")!, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true,
     "S8 stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens",
@@ -290,10 +293,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(skipReason(SCENARIOS.find((s) => s.id === "S19")!, baseOnly, missing, false) === undefined, "S19 runs with base caps alone (slack+synthetic, no add-on fixture)");
   const s20 = skipReason(SCENARIOS.find((s) => s.id === "S20")!, baseOnly, missing, false);
   ok(s20 === `missing webhook driver (set ${ENV.webhookSecret})`, "S20 skip names exactly E2E_WEBHOOK_SECRET");
-  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S21", "S22", "S23"]) {
+  for (const id of ["S11", "S12", "S13", "S14", "S15", "S16", "S17", "S18", "S19", "S20", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
   }
-  for (const id of ["S21", "S22", "S23"]) {
+  for (const id of ["J1", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, slackOnly, missing, false) === undefined, `${id} runs with slack alone (no add-on fixture needed)`);
   }
 }
