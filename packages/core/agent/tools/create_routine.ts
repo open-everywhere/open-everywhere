@@ -4,10 +4,11 @@ import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
-import { addRoutine, newRoutineId } from "../routines/store.js";
-import { auditToolAction } from "../audit/tool-action.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
-import { describeTrigger, type Routine, type RoutineTrigger } from "../routines/routine.js";
+import { describeTrigger, type RoutineTrigger } from "../routines/routine.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { requestApproval } from "../approvals/flow.js";
+import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
 const trigger = z.discriminatedUnion("kind", [
   z.object({
@@ -80,9 +81,11 @@ export default defineTool({
   }),
   outputSchema: z.object({
     created: z.boolean(),
-    id: z.string(),
+    pending: z.boolean(),
+    pendingId: z.string().optional(),
     trigger: z.string(),
-    nextRunAt: z.string().nullable().describe("When it first fires (ISO, UTC), or null for event subscriptions."),
+    nextRunAt: z.string().nullable().describe("When it WOULD first fire once armed (ISO, UTC), or null for event subscriptions."),
+    message: z.string(),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -111,34 +114,42 @@ export default defineTool({
       throw new Error("`at` must be in the future — a one-shot routine can't fire in the past.");
     }
 
-    const target = bindFrom(ctx).target;
+    const binding = bindFrom(ctx);
+    if (!hasApprovalCardPath(binding.platform)) {
+      throw new Error(`create_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and arm the routine before it can fire unattended.`);
+    }
+    const createdBy = principalIdOf(ctx);
+    if (!createdBy) {
+      throw new Error("create_routine needs a verified sender to gate the write — no principal id resolved, so there's no requester to show on the approval card.");
+    }
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    if (!channelId) {
+      throw new Error("create_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
+    }
 
-    const routine: Routine = {
-      id: newRoutineId(),
-      org: p.org,
-      surfaceKey: p.surfaceKey,
-      target,
-      trigger: t,
-      prompt: input.prompt.trim(),
-      createdBy: principalIdOf(ctx),
-      createdAt: now.toISOString(),
-      status: "active",
-      nextRunAt: next ? next.toISOString() : null,
-      consecutiveFailures: 0,
-    };
-    await addRoutine(p, routine);
-
-    await auditToolAction(ctx, "routine.create", {
-      id: routine.id,
-      trigger: describeTrigger(t),
-      nextRunAt: routine.nextRunAt ?? null,
-    });
+    const target = binding.target;
+    const tainted = untrustedIngestedThisTurn();
+    const posted = await requestApproval(
+      {
+        org: p.org,
+        kind: "routine.create",
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted },
+        scopeKey: p.surfaceKey,
+        domain: null,
+        requestedBy: createdBy,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+      },
+      approvalPostDeps(binding.platform),
+    );
 
     return {
-      created: true,
-      id: routine.id,
+      created: false,
+      pending: true,
+      pendingId: posted.id,
       trigger: describeTrigger(t),
-      nextRunAt: routine.nextRunAt ?? null,
+      nextRunAt: next ? next.toISOString() : null,
+      message: `card posted — routine ${describeTrigger(t)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },
 });

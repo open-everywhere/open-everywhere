@@ -200,6 +200,9 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  await import("../agent/approvals/flow.js");
+
   await assert.rejects(async () => { await createSkillTool.execute({ name: "bad:name", content: "x" }, ctxEng as never); }, /valid skill name/, "create_skill: rejects an unsafe name");
   n++;
 
@@ -217,19 +220,35 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   await assert.rejects(async () => { await createSkillTool.execute({ name: "granted-one", content: "y" }, ctxEng as never); }, /already a bundle-granted skill/, "create_skill: refuses a name that collides with a bundle-granted skill");
   n++;
 
-  const created = await createSkillTool.execute({ name: "new-skill", content: "# Body", description: "A new one." }, ctxEng as never);
-  ok(created.ok && created.action === "created" && created.domain === "eng", "create_skill: first write is \"created\"");
-  const updated = await createSkillTool.execute({ name: "new-skill", content: "# Body v2" }, ctxEng as never);
-  ok(updated.action === "updated", "create_skill: writing the same name again is \"updated\", not a duplicate");
-  const rows = await getOperationalStore().listDomainSkills("default", "eng");
-  ok(rows.filter((r) => r.name === "new-skill").length === 1, "create_skill: update overwrites in place, no duplicate row");
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0001" }) })) as unknown as typeof fetch;
+  try {
+    const created = await createSkillTool.execute({ name: "new-skill", content: "# Body", description: "A new one." }, ctxEng as never);
+    ok(created.ok && created.pending === true && created.action === "created" && created.domain === "eng", "create_skill: proposes (card posted, pending), action \"created\"");
+    ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "create_skill: NOTHING is written until a human arms it (the PERSIST gate)");
 
-  process.env.OE_DOMAIN_SKILL_CAP = String((await getOperationalStore().listDomainSkills("default", "eng")).length);
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
-  n++;
-  const stillWorks = await createSkillTool.execute({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
-  ok(stillWorks.action === "updated", "create_skill: updating an EXISTING name still works at the cap (cap only blocks growth)");
-  delete process.env.OE_DOMAIN_SKILL_CAP;
+    const updated = await createSkillTool.execute({ name: "new-skill", content: "# Body v2" }, ctxEng as never);
+    ok(updated.pending === true && updated.action === "created", "create_skill: re-propose before arming is still \"created\" (no row exists yet)");
+
+    const kind = actionKind("skill.create")!;
+    ok(kind !== undefined && kind.policy === "member", "actionKind: skill.create registered with member policy");
+    const summary = kind.summarize({ org: "default", domain: "eng", name: "new-skill", content: "# Body v2", action: "created", tainted: true });
+    ok(summary.some((l: string) => l.includes("new-skill")) && summary.some((l: string) => l.includes("⚠")), "skill.create summarize: shows the name + the ⚠ tainted flag");
+    await kind.execute({ org: "default", domain: "eng", name: "new-skill", content: "# Body v2", action: "created", authoredBy: "U1" }, "U_ARMER");
+    const rows = await getOperationalStore().listDomainSkills("default", "eng");
+    ok(rows.filter((r) => r.name === "new-skill").length === 1, "skill.create execute: the click writes exactly one row");
+
+    process.env.OE_DOMAIN_SKILL_CAP = String((await getOperationalStore().listDomainSkills("default", "eng")).length);
+    await assert.rejects(async () => { await createSkillTool.execute({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
+    n++;
+    const stillWorks = await createSkillTool.execute({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
+    ok(stillWorks.pending === true && stillWorks.action === "updated", "create_skill: an EXISTING name still proposes at the cap, as \"updated\" (cap only blocks growth)");
+    delete process.env.OE_DOMAIN_SKILL_CAP;
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.SLACK_BOT_TOKEN;
+  }
 }
 
 {
