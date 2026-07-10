@@ -12,6 +12,7 @@ export interface DiscordMessage {
   readonly threadId?: string;
   readonly reactionEmoji: readonly string[];
   readonly components: readonly unknown[];
+  readonly attachments: readonly { filename: string }[];
 }
 
 interface DiscordApiMessage {
@@ -22,6 +23,7 @@ interface DiscordApiMessage {
   thread?: { id?: string };
   reactions?: readonly { emoji?: { name?: string } }[];
   components?: readonly unknown[];
+  attachments?: readonly { filename?: string }[];
 }
 
 function toMessage(m: DiscordApiMessage): DiscordMessage {
@@ -34,6 +36,7 @@ function toMessage(m: DiscordApiMessage): DiscordMessage {
     threadId: m.thread?.id,
     reactionEmoji: (m.reactions ?? []).map((r) => r.emoji?.name ?? "").filter((n) => n.length > 0),
     components: m.components ?? [],
+    attachments: (m.attachments ?? []).map((a) => ({ filename: a.filename ?? "" })),
   };
 }
 
@@ -101,5 +104,22 @@ export class DiscordDriver {
       async () => (await this.messagesAfter(afterId, channelId)).find((m) => this.isBotReply(m) && idAfter(m.id, afterId)),
       { timeoutMs: opts.timeoutMs, what: `a bot reply in channel ${channelId}` },
     );
+  }
+
+  async awaitReplyMatching(
+    channelId: string,
+    afterId: string,
+    predicate: (m: DiscordMessage) => boolean,
+    opts: { timeoutMs: number; what: string },
+  ): Promise<DiscordMessage> {
+    return pollUntil(
+      async () => (await this.messagesAfter(afterId, channelId)).find((m) => this.isBotReply(m) && idAfter(m.id, afterId) && predicate(m)),
+      { timeoutMs: opts.timeoutMs, what: opts.what },
+    );
+  }
+
+  async collectRepliesDuring(channelId: string, afterId: string, windowMs: number): Promise<readonly DiscordMessage[]> {
+    await sleep(windowMs);
+    return (await this.messagesAfter(afterId, channelId)).filter((m) => this.isBotReply(m) && idAfter(m.id, afterId));
   }
 }

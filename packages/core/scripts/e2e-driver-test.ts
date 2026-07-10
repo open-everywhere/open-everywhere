@@ -165,7 +165,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
-    "J1", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
+    "J1", "S4", "S5", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
     "S15", "S16", "S17", "S18", "S19", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC",
   ]);
   ok(
@@ -192,12 +192,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ok(KNOWN_SUITES.has(s.suite), `${s.id} declares a known suite (got "${s.suite}")`);
     ok((s.suite === "extended") === s.optional, `${s.id}: suite==="extended" iff optional (${s.suite}/${s.optional})`);
   }
-  ok(SCENARIOS.find((s) => s.id === "S7")!.surface === "discord", "S7 is the discord surface");
+  ok(SCENARIOS.find((s) => s.id === "J-DISC")!.surface === "discord", "J-DISC is the discord surface");
   ok(SCENARIOS.find((s) => s.id === "S8")!.surface === "cross", "S8 (Slack→Discord recall) is the cross surface");
   ok(SCENARIOS.find((s) => s.id === "J-TEAMS")!.surface === "teams", "J-TEAMS is the teams surface");
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
-  ok(nonSlack.join(",") === "J-GH,J-LIN,J-NOT,J-TEAMS,S7,S8", "the non-slack scenarios are exactly S7(discord)/S8(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)");
+  ok(nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-TEAMS,S8", "the non-slack scenarios are exactly J-DISC(discord)/S8(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)");
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
   ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC", "the security suite is exactly F-SEC (tainted-remember/SSRF/injection probes)");
@@ -279,8 +279,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     "S24 runs once BOTH the notion capability is live AND E2E_INCLUDE_OPTIONAL=1 is set",
   );
   const slackOnly = new Set(["slack"] as const);
-  const s7reason = skipReason(SCENARIOS.find((s) => s.id === "S7")!, slackOnly, missing, false);
-  ok(s7reason?.includes("discord") === true && s7reason.includes(ENV.discordDriverToken), "S7 skip names the discord vars specifically");
+  const s7reason = skipReason(SCENARIOS.find((s) => s.id === "J-DISC")!, slackOnly, missing, false);
+  ok(s7reason?.includes("discord") === true && s7reason.includes(ENV.discordDriverToken), "J-DISC skip names the discord vars specifically");
   const st1reason = skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS")!, slackOnly, missing, false);
   ok(st1reason?.includes("teams") === true && st1reason.includes(ENV.teamsRefreshToken), "J-TEAMS skip names the teams vars specifically");
   ok(skipReason(SCENARIOS.find((s) => s.id === "J-TEAMS")!, all, noneMissing, false) === undefined, "J-TEAMS runs when the teams capability is live");

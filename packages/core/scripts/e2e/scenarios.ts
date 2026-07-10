@@ -272,13 +272,13 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "S7",
-    title: "Discord mention → auto-thread → continuity (allowlist seam proving run)",
+    id: "J-DISC",
+    title: "Discord journey: mention → auto-thread → continuity → stop → post_file → card-shape (absorbs S7; ⛔ creds never provisioned)",
     requires: ["discord"],
     surface: "discord",
     suite: "core",
     optional: false,
-    timeoutMs: 420_000,
+    timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
       const discord = ctx.discord!;
@@ -286,18 +286,24 @@ export const SCENARIOS: readonly Scenario[] = [
       const threadId = await discord.awaitThread(driven.id, { timeoutMs: REPLY_WAIT });
       ctx.gate(threadId.length > 0, "auto-thread created off the driven message (seam + wake worked)");
       const reply1 = await discord.awaitReply(threadId, driven.id, { timeoutMs: REPLY_WAIT });
-      await ctx.judgePass(
-        closedQA("Is the reply a relevant one-line summary of the channel topic?", { mustMatch: [/.{10,}/] }),
-        reply1.content,
-        "turn-1 relevance",
-      );
+      await ctx.judgePass(closedQA("Is the reply a relevant one-line summary of the channel topic?", { mustMatch: [/.{10,}/] }), reply1.content, "turn-1 relevance");
       const followUp = await discord.post("and who should I ask about it?", threadId);
       const reply2 = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
-      await ctx.judgePass(
-        closedQA("Does the reply continue the conversation (references turn 1)?", { mustMatch: [/.{5,}/] }),
-        reply2.content,
-        "turn-2 continuity",
-      );
+      await ctx.judgePass(closedQA("Does the reply continue the conversation (references turn 1)?", { mustMatch: [/.{5,}/] }), reply2.content, "turn-2 continuity");
+
+      const stopMsg = await discord.post("stop", threadId);
+      const afterStop = await discord.post("and who else works on it?", threadId);
+      const silent = await discord.collectRepliesDuring(threadId, afterStop.id, SILENCE_WINDOW);
+      ctx.gate(silent.length === 0, "stop: a further thread message gets NO reply after stop");
+      ctx.log(`(stop driven at ${stopMsg.id})`);
+
+      const fileAsk = await discord.post(discord.mention("post a tiny text or image file here as an attachment using post_file"), threadId);
+      const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: REPLY_WAIT, what: "a bot reply carrying a file attachment" });
+      ctx.gate(fileReply.attachments.length > 0, "post_file: the reply carries a file attachment");
+
+      const cardAsk = await discord.post(discord.mention("raise this channel's spend cap to $20/day"), threadId);
+      const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
+      ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
     },
   },
   {
