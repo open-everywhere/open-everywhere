@@ -4,6 +4,7 @@ import {
   githubSupervisorToken,
   githubSupervisorSentinel,
   classifyGitHubAmbientComment,
+  extractGitHubAmbientEvent,
   buildGitHubSupervisorWake,
   handleGitHubSupervisorDispatch,
   shouldRotate,
@@ -74,6 +75,28 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(message.includes(`from-generation="1"`), "the handoff note is attributed to the outgoing generation");
 }
 
+{
+  const payload = {
+    action: "created",
+    issue: { number: 42, title: "Flaky retries on cold start" },
+    comment: { id: 9001, body: "should we bump the retry budget?", user: { login: "human-dev", type: "User", id: 7 }, author_association: "MEMBER", created_at: "2026-03-24T18:51:00Z" },
+    repository: { name: REPO, full_name: `${OWNER}/${REPO}`, id: 555, private: true, owner: { login: OWNER } },
+    installation: { id: 4242 },
+  } as unknown as Record<string, unknown>;
+  const ev = extractGitHubAmbientEvent("issue_comment", payload);
+  ok(ev !== null, "issue_comment created -> ambient candidate");
+  ok(ev!.owner === OWNER && ev!.repo === REPO && ev!.issueNumber === 42, "extractor reads owner/repo/issue");
+  ok(ev!.repoPrivate === true && ev!.installationId === 4242 && ev!.repositoryId === 555, "extractor reads privacy/installation/repo id");
+  ok(ev!.comment.authorLogin === "human-dev" && ev!.comment.authorAssociation === "MEMBER" && ev!.comment.id === "9001", "extractor reads the comment author facts");
+  ok(ev!.isPullRequest === false, "no issue.pull_request marker -> not a PR timeline comment");
+  const prEv = extractGitHubAmbientEvent("issue_comment", { ...payload, issue: { number: 7, title: "t", pull_request: { url: "x" } } });
+  ok(prEv !== null && prEv.isPullRequest === true && prEv.issueNumber === 7, "issue.pull_request marker -> PR timeline comment (same number space)");
+  ok(extractGitHubAmbientEvent("issue_comment", { ...payload, action: "edited" }) === null, "edited comments are not ambient candidates (v1)");
+  ok(extractGitHubAmbientEvent("pull_request_review_comment", payload) === null, "review-thread inline comments are out of ambient scope (v1)");
+  ok(extractGitHubAmbientEvent("issues", payload) === null, "non-comment events are not ambient candidates");
+  ok(extractGitHubAmbientEvent("issue_comment", { action: "created" }) === null, "a payload missing repo/issue/comment yields null (defensive)");
+}
+
 const AUTH: OpenEverywhereGitHubAuth = { authenticator: "github", principalId: "human-dev", principalType: "github-user", attributes: { owner: OWNER, repo: REPO, issue_number: "42" } };
 const SURFACE = `github/${OWNER}/${REPO}`;
 
@@ -136,6 +159,106 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
   };
   await assert.rejects(() => handleGitHubSupervisorDispatch(dispatch(), deps), /transient network blip/, "a transient (non-terminal) wake error propagates");
   passed++;
+}
+
+{
+  const { join, dirname } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { rmSync } = await import("node:fs");
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL } = await import("node:url");
+
+  const dir = join(tmpdir(), `open-everywhere-github-supervisor-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  process.env.GITHUB_APP_SLUG = SLUG;
+
+  const nodeRequire = createRequire(import.meta.url);
+  const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
+  const abs = (rel: string) => pathToFileURL(join(eveRoot, rel)).href;
+  const { ContextContainer, contextStorage } = await import(abs("dist/src/context/container.js"));
+  const { SessionKey } = await import(abs("dist/src/context/keys.js"));
+
+  const inSession = <T>(fn: () => Promise<T>, attributes?: Record<string, string>): Promise<T> => {
+    const c = new ContextContainer();
+    const auth = attributes ? { current: { attributes }, initiator: null } : null;
+    c.set(SessionKey, { sessionId: "github-supervisor-test", auth, turn: 1, parent: undefined });
+    return contextStorage.run(c, fn);
+  };
+
+  const githubChannelModule = (await import("../agent/channels/github.js")).default as unknown as {
+    adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
+  };
+  const turnStarted = (ctx: unknown) => githubChannelModule.adapter["turn.started"]!({}, ctx);
+  const completed = (message: string | null, ctx: unknown) =>
+    githubChannelModule.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
+
+  const supervisorState = () => ({
+    baseRef: null, baseSha: null, checkoutPath: null, conversationKind: "issue", defaultBranch: null,
+    headRef: null, headSha: null, installationId: 4242, issueNumber: null, owner: OWNER,
+    pullRequestNumber: null, repo: REPO, repositoryId: 555, reviewCommentId: null,
+    reviewThreadRootCommentId: null, triggeringCommentId: null, triggeringUserLogin: null,
+    oeSupervisor: true as const,
+    oeReplyTarget: undefined as { issueNumber: number } | undefined,
+  });
+
+  {
+    const state = supervisorState();
+    await inSession(() => turnStarted({ state }), { owner: OWNER, repo: REPO, issue_number: "42" });
+    ok(state.oeReplyTarget?.issueNumber === 42, "turn.started snapshots the issue_number auth attribute as the reply target");
+    await inSession(() => turnStarted({ state }), { owner: OWNER, repo: REPO, pull_request_number: "7" });
+    ok(state.oeReplyTarget?.issueNumber === 7, "a PR timeline comment's pull_request_number anchors the SAME endpoint (issues/{n}/comments)");
+    await inSession(() => turnStarted({ state }));
+    ok(state.oeReplyTarget === undefined, "no auth anchor CLEARS the target (never carry a stale one forward)");
+  }
+
+  {
+    const state = supervisorState();
+    const posts: Array<{ method: string; path: string; body: unknown }> = [];
+    const github = { request: async (input: { method: string; path: string; body?: unknown }) => { posts.push({ method: input.method, path: input.path, body: input.body }); return { ok: true, status: 201, body: {} }; } };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("the retry budget is fine — the flake is the cold-start race", { state, github });
+    }, { owner: OWNER, repo: REPO, issue_number: "42" });
+    ok(posts.length === 1 && posts[0]!.method === "POST" && posts[0]!.path === `/repos/${OWNER}/${REPO}/issues/42/comments`, "the supervisor reply posts to the snapshot issue via installation-auth REST");
+    ok((posts[0]!.body as { body?: string }).body?.includes("cold-start race") === true, "the reply body is the turn's final text");
+  }
+
+  {
+    const state = supervisorState();
+    const posts: unknown[] = [];
+    const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("this must not post", { state, github });
+    });
+    ok(posts.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING (fail safe)");
+  }
+
+  {
+    const state = supervisorState();
+    const posts: unknown[] = [];
+    const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("NO_REPLY", { state, github });
+    }, { owner: OWNER, repo: REPO, issue_number: "42" });
+    ok(posts.length === 0, "NO_REPLY suppresses the supervisor reply");
+    const { readAudit } = await import("../agent/audit/audit.js");
+    const silences = await readAudit({ action: "github.no_reply" });
+    ok(silences.length >= 1, "judged silence writes a github.no_reply audit row (audited silence, Slack/Notion parity)");
+  }
+
+  {
+    const state = supervisorState();
+    const posts: unknown[] = [];
+    const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+    await inSession(() => githubChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state, github }));
+    ok(posts.length === 0, "a failed supervisor turn posts NO error comment (reserved posture)");
+    const { readAudit } = await import("../agent/audit/audit.js");
+    const fails = await readAudit({ action: "github.supervisor_turn_failed" });
+    ok(fails.length >= 1, "the failed supervisor turn is audited instead");
+  }
 }
 
 console.log(`\n✓ github-supervisor: ${passed} assertions passed`);

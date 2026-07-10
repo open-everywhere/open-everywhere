@@ -85,6 +85,70 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
   };
 }
 
+export interface GitHubAmbientEvent {
+  readonly owner: string;
+  readonly repo: string;
+  readonly repositoryFullName?: string;
+  readonly repositoryId?: number;
+  readonly repoPrivate?: boolean;
+  readonly installationId?: number;
+  readonly issueNumber: number;
+  readonly issueTitle?: string;
+  readonly isPullRequest: boolean;
+  readonly comment: GitHubAmbientComment & {
+    readonly id?: string;
+    readonly createdAt?: string;
+    readonly authorId?: number;
+    readonly authorAssociation?: string;
+  };
+}
+
+function pick(o: unknown, k: string): unknown {
+  return o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined;
+}
+function str(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+function num(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+export function extractGitHubAmbientEvent(eventType: string, payload: Record<string, unknown>): GitHubAmbientEvent | null {
+  if (eventType !== "issue_comment") return null;
+  if (str(pick(payload, "action")) !== "created") return null;
+  const repository = pick(payload, "repository");
+  const issue = pick(payload, "issue");
+  const comment = pick(payload, "comment");
+  const owner = str(pick(pick(repository, "owner"), "login"));
+  const repo = str(pick(repository, "name"));
+  const issueNumber = num(pick(issue, "number"));
+  if (!owner || !repo || issueNumber === undefined || !comment) return null;
+  const user = pick(comment, "user");
+  const isPrivate = pick(repository, "private");
+  const commentId = num(pick(comment, "id"));
+  return {
+    owner,
+    repo,
+    repositoryFullName: str(pick(repository, "full_name")),
+    repositoryId: num(pick(repository, "id")),
+    repoPrivate: typeof isPrivate === "boolean" ? isPrivate : undefined,
+    installationId: num(pick(pick(payload, "installation"), "id")),
+    issueNumber,
+    issueTitle: str(pick(issue, "title")),
+    isPullRequest: pick(issue, "pull_request") !== undefined,
+    comment: {
+      id: commentId !== undefined ? String(commentId) : undefined,
+      body: str(pick(comment, "body")),
+      authorLogin: str(pick(user, "login")),
+      authorType: str(pick(user, "type")),
+      authorId: num(pick(user, "id")),
+      authorAssociation: str(pick(comment, "author_association")),
+      createdAt: str(pick(comment, "created_at")),
+      repoPrivate: typeof isPrivate === "boolean" ? isPrivate : undefined,
+    },
+  };
+}
+
 export interface GitHubSupervisorSession {
   readonly token: string;
   readonly generation: number;
