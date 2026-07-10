@@ -938,24 +938,36 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
-    id: "ST1",
-    title: "Teams channel @mention wake + relevant reply",
+    id: "J-TEAMS",
+    title: "Teams reply chain: @mention wake + relevant reply, non-mention silence (mention-gate pin), re-mention continuity (absorbs ST1)",
     requires: ["teams"],
     surface: "teams",
     suite: "core",
     smoke: true,
     optional: false,
-    timeoutMs: REPLY_WAIT * 2,
+    timeoutMs: REPLY_WAIT * 4,
     judged: true,
     run: async (ctx) => {
       const teams = ctx.teams!;
-      const driven = await teams.postMention("summarize what this channel is for in one line");
-      const reply = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT });
-      ctx.gate(reply.text.trim().length > 0, "bot replied in the message's reply chain (Graph-posted mention woke the bot end-to-end)");
+      const driven = await teams.postMention("I'm setting up a project called Northwind. Remember that and give me a one-line acknowledgement.");
+      const reply1 = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply1.text.trim().length > 0, "mention: bot replied in the message's reply chain (Graph-posted mention woke the bot end-to-end)");
       await ctx.judgePass(
-        closedQA("Is the reply a relevant, non-empty one-line-ish response (not an error)?", { mustMatch: [/.{10,}/] }),
-        reply.text,
-        "ST1 relevance",
+        closedQA("Is the reply a relevant, non-empty one-line-ish acknowledgement (not an error)?", { mustMatch: [/.{10,}/] }),
+        reply1.text,
+        "mention: relevance",
+      );
+
+      const nonMention = await teams.postReply(driven.id, "(just a note for the humans in this thread — no bot needed)");
+      const silent = await teams.collectBotRepliesDuring(driven.id, nonMention.createdDateTime ?? reply1.createdDateTime ?? "", SILENCE_WINDOW);
+      ctx.gate(silent.length === 0, "non-mention: a non-mention reply in the chain produces NO bot reply (mention-gate pin)");
+
+      const remention = await teams.postMentionReply(driven.id, "what's the name of the project I mentioned earlier? one word.");
+      const reply3 = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT, afterIso: remention.createdDateTime ?? reply1.createdDateTime });
+      await ctx.judgePass(
+        closedQA("Does the reply recall the project name Northwind (proving the reply-chain session kept context)?", { mustMatch: [/northwind/i] }),
+        reply3.text,
+        "re-mention: continuity in the reply chain",
       );
     },
   },

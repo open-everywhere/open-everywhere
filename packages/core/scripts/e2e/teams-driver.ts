@@ -128,6 +128,21 @@ export class TeamsDriver {
     return toMessage(json);
   }
 
+  async postReply(rootMessageId: string, text: string): Promise<TeamsMessage> {
+    const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages/${rootMessageId}/replies`, {
+      body: { contentType: "html", content: htmlEscape(text) },
+    })) as GraphChatMessage;
+    return toMessage(json);
+  }
+
+  async postMentionReply(rootMessageId: string, text: string): Promise<TeamsMessage> {
+    const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages/${rootMessageId}/replies`, {
+      body: { contentType: "html", content: `<at id="0">Open Everywhere</at> ${htmlEscape(text)}` },
+      mentions: [{ id: 0, mentionText: "Open Everywhere", mentioned: { application: { id: this.cfg.botAppId, displayName: "Open Everywhere", applicationIdentityType: "bot" } } }],
+    })) as GraphChatMessage;
+    return toMessage(json);
+  }
+
   async replies(rootMessageId: string): Promise<readonly TeamsMessage[]> {
     const json = (await this.graph(
       "GET",
@@ -140,10 +155,15 @@ export class TeamsDriver {
     return m.fromApplicationId === this.cfg.botAppId && m.text.trim().length > 0;
   }
 
-  async awaitReply(rootMessageId: string, opts: { timeoutMs: number }): Promise<TeamsMessage> {
+  async awaitReply(rootMessageId: string, opts: { timeoutMs: number; afterIso?: string }): Promise<TeamsMessage> {
     return pollUntil(
-      async () => (await this.replies(rootMessageId)).find((m) => this.isBotReply(m)),
-      { timeoutMs: opts.timeoutMs, what: `a bot reply in the reply chain of message ${rootMessageId}` },
+      async () => (await this.replies(rootMessageId)).find((m) => this.isBotReply(m) && (opts.afterIso === undefined || (m.createdDateTime ?? "") > opts.afterIso!)),
+      { timeoutMs: opts.timeoutMs, what: `a bot reply in the reply chain of message ${rootMessageId}${opts.afterIso ? ` after ${opts.afterIso}` : ""}` },
     );
+  }
+
+  async collectBotRepliesDuring(rootMessageId: string, afterIso: string, windowMs: number): Promise<readonly TeamsMessage[]> {
+    await sleep(windowMs);
+    return (await this.replies(rootMessageId)).filter((m) => this.isBotReply(m) && (m.createdDateTime ?? "") > afterIso);
   }
 }
