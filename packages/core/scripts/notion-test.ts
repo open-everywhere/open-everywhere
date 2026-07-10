@@ -16,7 +16,6 @@ import {
   richTextChunks,
   createCommentReply,
   retrieveBotUser,
-  notionContinuationToken,
   blockPlainText,
   getBlockChildren,
   readNotionPage,
@@ -24,8 +23,8 @@ import {
   type NotionComment,
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
-import { handleNotionDelivery, type NotionDispatchArgs } from "../agent/channels/notion-webhook.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
+import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -86,8 +85,6 @@ const big = "x".repeat(4500);
 const chunks = richTextChunks(big);
 ok(chunks.length === 3 && chunks[0].text.content.length === 2000 && chunks[2].text.content.length === 500, "long reply chunked at 2000 chars");
 
-ok(notionContinuationToken(DISCUSSION) === DISCUSSION, "continuation token is the discussion id (thread resume key)");
-
 function commentEvent(): string {
   return JSON.stringify({
     type: "comment.created",
@@ -131,7 +128,8 @@ const triggerMention: NotionComment = {
   rich_text: mentionRT,
 };
 const triggerNoMention: NotionComment = { ...triggerMention, rich_text: noMentionRT };
-const triggerSelf: NotionComment = { ...triggerMention, created_by: { id: BOT, object: "user" } };
+const triggerSelf: NotionComment = { ...triggerMention, created_by: { id: BOT, object: "user", type: "person" } };
+const triggerBot: NotionComment = { ...triggerMention, rich_text: noMentionRT, created_by: { id: "other-integration", object: "user", type: "bot" } };
 const priorComment: NotionComment = {
   id: "prior-comment",
   discussion_id: DISCUSSION,
@@ -140,12 +138,13 @@ const priorComment: NotionComment = {
 };
 
 const botIdFn = () => Promise.resolve<string | undefined>(BOT);
-function baseDeps(fetchImpl: FetchLike, dispatch: (a: NotionDispatchArgs) => Promise<void>, extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>) {
+function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) => Promise<void>, extra?: Partial<Parameters<typeof handleNotionDelivery>[2]>) {
   return {
     secret: SECRET,
     allowUnverified: false,
     apiKey: "ntn_key",
     resolveBotUserId: botIdFn,
+    ambientEnabled: () => true,
     fetch: fetchImpl,
     dispatch,
     ...extra,
@@ -176,42 +175,50 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (a: NotionDispatchArgs) => Pro
 
 {
   const raw = commentEvent();
-  let fetchedComment = false;
+  let captured: NotionSupervisorDispatch | undefined;
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention, listResults: [priorComment, triggerNoMention] }), async (d) => { captured = d; }));
+  ok(out.action === "dispatched" && captured?.addressing === "channel-watch", "plain comment -> dispatched as a JUDGED channel-watch wake (ambient)");
+  ok(captured!.surfaceKey === `notion/${WS}/${PAGE}`, "dispatch carries the notion/<ws>/<page> surfaceKey (session + gate key)");
+  ok(captured!.pageId === PAGE && captured!.discussionId === DISCUSSION && captured!.workspaceId === WS, "dispatch carries page + discussion + workspace");
+  ok(captured!.auth.authenticator === "notion" && captured!.auth.principalId === AUTHOR, "auth carries notion + the author principal (unchanged — invariant 1)");
+  ok(captured!.trigger.text === "just a normal comment" && captured!.trigger.from === "human", "the triggering comment is the trigger message");
+  ok(captured!.threadComments.length === 1 && captured!.threadComments[0].text === "an earlier note in this thread", "the OTHER discussion comments become backscroll siblings (trigger excluded)");
+}
+
+{
+  const raw = commentEvent();
   let dispatched = false;
-  const f: FetchLike = async (input, init) => {
-    if ((init?.method ?? "GET") === "GET" && /\/v1\/comments\/[^?]+$/.test(input)) { fetchedComment = true; return new Response(JSON.stringify(triggerNoMention), { status: 200 }); }
-    return new Response("{}", { status: 200 });
-  };
-  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(f, async () => { dispatched = true; }));
-  ok(fetchedComment, "the webhook is a SIGNAL: the comment is fetched (step 2) even to decide not-mentioned");
-  ok(out.action === "not-mentioned" && !dispatched, "no bot @mention -> gated, no dispatch");
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatched = true; }, { ambientEnabled: () => false }));
+  ok(out.action === "ambient-disabled" && !dispatched, "ambient OFF for the domain -> fail-closed, no dispatch");
+}
+
+{
+  const raw = commentEvent();
+  let captured: NotionSupervisorDispatch | undefined;
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention, listResults: [priorComment, triggerMention] }), async (d) => { captured = d; }));
+  ok(out.action === "dispatched" && captured?.addressing === "direct", "structured bot @mention -> dispatched as direct");
+  ok(captured!.trigger.text === "@OE please summarise this page", "direct trigger = the triggering comment text (the request)");
 }
 
 {
   const raw = commentEvent();
   let dispatched = false;
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerSelf }), async () => { dispatched = true; }));
-  ok(out.action === "skipped-self" && !dispatched, "our own comment -> skipped (no reply loop)");
+  ok(out.action === "skipped-self" && !dispatched, "our own comment -> skipped-self (no reply loop)");
 }
 
 {
   const raw = commentEvent();
-  let captured: NotionDispatchArgs | undefined;
-  const out = await handleNotionDelivery(
-    raw,
-    sign(raw),
-    baseDeps(makeFetch({ comment: triggerMention, listResults: [priorComment, triggerMention] }), async (a) => { captured = a; }),
-  );
-  ok(out.action === "dispatched" && captured !== undefined, "bot @mention -> dispatched");
-  ok(captured!.message === "@OE please summarise this page", "dispatch message = the triggering comment text (the request)");
-  ok(captured!.continuationToken === DISCUSSION, "continuation token = discussion id (thread resume)");
-  ok(captured!.auth.authenticator === "notion" && captured!.auth.principalId === AUTHOR, "auth carries notion + the author principal");
-  ok(captured!.auth.attributes.workspace_id === WS && captured!.auth.attributes.page_id === PAGE, "auth attributes carry workspace + page for the binding");
-  ok(captured!.state.discussionId === DISCUSSION && captured!.state.pageId === PAGE, "session state carries discussion + page for the reply");
-  const ctx = captured!.context.join("\n");
-  ok(captured!.context.length === 1 && ctx.includes(UNTRUSTED_OPEN) && ctx.includes(UNTRUSTED_CLOSE), "thread context is UNTRUSTED-wrapped");
-  ok(ctx.includes("an earlier note in this thread"), "prior thread comment included as context");
-  ok(!ctx.includes("please summarise this page"), "the triggering comment is NOT duplicated into the untrusted context");
+  let dispatched = false;
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerBot }), async () => { dispatched = true; }));
+  ok(out.action === "skipped-bot" && !dispatched, "another integration's comment -> skipped-bot (created_by.type != person)");
+}
+
+{
+  const raw = commentEvent();
+  let dispatched = false;
+  const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention }), async () => { dispatched = true; }, { resolveBotUserId: () => Promise.resolve(undefined) }));
+  ok(out.action === "dropped" && !dispatched, "unresolved bot user id -> DROP, no dispatch (fail-closed loop guard — the critical hardening)");
 }
 
 {
@@ -287,6 +294,9 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     posts = [];
     await inSession(() => notionChannel.adapter["message.completed"]!({ finishReason: "stop", message: "NO_REPLY — nothing to add" }, { state }));
     ok(posts.length === 0, "notion message.completed: the NO_REPLY sentinel still suppresses the reply");
+    const { readAudit } = await import("../agent/audit/audit.js");
+    const silences = await readAudit({ action: "notion.no_reply" });
+    ok(silences.length >= 1 && silences.some((a) => a.detail?.discussionId === DISCUSSION), "notion message.completed: judged silence writes a notion.no_reply audit row (audited silence)");
 
     posts = [];
     await inSession(async () => {

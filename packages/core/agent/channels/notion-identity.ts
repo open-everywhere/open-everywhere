@@ -34,6 +34,10 @@ export function notionWorkspaceKey(workspaceId: string): string {
   return `notion/${workspaceId}`;
 }
 
+export function notionSurfaceKey(workspaceId: string | undefined, surface: string | undefined): string {
+  return `notion/${workspaceId ?? "unknown"}/${surface ?? "unknown"}`;
+}
+
 export function notionMode(): SessionMode {
   return "channel";
 }

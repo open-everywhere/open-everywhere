@@ -242,9 +242,6 @@ export function richTextChunks(text: string): Array<{ type: "text"; text: { cont
   return chunks;
 }
 
-export function notionContinuationToken(discussionId: string): string {
-  return discussionId;
-}
 
 async function safeText(res: Response): Promise<string> {
   try {

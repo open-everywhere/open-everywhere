@@ -2,8 +2,18 @@ import { defineChannel, POST } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
+import { getConfig } from "../access/config.js";
+import { ambientSupervisorEnabled } from "../memory/domain.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
-import { handleNotionDelivery, type NotionDispatchArgs } from "./notion-webhook.js";
+import { handleNotionDelivery, type NotionSessionState } from "./notion-webhook.js";
+import {
+  handleNotionSupervisorDispatch,
+  notionSupervisorToken,
+  shouldRotate,
+  type NotionSupervisorDeps,
+  type NotionSupervisorDispatch,
+} from "./notion-supervisor.js";
 
 const ROUTE = "/eve/v1/notion";
 
@@ -37,11 +47,51 @@ export function _resetNotionBotUserCache(): void {
   botUserCache = undefined;
 }
 
-interface NotionState {
-  discussionId: string | null;
-  pageId: string | null;
-  workspaceId: string | null;
+function notionAmbientEnabled(surfaceKey: string): boolean {
+  try {
+    return ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains());
+  } catch {
+    return false;
+  }
 }
+
+type NotionState = NotionSessionState;
+
+function liveNotionSupervisorDeps(send: SendFn): NotionSupervisorDeps {
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  return {
+    async getOrCreateSession(surfaceKey, pageId, atIso) {
+      const existing = await store.getChannelSession(org, surfaceKey);
+      if (!existing) {
+        const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, 1), atIso);
+        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+      }
+      if (shouldRotate(existing, atIso)) {
+        const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, existing.generation + 1), atIso);
+        return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
+      }
+      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
+    },
+    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, surfaceKey, atIso),
+    async forceRotate(surfaceKey, pageId, atIso) {
+      const existing = await store.getChannelSession(org, surfaceKey);
+      const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, (existing?.generation ?? 0) + 1), atIso);
+      return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
+    },
+    audit: (action, detail) =>
+      appendAudit({ org, platform: "notion", workspace: typeof detail.workspaceId === "string" ? detail.workspaceId : "unknown", surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
+    now: () => new Date().toISOString(),
+    async wake({ token, auth, message, context, state }) {
+      await send({ message, context: [...context] }, { auth, continuationToken: token, state });
+    },
+  };
+}
+
+type SendFn = (
+  payload: { message: string; context?: string[] },
+  opts: { auth: unknown; continuationToken: string; state: NotionState },
+) => Promise<void>;
 
 export default defineChannel<NotionState, { state: NotionState }>({
   kindHint: "notion",
@@ -55,24 +105,16 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const signature = req.headers.get("x-notion-signature");
       const apiKey = notionApiKey();
 
-      const dispatch = async (args: NotionDispatchArgs): Promise<void> => {
-        await send(
-          { message: args.message, context: [...args.context] },
-          {
-            auth: args.auth,
-            continuationToken: args.continuationToken,
-            state: { discussionId: args.state.discussionId, pageId: args.state.pageId, workspaceId: args.state.workspaceId },
-          },
-        );
-        const a = args.auth.attributes;
+      const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
+        await handleNotionSupervisorDispatch(d, liveNotionSupervisorDeps(send as unknown as SendFn));
         await appendAudit({
           org: deploymentOrg(),
           platform: "notion",
-          workspace: a.workspace_id ?? "unknown",
-          surface: a.page_id ?? args.state.discussionId ?? "unknown",
-          principalId: args.auth.principalId || undefined,
+          workspace: d.workspaceId ?? "unknown",
+          surface: d.pageId || d.discussionId || "unknown",
+          principalId: d.auth.principalId || undefined,
           action: "notion.dispatched",
-          detail: { commentId: a.comment_id, discussionId: args.state.discussionId },
+          detail: { addressing: d.addressing, discussionId: d.discussionId },
         });
       };
 
@@ -81,6 +123,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         allowUnverified: process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK === "1",
         apiKey,
         resolveBotUserId: resolveBotUserId(apiKey ?? ""),
+        ambientEnabled: notionAmbientEnabled,
         dispatch,
       });
 
@@ -89,7 +132,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           `subscription handshake received — verification_token (set NOTION_WEBHOOK_SECRET to this AND paste it into Notion's verify form): ${handshakeToken(rawBody)}`,
         );
       } else if (outcome.action === "dispatched") {
-        log(`comment.created → dispatched`);
+        log(`comment.created → dispatched (${outcome.detail})`);
       } else if (outcome.action === "rejected") {
         log(`delivery rejected (${outcome.status}): ${outcome.detail}`);
         waitUntil(
@@ -111,9 +154,20 @@ export default defineChannel<NotionState, { state: NotionState }>({
   events: {
     async "message.completed"(data, channel) {
       const action = finalMessageActionForTurn(data.finishReason, data.message);
-      if (action.kind !== "post") return;
-      const message = action.text;
+      if (action.kind === "buffer-tool-status") return;
       const discussionId = channel.state.discussionId;
+      if (action.kind === "silent") {
+        await appendAudit({
+          org: deploymentOrg(),
+          platform: "notion",
+          workspace: channel.state.workspaceId ?? "unknown",
+          surface: channel.state.pageId ?? discussionId ?? "unknown",
+          action: "notion.no_reply",
+          detail: { discussionId, reason: action.reason },
+        });
+        return;
+      }
+      const message = action.text;
       const apiKey = notionApiKey();
       if (!discussionId || !apiKey) {
         log(`reply not posted — ${!apiKey ? "NOTION_API_KEY unset" : "no discussion_id on session state"}`);

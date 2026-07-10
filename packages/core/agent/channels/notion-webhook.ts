@@ -7,14 +7,12 @@ import {
   retrieveComment,
   listBlockComments,
   richTextToPlainText,
-  mentionsUser,
-  notionContinuationToken,
   type FetchLike,
   type NotionWebhookEvent,
   type NotionComment,
 } from "./notion-api.js";
-import { buildNotionAuth, type OpenEverywhereNotionAuth } from "./notion-identity.js";
-import { renderContext, type ContextLine } from "./context-render.js";
+import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
+import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
 
 export interface NotionSessionState {
   readonly discussionId: string | null;
@@ -22,22 +20,16 @@ export interface NotionSessionState {
   readonly workspaceId: string | null;
 }
 
-export interface NotionDispatchArgs {
-  readonly message: string;
-  readonly context: readonly string[];
-  readonly auth: OpenEverywhereNotionAuth;
-  readonly continuationToken: string;
-  readonly state: NotionSessionState;
-}
-
 export interface HandleNotionDeliveryDeps {
   readonly secret: string | undefined;
   readonly allowUnverified: boolean;
   readonly apiKey: string | undefined;
   readonly resolveBotUserId: () => Promise<string | undefined>;
+  readonly resolveBotName?: () => Promise<string | undefined>;
+  readonly ambientEnabled: (surfaceKey: string) => boolean;
   readonly fetch?: FetchLike;
   readonly version?: string;
-  readonly dispatch: (args: NotionDispatchArgs) => Promise<void>;
+  readonly dispatch: (d: NotionSupervisorDispatch) => Promise<void>;
   readonly onHandshakeToken?: (token: string) => void;
 }
 
@@ -49,8 +41,10 @@ export interface NotionDeliveryOutcome {
     | "rejected"
     | "bad-json"
     | "ignored"
-    | "not-mentioned"
+    | "ambient-disabled"
     | "skipped-self"
+    | "skipped-bot"
+    | "dropped"
     | "dispatched"
     | "no-api-key"
     | "error";
@@ -88,6 +82,7 @@ export async function handleNotionDelivery(
   const apiKey = deps.apiKey;
 
   const botUserId = await deps.resolveBotUserId();
+  const botName = deps.resolveBotName ? await deps.resolveBotName() : undefined;
 
   let comment: NotionComment;
   try {
@@ -96,24 +91,36 @@ export async function handleNotionDelivery(
     return { status: 200, body: "ok", action: "error", detail: `retrieveComment: ${String(err)}` };
   }
 
-  if (botUserId && comment.created_by?.id === botUserId) {
-    return { status: 200, body: "ok", action: "skipped-self" };
-  }
-
-  if (!mentionsUser(comment.rich_text, botUserId)) {
-    return { status: 200, body: "ok", action: "not-mentioned" };
-  }
-
-  const message = richTextToPlainText(comment.rich_text);
-  const discussionId = comment.discussion_id ?? "";
   const pageId = pageIdFromEvent(ev) ?? comment.parent?.page_id;
+  const discussionId = comment.discussion_id ?? "";
   const workspaceId = ev.workspace_id;
-  const context = await loadThreadContext(comment, pageId, discussionId, botUserId, {
+  const surface = pageId ?? (discussionId || undefined) ?? commentId;
+  const surfaceKey = notionSurfaceKey(workspaceId, surface);
+
+  if (!deps.ambientEnabled(surfaceKey)) {
+    return { status: 200, body: "ok", action: "ambient-disabled", detail: surfaceKey };
+  }
+
+  const classification = classifyNotionComment(comment, botUserId, botName);
+  if (classification.addressing === "drop") {
+    const reason = classification.reason;
+    const action = reason.startsWith("self") ? "skipped-self" : reason.startsWith("bot") ? "skipped-bot" : "dropped";
+    return { status: 200, body: "ok", action, detail: reason };
+  }
+
+  const triggerText = richTextToPlainText(comment.rich_text);
+  const trigger: NotionWakeMessage = {
+    from: "human",
+    id: commentId,
+    authorId: comment.created_by?.id,
+    sentAt: comment.created_time ?? new Date().toISOString(),
+    text: triggerText.length > 0 ? triggerText : "(the comment had no additional text)",
+  };
+  const threadComments = await loadThreadSiblings(comment, pageId, discussionId, botUserId, {
     apiKey,
     fetch: deps.fetch,
     version: deps.version,
   });
-
   const auth = buildNotionAuth({
     workspaceId,
     pageId,
@@ -123,37 +130,43 @@ export async function handleNotionDelivery(
   });
 
   await deps.dispatch({
-    message: message.length > 0 ? message : "(the comment mentioning you had no additional text)",
-    context,
+    surfaceKey,
+    addressing: classification.addressing,
+    pageId: pageId ?? "",
+    discussionId,
+    workspaceId: workspaceId ?? null,
     auth,
-    continuationToken: notionContinuationToken(discussionId || commentId),
-    state: { discussionId: discussionId || null, pageId: pageId ?? null, workspaceId: workspaceId ?? null },
+    trigger,
+    threadComments,
   });
 
-  return { status: 200, body: "ok", action: "dispatched" };
+  return { status: 200, body: "ok", action: "dispatched", detail: classification.addressing };
 }
 
-async function loadThreadContext(
+async function loadThreadSiblings(
   trigger: NotionComment,
   pageId: string | undefined,
   discussionId: string,
   botUserId: string | undefined,
   opts: { apiKey: string; fetch?: FetchLike; version?: string },
-): Promise<string[]> {
+): Promise<NotionWakeMessage[]> {
   if (!pageId) return [];
   try {
     const all = await listBlockComments(pageId, opts);
-    const lines: ContextLine[] = all
+    return all
       .filter((c) => c.id !== trigger.id && (discussionId ? c.discussion_id === discussionId : true))
       .map((c) => {
-        const text = richTextToPlainText(c.rich_text);
         const authorId = c.created_by?.id;
-        if (authorId && botUserId && authorId === botUserId) return { senderType: "agent" as const, ts: c.id ?? "", text };
-        if (authorId) return { senderType: "user" as const, senderId: authorId, ts: c.id ?? "", text };
-        return { senderType: "unknown" as const, ts: c.id ?? "", text };
-      });
-    const entry = renderContext(lines, `notion page ${pageId}`);
-    return entry ? [entry] : [];
+        const isSelf = Boolean(authorId && botUserId && authorId === botUserId);
+        return {
+          from: isSelf ? ("self" as const) : ("human" as const),
+          id: c.id ?? "",
+          authorId: isSelf ? undefined : authorId,
+          sentAt: c.created_time ?? "",
+          text: richTextToPlainText(c.rich_text),
+        };
+      })
+      .filter((m) => m.text.length > 0);
   } catch {
     return [];
   }
