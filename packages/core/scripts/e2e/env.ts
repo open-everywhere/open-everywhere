@@ -48,6 +48,10 @@ export const ENV = {
   notionAnchorOnTopic: "E2E_NOTION_ANCHOR_ONTOPIC",
   notionAnchorOnTopic2: "E2E_NOTION_ANCHOR_ONTOPIC2",
   notionAnchorOffTopic: "E2E_NOTION_ANCHOR_OFFTOPIC",
+
+  slackUnifiedChannelA: "E2E_SLACK_UNIFIED_CHANNEL_A",
+  slackUnifiedChannelB: "E2E_SLACK_UNIFIED_CHANNEL_B",
+  unifiedDomain: "E2E_UNIFIED_DOMAIN",
 } as const;
 
 export type Capability =
@@ -64,7 +68,8 @@ export type Capability =
   | "teams"
   | "github"
   | "linear"
-  | "notionAmbient";
+  | "notionAmbient"
+  | "slackUnified";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -146,6 +151,12 @@ export interface NotionAmbientConfig {
   readonly anchorOnTopic?: string;
   readonly anchorOnTopic2?: string;
   readonly anchorOffTopic?: string;
+}
+
+export interface SlackUnifiedConfig {
+  readonly channelA: string;
+  readonly channelB: string;
+  readonly domain: string;
 }
 
 export type Resolved<T> =
@@ -280,6 +291,13 @@ export function resolveNotionAmbient(env: Env = process.env): Resolved<NotionAmb
   };
 }
 
+export function resolveSlackUnified(env: Env = process.env): Resolved<SlackUnifiedConfig> {
+  const { values, missing } = need(env, [ENV.slackUnifiedChannelA, ENV.slackUnifiedChannelB]);
+  if (missing.length > 0) return { ok: false, missing };
+  const domain = env[ENV.unifiedDomain]?.trim() || "e2e-unified";
+  return { ok: true, cfg: { channelA: values[0], channelB: values[1], domain } };
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -301,6 +319,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const github = resolveGithub(env);
   const linear = resolveLinear(env);
   const notionAmbient = resolveNotionAmbient(env);
+  const slackUnified = resolveSlackUnified(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -316,6 +335,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (github.ok) available.add("github");
   if (linear.ok) available.add("linear");
   if (notionAmbient.ok) available.add("notionAmbient");
+  if (slackUnified.ok) available.add("slackUnified");
   return {
     available,
     missing: {
@@ -333,6 +353,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       github: github.ok ? [] : github.missing,
       linear: linear.ok ? [] : linear.missing,
       notionAmbient: notionAmbient.ok ? [] : notionAmbient.missing,
+      slackUnified: slackUnified.ok ? [] : slackUnified.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };

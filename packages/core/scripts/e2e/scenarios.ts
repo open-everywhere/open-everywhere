@@ -5,7 +5,7 @@ import type { TeamsDriver } from "./teams-driver.js";
 import type { GithubDriver } from "./github-driver.js";
 import type { LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
-import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
+import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
@@ -43,6 +43,10 @@ export interface ScenarioContext {
   readonly github?: GithubDriver;
   readonly linear?: LinearDriver;
   readonly notionAmbient?: NotionDriver;
+  readonly slackUnifiedA?: SlackDriver;
+  readonly slackUnifiedB?: SlackDriver;
+  readonly unifiedDomain?: string;
+  readonly unifiedAuditCall?: UnifiedAuditCall;
   readonly targetUrl?: string;
   readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
   readonly judge: ReplyJudge;
@@ -1335,6 +1339,126 @@ export const SCENARIOS: readonly Scenario[] = [
       await sleep(SILENCE_WINDOW);
       const noiseReplies = (await sup.history(noiseTs)).filter((m) => sup.isBotReply(m));
       ctx.gate(noiseReplies.length === 0, "supervisor: an off-topic aside drew NO in-channel reply within the silence window");
+    },
+  },
+  {
+    id: "J-UNIFIED",
+    title:
+      "Unified cross-surface supervisor, Slack-only live path: unified-audit route contract + flag detection, ONE domain session spanning two Slack containers (cross-container recall), per-wake reply-targeting, audited silence (research preview, flags default-OFF)",
+    requires: ["slack", "slackUnified"],
+    surface: "slack",
+    suite: "core",
+    optional: false,
+    timeoutMs: 900_000,
+    judged: true,
+    run: async (ctx) => {
+      const a = ctx.slackUnifiedA!;
+      const b = ctx.slackUnifiedB!;
+      const domainName = ctx.unifiedDomain!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const { teamId } = await a.identity();
+
+      let unifiedFlagConfirmed: boolean | undefined;
+      if (ctx.unifiedAuditCall) {
+        const good = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({ domain: domainName }));
+        ctx.gate(good.status === 200, `unified-audit: GET ?domain=${domainName} with the run's read token → 200`);
+        const body = good.body as UnifiedAuditWire;
+        ctx.gate(body.domain === domainName && typeof body.org === "string", "unified-audit: body echoes the domain + org");
+        ctx.gate(body.platforms.includes("slack"), "unified-audit: platforms include slack");
+        const keys = body.containers.map((c) => c.surfaceKey);
+        ctx.gate(
+          keys.includes(`slack/${teamId}/${a.channelId}`) && keys.includes(`slack/${teamId}/${b.channelId}`),
+          "unified-audit: the domain's containers include BOTH fixture channels (the 'which surfaces are in this one mind' answer)",
+        );
+        const containerSet = new Set(keys);
+        const workspaces = new Set(keys.map((k) => k.split("/").slice(0, 2).join("/")));
+        const rows = body.behaviour?.entries ?? [];
+        ctx.gate(
+          rows.every((e) => {
+            const key = `${e.platform}/${e.workspace}/${e.surface ?? ""}`.replace(/\/$/, "");
+            return containerSet.has(key) || (!e.surface && workspaces.has(`${e.platform}/${e.workspace}`));
+          }),
+          "unified-audit: behaviour rows are scoped to exact domain containers + workspace-level rows only (the scoping tightening)",
+        );
+        const wrongToken = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({ domain: domainName }), "e2e-definitely-wrong-token");
+        ctx.gate(wrongToken.status === 401, "unified-audit: a wrong bearer token → 401");
+        const noDomain = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({}));
+        ctx.gate(noDomain.status === 400, "unified-audit: a missing domain param → 400");
+        const badDomain = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({ domain: "e2e-no-such-domain" }));
+        ctx.gate(badDomain.status === 400, "unified-audit: an unknown domain name → 400");
+        unifiedFlagConfirmed = body.unified === true;
+        if (!unifiedFlagConfirmed) {
+          ctx.skip(
+            `deployment reports domain "${domainName}" is NOT unified (unified:false — org gate and/or unifiedSupervisor flag off); ` +
+              "flag-off is byte-identical per-container ambient, so the cross-container legs would test nothing new — " +
+              "arm OE_UNIFIED_SUPERVISOR=1 (or the org-domain unifiedSupervisorGate) + the domain's unifiedSupervisor flag to run them",
+          );
+        }
+      } else {
+        ctx.log("unified-audit legs skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to assert the route contract (and to pre-verify the flag state)");
+      }
+
+      const marker = factToken("uni");
+      const { ts: decideTs } = await a.post(
+        `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
+      );
+      const ackA = await a.awaitChannelMessage(decideTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(ackA.text.trim().length > 0, "container A: the channel-watch judge replied in-channel (ambient wake under the unified grain)");
+
+      const { ts: askTs } = await b.post(
+        "Quick check before I write this up — what was the deploy window token we decided on earlier? It was mentioned in the team's other channel.",
+      );
+      const replyB = await b.awaitChannelMessage(askTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(replyB.text.trim().length > 0, "container B: got an in-channel reply to the cross-container question");
+      ctx.gate(
+        replyB.text.includes(marker),
+        `one-mind: container B's reply quotes the token "${marker}" stated ONLY in container A (hard gate — one domain session spanning the containers)`,
+      );
+      await ctx.judgePass(
+        factuality(marker, `Does the reply give the deploy window token ${marker} (recalled from the other channel's conversation)?`, { mustMatch: [marker] }),
+        replyB.text,
+        "one-mind: cross-container recall quality",
+      );
+      const strayInA = (await a.history(askTs)).filter((m) => a.isBotReply(m));
+      ctx.gate(strayInA.length === 0, "reply-targeting: B's answer did NOT leak into container A (per-wake delivery auth — hard gate)");
+
+      const { ts: noiseTs } = await b.post("lol nothing to do with work — did anyone catch the match last night");
+      if (ctx.auditRead) {
+        try {
+          const rows = await ctx.auditRead({ sinceIso: runStart, platform: "slack", actions: ["slack.no_reply"] });
+          ctx.log(`unified audited silence: ${rows.length} slack.no_reply row(s) in the run window`);
+        } catch (err) {
+          ctx.log(`audit read unavailable (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
+        }
+      }
+      await sleep(SILENCE_WINDOW);
+      const noiseReplies = (await b.history(noiseTs)).filter((m) => b.isBotReply(m));
+      ctx.gate(noiseReplies.length === 0, "unified: an off-topic aside drew NO reply within the silence window (silence bias survives unification)");
+    },
+  },
+  {
+    id: "J-UNI-X",
+    title:
+      "Unified cross-surface MONEY-SHOT (plan-only, pending TODO(unified-dispatch)): a Slack decision quoted on a GitHub issue in the same domain, zero context re-entry",
+    requires: ["slack", "slackUnified", "github"],
+    surface: "cross",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 900_000,
+    judged: true,
+    run: async (ctx) => {
+      ctx.skip(
+        "pending TODO(unified-dispatch): only the Slack path is wired to the unified (org,domain) grain — " +
+          "github/linear/notion unified dispatch is stubbed with TODO(unified-dispatch) in {github,linear,notion}-supervisor.ts, " +
+          "and the non-Slack unified reply leg is TODO(unified-reply) (channels/slack.ts + unified-supervisor.ts). " +
+          "PLANNED LEGS once those land (the fixture = J-UNIFIED's Slack pair + J-GH's scratch repo, all in ONE unified domain): " +
+          "[1] post a decision carrying a run-unique factToken in the domain's Slack channel, NO mention (the agent is just in the room; silence gated); " +
+          "[2] @mention on an issue in the domain's GitHub repo asking whether a described change matches what was agreed — " +
+          "hard gate: the <slug>[bot] issue reply quotes the Slack token (one mind across SURFACES, zero context re-entry); " +
+          "[3] reply-targeting: the answer lands on the ISSUE and no bot post appears in the Slack channel (per-wake delivery auth across platforms); " +
+          "[4] audited rows (slack.no_reply for the un-mentioned decision, github.replied for the answer) via auditRead; " +
+          "[5] the unified-audit route's containers list spans both platforms for the domain",
+      );
     },
   },
 ];

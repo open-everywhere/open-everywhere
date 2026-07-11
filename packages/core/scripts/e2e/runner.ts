@@ -9,6 +9,7 @@ import {
   resolveSlackChannelB,
   resolveSlackPrivate,
   resolveSlackSupervisor,
+  resolveSlackUnified,
   resolveSlackUser2,
   resolveSynthetic,
   resolveSyntheticDm,
@@ -26,7 +27,7 @@ import { WebhookDriver } from "./webhook.js";
 import { judge3, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
-import { fetchAudit } from "./audit-read.js";
+import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -77,10 +78,13 @@ async function main(): Promise<void> {
   const github = resolveGithub();
   const linear = resolveLinear();
   const notionAmbient = resolveNotionAmbient();
+  const slackUnified = resolveSlackUnified();
 
   const auditTarget = (process.env.E2E_TARGET_URL ?? "").trim();
   const auditToken = (process.env.E2E_CONTROL_READ_TOKEN ?? "").trim();
   const auditRead = auditTarget && auditToken ? (opts: Parameters<typeof fetchAudit>[2]) => fetchAudit(auditTarget, auditToken, opts) : undefined;
+  const unifiedAuditCall =
+    auditTarget && auditToken ? (query: string, token?: string) => callUnifiedAudit(auditTarget, token ?? auditToken, query) : undefined;
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const githubDriver = github.ok ? new GithubDriver(github.cfg) : undefined;
@@ -92,6 +96,8 @@ async function main(): Promise<void> {
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
+  const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
+  const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
   const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
@@ -194,6 +200,10 @@ async function main(): Promise<void> {
       github: githubDriver,
       linear: linearDriver,
       notionAmbient: notionAmbientDriver,
+      slackUnifiedA: slackUnifiedADriver,
+      slackUnifiedB: slackUnifiedBDriver,
+      unifiedDomain: slackUnified.ok ? slackUnified.cfg.domain : undefined,
+      unifiedAuditCall,
       targetUrl: auditTarget || undefined,
       auditRead,
       judge,

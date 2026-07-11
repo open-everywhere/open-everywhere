@@ -51,3 +51,38 @@ export function hasAuditRow(
 ): boolean {
   return rows.some((e) => e.action === action && (where === undefined || where(e)));
 }
+
+export interface UnifiedAuditWire {
+  readonly org: string;
+  readonly domain: string;
+  readonly unified: boolean;
+  readonly platforms: readonly string[];
+  readonly containers: readonly { readonly surfaceKey: string; readonly platform: string }[];
+  readonly humans: readonly { readonly name: string; readonly surfacesNotIn: readonly string[] }[];
+  readonly behaviour: { readonly entries: readonly AuditWireEntry[] };
+  readonly notes: readonly string[];
+}
+
+export interface UnifiedAuditCallResult {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+export type UnifiedAuditCall = (query: string, token?: string) => Promise<UnifiedAuditCallResult>;
+
+export function buildUnifiedAuditQuery(opts: { domain?: string; sinceDays?: number }): string {
+  const params = new URLSearchParams();
+  if (opts.domain) params.set("domain", opts.domain);
+  if (opts.sinceDays !== undefined) params.set("sinceDays", String(opts.sinceDays));
+  const qs = params.toString();
+  return qs.length > 0 ? `?${qs}` : "";
+}
+
+export async function callUnifiedAudit(targetUrl: string, readToken: string, query: string): Promise<UnifiedAuditCallResult> {
+  const base = targetUrl.replace(/\/+$/, "");
+  const res = await fetch(`${base}/control/v1/unified-audit${query}`, {
+    headers: { authorization: `Bearer ${readToken}`, accept: "application/json" },
+  });
+  const body = await res.json().catch(() => undefined);
+  return { status: res.status, ...(body !== undefined ? { body } : {}) };
+}

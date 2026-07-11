@@ -30,6 +30,7 @@ const {
   resolveGithub,
   resolveLinear,
   resolveNotionAmbient,
+  resolveSlackUnified,
   resolveCapabilities,
 } = await import("./e2e/env.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
@@ -47,7 +48,7 @@ const {
 } = await import("./e2e/synthetic.js");
 const { signWebhookBody } = await import("./e2e/webhook.js");
 const { runFallbackCheck, FallbackJudge, judge3 } = await import("./e2e/judge.js");
-const { SCENARIOS, skipReason } = await import("./e2e/scenarios.js");
+const { SCENARIOS, skipReason, ScenarioSkip } = await import("./e2e/scenarios.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
 const { OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
@@ -82,6 +83,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   );
   const notionMiss = resolveNotion(empty);
   ok(!notionMiss.ok && notionMiss.missing.join(",") === ENV.notionChannel, "notion add-on misses exactly E2E_NOTION_CHANNEL");
+  const uniMiss = resolveSlackUnified(empty);
+  ok(
+    !uniMiss.ok && uniMiss.missing.join(",") === `${ENV.slackUnifiedChannelA},${ENV.slackUnifiedChannelB}`,
+    "slackUnified add-on misses exactly E2E_SLACK_UNIFIED_CHANNEL_A + E2E_SLACK_UNIFIED_CHANNEL_B (the domain name is defaulted, never required)",
+  );
 
   const caps = resolveCapabilities(empty);
   ok(caps.available.size === 0, "empty env: NO capabilities — full dry mode");
@@ -123,9 +129,18 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.teamsTeamId]: "team-1",
     [ENV.teamsChannelId]: "19:chan@thread.tacv2",
     [ENV.teamsBotAppId]: "bot-app-1",
+    [ENV.slackUnifiedChannelA]: "C0UNIA",
+    [ENV.slackUnifiedChannelB]: "C0UNIB",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 10, "full env: all ten capabilities live");
+  ok(capsFull.available.size === 11, "full env: all eleven capabilities live");
+  const uniCfg = resolveSlackUnified(full);
+  ok(
+    uniCfg.ok && uniCfg.cfg.channelA === "C0UNIA" && uniCfg.cfg.channelB === "C0UNIB" && uniCfg.cfg.domain === "e2e-unified",
+    'slackUnified cfg carries both channels and defaults E2E_UNIFIED_DOMAIN to "e2e-unified"',
+  );
+  const uniCfgOverride = resolveSlackUnified({ ...full, [ENV.unifiedDomain]: "payments" });
+  ok(uniCfgOverride.ok && uniCfgOverride.cfg.domain === "payments", "E2E_UNIFIED_DOMAIN overrides the default fixture domain name");
   const teamsCfg = resolveTeams(full);
   ok(
     teamsCfg.ok &&
@@ -167,12 +182,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const EXPECTED_IDS = new Set([
     "J1", "J2", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
+    "J-UNIFIED", "J-UNI-X",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the plan-only cross-surface money-shot pending TODO(unified-dispatch))`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -183,7 +199,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 1_800_000, `${s.id} budget is within the 120s–30min envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
-  ok(optional.join(",") === "S8,S9,S10,S24", "the plan's stretch scenarios PLUS the gated Notion leg are optional (S11–S23 are core coverage)");
+  ok(
+    optional.join(",") === "S8,S9,S10,S24,J-UNI-X",
+    "the plan's stretch scenarios PLUS the gated Notion leg PLUS the plan-only unified money-shot are optional (S11–S23 are core coverage)",
+  );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
   const KNOWN_SUITES = new Set(["core", "extended", "security"]);
@@ -197,7 +216,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "J-TEAMS")!.surface === "teams", "J-TEAMS is the teams surface");
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
-  ok(nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-TEAMS,S8", "the non-slack scenarios are exactly J-DISC(discord)/S8(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)");
+  ok(
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-TEAMS,J-UNI-X,S8",
+    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)",
+  );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
   ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC", "the security suite is exactly F-SEC (tainted-remember/SSRF/injection probes)");
@@ -213,10 +235,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(req("J1") === "slack" && req("S23") === "slack", "J1 (core journey) + S23 need only the base slack driver");
   ok(req("S24") === "slack+notion", "S24 requires slack + notion (the gated Notion add-on)");
   ok(req("J-TEAMS") === "teams", "J-TEAMS requires only the teams driver");
+  ok(req("J-UNIFIED") === "slack+slackUnified", "J-UNIFIED requires slack + slackUnified (the two-channel unified-domain fixture; audit legs guard on targetUrl/token at runtime)");
+  ok(req("J-UNI-X") === "slack+slackUnified+github", "J-UNI-X (plan-only) requires slack + slackUnified + github — the eventual cross-surface fixture union");
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -232,13 +256,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     github: [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue],
     linear: [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle],
     notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionBotUserId, ENV.notionWorkspaceId],
+    slackUnified: [ENV.slackUnifiedChannelA, ENV.slackUnifiedChannelB],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -254,6 +279,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     github: [],
     linear: [],
     notionAmbient: [],
+    slackUnified: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -298,8 +324,28 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(j4?.includes(ENV.slackDmChannel) === true && j4.includes("syntheticDm"), "J4 skip names E2E_SLACK_DM_CHANNEL (the DM negative leg's fixture)");
   const s20 = skipReason(SCENARIOS.find((s) => s.id === "S20")!, baseOnly, missing, false);
   ok(s20 === `missing webhook driver (set ${ENV.webhookSecret})`, "S20 skip names exactly E2E_WEBHOOK_SECRET");
-  for (const id of ["S11", "J2", "J3", "J4", "S13", "S14", "S20", "S23"]) {
+  const jUni = skipReason(SCENARIOS.find((s) => s.id === "J-UNIFIED")!, baseOnly, missing, false);
+  ok(
+    jUni === `missing slackUnified driver (set ${ENV.slackUnifiedChannelA}, ${ENV.slackUnifiedChannelB})`,
+    "J-UNIFIED skip names exactly E2E_SLACK_UNIFIED_CHANNEL_A + E2E_SLACK_UNIFIED_CHANNEL_B",
+  );
+  for (const id of ["S11", "J2", "J3", "J4", "S13", "S14", "S20", "S23", "J-UNIFIED"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
+  }
+  {
+    const jx = SCENARIOS.find((s) => s.id === "J-UNI-X")!;
+    const capMiss = skipReason(jx, baseOnly, missing, true);
+    ok(capMiss?.includes("slackUnified") === true && capMiss.includes(ENV.slackUnifiedChannelA), "J-UNI-X capability skip names the unified fixture vars (checked before the optional gate)");
+    ok(skipReason(jx, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true, "J-UNI-X stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens");
+    ok(skipReason(jx, all, noneMissing, true) === undefined, "J-UNI-X is SELECTED with full tokens + optional — the plan entry stays visible in the roster");
+    let selfSkip = "";
+    try {
+      await jx.run({ skip: (why: string) => { throw new ScenarioSkip(why); } } as never);
+    } catch (err) {
+      if (err instanceof ScenarioSkip) selfSkip = err.message;
+    }
+    ok(selfSkip.includes("TODO(unified-dispatch)"), "…but J-UNI-X's run body ALWAYS self-skips naming TODO(unified-dispatch) (plan-only until cross-surface dispatch lands)");
+    ok(selfSkip.includes("TODO(unified-reply)"), "…and names the TODO(unified-reply) non-Slack reply gap too (the second stubbed half)");
   }
   for (const id of ["J1", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, slackOnly, missing, false) === undefined, `${id} runs with slack alone (no add-on fixture needed)`);
@@ -704,6 +750,127 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(ok2.seen.join(",") === "(unstamped),test/model-a,test/unpriced", "checkExpectedModels reports the distinct model set it saw (sorted)");
   const ok3 = checkExpectedModels(rows, ["test/model-a"]);
   ok(!ok3.ok && ok3.unexpected.includes("test/unpriced"), "checkExpectedModels flags an unexpected routed model (the routing-regression catch)");
+}
+
+{
+  const { buildUnifiedAuditQuery } = await import("./e2e/audit-read.js");
+  ok(buildUnifiedAuditQuery({ domain: "e2e-unified" }) === "?domain=e2e-unified", "unified-audit query carries the domain");
+  ok(buildUnifiedAuditQuery({ domain: "payments", sinceDays: 7 }) === "?domain=payments&sinceDays=7", "unified-audit query carries the optional sinceDays");
+  ok(buildUnifiedAuditQuery({}) === "", "an absent domain yields an EMPTY query — the missing-domain 400 route leg");
+}
+
+{
+  const { defineDomain, assertUnifiedDomainTrust } = await import("../agent/memory/domain.js");
+  const { supervisorGrainFor, unifiedSupervisorToken, unifiedDomainSessionKey } = await import("../agent/channels/unified-supervisor.js");
+  const { definePrincipal, resolvePrincipal, assertPrincipalsValid } = await import("../agent/identity/principals.js");
+  const throws = (fn: () => unknown): boolean => {
+    try {
+      fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  const A = "slack/T1/C0UNIA";
+  const B = "slack/T1/C0UNIB";
+  const fixture = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, unifiedSupervisor: true });
+  const ambientTwin = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true });
+  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
+  const orgPlain = defineDomain({ name: "org", match: "org" });
+
+  const prevGate = process.env.OE_UNIFIED_SUPERVISOR;
+  delete process.env.OE_UNIFIED_SUPERVISOR;
+  try {
+    for (const key of [A, B]) {
+      const off = supervisorGrainFor(key, [fixture, orgPlain]);
+      const ambient = supervisorGrainFor(key, [ambientTwin, orgPlain]);
+      ok(off.unified === false && off.registryKey === key && off.domainName === undefined, `flags OFF: ${key} plans per-container (registryKey === surfaceKey)`);
+      ok(JSON.stringify(off) === JSON.stringify(ambient), `flags OFF: the unified fixture's plan is IDENTICAL to the plain-ambient twin's for ${key} (byte-identical-off)`);
+    }
+    ok(supervisorGrainFor(A, [ambientTwin, orgGate]).unified === false, "org gate ON alone (domain flag off) still plans per-container — BOTH levels required");
+    ok(supervisorGrainFor(A, [fixture, orgPlain]).unified === false, "domain flag ON alone (org gate off) still plans per-container — BOTH levels required");
+
+    const onA = supervisorGrainFor(A, [fixture, orgGate]);
+    const onB = supervisorGrainFor(B, [fixture, orgGate]);
+    ok(
+      onA.unified === true && onB.unified === true && onA.registryKey === onB.registryKey && onA.registryKey === unifiedDomainSessionKey("e2e-unified"),
+      "flags ON: both fixture channels resolve ONE domain-keyed registry row (oe-domain::e2e-unified) — one team, one supervisor session",
+    );
+    ok(
+      unifiedSupervisorToken("e2e-unified", 1) === "oe-dom:e2e-unified:oe-sup:g1",
+      "flags ON: the fixture domain's session token is oe-dom:<domain>:oe-sup:g<n> (carries the :oe-sup:g infix so spend/rotation/model-routing detectors are unchanged)",
+    );
+  } finally {
+    if (prevGate === undefined) delete process.env.OE_UNIFIED_SUPERVISOR;
+    else process.env.OE_UNIFIED_SUPERVISOR = prevGate;
+  }
+
+  ok(!throws(() => assertUnifiedDomainTrust([fixture, orgGate])), "the documented J-UNIFIED fixture passes assertUnifiedDomainTrust");
+  ok(
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true })])),
+    "unifiedSupervisor on the org pseudo-domain → load fails loud (the 'unify everything' footgun)",
+  );
+  ok(
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "public", match: "public", ambientSupervisor: true, unifiedSupervisor: true })])) &&
+      throws(() => assertUnifiedDomainTrust([defineDomain({ name: "dm", match: "dm", ambientSupervisor: true, unifiedSupervisor: true })])),
+    "unifiedSupervisor on the public/dm pseudo-domains → load fails loud",
+  );
+  ok(
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], unifiedSupervisor: true })])),
+    "unifiedSupervisor WITHOUT ambientSupervisor → load fails loud (a unified session is a re-keyed ambient supervisor)",
+  );
+  ok(
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, unifiedSupervisor: true, unifiedSupervisorGate: true })])),
+    "unifiedSupervisorGate anywhere but the org pseudo-domain → load fails loud (it's the ORG master switch)",
+  );
+
+  const human = definePrincipal({ name: "E2E Human", handle: "e2e", ids: { slack: "U_E2E", github: "e2e-human" } });
+  ok(resolvePrincipal("github", "e2e-human", [human]) === human && resolvePrincipal("slack", "U_E2E", [human]) === human, "principals: explicit (platform, id) joins resolve the same human across surfaces");
+  ok(
+    resolvePrincipal("github", "E2E Human", [human]) === undefined && resolvePrincipal("github", "e2e", [human]) === undefined,
+    "principals: a display-name or handle match NEVER resolves (fail-closed on merge — an attacker-named account inherits nothing)",
+  );
+  ok(resolvePrincipal("slack", "U_SOMEONE_ELSE", [human]) === undefined, "principals: an unmapped id stays a distinct per-surface identity");
+  ok(
+    throws(() => assertPrincipalsValid([human, definePrincipal({ name: "Impostor", ids: { slack: "U_E2E" } })])),
+    "principals: a double-claimed (platform, id) fails LOUD at config load (an account is exactly one person)",
+  );
+
+  const { clusterBackscrollMulti, flattenMultiBackscroll } = await import("../agent/channels/backscroll-cluster.js");
+  const { renderWakeEnvelope } = await import("../agent/channels/wake-envelope.js");
+  type NormalizedMessage = import("../agent/channels/backscroll-cluster.js").NormalizedMessage;
+  const NOW_MS = 1_000 * 3_600_000;
+  const bmsg = (id: string, hoursAgo: number): NormalizedMessage => ({
+    id,
+    ms: NOW_MS - hoursAgo * 3_600_000,
+    authorId: "U1",
+    sender: "human",
+    type: "channel",
+    text: `backscroll ${id}`,
+  });
+  const rendered = clusterBackscrollMulti(
+    [
+      { containerId: A, platform: "slack", label: "#uni-a", messages: [bmsg("a1", 2), bmsg("a2", 1.9)] },
+      { containerId: B, platform: "slack", label: "#uni-b", messages: [bmsg("b1", 1.5), bmsg("b2", 1.4)] },
+    ],
+    NOW_MS,
+  );
+  const sidsA = new Set(rendered[0].messages.map((m) => m.sessionId));
+  const sidsB = new Set(rendered[1].messages.map((m) => m.sessionId));
+  ok([...sidsA].every((s) => s !== undefined && !sidsB.has(s)), "multi-backscroll: no sessionId is shared across the two fixture containers (container-namespaced)");
+  const envelope = renderWakeEnvelope({
+    reason: "channel-activity",
+    currentTime: "2026-03-15T09:30:00.000Z",
+    channel: { id: "C0UNIA", type: "channel", platform: "slack", platformLabel: "#uni-a" },
+    messages: [
+      ...flattenMultiBackscroll(rendered),
+      { from: "human", author: "Asker", id: "t1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "what did we decide?" },
+    ],
+  });
+  const sessionOpens = envelope.match(/<session /g) ?? [];
+  ok(sessionOpens.length === 2, "the rendered first-wake envelope carries exactly TWO <session> groups — one per container, NEVER merged");
+  ok((envelope.match(/<session [^>]*messages="2"/g) ?? []).length === 2, "each container's <session> group carries its OWN message count (2 + 2, not one merged 4)");
 }
 
 rmSync(dir, { recursive: true, force: true });
