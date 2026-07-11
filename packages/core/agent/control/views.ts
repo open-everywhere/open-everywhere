@@ -629,7 +629,8 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     ...behaviourAll,
     entries: behaviourAll.entries.filter((e) => {
       const key = `${e.platform}/${e.workspace}/${e.surface ?? ""}`.replace(/\/$/, "");
-      return [...surfaceSet].some((ch) => key === ch || ch.startsWith(`${e.platform}/${e.workspace}`));
+      if (surfaceSet.has(key)) return true;
+      return !e.surface && [...surfaceSet].some((ch) => ch.startsWith(`${e.platform}/${e.workspace}/`));
     }),
   };
 
