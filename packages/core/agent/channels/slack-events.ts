@@ -4,9 +4,9 @@ import { resolveWakeTrust } from "../identity/wake-trust.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
-import { nameDropWakeEnabled, engagementTierFor } from "../memory/domain.js";
+import { nameDropWakeEnabled, engagementTierFor, ambientSupervisorEnabled } from "../memory/domain.js";
 import { supervisorGrainFor, unifiedSupervisorToken, type SupervisorGrain } from "./unified-supervisor.js";
-import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
+import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -119,7 +119,7 @@ function slackTsToIso(ts: string): string {
 
 function triggerMessage(
   ev: ParsedMessageEvent,
-  opts: { trust: WakeTrust; isEdit: boolean; authorName?: string; authorHandle?: string },
+  opts: { trust: WakeTrust; isEdit: boolean; authorName?: string; authorHandle?: string; mention?: boolean },
 ): WakeMessageInput {
   const rawId = ev.userId ?? undefined;
   return {
@@ -131,6 +131,7 @@ function triggerMessage(
     sentAt: slackTsToIso(ev.ts),
     trust: opts.trust,
     trigger: true,
+    mention: opts.mention || undefined,
     edited: opts.isEdit || undefined,
     previousBody: opts.isEdit ? ev.previousText : undefined,
     attachments: ev.attachments && ev.attachments.length > 0 ? ev.attachments : undefined,
@@ -219,14 +220,16 @@ export interface SlackWakeOpts {
   readonly unified?: boolean;
   readonly platformLabel?: string;
   readonly wakeId?: string;
+  readonly directMention?: boolean;
 }
 
-function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch", opts?: SlackWakeOpts): NormalizedWake {
+function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch" | "direct-mention", opts?: SlackWakeOpts): NormalizedWake {
   const isEdit = ev.subtype === "message_changed";
+  const directMention = addressing === "direct-mention";
   const hasHandoff = typeof opts?.handoffNote === "string" && opts.handoffNote.length > 0;
   return {
     platform: "slack",
-    reason: isEdit ? "message-edited" : ev.threadTs ? "thread-activity" : "channel-activity",
+    reason: isEdit ? "message-edited" : directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity",
     addressing,
     locus: {
       channel: {
@@ -238,13 +241,19 @@ function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts?.participants,
-    engagementTier: opts?.engagementTier,
+    engagementTier: directMention ? undefined : opts?.engagementTier,
     unifiedDisclosure: opts?.unified === true ? true : undefined,
     wakeId: opts?.wakeId,
     handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts?.backscroll,
     trigger: mkMessageTrigger(
-      triggerMessage(ev, { trust: opts?.trust ?? "peer", isEdit, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      triggerMessage(ev, {
+        trust: opts?.trust ?? "peer",
+        isEdit,
+        authorName: opts?.triggerAuthorName,
+        authorHandle: opts?.triggerAuthorHandle,
+        mention: directMention ? true : undefined,
+      }),
     ),
   };
 }
@@ -254,7 +263,7 @@ export function slackThreadFollowWake(ev: ParsedMessageEvent, opts?: SlackWakeOp
 }
 
 export function slackChannelWatchWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
-  return slackJudgedWake(ev, "channel-watch", opts);
+  return slackJudgedWake(ev, opts?.directMention === true ? "direct-mention" : "channel-watch", opts);
 }
 
 export type FinalMessageAction =
@@ -693,6 +702,20 @@ export async function confirmChannelInternalWithMeta(channelId: string): Promise
   return { internal, memberCount: meta?.memberCount };
 }
 
+export async function slackSingleWindowMentionPolicy(channelId: string, surfaceKey: string): Promise<SingleWindowMentionPolicy> {
+  let singleWindow = false;
+  try {
+    const domains = getConfig().loadDomains();
+    singleWindow = supervisorGrainFor(surfaceKey, domains).singleWindow === true && ambientSupervisorEnabled(surfaceKey, domains);
+  } catch {
+    singleWindow = false;
+  }
+  if (!singleWindow) return singleWindowMentionPolicy(false, true, false);
+  const { internal, meta } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined }));
+  const privacyOk = internal && (meta?.channelType === "channel" || meta?.channelType === "group");
+  return singleWindowMentionPolicy(true, true, privacyOk);
+}
+
 const TRANSCRIPT_MESSAGES = 50;
 const TRANSCRIPT_LINE_CHARS = 240;
 const TRANSCRIPT_TOTAL_CHARS = 4000;
@@ -868,12 +891,17 @@ export interface SupervisorRouteDeps {
   readonly unifiedMeta?: (surfaceKey: string) => { unified: boolean; label?: string; singleWindow?: boolean };
 }
 
-export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
+export async function routeSupervisorEvent(
+  ev: ParsedMessageEvent,
+  deps: SupervisorRouteDeps,
+  opts?: { readonly directMention?: boolean },
+): Promise<RouteOutcome> {
+  const directMention = opts?.directMention === true;
   const base = {
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
-    isAppMention: ev.isAppMention,
+    isAppMention: directMention ? false : ev.isAppMention,
     subtype: ev.subtype,
-    channelType: ev.channelType,
+    channelType: directMention && ev.channelType === undefined ? "channel" : ev.channelType,
   };
   const pre = shouldSupervisorWake({ ...base, channelConfirmedInternal: true });
   if (!pre.deliver) return { ...pre, woke: false };
@@ -911,9 +939,14 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
   } catch {
     unifiedMeta = undefined;
   }
+  const mentionPolicy = singleWindowMentionPolicy(unifiedMeta?.singleWindow === true, opts?.directMention === true, internal);
   const window: UnifiedWindowWake | undefined =
     unifiedMeta?.singleWindow === true
-      ? { wakeId: mintWakeId(), origin: { platform: "slack", channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) } }
+      ? {
+          wakeId: mintWakeId(),
+          origin: { platform: "slack", channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) },
+          ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
+        }
       : undefined;
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
@@ -928,6 +961,7 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
         unified: unifiedMeta?.unified === true,
         platformLabel: unifiedMeta?.label,
         wakeId: window?.wakeId,
+        directMention: mentionPolicy.addressing === "direct-mention",
         memberCount,
         backscroll: applyResolvedNames(bs, names.participants),
         handoffNote: handoffNote ?? undefined,

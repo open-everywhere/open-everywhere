@@ -609,7 +609,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(typeof envelope.event_id === "string" && (envelope.event_id as string).length > 0, "mention envelope carries an event_id (eve dedupes on it)");
 
   const decision = classifyEnvelope(JSON.stringify(envelope), "application/json");
-  ok(decision.kind === "forward" && decision.reason.includes("app_mention"), "classifyEnvelope forwards the forged mention to the mention path");
+  ok(decision.kind === "mention" && decision.reason.includes("app_mention"), "classifyEnvelope routes the forged mention to the mention branch (default: forward)");
 
   type EveMention = Parameters<typeof parseAppMentionEvent>[0];
   const parsed = parseAppMentionEvent(envelope as unknown as EveMention);
