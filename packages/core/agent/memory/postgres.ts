@@ -27,14 +27,24 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS memory_file_org_isolation ON memory_file`,
   `DROP POLICY IF EXISTS memory_tier_org_isolation ON memory_tier`,
   `CREATE POLICY memory_file_org_isolation ON memory_file
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING (org_id = current_setting('app.current_org', true)
+       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)
+     WITH CHECK (org_id = current_setting('app.current_org', true)
+       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`,
   `CREATE POLICY memory_tier_org_isolation ON memory_tier
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING (org_id = current_setting('app.current_org', true)
+       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)
+     WITH CHECK (org_id = current_setting('app.current_org', true)
+       OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`,
 ];
 
 export async function initPostgresSchema(client: PgClient): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS is_owner
+     FROM pg_class c WHERE c.oid = to_regclass('memory_file')`,
+  );
+  const r = rows[0] as { is_owner: boolean } | undefined;
+  if (r && r.is_owner !== true) return;
   for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
 }
 

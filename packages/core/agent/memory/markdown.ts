@@ -99,8 +99,12 @@ export function ensureFullHistoryPointer(content: string, sectionTitle: string, 
 
 export function removeBulletLine(content: string, bullet: string): { content: string; removed: boolean } {
   const target = bullet.replace(/[ \t]+$/, "");
+  return removeBulletLineWhere(content, (line) => line === target);
+}
+
+export function removeBulletLineWhere(content: string, matches: (normalizedLine: string) => boolean): { content: string; removed: boolean } {
   const lines = content.split("\n");
-  const idx = lines.findIndex((l) => l.replace(/[ \t]+$/, "") === target);
+  const idx = lines.findIndex((l) => matches(l.replace(/[ \t]+$/, "")));
   if (idx === -1) return { content, removed: false };
 
   const before = lines.slice(0, idx);

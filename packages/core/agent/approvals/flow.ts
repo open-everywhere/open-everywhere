@@ -44,6 +44,7 @@ export interface RequestApprovalInput {
   readonly requestedBy: string;
   readonly channelId: string;
   readonly threadTs?: string | null;
+  readonly summaryLines?: readonly string[];
 }
 
 export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]) => Promise<string | undefined>;
@@ -86,7 +87,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
 
   await store.addPendingAction(row);
 
-  const summaryLines = kindDef.summarize(input.args);
+  const summaryLines = input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args);
 
   let messageTs: string | undefined;
   if (deps.postCard) {

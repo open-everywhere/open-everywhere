@@ -429,5 +429,86 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.getDomainModel("acme", "eng")) === null, "pg: gone after clear");
 }
 
+{
+  const { runtimeRoleGrantsSql, verifyAppendOnlyAudit } = await import("../agent/operational/postgres.js");
+  const { initPostgresSchema } = await import("../agent/memory/postgres.js");
+  await initPostgresSchema(client);
+
+  async function denied(sql: string, needle: string, label: string): Promise<void> {
+    try {
+      await client.query(sql);
+      ok(false, `${label} (statement unexpectedly succeeded)`);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      ok(m.includes(needle), `${label} (error: "${m}")`);
+    }
+  }
+
+  await db.exec("CREATE ROLE oe_runtime NOSUPERUSER");
+  for (const stmt of runtimeRoleGrantsSql("oe_runtime")) await client.query(stmt);
+  await client.query("SELECT set_config('app.current_org', '', false)");
+
+  try {
+    await db.exec("SET ROLE oe_runtime");
+
+    await initOperationalSchema(client);
+    await initPostgresSchema(client);
+    ok(true, "two-role: initOperationalSchema + initPostgresSchema boot clean under the runtime role (verify-only, no DDL)");
+
+    await store.recordUsage("acme", "slack/T9/C9", "2026-07", { inputTokens: 1, outputTokens: 1 });
+    ok((await store.surfaceLedger("acme", "slack/T9/C9")).windows["2026-07"].calls === 1, "two-role: mutable DML works with the GUC unset ('' folds to unset — permissive arm)");
+    await setOrgContext(client, "acme");
+    const spendOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id));
+    ok(spendOrgs.size === 1 && spendOrgs.has("acme"), "two-role: with the GUC set, mutable-table RLS enforces for the runtime role");
+    await client.query("SELECT set_config('app.current_org', '', false)");
+
+    await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-07-11T10:00:00Z', 'acme', 'slack', 'T1', 'runtime.append')");
+    ok(((await client.query("SELECT count(*)::int AS n FROM audit_entry")).rows as { n: number }[])[0].n > 0, "two-role: the runtime role can append + read audit_entry");
+    await denied("UPDATE audit_entry SET action = 'tampered'", "permission denied", "two-role: UPDATE audit_entry is permission-DENIED for the runtime role");
+    await denied("DELETE FROM audit_entry", "permission denied", "two-role: DELETE audit_entry is permission-DENIED for the runtime role");
+
+    await denied("DROP POLICY audit_select ON audit_entry", "must be owner", "two-role: DROP POLICY is refused (not owner)");
+    await denied("ALTER TABLE audit_entry DISABLE ROW LEVEL SECURITY", "must be owner", "two-role: DISABLE ROW LEVEL SECURITY is refused (not owner)");
+    await denied("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY", "must be owner", "two-role: NO FORCE ROW LEVEL SECURITY is refused (not owner)");
+    await denied("CREATE POLICY sneaky_delete ON audit_entry FOR DELETE USING (true)", "must be owner", "two-role: smuggling in a DELETE policy is refused (not owner)");
+    await denied("ALTER TABLE usage_events DISABLE ROW LEVEL SECURITY", "must be owner", "two-role: usage_events DDL is refused too");
+
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "two-role: verifyAppendOnlyAudit reports a sound posture");
+  } finally {
+    await db.exec("RESET ROLE");
+  }
+
+  {
+    await db.exec("DROP POLICY audit_insert ON audit_entry");
+    const found = await verifyAppendOnlyAudit(client);
+    ok(found.some((v) => v.includes("no INSERT policy")), "tamper: verifyAppendOnlyAudit detects the dropped policy");
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "tamper: the owner-mode boot re-applies the append-only posture");
+    const integrity = await store.readAudit({ org: "default", action: "audit.integrity" });
+    ok(integrity.length === 1 && integrity[0].detail?.healed === true, "tamper: the repair is recorded as an audit.integrity row (healed:true)");
+    ok(JSON.stringify(integrity[0].detail?.violations ?? []).includes("no INSERT policy"), "tamper: the integrity row names what was broken");
+  }
+
+  {
+    await db.exec("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY");
+    await db.exec("SET ROLE oe_runtime");
+    let threw = "";
+    try {
+      await initOperationalSchema(client);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+    ok(threw.includes("FAILED verification") && threw.includes("FORCE"), "tamper: the runtime-role boot refuses to serve on a tampered posture (fail-closed)");
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "tamper: owner-mode boot repairs after the runtime refusal");
+    const integrity = await store.readAudit({ org: "default", action: "audit.integrity" });
+    ok(integrity.some((r) => r.detail?.healed === false) && integrity.filter((r) => r.detail?.healed === true).length === 2, "tamper: refusal (healed:false) and both repairs (healed:true) are all audit rows");
+  }
+}
+
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);

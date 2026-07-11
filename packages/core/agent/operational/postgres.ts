@@ -8,6 +8,10 @@ import type { ModelReasoning } from "../memory/domain.js";
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
 
+const ORG_GUC =
+  `(org_id = current_setting('app.current_org', true)
+     OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`;
+
 const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS spend_ledger (
      org_id        text   NOT NULL,
@@ -186,43 +190,152 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
   `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY routine_org_isolation ON routine
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY audit_select ON audit_entry FOR SELECT USING (true)`,
   `CREATE POLICY audit_insert ON audit_entry FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY spend_limit_org_isolation ON spend_limit
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY connector_override_org_isolation ON connector_override
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY thread_engagement_org_isolation ON thread_engagement
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY channel_session_org_isolation ON channel_session
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_model_org_isolation ON domain_model
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY usage_events_select ON usage_events FOR SELECT USING (true)`,
   `CREATE POLICY usage_events_insert ON usage_events FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY pending_actions_org_isolation ON pending_actions
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
 ];
 
+const APPEND_ONLY_TABLES = ["audit_entry", "usage_events"] as const;
+
+async function ownsAuditTable(client: PgClient): Promise<boolean | null> {
+  const { rows } = await client.query(
+    `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS is_owner
+     FROM pg_class c WHERE c.oid = to_regclass('audit_entry')`,
+  );
+  const r = rows[0] as { is_owner: boolean } | undefined;
+  return r ? r.is_owner === true : null;
+}
+
+export async function verifyAppendOnlyAudit(client: PgClient): Promise<string[]> {
+  const violations: string[] = [];
+  for (const table of APPEND_ONLY_TABLES) {
+    const { rows } = await client.query(
+      `SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS force
+       FROM pg_class c WHERE c.oid = to_regclass($1)`,
+      [table],
+    );
+    const t = rows[0] as { rls: boolean; force: boolean } | undefined;
+    if (!t) {
+      violations.push(`${table}: table missing`);
+      continue;
+    }
+    if (t.rls !== true) violations.push(`${table}: ROW LEVEL SECURITY is disabled`);
+    if (t.force !== true) violations.push(`${table}: FORCE ROW LEVEL SECURITY is off (owner would bypass policies)`);
+
+    const { rows: pols } = await client.query(
+      `SELECT p.polname AS name, p.polcmd AS cmd FROM pg_policy p WHERE p.polrelid = to_regclass($1)`,
+      [table],
+    );
+    const cmds = (pols as { name: string; cmd: string }[]);
+    for (const p of cmds) {
+      if (p.cmd === "w" || p.cmd === "d" || p.cmd === "*") {
+        violations.push(`${table}: policy "${p.name}" permits ${p.cmd === "w" ? "UPDATE" : p.cmd === "d" ? "DELETE" : "ALL"} — append-only defeated`);
+      }
+    }
+    if (!cmds.some((p) => p.cmd === "a")) violations.push(`${table}: no INSERT policy — appends would be denied under FORCE`);
+    if (!cmds.some((p) => p.cmd === "r")) violations.push(`${table}: no SELECT policy — reads would be denied under FORCE`);
+  }
+  return violations;
+}
+
+async function recordAuditIntegrity(client: PgClient, violations: readonly string[], healed: boolean): Promise<void> {
+  try {
+    await client.query(
+      `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail)
+       VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3)`,
+      [new Date().toISOString(), process.env.OE_ORG?.trim() || "default", JSON.stringify({ violations, healed })],
+    );
+  } catch (err) {
+    console.error(`[open-everywhere:operational] could not record audit.integrity row: ${String(err)}`);
+  }
+}
+
 export async function initOperationalSchema(client: PgClient): Promise<void> {
-  for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
+  const owner = await ownsAuditTable(client);
+
+  if (owner === false) {
+    const violations = await verifyAppendOnlyAudit(client);
+    if (violations.length > 0) {
+      await recordAuditIntegrity(client, violations, false);
+      throw new Error(
+        `operational schema: append-only audit posture FAILED verification under the non-owner runtime role — ${violations.join("; ")}. ` +
+          "Re-run the schema init as the owner/migration role to repair it, then reboot (docs/extending/database.md, two-role split).",
+      );
+    }
+    return;
+  }
+
+  const preViolations = owner === true ? await verifyAppendOnlyAudit(client) : [];
+
+  try {
+    for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
+  } catch (err) {
+    if (owner === null) {
+      throw new Error(
+        `operational schema: could not create the schema (fresh database, and this role may lack CREATE) — ${String(err)}. ` +
+          "Run the first boot / migration as the owner role, then point the app at the runtime role (docs/extending/database.md).",
+      );
+    }
+    throw err;
+  }
+
+  if (preViolations.length > 0) {
+    console.error(`[open-everywhere:operational] append-only audit posture was broken and has been re-applied: ${preViolations.join("; ")}`);
+    await recordAuditIntegrity(client, preViolations, true);
+  }
+
+  const post = await verifyAppendOnlyAudit(client);
+  if (post.length > 0) {
+    throw new Error(`operational schema: append-only audit posture STILL failing after apply — ${post.join("; ")}`);
+  }
+}
+
+export function runtimeRoleGrantsSql(role: string): string[] {
+  if (!/^[a-z_][a-z0-9_]*$/.test(role)) {
+    throw new Error(`runtimeRoleGrantsSql: "${role}" is not a plain lowercase identifier`);
+  }
+  const mutable =
+    "spend_ledger, routine, spend_limit, connector_override, thread_engagement, " +
+    "channel_session, event_dedupe, pending_actions, domain_skill, domain_model, instance_meta";
+  return [
+    `GRANT USAGE ON SCHEMA public TO ${role}`,
+    `REVOKE CREATE ON SCHEMA public FROM ${role}`,
+    `GRANT SELECT, INSERT ON audit_entry, usage_events TO ${role}`,
+    `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events FROM ${role}`,
+    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ${mutable} TO ${role}`,
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO ${role}`,
+  ];
 }
 
 const UPSERT_SPEND =
