@@ -8,6 +8,8 @@ import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
+import { unifiedSupervisorEnabled } from "../memory/domain.js";
+import { principalSurfaces } from "../identity/principals.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
 import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
@@ -511,6 +513,152 @@ export async function pendingActionsView(org: string, roles: readonly string[], 
     });
   }
   return { org, now: new Date(now).toISOString(), pending };
+}
+
+export interface UnifiedContainerRow {
+  readonly surfaceKey: string;
+  readonly platform: string;
+  readonly reachableHosts: readonly string[];
+  readonly connectors: readonly string[];
+  readonly repos: readonly string[];
+  readonly skills: readonly string[];
+  readonly subagents: readonly string[];
+  readonly widens: readonly string[];
+  readonly warnings: readonly string[];
+}
+export interface UnifiedHumanRow {
+  readonly name: string;
+  readonly handle?: string;
+  readonly surfacesInDomain: readonly string[];
+  readonly surfacesNotIn: readonly string[];
+}
+export interface UnifiedDomainAuditResult {
+  readonly org: string;
+  readonly domain: string;
+  readonly unified: boolean;
+  readonly platforms: readonly string[];
+  readonly containers: readonly UnifiedContainerRow[];
+  readonly agentReach: {
+    readonly reachableHosts: readonly string[];
+    readonly connectors: readonly string[];
+    readonly repos: readonly string[];
+    readonly skills: readonly string[];
+    readonly subagents: readonly string[];
+  };
+  readonly humans: readonly UnifiedHumanRow[];
+  readonly controllers: readonly string[];
+  readonly behaviour: AuditView;
+  readonly notes: readonly string[];
+}
+
+export interface UnifiedDomainAuditQuery {
+  readonly domain: string;
+  readonly org?: string;
+  readonly sinceDays?: number;
+}
+
+function surfaceKeyParts(surfaceKey: string): { platform: string; workspace: string; channel: string } {
+  const parts = surfaceKey.split("/");
+  return { platform: parts[0] ?? "", workspace: parts[1] ?? "", channel: parts.slice(2).join("/") };
+}
+
+export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<UnifiedDomainAuditResult> {
+  const org = q.org ?? deploymentOrg();
+  const cfg = getConfig();
+  const domains = cfg.loadDomains();
+  const domain = domains.find((d) => d.name === q.domain);
+  if (!domain) {
+    const have = domains.map((d) => d.name).join(", ") || "(none)";
+    throw new Error(`no domain named "${q.domain}" (configured domains: ${have}).`);
+  }
+  const channels = [...(domain.channels ?? [])];
+  const unified = channels.length > 0 && unifiedSupervisorEnabled(channels[0], domains);
+
+  const perContainer = await Promise.all(
+    channels.map(async (surfaceKey) => {
+      const { platform, workspace, channel } = surfaceKeyParts(surfaceKey);
+      const a = await accessView({ platform, workspace, channel, mode: "channel" });
+      return { surfaceKey, platform, access: a };
+    }),
+  );
+
+  const reachCount = new Map<string, number>();
+  const tag = (kind: string, v: string): string => `${kind}:${v}`;
+  const itemsOf = (a: Awaited<ReturnType<typeof accessView>>): string[] => [
+    ...a.reachableHosts.map((h) => tag("host", h.host)),
+    ...a.connectors.map((c) => tag("connector", c)),
+    ...a.repos.map((r) => tag("repo", r)),
+    ...a.skills.map((s) => tag("skill", s)),
+    ...a.subagents.map((s) => tag("subagent", s)),
+  ];
+  for (const c of perContainer) for (const it of new Set(itemsOf(c.access))) reachCount.set(it, (reachCount.get(it) ?? 0) + 1);
+
+  const containers: UnifiedContainerRow[] = perContainer.map((c) => {
+    const items = new Set(itemsOf(c.access));
+    const widens = [...items].filter((it) => reachCount.get(it) === 1).sort();
+    return {
+      surfaceKey: c.surfaceKey,
+      platform: c.platform,
+      reachableHosts: c.access.reachableHosts.map((h) => h.host),
+      connectors: c.access.connectors,
+      repos: c.access.repos,
+      skills: c.access.skills,
+      subagents: c.access.subagents,
+      widens,
+      warnings: c.access.warnings,
+    };
+  });
+
+  const union = (pick: (r: UnifiedContainerRow) => readonly string[]): string[] => [...new Set(containers.flatMap((r) => [...pick(r)]))].sort();
+  const platforms = [...new Set(channels.map((ch) => surfaceKeyParts(ch).platform))].sort();
+
+  const principals = cfg.loadPrincipals?.() ?? [];
+  const humans: UnifiedHumanRow[] = principals
+    .map((p) => {
+      const surfaces = principalSurfaces(p);
+      const inDomain = platforms.filter((pl) => surfaces.includes(pl));
+      const notIn = platforms.filter((pl) => !surfaces.includes(pl));
+      return { name: p.name, ...(p.handle ? { handle: p.handle } : {}), surfacesInDomain: inDomain, surfacesNotIn: notIn };
+    })
+    .filter((h) => h.surfacesInDomain.length > 0);
+
+  const since = new Date(Date.now() - (q.sinceDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
+  const surfaceSet = new Set(channels);
+  const behaviourAll = await auditView({ org, since, limit: 200 });
+  const behaviour: AuditView = {
+    ...behaviourAll,
+    entries: behaviourAll.entries.filter((e) => {
+      const key = `${e.platform}/${e.workspace}/${e.surface ?? ""}`.replace(/\/$/, "");
+      return [...surfaceSet].some((ch) => key === ch || ch.startsWith(`${e.platform}/${e.workspace}`));
+    }),
+  };
+
+  const notes = [
+    "Pure-read: this view restricts the agent by nothing — it is only answerable because the domain unifies the surfaces.",
+    "Per-container INTERNAL/EXTERNAL trust and per-account membership are confirmed FAIL-CLOSED at delivery time (each surface's confirmInternal); a container that fails is dropped and audited (*.trust_demotion). This read reflects config-declared membership, not a live trust probe.",
+    "Unmapped accounts (present in a surface but not in the principals map) stay DISTINCT per-surface identities — never merged on name similarity; enumerate them from the live surface, not here.",
+    "Surface-privacy ORDINAL (P5 enforced form) is not yet built — TODO(unified-audit-privacy-ordinal); quote-across-surfaces is advisory (the disclosure preamble) until it lands.",
+  ];
+  if (!unified) notes.unshift(`NOTE: domain "${q.domain}" is not currently unified (org gate and/or per-domain unifiedSupervisor flag off) — this shows what unification WOULD expose.`);
+
+  return {
+    org,
+    domain: q.domain,
+    unified,
+    platforms,
+    containers,
+    agentReach: {
+      reachableHosts: union((r) => r.reachableHosts),
+      connectors: union((r) => r.connectors),
+      repos: union((r) => r.repos),
+      skills: union((r) => r.skills),
+      subagents: union((r) => r.subagents),
+    },
+    humans,
+    controllers: [...(domain.admins ?? [])],
+    behaviour,
+    notes,
+  };
 }
 
 export interface AccessQuery {

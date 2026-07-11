@@ -1,11 +1,12 @@
 import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
-import { auditView, usageWindowView } from "./views.js";
+import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
 import type { AuditFilter } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 
 export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
+export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 
@@ -103,6 +104,41 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     const wanted = new Set(actions);
     const filtered = view.entries.filter((e) => wanted.has(e.action)).slice(0, limit);
     return json(200, { ...view, filter: { ...view.filter, limit }, entries: filtered, capped: filtered.length === limit });
+  } catch (err) {
+    return json(400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
+  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  if (entries.length === 0) return new Response("not found", { status: 404 });
+
+  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
+  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+
+  const url = new URL(req.url);
+  const domain = (url.searchParams.get("domain") ?? "").trim();
+  if (!domain) return json(400, { error: "expected query param: domain=<domain name>" });
+  const sinceDaysRaw = (url.searchParams.get("sinceDays") ?? "").trim();
+  let sinceDays: number | undefined;
+  if (sinceDaysRaw.length > 0) {
+    const n = Number.parseInt(sinceDaysRaw, 10);
+    if (!Number.isInteger(n) || n <= 0 || n > 365) return json(400, { error: `sinceDays "${sinceDaysRaw}" must be a positive integer ≤ 365` });
+    sinceDays = n;
+  }
+
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "control",
+    workspace: "control",
+    principalId: identity.subject,
+    action: "control.service_call",
+    detail: { service: identity.subject, view: "unified_domain_audit", domain, sinceDays: sinceDays ?? 30 },
+  });
+
+  try {
+    return json(200, await unifiedDomainAudit({ domain, org: deploymentOrg(), ...(sinceDays ? { sinceDays } : {}) }));
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView, pendingActionsView } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { scopeDenial, siloScopeDenial } from "./auth.js";
 import { getConfig } from "../access/config.js";
@@ -34,6 +34,7 @@ export const CONTROL_TOOL_NAMES = [
   "memory_list",
   "memory_read",
   "pending_actions_list",
+  "unified_domain_audit",
 ] as const;
 
 export interface ControlServerOptions {
@@ -100,6 +101,27 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
       },
     },
     (args) => jsonTool(() => accessView(args))(),
+  );
+
+  server.registerTool(
+    "unified_domain_audit",
+    {
+      title: "Unified cross-surface domain audit",
+      description:
+        "For a unified cross-surface supervisor domain (research preview): which surfaces are in this one mind, what the agent itself can reach ACROSS all of them (unioned, flagging any container that widens the set), which mapped humans can read across which surfaces (the read-across exposure map), the domain admins, and the audited reply/silence record. Pure-read (restricts nothing) — the domain-grain answer no per-container access_preview can give. Scope-gated to org or domain:<name> role. sinceDays defaults to 30.",
+      inputSchema: {
+        domain: z.string().min(1),
+        org: z.string().optional(),
+        sinceDays: z.number().int().positive().max(365).optional(),
+      },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const org = args.org ?? deploymentOrg();
+        const denial = scopeDenial(roles, { org, domain: args.domain });
+        if (denial) throw new Error(denial);
+        return unifiedDomainAudit({ domain: args.domain, org, ...(args.sinceDays ? { sinceDays: args.sinceDays } : {}) });
+      })(),
   );
 
   server.registerTool(
