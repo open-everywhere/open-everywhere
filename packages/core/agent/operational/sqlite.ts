@@ -805,7 +805,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
-    handle.prepare("DELETE FROM unified_wake_target WHERE created_at < ?").run(cutoff);
+    handle.prepare("DELETE FROM unified_wake_target WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     handle
       .prepare(
         `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES (?, ?, ?, ?)

@@ -311,6 +311,21 @@ export function isUnifiedWindowContext(ctx: BindableContext): boolean {
   return platformFromKind(ctx.channel?.kind) === "unified";
 }
 
+export function currentWakeId(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
+}
+
+export function assertTurnSurface(ctx: BindableContext, surface: string): void {
+  if (!isUnifiedWindowContext(ctx)) return;
+  const origin = channelPlatform(ctx);
+  if (origin !== surface) {
+    throw new Error(
+      `this tool reads ${surface}, but the message that woke this turn came from ${origin ?? "another surface"} — ` +
+        `on a cross-surface session a per-surface read tool only runs on a turn from its OWN surface (what you can recall across surfaces is the shared context, not another surface's live reads).`,
+    );
+  }
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
   let raw = (MAPPERS[platform] ?? bindLocal)(ctx);

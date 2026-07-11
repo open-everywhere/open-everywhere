@@ -48,7 +48,9 @@ import {
 import { withSingleWindowDiversion } from "../agent/channels/slack-front.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "../agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
-import { channelPlatform, isUnifiedWindowContext, bindFrom, type BindableContext } from "../agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, currentWakeId, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
+import replyTool from "../agent/tools/reply.js";
+import readSlackChannel from "../agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 let n = 0;
@@ -58,6 +60,10 @@ const ok = (cond: boolean, label: string) => {
 };
 const throws = (fn: () => unknown, label: string) => {
   assert.throws(fn, label);
+  n++;
+};
+const noThrow = (fn: () => unknown, label: string) => {
+  assert.doesNotThrow(fn, label);
   n++;
 };
 
@@ -391,6 +397,62 @@ const store = getOperationalStore();
   ok(b.platform === "slack" && b.workspace === "T_WIN" && b.surface === "C_WINA" && b.trust === "internal", "bindFrom on a stamped unified delivery resolves the REAL Slack partition (memory/spend/audit unchanged)");
   const stamped = stampUnifiedWindowAuth({ attributes: { team_id: "T1" } as Record<string, unknown> }, "slack", "w-1");
   ok(stamped.attributes?.team_id === "T1" && stamped.attributes?.[OE_PLATFORM_ATTR] === "slack" && stamped.attributes?.[OE_WAKE_ID_ATTR] === "w-1", "stampUnifiedWindowAuth adds the two stamps and preserves existing attributes");
+}
+
+{
+  type Handler = (event: unknown, ctx: unknown) => unknown;
+  interface Armed {
+    readonly execute: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown>;
+  }
+  const arm = (def: unknown, ctx: unknown): Armed | null => (def as { events: Record<string, Handler> }).events["session.started"]({}, ctx) as Armed | null;
+
+  const unifiedCtx = (platform: string, wakeId?: string): BindableContext => ({
+    channel: { kind: "channel:unified" },
+    session: {
+      auth: {
+        current: {
+          attributes: { oe_platform: platform, ...(wakeId ? { oe_wake_id: wakeId } : {}), channel_id: "C_WINA", team_id: "T_WIN" },
+          principalId: "U1",
+          principalType: "slack-user",
+        },
+      },
+    },
+  });
+
+  ok(currentWakeId(unifiedCtx("slack", "wake-abc")) === "wake-abc", "currentWakeId reads the current delivery's oe_wake_id stamp");
+  ok(currentWakeId(unifiedCtx("slack")) === undefined, "currentWakeId is undefined with no stamp (off the single-window path)");
+
+  const turnWake = mintWakeId();
+  const armedReply = arm(replyTool, unifiedCtx("github", turnWake));
+  ok(armedReply !== null, "reply arms its unified (map-addressed) variant on a unified session");
+  const strayWake = mintWakeId();
+  await store.putUnifiedWakeTarget("default", strayWake, JSON.stringify({ platform: "slack", channelId: "C_OTHER" }), new Date().toISOString(), WAKE_TARGET_TTL_MS);
+  await assert.rejects(
+    () => armedReply!.execute({ text: "exfil", wake: strayWake }, unifiedCtx("github", turnWake)),
+    /is not the wake you are answering this turn/,
+    "reply REFUSES a wakeId that isn't THIS turn's wake — even one live in the org-wide map (authority-bleed fence, finding 1a)",
+  );
+  n++;
+  await assert.rejects(
+    () => armedReply!.execute({ text: "answer", wake: turnWake }, unifiedCtx("github", turnWake)),
+    /no longer on record|expired/,
+    "reply lets THIS turn's own wakeId PAST the fence (then fails at resolve, unregistered) — the demo's own-wake reply path is intact",
+  );
+  n++;
+
+  noThrow(() => assertTurnSurface(unifiedCtx("slack"), "slack"), "assertTurnSurface: a slack-origin unified turn MAY read slack");
+  throws(() => assertTurnSurface(unifiedCtx("github"), "slack"), "assertTurnSurface: a GITHUB-origin unified turn may NOT read slack (finding 1b)");
+  noThrow(() => assertTurnSurface({ channel: { kind: "slack" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "slack-user" } } } }, "slack"), "assertTurnSurface: a NORMAL slack session is a no-op (session.started gate is authoritative)");
+
+  ok(arm(readSlackChannel, unifiedCtx("slack")) !== null, "read_slack_channel arms on a unified session (regardless of the current origin)");
+  ok(arm(readSlackChannel, { channel: { kind: "channel:github" }, session: { auth: { current: { attributes: {}, principalId: "U", principalType: "github-user" } } } }) === null, "read_slack_channel stays HIDDEN on a normal github session (byte-identical to today)");
+  const armedRead = arm(readSlackChannel, unifiedCtx("slack"));
+  await assert.rejects(
+    () => armedRead!.execute({ channel: "C_WINA" }, unifiedCtx("github")),
+    /reads slack, but the message that woke this turn came from github|per-surface read tool/,
+    "read_slack_channel EXECUTE refuses a GitHub-origin turn on a unified session (finding 1b — before any Slack API call)",
+  );
+  n++;
 }
 
 console.log(`unified-window: ${n} assertions passed`);

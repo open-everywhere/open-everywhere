@@ -218,8 +218,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY unified_wake_target_org_isolation ON unified_wake_target
-     USING (org_id = current_setting('app.current_org', true))
-     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+     USING (org_id = current_setting('app.current_org', true) OR NULLIF(current_setting('app.current_org', true), '') IS NULL)
+     WITH CHECK (org_id = current_setting('app.current_org', true) OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
@@ -835,7 +835,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
       const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
-      await client.query("DELETE FROM unified_wake_target WHERE created_at < $1", [cutoff]);
+      await client.query("DELETE FROM unified_wake_target WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
       await client.query(
         `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES ($1, $2, $3, $4)
          ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = EXCLUDED.target_json, created_at = EXCLUDED.created_at`,

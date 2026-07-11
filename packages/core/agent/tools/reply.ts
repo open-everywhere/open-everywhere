@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { deploymentOrg, isUnifiedWindowContext, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, isUnifiedWindowContext, currentWakeId, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply } from "../channels/reply-post.js";
 import { markRepliedThisTurn } from "../channels/reply-signal.js";
@@ -24,10 +24,16 @@ function unifiedReplyTool() {
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string() }),
     async execute(input, ctx) {
+      const turnWake = currentWakeId(ctx as BindableContext);
+      if (!turnWake || input.wake !== turnWake) {
+        throw new Error(
+          `reply: wake-id "${input.wake.slice(0, 64)}" is not the wake you are answering this turn — pass the wake-id from the envelope of the message that woke THIS turn (a wake-id from an earlier turn or another conversation is refused).`,
+        );
+      }
       const origin = await resolveUnifiedWakeTarget(getOperationalStore(), deploymentOrg(), input.wake);
       if (!origin) {
         throw new Error(
-          `reply couldn't resolve wake-id "${input.wake.slice(0, 64)}" — pass the exact wake-id from the envelope of the message you're answering (an unknown or expired id is never guessed).`,
+          `reply couldn't resolve wake-id "${input.wake.slice(0, 64)}" — the wake's reply target is no longer on record (expired). It can't be answered now.`,
         );
       }
       const id = await postUnifiedReply(origin, input.text);
