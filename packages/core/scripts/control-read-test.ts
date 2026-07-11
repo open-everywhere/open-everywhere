@@ -177,9 +177,10 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const channel = (await import("../agent/channels/control-read.js")).default as unknown as {
     routes: { method: string; path: string }[];
   };
-  ok(channel.routes.length === 2 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly two GET routes (usage + audit)");
+  ok(channel.routes.length === 3 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly three GET routes (usage + audit + unified-audit)");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
+  ok(channel.routes.some((r) => r.path === "/control/v1/unified-audit"), "…one at /control/v1/unified-audit");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {
