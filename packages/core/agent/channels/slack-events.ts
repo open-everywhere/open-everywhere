@@ -896,11 +896,12 @@ export async function routeSupervisorEvent(
   deps: SupervisorRouteDeps,
   opts?: { readonly directMention?: boolean },
 ): Promise<RouteOutcome> {
+  const directMention = opts?.directMention === true;
   const base = {
     authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
-    isAppMention: ev.isAppMention,
+    isAppMention: directMention ? false : ev.isAppMention,
     subtype: ev.subtype,
-    channelType: ev.channelType,
+    channelType: directMention && ev.channelType === undefined ? "channel" : ev.channelType,
   };
   const pre = shouldSupervisorWake({ ...base, channelConfirmedInternal: true });
   if (!pre.deliver) return { ...pre, woke: false };

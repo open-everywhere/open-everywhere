@@ -21,6 +21,7 @@ import {
   bindableForReaction,
   slackSingleWindowMentionPolicy,
   type SlackEventEnvelope,
+  type ParsedMessageEvent,
   type RouteOutcome,
 } from "./slack-events.js";
 import type { SingleWindowMentionPolicy } from "./unified-window.js";
@@ -325,6 +326,49 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
+    const send = args.send as unknown as Parameters<typeof liveDeps>[0];
+
+    const notYetSeen = async (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> => {
+      const key = wakeKey(env, ev.channelId, ev.ts);
+      if (dedupe.seen(key, now())) return false;
+      dedupe.mark(key, now());
+      try {
+        const org = resolvePartition(bindableFor(ev)).org;
+        if (!(await markEventSeen(org, key, new Date(now()).toISOString()))) return false;
+      } catch {
+      }
+      return true;
+    };
+
+    const scheduleUnownedWake = (ev: ParsedMessageEvent, label: string, directMention = false): void => {
+      let ambient = false;
+      let surfaceKey: string | undefined;
+      try {
+        surfaceKey = resolvePartition(bindableFor(ev)).surfaceKey;
+        ambient = ambientEnabledFor(surfaceKey);
+      } catch {
+        ambient = false;
+      }
+      if (directMention && !ambient) {
+        console.warn(`[open-everywhere:slack-front] ${label} ${ev.channelId}/${ev.ts}: ambient off after mention was kept — dropped (no road to the unified window)`);
+        return;
+      }
+      if (ambient) {
+        const supKey = supervisorFifoKey(ev.channelId);
+        args.waitUntil(
+          fifo.enqueue(supKey, () =>
+            routeSupervisorEvent(
+              ev,
+              withSingleWindowDiversion(liveSupervisorDeps(send), args.receive, surfaceKey!),
+              directMention ? { directMention: true } : undefined,
+            ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
+          ),
+        );
+        return;
+      }
+      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
+    };
+
     if (decision.kind === "forward") {
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);
@@ -332,19 +376,20 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (decision.kind === "mention") {
       const mev = parseMessageEvent(decision.env);
-      let suppress = false;
+      let owned = false;
       if (mev) {
         try {
-          suppress = await singleWindowOwnsMention(mev.channelId, resolvePartition(bindableFor(mev)).surfaceKey);
+          owned = await singleWindowOwnsMention(mev.channelId, resolvePartition(bindableFor(mev)).surfaceKey);
         } catch {
-          suppress = false;
+          owned = false;
         }
       }
-      if (suppress) {
+      if (owned && mev) {
+        if (!(await notYetSeen(decision.env, mev))) return OK();
         console.log(
-          `[open-everywhere:slack-front] app_mention ${mev!.channelId}/${mev!.ts}: native forward suppressed — ` +
-            `single-window sibling carries it to the unified supervisor`,
+          `[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: single-window — diverting to the unified supervisor (native forward suppressed)`,
         );
+        scheduleUnownedWake(mev, "single-window-mention", true);
         return OK();
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
@@ -407,70 +452,18 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (!ev) return OK();
 
     const { userId: botUserId } = await getBotIdentity();
-    const isMention = Boolean(botUserId && ev.text.includes(`<@${botUserId}>`));
-    if (isMention) {
-      let owned = false;
-      try {
-        owned = await singleWindowOwnsMention(ev.channelId, resolvePartition(bindableFor(ev)).surfaceKey);
-      } catch {
-        owned = false;
-      }
-      if (!owned) return OK();
-    }
+    if (botUserId && ev.text.includes(`<@${botUserId}>`)) return OK();
 
-    const key = wakeKey(decision.env, ev.channelId, ev.ts);
-    if (dedupe.seen(key, now())) return OK();
-    dedupe.mark(key, now());
-    try {
-      const org = resolvePartition(bindableFor(ev)).org;
-      if (!(await markEventSeen(org, key, new Date(now()).toISOString()))) return OK();
-    } catch {
-    }
-
-    const send = args.send as unknown as Parameters<typeof liveDeps>[0];
-
-    const scheduleUnownedWake = (label: string, directMention = false): void => {
-      let ambient = false;
-      let surfaceKey: string | undefined;
-      try {
-        surfaceKey = resolvePartition(bindableFor(ev)).surfaceKey;
-        ambient = ambientEnabledFor(surfaceKey);
-      } catch {
-        ambient = false;
-      }
-      if (directMention && !ambient) {
-        console.warn(`[open-everywhere:slack-front] ${label} ${ev.channelId}/${ev.ts}: ambient off after mention was kept — dropped (no road to the unified window)`);
-        return;
-      }
-      if (ambient) {
-        const supKey = supervisorFifoKey(ev.channelId);
-        args.waitUntil(
-          fifo.enqueue(supKey, () =>
-            routeSupervisorEvent(
-              ev,
-              withSingleWindowDiversion(liveSupervisorDeps(send), args.receive, surfaceKey!),
-              directMention ? { directMention: true } : undefined,
-            ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
-          ),
-        );
-        return;
-      }
-      args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
-    };
-
-    if (isMention) {
-      scheduleUnownedWake("single-window-mention", true);
-      return OK();
-    }
+    if (!(await notYetSeen(decision.env, ev))) return OK();
 
     if (!ev.threadTs) {
-      scheduleUnownedWake("name-drop");
+      scheduleUnownedWake(ev, "name-drop");
       return OK();
     }
 
     const engaged = await isThreadEngaged(resolvePartition(bindableFor(ev)), ev.threadTs);
     if (!engaged) {
-      scheduleUnownedWake("name-drop-thread");
+      scheduleUnownedWake(ev, "name-drop-thread");
       return OK();
     }
 

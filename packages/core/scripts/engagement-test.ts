@@ -1384,18 +1384,33 @@ registerConfig({
   };
 
   let r = await run(true, mentionEnv("EvSW1"));
-  ok(r.res.status === 200 && !r.innerCalled && r.fifo.keys.length === 0 && r.waits === 0, "single-window: app_mention native forward SUPPRESSED (no inner call, no separate wake)");
+  ok(
+    r.res.status === 200 && !r.innerCalled && r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"),
+    "single-window (single-leg): the app_mention EVENT is diverted to the unified supervisor on ONE webhook — native forward suppressed AND supervisor enqueued (mention HANDLED, never lost)",
+  );
   r = await run(true, siblingEnv("EvSW2"));
-  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "single-window: the mention's message.channels sibling is KEPT → supervisor branch (the unified road), not dropped");
+  ok(!r.innerCalled && r.fifo.keys.length === 0 && r.waits === 0, "single-window: the mention's message.channels sibling is ALWAYS DROPPED (the divert rides the app_mention event, not this sibling)");
+
+  r = await run(true, mentionEnv("EvSW3", { thread_ts: "94.0" }));
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "single-window: an in-thread app_mention routes to the supervisor, never the per-thread session");
 
   {
-    const store = getOperationalStore();
-    const thEv = parseMessageEvent(JSON.parse(siblingEnv("EvSW3", { thread_ts: "94.0" })))!;
-    const pth = resolvePartition(bindableFor(thEv));
-    await store.markEngaged(pth.org, pth.surfaceKey, "94.0", "2026-07-09T10:00:00Z");
-    r = await run(true, siblingEnv("EvSW3", { thread_ts: "94.0" }));
-    ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "single-window: an in-thread mention (even in an ENGAGED thread) routes to the supervisor, not the per-thread session");
-    await store.disengage(pth.org, pth.surfaceKey, "94.0");
+    const dedupe = new EventDedupe();
+    const runDedup = async (body: string) => {
+      const fifo = new SpyFifo();
+      const waits: Array<Promise<unknown>> = [];
+      const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+      const handler = buildFrontHandler(async () => new Response("inner"), {
+        signingSecret: secret, now: () => nowMs, markEventSeen: async () => true,
+        getBotIdentity: async () => ({ userId: "UBOT" }), ambientEnabledFor: () => true, mentionPolicyFor: policy(true), fifo, dedupe,
+      });
+      await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
+      await Promise.all(waits);
+      return fifo.keys.length;
+    };
+    const firstN = await runDedup(mentionEnv("EvSWDUP"));
+    const secondN = await runDedup(mentionEnv("EvSWDUP"));
+    ok(firstN === 1 && secondN === 0, "single-window: a retried app_mention (same event_id) does NOT double-divert (idempotent)");
   }
 
   r = await run(false, mentionEnv("EvSW4"));
@@ -1442,12 +1457,20 @@ registerConfig({
   }
 
   {
-    const supEv = (over: Record<string, unknown> = {}) =>
+    const mentionSupEv = (over: Record<string, unknown> = {}) =>
       parseMessageEvent({
         type: "event_callback",
         team_id: "T_ENG",
-        event: { type: "message", channel: "C_TXN", ts: "96.1", user: "U1", channel_type: "channel", text: "<@UBOT> what did we decide about tigers?", ...over },
+        event: { type: "app_mention", channel: "C_TXN", ts: "96.1", user: "U1", text: "<@UBOT> what did we decide about tigers?", ...over },
       })!;
+    const ambientSupEv = (over: Record<string, unknown> = {}) =>
+      parseMessageEvent({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event: { type: "message", channel: "C_TXN", ts: "96.2", user: "U1", channel_type: "channel", text: "deploy looks green", ...over },
+      })!;
+    ok(mentionSupEv().isAppMention === true && mentionSupEv().channelType === undefined, "an app_mention parses as isAppMention=true with NO channel_type (the single-leg divert must cope with both)");
+
     const wakes: Array<{ token: string; message: string; window?: { wakeId: string; addressing?: string } }> = [];
     const deps = (over: Partial<SupervisorRouteDeps> = {}): SupervisorRouteDeps => ({
       confirmInternalWithMeta: async () => ({ internal: true, memberCount: 5 }),
@@ -1460,22 +1483,26 @@ registerConfig({
       ...over,
     });
 
-    let out = await routeSupervisorEvent(supEv(), deps(), { directMention: true });
-    ok(out.woke && wakes.length === 1 && wakes[0].window?.addressing === "direct-mention", "directMention + singleWindow → window stamped addressing:direct-mention (the reply-bridge arm)");
+    let out = await routeSupervisorEvent(mentionSupEv(), deps(), { directMention: true });
+    ok(out.woke && wakes.length === 1 && wakes[0].window?.addressing === "direct-mention", "directMention + singleWindow on an app_mention → WAKES (disqualifiers lifted) + window stamped addressing:direct-mention (the reply-bridge arm)");
     ok(wakes[0].message.includes("[direct]") && !wakes[0].message.includes("[channel-watch]"), "directMention wake renders the ADDRESSED [direct] preamble, not the silence-biased watch framing");
     ok(wakes[0].message.includes(`wake-id="${wakes[0].window!.wakeId}"`), "the envelope's wake-id matches the minted window wakeId (the reply tool's routing key survives)");
     ok(wakes[0].message.includes('reason="mention"') && wakes[0].message.includes('mention="true"'), "directMention wake carries reason=mention + the trigger's mention=true response-obligation flag");
 
     wakes.length = 0;
-    out = await routeSupervisorEvent(supEv({ text: "no mention here" }), deps());
+    out = await routeSupervisorEvent(mentionSupEv(), deps());
+    ok(!out.woke && wakes.length === 0, "the SAME app_mention WITHOUT directMention → DROPPED by the isAppMention gate (bypass is gated on the flag, byte-identical ambient behaviour)");
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(ambientSupEv(), deps());
     ok(out.woke && wakes[0].window !== undefined && !("addressing" in wakes[0].window!), "ambient singleWindow wake's window carries NO addressing key (prose-drop guarantee intact)");
     ok(wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes("[direct]") && !wakes[0].message.includes('mention="true"'), "ambient singleWindow wake renders channel-watch, byte-identical");
 
     wakes.length = 0;
-    out = await routeSupervisorEvent(supEv(), deps({ unifiedMeta: () => ({ unified: true }) }), { directMention: true });
+    out = await routeSupervisorEvent(mentionSupEv(), deps({ unifiedMeta: () => ({ unified: true }) }), { directMention: true });
     ok(
       out.woke && wakes[0].window === undefined && wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes('mention="true"'),
-      "directMention without singleWindow → the seam gates it off (no window, plain channel-watch wake)",
+      "directMention without singleWindow → the seam gates the addressing off (no window, plain channel-watch wake)",
     );
   }
 
