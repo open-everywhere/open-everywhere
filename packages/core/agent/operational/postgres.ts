@@ -227,6 +227,89 @@ const SCHEMA_STATEMENTS: readonly string[] = [
 
 const APPEND_ONLY_TABLES = ["audit_entry", "usage_events"] as const;
 
+interface ExpectedPolicy {
+  readonly name: string;
+  readonly permissive: boolean;
+  readonly cmd: string;
+  readonly qual: string | null;
+  readonly withCheck: string | null;
+}
+const EXPECTED_POLICIES: Readonly<Record<string, readonly ExpectedPolicy[]>> = {
+  audit_entry: [
+    { name: "audit_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
+    { name: "audit_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
+  ],
+  usage_events: [
+    { name: "usage_events_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
+    { name: "usage_events_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
+  ],
+};
+
+interface FoundPolicy {
+  readonly name: string;
+  readonly permissive: boolean;
+  readonly cmd: string;
+  readonly qual: string | null;
+  readonly withcheck: string | null;
+}
+
+function policyMatchesExpected(p: FoundPolicy, e: ExpectedPolicy): boolean {
+  return p.name === e.name && p.permissive === e.permissive && p.cmd === e.cmd && p.qual === e.qual && p.withcheck === e.withCheck;
+}
+
+async function policiesOn(client: PgClient, table: string): Promise<FoundPolicy[]> {
+  const { rows } = await client.query(
+    `SELECT p.polname AS name, p.polpermissive AS permissive, p.polcmd AS cmd,
+            pg_get_expr(p.polqual, p.polrelid) AS qual,
+            pg_get_expr(p.polwithcheck, p.polrelid) AS withcheck
+     FROM pg_policy p WHERE p.polrelid = to_regclass($1)`,
+    [table],
+  );
+  return (rows as { name: string; permissive: boolean; cmd: string; qual: string | null; withcheck: string | null }[]).map((r) => ({
+    name: r.name,
+    permissive: r.permissive,
+    cmd: r.cmd,
+    qual: r.qual,
+    withcheck: r.withcheck,
+  }));
+}
+
+function triggerEvents(tgtype: number): string[] {
+  const ev: string[] = [];
+  if (tgtype & 4) ev.push("INSERT");
+  if (tgtype & 8) ev.push("DELETE");
+  if (tgtype & 16) ev.push("UPDATE");
+  if (tgtype & 32) ev.push("TRUNCATE");
+  return ev;
+}
+
+async function nonInternalTriggers(client: PgClient, table: string): Promise<{ name: string; tgtype: number }[]> {
+  const { rows } = await client.query(
+    `SELECT t.tgname AS name, t.tgtype AS tgtype
+     FROM pg_trigger t WHERE t.tgrelid = to_regclass($1) AND NOT t.tgisinternal`,
+    [table],
+  );
+  return (rows as { name: string; tgtype: number | string }[]).map((r) => ({ name: r.name, tgtype: Number(r.tgtype) }));
+}
+
+async function badMutationGrants(client: PgClient, table: string): Promise<{ token: string; label: string; privilege: string }[]> {
+  const { rows } = await client.query(
+    `SELECT DISTINCT
+        CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE quote_ident(r.rolname) END AS token,
+        CASE WHEN g.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END          AS label,
+        g.privilege_type AS privilege
+     FROM (
+       SELECT ae.grantee AS grantee, ae.privilege_type AS privilege_type, c.relowner AS relowner
+       FROM pg_class c CROSS JOIN LATERAL aclexplode(c.relacl) ae
+       WHERE c.oid = to_regclass($1)
+     ) g
+     LEFT JOIN pg_roles r ON r.oid = g.grantee
+     WHERE g.privilege_type IN ('UPDATE', 'DELETE', 'TRUNCATE') AND g.grantee <> g.relowner`,
+    [table],
+  );
+  return rows as { token: string; label: string; privilege: string }[];
+}
+
 async function ownsAuditTable(client: PgClient): Promise<boolean | null> {
   const { rows } = await client.query(
     `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS is_owner
@@ -252,28 +335,82 @@ export async function verifyAppendOnlyAudit(client: PgClient): Promise<string[]>
     if (t.rls !== true) violations.push(`${table}: ROW LEVEL SECURITY is disabled`);
     if (t.force !== true) violations.push(`${table}: FORCE ROW LEVEL SECURITY is off (owner would bypass policies)`);
 
-    const { rows: pols } = await client.query(
-      `SELECT p.polname AS name, p.polcmd AS cmd FROM pg_policy p WHERE p.polrelid = to_regclass($1)`,
-      [table],
-    );
-    const cmds = (pols as { name: string; cmd: string }[]);
-    for (const p of cmds) {
+    const pols = await policiesOn(client, table);
+    const expected = EXPECTED_POLICIES[table] ?? [];
+    for (const p of pols) {
       if (p.cmd === "w" || p.cmd === "d" || p.cmd === "*") {
         violations.push(`${table}: policy "${p.name}" permits ${p.cmd === "w" ? "UPDATE" : p.cmd === "d" ? "DELETE" : "ALL"} — append-only defeated`);
       }
+      if (!expected.some((e) => policyMatchesExpected(p, e))) {
+        violations.push(`${table}: unexpected ${p.permissive ? "permissive" : "RESTRICTIVE"} policy "${p.name}" (cmd ${p.cmd}) — not in the append-only allowlist`);
+      }
     }
-    if (!cmds.some((p) => p.cmd === "a")) violations.push(`${table}: no INSERT policy — appends would be denied under FORCE`);
-    if (!cmds.some((p) => p.cmd === "r")) violations.push(`${table}: no SELECT policy — reads would be denied under FORCE`);
+    if (!pols.some((p) => p.cmd === "a")) violations.push(`${table}: no INSERT policy — appends would be denied under FORCE`);
+    if (!pols.some((p) => p.cmd === "r")) violations.push(`${table}: no SELECT policy — reads would be denied under FORCE`);
+
+    for (const tr of await nonInternalTriggers(client, table)) {
+      const ev = triggerEvents(tr.tgtype);
+      if (ev.some((e) => e === "INSERT" || e === "UPDATE" || e === "DELETE")) {
+        violations.push(`${table}: hostile trigger "${tr.name}" (${ev.join("/")}) — could suppress or alter audit writes`);
+      }
+    }
+
+    for (const g of await badMutationGrants(client, table)) {
+      violations.push(`${table}: role "${g.label}" holds a ${g.privilege} grant — a non-owner could mutate the append-only log`);
+    }
   }
   return violations;
 }
 
-async function recordAuditIntegrity(client: PgClient, violations: readonly string[], healed: boolean): Promise<void> {
+interface HealActions {
+  readonly droppedPolicies: string[];
+  readonly droppedTriggers: string[];
+  readonly revokedGrants: string[];
+}
+
+async function healUnexpectedArtifacts(client: PgClient): Promise<HealActions> {
+  const droppedPolicies: string[] = [];
+  const droppedTriggers: string[] = [];
+  const revokedGrants: string[] = [];
+  for (const table of APPEND_ONLY_TABLES) {
+    const expected = EXPECTED_POLICIES[table] ?? [];
+    for (const p of await policiesOn(client, table)) {
+      if (!expected.some((e) => policyMatchesExpected(p, e))) {
+        await client.query(`DROP POLICY IF EXISTS ${quoteIdent(p.name)} ON ${table}`);
+        droppedPolicies.push(`${table}.${p.name}`);
+      }
+    }
+    for (const tr of await nonInternalTriggers(client, table)) {
+      await client.query(`DROP TRIGGER IF EXISTS ${quoteIdent(tr.name)} ON ${table}`);
+      droppedTriggers.push(`${table}.${tr.name}`);
+    }
+    for (const g of await badMutationGrants(client, table)) {
+      await client.query(`REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM ${g.token}`);
+      revokedGrants.push(`${table}:${g.label}:${g.privilege}`);
+    }
+  }
+  return { droppedPolicies, droppedTriggers, revokedGrants };
+}
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+async function recordAuditIntegrity(
+  client: PgClient,
+  violations: readonly string[],
+  healed: boolean,
+  heal?: HealActions,
+): Promise<void> {
+  const detail: Record<string, unknown> = { violations, healed };
+  if (heal && (heal.droppedPolicies.length || heal.droppedTriggers.length || heal.revokedGrants.length)) {
+    detail.healed_artifacts = heal;
+  }
   try {
     await client.query(
       `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail)
        VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3)`,
-      [new Date().toISOString(), process.env.OE_ORG?.trim() || "default", JSON.stringify({ violations, healed })],
+      [new Date().toISOString(), process.env.OE_ORG?.trim() || "default", JSON.stringify(detail)],
     );
   } catch (err) {
     console.error(`[open-everywhere:operational] could not record audit.integrity row: ${String(err)}`);
@@ -297,6 +434,8 @@ export async function initOperationalSchema(client: PgClient): Promise<void> {
 
   const preViolations = owner === true ? await verifyAppendOnlyAudit(client) : [];
 
+  const heal = owner === true ? await healUnexpectedArtifacts(client) : { droppedPolicies: [], droppedTriggers: [], revokedGrants: [] };
+
   try {
     for (const stmt of SCHEMA_STATEMENTS) await client.query(stmt);
   } catch (err) {
@@ -311,7 +450,7 @@ export async function initOperationalSchema(client: PgClient): Promise<void> {
 
   if (preViolations.length > 0) {
     console.error(`[open-everywhere:operational] append-only audit posture was broken and has been re-applied: ${preViolations.join("; ")}`);
-    await recordAuditIntegrity(client, preViolations, true);
+    await recordAuditIntegrity(client, preViolations, true, heal);
   }
 
   const post = await verifyAppendOnlyAudit(client);

@@ -202,6 +202,7 @@ const store = makeOperationalPostgresStore(client);
   } finally {
     await db.exec("RESET ROLE");
   }
+  await db.exec("REVOKE UPDATE, DELETE ON audit_entry, usage_events FROM open_everywhere_app");
 }
 
 {
@@ -508,7 +509,64 @@ const store = makeOperationalPostgresStore(client);
     const integrity = await store.readAudit({ org: "default", action: "audit.integrity" });
     ok(integrity.some((r) => r.detail?.healed === false) && integrity.filter((r) => r.detail?.healed === true).length === 2, "tamper: refusal (healed:false) and both repairs (healed:true) are all audit rows");
   }
+
+  async function integrityHealMentions(fragment: string): Promise<boolean> {
+    const rows = await store.readAudit({ org: "default", action: "audit.integrity" });
+    return rows.some((r) => r.detail?.healed === true && JSON.stringify(r.detail?.healed_artifacts ?? {}).includes(fragment));
+  }
+
+  {
+    await db.exec("CREATE FUNCTION oe_swallow_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END; $$");
+    await db.exec("CREATE TRIGGER oe_swallow BEFORE INSERT ON audit_entry FOR EACH ROW EXECUTE FUNCTION oe_swallow_audit()");
+    ok((await verifyAppendOnlyAudit(client)).some((v) => v.includes("hostile trigger") && v.includes("oe_swallow")), "probe(a): verify detects the insert-swallowing trigger");
+
+    await db.exec("SET ROLE oe_runtime");
+    let threw = "";
+    try {
+      await initOperationalSchema(client);
+    } catch (e) {
+      threw = e instanceof Error ? e.message : String(e);
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+    ok(threw.includes("FAILED verification") && threw.includes("hostile trigger"), "probe(a): runtime-role boot fails closed on the hostile trigger");
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "probe(a): owner boot heals the trigger — posture sound");
+    ok(await integrityHealMentions("oe_swallow"), "probe(a): the dropped trigger is recorded in healed_artifacts");
+    await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-07-11T11:00:00Z','acme','slack','T1','post.heal.a')");
+    ok((await store.readAudit({ org: "acme", action: "post.heal.a" })).length === 1, "probe(a): appends land again once the trigger is healed");
+  }
+
+  {
+    await db.exec("CREATE POLICY oe_block_insert ON audit_entry AS RESTRICTIVE FOR INSERT WITH CHECK (false)");
+    ok((await verifyAppendOnlyAudit(client)).some((v) => v.includes("unexpected RESTRICTIVE policy") && v.includes("oe_block_insert")), "probe(b): verify detects the restrictive insert-blocking policy");
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "probe(b): owner boot drops the restrictive policy — survives-reboot regression closed");
+    ok(await integrityHealMentions("oe_block_insert"), "probe(b): the dropped restrictive policy is recorded in healed_artifacts");
+    await client.query("INSERT INTO audit_entry (ts, org_id, platform, workspace, action) VALUES ('2026-07-11T11:05:00Z','acme','slack','T1','post.heal.b')");
+    ok((await store.readAudit({ org: "acme", action: "post.heal.b" })).length === 1, "probe(b): appends land again once the restrictive policy is dropped");
+  }
+
+  {
+    await client.query("GRANT TRUNCATE ON audit_entry TO oe_runtime");
+    ok((await verifyAppendOnlyAudit(client)).some((v) => v.includes("oe_runtime") && v.includes("TRUNCATE")), "probe(c): verify detects a stray TRUNCATE grant to the runtime role");
+
+    await initOperationalSchema(client);
+    ok((await verifyAppendOnlyAudit(client)).length === 0, "probe(c): owner boot revokes the stray grant — posture sound");
+    ok(await integrityHealMentions("oe_runtime"), "probe(c): the revoked grant is recorded in healed_artifacts");
+    await db.exec("SET ROLE oe_runtime");
+    try {
+      await client.query("TRUNCATE audit_entry");
+      ok(false, "probe(c): TRUNCATE unexpectedly succeeded for the runtime role");
+    } catch (e) {
+      ok((e instanceof Error ? e.message : String(e)).includes("permission denied"), "probe(c): TRUNCATE is permission-denied for the runtime role after the revoke");
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+  }
 }
 
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);
