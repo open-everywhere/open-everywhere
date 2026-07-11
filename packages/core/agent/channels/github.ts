@@ -11,7 +11,9 @@ import {
   type GitHubAmbientEvent,
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
+import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -72,15 +74,17 @@ async function fanOutDelivery(body: string, eventType: string, receive: RouteHan
 
 type GitHubSupervisorSessionState = GitHubChannelState & {
   oeSupervisor?: boolean;
-  oeReplyTarget?: { issueNumber: number };
+  oeUnified?: boolean;
+  oeReplyTarget?: { issueNumber: number; owner?: string; repo?: string };
 };
 
 function isSupervisorGitHubState(state: unknown): state is GitHubSupervisorSessionState {
   return (state as Record<string, unknown> | undefined)?.["oeSupervisor"] === true;
 }
 
-function supervisorSeedState(ev: GitHubAmbientEvent): GitHubSupervisorSessionState {
+function supervisorSeedState(ev: GitHubAmbientEvent, unified: boolean): GitHubSupervisorSessionState {
   return {
+    ...(unified ? { oeUnified: true } : {}),
     baseRef: null,
     baseSha: null,
     checkoutPath: null,
@@ -118,35 +122,48 @@ function githubEngagementTier(surfaceKey: string): EngagementTier | undefined {
   }
 }
 
+function githubGrainFor(surfaceKey: string): SupervisorGrain {
+  try {
+    return supervisorGrainFor(surfaceKey, getConfig().loadDomains());
+  } catch {
+    return { unified: false, registryKey: surfaceKey };
+  }
+}
+
 function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent): GitHubSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
     async getOrCreateSession(surfaceKey, owner, repo, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
+      const grain = githubGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const row = await store.rotateChannelSession(org, surfaceKey, githubSupervisorToken(owner, repo, 1), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, 1, () => githubSupervisorToken(owner, repo, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
-        const row = await store.rotateChannelSession(org, surfaceKey, githubSupervisorToken(owner, repo, existing.generation + 1), atIso);
+        const gen = existing.generation + 1;
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
-    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, surfaceKey, atIso),
+    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
     async forceRotate(surfaceKey, owner, repo, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
-      const row = await store.rotateChannelSession(org, surfaceKey, githubSupervisorToken(owner, repo, (existing?.generation ?? 0) + 1), atIso);
+      const grain = githubGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
+      const gen = (existing?.generation ?? 0) + 1;
+      const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) =>
       appendAudit({ org, platform: "github", workspace: ev.owner, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context }) {
+      const unified = githubGrainFor(`github/${ev.owner}/${ev.repo}`).unified;
       await send(
         { message, context: [...context] },
-        { auth: auth as unknown as Parameters<SendFn<GitHubChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(ev) },
+        { auth: auth as unknown as Parameters<SendFn<GitHubChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(ev, unified) },
       );
     },
   };
@@ -198,6 +215,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
         text: ev.comment.body ?? "(the comment had no text)",
       },
       engagementTier: githubEngagementTier(surfaceKey),
+      unified: githubGrainFor(surfaceKey).unified,
     },
     liveGitHubSupervisorDeps(send, ev),
   );
@@ -249,7 +267,17 @@ const native: GitHubChannel = githubChannel({
       const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
       const anchor = str(attrs?.issue_number) ?? str(attrs?.pull_request_number);
       const n = anchor !== undefined ? Number(anchor) : NaN;
-      st.oeReplyTarget = Number.isFinite(n) && n > 0 ? { issueNumber: n } : undefined;
+      if (!Number.isFinite(n) || n <= 0) {
+        st.oeReplyTarget = undefined;
+        return;
+      }
+      if (st.oeUnified === true) {
+        const owner = str(attrs?.owner);
+        const repo = str(attrs?.repo);
+        st.oeReplyTarget = owner && repo ? { issueNumber: n, owner, repo } : undefined;
+        return;
+      }
+      st.oeReplyTarget = { issueNumber: n };
     },
     async "message.completed"(data, channel) {
       if (!isSupervisorGitHubState(channel.state)) {
@@ -261,19 +289,36 @@ const native: GitHubChannel = githubChannel({
       if (action.kind === "buffer-tool-status") return;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
+      const postOwner = st.oeUnified === true ? target?.owner : st.owner;
+      const postRepo = st.oeUnified === true ? target?.repo : st.repo;
+      const auditOwner = (st.oeUnified === true ? target?.owner : undefined) ?? st.owner;
+      const auditRepo = (st.oeUnified === true ? target?.repo : undefined) ?? st.repo;
       if (action.kind === "silent") {
         await appendAudit({
           org,
           platform: "github",
-          workspace: st.owner,
-          surface: `github/${st.owner}/${st.repo}`,
+          workspace: auditOwner,
+          surface: `github/${auditOwner}/${auditRepo}`,
           action: "github.no_reply",
           detail: { issueNumber: target?.issueNumber ?? null, reason: action.reason },
         });
         return;
       }
-      if (!target) {
-        slog(`reply not posted — no per-turn issue target (turn.started snapshot empty); FAIL SAFE`);
+      if (!target || !postOwner || !postRepo) {
+        slog(`reply not posted — no per-turn ${!target ? "issue" : "repo"} target (turn.started snapshot empty); FAIL SAFE`);
+        return;
+      }
+      const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("github").midTurnPost);
+      if (!delivery.postText) {
+        slog(`supervisor message-tool-only: DROPPED terminal prose (reply must come from the reply tool) — nothing posted (${postOwner}/${postRepo}#${target.issueNumber})`);
+        await appendAudit({
+          org,
+          platform: "github",
+          workspace: auditOwner,
+          surface: `github/${auditOwner}/${auditRepo}`,
+          action: "turn.supervisor_prose_dropped",
+          detail: { issueNumber: target.issueNumber, chars: action.text.length },
+        }).catch(() => undefined);
         return;
       }
       try {
@@ -281,7 +326,7 @@ const native: GitHubChannel = githubChannel({
           org,
           key: outboundKey({
             surface: "github",
-            channel: `${st.owner}/${st.repo}`,
+            channel: `${postOwner}/${postRepo}`,
             threadTs: `#${target.issueNumber}`,
             action: "github.supervisor-reply",
             payload: action.text,
@@ -289,15 +334,15 @@ const native: GitHubChannel = githubChannel({
           run: () =>
             channel.github.request({
               method: "POST",
-              path: `/repos/${st.owner}/${st.repo}/issues/${target.issueNumber}/comments`,
+              path: `/repos/${postOwner}/${postRepo}/issues/${target.issueNumber}/comments`,
               body: { body: action.text },
             }),
         });
         await appendAudit({
           org,
           platform: "github",
-          workspace: st.owner,
-          surface: `github/${st.owner}/${st.repo}`,
+          workspace: postOwner,
+          surface: `github/${postOwner}/${postRepo}`,
           action: "github.replied",
           detail: { issueNumber: target.issueNumber, chars: action.text.length },
         });

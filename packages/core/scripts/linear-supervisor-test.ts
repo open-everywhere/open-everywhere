@@ -73,6 +73,15 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(!message.includes("Calibration for this"), "no tier -> neutral -> no calibration sentence (Linear's platform default)");
   ok(message.includes(`<thread ts="${ISSUE}">`), "no identifier -> the issue id labels the thread");
 }
+{
+  const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger }), NOW);
+  const unified = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: true }), NOW);
+  ok(unified.message.includes(`<channel platform="linear" id="${TEAM}">`), "unified wake stamps the <channel platform=\"linear\"> surface address");
+  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-team wake carries NO platform attr / disclosure");
+  const explicitOff = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, trigger, unified: false }), NOW);
+  ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-team wake (flag-off invariant)");
+}
 
 const AUTH: OpenEverywhereLinearAuth = { authenticator: "linear", principalId: "human-1", principalType: "linear-user", attributes: { team_id: TEAM, issue_id: ISSUE, comment_id: "c-trig" } };
 const SURFACE = `linear/org-1/${TEAM}`;
@@ -216,6 +225,23 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
         await completed("this must not post", { state });
       });
       ok(gql.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING (fail safe)");
+    }
+
+    {
+      const state = { ...supervisorState(), oeUnified: true as const, oeReplyTarget: undefined as { issueId: string; parentId?: string; teamId?: string; organizationId?: string } | undefined };
+      gql = [];
+      await inSession(async () => {
+        await turnStarted({ state });
+        await completed("answering the other team's issue", { state });
+      }, { issue_id: "issue-uuid-OTHER", comment_id: "c-x", team_id: "team-uuid-2", organization_id: "org-1" });
+      ok(state.oeReplyTarget?.teamId === "team-uuid-2" && state.oeReplyTarget?.organizationId === "org-1", "unified turn.started snapshots THIS wake's team/org off the delivery auth");
+      ok(gql.length === 1 && gql[0]!.variables?.input?.issueId === "issue-uuid-OTHER", "the unified reply posts into the issue that woke it (fail-open message-tool-only: terminal prose is Linear's only reply route)");
+      const { readAudit } = await import("../agent/audit/audit.js");
+      const replied = await readAudit({ action: "linear.replied" });
+      ok(replied.some((r) => r.surface === "linear/org-1/team-uuid-2"), "the linear.replied audit row names the WAKING container (snapshot team), not the seed team");
+      const perTeam = supervisorState();
+      await inSession(() => turnStarted({ state: perTeam }), { issue_id: ISSUE, comment_id: "c-top", team_id: "team-uuid-2", organization_id: "org-1" });
+      ok(perTeam.oeReplyTarget !== undefined && !("teamId" in (perTeam.oeReplyTarget as Record<string, unknown>)), "non-unified snapshot stays {issueId, parentId} only (byte-identical off)");
     }
 
     {

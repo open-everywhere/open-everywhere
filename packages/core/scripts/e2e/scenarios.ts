@@ -1439,7 +1439,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J-UNI-X",
     title:
-      "Unified cross-surface MONEY-SHOT (plan-only, pending TODO(unified-dispatch)): a Slack decision quoted on a GitHub issue in the same domain, zero context re-entry",
+      "Unified cross-surface MONEY-SHOT (runnable pending a live cross-surface fixture): a Slack decision recalled on a GitHub issue in the same domain, zero context re-entry",
     requires: ["slack", "slackUnified", "github"],
     surface: "cross",
     suite: "extended",
@@ -1447,18 +1447,71 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 900_000,
     judged: true,
     run: async (ctx) => {
-      ctx.skip(
-        "pending TODO(unified-dispatch): only the Slack path is wired to the unified (org,domain) grain — " +
-          "github/linear/notion unified dispatch is stubbed with TODO(unified-dispatch) in {github,linear,notion}-supervisor.ts, " +
-          "and the non-Slack unified reply leg is TODO(unified-reply) (channels/slack.ts + unified-supervisor.ts). " +
-          "PLANNED LEGS once those land (the fixture = J-UNIFIED's Slack pair + J-GH's scratch repo, all in ONE unified domain): " +
-          "[1] post a decision carrying a run-unique factToken in the domain's Slack channel, NO mention (the agent is just in the room; silence gated); " +
-          "[2] @mention on an issue in the domain's GitHub repo asking whether a described change matches what was agreed — " +
-          "hard gate: the <slug>[bot] issue reply quotes the Slack token (one mind across SURFACES, zero context re-entry); " +
-          "[3] reply-targeting: the answer lands on the ISSUE and no bot post appears in the Slack channel (per-wake delivery auth across platforms); " +
-          "[4] audited rows (slack.no_reply for the un-mentioned decision, github.replied for the answer) via auditRead; " +
-          "[5] the unified-audit route's containers list spans both platforms for the domain",
+      const a = ctx.slackUnifiedA!;
+      const gh = ctx.github!;
+      const domainName = ctx.unifiedDomain!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const unifiedAuditCall =
+        ctx.unifiedAuditCall ??
+        ctx.skip(
+          "live-fixture-pending: set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so the run can verify the unified domain " +
+            "actually spans the Slack pair AND the GitHub fixture repo (GET /control/v1/unified-audit) before firing the cross-surface legs",
+        );
+      const probe = await unifiedAuditCall(buildUnifiedAuditQuery({ domain: domainName }));
+      if (probe.status !== 200) {
+        ctx.skip(`live-fixture-pending: unified-audit for domain "${domainName}" returned ${probe.status} — provision the domain (see J-UNIFIED's fixture doc) before the cross-surface run`);
+      }
+      const wire = probe.body as UnifiedAuditWire;
+      if (wire.unified !== true) {
+        ctx.skip(
+          `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (org gate and/or unifiedSupervisor flag off) — ` +
+            "arm OE_UNIFIED_SUPERVISOR=1 (or the org-domain unifiedSupervisorGate) + the domain's unifiedSupervisor flag",
+        );
+      }
+      const ghKey = `github/${gh.repo}`;
+      const keys = wire.containers.map((c) => c.surfaceKey);
+      if (!keys.includes(ghKey) || !wire.platforms.includes("github")) {
+        ctx.skip(
+          `live-fixture-pending: domain "${domainName}" does not span the GitHub fixture repo (${ghKey} not in its containers) — ` +
+            "add the repo to the domain's channels (ambientSupervisor+unifiedSupervisor on, App installed, repo PRIVATE) to arm the cross-surface money-shot",
+        );
+      }
+      ctx.gate(wire.platforms.includes("slack") && wire.platforms.includes("github"), "unified-audit: the domain's containers span BOTH platforms (the 'one mind' membership answer)");
+
+      const marker = factToken("unix");
+      const { ts: decideTs } = await a.post(
+        `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
+      const ack = await a.awaitChannelMessage(decideTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(ack.text.trim().length > 0, "slack: the unified supervisor acknowledged the decision in-channel");
+
+      const askId = await gh.comment(
+        gh.fixtureIssue,
+        `Before I write this up — what was the deploy window token the team decided on earlier today? It was agreed in the team's Slack channel; asking here so it's on the record.`,
+      );
+      const reply = await gh.awaitBotReply(gh.fixtureIssue, askId, { timeoutMs: REPLY_WAIT });
+      ctx.gate(
+        reply.body.includes(marker),
+        `MONEY SHOT: the <slug>[bot] issue reply quotes the token "${marker}" stated ONLY in Slack (one mind across SURFACES, zero context re-entry — hard gate)`,
+      );
+      await ctx.judgePass(
+        factuality(marker, `Does the reply give the deploy window token ${marker} (recalled from the team's Slack conversation)?`, { mustMatch: [marker] }),
+        reply.body,
+        "money-shot: cross-surface recall quality",
+      );
+
+      const strayInSlack = (await a.history(ack.ts)).filter((m) => a.isBotReply(m) && m.ts !== ack.ts);
+      ctx.gate(strayInSlack.length === 0, "reply-targeting: the GitHub answer did NOT leak into the Slack container (per-wake delivery auth across platforms — hard gate)");
+
+      if (ctx.auditRead) {
+        try {
+          const replied = await ctx.auditRead({ sinceIso: runStart, platform: "github", actions: ["github.replied"] });
+          ctx.log(`audited cross-surface reply: ${replied.length} github.replied row(s) in the run window`);
+        } catch (err) {
+          ctx.log(`audit read unavailable (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
+        }
+      }
     },
   },
 ];

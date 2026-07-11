@@ -54,6 +54,7 @@ export interface GitHubSupervisorWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
+  readonly unified?: boolean;
 }
 
 export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): NormalizedWake {
@@ -69,7 +70,11 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     addressing: "channel-watch",
     containerNoun: "repo",
     engagementTier: input.engagementTier,
-    locus: { channel: { id: `${input.owner}/${input.repo}` }, thread: { ts: `#${input.issueNumber}` } },
+    unifiedDisclosure: input.unified === true ? true : undefined,
+    locus: {
+      channel: { id: `${input.owner}/${input.repo}`, ...(input.unified ? { platform: "github" } : {}) },
+      thread: { ts: `#${input.issueNumber}` },
+    },
     contextLines,
     contextSource: contextLines ? "the issue/PR this comment is on" : undefined,
     handoff,
@@ -179,6 +184,7 @@ export interface GitHubSupervisorDispatch {
   readonly auth: OpenEverywhereGitHubAuth;
   readonly trigger: GitHubSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
+  readonly unified?: boolean;
 }
 
 export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch, deps: GitHubSupervisorDeps): Promise<void> {
@@ -193,6 +199,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       issueTitle: d.issueTitle,
       trigger: d.trigger,
       engagementTier: d.engagementTier,
+      unified: d.unified,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

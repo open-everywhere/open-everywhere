@@ -74,6 +74,18 @@ const siblings: NotionWakeMessage[] = [
   ok(message === "@OE summarise this page", "direct wake is the body VERBATIM (no preamble, no envelope, backscroll ignored)");
 }
 
+{
+  const mk = (unified?: boolean) => renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, unified }), NOW);
+  const plain = mk();
+  const unified = mk(true);
+  ok(unified.message.includes(`<channel platform="notion" id="${PAGE}">`), "unified wake stamps the <channel platform=\"notion\"> surface address");
+  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
+  ok(!plain.message.includes("platform=") && !plain.message.includes("Cross-surface disclosure"), "per-doc wake carries NO platform attr / disclosure");
+  ok(mk(false).message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-doc wake (flag-off invariant)");
+  const direct = renderWake(buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE summarise this page" }, threadComments: siblings, unified: true }), NOW);
+  ok(direct.message === "@OE summarise this page", "a unified DIRECT wake is still the body verbatim (stamp is judged-path-only by construction)");
+}
+
 const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: AUTHOR, principalType: "notion-user", attributes: { page_id: PAGE, discussion_id: DISCUSSION } };
 const SURFACE = `notion/ws-1/${PAGE}`;
 
@@ -105,6 +117,10 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(wakes[0].state.discussionId === DISCUSSION && wakes[0].state.pageId === PAGE && wakes[0].state.workspaceId === "ws-1", "session state carries discussion+page+workspace for the reply");
   ok(wakes[0].message.includes("you are this doc's standing session"), "the delivered message is the doc-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
+  ok(!("oeUnified" in (wakes[0].state as Record<string, unknown>)), "a per-doc dispatch seeds NO oeUnified marker (byte-identical off)");
+  await handleNotionSupervisorDispatch(dispatch({ unified: true }), deps);
+  ok(wakes[1].message.includes(`<channel platform="notion" id="${PAGE}">`), "a unified dispatch stamps the surface address on the delivered wake");
+  ok((wakes[1].state as Record<string, unknown>).oeUnified === true, "a unified dispatch seeds state.oeUnified = true (the silence gate's key)");
 }
 
 {

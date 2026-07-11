@@ -186,7 +186,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the plan-only cross-surface money-shot pending TODO(unified-dispatch))`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified"]);
   for (const s of SCENARIOS) {
@@ -201,7 +201,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
     optional.join(",") === "S8,S9,S10,S24,J-UNI-X",
-    "the plan's stretch scenarios PLUS the gated Notion leg PLUS the plan-only unified money-shot are optional (S11–S23 are core coverage)",
+    "the plan's stretch scenarios PLUS the gated Notion leg PLUS the cross-surface unified money-shot are optional (S11–S23 are core coverage)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -337,15 +337,16 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     const capMiss = skipReason(jx, baseOnly, missing, true);
     ok(capMiss?.includes("slackUnified") === true && capMiss.includes(ENV.slackUnifiedChannelA), "J-UNI-X capability skip names the unified fixture vars (checked before the optional gate)");
     ok(skipReason(jx, all, noneMissing, false)?.includes("E2E_INCLUDE_OPTIONAL") === true, "J-UNI-X stays skipped without E2E_INCLUDE_OPTIONAL=1 even with full tokens");
-    ok(skipReason(jx, all, noneMissing, true) === undefined, "J-UNI-X is SELECTED with full tokens + optional — the plan entry stays visible in the roster");
+    ok(skipReason(jx, all, noneMissing, true) === undefined, "J-UNI-X is SELECTED with full tokens + optional — the roster entry is live");
     let selfSkip = "";
     try {
       await jx.run({ skip: (why: string) => { throw new ScenarioSkip(why); } } as never);
     } catch (err) {
       if (err instanceof ScenarioSkip) selfSkip = err.message;
     }
-    ok(selfSkip.includes("TODO(unified-dispatch)"), "…but J-UNI-X's run body ALWAYS self-skips naming TODO(unified-dispatch) (plan-only until cross-surface dispatch lands)");
-    ok(selfSkip.includes("TODO(unified-reply)"), "…and names the TODO(unified-reply) non-Slack reply gap too (the second stubbed half)");
+    ok(selfSkip.includes("live-fixture-pending"), "…without the unified-audit caller the body self-skips as live-fixture-pending (fixture detection, not a stub)");
+    ok(selfSkip.includes("E2E_TARGET_URL") && selfSkip.includes("E2E_CONTROL_READ_TOKEN"), "…and the self-skip names the env pair that arms fixture detection");
+    ok(!selfSkip.includes("TODO(unified-dispatch)") && !selfSkip.includes("TODO(unified-reply)"), "…and no longer names the retired TODO(unified-dispatch)/TODO(unified-reply) stubs (they are wired)");
   }
   for (const id of ["J1", "S23"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, slackOnly, missing, false) === undefined, `${id} runs with slack alone (no add-on fixture needed)`);

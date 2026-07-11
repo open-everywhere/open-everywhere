@@ -47,3 +47,7 @@ export function supervisorGrainFor(surfaceKey: string, domains: readonly Domain[
   if (!domain) return { unified: false, registryKey: surfaceKey };
   return { unified: true, registryKey: unifiedDomainSessionKey(domain.name), domainName: domain.name };
 }
+
+export function supervisorTokenForGrain(grain: SupervisorGrain, generation: number, perContainer: () => string): string {
+  return grain.unified && grain.domainName !== undefined ? unifiedSupervisorToken(grain.domainName, generation) : perContainer();
+}

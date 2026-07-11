@@ -17,7 +17,11 @@ import {
   unifiedDomainSessionKey,
   domainFromSessionKey,
   supervisorGrainFor,
+  supervisorTokenForGrain,
 } from "../agent/channels/unified-supervisor.js";
+import { githubSupervisorToken } from "../agent/channels/github-supervisor.js";
+import { linearSupervisorToken } from "../agent/channels/linear-supervisor.js";
+import { notionSupervisorToken } from "../agent/channels/notion-supervisor.js";
 import { isSupervisorSession } from "../agent/model/routing.js";
 import { renderWakeEnvelope, type WakeEnvelopeInput } from "../agent/channels/wake-envelope.js";
 import { renderWake, type NormalizedWake } from "../agent/channels/normalized-wake.js";
@@ -150,6 +154,20 @@ withEnv("1", () => {
   ok(g.registryKey === g2.registryKey, "slack + github in one domain share the unified registry key");
   const g3 = supervisorGrainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]);
   ok(g3.unified === false && g3.registryKey === "slack/T1/C_ORPHAN", "orphan channel stays per-container");
+});
+
+withEnv("1", () => {
+  const slackGrain = supervisorGrainFor(CH, [payments, orgNoGate]);
+  const ghGrain = supervisorGrainFor(GH, [payments, orgNoGate]);
+  const tok = unifiedSupervisorToken("payments", 4);
+  ok(supervisorTokenForGrain(ghGrain, 4, () => githubSupervisorToken("acme", "payments-api", 4)) === tok, "unified github grain mints the DOMAIN token, not the per-repo one");
+  ok(supervisorTokenForGrain(slackGrain, 4, () => "C_PAY:oe-sup:g4") === tok, "unified slack grain mints the SAME domain token — one team, one token per generation");
+});
+withEnv(undefined, () => {
+  const off = supervisorGrainFor(GH, [payments, orgNoGate]);
+  ok(supervisorTokenForGrain(off, 2, () => githubSupervisorToken("acme", "payments-api", 2)) === "github:acme/payments-api:oe-sup:g2", "flag-off github grain falls back to the per-repo token (byte-identical)");
+  ok(supervisorTokenForGrain(off, 2, () => linearSupervisorToken("team-1", 2)) === "linear:team-1:oe-sup:g2", "flag-off linear fallback is the per-team token");
+  ok(supervisorTokenForGrain(off, 2, () => notionSupervisorToken("page-1", 2)) === "notion:page-1:oe-sup:g2", "flag-off notion fallback is the per-doc token");
 });
 
 const baseInput: WakeEnvelopeInput = {

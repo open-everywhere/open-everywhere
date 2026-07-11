@@ -25,6 +25,7 @@ export interface NotionSessionState {
   readonly pageId: string | null;
   readonly workspaceId: string | null;
   oeReplyTarget?: NotionReplyTarget;
+  readonly oeUnified?: boolean;
 }
 
 export interface HandleNotionDeliveryDeps {

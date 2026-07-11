@@ -74,6 +74,16 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(message.includes("Open asks: the retry-budget question in #42."), "a handoff note renders in the wake");
   ok(message.includes(`from-generation="1"`), "the handoff note is attributed to the outgoing generation");
 }
+{
+  const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger }), NOW);
+  const unified = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: true }), NOW);
+  ok(unified.message.includes(`<channel platform="github" id="${OWNER}/${REPO}">`), "unified wake stamps the <channel platform=\"github\"> surface address");
+  ok(unified.message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure to the judged preamble");
+  ok(!plain.message.includes("platform="), "per-repo wake carries NO platform attribute");
+  ok(!plain.message.includes("Cross-surface disclosure"), "per-repo wake carries NO disclosure sentence");
+  const explicitOff = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: false }), NOW);
+  ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-repo wake (flag-off invariant)");
+}
 
 {
   const payload = {
@@ -121,6 +131,9 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(wakes[0]!.token === githubSupervisorToken(OWNER, REPO, 1), "wake uses the supervisor continuation token (the :oe-sup:g infix)");
   ok(wakes[0]!.message.includes("you are this repo's standing session"), "the delivered message is the repo-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake on the current generation");
+  await handleGitHubSupervisorDispatch(dispatch({ unified: true }), deps);
+  ok(wakes[1]!.message.includes(`<channel platform="github" id="${OWNER}/${REPO}">`), "a unified dispatch stamps the surface address on the delivered wake");
+  ok(!wakes[0]!.message.includes("platform="), "the non-unified dispatch's wake stays unstamped (byte-identical off)");
 }
 
 ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
@@ -233,6 +246,28 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
       await completed("this must not post", { state, github });
     });
     ok(posts.length === 0, "no per-turn target ⇒ the supervisor posts NOTHING (fail safe)");
+  }
+
+  {
+    const state = { ...supervisorState(), oeUnified: true as const, oeReplyTarget: undefined as { issueNumber: number; owner?: string; repo?: string } | undefined };
+    const posts: Array<{ path: string }> = [];
+    const github = { request: async (input: { path: string }) => { posts.push({ path: input.path }); return { ok: true, status: 201, body: {} }; } };
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("cross-repo answer", { state, github });
+    }, { owner: "acme", repo: "payments-api", issue_number: "9" });
+    ok(state.oeReplyTarget?.owner === "acme" && state.oeReplyTarget?.repo === "payments-api", "unified turn.started snapshots THIS wake's owner/repo off the delivery auth");
+    ok(posts.length === 1 && posts[0]!.path === "/repos/acme/payments-api/issues/9/comments", "the unified reply posts into the repo that woke it, NOT the session's seed repo");
+    posts.length = 0;
+    await inSession(async () => {
+      await turnStarted({ state, github });
+      await completed("this must not post", { state, github });
+    }, { issue_number: "9" });
+    ok(state.oeReplyTarget === undefined, "unified path: a wake without owner/repo auth CLEARS the target");
+    ok(posts.length === 0, "unified path: cleared target ⇒ posts NOTHING (never the seed repo)");
+    const perRepo = supervisorState();
+    await inSession(() => turnStarted({ state: perRepo, github }), { owner: "someone", repo: "elsewhere", issue_number: "3" });
+    ok(perRepo.oeReplyTarget !== undefined && !("owner" in (perRepo.oeReplyTarget as Record<string, unknown>)), "non-unified snapshot stays {issueNumber} only (byte-identical off)");
   }
 
   {

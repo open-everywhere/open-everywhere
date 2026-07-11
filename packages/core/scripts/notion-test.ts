@@ -335,6 +335,38 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
       await completed("actually let me add one more thing", ctx);
     }, attrs);
     ok(posts.length === 0, "notion message.completed: the no_reply TOOL route suppresses the reply (regression for the isNoReply-only bug)");
+
+    const { markRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
+    const { readAudit: readAudit2 } = await import("../agent/audit/audit.js");
+    const unifiedState = { ...state, oeUnified: true };
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state: unifiedState };
+      await turnStarted(ctx);
+      await completed("stray narration the judge never posted via the reply tool", ctx);
+    }, attrs);
+    ok(posts.length === 0, "UNIFIED notion turn: terminal prose is DROPPED (message-tool-only) — nothing posts");
+    const dropped = await readAudit2({ action: "turn.supervisor_prose_dropped" });
+    ok(dropped.length >= 1 && dropped.some((a) => a.detail?.discussionId === DISCUSSION), "UNIFIED notion turn: the dropped stray prose is audited (turn.supervisor_prose_dropped)");
+
+    posts = [];
+    const droppedBefore = (await readAudit2({ action: "turn.supervisor_prose_dropped" })).length;
+    await inSession(async () => {
+      const ctx = { state: unifiedState };
+      await turnStarted(ctx);
+      markRepliedThisTurn();
+      await completed("trailing narration after a real tool reply", ctx);
+    }, attrs);
+    ok(posts.length === 0, "UNIFIED notion turn: trailing narration after a tool reply is dropped too (never double-posts)");
+    ok((await readAudit2({ action: "turn.supervisor_prose_dropped" })).length === droppedBefore, "…but a tool-replied turn's dropped narration is NOT audited as a leak");
+
+    posts = [];
+    await inSession(async () => {
+      const ctx = { state: { ...state } };
+      await turnStarted(ctx);
+      await completed("per-doc sessions keep posting terminal text", ctx);
+    }, attrs);
+    ok(posts.length === 1, "per-doc (non-unified) notion turn: terminal text still posts (byte-identical flag-off)");
   } finally {
     globalThis.fetch = realFetch;
   }

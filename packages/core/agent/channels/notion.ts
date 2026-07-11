@@ -1,10 +1,12 @@
 import { defineChannel, POST } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { finalMessageActionForTurn, supervisorTextDelivery, isSupervisorProseLeak } from "./slack-events.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { capabilitiesForPlatform } from "../identity/capabilities.js";
+import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
@@ -14,6 +16,7 @@ import {
   type NotionSupervisorDeps,
   type NotionSupervisorDispatch,
 } from "./notion-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
 
 const ROUTE = "/eve/v1/notion";
 
@@ -59,6 +62,14 @@ function notionAmbientEnabled(surfaceKey: string): boolean {
   }
 }
 
+function notionGrainFor(surfaceKey: string): SupervisorGrain {
+  try {
+    return supervisorGrainFor(surfaceKey, getConfig().loadDomains());
+  } catch {
+    return { unified: false, registryKey: surfaceKey };
+  }
+}
+
 type NotionState = NotionSessionState;
 
 function liveNotionSupervisorDeps(send: SendFn): NotionSupervisorDeps {
@@ -66,21 +77,25 @@ function liveNotionSupervisorDeps(send: SendFn): NotionSupervisorDeps {
   const store = getOperationalStore();
   return {
     async getOrCreateSession(surfaceKey, pageId, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
+      const grain = notionGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, 1), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
-        const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, existing.generation + 1), atIso);
+        const gen = existing.generation + 1;
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
-    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, surfaceKey, atIso),
+    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, notionGrainFor(surfaceKey).registryKey, atIso),
     async forceRotate(surfaceKey, pageId, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
-      const row = await store.rotateChannelSession(org, surfaceKey, notionSupervisorToken(pageId, (existing?.generation ?? 0) + 1), atIso);
+      const grain = notionGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
+      const gen = (existing?.generation ?? 0) + 1;
+      const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) =>
@@ -111,7 +126,10 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const botUser = resolveBotUser(apiKey ?? "");
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
-        await handleNotionSupervisorDispatch(d, liveNotionSupervisorDeps(send as unknown as SendFn));
+        await handleNotionSupervisorDispatch(
+          { ...d, unified: notionGrainFor(d.surfaceKey).unified },
+          liveNotionSupervisorDeps(send as unknown as SendFn),
+        );
         await appendAudit({
           org: deploymentOrg(),
           platform: "notion",
@@ -172,6 +190,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       if (action.kind === "buffer-tool-status") return;
       const target = channel.state.oeReplyTarget;
       const discussionId = target?.discussionId;
+      const repliedThisTurn = consumeRepliedThisTurn();
       if (action.kind === "silent") {
         await appendAudit({
           org: deploymentOrg(),
@@ -182,6 +201,23 @@ export default defineChannel<NotionState, { state: NotionState }>({
           detail: { discussionId: discussionId ?? channel.state.discussionId, reason: action.reason },
         });
         return;
+      }
+      if (channel.state.oeUnified === true) {
+        const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("notion").midTurnPost);
+        if (!delivery.postText) {
+          if (isSupervisorProseLeak(true, repliedThisTurn, false)) {
+            log(`supervisor message-tool-only: DROPPED terminal prose (judge emitted text without calling reply) — nothing posted (${discussionId ?? "?"})`);
+            await appendAudit({
+              org: deploymentOrg(),
+              platform: "notion",
+              workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
+              surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
+              action: "turn.supervisor_prose_dropped",
+              detail: { discussionId: discussionId ?? null, chars: action.text.length },
+            }).catch(() => undefined);
+          }
+          return;
+        }
       }
       const message = action.text;
       const apiKey = notionApiKey();

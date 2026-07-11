@@ -48,6 +48,7 @@ export interface NotionSupervisorWakeInput {
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
   readonly engagementTier?: WakeEngagementTier;
+  readonly unified?: boolean;
 }
 
 function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
@@ -75,7 +76,11 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
     addressing: input.addressing,
     containerNoun: "doc",
     engagementTier: judged ? input.engagementTier : undefined,
-    locus: { channel: { id: input.pageId }, thread: { ts: input.discussionId } },
+    unifiedDisclosure: judged && input.unified === true ? true : undefined,
+    locus: {
+      channel: { id: input.pageId, ...(input.unified ? { platform: "notion" } : {}) },
+      thread: { ts: input.discussionId },
+    },
     backscroll,
     handoff,
     trigger: mkMessageTrigger({
@@ -123,12 +128,18 @@ export interface NotionSupervisorDispatch {
   readonly trigger: NotionWakeMessage;
   readonly threadComments: readonly NotionWakeMessage[];
   readonly engagementTier?: WakeEngagementTier;
+  readonly unified?: boolean;
 }
 
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.pageId, atIso);
-  const state: NotionSessionState = { discussionId: d.discussionId || null, pageId: d.pageId || null, workspaceId: d.workspaceId };
+  const state: NotionSessionState = {
+    discussionId: d.discussionId || null,
+    pageId: d.pageId || null,
+    workspaceId: d.workspaceId,
+    ...(d.unified ? { oeUnified: true } : {}),
+  };
 
   const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
     const nw = buildNotionSupervisorWake({
@@ -138,6 +149,7 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       trigger: d.trigger,
       threadComments: d.threadComments,
       engagementTier: d.engagementTier,
+      unified: d.unified,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

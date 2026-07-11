@@ -91,6 +91,7 @@ export interface LinearSupervisorWakeInput {
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
+  readonly unified?: boolean;
 }
 
 export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): NormalizedWake {
@@ -107,7 +108,11 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     addressing: "channel-watch",
     containerNoun: "team",
     engagementTier: input.engagementTier,
-    locus: { channel: { id: input.teamId }, thread: { ts: issueLabel } },
+    unifiedDisclosure: input.unified === true ? true : undefined,
+    locus: {
+      channel: { id: input.teamId, ...(input.unified ? { platform: "linear" } : {}) },
+      thread: { ts: issueLabel },
+    },
     contextLines,
     contextSource: contextLines ? "the issue this comment is on" : undefined,
     handoff,
@@ -153,6 +158,7 @@ export interface LinearSupervisorDispatch {
   readonly auth: OpenEverywhereLinearAuth;
   readonly trigger: LinearSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
+  readonly unified?: boolean;
 }
 
 export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch, deps: LinearSupervisorDeps): Promise<void> {
@@ -167,6 +173,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
       issueTitle: d.issueTitle,
       trigger: d.trigger,
       engagementTier: d.engagementTier,
+      unified: d.unified,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

@@ -17,7 +17,8 @@ import {
   shouldRotate,
   type LinearSupervisorDeps,
 } from "./linear-supervisor.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -146,16 +147,17 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
 
 type LinearSupervisorSessionState = LinearChannelState & {
   oeSupervisor?: boolean;
+  oeUnified?: boolean;
   oeTeamId?: string;
-  oeReplyTarget?: { issueId: string; parentId?: string };
+  oeReplyTarget?: { issueId: string; parentId?: string; teamId?: string; organizationId?: string };
 };
 
 function isSupervisorLinearState(state: unknown): state is LinearSupervisorSessionState {
   return (state as Record<string, unknown> | undefined)?.["oeSupervisor"] === true;
 }
 
-function supervisorSeedState(teamId: string, organizationId: string): LinearSupervisorSessionState {
-  return { agentSessionId: null, organizationId, oeSupervisor: true, oeTeamId: teamId };
+function supervisorSeedState(teamId: string, organizationId: string, unified: boolean): LinearSupervisorSessionState {
+  return { agentSessionId: null, organizationId, oeSupervisor: true, oeTeamId: teamId, ...(unified ? { oeUnified: true } : {}) };
 }
 
 function linearAmbientEnabled(surfaceKey: string): boolean {
@@ -173,35 +175,48 @@ function linearEngagementTier(surfaceKey: string): EngagementTier | undefined {
   }
 }
 
+function linearGrainFor(surfaceKey: string): SupervisorGrain {
+  try {
+    return supervisorGrainFor(surfaceKey, getConfig().loadDomains());
+  } catch {
+    return { unified: false, registryKey: surfaceKey };
+  }
+}
+
 function liveLinearSupervisorDeps(send: SendFn<LinearChannelState>, teamId: string, organizationId: string): LinearSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
     async getOrCreateSession(surfaceKey, team, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
+      const grain = linearGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const row = await store.rotateChannelSession(org, surfaceKey, linearSupervisorToken(team, 1), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, 1, () => linearSupervisorToken(team, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
-        const row = await store.rotateChannelSession(org, surfaceKey, linearSupervisorToken(team, existing.generation + 1), atIso);
+        const gen = existing.generation + 1;
+        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => linearSupervisorToken(team, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
-    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, surfaceKey, atIso),
+    touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, linearGrainFor(surfaceKey).registryKey, atIso),
     async forceRotate(surfaceKey, team, atIso) {
-      const existing = await store.getChannelSession(org, surfaceKey);
-      const row = await store.rotateChannelSession(org, surfaceKey, linearSupervisorToken(team, (existing?.generation ?? 0) + 1), atIso);
+      const grain = linearGrainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
+      const gen = (existing?.generation ?? 0) + 1;
+      const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => linearSupervisorToken(team, gen)), atIso);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) =>
       appendAudit({ org, platform: "linear", workspace: organizationId, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context }) {
+      const unified = linearGrainFor(`linear/${organizationId}/${teamId}`).unified;
       await send(
         { message, context: [...context] },
-        { auth: auth as unknown as Parameters<SendFn<LinearChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(teamId, organizationId) },
+        { auth: auth as unknown as Parameters<SendFn<LinearChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
       );
     },
   };
@@ -257,6 +272,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
         text: c.body ?? "(the comment had no text)",
       },
       engagementTier: linearEngagementTier(surfaceKey),
+      unified: linearGrainFor(surfaceKey).unified,
     },
     liveLinearSupervisorDeps(send, c.teamId, signal.organizationId),
   );
@@ -309,7 +325,13 @@ const native: LinearChannel = linearChannel({
       const commentId = str(attrs?.comment_id);
       const parentId = str(attrs?.parent_comment_id);
       st.oeReplyTarget =
-        issueId && (parentId ?? commentId) ? { issueId, parentId: parentId ?? commentId } : undefined;
+        issueId && (parentId ?? commentId)
+          ? {
+              issueId,
+              parentId: parentId ?? commentId,
+              ...(st.oeUnified === true ? { teamId: str(attrs?.team_id), organizationId: str(attrs?.organization_id) } : {}),
+            }
+          : undefined;
     },
     async "actions.requested"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) await defaultEvent("actions.requested")?.(data, channel);
@@ -331,12 +353,14 @@ const native: LinearChannel = linearChannel({
       if (action.kind === "buffer-tool-status") return;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
-      const surface = st.oeTeamId ? `linear/${st.organizationId ?? "unknown"}/${st.oeTeamId}` : undefined;
+      const auditTeamId = (st.oeUnified === true ? target?.teamId : undefined) ?? st.oeTeamId;
+      const auditOrgId = (st.oeUnified === true ? target?.organizationId : undefined) ?? st.organizationId;
+      const surface = auditTeamId ? `linear/${auditOrgId ?? "unknown"}/${auditTeamId}` : undefined;
       if (action.kind === "silent") {
         await appendAudit({
           org,
           platform: "linear",
-          workspace: st.organizationId ?? "unknown",
+          workspace: auditOrgId ?? "unknown",
           surface,
           action: "linear.no_reply",
           detail: { issueId: target?.issueId ?? null, reason: action.reason },
@@ -347,12 +371,25 @@ const native: LinearChannel = linearChannel({
         slog("reply not posted — no per-turn thread target (turn.started snapshot empty); FAIL SAFE");
         return;
       }
+      const delivery = supervisorTextDelivery(true, false);
+      if (!delivery.postText) {
+        slog(`supervisor message-tool-only: DROPPED terminal prose — nothing posted (issue ${target.issueId})`);
+        await appendAudit({
+          org,
+          platform: "linear",
+          workspace: auditOrgId ?? "unknown",
+          surface,
+          action: "turn.supervisor_prose_dropped",
+          detail: { issueId: target.issueId, chars: action.text.length },
+        }).catch(() => undefined);
+        return;
+      }
       try {
         await postOnce({
           org,
           key: outboundKey({
             surface: "linear",
-            channel: st.oeTeamId ?? "",
+            channel: auditTeamId ?? "",
             threadTs: target.parentId ?? target.issueId,
             action: "linear.supervisor-reply",
             payload: action.text,
@@ -367,7 +404,7 @@ const native: LinearChannel = linearChannel({
         await appendAudit({
           org,
           platform: "linear",
-          workspace: st.organizationId ?? "unknown",
+          workspace: auditOrgId ?? "unknown",
           surface,
           action: "linear.replied",
           detail: { issueId: target.issueId, parentId: target.parentId ?? null, chars: action.text.length },
