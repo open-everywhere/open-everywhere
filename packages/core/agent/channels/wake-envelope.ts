@@ -16,6 +16,8 @@ export interface WakeChannelMeta {
   readonly id: string;
   readonly type?: string;
   readonly memberCount?: number;
+  readonly platform?: string;
+  readonly platformLabel?: string;
 }
 
 export interface WakeThreadMeta {
@@ -159,7 +161,7 @@ function renderParticipants(ps: readonly WakeParticipant[]): string {
 
 function renderChannelOpen(c: WakeChannelMeta): string {
   const memberCount = c.memberCount === undefined ? undefined : String(c.memberCount);
-  return `<channel${attr("id", c.id)}${attr("type", c.type)}${attr("member-count", memberCount)}>`;
+  return `<channel${attr("platform", c.platform)}${attr("id", c.id)}${attr("label", c.platformLabel)}${attr("type", c.type)}${attr("member-count", memberCount)}>`;
 }
 
 function renderThreadOpen(t: WakeThreadMeta): string {

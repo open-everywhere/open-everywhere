@@ -3,6 +3,7 @@ import {
   domainForChannel,
   assertChannelExclusivity,
   assertDomainsValid,
+  assertUnifiedDomainTrust,
   type Domain,
 } from "@open-everywhere/core/agent/memory/domain.js";
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
@@ -62,6 +63,7 @@ const domains: Domain[] = applyRoleDefaults(rawDomains, loadRoles());
 
 assertChannelExclusivity(domains);
 assertDomainsValid(domains);
+assertUnifiedDomainTrust(domains);
 assertSilosValid(silos);
 
 export function loadDomains(): readonly Domain[] {

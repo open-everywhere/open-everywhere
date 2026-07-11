@@ -45,6 +45,8 @@ export interface Domain {
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly awarenessWake?: boolean;
+  readonly unifiedSupervisor?: boolean;
+  readonly unifiedSupervisorGate?: boolean;
   readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
@@ -95,6 +97,52 @@ export function awarenessWakeEnabled(channelKey: string, domains: readonly Domai
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.awarenessWake === true;
   return criteriaDomain("org", domains)?.awarenessWake === true;
+}
+
+export function unifiedSupervisorOrgGateEnabled(domains: readonly Domain[]): boolean {
+  const env = (process.env.OE_UNIFIED_SUPERVISOR ?? "").trim().toLowerCase();
+  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
+  return criteriaDomain("org", domains)?.unifiedSupervisorGate === true;
+}
+
+export function unifiedSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  if (!unifiedSupervisorOrgGateEnabled(domains)) return false;
+  const explicit = domainForChannel(channelKey, domains);
+  return explicit?.unifiedSupervisor === true && explicit?.ambientSupervisor === true;
+}
+
+export function unifiedDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
+  if (!unifiedSupervisorEnabled(channelKey, domains)) return undefined;
+  return domainForChannel(channelKey, domains);
+}
+
+export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
+  const bad: string[] = [];
+  for (const d of domains) {
+    const isPseudo = d.match !== undefined;
+    if (d.unifiedSupervisor === true) {
+      if (isPseudo) {
+        bad.push(
+          `  "${d.name}" (match "${d.match}") must not set unifiedSupervisor — the unified supervisor is a TEAM-section feature, never a pseudo-domain (org=the "unify everything" footgun; public/dm=external/personal surface)`,
+        );
+      }
+      if (d.ambientSupervisor !== true) {
+        bad.push(`  "${d.name}" sets unifiedSupervisor but not ambientSupervisor — a unified session is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
+      }
+    }
+    if (d.unifiedSupervisorGate === true && d.match !== "org") {
+      bad.push(
+        `  "${d.name}" sets unifiedSupervisorGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_UNIFIED_SUPERVISOR=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
+      );
+    }
+  }
+  if (bad.length > 0) {
+    throw new Error(
+      "open-everywhere: invalid unified cross-surface supervisor configuration:\n" +
+        bad.join("\n") +
+        "\n(memory/domain.ts assertUnifiedDomainTrust).",
+    );
+  }
 }
 
 const PLATFORM_ENGAGEMENT_TIER_DEFAULTS: Readonly<Record<string, EngagementTier>> = {
