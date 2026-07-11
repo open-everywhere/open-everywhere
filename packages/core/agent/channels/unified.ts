@@ -1,11 +1,12 @@
 import { defineChannel, GET } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { postUnifiedReply } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -63,7 +64,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     );
   },
   events: {
-    async "message.completed"(data, channel) {
+    async "message.completed"(data, channel, ctx) {
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const replied = consumeRepliedThisTurn();
@@ -79,6 +80,28 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           detail: { reason: action.reason, replied },
         }).catch(() => undefined);
         return;
+      }
+      const bind = { session: ctx.session } as unknown as BindableContext;
+      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied)) {
+        const wakeId = currentWakeId(bind);
+        const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
+        if (origin) {
+          try {
+            const id = await postUnifiedReply(origin, action.text);
+            ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
+            await appendAudit({
+              org,
+              platform: "unified",
+              workspace,
+              surface,
+              action: "turn.direct_mention_prose_delivered",
+              detail: { chars: action.text.length, platform: origin.platform },
+            }).catch(() => undefined);
+            return;
+          } catch (err) {
+            ulog(`addressed-mention bridge: post failed, dropping prose (audited): ${String(err).slice(0, 200)}`);
+          }
+        }
       }
       ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}) — replies must come from the reply tool`);
       await appendAudit({
@@ -130,7 +153,7 @@ export async function divertToUnifiedWindow(
     readonly auth: { attributes?: Record<string, unknown> };
   },
 ): Promise<void> {
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId);
+  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing);
   const target: UnifiedReceiveTarget = {
     token: input.token,
     wakeId: input.window.wakeId,

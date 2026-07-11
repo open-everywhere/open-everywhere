@@ -155,10 +155,13 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
 function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean): string {
   return (
     `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
-    `you and is asking for a response, so answer it. Reply with what they need; you post by naming ` +
-    `this wake to your reply tool, and only that reply is posted (your turn-final text is not). Stay ` +
-    `silent only if the mention turns out to be purely social or needs nothing from you — then output ` +
-    `exactly ${NO_REPLY_SENTINEL} and nothing else. ${PREFER_NO_REPLY_TOOL}` +
+    `you and is asking for a response, so answer it. You are a cross-surface session, so you MUST ` +
+    `deliver your answer by CALLING THE \`reply\` TOOL: set \`text\` to your answer and \`wake\` to ` +
+    `the \`wake-id\` shown in the wake envelope below. Do NOT put your answer in your turn-final ` +
+    `text — on this session turn-final text is DISCARDED and nothing is posted; the \`reply\` tool ` +
+    `call is the ONLY way your answer reaches them. Stay silent only if the mention turns out to be ` +
+    `purely social or needs nothing from you — then output exactly ${NO_REPLY_SENTINEL} and nothing ` +
+    `else. ${PREFER_NO_REPLY_TOOL}` +
     unifiedDisclosureLine(unifiedDisclosure) +
     handoffLine(hasHandoff)
   );

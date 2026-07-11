@@ -315,6 +315,10 @@ export function currentWakeId(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
 }
 
+export function currentTurnAddressing(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_addressing", "oeAddressing"]);
+}
+
 export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   if (!isUnifiedWindowContext(ctx)) return;
   const origin = channelPlatform(ctx);

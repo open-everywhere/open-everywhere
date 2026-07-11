@@ -221,6 +221,8 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
   const m = renderWake(nw, NOW).message;
   ok(m.startsWith("[direct]"), "direct-mention leads with the addressed preamble");
   ok(m.includes("addressed to you and is asking for a response"), "direct-mention says it is addressed and owes a reply (not the high-bar watch framing)");
+  ok(m.includes("`reply`") && m.includes("`wake`") && m.includes("`text`"), "direct-mention NAMES the reply tool and its wake+text args explicitly (so the model routes the answer through the tool, not terminal prose)");
+  ok(m.includes("turn-final text is DISCARDED"), "direct-mention states the hard consequence: turn-final text is discarded — counters the dual-mode 'end with your answer' habit");
   ok(m.includes(`<wake reason="mention"`) && m.includes(`wake-id="wk-9"`), "direct-mention keeps the envelope AND the wake-id (unlike raw 'direct', which emits neither)");
   ok(m.includes(`mention="true"`), "the trigger renders the @mention flag");
   ok(m.includes("Cross-surface disclosure:"), "the unified disclosure rides the addressed preamble");

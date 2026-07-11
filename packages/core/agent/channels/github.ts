@@ -253,6 +253,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
               issueNumber: ev.issueNumber,
               ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
             },
+            ...(directMention ? { addressing: "direct-mention" as const } : {}),
           } satisfies UnifiedWindowWake)
         : undefined,
     },

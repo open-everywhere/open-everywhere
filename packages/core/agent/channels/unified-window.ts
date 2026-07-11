@@ -84,15 +84,31 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
 
 export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
+export const OE_ADDRESSING_ATTR = "oe_addressing";
 
-export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, unknown> }>(auth: A, platform: UnifiedWakeOrigin["platform"], wakeId: string): A {
+export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, unknown> }>(
+  auth: A,
+  platform: UnifiedWakeOrigin["platform"],
+  wakeId: string,
+  addressing?: "direct-mention",
+): A {
   return {
     ...auth,
-    attributes: { ...(auth.attributes ?? {}), [OE_PLATFORM_ATTR]: platform, [OE_WAKE_ID_ATTR]: wakeId },
+    attributes: {
+      ...(auth.attributes ?? {}),
+      [OE_PLATFORM_ATTR]: platform,
+      [OE_WAKE_ID_ATTR]: wakeId,
+      ...(addressing ? { [OE_ADDRESSING_ATTR]: addressing } : {}),
+    },
   };
+}
+
+export function shouldBridgeAddressedProse(addressing: string | undefined, alreadyReplied: boolean): boolean {
+  return addressing === "direct-mention" && !alreadyReplied;
 }
 
 export interface UnifiedWindowWake {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;
+  readonly addressing?: "direct-mention";
 }

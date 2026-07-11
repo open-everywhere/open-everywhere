@@ -30,9 +30,11 @@ import {
   resolveUnifiedWakeTarget,
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
+  shouldBridgeAddressedProse,
   WAKE_TARGET_TTL_MS,
   OE_PLATFORM_ATTR,
   OE_WAKE_ID_ATTR,
+  OE_ADDRESSING_ATTR,
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
@@ -50,7 +52,7 @@ import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSuper
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "../agent/channels/linear-supervisor.js";
 import { buildLinearAuth } from "../agent/channels/linear-identity.js";
-import { channelPlatform, isUnifiedWindowContext, currentWakeId, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -520,6 +522,16 @@ const store = getOperationalStore();
   ok(b.platform === "slack" && b.workspace === "T_WIN" && b.surface === "C_WINA" && b.trust === "internal", "bindFrom on a stamped unified delivery resolves the REAL Slack partition (memory/spend/audit unchanged)");
   const stamped = stampUnifiedWindowAuth({ attributes: { team_id: "T1" } as Record<string, unknown> }, "slack", "w-1");
   ok(stamped.attributes?.team_id === "T1" && stamped.attributes?.[OE_PLATFORM_ATTR] === "slack" && stamped.attributes?.[OE_WAKE_ID_ATTR] === "w-1", "stampUnifiedWindowAuth adds the two stamps and preserves existing attributes");
+  ok(stamped.attributes?.[OE_ADDRESSING_ATTR] === undefined, "stampUnifiedWindowAuth stamps NO oe_addressing for an ambient/watch wake (no addressing arg) — prose stays hard-dropped");
+  const addressed = stampUnifiedWindowAuth({ attributes: { team_id: "T1" } as Record<string, unknown> }, "github", "w-2", "direct-mention");
+  ok(addressed.attributes?.[OE_ADDRESSING_ATTR] === "direct-mention" && addressed.attributes?.[OE_WAKE_ID_ATTR] === "w-2", "stampUnifiedWindowAuth stamps oe_addressing='direct-mention' for an addressed mention (alongside the platform + wake id)");
+  ok(shouldBridgeAddressedProse("direct-mention", false) === true, "bridge gate: an addressed direct-mention that did NOT call reply IS bridged");
+  ok(shouldBridgeAddressedProse("direct-mention", true) === false, "bridge gate: a direct-mention that ALREADY replied is NOT bridged (no double-post)");
+  ok(shouldBridgeAddressedProse("channel-watch", false) === false, "bridge gate: an ambient channel-watch turn is NEVER bridged — prose stays hard-dropped (message-tool-only preserved)");
+  ok(shouldBridgeAddressedProse(undefined, false) === false, "bridge gate: an unstamped (non-single-window / non-addressed) turn is NEVER bridged");
+  const addressedCtx: BindableContext = { channel: { kind: "channel:unified" }, session: { auth: { current: { attributes: { oe_addressing: "direct-mention", oe_wake_id: "w-2" }, principalId: "U", principalType: "github-user" } } } };
+  ok(currentTurnAddressing(addressedCtx) === "direct-mention", "currentTurnAddressing reads the current delivery's oe_addressing stamp");
+  ok(currentTurnAddressing({ channel: { kind: "channel:unified" }, session: { auth: { current: { attributes: { oe_wake_id: "w-3" }, principalId: "U", principalType: "slack-user" } } } }) === undefined, "currentTurnAddressing is undefined for an ambient wake (no oe_addressing) ⇒ never bridged");
 }
 
 {
