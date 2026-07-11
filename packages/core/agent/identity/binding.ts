@@ -299,7 +299,31 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
 };
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
-  return platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
+  const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
+  if (kind === "unified") {
+    const stamped = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
+    return stamped ? normalizePlatform(stamped) : kind;
+  }
+  return kind;
+}
+
+export function isUnifiedWindowContext(ctx: BindableContext): boolean {
+  return platformFromKind(ctx.channel?.kind) === "unified";
+}
+
+export function currentWakeId(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
+}
+
+export function assertTurnSurface(ctx: BindableContext, surface: string): void {
+  if (!isUnifiedWindowContext(ctx)) return;
+  const origin = channelPlatform(ctx);
+  if (origin !== surface) {
+    throw new Error(
+      `this tool reads ${surface}, but the message that woke this turn came from ${origin ?? "another surface"} — ` +
+        `on a cross-surface session a per-surface read tool only runs on a turn from its OWN surface (what you can recall across surfaces is the shared context, not another surface's live reads).`,
+    );
+  }
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {

@@ -56,6 +56,7 @@ export interface UnifiedAuditWire {
   readonly org: string;
   readonly domain: string;
   readonly unified: boolean;
+  readonly singleWindow?: boolean;
   readonly platforms: readonly string[];
   readonly containers: readonly { readonly surfaceKey: string; readonly platform: string }[];
   readonly humans: readonly { readonly name: string; readonly surfacesNotIn: readonly string[] }[];

@@ -1478,7 +1478,14 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
       ctx.gate(wire.platforms.includes("slack") && wire.platforms.includes("github"), "unified-audit: the domain's containers span BOTH platforms (the 'one mind' membership answer)");
+      const singleWindow = wire.singleWindow === true;
+      ctx.log(
+        singleWindow
+          ? "mode: SINGLE-CONTEXT WINDOW (crossSurfaceWindow armed) — recall is from ONE literal context window; leg 2.5 hard-gates no-memory-hop"
+          : "mode: memory-mediated (crossSurfaceWindow off) — recall rides the shared domain memory across sibling per-platform sessions",
+      );
 
+      const decideAt = new Date(Date.now() - 5_000).toISOString();
       const marker = factToken("unix");
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
@@ -1501,13 +1508,23 @@ export const SCENARIOS: readonly Scenario[] = [
         "money-shot: cross-surface recall quality",
       );
 
+      if (singleWindow && ctx.auditRead) {
+        const writes = await ctx.auditRead({ sinceIso: decideAt, actions: ["memory.write"] });
+        ctx.gate(
+          writes.length === 0,
+          `shared-context proof: NO memory.write audit row in the decide→reply window (found ${writes.length}) — the recall came from the live shared context, not a memory hop`,
+        );
+      } else if (singleWindow) {
+        ctx.log("shared-context proof skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so the run can assert the no-memory-hop half of the money shot");
+      }
+
       const strayInSlack = (await a.history(ack.ts)).filter((m) => a.isBotReply(m) && m.ts !== ack.ts);
       ctx.gate(strayInSlack.length === 0, "reply-targeting: the GitHub answer did NOT leak into the Slack container (per-wake delivery auth across platforms — hard gate)");
 
       if (ctx.auditRead) {
         try {
-          const replied = await ctx.auditRead({ sinceIso: runStart, platform: "github", actions: ["github.replied"] });
-          ctx.log(`audited cross-surface reply: ${replied.length} github.replied row(s) in the run window`);
+          const replied = await ctx.auditRead({ sinceIso: runStart, platform: "github", actions: ["github.replied", "reply.post"] });
+          ctx.log(`audited cross-surface reply: ${replied.length} github.replied/reply.post row(s) in the run window`);
         } catch (err) {
           ctx.log(`audit read unavailable (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
         }

@@ -3,6 +3,7 @@ import type { ContextLine } from "./context-render.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
+import type { UnifiedWindowWake } from "./unified-window.js";
 
 export function githubSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -55,6 +56,7 @@ export interface GitHubSupervisorWakeInput {
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
   readonly unified?: boolean;
+  readonly wakeId?: string;
 }
 
 export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): NormalizedWake {
@@ -71,6 +73,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     containerNoun: "repo",
     engagementTier: input.engagementTier,
     unifiedDisclosure: input.unified === true ? true : undefined,
+    wakeId: input.wakeId,
     locus: {
       channel: { id: `${input.owner}/${input.repo}`, ...(input.unified ? { platform: "github" } : {}) },
       thread: { ts: `#${input.issueNumber}` },
@@ -170,6 +173,7 @@ export interface GitHubSupervisorDeps {
     auth: OpenEverywhereGitHubAuth;
     message: string;
     context: readonly string[];
+    window?: UnifiedWindowWake;
   }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
@@ -185,6 +189,7 @@ export interface GitHubSupervisorDispatch {
   readonly trigger: GitHubSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
+  readonly window?: UnifiedWindowWake;
 }
 
 export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch, deps: GitHubSupervisorDeps): Promise<void> {
@@ -200,11 +205,12 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       trigger: d.trigger,
       engagementTier: d.engagementTier,
       unified: d.unified,
+      wakeId: d.window?.wakeId,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [] });
+    await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
   try {

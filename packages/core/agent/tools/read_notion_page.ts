@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage } from "../channels/notion-api.js";
 import { ingestUntrusted } from "../access/untrusted.js";
-import { channelPlatform, bindFrom, type BindableContext } from "../identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
 
 const MAX_CHARS = 20_000;
 const MAX_BLOCKS = 200;
@@ -15,7 +15,7 @@ function notionApiKey(): string | undefined {
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "notion") return null;
+      if (!isUnifiedWindowContext(ctx as BindableContext) && channelPlatform(ctx as BindableContext) !== "notion") return null;
       return defineTool({
         description:
           "Read the text of a Notion page (this doc, or another page shared with the integration). " +
@@ -36,6 +36,7 @@ export default defineDynamic({
           text: z.string(),
         }),
         async execute(input, ctx2) {
+          assertTurnSurface(ctx2 as BindableContext, "notion");
           const apiKey = notionApiKey();
           if (!apiKey) throw new Error("NOTION_API_KEY is not set — cannot read the page.");
           const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;

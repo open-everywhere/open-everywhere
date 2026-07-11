@@ -24,6 +24,7 @@ import {
 } from "./slack-events.js";
 import { resolvePartition } from "../memory/partition.js";
 import { isThreadEngaged } from "./engagement.js";
+import { divertToUnifiedWindow } from "./unified.js";
 import { ambientSupervisorEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -277,6 +278,26 @@ export function recordWakeFailure(key: string, err: unknown): void {
   })();
 }
 
+export function withSingleWindowDiversion(
+  deps: ReturnType<typeof liveSupervisorDeps>,
+  receive: RouteHandlerArgs["receive"],
+  surfaceKey: string,
+): ReturnType<typeof liveSupervisorDeps> {
+  return {
+    ...deps,
+    async wake(input) {
+      if (!input.window) return deps.wake(input);
+      await divertToUnifiedWindow(receive, {
+        message: input.message,
+        token: input.token,
+        window: input.window,
+        surfaceKey,
+        auth: input.auth as { attributes?: Record<string, unknown> },
+      });
+    },
+  };
+}
+
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
   const dedupe = opts.dedupe ?? new EventDedupe();
   const fifo = opts.fifo ?? new ThreadFifo(recordWakeFailure);
@@ -370,8 +391,10 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     const scheduleUnownedWake = (label: string): void => {
       let ambient = false;
+      let surfaceKey: string | undefined;
       try {
-        ambient = ambientEnabledFor(resolvePartition(bindableFor(ev)).surfaceKey);
+        surfaceKey = resolvePartition(bindableFor(ev)).surfaceKey;
+        ambient = ambientEnabledFor(surfaceKey);
       } catch {
         ambient = false;
       }
@@ -379,7 +402,9 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         const supKey = supervisorFifoKey(ev.channelId);
         args.waitUntil(
           fifo.enqueue(supKey, () =>
-            routeSupervisorEvent(ev, liveSupervisorDeps(send)).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
+            routeSupervisorEvent(ev, withSingleWindowDiversion(liveSupervisorDeps(send), args.receive, surfaceKey!)).then(
+              logOutcome(`${label}-supervisor`, ev.channelId, ev.ts),
+            ),
           ),
         );
         return;

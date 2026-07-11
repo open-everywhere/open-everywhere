@@ -1,4 +1,10 @@
-import { unifiedDomainFor, type Domain } from "../memory/domain.js";
+import { unifiedDomainFor, crossSurfaceWindowEnabled, type Domain } from "../memory/domain.js";
+
+export const UNIFIED_CHANNEL_NAME = "unified";
+
+export function effectiveEveToken(channelName: string, rawToken: string): string {
+  return `${channelName}:${rawToken}`;
+}
 
 export function unifiedSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -40,12 +46,19 @@ export interface SupervisorGrain {
   readonly unified: boolean;
   readonly registryKey: string;
   readonly domainName?: string;
+  readonly singleWindow?: true;
 }
 
 export function supervisorGrainFor(surfaceKey: string, domains: readonly Domain[]): SupervisorGrain {
   const domain = unifiedDomainFor(surfaceKey, domains);
   if (!domain) return { unified: false, registryKey: surfaceKey };
-  return { unified: true, registryKey: unifiedDomainSessionKey(domain.name), domainName: domain.name };
+  const singleWindow = crossSurfaceWindowEnabled(surfaceKey, domains);
+  return {
+    unified: true,
+    registryKey: unifiedDomainSessionKey(domain.name),
+    domainName: domain.name,
+    ...(singleWindow ? { singleWindow: true as const } : {}),
+  };
 }
 
 export function supervisorTokenForGrain(grain: SupervisorGrain, generation: number, perContainer: () => string): string {

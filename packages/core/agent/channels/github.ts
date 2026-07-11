@@ -12,6 +12,8 @@ import {
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
+import { divertToUnifiedWindow } from "./unified.js";
 import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
@@ -130,7 +132,7 @@ function githubGrainFor(surfaceKey: string): SupervisorGrain {
   }
 }
 
-function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent): GitHubSupervisorDeps {
+function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent, receive?: RouteHandlerArgs["receive"]): GitHubSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -159,7 +161,18 @@ function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAm
     audit: (action, detail) =>
       appendAudit({ org, platform: "github", workspace: ev.owner, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
-    async wake({ token, auth, message, context }) {
+    async wake({ token, auth, message, context, window }) {
+      if (window && receive) {
+        await divertToUnifiedWindow(receive, {
+          message,
+          context: [...context],
+          token,
+          window,
+          surfaceKey: `github/${ev.owner}/${ev.repo}`,
+          auth: auth as unknown as { attributes?: Record<string, unknown> },
+        });
+        return;
+      }
       const unified = githubGrainFor(`github/${ev.owner}/${ev.repo}`).unified;
       await send(
         { message, context: [...context] },
@@ -169,7 +182,7 @@ function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAm
   };
 }
 
-async function ambientDelivery(body: string, eventType: string, send: SendFn<GitHubChannelState>): Promise<void> {
+async function ambientDelivery(body: string, eventType: string, send: SendFn<GitHubChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(body) as Record<string, unknown>;
@@ -216,8 +229,21 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
       },
       engagementTier: githubEngagementTier(surfaceKey),
       unified: githubGrainFor(surfaceKey).unified,
+      window:
+        githubGrainFor(surfaceKey).singleWindow === true
+          ? ({
+              wakeId: mintWakeId(),
+              origin: {
+                platform: "github",
+                owner: ev.owner,
+                repo: ev.repo,
+                issueNumber: ev.issueNumber,
+                ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
+              },
+            } satisfies UnifiedWindowWake)
+          : undefined,
     },
-    liveGitHubSupervisorDeps(send, ev),
+    liveGitHubSupervisorDeps(send, ev, receive),
   );
   await appendAudit({
     org: deploymentOrg(),
@@ -401,7 +427,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     }
     const eventType = req.headers.get("x-github-event") ?? "";
     args.waitUntil(fanOutDelivery(body, eventType, args.receive));
-    args.waitUntil(ambientDelivery(body, eventType, args.send).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+    args.waitUntil(ambientDelivery(body, eventType, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);
   };
