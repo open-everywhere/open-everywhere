@@ -36,6 +36,7 @@ export interface NormalizedWake {
   readonly containerNoun?: string;
   readonly engagementTier?: WakeEngagementTier;
   readonly unifiedDisclosure?: boolean;
+  readonly wakeId?: string;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
   readonly handoff?: WakeHandoff;
@@ -212,6 +213,7 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
           renderWakeEnvelope({
             reason: nw.reason,
             currentTime: now(),
+            wakeId: nw.wakeId,
             channel: nw.locus.channel,
             participants: nw.participants,
             thread: nw.locus.thread,

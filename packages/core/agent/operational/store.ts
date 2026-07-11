@@ -224,6 +224,9 @@ export interface OperationalStore {
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 
+  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number): Promise<void>;
+  getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
+
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
   listPendingActions(org: string): Promise<readonly PendingActionRow[]>;

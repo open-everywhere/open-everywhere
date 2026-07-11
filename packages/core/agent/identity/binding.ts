@@ -299,7 +299,16 @@ const MAPPERS: Readonly<Record<string, Mapper>> = {
 };
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
-  return platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
+  const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);
+  if (kind === "unified") {
+    const stamped = attr(authOf(ctx)?.attributes, ["oe_platform", "oePlatform"]);
+    return stamped ? normalizePlatform(stamped) : kind;
+  }
+  return kind;
+}
+
+export function isUnifiedWindowContext(ctx: BindableContext): boolean {
+  return platformFromKind(ctx.channel?.kind) === "unified";
 }
 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {

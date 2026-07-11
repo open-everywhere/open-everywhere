@@ -47,6 +47,8 @@ export interface Domain {
   readonly awarenessWake?: boolean;
   readonly unifiedSupervisor?: boolean;
   readonly unifiedSupervisorGate?: boolean;
+  readonly crossSurfaceWindow?: boolean;
+  readonly crossSurfaceWindowGate?: boolean;
   readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
@@ -116,6 +118,18 @@ export function unifiedDomainFor(channelKey: string, domains: readonly Domain[])
   return domainForChannel(channelKey, domains);
 }
 
+export function crossSurfaceWindowOrgGateEnabled(domains: readonly Domain[]): boolean {
+  const env = (process.env.OE_CROSS_SURFACE_WINDOW ?? "").trim().toLowerCase();
+  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
+  return criteriaDomain("org", domains)?.crossSurfaceWindowGate === true;
+}
+
+export function crossSurfaceWindowEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  if (!crossSurfaceWindowOrgGateEnabled(domains)) return false;
+  if (!unifiedSupervisorEnabled(channelKey, domains)) return false;
+  return domainForChannel(channelKey, domains)?.crossSurfaceWindow === true;
+}
+
 export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   const bad: string[] = [];
   for (const d of domains) {
@@ -133,6 +147,23 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
     if (d.unifiedSupervisorGate === true && d.match !== "org") {
       bad.push(
         `  "${d.name}" sets unifiedSupervisorGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_UNIFIED_SUPERVISOR=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
+      );
+    }
+    if (d.crossSurfaceWindow === true) {
+      if (isPseudo) {
+        bad.push(
+          `  "${d.name}" (match "${d.match}") must not set crossSurfaceWindow — the single-context window is a TEAM-section feature, never a pseudo-domain (same footgun as unifiedSupervisor)`,
+        );
+      }
+      if (d.unifiedSupervisor !== true) {
+        bad.push(
+          `  "${d.name}" sets crossSurfaceWindow but not unifiedSupervisor — the single-context window is a delivery mode OF the unified supervisor, so it REQUIRES unifiedSupervisor: true`,
+        );
+      }
+    }
+    if (d.crossSurfaceWindowGate === true && d.match !== "org") {
+      bad.push(
+        `  "${d.name}" sets crossSurfaceWindowGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_CROSS_SURFACE_WINDOW=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
       );
     }
   }

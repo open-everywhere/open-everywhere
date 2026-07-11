@@ -67,6 +67,7 @@ export interface WakeParticipant {
 export interface WakeEnvelopeInput {
   readonly reason: WakeReason;
   readonly currentTime: string;
+  readonly wakeId?: string;
   readonly channel: WakeChannelMeta;
   readonly participants?: readonly WakeParticipant[];
   readonly thread?: WakeThreadMeta;
@@ -196,7 +197,7 @@ export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
     : `${participantsXml}${handoffXml}${indent(messagesXml, 2)}`;
 
   const lines = [
-    `<wake${attr("reason", input.reason)}${attr("current-time", input.currentTime)}>`,
+    `<wake${attr("reason", input.reason)}${attr("current-time", input.currentTime)}${attr("wake-id", input.wakeId)}>`,
     indent(channelOpen, 2),
     channelBody,
     indent("</channel>", 2),

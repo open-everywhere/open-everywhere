@@ -5,6 +5,7 @@ import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { nameDropWakeEnabled, engagementTierFor } from "../memory/domain.js";
 import { supervisorGrainFor, unifiedSupervisorToken, type SupervisorGrain } from "./unified-supervisor.js";
+import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -215,6 +216,7 @@ export interface SlackWakeOpts {
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
   readonly platformLabel?: string;
+  readonly wakeId?: string;
 }
 
 function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch", opts?: SlackWakeOpts): NormalizedWake {
@@ -236,6 +238,7 @@ function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "
     participants: opts?.participants,
     engagementTier: opts?.engagementTier,
     unifiedDisclosure: opts?.unified === true ? true : undefined,
+    wakeId: opts?.wakeId,
     handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts?.backscroll,
     trigger: mkMessageTrigger(
@@ -838,13 +841,13 @@ export interface SupervisorRouteDeps {
   ) => Promise<{ token: string; generation: number; freshGeneration: boolean; handoffNote?: string | null }>;
   readonly touchSession?: (org: string, surfaceKey: string, atIso: string) => Promise<void>;
   readonly fetchBackscroll?: (input: { channelId: string; ts: string }) => Promise<readonly WakeMessageInput[]>;
-  readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown }) => Promise<void>;
+  readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
   readonly forceRotate?: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
   readonly engagementTier?: (surfaceKey: string) => WakeEngagementTier;
-  readonly unifiedMeta?: (surfaceKey: string) => { unified: boolean; label?: string };
+  readonly unifiedMeta?: (surfaceKey: string) => { unified: boolean; label?: string; singleWindow?: boolean };
 }
 
 export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
@@ -878,12 +881,16 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
   } catch {
     engagementTier = undefined;
   }
-  let unifiedMeta: { unified: boolean; label?: string } | undefined;
+  let unifiedMeta: { unified: boolean; label?: string; singleWindow?: boolean } | undefined;
   try {
     unifiedMeta = deps.unifiedMeta?.(p.surfaceKey);
   } catch {
     unifiedMeta = undefined;
   }
+  const window: UnifiedWindowWake | undefined =
+    unifiedMeta?.singleWindow === true
+      ? { wakeId: mintWakeId(), origin: { platform: "slack", channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) } }
+      : undefined;
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
     const trigger = displayNameOpts(names.triggerAuthor);
@@ -895,6 +902,7 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
         engagementTier,
         unified: unifiedMeta?.unified === true,
         platformLabel: unifiedMeta?.label,
+        wakeId: window?.wakeId,
         memberCount,
         backscroll: applyResolvedNames(bs, names.participants),
         handoffNote: handoffNote ?? undefined,
@@ -904,6 +912,7 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
         participants: names.participants,
       }),
       state: wakeState(ev, supervisorSentinel(generation), { oeSupervisor: true, oeUninvited: true }),
+      window,
     });
   };
 
@@ -949,7 +958,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
     unifiedMeta: (surfaceKey) => {
       const g = grainFor(surfaceKey);
-      return { unified: g.unified };
+      return { unified: g.unified, ...(g.singleWindow === true ? { singleWindow: true } : {}) };
     },
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();

@@ -8,7 +8,7 @@ import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { unifiedSupervisorEnabled } from "../memory/domain.js";
+import { unifiedSupervisorEnabled, crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
@@ -536,6 +536,7 @@ export interface UnifiedDomainAuditResult {
   readonly org: string;
   readonly domain: string;
   readonly unified: boolean;
+  readonly singleWindow: boolean;
   readonly platforms: readonly string[];
   readonly containers: readonly UnifiedContainerRow[];
   readonly agentReach: {
@@ -573,6 +574,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
   }
   const channels = [...(domain.channels ?? [])];
   const unified = channels.length > 0 && unifiedSupervisorEnabled(channels[0], domains);
+  const singleWindow = channels.length > 0 && crossSurfaceWindowEnabled(channels[0], domains);
 
   const perContainer = await Promise.all(
     channels.map(async (surfaceKey) => {
@@ -646,6 +648,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     org,
     domain: q.domain,
     unified,
+    singleWindow,
     platforms,
     containers,
     agentReach: {

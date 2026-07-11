@@ -104,6 +104,13 @@ function getDb(): DatabaseSync {
       seen_at TEXT NOT NULL,                  -- ISO-8601 (lexicographic = chronological)
       PRIMARY KEY (org_id, key)
     );
+    CREATE TABLE IF NOT EXISTS unified_wake_target (
+      org_id      TEXT NOT NULL,
+      wake_id     TEXT NOT NULL,              -- host-minted per-wake id (rides the wake envelope)
+      target_json TEXT NOT NULL,              -- serialized UnifiedWakeOrigin (opaque to the store)
+      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, wake_id)
+    );
     CREATE TABLE IF NOT EXISTS pending_actions (
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,
@@ -793,6 +800,25 @@ export const sqliteOperationalStore: OperationalStore = {
     handle.prepare("DELETE FROM event_dedupe WHERE seen_at < ?").run(cutoff);
     const info = handle.prepare("INSERT OR IGNORE INTO event_dedupe (org_id, key, seen_at) VALUES (?, ?, ?)").run(org, key, at);
     return info.changes > 0;
+  },
+
+  async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM unified_wake_target WHERE created_at < ?").run(cutoff);
+    handle
+      .prepare(
+        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = excluded.target_json, created_at = excluded.created_at`,
+      )
+      .run(org, wakeId, targetJson, at);
+  },
+
+  async getUnifiedWakeTarget(org, wakeId) {
+    const row = getDb().prepare("SELECT target_json FROM unified_wake_target WHERE org_id = ? AND wake_id = ?").get(org, wakeId) as
+      | { target_json: string }
+      | undefined;
+    return row?.target_json ?? null;
   },
 
   async addPendingAction(row) {

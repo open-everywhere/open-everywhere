@@ -86,6 +86,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      seen_at text NOT NULL,
      PRIMARY KEY (org_id, key)
    )`,
+  `CREATE TABLE IF NOT EXISTS unified_wake_target (
+     org_id      text NOT NULL,
+     wake_id     text NOT NULL,
+     target_json text NOT NULL,
+     created_at  text NOT NULL,
+     PRIMARY KEY (org_id, wake_id)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -165,6 +172,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -180,6 +188,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
+  `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -206,6 +215,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
+     USING (org_id = current_setting('app.current_org', true))
+     WITH CHECK (org_id = current_setting('app.current_org', true))`,
+  `CREATE POLICY unified_wake_target_org_isolation ON unified_wake_target
      USING (org_id = current_setting('app.current_org', true))
      WITH CHECK (org_id = current_setting('app.current_org', true))`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -819,6 +831,22 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org, key, at],
       );
       return rows.length > 0;
+    },
+
+    async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM unified_wake_target WHERE created_at < $1", [cutoff]);
+      await client.query(
+        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = EXCLUDED.target_json, created_at = EXCLUDED.created_at`,
+        [org, wakeId, targetJson, at],
+      );
+    },
+
+    async getUnifiedWakeTarget(org, wakeId) {
+      const { rows } = await client.query("SELECT target_json FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2", [org, wakeId]);
+      const r = (rows as { target_json: string }[])[0];
+      return r ? r.target_json : null;
     },
 
     async addPendingAction(row: PendingActionRow) {
