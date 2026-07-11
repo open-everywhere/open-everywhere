@@ -138,6 +138,14 @@ ok(!("drop/junk.md" in subset), "select: unticked sub-folder excluded");
 await provider.deleteTier(p, tier, silo);
 await provider.writeTier(p, tier, { "MEMORY.md": "# changed\n", "people.md": "@ana owns deploys\n" }, "restore", silo);
 
+ok((await provider.tierVersion!(partition("org-never-written"), tier, silo)) === null, "tierVersion is null for an empty/absent tier");
+const dBefore = await provider.tierVersion!(p, tier, silo);
+ok(typeof dBefore === "string" && dBefore.length > 0, "tierVersion is non-null once written");
+ok((await provider.tierVersion!(p, tier, silo)) === dBefore, "tierVersion is stable while nothing changes (the skip gate)");
+await provider.writeTier(p, tier, { "people.md": "@ana owns deploys; @bo owns memory\n" }, "bump", silo);
+const dAfter = await provider.tierVersion!(p, tier, silo);
+ok(typeof dAfter === "string" && dAfter !== dBefore, "tierVersion advances on a changed write (new blob sha changes the listing digest)");
+
 const other = partition("org-b");
 ok(Object.keys(await provider.readTier(other, tier, silo)).length === 0, "org-b can't see org-a's tier");
 

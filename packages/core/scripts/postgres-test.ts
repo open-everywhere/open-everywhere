@@ -43,6 +43,14 @@ const provider = makePostgresProvider(client);
   const both = await provider.readTier(p, WORKSPACE);
   ok(both["MEMORY.md"] === "# changed\n" && both["people.md"] === "@ana owns deploys\n", "write unions files (upsert-only)");
 
+  ok((await provider.tierVersion!(partition("never", "written"), WORKSPACE)) === null, "tierVersion is null for a never-written tier");
+  const vBefore = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vBefore === "string" && vBefore.length > 0, "tierVersion is non-null once written");
+  ok((await provider.tierVersion!(p, WORKSPACE)) === vBefore, "tierVersion is stable while nothing changes (the skip gate)");
+  await provider.writeTier(p, WORKSPACE, { "version-probe.md": "advanced\n" }, "bump");
+  const vAfter = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vAfter === "string" && vAfter !== vBefore, "tierVersion advances on a changed write");
+
   await provider.ensureTier(p, SURFACE);
   await provider.writeTier(p, SURFACE, { "MEMORY.md": "surface-only\n" }, "s");
   await provider.ensureTier(p, siloTier("payments"));

@@ -97,6 +97,16 @@ export function makePostgresProvider(client: PgClient): MemoryProvider {
       return seed;
     },
 
+    async tierVersion(p, tier) {
+      const path = tierRelDir(p, tier);
+      const { rows } = await client.query(
+        "SELECT version FROM memory_tier WHERE org_id = $1 AND tier_path = $2",
+        [p.org, path],
+      );
+      const r = rows[0] as { version: number | string } | undefined;
+      return r ? String(r.version) : null;
+    },
+
     async writeTier(p, tier, files, _message) {
       const path = tierRelDir(p, tier);
       const existing = await readRows(p, tier);

@@ -77,6 +77,13 @@ export async function readTier(p: Partition, tier: Tier): Promise<MemoryFiles> {
   return readDir(tierAbsDir(p, tier));
 }
 
+export async function tierVersion(p: Partition, tier: Tier): Promise<string | null> {
+  if (!existsSync(join(ROOT, ".git"))) return null;
+  const r = git(["log", "-1", "--format=%H", "--", storeRelDir(p, tier)], ROOT);
+  const sha = r.stdout.trim();
+  return r.ok && sha.length > 0 ? sha : null;
+}
+
 export async function ensureTier(p: Partition, tier: Tier): Promise<MemoryFiles> {
   await mkdir(ROOT, { recursive: true });
   ensureRepo();

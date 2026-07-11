@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Partition } from "./partition.js";
 import type { MemorySilo } from "./silo.js";
 import type { MemoryProvider } from "./provider.js";
@@ -74,6 +75,18 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       return seed;
     },
     writeTier: write,
+    tierVersion: async (p, tier, siloArg) => {
+      const silo = requireSilo(siloArg);
+      const repo = silo.container!;
+      const dir = repoPath(silo, p, tier);
+      const token = await deps.mintToken(repo);
+      const shas = await deps.contents.listFiles(repo, dir, branch, token, makeSelector(normalizeSelection(silo)));
+      const entries = Object.entries(shas).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      if (entries.length === 0) return null;
+      const h = createHash("sha1");
+      for (const [rel, sha] of entries) h.update(`${rel}\n${sha}\n`);
+      return h.digest("hex");
+    },
     deleteTier: async (p, tier, siloArg) => {
       const silo = requireSilo(siloArg);
       const repo = silo.container!;

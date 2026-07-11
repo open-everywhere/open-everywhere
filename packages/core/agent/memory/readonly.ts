@@ -27,3 +27,7 @@ export function hasReadOnlyBanner(md: string): boolean {
 export function lockCommand(path: string): string {
   return `chmod -R a-w '${path}'`;
 }
+
+export function unlockCommand(path: string): string {
+  return `chmod -R u+w '${path}'`;
+}
