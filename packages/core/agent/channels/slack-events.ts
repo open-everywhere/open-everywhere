@@ -4,6 +4,7 @@ import { bindFrom, slackMode, type BindableContext } from "../identity/binding.j
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { nameDropWakeEnabled, engagementTierFor } from "../memory/domain.js";
+import { supervisorGrainFor, unifiedSupervisorToken, type SupervisorGrain } from "./unified-supervisor.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -212,6 +213,8 @@ export interface SlackWakeOpts {
   readonly participants?: readonly WakeParticipant[];
   readonly mode?: "supervisor";
   readonly engagementTier?: WakeEngagementTier;
+  readonly unified?: boolean;
+  readonly platformLabel?: string;
 }
 
 function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch", opts?: SlackWakeOpts): NormalizedWake {
@@ -222,11 +225,17 @@ function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "
     reason: isEdit ? "message-edited" : ev.threadTs ? "thread-activity" : "channel-activity",
     addressing,
     locus: {
-      channel: { id: ev.channelId, type: ev.channelType, memberCount: opts?.memberCount },
+      channel: {
+        id: ev.channelId,
+        type: ev.channelType,
+        memberCount: opts?.memberCount,
+        ...(opts?.unified ? { platform: "slack", ...(opts.platformLabel ? { platformLabel: opts.platformLabel } : {}) } : {}),
+      },
       thread: ev.threadTs ? { ts: ev.threadTs } : undefined,
     },
     participants: opts?.participants,
     engagementTier: opts?.engagementTier,
+    unifiedDisclosure: opts?.unified === true ? true : undefined,
     handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts?.backscroll,
     trigger: mkMessageTrigger(
@@ -835,6 +844,7 @@ export interface SupervisorRouteDeps {
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
   readonly engagementTier?: (surfaceKey: string) => WakeEngagementTier;
+  readonly unifiedMeta?: (surfaceKey: string) => { unified: boolean; label?: string };
 }
 
 export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: SupervisorRouteDeps): Promise<RouteOutcome> {
@@ -868,6 +878,12 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
   } catch {
     engagementTier = undefined;
   }
+  let unifiedMeta: { unified: boolean; label?: string } | undefined;
+  try {
+    unifiedMeta = deps.unifiedMeta?.(p.surfaceKey);
+  } catch {
+    unifiedMeta = undefined;
+  }
   const doWake = async (token: string, generation: number, bs: readonly WakeMessageInput[], handoffNote: string | null | undefined) => {
     const names = await resolveWakeNames(ev.userId, bs, deps.resolveProfile);
     const trigger = displayNameOpts(names.triggerAuthor);
@@ -877,6 +893,8 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
       message: renderWakeMessage(ev, deps.now, {
         mode: "supervisor",
         engagementTier,
+        unified: unifiedMeta?.unified === true,
+        platformLabel: unifiedMeta?.label,
         memberCount,
         backscroll: applyResolvedNames(bs, names.participants),
         handoffNote: handoffNote ?? undefined,
@@ -917,34 +935,43 @@ async function distillRotationHandoff(scope: string, channelId: string, outgoing
 }
 
 export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
-  const rotateWithHandoff = async (org: string, surfaceKey: string, channelId: string, atIso: string, outgoing: ChannelSessionRow | null) => {
-    const note = await distillRotationHandoff(surfaceKey, channelId, outgoing);
-    const token = supervisorToken(channelId, (outgoing?.generation ?? 0) + 1);
-    return getOperationalStore().rotateChannelSession(org, surfaceKey, token, atIso, note);
+  const grainFor = (surfaceKey: string): SupervisorGrain => supervisorGrainFor(surfaceKey, getConfig().loadDomains());
+  const tokenFor = (grain: SupervisorGrain, channelId: string, gen: number): string =>
+    grain.unified && grain.domainName !== undefined ? unifiedSupervisorToken(grain.domainName, gen) : supervisorToken(channelId, gen);
+  const rotateWithHandoff = async (org: string, realSurfaceKey: string, channelId: string, atIso: string, outgoing: ChannelSessionRow | null, grain: SupervisorGrain) => {
+    const note = await distillRotationHandoff(realSurfaceKey, channelId, outgoing);
+    const token = tokenFor(grain, channelId, (outgoing?.generation ?? 0) + 1);
+    return getOperationalStore().rotateChannelSession(org, grain.registryKey, token, atIso, note);
   };
   return {
     confirmInternalWithMeta: confirmChannelInternalWithMeta,
     resolveProfile: liveResolveProfile,
     engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
+    unifiedMeta: (surfaceKey) => {
+      const g = grainFor(surfaceKey);
+      return { unified: g.unified };
+    },
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
-      const existing = await store.getChannelSession(org, surfaceKey);
+      const grain = grainFor(surfaceKey);
+      const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const token = supervisorToken(channelId, 1);
-        const row = await store.rotateChannelSession(org, surfaceKey, token, atIso);
+        const token = tokenFor(grain, channelId, 1);
+        const row = await store.rotateChannelSession(org, grain.registryKey, token, atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
-        const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing);
+        const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing, grain);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
-    touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, surfaceKey, atIso),
+    touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, grainFor(surfaceKey).registryKey, atIso),
     fetchBackscroll: (input) => fetchWakeEnvelopeBackscroll(input),
     async forceRotate(org, surfaceKey, channelId, atIso) {
-      const existing = await getOperationalStore().getChannelSession(org, surfaceKey);
-      const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing);
+      const grain = grainFor(surfaceKey);
+      const existing = await getOperationalStore().getChannelSession(org, grain.registryKey);
+      const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing, grain);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),

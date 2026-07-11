@@ -1010,6 +1010,25 @@ registerConfig({
   ok(wakes[0].message.includes('trust="peer"'), "envelope trigger message is trust=peer (default-observe)");
   ok(wakes[0].message.includes('member-count="12"'), "member count threaded into the envelope's <channel member-count>");
   ok(getOrCreateCalls === 1 && touchCalls === 1, "session created-or-fetched once, and touched after the wake");
+  ok(!wakes[0].message.includes("platform="), "default supervisor wake has NO <channel platform> attr (byte-identical)");
+  ok(!wakes[0].message.includes("Cross-surface disclosure"), "default supervisor wake has NO P5 disclosure sentence (byte-identical)");
+
+  {
+    const uw: Array<{ message: string }> = [];
+    const out2 = await routeSupervisorEvent(
+      supEv(),
+      supDeps(true, 12, {
+        unifiedMeta: () => ({ unified: true }),
+        wake: async (input) => {
+          uw.push(input);
+        },
+      }),
+    );
+    ok(out2.woke && uw.length === 1, "unified path: supervisor wake still fires");
+    ok(uw[0].message.includes('<channel platform="slack" id="C_SUP"'), "unified wake stamps the <channel platform> surface address");
+    ok(uw[0].message.includes("Cross-surface disclosure:"), "unified wake appends the P5 advisory disclosure preamble");
+    ok(uw[0].message.includes("[channel-watch]"), "unified wake still leads with the [channel-watch] framing (disclosure never replaces it)");
+  }
 
   wakes.length = 0;
   const editEv = parseMessageEvent({

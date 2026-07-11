@@ -20,6 +20,7 @@ import {
 } from "../agent/channels/unified-supervisor.js";
 import { isSupervisorSession } from "../agent/model/routing.js";
 import { renderWakeEnvelope, type WakeEnvelopeInput } from "../agent/channels/wake-envelope.js";
+import { renderWake, type NormalizedWake } from "../agent/channels/normalized-wake.js";
 import {
   definePrincipal,
   resolvePrincipal,
@@ -195,5 +196,21 @@ throws(
   () => assertPrincipalsValid([rowan, definePrincipal({ name: "Other", ids: { github: "other" }, email: "T@Example.com" })]),
   "duplicate email (case-insensitive) ⇒ fail loud",
 );
+
+const cw = (unifiedDisclosure?: boolean): NormalizedWake => ({
+  platform: "slack",
+  reason: "channel-activity",
+  addressing: "channel-watch",
+  ...(unifiedDisclosure ? { unifiedDisclosure } : {}),
+  locus: { channel: { id: "C_PAY", type: "channel" } },
+  trigger: { kind: "message", message: { from: "human", author: "Sarah", id: "1.1", sentAt: "2026-03-15T09:29:00.000Z", trust: "peer", trigger: true, body: "hi" } },
+});
+const clock = () => "2026-03-15T09:30:00.000Z";
+const plain = renderWake(cw(), clock).message;
+const disclosed = renderWake(cw(true), clock).message;
+ok(!plain.includes("Cross-surface disclosure"), "channel-watch WITHOUT unifiedDisclosure is byte-identical (no disclosure sentence)");
+ok(disclosed.includes("Cross-surface disclosure:"), "unifiedDisclosure appends the P5 advisory sentence");
+ok(disclosed.includes("paraphrase-and-point"), "the disclosure sentence carries the paraphrase-and-point guidance");
+ok(disclosed.startsWith("[channel-watch]"), "the disclosure sentence never replaces the channel-watch framing (still leads with it)");
 
 console.log(`unified-supervisor-test: ${n} assertions passed`);

@@ -35,6 +35,7 @@ export interface NormalizedWake {
   readonly addressing: WakeAddressing;
   readonly containerNoun?: string;
   readonly engagementTier?: WakeEngagementTier;
+  readonly unifiedDisclosure?: boolean;
   readonly locus: WakeLocus;
   readonly participants?: readonly WakeParticipant[];
   readonly handoff?: WakeHandoff;
@@ -112,7 +113,19 @@ function engagementTierLine(tier: WakeEngagementTier | undefined, containerNoun:
   }
 }
 
-function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNoun = "channel", tier?: WakeEngagementTier): string {
+function unifiedDisclosureLine(enabled: boolean | undefined): string {
+  if (!enabled) return "";
+  return (
+    ` Cross-surface disclosure: you are one team's standing session across SEVERAL surfaces (each ` +
+    `wake names its own via the <channel platform> address). Content you saw on one surface is context ` +
+    `for judgment everywhere, but QUOTE it only into surfaces at equal-or-higher privacy — when unsure, ` +
+    `paraphrase-and-point ("as discussed in #payments") rather than quoting a private line verbatim into ` +
+    `a more public surface. The magic is that you were in the room; it is not licence to move a private ` +
+    `sentence to a less-private place.`
+  );
+}
+
+function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNoun = "channel", tier?: WakeEngagementTier, unifiedDisclosure?: boolean): string {
   return (
     `[channel-watch]${isEdit ? " (edited message)" : ""} You were not mentioned — this message reached ` +
     `you because you are this ${containerNoun}'s standing session: you see its activity so you can watch, ` +
@@ -133,6 +146,7 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
     `${NO_REPLY_SENTINEL} turns above means the earlier messages weren't for you, not that this one ` +
     `isn't. ${PREFER_NO_REPLY_TOOL}` +
     engagementTierLine(tier, containerNoun) +
+    unifiedDisclosureLine(unifiedDisclosure) +
     handoffLine(hasHandoff)
   );
 }
@@ -171,7 +185,7 @@ function judgedPreamble(nw: NormalizedWake): string {
     case "thread-follow":
       return threadFollowPreamble(isEdit, hasHandoff);
     case "channel-watch":
-      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun, nw.engagementTier);
+      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun, nw.engagementTier, nw.unifiedDisclosure);
     case "name-drop": {
       if (!nw.nameDrop) throw new Error("renderWake: name-drop addressing requires a nameDrop field");
       return nameDropPreamble(nw.nameDrop.botName, nw.nameDrop.followUp);
