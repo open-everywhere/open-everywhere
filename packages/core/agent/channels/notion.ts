@@ -1,6 +1,7 @@
 import { defineChannel, POST } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { finalMessageActionForTurn, supervisorTextDelivery, isSupervisorProseLeak } from "./slack-events.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";
@@ -15,6 +16,7 @@ import {
   shouldRotate,
   type NotionSupervisorDeps,
   type NotionSupervisorDispatch,
+  type NotionWakeMessage,
 } from "./notion-supervisor.js";
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
 
@@ -126,8 +128,16 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const botUser = resolveBotUser(apiKey ?? "");
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
+        const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
+        const trustOf = (m: NotionWakeMessage) =>
+          m.from === "human" && m.authorId ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId, isBot: false }) : ("relay" as const);
         await handleNotionSupervisorDispatch(
-          { ...d, unified: notionGrainFor(d.surfaceKey).unified },
+          {
+            ...d,
+            unified: notionGrainFor(d.surfaceKey).unified,
+            trigger: { ...d.trigger, trust: trustOf(d.trigger) },
+            threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
+          },
           liveNotionSupervisorDeps(send as unknown as SendFn),
         );
         await appendAudit({

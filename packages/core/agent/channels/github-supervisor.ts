@@ -4,6 +4,7 @@ import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
 import type { UnifiedWindowWake } from "./unified-window.js";
+import type { WakeTrust } from "./wake-envelope.js";
 
 export function githubSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -51,6 +52,7 @@ export interface GitHubSupervisorWakeInput {
     readonly authorLogin?: string;
     readonly sentAt: string;
     readonly text: string;
+    readonly trust?: WakeTrust;
   };
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
@@ -87,7 +89,7 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
       authorId: input.trigger.authorLogin,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: "peer",
+      trust: input.trigger.trust ?? "peer",
       body: input.trigger.text,
     }),
   };

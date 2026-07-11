@@ -1,7 +1,7 @@
 import { callSlackApi } from "eve/channels/slack";
 import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
 import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
-import { clusterBackscroll, type NormalizedMessage } from "./backscroll-cluster.js";
+import { clusterBackscroll, type NormalizedMessage, type BackscrollTrustFor } from "./backscroll-cluster.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 
 export { WAKE_BACKSCROLL_MAX } from "./context-render.js";
@@ -253,12 +253,13 @@ export async function fetchSlackBackscrollWindow(
 export async function fetchWakeEnvelopeBackscroll(
   input: WakeEnvelopeBackscrollInput,
   deps: WakeBackscrollDeps = liveDeps,
+  trustFor?: BackscrollTrustFor,
 ): Promise<WakeMessageInput[]> {
   try {
     const window = await fetchSlackBackscrollWindow(input, deps);
     if (window.length === 0) return [];
     const nowMs = Number.parseFloat(input.ts) * 1000;
-    return clusterBackscroll(window, nowMs);
+    return clusterBackscroll(window, nowMs, undefined, trustFor);
   } catch {
     return [];
   }

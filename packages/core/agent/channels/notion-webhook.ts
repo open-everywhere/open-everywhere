@@ -175,10 +175,11 @@ async function loadThreadSiblings(
       .map((c) => {
         const authorId = c.created_by?.id;
         const isSelf = Boolean(authorId && botUserId && authorId === botUserId);
+        const isPerson = c.created_by?.type === "person";
         return {
           from: isSelf ? ("self" as const) : ("human" as const),
           id: c.id ?? "",
-          authorId: isSelf ? undefined : authorId,
+          authorId: isSelf || !isPerson ? undefined : authorId,
           sentAt: c.created_time ?? "",
           text: richTextToPlainText(c.rich_text),
         };
