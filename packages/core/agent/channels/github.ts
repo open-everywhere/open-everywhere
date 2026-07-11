@@ -133,6 +133,10 @@ function githubGrainFor(surfaceKey: string): SupervisorGrain {
   }
 }
 
+export function shouldSuppressNativeMention(singleWindow: boolean, isPrivate: boolean | undefined): boolean {
+  return singleWindow && isPrivate === true;
+}
+
 function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent, receive?: RouteHandlerArgs["receive"]): GitHubSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -194,11 +198,13 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
   if (!githubAmbientEnabled(surfaceKey)) return;
-  const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME);
+  const singleWindow = githubGrainFor(surfaceKey).singleWindow === true;
+  const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME, { treatMentionAsDirect: singleWindow });
   if (cls.addressing === "drop") {
     slog(`comment on ${surfaceKey}#${ev.issueNumber} dropped: ${cls.reason}`);
     return;
   }
+  const directMention = cls.addressing === "direct";
   const auth = buildGitHubAuth({
     owner: ev.owner,
     repo: ev.repo,
@@ -236,19 +242,19 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
       },
       engagementTier: githubEngagementTier(surfaceKey),
       unified: githubGrainFor(surfaceKey).unified,
-      window:
-        githubGrainFor(surfaceKey).singleWindow === true
-          ? ({
-              wakeId: mintWakeId(),
-              origin: {
-                platform: "github",
-                owner: ev.owner,
-                repo: ev.repo,
-                issueNumber: ev.issueNumber,
-                ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
-              },
-            } satisfies UnifiedWindowWake)
-          : undefined,
+      directMention,
+      window: singleWindow
+        ? ({
+            wakeId: mintWakeId(),
+            origin: {
+              platform: "github",
+              owner: ev.owner,
+              repo: ev.repo,
+              issueNumber: ev.issueNumber,
+              ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
+            },
+          } satisfies UnifiedWindowWake)
+        : undefined,
     },
     liveGitHubSupervisorDeps(send, ev, receive),
   );
@@ -273,6 +279,10 @@ const native: GitHubChannel = githubChannel({
   botName: BOT_NAME,
   onComment: (ctx, comment) => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
+    const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
+    if (shouldSuppressNativeMention(githubGrainFor(surfaceKey).singleWindow === true, ctx.repository.private)) {
+      return null;
+    }
     const auth = buildGitHubAuth({
       owner: ctx.repository.owner,
       repo: ctx.repository.name,

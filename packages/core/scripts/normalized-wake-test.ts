@@ -217,6 +217,19 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 }
 
 {
+  const nw: NormalizedWake = { platform: "github", reason: "mention", addressing: "direct-mention", containerNoun: "repo", unifiedDisclosure: true, wakeId: "wk-9", locus: { channel: { id: "acme/widgets", platform: "github" }, thread: { ts: "#42" } }, trigger: trig("does this match Slack?", { mention: true }) };
+  const m = renderWake(nw, NOW).message;
+  ok(m.startsWith("[direct]"), "direct-mention leads with the addressed preamble");
+  ok(m.includes("addressed to you and is asking for a response"), "direct-mention says it is addressed and owes a reply (not the high-bar watch framing)");
+  ok(m.includes(`<wake reason="mention"`) && m.includes(`wake-id="wk-9"`), "direct-mention keeps the envelope AND the wake-id (unlike raw 'direct', which emits neither)");
+  ok(m.includes(`mention="true"`), "the trigger renders the @mention flag");
+  ok(m.includes("Cross-surface disclosure:"), "the unified disclosure rides the addressed preamble");
+  ok(count(m, UNTRUSTED_OPEN) === 1, "the body is untrusted-wrapped exactly once (W1 holds on the addressed path)");
+  const raw = renderWake({ ...nw, addressing: "direct" }, NOW).message;
+  ok(!raw.includes("<wake") && !raw.includes("wk-9"), "raw 'direct' emits no envelope/wake-id (why direct-mention exists for the unified window)");
+}
+
+{
   const nd = (followUp: NonNullable<NormalizedWake["nameDrop"]>["followUp"]): NormalizedWake => ({ platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { botName: "Bot", followUp }, trigger: trig("hi") });
   ok(renderWake(nd("follows-on-reply"), NOW).message.startsWith(`[name-drop] A top-level channel message said your name ("Bot")`), "name-drop: core text is Slack's");
   ok(renderWake(nd("follows-on-reply"), NOW).message.includes("you will be following the thread from then on"), "name-drop: follows-on-reply closing sentence");

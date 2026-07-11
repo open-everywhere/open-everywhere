@@ -20,7 +20,7 @@ export type NormalizedWakeTrigger = {
   readonly message: WakeMessageInput;
 };
 
-export type WakeAddressing = "direct" | "thread-follow" | "channel-watch" | "name-drop";
+export type WakeAddressing = "direct" | "direct-mention" | "thread-follow" | "channel-watch" | "name-drop";
 
 export type WakeEngagementTier = "aggressive" | "neutral" | "reserved";
 
@@ -152,6 +152,18 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
   );
 }
 
+function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean): string {
+  return (
+    `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
+    `you and is asking for a response, so answer it. Reply with what they need; you post by naming ` +
+    `this wake to your reply tool, and only that reply is posted (your turn-final text is not). Stay ` +
+    `silent only if the mention turns out to be purely social or needs nothing from you — then output ` +
+    `exactly ${NO_REPLY_SENTINEL} and nothing else. ${PREFER_NO_REPLY_TOOL}` +
+    unifiedDisclosureLine(unifiedDisclosure) +
+    handoffLine(hasHandoff)
+  );
+}
+
 function nameDropFollowUp(followUp: NonNullable<NormalizedWake["nameDrop"]>["followUp"]): string {
   switch (followUp) {
     case "follows-on-reply":
@@ -183,6 +195,8 @@ function judgedPreamble(nw: NormalizedWake): string {
   const isEdit = Boolean(nw.trigger.message.edited);
   const hasHandoff = nw.handoff !== undefined;
   switch (nw.addressing) {
+    case "direct-mention":
+      return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure);
     case "thread-follow":
       return threadFollowPreamble(isEdit, hasHandoff);
     case "channel-watch":

@@ -14,7 +14,7 @@ export function githubSupervisorToken(owner: string, repo: string, generation: n
   return `github:${owner}/${repo}:${githubSupervisorSentinel(generation)}`;
 }
 
-export type GitHubAmbientAddressing = "channel-watch" | "drop";
+export type GitHubAmbientAddressing = "direct" | "channel-watch" | "drop";
 
 export interface GitHubAmbientClassification {
   readonly addressing: GitHubAmbientAddressing;
@@ -28,7 +28,11 @@ export interface GitHubAmbientComment {
   readonly repoPrivate?: boolean;
 }
 
-export function classifyGitHubAmbientComment(c: GitHubAmbientComment, botSlug: string | undefined): GitHubAmbientClassification {
+export function classifyGitHubAmbientComment(
+  c: GitHubAmbientComment,
+  botSlug: string | undefined,
+  opts?: { treatMentionAsDirect?: boolean },
+): GitHubAmbientClassification {
   const slug = botSlug?.trim();
   if (!slug) return { addressing: "drop", reason: "no bot slug configured — fail-closed loop guard" };
   if (c.authorType === "Bot") return { addressing: "drop", reason: "bot-authored comment (loop guard)" };
@@ -36,6 +40,9 @@ export function classifyGitHubAmbientComment(c: GitHubAmbientComment, botSlug: s
     return { addressing: "drop", reason: "self-authored comment (our own reply)" };
   }
   if (githubBotMentioned(c.body, slug, { login: c.authorLogin, type: c.authorType })) {
+    if (opts?.treatMentionAsDirect && c.repoPrivate === true) {
+      return { addressing: "direct", reason: "bot @mention on a single-window private repo — answered by the unified window" };
+    }
     return { addressing: "drop", reason: "bot @mention — owned by the native githubChannel path" };
   }
   if (c.repoPrivate !== true) return { addressing: "drop", reason: "repo not positively private — fail-closed (no public-repo ambient)" };
@@ -59,9 +66,11 @@ export interface GitHubSupervisorWakeInput {
   readonly handoffFromGeneration?: number;
   readonly unified?: boolean;
   readonly wakeId?: string;
+  readonly directMention?: boolean;
 }
 
 export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): NormalizedWake {
+  const directMention = input.directMention === true;
   const contextLines: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: `#${input.issueNumber}`, text: `issue/PR #${input.issueNumber}: ${input.issueTitle}` }]
     : undefined;
@@ -70,10 +79,10 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
     : undefined;
   return {
     platform: "github",
-    reason: "channel-activity",
-    addressing: "channel-watch",
+    reason: directMention ? "mention" : "channel-activity",
+    addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "repo",
-    engagementTier: input.engagementTier,
+    engagementTier: directMention ? undefined : input.engagementTier,
     unifiedDisclosure: input.unified === true ? true : undefined,
     wakeId: input.wakeId,
     locus: {
@@ -89,7 +98,8 @@ export function buildGitHubSupervisorWake(input: GitHubSupervisorWakeInput): Nor
       authorId: input.trigger.authorLogin,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? "peer",
+      trust: input.trigger.trust ?? (directMention ? "principal" : "peer"),
+      mention: directMention ? true : undefined,
       body: input.trigger.text,
     }),
   };
@@ -192,6 +202,7 @@ export interface GitHubSupervisorDispatch {
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
+  readonly directMention?: boolean;
 }
 
 export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch, deps: GitHubSupervisorDeps): Promise<void> {
@@ -208,6 +219,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
       engagementTier: d.engagementTier,
       unified: d.unified,
       wakeId: d.window?.wakeId,
+      directMention: d.directMention,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

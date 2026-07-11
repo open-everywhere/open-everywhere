@@ -48,6 +48,13 @@ ok(classifyGitHubAmbientComment({ ...base, authorType: "User", authorLogin: `${S
 ok(classifyGitHubAmbientComment({ ...base, repoPrivate: false }, SLUG).addressing === "drop", "PUBLIC repo -> DROP (no drive-by ambient wakes)");
 ok(classifyGitHubAmbientComment({ ...base, repoPrivate: undefined }, SLUG).addressing === "drop", "UNKNOWN repo privacy -> DROP (fail closed)");
 
+const mention = { ...base, body: `hey @${SLUG} does this match what we agreed in Slack?` };
+ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true }).addressing === "direct", "single-window @mention on a PRIVATE repo -> direct (the unified window answers it, native suppressed)");
+ok(classifyGitHubAmbientComment(mention, SLUG).addressing === "drop", "the SAME @mention WITHOUT treatMentionAsDirect -> DROP (byte-identical default; native path owns it)");
+ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: false }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention on a PUBLIC repo -> DROP (native NOT suppressed there — no double-handle)");
+ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: undefined }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention on UNKNOWN-privacy repo -> DROP (fail closed)");
+ok(classifyGitHubAmbientComment(base, SLUG, { treatMentionAsDirect: true }).addressing === "channel-watch", "a NON-mention comment is unaffected by treatMentionAsDirect -> channel-watch (judged)");
+
 const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:51:00Z", text: "should we bump the retry budget here?" };
 {
   const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Flaky retries on cold start", trigger, engagementTier: "reserved" });
@@ -83,6 +90,29 @@ const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:
   ok(!plain.message.includes("Cross-surface disclosure"), "per-repo wake carries NO disclosure sentence");
   const explicitOff = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, trigger, unified: false }), NOW);
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-repo wake (flag-off invariant)");
+}
+
+{
+  const wakeId = "wk-abc-123";
+  const nw = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, unified: true, directMention: true, wakeId });
+  const { message } = renderWake(nw, NOW);
+  ok(message.startsWith("[direct]"), "direct-mention leads with the ADDRESSED preamble, not [channel-watch]");
+  ok(!message.includes("[channel-watch]"), "direct-mention does NOT use the silence-biased watch preamble");
+  ok(message.includes("addressed to you and is asking for a response"), "direct-mention tells the supervisor it is addressed and owes a reply");
+  ok(!message.includes("the bar to reply is high"), "direct-mention drops the watch preamble's high-bar silence framing");
+  ok(message.includes(`<wake reason="mention"`), "direct-mention keeps the full judged envelope (reason=\"mention\")");
+  ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
+  ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
+  ok(message.includes(`<channel platform="github" id="${OWNER}/${REPO}">`), "the surface address rides the unified addressed wake");
+  ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
+  ok(message.includes(UNTRUSTED_OPEN), "the comment body is still untrusted-wrapped by the envelope (W1 holds on the addressed path)");
+}
+{
+  const off = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved", directMention: false }), NOW);
+  const plain = renderWake(buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 42, issueTitle: "Retry budget", trigger, engagementTier: "reserved" }), NOW);
+  ok(off.message === plain.message, "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
+  ok(JSON.stringify(off.context) === JSON.stringify(plain.context), "directMention:false context is byte-identical too");
+  ok(off.message.startsWith("[channel-watch]"), "the flag-off wake is still the silence-biased channel-watch ambient wake");
 }
 
 {
@@ -134,6 +164,24 @@ interface WakeCapture { token: string; message: string; context: readonly string
   await handleGitHubSupervisorDispatch(dispatch({ unified: true }), deps);
   ok(wakes[1]!.message.includes(`<channel platform="github" id="${OWNER}/${REPO}">`), "a unified dispatch stamps the surface address on the delivered wake");
   ok(!wakes[0]!.message.includes("platform="), "the non-unified dispatch's wake stays unstamped (byte-identical off)");
+}
+
+{
+  const token = "oe-dom:acme-eng:oe-sup:g1";
+  const session: GitHubSupervisorSession = { token, generation: 1, freshGeneration: false, handoffNote: null };
+  const wakeId = "wk-dispatch-1";
+  const window = { wakeId, origin: { platform: "github" as const, owner: OWNER, repo: REPO, issueNumber: 42, installationId: 4242 } };
+  let captured: { message: string; window: unknown } | undefined;
+  const deps: GitHubSupervisorDeps = {
+    getOrCreateSession: async () => session,
+    wake: async (w) => { captured = { message: w.message, window: w.window }; },
+    now: NOW,
+  };
+  await handleGitHubSupervisorDispatch(dispatch({ unified: true, directMention: true, window }), deps);
+  ok(captured !== undefined, "the single-window direct @mention dispatches a wake");
+  ok(captured!.message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
+  ok(captured!.message.includes(`wake-id="${wakeId}"`), "the delivered wake renders the wake-id (the reply tool's routing key)");
+  ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window (its wiring diverts into the unified channel + registers the reply-target map)");
 }
 
 ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
@@ -202,6 +250,12 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
   const githubChannelModule = (await import("../agent/channels/github.js")).default as unknown as {
     adapter: Record<string, (data: unknown, ctx: unknown) => Promise<void>>;
   };
+
+  const { shouldSuppressNativeMention } = await import("../agent/channels/github.js");
+  ok(shouldSuppressNativeMention(true, true) === true, "single-window PRIVATE repo -> native mention SUPPRESSED (the unified window answers it instead)");
+  ok(shouldSuppressNativeMention(true, false) === false, "single-window PUBLIC repo -> native KEPT (ambient drops mentions there — no gap, no reply lost)");
+  ok(shouldSuppressNativeMention(true, undefined) === false, "single-window UNKNOWN-privacy -> native KEPT (fail-soft to today's native path)");
+  ok(shouldSuppressNativeMention(false, true) === false, "NON-single-window repo -> native KEPT (byte-identical: the native mention session engages exactly as today)");
   const turnStarted = (ctx: unknown) => githubChannelModule.adapter["turn.started"]!({}, ctx);
   const completed = (message: string | null, ctx: unknown) =>
     githubChannelModule.adapter["message.completed"]!({ finishReason: "stop", message }, ctx);
