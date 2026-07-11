@@ -4,6 +4,7 @@ import { pollUntil } from "./poll.js";
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2022-06-28";
+const NOTION_COMMENT_VERSION = "2026-03-11";
 
 export interface NotionComment {
   readonly id: string;
@@ -32,19 +33,26 @@ export function buildCommentCreatedEvent(input: CommentCreatedForgeInput): Recor
   };
 }
 
+export function buildBlockCommentBody(blockId: string, text: string): Record<string, unknown> {
+  return { parent: { block_id: blockId }, rich_text: [{ text: { content: text } }] };
+}
+
 export class NotionDriver {
   constructor(private readonly cfg: NotionAmbientConfig) {}
 
   get botUserId(): string {
     return this.cfg.botUserId;
   }
-  get anchorOnTopic(): string {
+  get webhookSecret(): string | undefined {
+    return this.cfg.webhookSecret;
+  }
+  get anchorOnTopic(): string | undefined {
     return this.cfg.anchorOnTopic;
   }
-  get anchorOnTopic2(): string {
+  get anchorOnTopic2(): string | undefined {
     return this.cfg.anchorOnTopic2;
   }
-  get anchorOffTopic(): string {
+  get anchorOffTopic(): string | undefined {
     return this.cfg.anchorOffTopic;
   }
 
@@ -59,8 +67,7 @@ export class NotionDriver {
     return (await res.json()) as Record<string, unknown>;
   }
 
-  async pageComments(): Promise<readonly NotionComment[]> {
-    const json = await this.api(`/comments?block_id=${encodeURIComponent(this.cfg.pageId)}`);
+  private static mapComments(json: Record<string, unknown>): readonly NotionComment[] {
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
     return results.map((c) => {
       const rich = Array.isArray(c.rich_text) ? (c.rich_text as { plain_text?: string }[]) : [];
@@ -75,12 +82,47 @@ export class NotionDriver {
     });
   }
 
+  async pageComments(): Promise<readonly NotionComment[]> {
+    return NotionDriver.mapComments(await this.api(`/comments?block_id=${encodeURIComponent(this.cfg.pageId)}`));
+  }
+
+  async blockComments(blockId: string): Promise<readonly NotionComment[]> {
+    return NotionDriver.mapComments(await this.api(`/comments?block_id=${encodeURIComponent(blockId)}`));
+  }
+
   async discussionOf(commentId: string): Promise<string | undefined> {
     return (await this.pageComments()).find((c) => c.id === commentId)?.discussionId;
   }
 
   isBotComment(c: NotionComment): boolean {
     return c.authorId === this.cfg.botUserId;
+  }
+
+  async pageBlocks(): Promise<readonly string[]> {
+    const json = await this.api(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children?page_size=50`);
+    const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
+    return results.map((b) => (typeof b.id === "string" ? b.id : "")).filter((id) => id.length > 0);
+  }
+
+  async createBlockDiscussion(blockId: string, text: string): Promise<{ commentId: string; discussionId: string }> {
+    const res = await fetch(`${NOTION_API}/comments`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.cfg.driverKey}`,
+        "notion-version": NOTION_COMMENT_VERSION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(buildBlockCommentBody(blockId, text)),
+    });
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => "")).slice(0, 200);
+      throw new Error(`notion POST /comments (block ${blockId}) → ${res.status}${detail ? ` (${detail})` : ""}`);
+    }
+    const json = (await res.json()) as Record<string, unknown>;
+    return {
+      commentId: typeof json.id === "string" ? json.id : "",
+      discussionId: typeof json.discussion_id === "string" ? json.discussion_id : "",
+    };
   }
 
   async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number }): Promise<NotionComment> {
@@ -93,7 +135,10 @@ export class NotionDriver {
   async forgeCommentCreated(targetUrl: string, commentId: string, opts: { signed?: boolean } = {}): Promise<{ status: number }> {
     const rawBody = JSON.stringify(buildCommentCreatedEvent({ workspaceId: this.cfg.workspaceId, commentId, pageId: this.cfg.pageId }));
     const headers: Record<string, string> = { "content-type": "application/json" };
-    if (opts.signed !== false) headers["x-notion-signature"] = signNotionBody(this.cfg.webhookSecret, rawBody);
+    if (opts.signed !== false) {
+      if (!this.cfg.webhookSecret) throw new Error("forgeCommentCreated(signed) requires E2E_NOTION_WEBHOOK_SECRET — the forge legs must gate on it");
+      headers["x-notion-signature"] = signNotionBody(this.cfg.webhookSecret, rawBody);
+    }
     const res = await fetch(`${targetUrl.replace(/\/+$/, "")}/eve/v1/notion`, { method: "POST", headers, body: rawBody });
     return { status: res.status };
   }

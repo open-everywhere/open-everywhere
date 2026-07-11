@@ -231,7 +231,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
     github: [ENV.githubDriverToken, ENV.githubRepo, ENV.githubAppSlug, ENV.githubIssue],
     linear: [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle],
-    notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionAmbientWebhookSecret, ENV.notionBotUserId, ENV.notionWorkspaceId, ENV.notionAnchorOnTopic, ENV.notionAnchorOnTopic2, ENV.notionAnchorOffTopic],
+    notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionBotUserId, ENV.notionWorkspaceId],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
@@ -398,7 +398,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 
 {
   const notMiss = resolveNotionAmbient({});
-  ok(!notMiss.ok && notMiss.missing.length === 8 && notMiss.missing.includes(ENV.notionDriverKey), "notionAmbient half reports its eight required vars missing in an empty env");
+  ok(!notMiss.ok && notMiss.missing.length === 4 && notMiss.missing.includes(ENV.notionDriverKey), "notionAmbient half reports its four CORE required vars missing in an empty env (forge secret + anchors are optional)");
+  const notCore = resolveNotionAmbient({
+    [ENV.notionDriverKey]: "secret_x",
+    [ENV.notionAmbientPageId]: "page-uuid",
+    [ENV.notionBotUserId]: "bot-user-uuid",
+    [ENV.notionWorkspaceId]: "ws-uuid",
+  });
+  ok(notCore.ok && notCore.cfg.webhookSecret === undefined && notCore.cfg.anchorOnTopic === undefined, "notionAmbient resolves on the four core vars alone; forge secret + anchors stay undefined");
   const notFull = resolveNotionAmbient({
     [ENV.notionDriverKey]: "secret_x",
     [ENV.notionAmbientPageId]: "page-uuid",
@@ -409,8 +416,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.notionAnchorOnTopic2]: "c-ontopic-2",
     [ENV.notionAnchorOffTopic]: "c-offtopic",
   });
-  ok(notFull.ok && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic", "notionAmbient cfg carries the three anchor ids (two on-topic + one off-topic)");
+  ok(notFull.ok && notFull.cfg.webhookSecret === "verif-token" && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic", "notionAmbient cfg carries the forge secret + the three anchor ids when they're set");
   ok(notFull.ok && notFull.cfg.botUserId === "bot-user-uuid" && notFull.cfg.workspaceId === "ws-uuid", "notionAmbient cfg carries bot user id (self-loop) + workspace id (envelope)");
+
+  const { buildBlockCommentBody } = await import("./e2e/notion-driver.js");
+  const bc = buildBlockCommentBody("block-123", "hi there") as { parent?: { block_id?: string }; rich_text?: { text?: { content?: string } }[] };
+  ok(bc.parent?.block_id === "block-123", "buildBlockCommentBody anchors on parent.block_id (mints a fresh per-block discussion)");
+  ok(bc.rich_text?.[0]?.text?.content === "hi there", "buildBlockCommentBody carries the comment text as one rich-text item");
 
   const { signNotionBody, buildCommentCreatedEvent } = await import("./e2e/notion-driver.js");
   const { verifyNotionSignature } = await import("../agent/channels/notion-api.js");

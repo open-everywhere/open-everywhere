@@ -140,12 +140,12 @@ export interface LinearDriverConfig {
 export interface NotionAmbientConfig {
   readonly driverKey: string;
   readonly pageId: string;
-  readonly webhookSecret: string;
   readonly botUserId: string;
   readonly workspaceId: string;
-  readonly anchorOnTopic: string;
-  readonly anchorOnTopic2: string;
-  readonly anchorOffTopic: string;
+  readonly webhookSecret?: string;
+  readonly anchorOnTopic?: string;
+  readonly anchorOnTopic2?: string;
+  readonly anchorOffTopic?: string;
 }
 
 export type Resolved<T> =
@@ -263,20 +263,20 @@ export function resolveLinear(env: Env = process.env): Resolved<LinearDriverConf
 }
 
 export function resolveNotionAmbient(env: Env = process.env): Resolved<NotionAmbientConfig> {
-  const { values, missing } = need(env, [
-    ENV.notionDriverKey,
-    ENV.notionAmbientPageId,
-    ENV.notionAmbientWebhookSecret,
-    ENV.notionBotUserId,
-    ENV.notionWorkspaceId,
-    ENV.notionAnchorOnTopic,
-    ENV.notionAnchorOnTopic2,
-    ENV.notionAnchorOffTopic,
-  ]);
+  const { missing } = need(env, [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionBotUserId, ENV.notionWorkspaceId]);
   if (missing.length > 0) return { ok: false, missing };
   return {
     ok: true,
-    cfg: { driverKey: values[0], pageId: values[1], webhookSecret: values[2], botUserId: values[3], workspaceId: values[4], anchorOnTopic: values[5], anchorOnTopic2: values[6], anchorOffTopic: values[7] },
+    cfg: {
+      driverKey: env[ENV.notionDriverKey]!.trim(),
+      pageId: env[ENV.notionAmbientPageId]!.trim(),
+      botUserId: env[ENV.notionBotUserId]!.trim(),
+      workspaceId: env[ENV.notionWorkspaceId]!.trim(),
+      webhookSecret: env[ENV.notionAmbientWebhookSecret]?.trim() || undefined,
+      anchorOnTopic: env[ENV.notionAnchorOnTopic]?.trim() || undefined,
+      anchorOnTopic2: env[ENV.notionAnchorOnTopic2]?.trim() || undefined,
+      anchorOffTopic: env[ENV.notionAnchorOffTopic]?.trim() || undefined,
+    },
   };
 }
 
