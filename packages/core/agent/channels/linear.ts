@@ -7,7 +7,7 @@ import {
   type LinearChannel,
   type LinearChannelState,
 } from "eve/channels/linear";
-import type { HttpRouteDefinition, SendFn } from "eve/channels";
+import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { buildLinearAuth, teamFactsFromTeam } from "./linear-identity.js";
 import {
   classifyLinearAmbientComment,
@@ -18,6 +18,8 @@ import {
   type LinearSupervisorDeps,
 } from "./linear-supervisor.js";
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
+import { divertToUnifiedWindow } from "./unified.js";
 import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -184,7 +186,12 @@ function linearGrainFor(surfaceKey: string): SupervisorGrain {
   }
 }
 
-function liveLinearSupervisorDeps(send: SendFn<LinearChannelState>, teamId: string, organizationId: string): LinearSupervisorDeps {
+function liveLinearSupervisorDeps(
+  send: SendFn<LinearChannelState>,
+  teamId: string,
+  organizationId: string,
+  receive?: RouteHandlerArgs["receive"],
+): LinearSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -213,7 +220,18 @@ function liveLinearSupervisorDeps(send: SendFn<LinearChannelState>, teamId: stri
     audit: (action, detail) =>
       appendAudit({ org, platform: "linear", workspace: organizationId, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
-    async wake({ token, auth, message, context }) {
+    async wake({ token, auth, message, context, window }) {
+      if (window && receive) {
+        await divertToUnifiedWindow(receive, {
+          message,
+          context: [...context],
+          token,
+          window,
+          surfaceKey: `linear/${organizationId}/${teamId}`,
+          auth: auth as unknown as { attributes?: Record<string, unknown> },
+        });
+        return;
+      }
       const unified = linearGrainFor(`linear/${organizationId}/${teamId}`).unified;
       await send(
         { message, context: [...context] },
@@ -223,7 +241,7 @@ function liveLinearSupervisorDeps(send: SendFn<LinearChannelState>, teamId: stri
   };
 }
 
-async function ambientDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>): Promise<void> {
+async function ambientDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
   let event: ReturnType<typeof parseLinearWebhookEvent>;
   try {
     event = parseLinearWebhookEvent({ body, headers });
@@ -280,8 +298,19 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
       },
       engagementTier: linearEngagementTier(surfaceKey),
       unified: linearGrainFor(surfaceKey).unified,
+      window:
+        linearGrainFor(surfaceKey).singleWindow === true
+          ? ({
+              wakeId: mintWakeId(),
+              origin: {
+                platform: "linear",
+                issueId: c.issueId,
+                parentId: c.parentId ?? c.id,
+              },
+            } satisfies UnifiedWindowWake)
+          : undefined,
     },
-    liveLinearSupervisorDeps(send, c.teamId, signal.organizationId),
+    liveLinearSupervisorDeps(send, c.teamId, signal.organizationId, receive),
   );
   await appendAudit({
     org: deploymentOrg(),
@@ -460,7 +489,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     const res = await inner(cloned, args);
     if (res.ok) {
-      args.waitUntil(ambientDelivery(body, req.headers, args.send).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+      args.waitUntil(ambientDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     }
     return res;
   };
