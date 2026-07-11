@@ -53,6 +53,8 @@ import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSuper
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
 import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "../agent/channels/linear-supervisor.js";
 import { buildLinearAuth } from "../agent/channels/linear-identity.js";
+import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "../agent/channels/notion-supervisor.js";
+import { buildNotionAuth } from "../agent/channels/notion-identity.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
@@ -92,15 +94,16 @@ const withGates = async <T>(vals: Partial<Record<(typeof GATES)[number], string>
 const SLACK_KEY = "slack/T_WIN/C_WINA";
 const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
+const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY],
+  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY],
   ambientSupervisor: true,
   unifiedSupervisor: true,
   crossSurfaceWindow: true,
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY], ambientSupervisor: true, unifiedSupervisor: true });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY], ambientSupervisor: true });
+const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true, unifiedSupervisor: true });
+const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true });
 const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
 const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgPlain = defineDomain({ name: "org", match: "org" });
@@ -112,7 +115,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, orgBoth],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE"].includes(surface) ? ["payments"] : []),
 });
 
 await withGates({}, () => {
@@ -155,10 +158,13 @@ await withGates({}, () => {
   const gLin = supervisorGrainFor(LINEAR_KEY, [winDomain, orgBoth]);
   ok(gLin.unified && gLin.singleWindow === true, "gates ON: the Linear surface's grain is unified + singleWindow too");
   ok(gLin.registryKey === gSlack.registryKey, "the Linear surface shares the one domain registry row");
+  const gNot = supervisorGrainFor(NOTION_KEY, [winDomain, orgBoth]);
+  ok(gNot.unified && gNot.singleWindow === true && gNot.registryKey === gSlack.registryKey, "gates ON: the Notion page's grain is unified + singleWindow and shares the one domain registry row");
   const rawSlack = supervisorTokenForGrain(gSlack, 3, () => supervisorToken("C_WINA", 3));
   const rawGh = supervisorTokenForGrain(gGh, 3, () => githubSupervisorToken("acme", "payments-api", 3));
   const rawLin = supervisorTokenForGrain(gLin, 3, () => linearSupervisorToken("T_WINX", 3));
-  ok(rawSlack === rawGh && rawSlack === rawLin && rawSlack === unifiedSupervisorToken("payments", 3), "IDENTICAL raw token from the Slack, GitHub AND Linear dispatch paths");
+  const rawNot = supervisorTokenForGrain(gNot, 3, () => notionSupervisorToken("P_WINPAGE", 3));
+  ok(rawSlack === rawGh && rawSlack === rawLin && rawSlack === rawNot && rawSlack === unifiedSupervisorToken("payments", 3), "IDENTICAL raw token from the Slack, GitHub, Linear AND Notion dispatch paths");
   ok(
     effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === effectiveEveToken(UNIFIED_CHANNEL_NAME, rawGh) &&
       effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === "unified:oe-dom:payments:oe-sup:g3",
@@ -342,6 +348,67 @@ await handleLinearSupervisorDispatch(
   ok(typeof a.team_id === "string" && a.team_id === "T_WINX", "linear: the surface's own auth attributes ride verbatim (identity binding unchanged)");
 }
 
+const notAuth = buildNotionAuth({
+  workspaceId: "W_WIN",
+  pageId: "P_WINPAGE",
+  discussionId: "disc-win-1",
+  commentId: "nc-1",
+  principalId: "sam-notion",
+});
+const notWindow = planNotionSingleWindow(true, true, true, { discussionId: "disc-win-1", pageId: "P_WINPAGE", workspaceId: "W_WIN" })!;
+ok(notWindow !== undefined && notWindow.addressing === "direct-mention", "notion: the REAL plan mints an ADDRESSED window for a mention on a singleWindow internal page");
+ok(planNotionSingleWindow(true, true, false, { discussionId: "disc-win-1" }) === undefined && planNotionSingleWindow(true, true, undefined, { discussionId: "disc-win-1" }) === undefined, "notion: a public/unknown-privacy page plans NO window (fail-closed — never routed to the shared window)");
+const notDeps: NotionSupervisorDeps = {
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  wake: async ({ token, auth, message, context, window }) => {
+    ok(window !== undefined, "notion: the dispatch core threads the window through to the wake dep");
+    await divertToUnifiedWindow(captureReceive, {
+      message,
+      context: [...context],
+      token,
+      window: window!,
+      surfaceKey: NOTION_KEY,
+      auth: auth as unknown as { attributes?: Record<string, unknown> },
+    });
+  },
+  now: () => "2026-01-14T02:00:09Z",
+};
+await handleNotionSupervisorDispatch(
+  {
+    surfaceKey: NOTION_KEY,
+    addressing: "direct",
+    pageId: "P_WINPAGE",
+    discussionId: "disc-win-1",
+    workspaceId: "W_WIN",
+    auth: notAuth,
+    trigger: { from: "human", id: "nc-1", authorId: "sam-notion", sentAt: "2026-01-14T02:00:08Z", text: "@OE what was the deploy window token we agreed?" },
+    threadComments: [],
+    unified: true,
+    window: notWindow,
+    directMention: true,
+  },
+  notDeps,
+);
+{
+  ok(received.length === 4 && received[3].channel === unifiedChannel, "notion: the diversion targets the SAME unified channel value");
+  ok(received[3].target.token === RAW_TOKEN, "notion: the diverted wake carries the SAME raw domain token");
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[3].target.token),
+    "💥 SINGLE CONTEXT: the Slack wake and the Notion wake resolve ONE identical effective eve token — the fourth-surface proof",
+  );
+  ok(received[3].message.startsWith("[direct]") && received[3].message.includes(`wake-id="${notWindow.wakeId}"`), "notion: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  const a = received[3].auth.attributes ?? {};
+  ok(a[OE_PLATFORM_ATTR] === "notion" && a[OE_WAKE_ID_ATTR] === notWindow.wakeId, "notion: the forwarded auth is stamped with oe_platform + oe_wake_id");
+  ok(a[OE_ADDRESSING_ATTR] === "direct-mention", "notion: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
+  ok(
+    received[3].target.origin.platform === "notion" &&
+      (received[3].target.origin as { discussionId?: string }).discussionId === "disc-win-1" &&
+      (received[3].target.origin as { pageId?: string }).pageId === "P_WINPAGE",
+    "notion: the frozen origin names the triggering discussion (the reply target) + page",
+  );
+  ok(typeof a.discussion_id === "string" && a.discussion_id === "disc-win-1", "notion: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+}
+
 const store = getOperationalStore();
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
@@ -372,6 +439,13 @@ const store = getOperationalStore();
   const linRegistered = await resolveUnifiedWakeTarget(store, "default", received[2].target.wakeId);
   ok(linRegistered !== null && linRegistered.platform === "linear", "receive: the Linear origin round-trips from the real store");
 
+  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+    await unifiedChannel.receive!({ message: received[3].message, target: received[3].target, auth: received[3].auth as never }, { send: fakeSend });
+  });
+  ok(sent.length === 4 && sent[3].opts.continuationToken === RAW_TOKEN, "receive: the Notion wake delivers under the SAME raw token (same session)");
+  const notRegistered = await resolveUnifiedWakeTarget(store, "default", received[3].target.wakeId);
+  ok(notRegistered !== null && notRegistered.platform === "notion", "receive: the Notion origin round-trips from the real store");
+
   await assert.rejects(
     unifiedChannel.receive!(
       { message: "m", target: { ...received[0].target, surfaceKey: "slack/T_OTHER/C_NOPE" }, auth: received[0].auth as never },
@@ -399,6 +473,7 @@ const store = getOperationalStore();
   const slackPosts: Array<{ channelId: string; threadTs?: string; text: string }> = [];
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
   const linPosts: Array<{ issueId: string; parentId?: string; text: string }> = [];
+  const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
   const deps = {
     postSlack: async (o: { channelId: string; threadTs?: string }, text: string) => {
       slackPosts.push({ channelId: o.channelId, threadTs: o.threadTs, text });
@@ -412,18 +487,28 @@ const store = getOperationalStore();
       linPosts.push({ issueId: o.issueId, parentId: o.parentId, text });
       return "lc-1";
     },
+    postNotion: async (o: { discussionId: string; pageId?: string }, text: string) => {
+      notPosts.push({ discussionId: o.discussionId, pageId: o.pageId, text });
+      return "nc-reply-1";
+    },
   };
   const slackOrigin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
   const ghOrigin = await resolveUnifiedWakeTarget(store, "default", ghWindow.wakeId);
   const linOrigin = await resolveUnifiedWakeTarget(store, "default", linWindow.wakeId);
-  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null, "coalesced turn: ALL THREE pending wakeIds resolve from the map");
+  const notOrigin = await resolveUnifiedWakeTarget(store, "default", notWindow.wakeId);
+  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null, "coalesced turn: ALL FOUR pending wakeIds resolve from the map");
   ok((await postUnifiedReply(slackOrigin!, "answer for slack", deps)) === "ts-1", "reply(slack wakeId) returns the Slack post id");
   ok((await postUnifiedReply(ghOrigin!, "answer for github", deps)) === "c-1", "reply(github wakeId) returns the GitHub comment id");
   ok((await postUnifiedReply(linOrigin!, "answer for linear", deps)) === "lc-1", "reply(linear wakeId) returns the Linear comment id");
+  ok((await postUnifiedReply(notOrigin!, "answer for notion", deps)) === "nc-reply-1", "reply(notion wakeId) returns the Notion comment id");
   ok(slackPosts.length === 1 && slackPosts[0].channelId === "C_WINA" && slackPosts[0].threadTs === undefined, "Slack reply landed in the Slack channel (top-level, matching the trigger)");
   ok(ghPosts.length === 1 && ghPosts[0].owner === "acme" && ghPosts[0].repo === "payments-api" && ghPosts[0].issueNumber === 55, "GitHub reply landed on the GitHub issue that woke it");
   ok(linPosts.length === 1 && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1", "Linear reply landed on the issue + thread-root that woke it (commentCreate issueId + parentId)");
-  ok(slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear", "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn");
+  ok(notPosts.length === 1 && notPosts[0].discussionId === "disc-win-1", "Notion reply landed in the discussion thread that woke it (createCommentReply discussion_id)");
+  ok(
+    slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion",
+    "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn",
+  );
 
   const threadedId = mintWakeId();
   await registerUnifiedWakeTarget(store, "default", threadedId, { platform: "slack", channelId: "C_WINA", threadTs: "99.5" }, new Date().toISOString());
@@ -446,8 +531,10 @@ const store = getOperationalStore();
     isUnifiedWakeOrigin({ platform: "slack", channelId: "C1" }) &&
       isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 1 }) &&
       isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
-      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }),
-    "all three origin variants validate (linear with and without parentId)",
+      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }) &&
+      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1" }) &&
+      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }),
+    "all four origin variants validate (linear ± parentId; notion ± page/workspace)",
   );
   ok(
     !isUnifiedWakeOrigin({ platform: "slack" }) &&
@@ -455,9 +542,12 @@ const store = getOperationalStore();
       !isUnifiedWakeOrigin({ platform: "linear" }) &&
       !isUnifiedWakeOrigin({ platform: "linear", issueId: "" }) &&
       !isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: 5 }) &&
+      !isUnifiedWakeOrigin({ platform: "notion" }) &&
+      !isUnifiedWakeOrigin({ platform: "notion", discussionId: "" }) &&
+      !isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: 7 }) &&
       !isUnifiedWakeOrigin(null) &&
       !isUnifiedWakeOrigin("slack"),
-    "missing/invalid fields fail validation (incl. linear without issueId / non-string parentId)",
+    "missing/invalid fields fail validation (incl. notion without/empty discussionId / non-string pageId)",
   );
 }
 
@@ -472,9 +562,10 @@ const store = getOperationalStore();
   const offToken: string = supervisorTokenForGrain(offGrain, 1, () => supervisorToken("C_WINA", 1));
   const offGhToken: string = supervisorTokenForGrain(supervisorGrainFor(GH_KEY, [ambientTwin, orgPlain]), 1, () => githubSupervisorToken("acme", "payments-api", 1));
   const offLinToken: string = supervisorTokenForGrain(supervisorGrainFor(LINEAR_KEY, [ambientTwin, orgPlain]), 1, () => linearSupervisorToken("T_WINX", 1));
+  const offNotToken: string = supervisorTokenForGrain(supervisorGrainFor(NOTION_KEY, [ambientTwin, orgPlain]), 1, () => notionSupervisorToken("P_WINPAGE", 1));
   ok(
-    offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1" && offLinToken === "linear:T_WINX:oe-sup:g1",
-    "gates OFF: the three surfaces resolve DIFFERENT per-container tokens exactly as today",
+    offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1" && offLinToken === "linear:T_WINX:oe-sup:g1" && offNotToken === "notion:P_WINPAGE:oe-sup:g1",
+    "gates OFF: the four surfaces resolve DIFFERENT per-container tokens exactly as today",
   );
 }
 {

@@ -2,16 +2,19 @@ import { slackForm } from "./slack-events.js";
 import { callLinearGraphQL } from "eve/channels/linear";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
+import { createCommentReply } from "./notion-api.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
+type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
 
 export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
   readonly postGitHub?: (origin: GitHubOrigin, text: string) => Promise<string>;
   readonly postLinear?: (origin: LinearOrigin, text: string) => Promise<string>;
+  readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
 }
 
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
@@ -21,7 +24,24 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
   if (origin.platform === "linear") {
     return (deps.postLinear ?? liveLinearPost)(origin, text);
   }
+  if (origin.platform === "notion") {
+    return (deps.postNotion ?? liveNotionPost)(origin, text);
+  }
   return (deps.postGitHub ?? liveGitHubPost)(origin, text);
+}
+
+async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
+  const apiKey = process.env.NOTION_API_KEY;
+  if (!apiKey || apiKey.length === 0) {
+    throw new Error(`unified reply couldn't post to Notion — NOTION_API_KEY is not set (discussion ${origin.discussionId})`);
+  }
+  let id: string;
+  try {
+    id = await createCommentReply({ discussionId: origin.discussionId, text, apiKey });
+  } catch {
+    throw new Error(`unified reply couldn't post to Notion — createCommentReply failed on discussion ${origin.discussionId}`);
+  }
+  return id || "unknown";
 }
 
 async function liveLinearPost(origin: LinearOrigin, text: string): Promise<string> {
