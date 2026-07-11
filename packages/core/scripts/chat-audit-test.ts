@@ -120,6 +120,12 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   const replies = await readAudit({ action: "teams.replied" });
   ok(posts.length === 1, "teams: the default terminal post still delivers");
   ok(replies.length === 1 && replies[0]!.detail?.chars === "done — deployed".length, "teams: a posted reply writes a teams.replied audit row");
+
+  await inSession(async () => {
+    markRepliedThisTurn();
+    await teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctx);
+  });
+  ok((await readAudit({ action: "teams.no_reply" })).length === 1, "teams: a reply-tool turn's empty terminal writes NO teams.no_reply row (the turn answered)");
 }
 
 {
@@ -140,6 +146,12 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   const replies = await readAudit({ action: "telegram.replied" });
   ok(posts.length === 1, "telegram: the default terminal post still delivers");
   ok(replies.length === 1 && replies[0]!.detail?.chars === "watch fired: build green".length, "telegram: a posted reply writes a telegram.replied audit row");
+
+  await inSession(async () => {
+    markRepliedThisTurn();
+    await telegramChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctx);
+  });
+  ok((await readAudit({ action: "telegram.no_reply" })).length === 1, "telegram: a reply-tool turn's empty terminal writes NO telegram.no_reply row (the turn answered)");
 }
 
 rmSync(tmp, { recursive: true, force: true });

@@ -62,13 +62,19 @@ function slackCtx(attributes: Record<string, string>): BindableContext {
 }
 const VERIFIED = { team_id: "T1", channel_id: "C_ENG", channel_type: "channel", is_private: "false", is_ext_shared: "false", trust_checked: "true" };
 
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN" }, DOMAINS) === "principal", "ctx form: verified-internal Slack channel + org admin → principal");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ENG_ADMIN" }, DOMAINS) === "principal", "ctx form: domain admin on the domain's channel (binding-derived channelKey) → principal");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_MEMBER" }, DOMAINS) === "peer", "ctx form: verified-internal member → peer");
-ok(resolveWakeTrustFromContext(slackCtx({ team_id: "T1", channel_id: "C_ENG", channel_type: "channel" }), { id: "U_ORG_ADMIN" }, DOMAINS) === "relay", "ctx form: trust never checked → the binding fails closed → relay, even for an admin");
-ok(resolveWakeTrustFromContext(slackCtx({ ...VERIFIED, is_ext_shared: "true" }), { id: "U_ORG_ADMIN" }, DOMAINS) === "relay", "ctx form: externally-shared channel → relay");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: true }, DOMAINS) === "relay", "ctx form: bot author → relay");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), {}, []) === "relay", "ctx form: no author id anywhere → relay (fail closed)");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "principal", "ctx form: verified-internal Slack channel + org admin (human) → principal");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ENG_ADMIN", isBot: false }, { domains: DOMAINS }) === "principal", "ctx form: domain admin on the domain's channel (binding-derived channelKey) → principal");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_MEMBER", isBot: false }, { domains: DOMAINS }) === "peer", "ctx form: verified-internal member → peer");
+ok(resolveWakeTrustFromContext(slackCtx({ team_id: "T1", channel_id: "C_ENG", channel_type: "channel" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: trust never checked → the binding fails closed → relay, even for an admin");
+ok(resolveWakeTrustFromContext(slackCtx({ ...VERIFIED, is_ext_shared: "true" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: externally-shared channel → relay");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: true }, { domains: DOMAINS }) === "relay", "ctx form: explicit bot author → relay");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { isBot: false }, { domains: [] }) === "relay", "ctx form: no author id anywhere → relay (fail closed)");
+
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN" }, { domains: DOMAINS }) === "relay", "ctx form: unknown bot-ness (isBot undefined) fails closed → relay, even for a rostered admin");
+
+const adminPrincipalCtx = slackCtx({ ...VERIFIED, user_id: "U_ORG_ADMIN" });
+ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { principalFallback: true, domains: DOMAINS }) === "principal", "ctx form: a TRIGGER (principalFallback on) with no explicit author id borrows the bound admin principal → principal");
+ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: a SIBLING (no fallback) with no author id does NOT borrow the principal → relay (the notion-sibling escalation fix)");
 
 const ghWake = buildGitHubSupervisorWake({
   owner: "acme", repo: "api", issueNumber: 7,

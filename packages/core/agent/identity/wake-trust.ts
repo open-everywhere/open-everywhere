@@ -56,16 +56,18 @@ export function resolveWakeTrust(input: {
 export function resolveWakeTrustFromContext(
   ctx: BindableContext,
   author: { readonly id?: string; readonly isBot?: boolean },
-  domains?: readonly Domain[],
+  opts?: { readonly principalFallback?: boolean; readonly domains?: readonly Domain[] },
 ): WakeTrust {
   try {
     const binding = bindFrom(ctx);
+    const authorIsBot = author.isBot !== false;
+    const authorId = author.id ?? (opts?.principalFallback === true ? binding.principalId : undefined);
     return resolveWakeTrust({
-      authorIsBot: author.isBot === true,
-      authorId: author.id ?? binding.principalId,
+      authorIsBot,
+      authorId,
       surfaceInternal: binding.trust === "internal",
       channelKey: `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`,
-      domains,
+      domains: opts?.domains,
     });
   } catch {
     return "relay";

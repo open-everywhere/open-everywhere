@@ -364,7 +364,10 @@ const slackMentionChannel = slackChannel({
               channel: { kind: "slack" },
               session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
             });
-            await auditChatSilence(p, { threadTs: channel.state.threadTs ?? null, reason: action.reason });
+            const silentTarget = isSupervisorReplyTurn(channel.state)
+              ? ((channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined)?.threadTs ?? null
+              : channel.state.threadTs ?? null;
+            await auditChatSilence(p, { threadTs: silentTarget, reason: action.reason });
           } catch (err) {
             console.warn(`[open-everywhere:slack] no_reply audit write failed: ${String(err)}`);
           }

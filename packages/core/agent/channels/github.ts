@@ -217,6 +217,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
   const wakeTrust = resolveWakeTrustFromContext(
     { channel: { kind: "github" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
     { id: ev.comment.authorLogin, isBot: ev.comment.authorType === "Bot" },
+    { principalFallback: true },
   );
   await handleGitHubSupervisorDispatch(
     {

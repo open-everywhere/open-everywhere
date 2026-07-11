@@ -260,6 +260,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
   const wakeTrust = resolveWakeTrustFromContext(
     { channel: { kind: "linear" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
     { id: c.authorId, isBot: false },
+    { principalFallback: true },
   );
   await handleLinearSupervisorDispatch(
     {

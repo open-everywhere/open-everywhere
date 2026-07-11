@@ -186,6 +186,36 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
 }
 
 {
+  const personSibling: NotionComment = {
+    id: "sib-person", discussion_id: DISCUSSION,
+    created_by: { id: "human-222", object: "user", type: "person" },
+    rich_text: [{ type: "text", plain_text: "a teammate's note", text: { content: "x" } }],
+  };
+  const botSibling: NotionComment = {
+    id: "sib-bot", discussion_id: DISCUSSION,
+    created_by: { id: "integration-333", object: "user", type: "bot" },
+    rich_text: [{ type: "text", plain_text: "a bot's note", text: { content: "x" } }],
+  };
+  const untypedSibling: NotionComment = {
+    id: "sib-untyped", discussion_id: DISCUSSION,
+    created_by: { id: "unknown-444", object: "user" },
+    rich_text: [{ type: "text", plain_text: "an unattributable note", text: { content: "x" } }],
+  };
+  const raw = commentEvent();
+  let captured: NotionSupervisorDispatch | undefined;
+  await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(makeFetch({ comment: triggerNoMention, listResults: [personSibling, botSibling, untypedSibling, triggerNoMention] }), async (d) => { captured = d; }),
+  );
+  const byId = new Map(captured!.threadComments.map((m) => [m.id, m]));
+  ok(byId.get("sib-person")?.authorId === "human-222", "F3: an identified PERSON sibling keeps its authorId (resolves a real human tier)");
+  ok(byId.get("sib-bot")?.authorId === undefined, "F3: a BOT/integration sibling is left id-less → wake-trust resolves it relay");
+  ok(byId.get("sib-untyped")?.authorId === undefined, "F3: a sibling with unconfirmed person-ness (no created_by.type) fails closed to id-less → relay");
+  ok(captured!.trigger.from === "human", "the trigger itself stays a human message (attributed via classify's person gate)");
+}
+
+{
   const raw = commentEvent();
   let dispatched = false;
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerNoMention }), async () => { dispatched = true; }, { ambientEnabled: () => false }));

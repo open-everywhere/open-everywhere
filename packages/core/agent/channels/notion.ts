@@ -130,7 +130,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
         const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
         const trustOf = (m: NotionWakeMessage) =>
-          m.from === "human" ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId }) : ("relay" as const);
+          m.from === "human" && m.authorId ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId, isBot: false }) : ("relay" as const);
         await handleNotionSupervisorDispatch(
           {
             ...d,
