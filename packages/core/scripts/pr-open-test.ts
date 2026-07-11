@@ -7,13 +7,29 @@ import { fileURLToPath } from "node:url";
 const dir = join(tmpdir(), `open-everywhere-pr-open-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.OE_PRINCIPAL;
 
 const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { executePrOpen } = await import("../agent/approvals/pr-open.js");
+const { default: openPullRequestTool } = await import("../agent/tools/open_pull_request.js");
+const { registerConfig } = await import("../agent/access/config.js");
+const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 type PrOpenArgs = import("../agent/approvals/pr-open.js").PrOpenArgs;
 type PrOpenExecuteDeps = import("../agent/approvals/pr-open.js").PrOpenExecuteDeps;
+type BindableContext = import("../agent/identity/binding.js").BindableContext;
 await import("../agent/approvals/flow.js");
+
+registerConfig({
+  loadBundles: () => [defineBundle({ name: "coding", repos: ["acme/web"] })],
+  loadBindings: () => [defineBinding({ bundle: "coding", scope: { level: "org" } })],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+});
+process.env.GITHUB_TOKEN = "test-pat";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -135,6 +151,72 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   const { deps } = fakeDeps({ currentSha: null, deleteRefFails: true });
   const outcome = await executePrOpen(args(), "U_APPROVER", deps);
   ok(outcome.includes("opened PR #7"), "a failed staging-ref cleanup never fails the publish (best-effort by contract)");
+}
+
+{
+  let sandboxCalls = 0;
+  const spySandbox = {
+    async getSandbox() {
+      sandboxCalls++;
+      throw new Error("SANDBOX_REACHED — a gate that should have thrown did not");
+    },
+  };
+  const ctx = (platform: string, attrs: Record<string, unknown>, principalId?: string): BindableContext =>
+    ({
+      channel: { kind: platform },
+      session: { auth: { current: { attributes: attrs, ...(principalId ? { principalId, principalType: `${platform}-user` } : {}) } } },
+      ...spySandbox,
+    }) as unknown as BindableContext;
+
+  const slackAttrs = { team_id: "T1", channel_id: "C1", channel_type: "channel" };
+  const goodInput = { repo: "acme/web", head: "fix/issue-9", base: "main", title: "t", body: "b" };
+
+  async function refuses(label: string, c: BindableContext, input: Record<string, unknown>, needle: RegExp): Promise<void> {
+    const before = sandboxCalls;
+    await assert.rejects(async () => {
+      await openPullRequestTool.execute(input as never, c as never);
+    }, needle, label);
+    ok(sandboxCalls === before, `${label} — refused BEFORE the sandbox (no stage-push, no card)`);
+  }
+
+  await refuses(
+    "ungranted repo",
+    ctx("slack", slackAttrs, "U1"),
+    { ...goodInput, repo: "evil/repo" },
+    /not granted to this channel/,
+  );
+  await refuses(
+    "unsafe head branch (refspec smuggling)",
+    ctx("slack", slackAttrs, "U1"),
+    { ...goodInput, head: "a:b" },
+    /invalid head branch/,
+  );
+  await refuses(
+    "unsafe checkout dir (traversal)",
+    ctx("slack", slackAttrs, "U1"),
+    { ...goodInput, dir: "../etc" },
+    /invalid checkout dir/,
+  );
+  await refuses(
+    "no approval-card path (teams surface)",
+    ctx("teams", { conversation_id: "19:abc", channel_id: "C1" }, "U1"),
+    goodInput,
+    /approval-card path/,
+  );
+  await refuses(
+    "no verified sender (no principal / no user_id)",
+    ctx("slack", slackAttrs),
+    goodInput,
+    /verified sender/,
+  );
+  await refuses(
+    "no resolvable channel id (no channel_id attr → target undefined)",
+    ctx("slack", { team_id: "T1", channel_type: "channel" }, "U1"),
+    goodInput,
+    /channel's id/,
+  );
+
+  ok(sandboxCalls === 0, "across ALL fail-closed cases the sandbox was never reached (nothing staged, no card posted)");
 }
 
 {

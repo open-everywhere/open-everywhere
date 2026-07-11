@@ -1,9 +1,17 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkConsequenceRegistry, type ToolSource } from "@open-everywhere/core/agent/access/consequence.js";
 import { actionKind } from "@open-everywhere/core/agent/approvals/actions.js";
 import "@open-everywhere/core/agent/approvals/flow.js";
+
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const { getAllFrameworkToolNames } = (await import(
+  pathToFileURL(join(eveRoot, "dist/src/runtime/framework-tools/index.js")).href
+)) as { getAllFrameworkToolNames(): ReadonlySet<string> };
+const frameworkToolNames = [...getAllFrameworkToolNames(), "connection_search"];
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");
@@ -25,10 +33,14 @@ for (const f of readdirSync(appToolsDir).filter((f) => f.endsWith(".ts") && !f.s
   tools.set(name, { name, source });
 }
 
-const problems = checkConsequenceRegistry([...tools.values()], (action) => actionKind(action)?.policy);
+const problems = checkConsequenceRegistry([...tools.values()], frameworkToolNames, (action) => actionKind(action)?.policy);
 
 if (problems.length > 0) {
   console.error(`✗ consequence-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
   process.exit(1);
 }
-console.log(`✓ consequence-lint: ${tools.size} tool(s), every declaration total and matching its runtime gate`);
+const frameworkOnly = frameworkToolNames.filter((n) => !tools.has(n)).length;
+console.log(
+  `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework), every declaration matching its runtime gate. ` +
+    `Connector/MCP operations are a separate, design-deferred plane (§3 grain 2, §7 item 5).`,
+);

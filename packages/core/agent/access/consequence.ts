@@ -23,6 +23,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_file: open("sandbox-local read"),
   write_file: open("sandbox-local write — durable effects leave only via gated verbs"),
 
+  web_search: open("read of the public web via eve's provider; a read, escapes nothing"),
+  ask_question: open("asks the ROOM a clarifying question — stays in the asking conversation"),
+  todo: open("in-context scratchpad for the model's own turn planning; nothing durable, nothing leaves"),
+  load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
+  connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
+
   check_pr_status: open("read of a PR's state"),
   checkout_repo: open("read into the sandbox with a read-only credential; the write path is open_pull_request"),
   describe_image: open("read/vision over an attachment already in the room"),
@@ -99,11 +105,13 @@ const EVE_HITL = /^\s*approval:(?!\s*never\()/m;
 
 export function checkConsequenceRegistry(
   tools: readonly ToolSource[],
+  frameworkToolNames: readonly string[],
   policyOf: (action: string) => "admin" | "member" | undefined,
   registry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
 ): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
+  const authored = new Set(tools.map((t) => t.name));
 
   for (const tool of tools) {
     seen.add(tool.name);
@@ -173,9 +181,28 @@ export function checkConsequenceRegistry(
     }
   }
 
+  for (const name of frameworkToolNames) {
+    if (authored.has(name)) continue;
+    seen.add(name);
+    const entry = registry[name];
+    if (!entry) {
+      problems.push(
+        `framework tool "${name}" is mounted by eve at runtime but has NO consequence declaration — add it to access/consequence.ts's TOOL_CONSEQUENCE (fail-closed: a mounted tool can't be un-tiered)`,
+      );
+      continue;
+    }
+    if (!(entry.tier === "open" && entry.via.kind === "none")) {
+      problems.push(
+        `framework tool "${name}" is declared ${entry.tier}/${entry.via.kind} — a framework tool OE doesn't author has no source to scan and no ActionKind of its own, so it must be open/none. To gate it, ship an agent/tools/${name}.ts override (which moves it onto the scanned path).`,
+      );
+    }
+  }
+
   for (const name of Object.keys(registry)) {
     if (!seen.has(name)) {
-      problems.push(`TOOL_CONSEQUENCE registers "${name}" but no such tool file exists — remove the row or fix the name (a stale row hides a real gap)`);
+      problems.push(
+        `TOOL_CONSEQUENCE registers "${name}" but it is neither an authored tool file nor a mounted framework tool — remove the row or fix the name (a stale row hides a real gap)`,
+      );
     }
   }
 
