@@ -1,20 +1,25 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { deleteDomainSkill, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
-import { auditToolAction } from "../audit/tool-action.js";
+import { bindFrom } from "../identity/binding.js";
+import { principalIdOf } from "../access/request.js";
+import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
+import { requestApproval } from "../approvals/flow.js";
+import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
 export default defineTool({
   description:
-    "Delete a domain skill created with create_skill, by its bare name (see list_skills). Any member of the domain may delete it. Can't be used from a DM, a group chat, or an externally-shared/unconfirmed channel.",
+    "PROPOSE deleting a domain skill created with create_skill, by its bare name (see list_skills). Any member of the domain may propose it, but this does NOT delete on the spot: an approval card posts naming the exact skill, and it's removed only when a human in the domain confirms (deleting a skill removes a guardrail, so it's gated like creating one). Can't be used from a DM, a group chat, an externally-shared/unconfirmed channel, or a surface with no approval-card path (Slack/Discord only). The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
     name: z.string().min(1).describe("The skill's bare name, as shown by list_skills."),
   }),
   outputSchema: z.object({
-    deleted: z.boolean(),
+    pending: z.boolean(),
+    pendingId: z.string().optional(),
     domain: z.string(),
     name: z.string(),
+    message: z.string(),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -25,11 +30,45 @@ export default defineTool({
     const domain = resolved.domain;
     const name = input.name.trim();
     const p = resolvePartition(ctx);
-    const deleted = await deleteDomainSkill(p.org, domain, name);
-    if (!deleted) {
+
+    const existing = await listDomainSkills(p.org, domain);
+    if (!existing.some((s) => s.name === name)) {
       throw new Error(`No skill named "${name}" in domain "${domain}" — check the name with list_skills.`);
     }
-    await auditToolAction(ctx, "skill.delete", { domain, name });
-    return { deleted, domain, name };
+
+    const binding = bindFrom(ctx);
+    if (!hasApprovalCardPath(binding.platform)) {
+      throw new Error(`delete_skill needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm the removal.`);
+    }
+    const requestedBy = principalIdOf(ctx);
+    if (!requestedBy) {
+      throw new Error("delete_skill needs a verified sender to gate the removal — no principal id resolved, so there's no requester to show on the approval card.");
+    }
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    if (!channelId) {
+      throw new Error("delete_skill couldn't resolve this channel's id for the approval card — try again from a real channel.");
+    }
+
+    const posted = await requestApproval(
+      {
+        org: p.org,
+        kind: "skill.delete",
+        args: { org: p.org, domain, name, requestedBy },
+        scopeKey: p.surfaceKey,
+        domain,
+        requestedBy,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+      },
+      approvalPostDeps(binding.platform),
+    );
+
+    return {
+      pending: true,
+      pendingId: posted.id,
+      domain,
+      name,
+      message: `card posted — delete of skill "${name}" (domain "${domain}") awaiting a human to confirm (pending ${posted.id}).`,
+    };
   },
 });

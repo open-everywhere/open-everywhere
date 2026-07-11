@@ -204,6 +204,13 @@ firesWith(
   ok(actionKind("pr.open")?.policy === "member", "the pr.open kind is registered with member policy");
   ok(TOOL_CONSEQUENCE.set_spend_limit.tier === "gate:admin", "set_spend_limit is declared gate:admin");
   ok(TOOL_CONSEQUENCE.reply.tier === "open", "reply is declared open (same-room, fails all three rubric axes)");
+
+  for (const [tool, kind] of [["delete_skill", "skill.delete"], ["cancel_routine", "routine.cancel"]] as const) {
+    const entry = TOOL_CONSEQUENCE[tool];
+    ok(entry.tier === "gate:member", `${tool} is declared gate:member`);
+    ok(entry.via.kind === "action-kind" && entry.via.action === kind, `${tool} routes via the ${kind} ActionKind`);
+    ok(actionKind(kind)?.policy === "member", `the ${kind} kind is registered with member policy`);
+  }
 }
 
 console.log(`✓ ${n} consequence-registry assertions passed`);

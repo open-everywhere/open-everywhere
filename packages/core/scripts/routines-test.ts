@@ -227,6 +227,48 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
   ok(disabled?.status === "disabled" && disabled.trigger.kind === "once", "store: updateRoutine's generic patch path disables a once row without touching its trigger");
 }
 
+{
+  const { resolvePartition } = await import("../agent/memory/partition.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  await import("../agent/approvals/flow.js");
+  const { default: cancelRoutineTool } = await import("../agent/tools/cancel_routine.js");
+
+  const ctx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1", principalType: "slack-user" } } },
+  } as never;
+  const cp = resolvePartition(ctx);
+  const cancelId = store.newRoutineId();
+  await store.addRoutine(cp as never, { ...base, id: cancelId, org: cp.org, surfaceKey: cp.surfaceKey, trigger: { kind: "interval", everyMinutes: 30 } });
+
+  let threwMissing = false;
+  try { await cancelRoutineTool.execute({ id: "r-nope" } as never, ctx); } catch { threwMissing = true; }
+  ok(threwMissing, "cancel_routine: refuses a nonexistent id up front (no card wasted)");
+
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0003" }) })) as unknown as typeof fetch;
+  try {
+    const proposed = (await cancelRoutineTool.execute({ id: cancelId } as never, ctx)) as { pending: boolean; id: string };
+    ok(proposed.pending === true && proposed.id === cancelId, "cancel_routine: proposes (card posted, pending) instead of cancelling on the spot");
+    ok((await store.getRoutine(cp.org, cp.surfaceKey, cancelId)) !== null, "cancel_routine: NOTHING is removed until a human confirms (routine still present)");
+
+    const kind = actionKind("routine.cancel")!;
+    ok(kind !== undefined && kind.policy === "member", "actionKind: routine.cancel registered with member policy");
+    const summary = kind.summarize({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min" });
+    ok(summary.some((l: string) => l.includes(cancelId)), "routine.cancel summarize: names the exact frozen routine id");
+    const outcome = await kind.execute({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min", requestedBy: "U1" }, "U_CONFIRMER");
+    ok(/cancelled/.test(outcome), "routine.cancel execute: the confirming click removes the frozen target");
+    ok((await store.getRoutine(cp.org, cp.surfaceKey, cancelId)) === null, "cancel_routine: gone from the store after the confirming click");
+
+    const again = await kind.execute({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min" }, "U_CONFIRMER");
+    ok(/nothing to cancel/.test(again), "routine.cancel execute: a target already gone reports cleanly (no throw)");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.SLACK_BOT_TOKEN;
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 
 console.log(`✓ routines: ${passed} assertions passed`);

@@ -58,8 +58,8 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
       "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted).",
   },
 
-  cancel_routine: open("removes a routine from this surface; reversible by recreation; audited ( 'anyone does everything')"),
-  delete_skill: open("removes a shared domain skill; reversible by re-proposing it; audited skill.delete (same 2026-07-04 decision)"),
+  cancel_routine: member("routine.cancel", "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms"),
+  delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
 
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
   subscribe_pr: open("arms a self-serve check-back that posts into this same surface; cancellable with cancel_routine"),

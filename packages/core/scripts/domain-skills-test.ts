@@ -252,14 +252,36 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "no-such-skill" }, ctxEng as never); }, /No skill named/, "delete_skill: clear not-found message");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  await import("../agent/approvals/flow.js");
+
+  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "no-such-skill" }, ctxEng as never); }, /No skill named/, "delete_skill: refuses a nonexistent skill up front (no card wasted)");
   n++;
   await assert.rejects(async () => { await deleteSkillTool.execute({ name: "x" }, ctxDm as never); }, /DM/, "delete_skill: refuses from a DM too");
   n++;
 
-  const result = await deleteSkillTool.execute({ name: "new-skill" }, ctxEng as never);
-  ok(result.deleted === true && result.domain === "eng", "delete_skill: deletes an existing skill");
-  ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "delete_skill: gone from the store after delete");
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0002" }) })) as unknown as typeof fetch;
+  try {
+    const proposed = await deleteSkillTool.execute({ name: "new-skill" }, ctxEng as never);
+    ok(proposed.pending === true && proposed.domain === "eng" && proposed.name === "new-skill", "delete_skill: proposes (card posted, pending) instead of deleting on the spot");
+    ok((await getOperationalStore().listDomainSkills("default", "eng")).some((r) => r.name === "new-skill"), "delete_skill: NOTHING is removed until a human confirms (skill still present)");
+
+    const kind = actionKind("skill.delete")!;
+    ok(kind !== undefined && kind.policy === "member", "actionKind: skill.delete registered with member policy");
+    const summary = kind.summarize({ org: "default", domain: "eng", name: "new-skill" });
+    ok(summary.some((l: string) => l.includes("new-skill")) && summary.some((l: string) => l.includes("eng")), "skill.delete summarize: names the exact frozen skill + domain");
+    const outcome = await kind.execute({ org: "default", domain: "eng", name: "new-skill", requestedBy: "U1" }, "U_CONFIRMER");
+    ok(/deleted/.test(outcome), "skill.delete execute: the confirming click removes the frozen target");
+    ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "delete_skill: gone from the store after the confirming click");
+
+    const again = await kind.execute({ org: "default", domain: "eng", name: "new-skill" }, "U_CONFIRMER");
+    ok(/nothing to delete/.test(again), "skill.delete execute: a target already gone reports cleanly (no throw)");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.SLACK_BOT_TOKEN;
+  }
 }
 
 {

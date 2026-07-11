@@ -15,6 +15,8 @@ import "./skill-create.js";
 import "./routine-create.js";
 import "./memory-remember.js";
 import "./pr-open.js";
+import "./skill-delete.js";
+import "./routine-cancel.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 
