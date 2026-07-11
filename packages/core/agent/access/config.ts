@@ -9,6 +9,7 @@ import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
 import type { ModelPolicy } from "../model/policy.js";
 import type { BlobHostingConfig } from "../blob/hosting.js";
+import type { Principal } from "../identity/principals.js";
 
 export interface AccessRequestsConfig {
   readonly adminChannel?: string;
@@ -35,6 +36,7 @@ export interface AppConfig {
   loadAccessRequests?(): AccessRequestsConfig | null;
   loadModelPolicy?(): ModelPolicy | undefined;
   loadBlobHosting?(): BlobHostingConfig | undefined;
+  loadPrincipals?(): readonly Principal[];
 }
 
 let registered: AppConfig | null = null;
