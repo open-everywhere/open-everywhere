@@ -4,6 +4,8 @@ import {
   isSupervisorReplyTurn,
   deliverSupervisorReply,
   finalMessageAction,
+  supervisorTextDelivery,
+  isSupervisorProseLeak,
   type SupervisorReplyDeps,
 } from "../agent/channels/slack-events.js";
 
@@ -119,6 +121,40 @@ function spyDeps(over: Partial<SupervisorReplyDeps> & { ownerToken?: string | un
   ok(finalMessageAction("stop", "NO_REPLY — chatter").kind === "silent", "NO_REPLY: prefix match still silent");
   ok(finalMessageAction("stop", "").kind === "silent", "empty completion: silent (nothing posts)");
   ok(finalMessageAction("stop", TEXT).kind === "post", "a real reply: maps to post (the supervisor branch runs)");
+}
+
+{
+  const d = supervisorTextDelivery(true, true);
+  ok(d.postText === false, "gate: with the reply tool armed, terminal prose does NOT post");
+  ok(d.droppedProse === true, "gate: the dropped terminal prose is flagged for observability");
+
+  const empty = supervisorTextDelivery(false, true);
+  ok(empty.postText === false && empty.droppedProse === false, "gate: no terminal prose ⇒ nothing posts, nothing dropped");
+
+  const failOpen = supervisorTextDelivery(true, false);
+  ok(failOpen.postText === true, "gate: fail-open — with NO reply tool, terminal text still posts");
+  ok(failOpen.droppedProse === false, "gate: fail-open drops nothing (it posted the text)");
+}
+
+{
+  ok(isSupervisorProseLeak(true, false, false) === true, "leak: prose with no reply-tool post and no card IS a leak");
+  ok(isSupervisorProseLeak(true, true, false) === false, "leak: prose after a real tool reply is NOT a leak");
+  ok(isSupervisorProseLeak(true, false, true) === false, "leak: prose suppressed by a posted card is NOT a leak");
+  ok(isSupervisorProseLeak(false, false, false) === false, "leak: no terminal prose ⇒ no leak");
+}
+
+{
+  const { deps, spy } = spyDeps({ target: { channelId: CHANNEL, threadTs: THREAD }, postText: false });
+  const res = await deliverSupervisorReply(deps);
+  ok(spy.posts.length === 0, "message-tool-only: terminal text is NEVER posted to the channel");
+  ok(res.posted === false, "message-tool-only: result reports nothing posted");
+  ok(spy.binds.length === 1 && spy.binds[0].ownerToken === SUP_TOKEN && res.bound === true, "message-tool-only: the thread still binds under the supervisor token");
+}
+{
+  const { deps, spy } = spyDeps({ target: { channelId: CHANNEL }, postText: false });
+  const res = await deliverSupervisorReply(deps);
+  ok(spy.posts.length === 0 && spy.binds.length === 0, "message-tool-only (top-level): stray prose posts and binds NOTHING");
+  ok(res.posted === false && res.bound === false, "message-tool-only (top-level): result posted/bound nothing");
 }
 
 console.log(`supervisor-reply: ${n} assertions passed`);

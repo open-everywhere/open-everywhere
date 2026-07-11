@@ -20,7 +20,8 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, type SupervisorReplyTarget } from "./slack-events.js";
+import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, supervisorTextDelivery, isSupervisorProseLeak, type SupervisorReplyTarget } from "./slack-events.js";
+import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -423,8 +424,29 @@ const slackMentionChannel = slackChannel({
               session: { auth: { current: { attributes: { team_id: teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
             })
           : undefined;
+        const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("slack").midTurnPost);
+        if (delivery.droppedProse && isSupervisorProseLeak(true, repliedThisTurn, cardPostedThisTurn)) {
+          console.warn(
+            `[open-everywhere:slack] supervisor message-tool-only: DROPPED terminal prose (judge emitted text without calling reply) — nothing posted (${channelId ?? "?"}/${target?.threadTs ?? "top-level"})`,
+          );
+          if (partition) {
+            try {
+              await getOperationalStore().appendAudit({
+                ts: new Date().toISOString(),
+                org: partition.org,
+                platform: partition.platform,
+                workspace: partition.workspace,
+                surface: partition.surface,
+                action: "turn.supervisor_prose_dropped",
+                detail: { threadTs: target?.threadTs, chars: action.text.length },
+              });
+            } catch (err) {
+              console.warn(`[open-everywhere:slack] supervisor prose-dropped audit write failed: ${String(err)}`);
+            }
+          }
+        }
         await deliverSupervisorReply({
-          postText: effects.postText,
+          postText: delivery.postText,
           text: action.text,
           target,
           async post(cid, tts, text) {
@@ -451,7 +473,9 @@ const slackMentionChannel = slackChannel({
             await markThreadEngaged(partition, tts, new Date().toISOString(), { participating: true, ownerToken });
           },
         });
-        (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
+        if (repliedThisTurn || cardPostedThisTurn) {
+          (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
+        }
         return;
       }
       if (effects.postText) {

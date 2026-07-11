@@ -1008,6 +1008,27 @@ export function isSupervisorReplyTurn(state: unknown): boolean {
   return (state as Record<string, unknown> | undefined)?.oeSupervisor === true;
 }
 
+export interface SupervisorTextDelivery {
+  readonly postText: boolean;
+  readonly droppedProse: boolean;
+  readonly reason: string;
+}
+
+export function supervisorTextDelivery(hasTerminalProse: boolean, midTurnPostAvailable: boolean): SupervisorTextDelivery {
+  if (!midTurnPostAvailable) {
+    return { postText: hasTerminalProse, droppedProse: false, reason: "no reply tool on this surface — fail open, terminal text posts" };
+  }
+  return {
+    postText: false,
+    droppedProse: hasTerminalProse,
+    reason: hasTerminalProse ? "message-tool-only: terminal prose dropped (reply via the tool)" : "message-tool-only: no terminal text",
+  };
+}
+
+export function isSupervisorProseLeak(hasTerminalProse: boolean, repliedViaTool: boolean, cardPosted: boolean): boolean {
+  return hasTerminalProse && !repliedViaTool && !cardPosted;
+}
+
 export interface SupervisorReplyDeps {
   readonly postText: boolean;
   readonly text: string;
@@ -1035,7 +1056,7 @@ export async function deliverSupervisorReply(deps: SupervisorReplyDeps): Promise
     posted = true;
   } else {
     console.log(
-      `[open-everywhere:slack] supervisor reply: card already posted this turn — suppressing the redundant text (${plan.post.channel}/${plan.post.threadTs ?? "top-level"})`,
+      `[open-everywhere:slack] supervisor reply: terminal text not posted (message-tool-only / card-narrated) — bind only (${plan.post.channel}/${plan.post.threadTs ?? "top-level"})`,
     );
   }
   let bound = false;

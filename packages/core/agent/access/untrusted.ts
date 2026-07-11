@@ -1,4 +1,5 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
+import { capResult } from "./result-cap.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
 export const UNTRUSTED_CLOSE = "</untrusted_external_data>";
@@ -22,7 +23,7 @@ export function wrapUntrusted(content: string, opts: UntrustedOpts = {}): string
   const src = opts.source ? ` source=${JSON.stringify(opts.source)}` : "";
   return (
     `${UNTRUSTED_OPEN}${src}>\n` +
-    `${defangDelimiters(content)}\n` +
+    `${defangDelimiters(capResult(content))}\n` +
     `${UNTRUSTED_CLOSE}\n` +
     NOTICE
   );
