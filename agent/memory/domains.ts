@@ -64,7 +64,7 @@ const rawDomains: Domain[] = [
     unifiedSupervisor: true,
     crossSurfaceWindow: true,
     engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+    models: { primary: { id: "deepseek/deepseek-v4-flash" }, supervisor: { id: "zai/glm-5.2", reasoning: "medium" } },
   }),
 
 ];
