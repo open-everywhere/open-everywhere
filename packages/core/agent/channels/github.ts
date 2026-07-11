@@ -12,7 +12,7 @@ import {
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
-import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
+import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import { divertToUnifiedWindow } from "./unified.js";
 import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
@@ -134,7 +134,7 @@ function githubGrainFor(surfaceKey: string): SupervisorGrain {
 }
 
 export function shouldSuppressNativeMention(singleWindow: boolean, isPrivate: boolean | undefined): boolean {
-  return singleWindow && isPrivate === true;
+  return singleWindowMentionPolicy(singleWindow, true, isPrivate === true).suppressNative;
 }
 
 function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent, receive?: RouteHandlerArgs["receive"]): GitHubSupervisorDeps {
@@ -205,6 +205,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
     return;
   }
   const directMention = cls.addressing === "direct";
+  const mentionPolicy = singleWindowMentionPolicy(singleWindow, directMention, ev.repoPrivate === true);
   const auth = buildGitHubAuth({
     owner: ev.owner,
     repo: ev.repo,
@@ -253,7 +254,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
               issueNumber: ev.issueNumber,
               ...(ev.installationId !== undefined ? { installationId: ev.installationId } : {}),
             },
-            ...(directMention ? { addressing: "direct-mention" as const } : {}),
+            ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
           } satisfies UnifiedWindowWake)
         : undefined,
     },

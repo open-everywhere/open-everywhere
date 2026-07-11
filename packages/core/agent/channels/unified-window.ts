@@ -107,6 +107,19 @@ export function shouldBridgeAddressedProse(addressing: string | undefined, alrea
   return addressing === "direct-mention" && !alreadyReplied;
 }
 
+export interface SingleWindowMentionPolicy {
+  readonly suppressNative: boolean;
+  readonly addressing: "direct-mention" | undefined;
+}
+export function singleWindowMentionPolicy(
+  singleWindow: boolean,
+  isMention: boolean,
+  privacyOk: boolean,
+): SingleWindowMentionPolicy {
+  const on = singleWindow && privacyOk;
+  return { suppressNative: on && isMention, addressing: on && isMention ? "direct-mention" : undefined };
+}
+
 export interface UnifiedWindowWake {
   readonly wakeId: string;
   readonly origin: UnifiedWakeOrigin;

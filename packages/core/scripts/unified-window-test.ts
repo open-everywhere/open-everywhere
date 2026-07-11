@@ -31,6 +31,7 @@ import {
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
   shouldBridgeAddressedProse,
+  singleWindowMentionPolicy,
   WAKE_TARGET_TTL_MS,
   OE_PLATFORM_ATTR,
   OE_WAKE_ID_ATTR,
@@ -529,6 +530,19 @@ const store = getOperationalStore();
   ok(shouldBridgeAddressedProse("direct-mention", true) === false, "bridge gate: a direct-mention that ALREADY replied is NOT bridged (no double-post)");
   ok(shouldBridgeAddressedProse("channel-watch", false) === false, "bridge gate: an ambient channel-watch turn is NEVER bridged — prose stays hard-dropped (message-tool-only preserved)");
   ok(shouldBridgeAddressedProse(undefined, false) === false, "bridge gate: an unstamped (non-single-window / non-addressed) turn is NEVER bridged");
+  const pol = (sw: boolean, m: boolean, priv: boolean) => singleWindowMentionPolicy(sw, m, priv);
+  ok(pol(true, true, true).suppressNative === true && pol(true, true, true).addressing === "direct-mention", "mention seam (sw=1,m=1,priv=1): native SUPPRESSED and the wake is addressed 'direct-mention' — the unified window owns the mention");
+  ok(pol(true, true, false).suppressNative === false && pol(true, true, false).addressing === undefined, "mention seam (sw=1,m=1,priv=0): public/unknown-privacy repo — native KEPT, no addressed stamp (fail-closed on privacy)");
+  ok(pol(true, false, true).suppressNative === false && pol(true, false, true).addressing === undefined, "mention seam (sw=1,m=0,priv=1): a NON-mention never suppresses the native path and is never addressed (ambient/watch treatment)");
+  ok(pol(true, false, false).suppressNative === false && pol(true, false, false).addressing === undefined, "mention seam (sw=1,m=0,priv=0): non-mention on a public repo — nothing");
+  ok(pol(false, true, true).suppressNative === false && pol(false, true, true).addressing === undefined, "mention seam (sw=0,m=1,priv=1): single-window OFF — byte-identical split (native owns the mention, no stamp)");
+  ok(pol(false, true, false).suppressNative === false && pol(false, true, false).addressing === undefined, "mention seam (sw=0,m=1,priv=0): single-window OFF, public — nothing");
+  ok(pol(false, false, true).suppressNative === false && pol(false, false, true).addressing === undefined, "mention seam (sw=0,m=0,priv=1): single-window OFF, non-mention — nothing");
+  ok(pol(false, false, false).suppressNative === false && pol(false, false, false).addressing === undefined, "mention seam (sw=0,m=0,priv=0): all off — nothing");
+  for (const sw of [true, false]) for (const m of [true, false]) for (const priv of [true, false]) {
+    const p = pol(sw, m, priv);
+    ok((p.addressing === "direct-mention") === p.suppressNative, `mention seam complementarity: addressing ⟺ suppressNative (sw=${sw},m=${m},priv=${priv})`);
+  }
   const addressedCtx: BindableContext = { channel: { kind: "channel:unified" }, session: { auth: { current: { attributes: { oe_addressing: "direct-mention", oe_wake_id: "w-2" }, principalId: "U", principalType: "github-user" } } } };
   ok(currentTurnAddressing(addressedCtx) === "direct-mention", "currentTurnAddressing reads the current delivery's oe_addressing stamp");
   ok(currentTurnAddressing({ channel: { kind: "channel:unified" }, session: { auth: { current: { attributes: { oe_wake_id: "w-3" }, principalId: "U", principalType: "slack-user" } } } }) === undefined, "currentTurnAddressing is undefined for an ambient wake (no oe_addressing) ⇒ never bridged");

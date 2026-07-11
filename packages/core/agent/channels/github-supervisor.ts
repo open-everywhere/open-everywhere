@@ -3,7 +3,7 @@ import type { ContextLine } from "./context-render.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import { githubBotMentioned, type OpenEverywhereGitHubAuth } from "./github-identity.js";
-import type { UnifiedWindowWake } from "./unified-window.js";
+import { singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import type { WakeTrust } from "./wake-envelope.js";
 
 export function githubSupervisorSentinel(generation: number): string {
@@ -40,7 +40,7 @@ export function classifyGitHubAmbientComment(
     return { addressing: "drop", reason: "self-authored comment (our own reply)" };
   }
   if (githubBotMentioned(c.body, slug, { login: c.authorLogin, type: c.authorType })) {
-    if (opts?.treatMentionAsDirect && c.repoPrivate === true) {
+    if (singleWindowMentionPolicy(opts?.treatMentionAsDirect === true, true, c.repoPrivate === true).addressing === "direct-mention") {
       return { addressing: "direct", reason: "bot @mention on a single-window private repo — answered by the unified window" };
     }
     return { addressing: "drop", reason: "bot @mention — owned by the native githubChannel path" };
