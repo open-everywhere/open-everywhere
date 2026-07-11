@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { defineHook, type HookContext } from "eve/hooks";
 import { defineState } from "eve/context";
 import { resolvePartition } from "../memory/partition.js";
@@ -8,7 +10,7 @@ import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { tierId, storeRoot, type MemoryFiles } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
-import { syncTierIntoSandbox, readTierFromSandbox, tierSandboxDir } from "../memory/sandbox-sync.js";
+import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, tierSandboxDir } from "../memory/sandbox-sync.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
@@ -28,6 +30,11 @@ const writeBaseline = defineState<Record<string, Record<string, string>>>(
 
 const readSyncVersions = defineState<Record<string, string | null>>(
   "open-everywhere.memory.readSyncVersions",
+  () => ({}),
+);
+
+const failedReadSilos = defineState<Record<string, string>>(
+  "open-everywhere.memory.failedReadSilos",
   () => ({}),
 );
 
@@ -169,6 +176,18 @@ function resyncArmed(ctx: HookContext): boolean {
   }
 }
 
+function warnGitlessReadSilos(reads: readonly ResolvedMemory[]): void {
+  if (existsSync(join(storeRoot(), ".git"))) return;
+  const gitSilos = reads.filter((r) => r.silo.provider === "git").map((r) => r.silo.name);
+  if (gitSilos.length === 0) return;
+  log(
+    `⚠ git-backed read silo(s) [${gitSilos.join(", ")}] but the memory store has no .git — ` +
+      `tierVersion can't detect upstream writes, so mid-session re-sync will NEVER fire for them ` +
+      `(a degraded-git self-host store stays stale until session end). Initialise git in the store ` +
+      `(${storeRoot()}) or use the sqlite/postgres memory provider.`,
+  );
+}
+
 async function recordReadVersions(p: ReturnType<typeof resolvePartition>, reads: readonly ResolvedMemory[]): Promise<void> {
   const versions: Record<string, string | null> = {};
   for (const rm of reads) {
@@ -199,7 +218,34 @@ async function refreshWritableTier(
     if (sandboxContent !== content) await sandbox.writeTextFile({ path: `${dir}/${rel}`, content });
     baseline[rel] = hashContent(content);
   }
+  const toDelete: string[] = [];
+  for (const [rel, sandboxContent] of Object.entries(fromSandbox)) {
+    if (rel in host) continue;
+    if (hashContent(sandboxContent) === baseline[rel]) {
+      toDelete.push(rel);
+      delete baseline[rel];
+    }
+  }
+  if (toDelete.length > 0) await removeTierFiles(sandbox, rm.tier, toDelete);
   writeBaseline.update((b) => ({ ...b, [tid]: baseline }));
+}
+
+async function refreshReadOnlyTier(
+  sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>,
+  p: ReturnType<typeof resolvePartition>,
+  rm: ResolvedMemory,
+): Promise<void> {
+  const files = await loadSource(p, rm);
+  const dir = tierSandboxDir(rm.tier);
+  const before = await readTierFromSandbox(sandbox, rm.tier);
+  const stale = Object.keys(before).filter((rel) => !(rel in files));
+  try {
+    await sandbox.run({ command: unlockCommand(dir) });
+    await syncTierIntoSandbox(sandbox, rm.tier, files);
+    if (stale.length > 0) await removeTierFiles(sandbox, rm.tier, stale);
+  } finally {
+    await lock(sandbox, dir);
+  }
 }
 
 async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
@@ -211,6 +257,8 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   const next: Record<string, string | null> = { ...last };
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   const resynced: string[] = [];
+  const healed: string[] = [];
+  const stillFailed = { ...failedReadSilos.get() };
   for (const rm of plan.reads) {
     const tid = tierId(rm.tier);
     try {
@@ -220,16 +268,14 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
       const lastSynced = last[tid];
       if (lastSynced !== undefined && version === lastSynced) continue;
       sandbox ??= await ctx.getSandbox();
-      if (rm.readOnly) {
-        const files = await loadSource(p, rm);
-        await sandbox.run({ command: unlockCommand(tierSandboxDir(rm.tier)) });
-        await syncTierIntoSandbox(sandbox, rm.tier, files);
-        await lock(sandbox, tierSandboxDir(rm.tier));
-      } else {
-        await refreshWritableTier(sandbox, p, rm);
-      }
+      if (rm.readOnly) await refreshReadOnlyTier(sandbox, p, rm);
+      else await refreshWritableTier(sandbox, p, rm);
       next[tid] = version;
       resynced.push(tid);
+      if (stillFailed[tid]) {
+        delete stillFailed[tid];
+        healed.push(tid);
+      }
     } catch (err) {
       log(`turn.started RE-SYNC FAILED for ${tid} ← ${rm.silo.name}/${rm.silo.provider} (other silos unaffected): ${String(err)}`);
     }
@@ -237,6 +283,19 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   if (resynced.length > 0) {
     readSyncVersions.update(() => next);
     log(`turn.started re-materialised ${resynced.length} advanced silo(s) [${resynced.join(", ")}] for ${p.key}`);
+  }
+  if (healed.length > 0 && sandbox) {
+    failedReadSilos.update(() => stillFailed);
+    try {
+      const okReads = plan.reads.filter((r) => !stillFailed[tierId(r.tier)]);
+      const failedNames = plan.reads.filter((r) => stillFailed[tierId(r.tier)]).map((r) => r.silo.name);
+      await sandbox.run({ command: unlockCommand("memory/MEMORY.md") });
+      await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedNames) });
+      await lock(sandbox, "memory/MEMORY.md");
+      log(`turn.started healed ${healed.length} previously-failed silo(s) [${healed.join(", ")}]; refreshed memory index for ${p.key}`);
+    } catch (err) {
+      log(`turn.started index refresh after heal failed (silos still materialised): ${String(err)}`);
+    }
   }
 }
 
@@ -263,6 +322,7 @@ export default defineHook({
         let synced = 0;
         const okReads: typeof plan.reads[number][] = [];
         const failedReads: string[] = [];
+        const failedTiers: Record<string, string> = {};
         for (const rm of plan.reads) {
           try {
             const files = await loadSource(p, rm);
@@ -272,12 +332,17 @@ export default defineHook({
             okReads.push(rm);
           } catch (err) {
             failedReads.push(rm.silo.name);
+            failedTiers[tierId(rm.tier)] = rm.silo.name;
             log(`SYNC FAILED for ${tierId(rm.tier)} ← ${rm.silo.name}/${rm.silo.provider} (other silos unaffected): ${String(err)}`);
           }
         }
         await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedReads) });
         await lock(sandbox, "memory/MEMORY.md");
-        if (resyncArmed(ctx)) await recordReadVersions(p, okReads);
+        if (resyncArmed(ctx)) {
+          await recordReadVersions(p, okReads);
+          failedReadSilos.update(() => failedTiers);
+          warnGitlessReadSilos(plan.reads);
+        }
         log(
           `synced ${synced} file(s) across [${okReads.map((r) => tierId(r.tier)).join(", ")}] for ${p.key} (${plan.reason})` +
             `${failedReads.length ? ` — ${failedReads.length} silo(s) FAILED to sync: ${failedReads.join(", ")}` : ""}`,

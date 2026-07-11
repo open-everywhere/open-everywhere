@@ -46,6 +46,17 @@ export async function readTierFromSandbox(
   return out;
 }
 
+export async function removeTierFiles(
+  sandbox: SandboxSession,
+  tier: Tier,
+  rels: readonly string[],
+): Promise<void> {
+  if (rels.length === 0) return;
+  const dir = tierSandboxDir(tier);
+  const quoted = rels.map((rel) => `'${`${dir}/${rel}`.replace(/'/g, "'\\''")}'`).join(" ");
+  await sandbox.run({ command: `rm -f ${quoted}` });
+}
+
 export async function readTierFile(
   sandbox: SandboxSession,
   tier: Tier,

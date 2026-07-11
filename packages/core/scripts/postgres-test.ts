@@ -50,6 +50,10 @@ const provider = makePostgresProvider(client);
   await provider.writeTier(p, WORKSPACE, { "version-probe.md": "advanced\n" }, "bump");
   const vAfter = await provider.tierVersion!(p, WORKSPACE);
   ok(typeof vAfter === "string" && vAfter !== vBefore, "tierVersion advances on a changed write");
+  await provider.deleteFile!(p, WORKSPACE, "version-probe.md");
+  const vDelete = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vDelete === "string" && vDelete !== vAfter, "tierVersion advances on a per-file delete (erasure is detectable by the re-sync)");
+  ok(!("version-probe.md" in (await provider.readTier(p, WORKSPACE))), "the deleted file is gone from the tier");
 
   await provider.ensureTier(p, SURFACE);
   await provider.writeTier(p, SURFACE, { "MEMORY.md": "surface-only\n" }, "s");
