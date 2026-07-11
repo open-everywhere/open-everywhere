@@ -53,6 +53,20 @@ async function runContract(provider: MemoryProvider): Promise<void> {
   const both = await provider.readTier(p, WORKSPACE);
   ok(both["MEMORY.md"] === "# changed\n" && both["people.md"] === "@ana owns deploys\n", `${id}: write unions files`);
 
+  ok(typeof provider.tierVersion === "function", `${id}: provider exposes the tierVersion probe`);
+  const fresh = partition(`ws-${id}-never-written`, "general");
+  ok((await provider.tierVersion!(fresh, WORKSPACE)) === null, `${id}: tierVersion is null for a never-written tier`);
+  const vBefore = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vBefore === "string" && vBefore.length > 0, `${id}: tierVersion is non-null once the tier has been written`);
+  ok((await provider.tierVersion!(p, WORKSPACE)) === vBefore, `${id}: tierVersion is stable while nothing changes (the skip gate)`);
+  await provider.writeTier(p, WORKSPACE, { "version-probe.md": "advanced\n" }, "bump");
+  const vAfter = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vAfter === "string" && vAfter !== vBefore, `${id}: tierVersion advances on a changed write`);
+  await provider.deleteFile!(p, WORKSPACE, "version-probe.md");
+  const vDelete = await provider.tierVersion!(p, WORKSPACE);
+  ok(typeof vDelete === "string" && vDelete !== vAfter, `${id}: tierVersion advances on a per-file delete (erasure is detectable by the re-sync)`);
+  ok(!("version-probe.md" in (await provider.readTier(p, WORKSPACE))), `${id}: the deleted file is gone from the tier`);
+
   await provider.ensureTier(p, SURFACE);
   await provider.writeTier(p, SURFACE, { "MEMORY.md": "surface-only\n" }, "s");
   await provider.ensureTier(p, siloTier("payments"));

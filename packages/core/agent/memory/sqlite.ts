@@ -105,6 +105,14 @@ export const sqliteProvider: MemoryProvider = {
     return seed;
   },
 
+  async tierVersion(p, tier) {
+    const path = tierRelDir(p, tier);
+    const row = getDb()
+      .prepare("SELECT version FROM memory_tier WHERE org_id = ? AND tier_path = ?")
+      .get(p.org, path) as { version: number } | undefined;
+    return row ? String(row.version) : null;
+  },
+
   async writeTier(p, tier, files, _message) {
     const path = tierRelDir(p, tier);
     const existing = readRows(p, tier);

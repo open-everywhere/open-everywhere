@@ -8,6 +8,7 @@ import {
   ensureTier as gitEnsureTier,
   readTier as gitReadTier,
   storeRoot as gitStoreRoot,
+  tierVersion as gitTierVersion,
   writeTier as gitWriteTier,
   type MemoryFiles,
   type Tier,
@@ -24,6 +25,8 @@ export interface MemoryProvider {
 
   deleteTier(p: Partition, tier: Tier, silo?: MemorySilo): Promise<void>;
 
+  tierVersion?(p: Partition, tier: Tier, silo?: MemorySilo): Promise<string | null>;
+
   deleteFile?(p: Partition, tier: Tier, relPath: string, silo?: MemorySilo): Promise<string | null>;
 
   root?(): string;
@@ -34,6 +37,7 @@ export const gitProvider: MemoryProvider = {
   readTier: gitReadTier,
   ensureTier: gitEnsureTier,
   writeTier: gitWriteTier,
+  tierVersion: gitTierVersion,
   deleteTier: gitDeleteTier,
   deleteFile: gitDeleteFile,
   root: gitStoreRoot,
