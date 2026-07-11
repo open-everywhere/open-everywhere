@@ -1,7 +1,7 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
-import { registerConfig } from "../agent/access/config.js";
+import { registerConfig, getConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { isStopRequest, shouldDeliverReply } from "../agent/channels/engagement.js";
@@ -29,6 +29,7 @@ import {
   SUPERVISOR_ROTATE_TURN_BUDGET,
   SUPERVISOR_ROTATE_TOKEN_BUDGET,
   confirmChannelInternalWithMeta,
+  slackSingleWindowMentionPolicy,
   liveSupervisorDeps,
   bindableFor,
   parseChannelJoinEvent,
@@ -443,7 +444,10 @@ registerConfig({
     body({ type: "event_callback", team_id: "T_ENG", event, ...extra });
 
   ok(classifyEnvelope(body({ type: "url_verification", challenge: "x" }), JSON_CT).kind === "forward", "url_verification → forward");
-  ok(classifyEnvelope(ev({ type: "app_mention", channel: "C", ts: "1.1", text: "<@B> hi" }), JSON_CT).kind === "forward", "app_mention → forward");
+  {
+    const d = classifyEnvelope(ev({ type: "app_mention", channel: "C", ts: "1.1", text: "<@B> hi" }), JSON_CT);
+    ok(d.kind === "mention" && d.env !== undefined, "app_mention → mention kind (carries env; handler decides forward vs single-window suppress)");
+  }
   ok(classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT).kind === "forward", "message.im (DM) → forward");
   ok(classifyEnvelope("payload=%7B%7D", "application/x-www-form-urlencoded").kind === "forward", "urlencoded interaction → forward");
   ok(classifyEnvelope("not json", JSON_CT).kind === "forward", "unparseable → forward (fail-safe)");
@@ -1312,6 +1316,168 @@ registerConfig({
     return fifo.keys.length;
   })();
   ok(first === 1 && r2 === 0, "dedupe: a redelivered event (same event_id) does NOT double-enqueue the supervisor");
+
+  if (prevTok === undefined) delete process.env.SLACK_BOT_TOKEN;
+  else process.env.SLACK_BOT_TOKEN = prevTok;
+}
+
+{
+  const secret = "single-window-secret";
+  const nowMs = 1_700_000_000_000;
+  const prevTok = process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_BOT_TOKEN;
+
+  const mentionEnv = (id: string, over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: id,
+      event: { type: "app_mention", channel: "C_TXN", ts: "95.1", user: "U1", text: "<@UBOT> what did we decide?", ...over },
+    });
+  const siblingEnv = (id: string, over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event_id: id,
+      event: { type: "message", channel: "C_TXN", ts: "95.1", channel_type: "channel", user: "U1", text: "<@UBOT> what did we decide?", ...over },
+    });
+  const mkReq = (body: string) => {
+    const ts = String(Math.floor(nowMs / 1000));
+    const sig = `v0=${createHmac("sha256", secret).update(`v0:${ts}:${body}`).digest("hex")}`;
+    return new Request("https://oe.test/eve/v1/slack", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+      body,
+    });
+  };
+  class SpyFifo extends ThreadFifo {
+    readonly keys: string[] = [];
+    override enqueue(key: string, run: () => Promise<void>): Promise<void> {
+      this.keys.push(key);
+      return super.enqueue(key, run);
+    }
+  }
+  const policy = (own: boolean) => async () =>
+    own ? { suppressNative: true, addressing: "direct-mention" as const } : { suppressNative: false, addressing: undefined };
+  const run = async (own: boolean | undefined, body: string) => {
+    const fifo = new SpyFifo();
+    let innerCalled = false;
+    const waits: Array<Promise<unknown>> = [];
+    const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const handler = buildFrontHandler(
+      async () => {
+        innerCalled = true;
+        return new Response("inner");
+      },
+      {
+        signingSecret: secret,
+        now: () => nowMs,
+        markEventSeen: async () => true,
+        getBotIdentity: async () => ({ userId: "UBOT" }),
+        fifo,
+        ...(own !== undefined ? { ambientEnabledFor: () => true, mentionPolicyFor: policy(own) } : {}),
+      },
+    );
+    const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
+    await Promise.all(waits);
+    return { fifo, innerCalled, waits: waits.length, res };
+  };
+
+  let r = await run(true, mentionEnv("EvSW1"));
+  ok(r.res.status === 200 && !r.innerCalled && r.fifo.keys.length === 0 && r.waits === 0, "single-window: app_mention native forward SUPPRESSED (no inner call, no separate wake)");
+  r = await run(true, siblingEnv("EvSW2"));
+  ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "single-window: the mention's message.channels sibling is KEPT → supervisor branch (the unified road), not dropped");
+
+  {
+    const store = getOperationalStore();
+    const thEv = parseMessageEvent(JSON.parse(siblingEnv("EvSW3", { thread_ts: "94.0" })))!;
+    const pth = resolvePartition(bindableFor(thEv));
+    await store.markEngaged(pth.org, pth.surfaceKey, "94.0", "2026-07-09T10:00:00Z");
+    r = await run(true, siblingEnv("EvSW3", { thread_ts: "94.0" }));
+    ok(r.fifo.keys.length === 1 && r.fifo.keys[0] === supervisorFifoKey("C_TXN"), "single-window: an in-thread mention (even in an ENGAGED thread) routes to the supervisor, not the per-thread session");
+    await store.disengage(pth.org, pth.surfaceKey, "94.0");
+  }
+
+  r = await run(false, mentionEnv("EvSW4"));
+  ok(r.innerCalled && r.fifo.keys.length === 0, "not owned (fail-closed privacy floor): app_mention forwards to the native slackChannel path (byte-identical)");
+  r = await run(false, siblingEnv("EvSW5"));
+  ok(!r.innerCalled && r.fifo.keys.length === 0 && r.waits === 0, "not owned: the mention-bearing sibling is DROPPED (byte-identical — the native turn owns the reply)");
+
+  r = await run(undefined, mentionEnv("EvSW6"));
+  ok(r.innerCalled && r.fifo.keys.length === 0, "live default: non-single-window domain → app_mention forwards exactly as today");
+  r = await run(undefined, siblingEnv("EvSW7"));
+  ok(!r.innerCalled && r.fifo.keys.length === 0 && r.waits === 0, "live default: non-single-window domain → mention sibling dropped exactly as today");
+
+  {
+    const pol = await slackSingleWindowMentionPolicy("C_TXN", "slack/T_ENG/C_TXN");
+    ok(!pol.suppressNative && pol.addressing === undefined, "live policy: non-single-window domain → native keeps the mention (no suppression, no addressing)");
+    const baseConfig = getConfig();
+    const prevUni = process.env.OE_UNIFIED_SUPERVISOR;
+    const prevWin = process.env.OE_CROSS_SURFACE_WINDOW;
+    process.env.OE_UNIFIED_SUPERVISOR = "1";
+    process.env.OE_CROSS_SURFACE_WINDOW = "1";
+    registerConfig({
+      ...baseConfig,
+      loadDomains: () => [
+        defineDomain({
+          name: "uni",
+          channels: ["slack/T_ENG/C_UNI"],
+          memory: "txn",
+          ambientSupervisor: true,
+          unifiedSupervisor: true,
+          crossSurfaceWindow: true,
+        }),
+      ],
+    });
+    const uniPol = await slackSingleWindowMentionPolicy("C_UNI", "slack/T_ENG/C_UNI");
+    ok(
+      !uniPol.suppressNative && uniPol.addressing === undefined,
+      "live policy: single-window domain but channel NOT positively confirmed internal → FAIL-CLOSED (native keeps the mention, nothing joins the window)",
+    );
+    registerConfig(baseConfig);
+    if (prevUni === undefined) delete process.env.OE_UNIFIED_SUPERVISOR;
+    else process.env.OE_UNIFIED_SUPERVISOR = prevUni;
+    if (prevWin === undefined) delete process.env.OE_CROSS_SURFACE_WINDOW;
+    else process.env.OE_CROSS_SURFACE_WINDOW = prevWin;
+  }
+
+  {
+    const supEv = (over: Record<string, unknown> = {}) =>
+      parseMessageEvent({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event: { type: "message", channel: "C_TXN", ts: "96.1", user: "U1", channel_type: "channel", text: "<@UBOT> what did we decide about tigers?", ...over },
+      })!;
+    const wakes: Array<{ token: string; message: string; window?: { wakeId: string; addressing?: string } }> = [];
+    const deps = (over: Partial<SupervisorRouteDeps> = {}): SupervisorRouteDeps => ({
+      confirmInternalWithMeta: async () => ({ internal: true, memberCount: 5 }),
+      getOrCreateSession: async (_o, _s, channelId) => ({ token: supervisorToken(channelId, 1), generation: 1, freshGeneration: false }),
+      wake: async (input) => {
+        wakes.push(input as (typeof wakes)[number]);
+      },
+      now: () => "2026-01-14T02:00:00Z",
+      unifiedMeta: () => ({ unified: true, singleWindow: true }),
+      ...over,
+    });
+
+    let out = await routeSupervisorEvent(supEv(), deps(), { directMention: true });
+    ok(out.woke && wakes.length === 1 && wakes[0].window?.addressing === "direct-mention", "directMention + singleWindow → window stamped addressing:direct-mention (the reply-bridge arm)");
+    ok(wakes[0].message.includes("[direct]") && !wakes[0].message.includes("[channel-watch]"), "directMention wake renders the ADDRESSED [direct] preamble, not the silence-biased watch framing");
+    ok(wakes[0].message.includes(`wake-id="${wakes[0].window!.wakeId}"`), "the envelope's wake-id matches the minted window wakeId (the reply tool's routing key survives)");
+    ok(wakes[0].message.includes('reason="mention"') && wakes[0].message.includes('mention="true"'), "directMention wake carries reason=mention + the trigger's mention=true response-obligation flag");
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(supEv({ text: "no mention here" }), deps());
+    ok(out.woke && wakes[0].window !== undefined && !("addressing" in wakes[0].window!), "ambient singleWindow wake's window carries NO addressing key (prose-drop guarantee intact)");
+    ok(wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes("[direct]") && !wakes[0].message.includes('mention="true"'), "ambient singleWindow wake renders channel-watch, byte-identical");
+
+    wakes.length = 0;
+    out = await routeSupervisorEvent(supEv(), deps({ unifiedMeta: () => ({ unified: true }) }), { directMention: true });
+    ok(
+      out.woke && wakes[0].window === undefined && wakes[0].message.includes("[channel-watch]") && !wakes[0].message.includes('mention="true"'),
+      "directMention without singleWindow → the seam gates it off (no window, plain channel-watch wake)",
+    );
+  }
 
   if (prevTok === undefined) delete process.env.SLACK_BOT_TOKEN;
   else process.env.SLACK_BOT_TOKEN = prevTok;
