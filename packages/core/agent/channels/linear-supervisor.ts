@@ -3,6 +3,7 @@ import type { ContextLine } from "./context-render.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
+import type { UnifiedWindowWake } from "./unified-window.js";
 import type { WakeTrust } from "./wake-envelope.js";
 
 export function linearSupervisorSentinel(generation: number): string {
@@ -94,6 +95,7 @@ export interface LinearSupervisorWakeInput {
   readonly handoffNote?: string | null;
   readonly handoffFromGeneration?: number;
   readonly unified?: boolean;
+  readonly wakeId?: string;
 }
 
 export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): NormalizedWake {
@@ -111,6 +113,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     containerNoun: "team",
     engagementTier: input.engagementTier,
     unifiedDisclosure: input.unified === true ? true : undefined,
+    wakeId: input.wakeId,
     locus: {
       channel: { id: input.teamId, ...(input.unified ? { platform: "linear" } : {}) },
       thread: { ts: issueLabel },
@@ -146,6 +149,7 @@ export interface LinearSupervisorDeps {
     auth: OpenEverywhereLinearAuth;
     message: string;
     context: readonly string[];
+    window?: UnifiedWindowWake;
   }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
@@ -161,6 +165,7 @@ export interface LinearSupervisorDispatch {
   readonly trigger: LinearSupervisorWakeInput["trigger"];
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
+  readonly window?: UnifiedWindowWake;
 }
 
 export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch, deps: LinearSupervisorDeps): Promise<void> {
@@ -176,11 +181,12 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
       trigger: d.trigger,
       engagementTier: d.engagementTier,
       unified: d.unified,
+      wakeId: d.window?.wakeId,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [] });
+    await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
   try {

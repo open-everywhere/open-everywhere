@@ -48,6 +48,8 @@ import {
 import { withSingleWindowDiversion } from "../agent/channels/slack-front.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "../agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "../agent/channels/github-identity.js";
+import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "../agent/channels/linear-supervisor.js";
+import { buildLinearAuth } from "../agent/channels/linear-identity.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
@@ -86,15 +88,16 @@ const withGates = async <T>(vals: Partial<Record<(typeof GATES)[number], string>
 
 const SLACK_KEY = "slack/T_WIN/C_WINA";
 const GH_KEY = "github/acme/payments-api";
+const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY],
+  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY],
   ambientSupervisor: true,
   unifiedSupervisor: true,
   crossSurfaceWindow: true,
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY], ambientSupervisor: true, unifiedSupervisor: true });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY], ambientSupervisor: true });
+const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY], ambientSupervisor: true, unifiedSupervisor: true });
+const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY], ambientSupervisor: true });
 const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
 const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgPlain = defineDomain({ name: "org", match: "org" });
@@ -106,7 +109,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, orgBoth],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX"].includes(surface) ? ["payments"] : []),
 });
 
 await withGates({}, () => {
@@ -146,9 +149,13 @@ await withGates({}, () => {
   const gGh = supervisorGrainFor(GH_KEY, [winDomain, orgBoth]);
   ok(gSlack.unified && gSlack.singleWindow === true && gGh.unified && gGh.singleWindow === true, "gates ON: both surfaces' grains are unified + singleWindow");
   ok(gSlack.registryKey === gGh.registryKey && gSlack.registryKey === unifiedDomainSessionKey("payments"), "one domain registry row for both surfaces");
+  const gLin = supervisorGrainFor(LINEAR_KEY, [winDomain, orgBoth]);
+  ok(gLin.unified && gLin.singleWindow === true, "gates ON: the Linear surface's grain is unified + singleWindow too");
+  ok(gLin.registryKey === gSlack.registryKey, "the Linear surface shares the one domain registry row");
   const rawSlack = supervisorTokenForGrain(gSlack, 3, () => supervisorToken("C_WINA", 3));
   const rawGh = supervisorTokenForGrain(gGh, 3, () => githubSupervisorToken("acme", "payments-api", 3));
-  ok(rawSlack === rawGh && rawSlack === unifiedSupervisorToken("payments", 3), "IDENTICAL raw token from the Slack and GitHub dispatch paths");
+  const rawLin = supervisorTokenForGrain(gLin, 3, () => linearSupervisorToken("T_WINX", 3));
+  ok(rawSlack === rawGh && rawSlack === rawLin && rawSlack === unifiedSupervisorToken("payments", 3), "IDENTICAL raw token from the Slack, GitHub AND Linear dispatch paths");
   ok(
     effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === effectiveEveToken(UNIFIED_CHANNEL_NAME, rawGh) &&
       effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === "unified:oe-dom:payments:oe-sup:g3",
@@ -271,6 +278,67 @@ await handleGitHubSupervisorDispatch(
   ok(received[1].target.context !== undefined && received[1].target.context!.length > 0, "github: side-channel context (the issue-title line) rides the receive target");
 }
 
+const linAuth = buildLinearAuth({
+  organizationId: "O_WIN",
+  teamId: "T_WINX",
+  issueId: "issue-uuid-77",
+  issueIdentifier: "ENG-77",
+  principalId: "sam",
+  isPrivate: true,
+  commentId: "comment-uuid-1",
+});
+const linWindow = {
+  wakeId: mintWakeId(),
+  origin: { platform: "linear", issueId: "issue-uuid-77", parentId: "comment-uuid-1" } satisfies UnifiedWakeOrigin,
+};
+const linDeps: LinearSupervisorDeps = {
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  wake: async ({ token, auth, message, context, window }) => {
+    ok(window !== undefined, "linear: the dispatch core threads the window through to the wake dep");
+    await divertToUnifiedWindow(captureReceive, {
+      message,
+      context: [...context],
+      token,
+      window: window!,
+      surfaceKey: LINEAR_KEY,
+      auth: auth as unknown as { attributes?: Record<string, unknown> },
+    });
+  },
+  now: () => "2026-01-14T02:00:07Z",
+};
+await handleLinearSupervisorDispatch(
+  {
+    surfaceKey: LINEAR_KEY,
+    teamId: "T_WINX",
+    issueId: "issue-uuid-77",
+    issueIdentifier: "ENG-77",
+    issueTitle: "Deploy window",
+    auth: linAuth,
+    trigger: { id: "comment-uuid-1", authorId: "sam", authorName: "Sam", sentAt: "2026-01-14T02:00:06Z", text: "what was the deploy window token we agreed?" },
+    unified: true,
+    window: linWindow,
+  },
+  linDeps,
+);
+{
+  ok(received.length === 3 && received[2].channel === unifiedChannel, "linear: the diversion targets the SAME unified channel value");
+  ok(received[2].target.token === RAW_TOKEN, "linear: the diverted wake carries the SAME raw domain token");
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[2].target.token),
+    "💥 SINGLE CONTEXT: the Slack wake and the Linear wake resolve ONE identical effective eve token — the second-surface proof",
+  );
+  ok(received[2].message.includes(`wake-id="${linWindow.wakeId}"`), "linear: the envelope carries the wake-id");
+  const a = received[2].auth.attributes ?? {};
+  ok(a[OE_PLATFORM_ATTR] === "linear" && a[OE_WAKE_ID_ATTR] === linWindow.wakeId, "linear: the forwarded auth is stamped with oe_platform + oe_wake_id");
+  ok(
+    received[2].target.origin.platform === "linear" &&
+      (received[2].target.origin as { issueId?: string }).issueId === "issue-uuid-77" &&
+      (received[2].target.origin as { parentId?: string }).parentId === "comment-uuid-1",
+    "linear: the frozen origin names the triggering issue + reply thread-root",
+  );
+  ok(typeof a.team_id === "string" && a.team_id === "T_WINX", "linear: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+}
+
 const store = getOperationalStore();
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
@@ -293,6 +361,13 @@ const store = getOperationalStore();
   });
   ok(sent.length === 2 && sent[1].opts.continuationToken === RAW_TOKEN, "receive: the GitHub wake delivers under the SAME raw token (same session)");
   ok(sent[1].payload.context !== undefined, "receive: side-channel context passes through to the delivery");
+
+  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+    await unifiedChannel.receive!({ message: received[2].message, target: received[2].target, auth: received[2].auth as never }, { send: fakeSend });
+  });
+  ok(sent.length === 3 && sent[2].opts.continuationToken === RAW_TOKEN, "receive: the Linear wake delivers under the SAME raw token (same session)");
+  const linRegistered = await resolveUnifiedWakeTarget(store, "default", received[2].target.wakeId);
+  ok(linRegistered !== null && linRegistered.platform === "linear", "receive: the Linear origin round-trips from the real store");
 
   await assert.rejects(
     unifiedChannel.receive!(
@@ -320,6 +395,7 @@ const store = getOperationalStore();
 {
   const slackPosts: Array<{ channelId: string; threadTs?: string; text: string }> = [];
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
+  const linPosts: Array<{ issueId: string; parentId?: string; text: string }> = [];
   const deps = {
     postSlack: async (o: { channelId: string; threadTs?: string }, text: string) => {
       slackPosts.push({ channelId: o.channelId, threadTs: o.threadTs, text });
@@ -329,15 +405,22 @@ const store = getOperationalStore();
       ghPosts.push({ owner: o.owner, repo: o.repo, issueNumber: o.issueNumber, text });
       return "c-1";
     },
+    postLinear: async (o: { issueId: string; parentId?: string }, text: string) => {
+      linPosts.push({ issueId: o.issueId, parentId: o.parentId, text });
+      return "lc-1";
+    },
   };
   const slackOrigin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
   const ghOrigin = await resolveUnifiedWakeTarget(store, "default", ghWindow.wakeId);
-  ok(slackOrigin !== null && ghOrigin !== null, "coalesced turn: BOTH pending wakeIds resolve from the map");
+  const linOrigin = await resolveUnifiedWakeTarget(store, "default", linWindow.wakeId);
+  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null, "coalesced turn: ALL THREE pending wakeIds resolve from the map");
   ok((await postUnifiedReply(slackOrigin!, "answer for slack", deps)) === "ts-1", "reply(slack wakeId) returns the Slack post id");
   ok((await postUnifiedReply(ghOrigin!, "answer for github", deps)) === "c-1", "reply(github wakeId) returns the GitHub comment id");
+  ok((await postUnifiedReply(linOrigin!, "answer for linear", deps)) === "lc-1", "reply(linear wakeId) returns the Linear comment id");
   ok(slackPosts.length === 1 && slackPosts[0].channelId === "C_WINA" && slackPosts[0].threadTs === undefined, "Slack reply landed in the Slack channel (top-level, matching the trigger)");
   ok(ghPosts.length === 1 && ghPosts[0].owner === "acme" && ghPosts[0].repo === "payments-api" && ghPosts[0].issueNumber === 55, "GitHub reply landed on the GitHub issue that woke it");
-  ok(slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github", "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn");
+  ok(linPosts.length === 1 && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1", "Linear reply landed on the issue + thread-root that woke it (commentCreate issueId + parentId)");
+  ok(slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear", "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn");
 
   const threadedId = mintWakeId();
   await registerUnifiedWakeTarget(store, "default", threadedId, { platform: "slack", channelId: "C_WINA", threadTs: "99.5" }, new Date().toISOString());
@@ -356,10 +439,22 @@ const store = getOperationalStore();
   await store.putUnifiedWakeTarget("default", "fresh", JSON.stringify({ platform: "slack", channelId: "C_NEW" }), new Date().toISOString(), WAKE_TARGET_TTL_MS);
   ok((await resolveUnifiedWakeTarget(store, "default", "stale")) === null, "an expired map row is pruned (the TTL bound)");
 
-  ok(isUnifiedWakeOrigin({ platform: "slack", channelId: "C1" }) && isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 1 }), "both origin variants validate");
   ok(
-    !isUnifiedWakeOrigin({ platform: "slack" }) && !isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 0 }) && !isUnifiedWakeOrigin(null) && !isUnifiedWakeOrigin("slack"),
-    "missing/invalid fields fail validation",
+    isUnifiedWakeOrigin({ platform: "slack", channelId: "C1" }) &&
+      isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 1 }) &&
+      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
+      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }),
+    "all three origin variants validate (linear with and without parentId)",
+  );
+  ok(
+    !isUnifiedWakeOrigin({ platform: "slack" }) &&
+      !isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 0 }) &&
+      !isUnifiedWakeOrigin({ platform: "linear" }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", issueId: "" }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: 5 }) &&
+      !isUnifiedWakeOrigin(null) &&
+      !isUnifiedWakeOrigin("slack"),
+    "missing/invalid fields fail validation (incl. linear without issueId / non-string parentId)",
   );
 }
 
@@ -373,7 +468,35 @@ const store = getOperationalStore();
   const offGrain = supervisorGrainFor(SLACK_KEY, [ambientTwin, orgPlain]);
   const offToken: string = supervisorTokenForGrain(offGrain, 1, () => supervisorToken("C_WINA", 1));
   const offGhToken: string = supervisorTokenForGrain(supervisorGrainFor(GH_KEY, [ambientTwin, orgPlain]), 1, () => githubSupervisorToken("acme", "payments-api", 1));
-  ok(offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1", "gates OFF: the two surfaces resolve DIFFERENT per-container tokens exactly as today");
+  const offLinToken: string = supervisorTokenForGrain(supervisorGrainFor(LINEAR_KEY, [ambientTwin, orgPlain]), 1, () => linearSupervisorToken("T_WINX", 1));
+  ok(
+    offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1" && offLinToken === "linear:T_WINX:oe-sup:g1",
+    "gates OFF: the three surfaces resolve DIFFERENT per-container tokens exactly as today",
+  );
+}
+{
+  let offWindow: unknown = "sentinel";
+  let offMsg = "";
+  await handleLinearSupervisorDispatch(
+    {
+      surfaceKey: LINEAR_KEY,
+      teamId: "T_WINX",
+      issueId: "issue-uuid-77",
+      issueIdentifier: "ENG-77",
+      auth: buildLinearAuth({ organizationId: "O_WIN", teamId: "T_WINX", issueId: "issue-uuid-77", principalId: "sam", commentId: "c2" }),
+      trigger: { id: "c2", authorId: "sam", sentAt: "2026-01-14T02:00:08Z", text: "plain per-team wake" },
+    },
+    {
+      getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+      wake: async ({ message, window }) => {
+        offWindow = window;
+        offMsg = message;
+      },
+      now: () => "2026-01-14T02:00:08Z",
+    },
+  );
+  ok(offWindow === undefined, "linear window OFF: the dispatch threads NO window to the wake dep (base send path, byte-identical)");
+  ok(!offMsg.includes("wake-id"), "linear window OFF: the wake envelope carries NO wake-id attribute (byte-identical render)");
 }
 {
   received.length = 0;

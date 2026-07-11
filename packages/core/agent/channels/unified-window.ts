@@ -12,6 +12,11 @@ export type UnifiedWakeOrigin =
       readonly repo: string;
       readonly issueNumber: number;
       readonly installationId?: number;
+    }
+  | {
+      readonly platform: "linear";
+      readonly issueId: string;
+      readonly parentId?: string;
     };
 
 export const WAKE_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
@@ -70,6 +75,9 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
       o.issueNumber > 0 &&
       (o.installationId === undefined || typeof o.installationId === "number")
     );
+  }
+  if (o.platform === "linear") {
+    return typeof o.issueId === "string" && o.issueId.length > 0 && (o.parentId === undefined || typeof o.parentId === "string");
   }
   return false;
 }
