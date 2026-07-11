@@ -356,8 +356,8 @@ const notAuth = buildNotionAuth({
   principalId: "sam-notion",
 });
 const notWindow = planNotionSingleWindow(true, true, true, { discussionId: "disc-win-1", pageId: "P_WINPAGE", workspaceId: "W_WIN" })!;
-ok(notWindow !== undefined && notWindow.addressing === "direct-mention", "notion: the REAL plan mints an ADDRESSED window for a mention on a singleWindow internal page");
-ok(planNotionSingleWindow(true, true, false, { discussionId: "disc-win-1" }) === undefined && planNotionSingleWindow(true, true, undefined, { discussionId: "disc-win-1" }) === undefined, "notion: a public/unknown-privacy page plans NO window (fail-closed — never routed to the shared window)");
+ok(notWindow !== undefined && notWindow.addressing === "direct-mention", "notion: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED page");
+ok(planNotionSingleWindow(true, true, false, { discussionId: "disc-win-1" }) === undefined, "notion: an UN-VOUCHED page plans NO window (fail-closed — never routed to the shared window)");
 const notDeps: NotionSupervisorDeps = {
   getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
   wake: async ({ token, auth, message, context, window }) => {

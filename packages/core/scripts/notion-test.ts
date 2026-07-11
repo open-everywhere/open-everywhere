@@ -16,7 +16,6 @@ import {
   richTextChunks,
   createCommentReply,
   retrieveBotUser,
-  pageIsInternal,
   blockPlainText,
   getBlockChildren,
   readNotionPage,
@@ -85,16 +84,6 @@ ok(richTextChunks("").length === 1 && richTextChunks("")[0].text.content === "(n
 const big = "x".repeat(4500);
 const chunks = richTextChunks(big);
 ok(chunks.length === 3 && chunks[0].text.content.length === 2000 && chunks[2].text.content.length === 500, "long reply chunked at 2000 chars");
-
-{
-  const pageFetch = (status: number, body: unknown): FetchLike => async () => new Response(JSON.stringify(body), { status });
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: pageFetch(200, { id: PAGE, public_url: null }) })) === true, "pageIsInternal: public_url null → TRUE (positively not published — internal)");
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: pageFetch(200, { id: PAGE, public_url: "https://notion.site/abc" }) })) === false, "pageIsInternal: a public_url string → FALSE (published to the web)");
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: pageFetch(200, { id: PAGE }) })) === undefined, "pageIsInternal: field ABSENT → undefined (unknown — the caller fails closed)");
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: pageFetch(200, { id: PAGE, public_url: 42 }) })) === undefined, "pageIsInternal: a non-string non-null value → undefined (never a guessed verdict)");
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: pageFetch(404, { object: "error" }) })) === undefined, "pageIsInternal: non-2xx → undefined (fail closed)");
-  ok((await pageIsInternal(PAGE, { apiKey: "k", fetch: async () => { throw new Error("net down"); } })) === undefined, "pageIsInternal: a fetch throw → undefined (fail closed, never crashes the dispatch)");
-}
 
 function commentEvent(): string {
   return JSON.stringify({

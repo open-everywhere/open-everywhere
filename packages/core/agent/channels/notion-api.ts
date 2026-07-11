@@ -122,20 +122,6 @@ export async function retrieveComment(commentId: string, opts: NotionCallOpts): 
   return (await res.json()) as NotionComment;
 }
 
-export async function pageIsInternal(pageId: string, opts: NotionCallOpts): Promise<boolean | undefined> {
-  try {
-    const f = opts.fetch ?? (globalThis.fetch as FetchLike);
-    const res = await f(`${NOTION_API_BASE}/v1/pages/${encodeURIComponent(pageId)}`, { method: "GET", headers: notionHeaders(opts) });
-    if (!res.ok) return undefined;
-    const body = (await res.json()) as Record<string, unknown>;
-    if (!("public_url" in body)) return undefined;
-    if (body.public_url === null) return true;
-    return typeof body.public_url === "string" ? false : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function retrieveBotUser(opts: NotionCallOpts): Promise<{ id?: string; type?: string; name?: string }> {
   const f = opts.fetch ?? (globalThis.fetch as FetchLike);
   const res = await f(`${NOTION_API_BASE}/v1/users/me`, { method: "GET", headers: notionHeaders(opts) });

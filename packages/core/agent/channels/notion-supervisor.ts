@@ -41,10 +41,9 @@ export interface NotionSingleWindowTarget {
 export function planNotionSingleWindow(
   singleWindow: boolean,
   isMention: boolean,
-  pageInternal: boolean | undefined,
+  privacyOk: boolean,
   target: NotionSingleWindowTarget,
 ): UnifiedWindowWake | undefined {
-  const privacyOk = pageInternal === true;
   const policy = singleWindowMentionPolicy(singleWindow, isMention, privacyOk);
   const divert = isMention ? policy.suppressNative : singleWindow && privacyOk;
   if (!divert) return undefined;

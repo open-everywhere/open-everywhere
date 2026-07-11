@@ -13,6 +13,8 @@ import {
   type NotionWakeMessage,
 } from "../agent/channels/notion-supervisor.js";
 import { singleWindowMentionPolicy, type UnifiedWindowWake } from "../agent/channels/unified-window.js";
+import { registerTrustedSurfaces, isVouchedInternal, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import { notionWorkspaceKey } from "../agent/channels/notion-identity.js";
 import { renderWake } from "../agent/channels/normalized-wake.js";
 import type { NotionComment } from "../agent/channels/notion-api.js";
 import type { OpenEverywhereNotionAuth } from "../agent/channels/notion-identity.js";
@@ -91,7 +93,7 @@ const siblings: NotionWakeMessage[] = [
 {
   const target = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" };
   const mention = planNotionSingleWindow(true, true, true, target);
-  ok(mention !== undefined && mention.addressing === "direct-mention", "plan: singleWindow @mention on an INTERNAL page → window with addressing 'direct-mention' (the unified window owns the mention)");
+  ok(mention !== undefined && mention.addressing === "direct-mention", "plan: singleWindow @mention on a VOUCHED page → window with addressing 'direct-mention' (the unified window owns the mention)");
   ok(
     mention!.origin.platform === "notion" &&
       (mention!.origin as { discussionId?: string }).discussionId === DISCUSSION &&
@@ -100,18 +102,37 @@ const siblings: NotionWakeMessage[] = [
     "plan: the frozen origin names the discussion (the reply target) + page + workspace",
   );
   ok(typeof mention!.wakeId === "string" && mention!.wakeId.length > 0, "plan: a host-minted wakeId rides the window");
-  ok(planNotionSingleWindow(true, true, false, target) === undefined, "plan: @mention on a PUBLIC page (public_url set) → NO window (privacy floor)");
-  ok(planNotionSingleWindow(true, true, undefined, target) === undefined, "plan: @mention with UNKNOWN page privacy → NO window (fail-closed, never default internal)");
+  ok(planNotionSingleWindow(true, true, false, target) === undefined, "plan: @mention on an UN-VOUCHED page (privacyOk=false) → NO window (privacy floor)");
   const ambient = planNotionSingleWindow(true, false, true, target);
-  ok(ambient !== undefined && ambient.addressing === undefined, "plan: ambient comment on a singleWindow internal page → window WITHOUT addressing (Leg A — judged treatment, prose stays hard-dropped)");
-  ok(planNotionSingleWindow(true, false, false, target) === undefined && planNotionSingleWindow(true, false, undefined, target) === undefined, "plan: ambient on a public/unknown page → NO window (the floor gates BOTH legs)");
+  ok(ambient !== undefined && ambient.addressing === undefined, "plan: ambient comment on a singleWindow vouched page → window WITHOUT addressing (Leg A — judged treatment, prose stays hard-dropped)");
+  ok(planNotionSingleWindow(true, false, false, target) === undefined, "plan: ambient on an un-vouched page → NO window (the floor gates BOTH legs)");
   ok(planNotionSingleWindow(false, true, true, target) === undefined && planNotionSingleWindow(false, false, true, target) === undefined, "plan: singleWindow OFF → NO window (byte-identical native path)");
   ok(planNotionSingleWindow(true, true, true, { discussionId: "" }) === undefined, "plan: an empty discussionId → NO window (no frozen reply target, fail-closed)");
-  for (const sw of [true, false]) for (const internal of [true, false, undefined] as const) {
-    const p = singleWindowMentionPolicy(sw, true, internal === true);
-    const w = planNotionSingleWindow(sw, true, internal, target);
-    ok((w !== undefined) === p.suppressNative && (w?.addressing === "direct-mention") === (p.addressing === "direct-mention"), `plan⟺seam complementarity for a mention (sw=${sw}, internal=${String(internal)})`);
+  for (const sw of [true, false]) for (const ok_ of [true, false]) {
+    const p = singleWindowMentionPolicy(sw, true, ok_);
+    const w = planNotionSingleWindow(sw, true, ok_, target);
+    ok((w !== undefined) === p.suppressNative && (w?.addressing === "direct-mention") === (p.addressing === "direct-mention"), `plan⟺seam complementarity for a mention (sw=${sw}, privacyOk=${ok_})`);
   }
+}
+
+{
+  _resetTrustedSurfacesForTest();
+  const WS = "ws-vouch";
+  const VOUCHED_PAGE = "page-vouched";
+  const UNVOUCHED_PAGE = "page-unvouched";
+  const wsKey = notionWorkspaceKey(WS);
+  const vouchedSk = `notion/${WS}/${VOUCHED_PAGE}`;
+  const unvouchedSk = `notion/${WS}/${UNVOUCHED_PAGE}`;
+  ok(!isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: with nothing registered, no Notion surface is internal (fail-closed default)");
+  registerTrustedSurfaces([wsKey]);
+  ok(isVouchedInternal(wsKey, vouchedSk), "vouch floor: a workspace-level vouch (notion/<ws>) admits a page under it");
+  const resolve = (sk: string) => isVouchedInternal(wsKey, sk);
+  ok(planNotionSingleWindow(true, true, resolve(vouchedSk), { discussionId: DISCUSSION, pageId: VOUCHED_PAGE, workspaceId: WS })?.addressing === "direct-mention", "vouch floor: a VOUCHED page's @mention diverts (addressing 'direct-mention')");
+  _resetTrustedSurfacesForTest();
+  registerTrustedSurfaces([vouchedSk]);
+  ok(isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: a surface-level vouch narrows to the one page (a sibling stays external)");
+  ok(planNotionSingleWindow(true, true, resolve(unvouchedSk), { discussionId: DISCUSSION, pageId: UNVOUCHED_PAGE, workspaceId: WS }) === undefined, "vouch floor: an UN-VOUCHED page's @mention takes the NATIVE path (fail-closed — no cross-surface leak to an external guest)");
+  _resetTrustedSurfacesForTest();
 }
 
 {

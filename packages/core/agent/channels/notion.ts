@@ -8,7 +8,9 @@ import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js
 import { getOperationalStore } from "../operational/provider.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { createCommentReply, retrieveBotUser, pageIsInternal } from "./notion-api.js";
+import { createCommentReply, retrieveBotUser } from "./notion-api.js";
+import { notionWorkspaceKey } from "./notion-identity.js";
+import { isVouchedInternal } from "../identity/trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
   handleNotionSupervisorDispatch,
@@ -106,7 +108,8 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: Ro
       appendAudit({ org, platform: "notion", workspace: typeof detail.workspaceId === "string" ? detail.workspaceId : "unknown", surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, state, window }) {
-      if (window && receive) {
+      if (window) {
+        if (!receive) throw new Error("notion single-window wake has no cross-channel receive — refusing (would post an unregistered wake-id)");
         await divertToUnifiedWindow(receive, {
           message,
           context: [...context],
@@ -142,9 +145,11 @@ export default defineChannel<NotionState, { state: NotionState }>({
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
         const grain = notionGrainFor(d.surfaceKey);
-        const pageInternal = grain.singleWindow === true && d.pageId && apiKey ? await pageIsInternal(d.pageId, { apiKey }) : undefined;
+        const privacyOk =
+          grain.singleWindow === true &&
+          (isVouchedInternal(notionWorkspaceKey(d.workspaceId ?? "unknown"), d.surfaceKey) || process.env.OE_TRUST === "internal");
         const window = grain.singleWindow === true
-          ? planNotionSingleWindow(true, d.addressing === "direct", pageInternal, {
+          ? planNotionSingleWindow(true, d.addressing === "direct", privacyOk, {
               discussionId: d.discussionId,
               pageId: d.pageId || undefined,
               workspaceId: d.workspaceId,
