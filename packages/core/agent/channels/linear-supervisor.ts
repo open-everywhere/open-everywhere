@@ -96,9 +96,11 @@ export interface LinearSupervisorWakeInput {
   readonly handoffFromGeneration?: number;
   readonly unified?: boolean;
   readonly wakeId?: string;
+  readonly directMention?: boolean;
 }
 
 export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): NormalizedWake {
+  const directMention = input.directMention === true;
   const issueLabel = input.issueIdentifier ?? input.issueId;
   const contextLines: ContextLine[] | undefined = input.issueTitle
     ? [{ senderType: "user", ts: issueLabel, text: `issue ${issueLabel}: ${input.issueTitle}` }]
@@ -108,10 +110,10 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
     : undefined;
   return {
     platform: "linear",
-    reason: "channel-activity",
-    addressing: "channel-watch",
+    reason: directMention ? "mention" : "channel-activity",
+    addressing: directMention ? "direct-mention" : "channel-watch",
     containerNoun: "team",
-    engagementTier: input.engagementTier,
+    engagementTier: directMention ? undefined : input.engagementTier,
     unifiedDisclosure: input.unified === true ? true : undefined,
     wakeId: input.wakeId,
     locus: {
@@ -127,10 +129,56 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.trigger.trust ?? "peer",
+      trust: input.trigger.trust ?? (directMention ? "principal" : "peer"),
+      mention: directMention ? true : undefined,
       body: input.trigger.text,
     }),
   };
+}
+
+export interface LinearAgentSessionSignal {
+  readonly action: string;
+  readonly agentSessionId?: string;
+  readonly organizationId?: string;
+  readonly teamId?: string;
+  readonly sourceCommentId?: string;
+  readonly promptSourceCommentId?: string;
+}
+
+export function linearAgentSessionSignal(
+  event: {
+    readonly action: string;
+    readonly organizationId?: string;
+    readonly agentSession: {
+      readonly id?: string;
+      readonly organizationId?: string;
+      readonly sourceCommentId?: string | null;
+      readonly commentId?: string | null;
+    };
+    readonly agentActivity?: { readonly sourceCommentId?: string | null };
+  },
+  teamId: string | undefined,
+): LinearAgentSessionSignal {
+  const s = event.agentSession;
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  return {
+    action: event.action,
+    agentSessionId: str(s.id),
+    organizationId: str(event.organizationId) ?? str(s.organizationId),
+    teamId,
+    sourceCommentId: str(s.sourceCommentId) ?? str(s.commentId),
+    promptSourceCommentId: str(event.agentActivity?.sourceCommentId),
+  };
+}
+
+export type LinearAgentSessionRouting = "native" | "suppress-and-divert" | "suppress";
+
+export function routeLinearAgentSession(sig: LinearAgentSessionSignal, singleWindow: boolean): LinearAgentSessionRouting {
+  if (!singleWindow) return "native";
+  if (!sig.agentSessionId || !sig.organizationId || !sig.teamId) return "native";
+  if (sig.action === "created") return sig.sourceCommentId ? "suppress-and-divert" : "native";
+  if (sig.action === "prompted") return sig.promptSourceCommentId ? "suppress" : "native";
+  return "native";
 }
 
 export interface LinearSupervisorSession {
@@ -166,6 +214,7 @@ export interface LinearSupervisorDispatch {
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
   readonly window?: UnifiedWindowWake;
+  readonly directMention?: boolean;
 }
 
 export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch, deps: LinearSupervisorDeps): Promise<void> {
@@ -182,6 +231,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
       engagementTier: d.engagementTier,
       unified: d.unified,
       wakeId: d.window?.wakeId,
+      directMention: d.directMention,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });

@@ -1,6 +1,7 @@
 import {
   linearChannel,
   callLinearGraphQL,
+  createLinearAgentActivity,
   parseLinearWebhookEvent,
   type LinearApiOptions,
   type LinearChannelCredentials,
@@ -13,6 +14,8 @@ import {
   classifyLinearAmbientComment,
   extractLinearCommentSignal,
   linearSupervisorToken,
+  linearAgentSessionSignal,
+  routeLinearAgentSession,
   handleLinearSupervisorDispatch,
   shouldRotate,
   type LinearSupervisorDeps,
@@ -324,18 +327,131 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
   slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) → judged wake dispatched`);
 }
 
+export const LINEAR_MENTION_HANDOFF_TEXT =
+  "On it — this team is handled by the org's cross-surface agent, so the answer will arrive as a reply in this comment thread.";
+
+export const LINEAR_MENTION_DIVERT_FAILED_TEXT =
+  "Open Everywhere couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
+
+export const LINEAR_PROMPT_HANDOFF_TEXT =
+  "This thread is handled by the org's cross-surface agent — replies arrive as comments in this thread.";
+
+async function mentionSessionDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
+  let event: ReturnType<typeof parseLinearWebhookEvent>;
+  try {
+    event = parseLinearWebhookEvent({ body, headers });
+  } catch {
+    return;
+  }
+  if (!event || event.kind !== "agent_session") return;
+  const teamId = teamIdFromRaw(event.raw);
+  const sig = linearAgentSessionSignal(event, teamId);
+  const surfaceKey = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
+  const singleWindow = surfaceKey ? linearGrainFor(surfaceKey).singleWindow === true : false;
+  if (routeLinearAgentSession(sig, singleWindow) !== "suppress-and-divert") return;
+  const agentSessionId = sig.agentSessionId!;
+  const organizationId = sig.organizationId!;
+  try {
+    if (!receive) throw new Error("no cross-channel receive on this route (cannot reach the unified window)");
+    const c = await enrichComment(sig.sourceCommentId!);
+    if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
+    const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
+    if (grain.singleWindow !== true) throw new Error("singleWindow does not hold for the enriched team (config raced or team mismatch)");
+    const auth = buildLinearAuth({
+      agentSessionId,
+      organizationId,
+      teamId: c.teamId,
+      issueId: c.issueId,
+      issueIdentifier: c.issueIdentifier,
+      principalId: c.authorId,
+      isPrivate: c.teamPrivate,
+      commentId: c.id,
+      parentCommentId: c.parentId,
+    });
+    const wakeTrust = resolveWakeTrustFromContext(
+      { channel: { kind: "linear" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
+      { id: c.authorId, isBot: false },
+      { principalFallback: true },
+    );
+    await handleLinearSupervisorDispatch(
+      {
+        surfaceKey: `linear/${organizationId}/${c.teamId}`,
+        teamId: c.teamId,
+        issueId: c.issueId,
+        issueIdentifier: c.issueIdentifier,
+        issueTitle: c.issueTitle,
+        auth,
+        trigger: {
+          id: c.id,
+          authorId: c.authorId,
+          authorName: c.authorName,
+          sentAt: c.createdAt ?? new Date().toISOString(),
+          text: c.body ?? "(the comment had no text)",
+          trust: wakeTrust,
+        },
+        unified: grain.unified,
+        directMention: true,
+        window: {
+          wakeId: mintWakeId(),
+          origin: { platform: "linear", issueId: c.issueId, parentId: c.parentId ?? c.id },
+          addressing: "direct-mention",
+        } satisfies UnifiedWindowWake,
+      },
+      liveLinearSupervisorDeps(send, c.teamId, organizationId, receive),
+    );
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: "linear",
+      workspace: organizationId,
+      surface: `linear/${organizationId}/${c.teamId}`,
+      principalId: c.authorId,
+      action: "linear.dispatched",
+      detail: { addressing: "direct", issueId: c.issueId, agentSessionId },
+    });
+    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "response", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
+      slog(`mention hand-off activity failed (dispatch already succeeded): ${String(err)}`),
+    );
+    slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) → addressed direct-mention wake diverted to the unified window`);
+  } catch (err) {
+    slog(`single-window mention divert FAILED (session ${agentSessionId}): ${String(err)}`);
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: "linear",
+      workspace: organizationId,
+      surface: surfaceKey,
+      action: "linear.mention_divert_failed",
+      detail: { agentSessionId, error: String(err).slice(0, 300) },
+    }).catch(() => undefined);
+    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
+  }
+}
+
 const pristine = linearChannel({});
 type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
 
 const native: LinearChannel = linearChannel({
-  onAgentSession: async (_ctx, event) => {
+  onAgentSession: async (ctx, event) => {
     const s = event.agentSession;
     const agentSessionId = s.id;
     if (!agentSessionId) return null;
 
     const teamId = teamIdFromRaw(event.raw);
+
+    {
+      const sig = linearAgentSessionSignal(event, teamId);
+      const sk = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
+      const routing = routeLinearAgentSession(sig, sk ? linearGrainFor(sk).singleWindow === true : false);
+      if (routing === "suppress-and-divert") return null;
+      if (routing === "suppress") {
+        await ctx.linear.createActivity({ type: "response", body: LINEAR_PROMPT_HANDOFF_TEXT }).catch((err) =>
+          slog(`prompted hand-off activity failed (session ${agentSessionId}): ${String(err)}`),
+        );
+        return null;
+      }
+    }
+
     const isPrivate = await enrichTeamPrivacy(teamId);
 
     const auth = buildLinearAuth({
@@ -490,6 +606,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     const res = await inner(cloned, args);
     if (res.ok) {
       args.waitUntil(ambientDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+      args.waitUntil(mentionSessionDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`mention leg failed: ${String(err)}`)));
     }
     return res;
   };

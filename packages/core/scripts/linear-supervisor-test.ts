@@ -6,6 +6,8 @@ import {
   extractLinearCommentSignal,
   classifyLinearAmbientComment,
   buildLinearSupervisorWake,
+  linearAgentSessionSignal,
+  routeLinearAgentSession,
   handleLinearSupervisorDispatch,
   shouldRotate,
   type LinearSupervisorDeps,
@@ -83,6 +85,59 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
   ok(explicitOff.message === plain.message, "unified:false renders BYTE-IDENTICAL to the unset per-team wake (flag-off invariant)");
 }
 
+{
+  const wakeId = "wk-lin-123";
+  const nw = buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueIdentifier: "ENG-42", issueTitle: "DB migration rollout", trigger, unified: true, directMention: true, wakeId, engagementTier: "reserved" });
+  const { message } = renderWake(nw, NOW);
+  ok(message.startsWith("[direct]"), "direct-mention leads with the ADDRESSED preamble, not [channel-watch]");
+  ok(!message.includes("[channel-watch]"), "direct-mention does NOT use the silence-biased watch preamble");
+  ok(message.includes("addressed to you and is asking for a response"), "direct-mention tells the supervisor it is addressed and owes a reply");
+  ok(!message.includes("Calibration for this team"), "the ambient calibration tier NEVER rides an addressed mention (an answer is owed)");
+  ok(message.includes(`<wake reason="mention"`), "direct-mention keeps the full judged envelope (reason=\"mention\")");
+  ok(message.includes(`wake-id="${wakeId}"`), "the wake-id survives in the envelope — the reply tool echoes it (the only reply route on the unified channel)");
+  ok(message.includes(`mention="true"`), "the trigger is flagged as a @mention (response-obligation signal)");
+  ok(message.includes(`<channel platform="linear" id="${TEAM}">`), "the surface address rides the unified addressed wake");
+  ok(message.includes("Cross-surface disclosure:"), "the P5 cross-surface disclosure still rides the addressed wake");
+  ok(message.includes(UNTRUSTED_OPEN), "the comment body is still untrusted-wrapped by the envelope (W1 holds on the addressed path)");
+  ok(message.includes(`trust="principal"`), "a direct mention defaults the trigger trust to principal (the live leg passes the real tier)");
+}
+{
+  const off = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueTitle: "DB migration rollout", trigger, engagementTier: "reserved", directMention: false }), NOW);
+  const plain = renderWake(buildLinearSupervisorWake({ teamId: TEAM, issueId: ISSUE, issueTitle: "DB migration rollout", trigger, engagementTier: "reserved" }), NOW);
+  ok(off.message === plain.message, "directMention:false renders BYTE-IDENTICAL to the unset channel-watch wake (flag-off invariant)");
+  ok(JSON.stringify(off.context) === JSON.stringify(plain.context), "directMention:false context is byte-identical too");
+  ok(off.message.startsWith("[channel-watch]"), "the flag-off wake is still the silence-biased channel-watch ambient wake");
+}
+
+{
+  const base = { action: "created", agentSessionId: "as-1", organizationId: "org-1", teamId: TEAM, sourceCommentId: "c-mention" };
+  ok(routeLinearAgentSession(base, false) === "native", "singleWindow OFF -> native (byte-identical, whatever the event)");
+  ok(routeLinearAgentSession(base, true) === "suppress-and-divert", "created mention session on a singleWindow team -> suppress-and-divert");
+  ok(routeLinearAgentSession({ ...base, sourceCommentId: undefined }, true) === "native", "comment-less created (assignment/delegation) -> native (not a mention; keep the native session)");
+  ok(routeLinearAgentSession({ ...base, agentSessionId: undefined }, true) === "native", "no session id -> native (under-identified; fail-open to the path that answers)");
+  ok(routeLinearAgentSession({ ...base, organizationId: undefined }, true) === "native", "no organization id -> native (can't key the surface)");
+  ok(routeLinearAgentSession({ ...base, teamId: undefined }, true) === "native", "no team id -> native (can't resolve the grain)");
+  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true) === "suppress", "comment-backed prompted -> suppress (the ambient Comment leg carries it into the same window)");
+  ok(routeLinearAgentSession({ ...base, action: "prompted" }, true) === "native", "comment-LESS prompted -> native (no ambient twin; never lose a user message)");
+  ok(routeLinearAgentSession({ ...base, action: "updated" }, true) === "native", "unknown actions -> native (unchanged behaviour)");
+}
+{
+  const sig = linearAgentSessionSignal(
+    {
+      action: "created",
+      organizationId: "org-1",
+      agentSession: { id: "as-9", organizationId: "org-shadow", sourceCommentId: null, commentId: "c-anchor" },
+      agentActivity: { sourceCommentId: "c-prompt" },
+    },
+    TEAM,
+  );
+  ok(sig.agentSessionId === "as-9" && sig.organizationId === "org-1" && sig.teamId === TEAM, "signal prefers the event-level organization id and carries the raw-derived team");
+  ok(sig.sourceCommentId === "c-anchor", "a null sourceCommentId falls back to the session's thread-anchor commentId");
+  ok(sig.promptSourceCommentId === "c-prompt", "the prompt activity's source comment rides the signal (the prompted `suppress` predicate)");
+  const bare = linearAgentSessionSignal({ action: "prompted", agentSession: { id: "as-9" } }, undefined);
+  ok(bare.organizationId === undefined && bare.sourceCommentId === undefined && bare.promptSourceCommentId === undefined, "absent facts stay undefined (fail-open to native downstream)");
+}
+
 const AUTH: OpenEverywhereLinearAuth = { authenticator: "linear", principalId: "human-1", principalType: "linear-user", attributes: { team_id: TEAM, issue_id: ISSUE, comment_id: "c-trig" } };
 const SURFACE = `linear/org-1/${TEAM}`;
 
@@ -106,6 +161,24 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(wakes.length === 1 && wakes[0]!.token === linearSupervisorToken(TEAM, 1), "dispatch wakes once under the supervisor token");
   ok(wakes[0]!.message.includes("you are this team's standing session"), "the delivered message is the team-supervisor wake");
   ok(touched.length === 1 && touched[0] === SURFACE, "touchSession records the wake");
+}
+
+{
+  const token = "oe-dom:acme-eng:oe-sup:g1";
+  const session: LinearSupervisorSession = { token, generation: 1, freshGeneration: false, handoffNote: null };
+  const wakeId = "wk-lin-dispatch-1";
+  const window = { wakeId, origin: { platform: "linear" as const, issueId: ISSUE, parentId: "c-root" }, addressing: "direct-mention" as const };
+  let captured: { message: string; window: unknown } | undefined;
+  const deps: LinearSupervisorDeps = {
+    getOrCreateSession: async () => session,
+    wake: async (w) => { captured = { message: w.message, window: w.window }; },
+    now: NOW,
+  };
+  await handleLinearSupervisorDispatch(dispatch({ unified: true, directMention: true, window }), deps);
+  ok(captured !== undefined, "the single-window direct @mention dispatches a wake");
+  ok(captured!.message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention wake (not a silence-biased watch)");
+  ok(captured!.message.includes(`wake-id="${wakeId}"`), "the delivered wake renders the wake-id (the reply tool's routing key)");
+  ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window WITH addressing (its wiring stamps oe_addressing for the prose-delivery bridge)");
 }
 
 ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young generation is NOT rotated");
