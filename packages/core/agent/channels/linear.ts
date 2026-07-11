@@ -21,6 +21,7 @@ import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } fro
 import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -256,6 +257,10 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     commentId: c.id,
     parentCommentId: c.parentId,
   });
+  const wakeTrust = resolveWakeTrustFromContext(
+    { channel: { kind: "linear" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
+    { id: c.authorId, isBot: false },
+  );
   await handleLinearSupervisorDispatch(
     {
       surfaceKey,
@@ -270,6 +275,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
         authorName: c.authorName,
         sentAt: c.createdAt ?? new Date().toISOString(),
         text: c.body ?? "(the comment had no text)",
+        trust: wakeTrust,
       },
       engagementTier: linearEngagementTier(surfaceKey),
       unified: linearGrainFor(surfaceKey).unified,

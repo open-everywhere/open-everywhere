@@ -1,5 +1,5 @@
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
-import type { WakeMessageInput } from "./wake-envelope.js";
+import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import { mentionsUser, type NotionComment } from "./notion-api.js";
@@ -37,6 +37,7 @@ export interface NotionWakeMessage {
   readonly authorId?: string;
   readonly sentAt: string;
   readonly text: string;
+  readonly trust?: WakeTrust;
 }
 
 export interface NotionSupervisorWakeInput {
@@ -58,7 +59,7 @@ function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
     authorId: m.authorId,
     id: m.id,
     sentAt: m.sentAt,
-    trust: "peer",
+    trust: m.trust ?? "peer",
     body: m.text,
   };
 }
@@ -89,7 +90,7 @@ export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): Nor
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: input.addressing === "direct" ? "principal" : "peer",
+      trust: input.trigger.trust ?? (input.addressing === "direct" ? "principal" : "peer"),
       mention: input.addressing === "direct",
       body: input.trigger.text,
     }),

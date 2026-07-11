@@ -18,6 +18,7 @@ import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-event
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -213,6 +214,10 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
     actorType: ev.comment.authorType,
     authorAssociation: ev.comment.authorAssociation,
   });
+  const wakeTrust = resolveWakeTrustFromContext(
+    { channel: { kind: "github" }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
+    { id: ev.comment.authorLogin, isBot: ev.comment.authorType === "Bot" },
+  );
   await handleGitHubSupervisorDispatch(
     {
       surfaceKey,
@@ -226,6 +231,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
         authorLogin: ev.comment.authorLogin,
         sentAt: ev.comment.createdAt ?? new Date().toISOString(),
         text: ev.comment.body ?? "(the comment had no text)",
+        trust: wakeTrust,
       },
       engagementTier: githubEngagementTier(surfaceKey),
       unified: githubGrainFor(surfaceKey).unified,

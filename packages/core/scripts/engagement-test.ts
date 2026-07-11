@@ -320,7 +320,7 @@ registerConfig({
     ok(/\(edited message\)/.test(woke[0]) && /EDIT of an earlier message/.test(woke[0]), "the wake message is framed as an edit");
     ok(/actually, more please/.test(woke[0]), "the wake message carries the post-edit text");
     ok(woke[0].includes('reason="message-edited"'), "the envelope's reason is message-edited on an edit wake");
-    ok(woke[0].includes('trust="peer"'), "the envelope's trigger message is trust=peer on the engaged-thread wake path");
+    ok(woke[0].includes('trust="relay"'), "the envelope's trigger fail-closes to trust=relay when the channel isn't confirmed internal (F3)");
     ok(woke[0].includes("<previous-body>") && /actually, mroe please/.test(woke[0]), "the envelope carries the pre-edit text as <previous-body>");
 
     woke.length = 0;

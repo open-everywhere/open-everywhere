@@ -1,5 +1,6 @@
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
-import { resolvePartition, type Partition } from "../memory/partition.js";
+import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
+import { resolveWakeTrust } from "../identity/wake-trust.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
@@ -206,6 +207,7 @@ export function renderWakeMessage(
 
 export interface SlackWakeOpts {
   readonly memberCount?: number;
+  readonly trust?: WakeTrust;
   readonly backscroll?: readonly WakeMessageInput[];
   readonly handoffNote?: string;
   readonly handoffFromGeneration?: number;
@@ -242,7 +244,7 @@ function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "
     handoff: hasHandoff ? { note: opts!.handoffNote!, fromGeneration: opts?.handoffFromGeneration ?? 0 } : undefined,
     backscroll: opts?.backscroll,
     trigger: mkMessageTrigger(
-      triggerMessage(ev, { trust: "peer", isEdit, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      triggerMessage(ev, { trust: opts?.trust ?? "peer", isEdit, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
     ),
   };
 }
@@ -362,12 +364,19 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   const uninvited = rec?.participating !== true;
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const trigger = displayNameOpts(names.triggerAuthor);
+  const wakeTrust = resolveWakeTrust({
+    authorIsBot: Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId),
+    authorId: ev.userId,
+    surfaceInternal: internal,
+    channelKey: domainKeyOf(p),
+  });
   try {
     await deps.wake({
       channelId: ev.channelId,
       threadTs: ev.threadTs!,
       auth,
       message: renderWakeMessage(ev, deps.now, {
+        trust: wakeTrust,
         triggerAuthorName: trigger.authorName,
         triggerAuthorHandle: trigger.authorHandle,
         participants: names.participants,
@@ -531,6 +540,7 @@ export function slackNameDropWake(
     readonly contextLines?: readonly ContextLine[];
     readonly contextSource?: string;
     readonly readMoreHint?: string;
+    readonly trust?: WakeTrust;
   },
 ): NormalizedWake {
   return {
@@ -547,7 +557,7 @@ export function slackNameDropWake(
     contextSource: opts?.contextSource,
     readMoreHint: opts?.readMoreHint,
     trigger: mkMessageTrigger(
-      triggerMessage(ev, { trust: "peer", isEdit: false, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
+      triggerMessage(ev, { trust: opts?.trust ?? "peer", isEdit: false, authorName: opts?.triggerAuthorName, authorHandle: opts?.triggerAuthorHandle }),
     ),
   };
 }
@@ -598,8 +608,16 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const names = await resolveWakeNames(ev.userId, undefined, deps.resolveProfile);
   const triggerName = displayNameOpts(names.triggerAuthor);
 
+  const wakeTrust = resolveWakeTrust({
+    authorIsBot: base.authorIsBot,
+    authorId: ev.userId,
+    surfaceInternal: internal,
+    channelKey: domainKeyOf(p),
+  });
+
   const rendered = renderWake(
     slackNameDropWake(ev, name!, {
+      trust: wakeTrust,
       triggerAuthorName: triggerName.authorName,
       triggerAuthorHandle: triggerName.authorHandle,
       participants: names.participants,
@@ -868,6 +886,12 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
 
   const p = resolvePartition(bindableFor(ev));
   const atIso = deps.now ? deps.now() : new Date().toISOString();
+  const wakeTrust = resolveWakeTrust({
+    authorIsBot: base.authorIsBot,
+    authorId: ev.userId,
+    surfaceInternal: internal,
+    channelKey: domainKeyOf(p),
+  });
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
   const backscroll = session.freshGeneration && deps.fetchBackscroll
@@ -899,6 +923,7 @@ export async function routeSupervisorEvent(ev: ParsedMessageEvent, deps: Supervi
       auth,
       message: renderWakeMessage(ev, deps.now, {
         mode: "supervisor",
+        trust: wakeTrust,
         engagementTier,
         unified: unifiedMeta?.unified === true,
         platformLabel: unifiedMeta?.label,
@@ -976,7 +1001,10 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
     touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, grainFor(surfaceKey).registryKey, atIso),
-    fetchBackscroll: (input) => fetchWakeEnvelopeBackscroll(input),
+    fetchBackscroll: (input) =>
+      fetchWakeEnvelopeBackscroll(input, undefined, (m) =>
+        m.sender === "human" ? resolveWakeTrust({ authorIsBot: false, authorId: m.authorId, surfaceInternal: true }) : "relay",
+      ),
     async forceRotate(org, surfaceKey, channelId, atIso) {
       const grain = grainFor(surfaceKey);
       const existing = await getOperationalStore().getChannelSession(org, grain.registryKey);

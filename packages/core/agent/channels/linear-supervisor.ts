@@ -3,6 +3,7 @@ import type { ContextLine } from "./context-render.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
+import type { WakeTrust } from "./wake-envelope.js";
 
 export function linearSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;
@@ -87,6 +88,7 @@ export interface LinearSupervisorWakeInput {
     readonly authorName?: string;
     readonly sentAt: string;
     readonly text: string;
+    readonly trust?: WakeTrust;
   };
   readonly engagementTier?: WakeEngagementTier;
   readonly handoffNote?: string | null;
@@ -122,7 +124,7 @@ export function buildLinearSupervisorWake(input: LinearSupervisorWakeInput): Nor
       authorId: input.trigger.authorId,
       id: input.trigger.id,
       sentAt: input.trigger.sentAt,
-      trust: "peer",
+      trust: input.trigger.trust ?? "peer",
       body: input.trigger.text,
     }),
   };

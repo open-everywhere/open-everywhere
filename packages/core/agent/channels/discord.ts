@@ -7,6 +7,20 @@ import { buildDiscordAuth, threadParentFromRawChannel, type OpenEverywhereDiscor
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
+import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { resolvePartition } from "../memory/partition.js";
+
+function auditPartitionForState(state: { channelId: string | null; guildId: string | null }): ChatAuditPartition | null {
+  if (!state.channelId) return null;
+  try {
+    return resolvePartition({
+      channel: { kind: "discord" },
+      session: { auth: { current: buildDiscordAuth({ userId: "", guildId: state.guildId ?? undefined, channelId: state.channelId }) } },
+    });
+  } catch {
+    return null;
+  }
+}
 
 function channelTypeFromRaw(raw: Record<string, unknown>): string | undefined {
   const ch = raw["channel"];
@@ -48,6 +62,10 @@ const discordInteractionChannel = discordChannel({
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:discord] judged silence (${action.reason}) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
         }
+        if (action.kind === "silent" && shouldAuditChatSilence(action.reason, repliedThisTurn)) {
+          const p = auditPartitionForState(channel.state);
+          if (p) await auditChatSilence(p, { channelId: channel.state.channelId, reason: action.reason });
+        }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(
             `[open-everywhere:discord] BARE STOP — turn ended with no reply and no no_reply (channel ${channel.state.channelId ?? "?"}) — this usually means a judgment call went missing, not that one was made.`,
@@ -56,6 +74,10 @@ const discordInteractionChannel = discordChannel({
         return;
       }
       await channel.discord.post(action.text);
+      {
+        const p = auditPartitionForState(channel.state);
+        if (p) await auditChatReply(p, { channelId: channel.state.channelId, chars: action.text.length });
+      }
     },
   },
 });

@@ -25,6 +25,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
+import { auditChatSilence, auditChatReply, shouldAuditChatSilence } from "./chat-turn-audit.js";
 import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -357,6 +358,17 @@ const slackMentionChannel = slackChannel({
         console.log(
           `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
+        if (shouldAuditChatSilence(action.reason, reactedThisTurn || repliedThisTurn || cardPostedThisTurn)) {
+          try {
+            const p = resolvePartition({
+              channel: { kind: "slack" },
+              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+            });
+            await auditChatSilence(p, { threadTs: channel.state.threadTs ?? null, reason: action.reason });
+          } catch (err) {
+            console.warn(`[open-everywhere:slack] no_reply audit write failed: ${String(err)}`);
+          }
+        }
         if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
           const channelId = channel.state.channelId ?? undefined;
           const threadTs = channel.state.threadTs ?? undefined;
@@ -480,6 +492,15 @@ const slackMentionChannel = slackChannel({
       }
       if (effects.postText) {
         await channel.thread.post(action.text);
+        try {
+          const p = resolvePartition({
+            channel: { kind: "slack" },
+            session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+          });
+          await auditChatReply(p, { threadTs: channel.state.threadTs ?? null, chars: action.text.length });
+        } catch (err) {
+          console.warn(`[open-everywhere:slack] replied audit write failed: ${String(err)}`);
+        }
       } else {
         console.log(
           `[open-everywhere:slack] approval card already posted this turn — suppressing the redundant text reply (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,

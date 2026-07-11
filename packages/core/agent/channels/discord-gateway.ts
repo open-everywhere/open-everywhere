@@ -21,6 +21,8 @@ import { fetchDiscordBackscroll } from "./discord-backscroll.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
+import { consumeRepliedThisTurn } from "./reply-signal.js";
+import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
 import { isAllowedDriver } from "../testing/driver-allowlist.js";
 import {
   buildIngestedReaction,
@@ -705,6 +707,15 @@ export function engagementCoordsFor(state: DiscordGatewayState): { p: Partition;
   return { p, key: state.channelId };
 }
 
+function auditPartitionForGatewayState(state: DiscordGatewayState): ChatAuditPartition | null {
+  if (!state.channelId) return null;
+  try {
+    return resolvePartition(ctxFromAuth(buildDiscordAuth({ userId: "", guildId: state.guildId, channelId: state.channelId })));
+  } catch {
+    return null;
+  }
+}
+
 export async function promoteParticipatingOnReply(state: DiscordGatewayState): Promise<void> {
   try {
     const coords = engagementCoordsFor(state);
@@ -811,20 +822,32 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (action.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
       const status = takeTurnStatus(channel.state);
+      const repliedThisTurn = consumeRepliedThisTurn();
+      const cardPostedThisTurn = consumeCardPostedThisTurn();
       const plan = planCompletion({
         action,
         reactionActive: Boolean(status.original),
-        cardPostedThisTurn: consumeCardPostedThisTurn(),
+        cardPostedThisTurn,
       });
 
       if (plan.reaction === "clear" && status.original) {
         await setDiscordReaction(status.original.channelId, status.original.messageId, EYES_EMOJI, "DELETE");
       }
 
+      const auditP = channel.state.channelId
+        ? auditPartitionForGatewayState(channel.state)
+        : null;
       if (plan.delivery.kind === "post") {
         await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
-      } else if (action.kind === "silent" && data.message) {
-        log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
+        if (auditP) {
+          const text = action.kind === "post" ? action.text : plan.delivery.chunks.join("\n");
+          await auditChatReply(auditP, { channelId: channel.channelId, chars: text.length });
+        }
+      } else if (action.kind === "silent") {
+        if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
+        if (auditP && shouldAuditChatSilence(action.reason, repliedThisTurn || cardPostedThisTurn)) {
+          await auditChatSilence(auditP, { channelId: channel.channelId, reason: action.reason });
+        }
       }
 
       if (action.kind === "post") {
