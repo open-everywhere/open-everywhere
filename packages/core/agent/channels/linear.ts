@@ -4,6 +4,7 @@ import {
   createLinearAgentActivity,
   parseLinearWebhookEvent,
   type LinearApiOptions,
+  type LinearAgentSessionEvent,
   type LinearChannelCredentials,
   type LinearChannel,
   type LinearChannelState,
@@ -333,8 +334,46 @@ export const LINEAR_MENTION_HANDOFF_TEXT =
 export const LINEAR_MENTION_DIVERT_FAILED_TEXT =
   "Open Everywhere couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
 
-export const LINEAR_PROMPT_HANDOFF_TEXT =
-  "This thread is handled by the org's cross-surface agent — replies arrive as comments in this thread.";
+interface MentionRoutingVerdict {
+  readonly routing: ReturnType<typeof routeLinearAgentSession>;
+  readonly isPrivate?: boolean;
+}
+
+const mentionRoutingMemo = new Map<string, Promise<MentionRoutingVerdict>>();
+
+function deliveryMemoKey(event: LinearAgentSessionEvent): string | undefined {
+  const did = event.delivery?.id;
+  if (typeof did === "string" && did.length > 0) return `d:${did}`;
+  const sid = typeof event.agentSession?.id === "string" ? event.agentSession.id : undefined;
+  if (!sid) return undefined;
+  const act = event.action ?? "";
+  const promptC = event.agentActivity?.sourceCommentId ?? "";
+  const srcC = event.agentSession?.sourceCommentId ?? event.agentSession?.commentId ?? "";
+  return `s:${sid}:${act}:${promptC}:${srcC}`;
+}
+
+async function computeMentionRouting(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
+  const sig = linearAgentSessionSignal(event, teamId);
+  const sk = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
+  const singleWindow = sk ? linearGrainFor(sk).singleWindow === true : false;
+  const isPrivate = singleWindow ? await enrichTeamPrivacy(sig.teamId) : undefined;
+  return { routing: routeLinearAgentSession(sig, singleWindow, isPrivate), isPrivate };
+}
+
+function mentionRoutingFor(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
+  const key = deliveryMemoKey(event);
+  const compute = (): Promise<MentionRoutingVerdict> => computeMentionRouting(event, teamId).catch(() => ({ routing: "native" as const }));
+  if (!key) return compute();
+  const existing = mentionRoutingMemo.get(key);
+  if (existing) return existing;
+  const p = compute();
+  mentionRoutingMemo.set(key, p);
+  if (mentionRoutingMemo.size > 512) {
+    const oldest = mentionRoutingMemo.keys().next().value;
+    if (oldest !== undefined) mentionRoutingMemo.delete(oldest);
+  }
+  return p;
+}
 
 async function mentionSessionDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
   let event: ReturnType<typeof parseLinearWebhookEvent>;
@@ -345,18 +384,21 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
   }
   if (!event || event.kind !== "agent_session") return;
   const teamId = teamIdFromRaw(event.raw);
+  const verdict = await mentionRoutingFor(event, teamId);
+  if (verdict.routing !== "suppress-and-divert") return;
   const sig = linearAgentSessionSignal(event, teamId);
-  const surfaceKey = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
-  const singleWindow = surfaceKey ? linearGrainFor(surfaceKey).singleWindow === true : false;
-  if (routeLinearAgentSession(sig, singleWindow) !== "suppress-and-divert") return;
   const agentSessionId = sig.agentSessionId!;
   const organizationId = sig.organizationId!;
+  const surfaceKey = `linear/${organizationId}/${sig.teamId}`;
+  const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
     if (!receive) throw new Error("no cross-channel receive on this route (cannot reach the unified window)");
-    const c = await enrichComment(sig.sourceCommentId!);
+    if (!triggerCommentId) throw new Error("suppress-and-divert with no trigger comment id (unreachable — the router requires one)");
+    const c = await enrichComment(triggerCommentId);
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (grain.singleWindow !== true) throw new Error("singleWindow does not hold for the enriched team (config raced or team mismatch)");
+    if (c.teamPrivate !== true) throw new Error("enriched team is not positively private (M1 privacy floor) — refusing the divert");
     const auth = buildLinearAuth({
       agentSessionId,
       organizationId,
@@ -432,27 +474,17 @@ const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
 
 const native: LinearChannel = linearChannel({
-  onAgentSession: async (ctx, event) => {
+  onAgentSession: async (_ctx, event) => {
     const s = event.agentSession;
     const agentSessionId = s.id;
     if (!agentSessionId) return null;
 
     const teamId = teamIdFromRaw(event.raw);
 
-    {
-      const sig = linearAgentSessionSignal(event, teamId);
-      const sk = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
-      const routing = routeLinearAgentSession(sig, sk ? linearGrainFor(sk).singleWindow === true : false);
-      if (routing === "suppress-and-divert") return null;
-      if (routing === "suppress") {
-        await ctx.linear.createActivity({ type: "response", body: LINEAR_PROMPT_HANDOFF_TEXT }).catch((err) =>
-          slog(`prompted hand-off activity failed (session ${agentSessionId}): ${String(err)}`),
-        );
-        return null;
-      }
-    }
+    const verdict = await mentionRoutingFor(event, teamId);
+    if (verdict.routing === "suppress-and-divert") return null;
 
-    const isPrivate = await enrichTeamPrivacy(teamId);
+    const isPrivate = verdict.isPrivate ?? (await enrichTeamPrivacy(teamId));
 
     const auth = buildLinearAuth({
       agentSessionId,

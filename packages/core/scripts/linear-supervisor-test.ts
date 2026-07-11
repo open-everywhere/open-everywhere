@@ -111,15 +111,18 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 
 {
   const base = { action: "created", agentSessionId: "as-1", organizationId: "org-1", teamId: TEAM, sourceCommentId: "c-mention" };
-  ok(routeLinearAgentSession(base, false) === "native", "singleWindow OFF -> native (byte-identical, whatever the event)");
-  ok(routeLinearAgentSession(base, true) === "suppress-and-divert", "created mention session on a singleWindow team -> suppress-and-divert");
-  ok(routeLinearAgentSession({ ...base, sourceCommentId: undefined }, true) === "native", "comment-less created (assignment/delegation) -> native (not a mention; keep the native session)");
-  ok(routeLinearAgentSession({ ...base, agentSessionId: undefined }, true) === "native", "no session id -> native (under-identified; fail-open to the path that answers)");
-  ok(routeLinearAgentSession({ ...base, organizationId: undefined }, true) === "native", "no organization id -> native (can't key the surface)");
-  ok(routeLinearAgentSession({ ...base, teamId: undefined }, true) === "native", "no team id -> native (can't resolve the grain)");
-  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true) === "suppress", "comment-backed prompted -> suppress (the ambient Comment leg carries it into the same window)");
-  ok(routeLinearAgentSession({ ...base, action: "prompted" }, true) === "native", "comment-LESS prompted -> native (no ambient twin; never lose a user message)");
-  ok(routeLinearAgentSession({ ...base, action: "updated" }, true) === "native", "unknown actions -> native (unchanged behaviour)");
+  ok(routeLinearAgentSession(base, false, true) === "native", "singleWindow OFF -> native (byte-identical, whatever the event/privacy)");
+  ok(routeLinearAgentSession(base, true, true) === "suppress-and-divert", "created mention on a singleWindow PRIVATE team -> suppress-and-divert");
+  ok(routeLinearAgentSession(base, true, false) === "native", "M1: singleWindow but team is PUBLIC (private===false) -> native (never leak a public surface into the shared window)");
+  ok(routeLinearAgentSession(base, true, undefined) === "native", "M1: singleWindow but team privacy UNKNOWN -> native (fail-closed on unknown)");
+  ok(routeLinearAgentSession({ ...base, sourceCommentId: undefined }, true, true) === "native", "comment-less created (assignment/delegation) -> native (not a mention; keep the native session)");
+  ok(routeLinearAgentSession({ ...base, agentSessionId: undefined }, true, true) === "native", "no session id -> native (under-identified; fail-open to the path that answers)");
+  ok(routeLinearAgentSession({ ...base, organizationId: undefined }, true, true) === "native", "no organization id -> native (can't key the surface)");
+  ok(routeLinearAgentSession({ ...base, teamId: undefined }, true, true) === "native", "no team id -> native (can't resolve the grain)");
+  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, true) === "suppress-and-divert", "S3: comment-backed prompted on a private team -> suppress-and-divert (self-diverts, no separate Comment webhook)");
+  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, false) === "native", "M1 applies to prompted too: a PUBLIC team prompt -> native");
+  ok(routeLinearAgentSession({ ...base, action: "prompted" }, true, true) === "native", "comment-LESS prompted -> native (nothing to divert; never lose a user message)");
+  ok(routeLinearAgentSession({ ...base, action: "updated" }, true, true) === "native", "unknown actions -> native (unchanged behaviour)");
 }
 {
   const sig = linearAgentSessionSignal(
