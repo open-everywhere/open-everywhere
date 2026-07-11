@@ -22,8 +22,14 @@ export interface ReplyJudge {
   grade(rubric: Rubric, reply: string): Promise<JudgeVerdict>;
 }
 
+function foldTypographic(s: string): string {
+  return s.replace(/[\u2010-\u2015\u2212]/g, "-").replace(/[\u00a0\u202f]/g, " ");
+}
+
 function matches(reply: string, pattern: string | RegExp): boolean {
-  return typeof pattern === "string" ? reply.toLowerCase().includes(pattern.toLowerCase()) : pattern.test(reply);
+  return typeof pattern === "string"
+    ? foldTypographic(reply).toLowerCase().includes(foldTypographic(pattern).toLowerCase())
+    : pattern.test(reply);
 }
 
 export function runFallbackCheck(check: FallbackCheck, reply: string): { pass: boolean; detail: string } {

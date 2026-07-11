@@ -125,6 +125,18 @@ export class LinearDriver {
     );
   }
 
+  async awaitAgentSession(issueId: string, opts: { timeoutMs: number }): Promise<LinearComment> {
+    const handle = this.cfg.agentHandle.toLowerCase();
+    return pollUntil(
+      async () =>
+        (await this.comments(issueId)).find((c) => {
+          const b = c.body.toLowerCase();
+          return this.isAppComment(c) || (b.includes("agent session") && b.includes(handle));
+        }),
+      { timeoutMs: opts.timeoutMs, what: `an agent-session-open signal (system marker or app reply) on issue ${issueId}` },
+    );
+  }
+
   get canForge(): boolean {
     return typeof this.cfg.webhookSecret === "string";
   }

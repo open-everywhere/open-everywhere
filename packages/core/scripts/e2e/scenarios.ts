@@ -954,7 +954,13 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       if (ctx.auditRead) {
-        const rows = await ctx.auditRead({ sinceIso: runStart, platform: "github", actions: ["github.no_reply"] });
+        const rows = await pollUntil(
+          async () => {
+            const r = await ctx.auditRead!({ sinceIso: runStart, platform: "github", actions: ["github.no_reply"] });
+            return r.length > 0 ? r : undefined;
+          },
+          { timeoutMs: REPLY_WAIT, what: "a github.no_reply audit row for the run (audited silence)" },
+        );
         ctx.gate(rows.length > 0, "audited silence: a github.no_reply row exists for the run (positive assertion of judged silence)");
       }
 
@@ -1013,19 +1019,33 @@ export const SCENARIOS: readonly Scenario[] = [
           await lin.archive(issueB.id);
         }
 
-        const beforeAssign = new Set((await lin.comments(issueA.id)).map((c) => c.id));
-        const assigned = await lin.assign(issueA.id, lin.appUserId);
-        ctx.gate(assigned, "assign: issueUpdate assigneeId=<app> succeeded");
-        const assignReply = await lin.awaitAppReply(issueA.id, beforeAssign, { timeoutMs: REPLY_WAIT });
-        ctx.gate(assignReply.userId === lin.appUserId, "assign: assigning the issue to the agent wakes an app-authored reply");
+        const issueC = await lin.createIssue(`(e2e) J-LIN assign-wake ${factToken("lin")}`);
+        try {
+          const assigned = await lin.assign(issueC.id, lin.appUserId);
+          ctx.gate(assigned, "assign: issueUpdate assigneeId=<app> succeeded");
+          const wake = await lin.awaitAgentSession(issueC.id, { timeoutMs: REPLY_WAIT });
+          ctx.gate(
+            lin.isAppComment(wake) || wake.body.toLowerCase().includes("agent session"),
+            "assign: assigning a FRESH issue to the agent opens an agent session (deterministic wake signal)",
+          );
+        } finally {
+          await lin.archive(issueC.id);
+        }
 
+        const offTopicAt = new Date().toISOString();
         await lin.comment(issueA.id, "just a note for the humans — no agent needed here, thanks");
         if (ctx.auditRead) {
-          const rows = await ctx.auditRead({ sinceIso: runStart, platform: "linear", actions: ["linear.no_reply"] });
+          const rows = await pollUntil(
+            async () => {
+              const r = await ctx.auditRead!({ sinceIso: runStart, platform: "linear", actions: ["linear.no_reply"] });
+              return r.length > 0 ? r : undefined;
+            },
+            { timeoutMs: REPLY_WAIT, what: "a linear.no_reply audit row for the off-topic comment (audited silence)" },
+          );
           ctx.gate(rows.length > 0, "audited silence: a linear.no_reply row exists for the run (positive assertion of judged silence)");
         } else {
           await sleep(SILENCE_WINDOW);
-          const strays = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.createdAt > assignReply.createdAt);
+          const strays = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.createdAt > offTopicAt);
           ctx.gate(strays.length === 0, "audited silence (fallback): the off-topic note drew NO app reply within the silence window");
         }
       } finally {
