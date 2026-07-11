@@ -48,3 +48,41 @@ export async function createBranch(opts: {
   if (res.status === 422 && text.includes("Reference already exists")) return "exists";
   throw new Error(`github create ref ${opts.repo}#${opts.branch}: ${res.status} ${text}`);
 }
+
+export async function updateRef(opts: {
+  repo: string;
+  ref: string;
+  sha: string;
+  force?: boolean;
+  token: string;
+  fetchFn?: HttpFetch;
+  apiBase?: string;
+}): Promise<void> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as HttpFetch);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const res = await fetchFn(`${apiBase}/repos/${opts.repo}/git/refs/${opts.ref}`, {
+    method: "PATCH",
+    headers: headers(opts.token),
+    body: JSON.stringify({ sha: opts.sha, force: opts.force === true }),
+  });
+  if (!res.ok) throw new Error(`github update ref ${opts.repo}#${opts.ref}: ${res.status} ${await res.text()}`);
+}
+
+export async function deleteRef(opts: {
+  repo: string;
+  ref: string;
+  token: string;
+  fetchFn?: HttpFetch;
+  apiBase?: string;
+}): Promise<"deleted" | "gone"> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as HttpFetch);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const res = await fetchFn(`${apiBase}/repos/${opts.repo}/git/refs/${opts.ref}`, {
+    method: "DELETE",
+    headers: headers(opts.token),
+  });
+  if (res.ok) return "deleted";
+  const text = await res.text();
+  if (res.status === 404 || (res.status === 422 && text.includes("Reference does not exist"))) return "gone";
+  throw new Error(`github delete ref ${opts.repo}#${opts.ref}: ${res.status} ${text}`);
+}

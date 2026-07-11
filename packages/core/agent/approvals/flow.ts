@@ -14,6 +14,7 @@ import "./access-request.js";
 import "./skill-create.js";
 import "./routine-create.js";
 import "./memory-remember.js";
+import "./pr-open.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 

@@ -253,7 +253,7 @@ export default defineTool({
           threadTs: binding.threadTs,
           action: `${platform}.post_file.attach`,
           stableId: callId,
-          payload: `${input.comment ?? ""} ${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
+          payload: `${input.comment ?? ""}\x00${toAttach.map((f) => `${f.filename}:${f.contentType}:${f.bytes.byteLength}`).join(",")}`,
         }),
         run: async () => {
           if (platform === "slack") await postFilesToSlack(ctx as BindableContext, toAttach, input.comment);
@@ -270,7 +270,7 @@ export default defineTool({
           threadTs: binding.threadTs,
           action: `${platform}.post_file.link`,
           stableId: callId,
-          payload: `${toAttach.length > 0 ? "" : (input.comment ?? "")} ${hostedUrls.join(",")}`,
+          payload: `${toAttach.length > 0 ? "" : (input.comment ?? "")}\x00${hostedUrls.join(",")}`,
         }),
         run: () => postLinkToSurface(ctx as BindableContext, platform, hostedUrls, toAttach.length > 0 ? undefined : input.comment),
       });

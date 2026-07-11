@@ -68,7 +68,11 @@ const bindings: Binding[] = [
 
   defineBinding({ bundle: "e2e-access-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
 
-  defineBinding({ bundle: "notion-connectors", scope: { level: "workspace", workspace: "1300000000000000100" } }),
+  defineBinding({
+    bundle: "notion-connectors",
+    scope: { level: "workspace", workspace: "1300000000000000100" },
+    allowBroad: "single-operator Discord test guild — every channel in it is the operator's own live-test surface",
+  }),
 
 ];
 

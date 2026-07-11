@@ -49,6 +49,7 @@ export interface Bundle {
 export interface Binding {
   readonly bundle: string;
   readonly scope: Scope;
+  readonly allowBroad?: string;
 }
 
 export function defineBundle(bundle: Bundle): Bundle {

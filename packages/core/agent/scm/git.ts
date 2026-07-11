@@ -77,9 +77,27 @@ export function checkoutCommandBrokered(
   ].join("\n");
 }
 
-export function pushCommand(dir: string, token: string, head: string): string {
+export const PENDING_REF_PREFIX = "oe-pending";
+
+export const STAGED_SHA_MARKER = "__OE_STAGED_SHA__";
+
+export function stagePushCommand(dir: string, token: string, head: string): string {
   const header = authExtraHeader(token);
-  return `git -C '${dir}' -c 'http.extraheader=${header}' push origin 'refs/heads/${head}:refs/heads/${head}'`;
+  return [
+    "set -e",
+    `sha=$(git -C '${dir}' rev-parse 'refs/heads/${head}')`,
+    `git -C '${dir}' -c 'http.extraheader=${header}' push origin "+$sha:refs/${PENDING_REF_PREFIX}/${head}"`,
+    `echo "${STAGED_SHA_MARKER} $sha"`,
+  ].join("\n");
+}
+
+export function parseStagedSha(stdout: string): string | null {
+  const re = new RegExp(`^${STAGED_SHA_MARKER}\\s+([0-9a-f]{40})$`);
+  for (const line of stdout.split("\n")) {
+    const m = line.trim().match(re);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 export const CONVENTION_FILES = ["AGENTS.md", "CLAUDE.md"] as const;

@@ -1,11 +1,15 @@
 import { defineTool } from "eve/tools";
-import { always } from "eve/tools/approval";
+import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { auditToolAction } from "../audit/tool-action.js";
-import { resolveAccessFor } from "../access/request.js";
+import { bindFrom } from "../identity/binding.js";
+import { resolvePartition } from "../memory/partition.js";
+import { principalIdOf, resolveAccessFor } from "../access/request.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
-import { isSafeBranchName, isSafeCheckoutDir, pushCommand, redactSecret } from "../scm/git.js";
-import { createOrUpdatePullRequest } from "../scm/pr.js";
+import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
+import { requestApproval } from "../approvals/flow.js";
+import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import type { PrOpenArgs } from "../approvals/pr-open.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -21,7 +25,7 @@ async function resolvePrToken(repo: string): Promise<string> {
 }
 export default defineTool({
   description:
-    "Push your committed branch and open a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first; this tool pushes it for you after approval. Write a clear body: what changed, why, how you verified it, and link the request that prompted it; open it as a draft if the repo's checks aren't passing. If a PR is already open for that branch, this updates it with your new commits instead. This is a consequential write and will pause for human approval before it runs.",
+    "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first. This does NOT open the PR: your commits are parked on a hidden staging ref and an approval card posts with the exact repo, branches, commit and description — the branch and PR publish only when a human in the channel approves. Write a clear body: what changed, why, how you verified it, and link the request that prompted it. If a PR is already open for that branch, approval updates it with your new commits instead. The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
     repo: z.string().describe("Target repository as 'owner/repo'."),
     head: z.string().describe("The branch containing the changes (must exist in the checkout)."),
@@ -30,7 +34,15 @@ export default defineTool({
     body: z.string().describe("PR description (markdown)."),
     dir: z.string().optional().describe("Workspace-relative checkout directory to push from (default: the repo name)."),
   }),
-  approval: always(),
+  outputSchema: z.object({
+    ok: z.boolean(),
+    repo: z.string(),
+    head: z.string(),
+    pending: z.boolean(),
+    pendingId: z.string().optional(),
+    message: z.string(),
+  }),
+  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -48,6 +60,21 @@ export default defineTool({
       throw new Error(`invalid checkout dir "${dir}" — use a simple workspace-relative path.`);
     }
 
+    const binding = bindFrom(ctx);
+    if (!hasApprovalCardPath(binding.platform)) {
+      throw new Error(
+        `open_pull_request needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and approve the PR before it publishes.`,
+      );
+    }
+    const requestedBy = principalIdOf(ctx);
+    if (!requestedBy) {
+      throw new Error("open_pull_request needs a verified sender to gate the publish — no principal id resolved, so there's no proposer to show on the approval card.");
+    }
+    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+    if (!channelId) {
+      throw new Error("open_pull_request couldn't resolve this channel's id for the approval card — try again from a real channel.");
+    }
+
     const token = await resolvePrToken(input.repo);
 
     let sandbox: Awaited<ReturnType<typeof ctx.getSandbox>>;
@@ -59,37 +86,50 @@ export default defineTool({
           `checkout_repo the repo, commit on "${input.head}", then retry.`,
       );
     }
-    const push = await sandbox.run({ command: pushCommand(dir, token, input.head) });
-    if (push.exitCode !== 0) {
+    const push = await sandbox.run({ command: stagePushCommand(dir, token, input.head) });
+    const headSha = push.exitCode === 0 ? parseStagedSha(push.stdout ?? "") : null;
+    if (push.exitCode !== 0 || !headSha) {
       throw new Error(
-        `push of "${input.head}" from ${dir}/ failed — is the repo checked out there (checkout_repo) with that branch committed? ` +
+        `staging push of "${input.head}" from ${dir}/ failed — is the repo checked out there (checkout_repo) with that branch committed? ` +
           redactSecret(push.stderr || push.stdout || "unknown error", token).slice(0, 500),
       );
     }
 
-    const pr = await createOrUpdatePullRequest({
+    const p = resolvePartition(ctx);
+    const tainted = untrustedIngestedThisTurn();
+    const args: PrOpenArgs = {
+      org: p.org,
+      scopeKey: p.surfaceKey,
       repo: input.repo,
       head: input.head,
       base: input.base,
       title: input.title,
       body: input.body,
-      token,
-    });
-
-    await auditToolAction(ctx, pr.updated ? "pr.update" : "pr.open", {
-      repo: input.repo,
-      head: input.head,
-      base: input.base,
-      number: pr.number,
-      url: pr.url,
-    });
+      headSha,
+      requestedBy,
+      tainted,
+    };
+    const posted = await requestApproval(
+      {
+        org: p.org,
+        kind: "pr.open",
+        args,
+        scopeKey: p.surfaceKey,
+        domain: null,
+        requestedBy,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+      },
+      approvalPostDeps(binding.platform),
+    );
 
     return {
-      url: pr.url,
-      number: pr.number,
-      message: pr.updated
-        ? `PR #${pr.number} was already open for ${input.head} — your pushed commits updated it: ${pr.url}`
-        : `Pushed ${input.head} and opened PR #${pr.number}: ${pr.url}`,
+      ok: true,
+      repo: input.repo,
+      head: input.head,
+      pending: true,
+      pendingId: posted.id,
+      message: `card posted — PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""} awaiting a human to approve the publish (pending ${posted.id}).`,
     };
   },
 });

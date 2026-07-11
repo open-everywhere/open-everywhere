@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
 import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
-import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, pushCommand, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
+import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, stagePushCommand, parseStagedSha, PENDING_REF_PREFIX, STAGED_SHA_MARKER, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
 import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
 import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
@@ -154,13 +154,20 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  const cmd = pushCommand("repo", "ghs_write", "fix/issue-9");
-  ok(cmd.startsWith("git -C 'repo' -c 'http.extraheader=AUTHORIZATION: basic"), "push carries the write token one-shot via git -c");
-  ok(cmd.includes("push origin 'refs/heads/fix/issue-9:refs/heads/fix/issue-9'"), "push targets the named branch with an explicit refspec (not HEAD, not push.default)");
+  const cmd = stagePushCommand("repo", "ghs_write", "fix/issue-9");
+  ok(cmd.includes("-c 'http.extraheader=AUTHORIZATION: basic"), "staging push carries the write token one-shot via git -c");
+  ok(cmd.includes(`rev-parse 'refs/heads/fix/issue-9'`), "resolves the head branch's exact sha first — the content pin the card freezes");
+  ok(cmd.includes(`push origin "+$sha:refs/${PENDING_REF_PREFIX}/fix/issue-9"`), "pushes THAT sha to the hidden staging ref — never to refs/heads (nothing publishes at propose)");
+  ok(!cmd.includes("refs/heads/fix/issue-9:refs/heads"), "no refspec ever targets a real branch");
   ok(!cmd.includes("config http.extraheader"), "the write token is NEVER persisted with git config");
   ok(!cmd.includes("ghs_write"), "raw token never appears (base64 extraheader form only)");
   ok(isSafeBranchName("fix/issue-9") && isSafeBranchName("release-1.2"), "branch guard accepts normal branch names");
   ok(!isSafeBranchName("-f") && !isSafeBranchName("a:b") && !isSafeBranchName("../x") && !isSafeBranchName("a'; rm -rf /"), "branch guard blocks option injection, refspec smuggling, traversal, shell metacharacters");
+
+  const sha = "c0ffee".padEnd(40, "0");
+  ok(parseStagedSha(`junk\n${STAGED_SHA_MARKER} ${sha}\n`) === sha, "parseStagedSha finds the marker line");
+  ok(parseStagedSha(`${STAGED_SHA_MARKER} nothexy\n`) === null, "parseStagedSha rejects a non-sha payload");
+  ok(parseStagedSha("no marker at all") === null, "parseStagedSha is null when the push never reported");
 }
 
 {
