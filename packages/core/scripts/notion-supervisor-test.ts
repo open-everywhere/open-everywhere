@@ -5,12 +5,16 @@ import {
   classifyNotionComment,
   buildNotionSupervisorWake,
   handleNotionSupervisorDispatch,
+  planNotionSingleWindow,
   shouldRotate,
   type NotionSupervisorDeps,
   type NotionSupervisorDispatch,
   type NotionSupervisorSession,
   type NotionWakeMessage,
 } from "../agent/channels/notion-supervisor.js";
+import { singleWindowMentionPolicy, type UnifiedWindowWake } from "../agent/channels/unified-window.js";
+import { registerTrustedSurfaces, isVouchedInternal, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import { notionWorkspaceKey } from "../agent/channels/notion-identity.js";
 import { renderWake } from "../agent/channels/normalized-wake.js";
 import type { NotionComment } from "../agent/channels/notion-api.js";
 import type { OpenEverywhereNotionAuth } from "../agent/channels/notion-identity.js";
@@ -86,6 +90,71 @@ const siblings: NotionWakeMessage[] = [
   ok(direct.message === "@OE summarise this page", "a unified DIRECT wake is still the body verbatim (stamp is judged-path-only by construction)");
 }
 
+{
+  const target = { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" };
+  const mention = planNotionSingleWindow(true, true, true, target);
+  ok(mention !== undefined && mention.addressing === "direct-mention", "plan: singleWindow @mention on a VOUCHED page → window with addressing 'direct-mention' (the unified window owns the mention)");
+  ok(
+    mention!.origin.platform === "notion" &&
+      (mention!.origin as { discussionId?: string }).discussionId === DISCUSSION &&
+      (mention!.origin as { pageId?: string }).pageId === PAGE &&
+      (mention!.origin as { workspaceId?: string }).workspaceId === "ws-1",
+    "plan: the frozen origin names the discussion (the reply target) + page + workspace",
+  );
+  ok(typeof mention!.wakeId === "string" && mention!.wakeId.length > 0, "plan: a host-minted wakeId rides the window");
+  ok(planNotionSingleWindow(true, true, false, target) === undefined, "plan: @mention on an UN-VOUCHED page (privacyOk=false) → NO window (privacy floor)");
+  const ambient = planNotionSingleWindow(true, false, true, target);
+  ok(ambient !== undefined && ambient.addressing === undefined, "plan: ambient comment on a singleWindow vouched page → window WITHOUT addressing (Leg A — judged treatment, prose stays hard-dropped)");
+  ok(planNotionSingleWindow(true, false, false, target) === undefined, "plan: ambient on an un-vouched page → NO window (the floor gates BOTH legs)");
+  ok(planNotionSingleWindow(false, true, true, target) === undefined && planNotionSingleWindow(false, false, true, target) === undefined, "plan: singleWindow OFF → NO window (byte-identical native path)");
+  ok(planNotionSingleWindow(true, true, true, { discussionId: "" }) === undefined, "plan: an empty discussionId → NO window (no frozen reply target, fail-closed)");
+  for (const sw of [true, false]) for (const ok_ of [true, false]) {
+    const p = singleWindowMentionPolicy(sw, true, ok_);
+    const w = planNotionSingleWindow(sw, true, ok_, target);
+    ok((w !== undefined) === p.suppressNative && (w?.addressing === "direct-mention") === (p.addressing === "direct-mention"), `plan⟺seam complementarity for a mention (sw=${sw}, privacyOk=${ok_})`);
+  }
+}
+
+{
+  _resetTrustedSurfacesForTest();
+  const WS = "ws-vouch";
+  const VOUCHED_PAGE = "page-vouched";
+  const UNVOUCHED_PAGE = "page-unvouched";
+  const wsKey = notionWorkspaceKey(WS);
+  const vouchedSk = `notion/${WS}/${VOUCHED_PAGE}`;
+  const unvouchedSk = `notion/${WS}/${UNVOUCHED_PAGE}`;
+  ok(!isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: with nothing registered, no Notion surface is internal (fail-closed default)");
+  registerTrustedSurfaces([wsKey]);
+  ok(isVouchedInternal(wsKey, vouchedSk), "vouch floor: a workspace-level vouch (notion/<ws>) admits a page under it");
+  const resolve = (sk: string) => isVouchedInternal(wsKey, sk);
+  ok(planNotionSingleWindow(true, true, resolve(vouchedSk), { discussionId: DISCUSSION, pageId: VOUCHED_PAGE, workspaceId: WS })?.addressing === "direct-mention", "vouch floor: a VOUCHED page's @mention diverts (addressing 'direct-mention')");
+  _resetTrustedSurfacesForTest();
+  registerTrustedSurfaces([vouchedSk]);
+  ok(isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: a surface-level vouch narrows to the one page (a sibling stays external)");
+  ok(planNotionSingleWindow(true, true, resolve(unvouchedSk), { discussionId: DISCUSSION, pageId: UNVOUCHED_PAGE, workspaceId: WS }) === undefined, "vouch floor: an UN-VOUCHED page's @mention takes the NATIVE path (fail-closed — no cross-surface leak to an external guest)");
+  _resetTrustedSurfacesForTest();
+}
+
+{
+  const mk = (over: { wakeId?: string; directMention?: boolean; unified?: boolean } = {}) =>
+    renderWake(
+      buildNotionSupervisorWake({ addressing: "direct", pageId: PAGE, discussionId: DISCUSSION, trigger: { ...trigger, text: "@OE what did we decide?" }, threadComments: siblings, ...over }),
+      NOW,
+    );
+  const dm = mk({ wakeId: "wake-notion-1", directMention: true, unified: true });
+  ok(dm.message.startsWith("[direct]"), "direct-mention wake leads with the ADDRESSED preamble (not the silence-biased watch one)");
+  ok(dm.message.includes(`wake-id="wake-notion-1"`), "direct-mention wake keeps the ENVELOPE with the wake-id (the reply tool's routing key)");
+  ok(dm.message.includes(`reason="mention"`) && dm.message.includes(`mention="true"`), "direct-mention wake is an honest mention (reason + response-obligation flag)");
+  ok(dm.message.includes(`<channel platform="notion" id="${PAGE}">`), "direct-mention wake carries the unified surface address");
+  ok(dm.message.includes("an earlier note"), "direct-mention wake keeps the discussion backscroll (context the shared window lacks)");
+  ok(mk().message === "@OE what did we decide?", "plain direct wake (no window) stays the body VERBATIM — byte-identical off");
+  const watch = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, directMention: true }), NOW);
+  ok(watch.message.startsWith("[channel-watch]"), "directMention alongside channel-watch addressing is ignored (guarded on `direct`)");
+  const watchId = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, wakeId: "wake-notion-2" }), NOW);
+  ok(watchId.message.includes(`wake-id="wake-notion-2"`), "a Leg-A judged wake carries its wake-id in the envelope");
+  ok(!renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW).message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (byte-identical render)");
+}
+
 const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: AUTHOR, principalType: "notion-user", attributes: { page_id: PAGE, discussion_id: DISCUSSION } };
 const SURFACE = `notion/ws-1/${PAGE}`;
 
@@ -93,7 +162,7 @@ function dispatch(over: Partial<NotionSupervisorDispatch> = {}): NotionSuperviso
   return { surfaceKey: SURFACE, addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, workspaceId: "ws-1", auth: AUTH, trigger, threadComments: siblings, ...over };
 }
 
-interface WakeCapture { token: string; message: string; context: readonly string[]; state: { discussionId: string | null; pageId: string | null; workspaceId: string | null } }
+interface WakeCapture { token: string; message: string; context: readonly string[]; state: { discussionId: string | null; pageId: string | null; workspaceId: string | null }; window?: UnifiedWindowWake }
 
 function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSupervisorDeps> = {}): { deps: NotionSupervisorDeps; wakes: WakeCapture[]; touched: string[] } {
   const wakes: WakeCapture[] = [];
@@ -101,7 +170,7 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   const deps: NotionSupervisorDeps = {
     getOrCreateSession: async () => session,
     touchSession: async (sk) => { touched.push(sk); },
-    wake: async (w) => { wakes.push({ token: w.token, message: w.message, context: w.context, state: w.state as WakeCapture["state"] }); },
+    wake: async (w) => { wakes.push({ token: w.token, message: w.message, context: w.context, state: w.state as WakeCapture["state"], window: w.window }); },
     now: NOW,
     ...over,
   };
@@ -121,6 +190,12 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   await handleNotionSupervisorDispatch(dispatch({ unified: true }), deps);
   ok(wakes[1].message.includes(`<channel platform="notion" id="${PAGE}">`), "a unified dispatch stamps the surface address on the delivered wake");
   ok((wakes[1].state as Record<string, unknown>).oeUnified === true, "a unified dispatch seeds state.oeUnified = true (the silence gate's key)");
+  ok(wakes[0].window === undefined && wakes[1].window === undefined, "no single-window plan → the dispatch threads NO window to the wake dep (byte-identical base path)");
+  const win = planNotionSingleWindow(true, true, true, { discussionId: DISCUSSION, pageId: PAGE, workspaceId: "ws-1" })!;
+  await handleNotionSupervisorDispatch(dispatch({ addressing: "direct", unified: true, window: win, directMention: true, trigger: { ...trigger, text: "@OE what did we decide?" } }), deps);
+  ok(wakes[2].window === win, "a single-window dispatch threads the window through to the wake dep (the wiring's divert key)");
+  ok(wakes[2].message.includes(`wake-id="${win.wakeId}"`), "the delivered direct-mention wake carries the window's wake-id in its envelope");
+  ok(wakes[2].message.startsWith("[direct]"), "the delivered wake is the ADDRESSED direct-mention render");
 }
 
 {

@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "eve/channels";
+import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
@@ -9,16 +9,20 @@ import { getOperationalStore } from "../operational/provider.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { createCommentReply, retrieveBotUser } from "./notion-api.js";
+import { notionWorkspaceKey } from "./notion-identity.js";
+import { isVouchedInternal } from "../identity/trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
   handleNotionSupervisorDispatch,
   notionSupervisorToken,
+  planNotionSingleWindow,
   shouldRotate,
   type NotionSupervisorDeps,
   type NotionSupervisorDispatch,
   type NotionWakeMessage,
 } from "./notion-supervisor.js";
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { divertToUnifiedWindow } from "./unified.js";
 
 const ROUTE = "/eve/v1/notion";
 
@@ -74,7 +78,7 @@ function notionGrainFor(surfaceKey: string): SupervisorGrain {
 
 type NotionState = NotionSessionState;
 
-function liveNotionSupervisorDeps(send: SendFn): NotionSupervisorDeps {
+function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: RouteHandlerArgs["receive"]): NotionSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -103,7 +107,19 @@ function liveNotionSupervisorDeps(send: SendFn): NotionSupervisorDeps {
     audit: (action, detail) =>
       appendAudit({ org, platform: "notion", workspace: typeof detail.workspaceId === "string" ? detail.workspaceId : "unknown", surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
-    async wake({ token, auth, message, context, state }) {
+    async wake({ token, auth, message, context, state, window }) {
+      if (window) {
+        if (!receive) throw new Error("notion single-window wake has no cross-channel receive — refusing (would post an unregistered wake-id)");
+        await divertToUnifiedWindow(receive, {
+          message,
+          context: [...context],
+          token,
+          window,
+          surfaceKey,
+          auth: auth as unknown as { attributes?: Record<string, unknown> },
+        });
+        return;
+      }
       await send({ message, context: [...context] }, { auth, continuationToken: token, state });
     },
   };
@@ -121,24 +137,37 @@ export default defineChannel<NotionState, { state: NotionState }>({
     return { state };
   },
   routes: [
-    POST(ROUTE, async (req, { send, waitUntil }) => {
+    POST(ROUTE, async (req, { send, waitUntil, receive }) => {
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
       const apiKey = notionApiKey();
       const botUser = resolveBotUser(apiKey ?? "");
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
+        const grain = notionGrainFor(d.surfaceKey);
+        const privacyOk =
+          grain.singleWindow === true &&
+          (isVouchedInternal(notionWorkspaceKey(d.workspaceId ?? "unknown"), d.surfaceKey) || process.env.OE_TRUST === "internal");
+        const window = grain.singleWindow === true
+          ? planNotionSingleWindow(true, d.addressing === "direct", privacyOk, {
+              discussionId: d.discussionId,
+              pageId: d.pageId || undefined,
+              workspaceId: d.workspaceId,
+            })
+          : undefined;
         const wakeCtx = { channel: { kind: "notion" }, session: { auth: { current: d.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
         const trustOf = (m: NotionWakeMessage) =>
           m.from === "human" && m.authorId ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId, isBot: false }) : ("relay" as const);
         await handleNotionSupervisorDispatch(
           {
             ...d,
-            unified: notionGrainFor(d.surfaceKey).unified,
+            unified: grain.unified,
+            window,
+            ...(window?.addressing === "direct-mention" ? { directMention: true } : {}),
             trigger: { ...d.trigger, trust: trustOf(d.trigger) },
             threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
           },
-          liveNotionSupervisorDeps(send as unknown as SendFn),
+          liveNotionSupervisorDeps(send as unknown as SendFn, d.surfaceKey, receive),
         );
         await appendAudit({
           org: deploymentOrg(),
@@ -147,7 +176,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           surface: d.pageId || d.discussionId || "unknown",
           principalId: d.auth.principalId || undefined,
           action: "notion.dispatched",
-          detail: { addressing: d.addressing, discussionId: d.discussionId },
+          detail: { addressing: d.addressing, discussionId: d.discussionId, ...(window ? { singleWindow: true } : {}) },
         });
       };
 

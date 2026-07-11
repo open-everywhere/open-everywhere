@@ -3,6 +3,7 @@ import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
 import { mentionsUser, type NotionComment } from "./notion-api.js";
+import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionSessionState } from "./notion-webhook.js";
 
@@ -31,6 +32,34 @@ export function classifyNotionComment(comment: NotionComment, botUserId: string 
   return { addressing: "channel-watch", reason: "ambient comment — judged by the doc supervisor" };
 }
 
+export interface NotionSingleWindowTarget {
+  readonly discussionId: string;
+  readonly pageId?: string;
+  readonly workspaceId?: string | null;
+}
+
+export function planNotionSingleWindow(
+  singleWindow: boolean,
+  isMention: boolean,
+  privacyOk: boolean,
+  target: NotionSingleWindowTarget,
+): UnifiedWindowWake | undefined {
+  const policy = singleWindowMentionPolicy(singleWindow, isMention, privacyOk);
+  const divert = isMention ? policy.suppressNative : singleWindow && privacyOk;
+  if (!divert) return undefined;
+  if (!target.discussionId) return undefined;
+  return {
+    wakeId: mintWakeId(),
+    origin: {
+      platform: "notion",
+      discussionId: target.discussionId,
+      ...(target.pageId ? { pageId: target.pageId } : {}),
+      ...(target.workspaceId ? { workspaceId: target.workspaceId } : {}),
+    },
+    ...(policy.addressing !== undefined ? { addressing: policy.addressing } : {}),
+  };
+}
+
 export interface NotionWakeMessage {
   readonly from: "human" | "self";
   readonly id: string;
@@ -50,6 +79,8 @@ export interface NotionSupervisorWakeInput {
   readonly handoffFromGeneration?: number;
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
+  readonly wakeId?: string;
+  readonly directMention?: boolean;
 }
 
 function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
@@ -65,19 +96,22 @@ function toWakeSibling(m: NotionWakeMessage): WakeMessageInput {
 }
 
 export function buildNotionSupervisorWake(input: NotionSupervisorWakeInput): NormalizedWake {
+  const directMention = input.directMention === true && input.addressing === "direct";
   const judged = input.addressing === "channel-watch";
-  const backscroll = judged ? (input.threadComments ?? []).map(toWakeSibling) : undefined;
+  const enveloped = judged || directMention;
+  const backscroll = enveloped ? (input.threadComments ?? []).map(toWakeSibling) : undefined;
   const handoff =
-    judged && input.handoffNote
+    enveloped && input.handoffNote
       ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 }
       : undefined;
   return {
     platform: "notion",
     reason: input.addressing === "direct" ? "mention" : "channel-activity",
-    addressing: input.addressing,
+    addressing: directMention ? "direct-mention" : input.addressing,
     containerNoun: "doc",
     engagementTier: judged ? input.engagementTier : undefined,
-    unifiedDisclosure: judged && input.unified === true ? true : undefined,
+    unifiedDisclosure: enveloped && input.unified === true ? true : undefined,
+    wakeId: input.wakeId,
     locus: {
       channel: { id: input.pageId, ...(input.unified ? { platform: "notion" } : {}) },
       thread: { ts: input.discussionId },
@@ -114,6 +148,7 @@ export interface NotionSupervisorDeps {
     message: string;
     context: readonly string[];
     state: NotionSessionState;
+    window?: UnifiedWindowWake;
   }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
@@ -130,6 +165,8 @@ export interface NotionSupervisorDispatch {
   readonly threadComments: readonly NotionWakeMessage[];
   readonly engagementTier?: WakeEngagementTier;
   readonly unified?: boolean;
+  readonly window?: UnifiedWindowWake;
+  readonly directMention?: boolean;
 }
 
 export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch, deps: NotionSupervisorDeps): Promise<void> {
@@ -151,11 +188,13 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
       threadComments: d.threadComments,
       engagementTier: d.engagementTier,
       unified: d.unified,
+      wakeId: d.window?.wakeId,
+      directMention: d.directMention,
       handoffNote: handoffNote ?? undefined,
       handoffFromGeneration: generation - 1,
     });
     const { message, context } = renderWake(nw, deps.now);
-    await deps.wake({ token, auth: d.auth, message, context: context ?? [], state });
+    await deps.wake({ token, auth: d.auth, message, context: context ?? [], state, window: d.window });
   };
 
   try {
