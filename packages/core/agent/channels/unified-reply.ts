@@ -1,5 +1,5 @@
 import { slackForm } from "./slack-events.js";
-import { callLinearGraphQL } from "eve/channels/linear";
+import { createLinearAgentActivity, LinearApiError } from "eve/channels/linear";
 import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
@@ -19,6 +19,7 @@ export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
   readonly postGitHub?: (origin: GitHubOrigin, text: string) => Promise<string>;
   readonly postLinear?: (origin: LinearOrigin, text: string) => Promise<string>;
+  readonly closeLinear?: (origin: LinearOrigin) => Promise<void>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
   readonly postDiscord?: (origin: DiscordOrigin, text: string) => Promise<string>;
   readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
@@ -102,21 +103,53 @@ async function liveNotionPost(origin: NotionOrigin, text: string): Promise<strin
   return id || "unknown";
 }
 
-async function liveLinearPost(origin: LinearOrigin, text: string): Promise<string> {
-  let data: { commentCreate?: { success?: boolean; comment?: { id?: string } } };
+function describeLinearError(err: unknown): string {
+  if (err instanceof LinearApiError) {
+    const body = err.body as { errors?: Array<{ message?: unknown }> } | undefined;
+    const msgs = Array.isArray(body?.errors)
+      ? body.errors.map((e) => (typeof e?.message === "string" ? e.message : "")).filter(Boolean).join("; ")
+      : "";
+    return `HTTP ${err.status}${msgs ? `: ${msgs}` : ""}`.slice(0, 240);
+  }
+  return "network/transport error";
+}
+
+export async function completeLinearSessionSilently(origin: LinearOrigin, deps: UnifiedReplyDeps = {}): Promise<void> {
+  return (deps.closeLinear ?? liveLinearSilentClose)(origin);
+}
+
+const LINEAR_SILENT_CLOSE_STATUS = "(no reply — nothing to add here)";
+
+async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
   try {
-    data = await callLinearGraphQL<{ commentCreate?: { success?: boolean; comment?: { id?: string } } }>({
-      query: "mutation OeUnifiedReply($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
-      queryName: "OeUnifiedReply",
-      variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
+    await createLinearAgentActivity({
+      activity: {
+        agentSessionId: origin.agentSessionId,
+        content: { type: "thought", body: LINEAR_SILENT_CLOSE_STATUS },
+        ephemeral: true,
+        signal: "stop",
+      },
     });
-  } catch {
-    throw new Error(`unified reply couldn't post to Linear — commentCreate failed on issue ${origin.issueId}`);
+  } catch (err) {
+    throw new Error(`unified silent-close couldn't stop the Linear session ${origin.agentSessionId} (${describeLinearError(err)})`);
   }
-  if (data.commentCreate?.success !== true) {
-    throw new Error(`unified reply couldn't post to Linear — commentCreate returned no success on issue ${origin.issueId}`);
+}
+
+async function liveLinearPost(origin: LinearOrigin, text: string): Promise<string> {
+  let res: { id: string; success: boolean };
+  try {
+    res = await createLinearAgentActivity({
+      activity: { agentSessionId: origin.agentSessionId, content: { type: "response", body: text } },
+    });
+  } catch (err) {
+    throw new Error(
+      `unified reply couldn't post to Linear — createLinearAgentActivity(response) failed on issue ${origin.issueId} (session ${origin.agentSessionId}) (${describeLinearError(err)})`,
+    );
   }
-  return data.commentCreate.comment?.id ?? "unknown";
+  if (res.success !== true) {
+    throw new Error(`unified reply couldn't post to Linear — the response activity returned no success on issue ${origin.issueId} (session ${origin.agentSessionId})`);
+  }
+  return res.id || "unknown";
 }
 
 async function liveSlackPost(origin: SlackOrigin, text: string): Promise<string> {

@@ -329,17 +329,6 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
       },
       engagementTier: linearEngagementTier(surfaceKey),
       unified: linearGrainFor(surfaceKey).unified,
-      window:
-        linearGrainFor(surfaceKey).singleWindow === true && linearTeamVouched(signal.organizationId, c.teamId)
-          ? ({
-              wakeId: mintWakeId(),
-              origin: {
-                platform: "linear",
-                issueId: c.issueId,
-                parentId: c.parentId ?? c.id,
-              },
-            } satisfies UnifiedWindowWake)
-          : undefined,
     },
     liveLinearSupervisorDeps(send, c.teamId, signal.organizationId, receive),
   );
@@ -356,7 +345,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
 }
 
 export const LINEAR_MENTION_HANDOFF_TEXT =
-  "On it — this team is handled by the org's cross-surface agent, so the answer will arrive as a reply in this comment thread.";
+  "Working on it — the org's cross-surface agent is answering; the reply will land here in a moment.";
 
 export const LINEAR_MENTION_DIVERT_FAILED_TEXT =
   "Open Everywhere couldn't route this mention to the org's cross-surface agent — please mention me again to retry.";
@@ -487,7 +476,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
         directMention: true,
         window: {
           wakeId: mintWakeId(),
-          origin: { platform: "linear", issueId: c.issueId, parentId: c.parentId ?? c.id },
+          origin: { platform: "linear", agentSessionId, issueId: c.issueId, parentId: c.parentId ?? c.id },
           addressing: "direct-mention",
         } satisfies UnifiedWindowWake,
       },
@@ -502,7 +491,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
       action: "linear.dispatched",
       detail: { addressing: "direct", issueId: c.issueId, agentSessionId },
     });
-    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "response", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
+    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
       slog(`mention hand-off activity failed (dispatch already succeeded): ${String(err)}`),
     );
     slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) → addressed direct-mention wake diverted to the unified window`);

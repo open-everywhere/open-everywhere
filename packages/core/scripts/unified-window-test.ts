@@ -39,7 +39,7 @@ import {
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
-import { postUnifiedReply } from "../agent/channels/unified-reply.js";
+import { postUnifiedReply, completeLinearSessionSilently } from "../agent/channels/unified-reply.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import {
   parseMessageEvent,
@@ -321,7 +321,7 @@ const linAuth = buildLinearAuth({
 });
 const linWindow = {
   wakeId: mintWakeId(),
-  origin: { platform: "linear", issueId: "issue-uuid-77", parentId: "comment-uuid-1" } satisfies UnifiedWakeOrigin,
+  origin: { platform: "linear", agentSessionId: "as-lin-77", issueId: "issue-uuid-77", parentId: "comment-uuid-1" } satisfies UnifiedWakeOrigin,
 };
 const linDeps: LinearSupervisorDeps = {
   getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
@@ -364,9 +364,10 @@ await handleLinearSupervisorDispatch(
   ok(a[OE_PLATFORM_ATTR] === "linear" && a[OE_WAKE_ID_ATTR] === linWindow.wakeId, "linear: the forwarded auth is stamped with oe_platform + oe_wake_id");
   ok(
     received[2].target.origin.platform === "linear" &&
+      (received[2].target.origin as { agentSessionId?: string }).agentSessionId === "as-lin-77" &&
       (received[2].target.origin as { issueId?: string }).issueId === "issue-uuid-77" &&
       (received[2].target.origin as { parentId?: string }).parentId === "comment-uuid-1",
-    "linear: the frozen origin names the triggering issue + reply thread-root",
+    "linear: the frozen origin names the OPEN agent session (the reply target) + issue + thread-root",
   );
   ok(typeof a.team_id === "string" && a.team_id === "T_WINX", "linear: the surface's own auth attributes ride verbatim (identity binding unchanged)");
 }
@@ -710,7 +711,7 @@ const store = getOperationalStore();
 {
   const slackPosts: Array<{ channelId: string; threadTs?: string; text: string }> = [];
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
-  const linPosts: Array<{ issueId: string; parentId?: string; text: string }> = [];
+  const linPosts: Array<{ agentSessionId: string; issueId: string; parentId?: string; text: string }> = [];
   const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
   const disPosts: Array<{ channelId: string; guildId: string; messageId?: string; text: string }> = [];
   const deps = {
@@ -726,8 +727,8 @@ const store = getOperationalStore();
       ghPosts.push({ owner: o.owner, repo: o.repo, issueNumber: o.issueNumber, text });
       return "c-1";
     },
-    postLinear: async (o: { issueId: string; parentId?: string }, text: string) => {
-      linPosts.push({ issueId: o.issueId, parentId: o.parentId, text });
+    postLinear: async (o: { agentSessionId: string; issueId: string; parentId?: string }, text: string) => {
+      linPosts.push({ agentSessionId: o.agentSessionId, issueId: o.issueId, parentId: o.parentId, text });
       return "lc-1";
     },
     postNotion: async (o: { discussionId: string; pageId?: string }, text: string) => {
@@ -748,7 +749,10 @@ const store = getOperationalStore();
   ok((await postUnifiedReply(disOrigin!, "answer for discord", deps)) === "dmsg-1", "reply(discord wakeId) returns the Discord message id");
   ok(slackPosts.length === 1 && slackPosts[0].channelId === "C_WINA" && slackPosts[0].threadTs === undefined, "Slack reply landed in the Slack channel (top-level, matching the trigger)");
   ok(ghPosts.length === 1 && ghPosts[0].owner === "acme" && ghPosts[0].repo === "payments-api" && ghPosts[0].issueNumber === 55, "GitHub reply landed on the GitHub issue that woke it");
-  ok(linPosts.length === 1 && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1", "Linear reply landed on the issue + thread-root that woke it (commentCreate issueId + parentId)");
+  ok(
+    linPosts.length === 1 && linPosts[0].agentSessionId === "as-lin-77" && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1",
+    "Linear reply reached the OPEN agent session that woke it (response Agent Activity — agentSessionId threaded, not commentCreate)",
+  );
   ok(notPosts.length === 1 && notPosts[0].discussionId === "disc-win-1", "Notion reply landed in the discussion thread that woke it (createCommentReply discussion_id)");
   ok(
     disPosts.length === 1 && disPosts[0].channelId === "CH_WIN" && disPosts[0].guildId === "G_WIN" && disPosts[0].messageId === "5002",
@@ -758,6 +762,13 @@ const store = getOperationalStore();
     slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion" && disPosts[0].text === "answer for discord",
     "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn",
   );
+
+  {
+    const closed: Array<{ agentSessionId: string; issueId: string }> = [];
+    const closeDeps = { closeLinear: async (o: { agentSessionId: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
+    await completeLinearSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
+    ok(closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent close: completeLinearSessionSilently closes the wake's OPEN agent session (no visible reply posted)");
+  }
 
   const threadedId = mintWakeId();
   await registerUnifiedWakeTarget(store, "default", threadedId, { platform: "slack", channelId: "C_WINA", threadTs: "99.5" }, new Date().toISOString());
@@ -779,20 +790,22 @@ const store = getOperationalStore();
   ok(
     isUnifiedWakeOrigin({ platform: "slack", channelId: "C1" }) &&
       isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 1 }) &&
-      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
-      isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }) &&
+      isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "as1", issueId: "i1" }) &&
+      isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "as1", issueId: "i1", parentId: "p1" }) &&
       isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1" }) &&
       isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }) &&
       isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "G1" }) &&
       isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "G1", messageId: "M1" }),
-    "all five origin variants validate (linear ± parentId; notion ± page/workspace; discord ± messageId)",
+    "all five origin variants validate (linear needs agentSessionId, ± parentId; notion ± page/workspace; discord ± messageId)",
   );
   ok(
     !isUnifiedWakeOrigin({ platform: "slack" }) &&
       !isUnifiedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 0 }) &&
       !isUnifiedWakeOrigin({ platform: "linear" }) &&
-      !isUnifiedWakeOrigin({ platform: "linear", issueId: "" }) &&
-      !isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: 5 }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "", issueId: "i1" }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "as1", issueId: "" }) &&
+      !isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "as1", issueId: "i1", parentId: 5 }) &&
       !isUnifiedWakeOrigin({ platform: "notion" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: 7 }) &&

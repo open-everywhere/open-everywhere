@@ -6,7 +6,7 @@ import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
-import { postUnifiedReply } from "./unified-reply.js";
+import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -72,13 +72,27 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       const org = deploymentOrg();
       const { workspace, surface } = auditLabels(channel.continuationToken);
       if (action.kind === "silent") {
+        const bind = { session: ctx.session } as unknown as BindableContext;
+        const wakeId = currentWakeId(bind);
+        const silentOrigin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
+        let linearClosed: boolean | undefined;
+        if (silentOrigin?.platform === "linear") {
+          try {
+            await completeLinearSessionSilently(silentOrigin);
+            linearClosed = true;
+            ulog(`silent turn: closed the open Linear session ${silentOrigin.agentSessionId} without posting (ephemeral stop)`);
+          } catch (err) {
+            linearClosed = false;
+            ulog(`silent turn: FAILED to close the Linear session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+          }
+        }
         await appendAudit({
           org,
           platform: "unified",
           workspace,
           surface,
           action: "unified.no_reply",
-          detail: { reason: action.reason, replied, ...(sessionId ? { sessionId } : {}) },
+          detail: { reason: action.reason, replied, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
         }).catch(() => undefined);
         return;
       }
@@ -86,22 +100,42 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied)) {
         const wakeId = currentWakeId(bind);
         const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
-        if (origin) {
-          try {
-            const id = await postUnifiedReply(origin, action.text);
-            ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
-            await appendAudit({
-              org,
-              platform: "unified",
-              workspace,
-              surface,
-              action: "turn.direct_mention_prose_delivered",
-              detail: { chars: action.text.length, platform: origin.platform, ...(sessionId ? { sessionId } : {}) },
-            }).catch(() => undefined);
-            return;
-          } catch (err) {
-            ulog(`addressed-mention bridge: post failed, dropping prose (audited): ${String(err).slice(0, 200)}`);
-          }
+        if (!origin) {
+          ulog(`addressed-mention bridge: UNRESOLVED wake target (wakeId=${currentWakeId(bind) ?? "none"}) — dropping owed prose (audited)`);
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: "turn.direct_mention_bridge_unresolved",
+            detail: { wakeId: currentWakeId(bind) ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
+          }).catch(() => undefined);
+          return;
+        }
+        try {
+          const id = await postUnifiedReply(origin, action.text);
+          ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: "turn.direct_mention_prose_delivered",
+            detail: { chars: action.text.length, platform: origin.platform, ...(sessionId ? { sessionId } : {}) },
+          }).catch(() => undefined);
+          return;
+        } catch (err) {
+          const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+          ulog(`addressed-mention bridge: POST FAILED to ${origin.platform} — dropping owed prose (audited): ${errMsg}`);
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: "turn.direct_mention_bridge_post_failed",
+            detail: { platform: origin.platform, chars: action.text.length, error: errMsg, ...(sessionId ? { sessionId } : {}) },
+          }).catch(() => undefined);
+          return;
         }
       }
       ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}) — replies must come from the reply tool`);

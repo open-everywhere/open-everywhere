@@ -169,7 +169,7 @@ interface WakeCapture { token: string; message: string; context: readonly string
   const token = "oe-dom:acme-eng:oe-sup:g1";
   const session: LinearSupervisorSession = { token, generation: 1, freshGeneration: false, handoffNote: null };
   const wakeId = "wk-lin-dispatch-1";
-  const window = { wakeId, origin: { platform: "linear" as const, issueId: ISSUE, parentId: "c-root" }, addressing: "direct-mention" as const };
+  const window = { wakeId, origin: { platform: "linear" as const, agentSessionId: "as-dispatch-1", issueId: ISSUE, parentId: "c-root" }, addressing: "direct-mention" as const };
   let captured: { message: string; window: unknown } | undefined;
   const deps: LinearSupervisorDeps = {
     getOrCreateSession: async () => session,
