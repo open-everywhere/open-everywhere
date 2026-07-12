@@ -81,12 +81,22 @@ export function isTrustedTeamsServiceUrl(serviceUrl: unknown): boolean {
   } catch {
     return false;
   }
-  return (
-    host === "smba.trafficmanager.net" ||
-    host.endsWith(".smba.trafficmanager.net") ||
-    host === "botframework.com" ||
-    host.endsWith(".botframework.com")
-  );
+  return teamsServiceHostAllowlist().some((h) => (h.startsWith(".") ? host.endsWith(h) : host === h));
+}
+
+const DEFAULT_TEAMS_SERVICE_HOSTS: readonly string[] = [
+  "smba.trafficmanager.net",
+  ".smba.trafficmanager.net",
+  "botframework.com",
+  ".botframework.com",
+];
+
+function teamsServiceHostAllowlist(): readonly string[] {
+  const extra = (process.env.OE_TEAMS_SERVICE_HOSTS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0);
+  return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;
 }
 
 export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
