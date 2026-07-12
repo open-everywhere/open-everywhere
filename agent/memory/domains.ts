@@ -37,20 +37,8 @@ const rawDomains: Domain[] = [
   }),
 
   defineDomain({
-    name: "e2e-ambient",
-    channels: [
-      "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011",
-      "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101",
-    ],
-    memory: "e2e-ambient-brain",
-    ambientSupervisor: true,
-    engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
-  }),
-
-  defineDomain({
     name: "e2e-unified",
-    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101"],
+    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101", "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2", "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011", "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101"],
     memory: "e2e-ambient-brain",
     ambientSupervisor: true,
     unifiedSupervisor: true,
