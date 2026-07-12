@@ -486,6 +486,23 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
   await dispatchTurn(m4, authForRelayMessage(m4)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
   ok(received.length === 6 && discordBaseSends.length === 1, "discord: a DM stays on the NATIVE path (never a personal surface into a team-shared window)");
   discordBaseSends.length = 0;
+
+  const m5 = discordMsg({ id: "5005", channelId: "TH_WIN", channelType: "11" });
+  await dispatchTurn(m5, authForRelayMessage(m5)!, discordSend, stubCreateThread, async () => "CH_WIN", captureReceive);
+  ok(
+    received.length === 7 && discordBaseSends.length === 0,
+    "discord: a mention INSIDE a thread DIVERTS (domain-grain key resolves the parent; the receive gate does NOT refuse) — no orphaned silence, forum channels work",
+  );
+  const dOrigin5 = received[6].target.origin as { platform: string; channelId?: string; messageId?: string };
+  ok(
+    dOrigin5.platform === "discord" && dOrigin5.channelId === "TH_WIN" && dOrigin5.messageId === "5005",
+    "discord: the thread wake's reply targets the thread's OWN channel + message (not the parent) — the answer lands where the human asked",
+  );
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[6].target.token),
+    "discord: the thread wake shares the SAME effective unified token as the base-channel wake (one context window across channel + thread)",
+  );
+  discordBaseSends.length = 0;
 }
 
 {

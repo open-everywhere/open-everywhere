@@ -705,7 +705,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
         origin,
         ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
       } satisfies UnifiedWindowWake,
-      surfaceKey: input.partition.surfaceKey,
+      surfaceKey: domainKeyOf(input.partition),
       auth: input.auth as unknown as { attributes?: Record<string, unknown> },
     });
   };
