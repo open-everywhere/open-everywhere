@@ -5,6 +5,7 @@ import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { createCommentReply } from "./notion-api.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
+import { isTrustedTeamsServiceUrl } from "./unified-window.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
@@ -40,8 +41,8 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`);
   }
-  if (!origin.serviceUrl.startsWith("https://")) {
-    throw new Error(`unified reply couldn't post to Teams — non-https serviceUrl on the wake origin (conversation ${origin.conversationId})`);
+  if (!isTrustedTeamsServiceUrl(origin.serviceUrl)) {
+    throw new Error(`unified reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${origin.conversationId})`);
   }
   let id: string;
   try {

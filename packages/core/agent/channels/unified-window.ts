@@ -71,6 +71,24 @@ export async function resolveUnifiedWakeTarget(store: UnifiedWakeTargetStore, or
   return isUnifiedWakeOrigin(parsed) ? parsed : null;
 }
 
+export function isTrustedTeamsServiceUrl(serviceUrl: unknown): boolean {
+  if (typeof serviceUrl !== "string") return false;
+  let host: string;
+  try {
+    const u = new URL(serviceUrl);
+    if (u.protocol !== "https:") return false;
+    host = u.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    host === "smba.trafficmanager.net" ||
+    host.endsWith(".smba.trafficmanager.net") ||
+    host === "botframework.com" ||
+    host.endsWith(".botframework.com")
+  );
+}
+
 export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return false;
@@ -102,8 +120,7 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   }
   if (o.platform === "teams") {
     return (
-      typeof o.serviceUrl === "string" &&
-      o.serviceUrl.startsWith("https://") &&
+      isTrustedTeamsServiceUrl(o.serviceUrl) &&
       typeof o.conversationId === "string" &&
       o.conversationId.length > 0 &&
       (o.replyToActivityId === undefined || typeof o.replyToActivityId === "string") &&

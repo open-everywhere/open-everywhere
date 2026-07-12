@@ -12,6 +12,10 @@ export function isVouchedInternal(workspaceKey: string, surfaceKey: string): boo
   return vouched.has(workspaceKey) || vouched.has(surfaceKey);
 }
 
+export function isVouchedSurface(surfaceKey: string): boolean {
+  return vouched.has(surfaceKey);
+}
+
 export function vouchedSurfaces(): string[] {
   return [...vouched];
 }

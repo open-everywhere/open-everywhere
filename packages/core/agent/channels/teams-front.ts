@@ -17,7 +17,7 @@ import { resolvePartition, domainKeyOf, type Partition } from "../memory/partiti
 import { engagementTierFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { isVouchedInternal } from "../identity/trust.js";
+import { isVouchedSurface } from "../identity/trust.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
@@ -66,7 +66,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
       scope: a.scope,
       membershipType: teamsMembershipType(a.channelData),
       tenantId,
-      vouched: isVouchedInternal(partition.workspaceKey, surfaceKey) || process.env.OE_TRUST === "internal",
+      vouched: isVouchedSurface(surfaceKey) || process.env.OE_TRUST === "internal",
     };
     const window = planTeamsSingleWindow(true, a.isBotMentioned, facts, {
       serviceUrl: a.serviceUrl,

@@ -32,12 +32,14 @@ import {
   stampUnifiedWindowAuth,
   shouldBridgeAddressedProse,
   singleWindowMentionPolicy,
+  isTrustedTeamsServiceUrl,
   WAKE_TARGET_TTL_MS,
   OE_PLATFORM_ATTR,
   OE_WAKE_ID_ATTR,
   OE_ADDRESSING_ATTR,
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
+import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { postUnifiedReply } from "../agent/channels/unified-reply.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -106,6 +108,7 @@ const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
 const TEAMS_KEY = "teams/TEN_WIN/19-winchan.tacv2";
+const TEAMS_WS_KEY = "teams/TEN_WIN";
 const ALL_KEYS = [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, TEAMS_KEY];
 const winDomain = defineDomain({
   name: "payments",
@@ -519,6 +522,22 @@ await handleTeamsSingleWindowDispatch(
   ok(planTeamsSingleWindow(true, true, f({ membershipType: "shared" }), target) === undefined, "teams plan: a shared channel plans NO window even when vouched");
   ok(planTeamsSingleWindow(true, false, f({ scope: "groupChat" }), target) === undefined, "teams plan: a group chat plans NO window (Leg A floor too)");
   ok(planTeamsSingleWindow(true, true, f({}), { ...target, serviceUrl: "" }) === undefined, "teams plan: no serviceUrl → NO window (no frozen reply target, fail closed)");
+
+  _resetTrustedSurfacesForTest();
+  registerTrustedSurfaces([TEAMS_WS_KEY]);
+  ok(isVouchedInternal(TEAMS_WS_KEY, TEAMS_KEY), "teams vouch: a tenant-wide vouch satisfies isVouchedInternal (the any-grain check)");
+  ok(!isVouchedSurface(TEAMS_KEY), "teams vouch: a tenant-wide vouch does NOT satisfy isVouchedSurface — so teams-front REFUSES the channel (a Connect channel can't be swept in by a coarse vouch)");
+  registerTrustedSurfaces([TEAMS_KEY]);
+  ok(isVouchedSurface(TEAMS_KEY), "teams vouch: a SURFACE-grain vouch admits — the operator asserted this specific channel is internal");
+  _resetTrustedSurfacesForTest();
+
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the canonical regional Bot Connector host is trusted");
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net"), "serviceUrl: the bare smba.trafficmanager.net host is trusted");
+  ok(isTrustedTeamsServiceUrl("https://sub.botframework.com/v3/"), "serviceUrl: a *.botframework.com host is trusted");
+  ok(!isTrustedTeamsServiceUrl("https://evil.example/v3/conversations"), "serviceUrl: an arbitrary https host is REJECTED (no token exfil)");
+  ok(!isTrustedTeamsServiceUrl("https://smba.trafficmanager.net.evil.com/"), "serviceUrl: a look-alike suffix host is REJECTED (endsWith is dot-anchored)");
+  ok(!isTrustedTeamsServiceUrl("http://smba.trafficmanager.net/"), "serviceUrl: a non-https Bot Framework host is REJECTED");
+  ok(!isTrustedTeamsServiceUrl("not a url") && !isTrustedTeamsServiceUrl("") && !isTrustedTeamsServiceUrl(undefined), "serviceUrl: unparseable / empty / non-string → REJECTED (fail-closed)");
 }
 
 const store = getOperationalStore();
