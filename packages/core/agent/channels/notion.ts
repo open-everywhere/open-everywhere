@@ -224,7 +224,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
         ? ({ discussionId, pageId: s(attrs?.page_id), workspaceId: s(attrs?.workspace_id) } satisfies NotionReplyTarget)
         : undefined;
     },
-    async "message.completed"(data, channel) {
+    async "message.completed"(data, channel, ctx) {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const target = channel.state.oeReplyTarget;
@@ -237,7 +238,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
           surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
           action: "notion.no_reply",
-          detail: { discussionId: discussionId ?? channel.state.discussionId, reason: action.reason },
+          detail: { discussionId: discussionId ?? channel.state.discussionId, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
         });
         return;
       }
@@ -252,7 +253,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
               workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
               surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
               action: "turn.supervisor_prose_dropped",
-              detail: { discussionId: discussionId ?? null, chars: action.text.length },
+              detail: { discussionId: discussionId ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
             }).catch(() => undefined);
           }
           return;
@@ -272,7 +273,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
           workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
           surface: target?.pageId ?? channel.state.pageId ?? discussionId,
           action: "notion.replied",
-          detail: { discussionId, chars: message.length },
+          detail: { discussionId, chars: message.length, ...(sessionId ? { sessionId } : {}) },
         });
       } catch (err) {
         log(`reply delivery failed: ${String(err)}`);

@@ -345,7 +345,8 @@ const slackMentionChannel = slackChannel({
     "actions.requested": async (_data, channel) => {
       await refreshTypingStatus(channel);
     },
-    "message.completed": async (data, channel) => {
+    "message.completed": async (data, channel, ctx) => {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") {
         return;
@@ -367,7 +368,7 @@ const slackMentionChannel = slackChannel({
             const silentTarget = isSupervisorReplyTurn(channel.state)
               ? ((channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined)?.threadTs ?? null
               : channel.state.threadTs ?? null;
-            await auditChatSilence(p, { threadTs: silentTarget, reason: action.reason });
+            await auditChatSilence(p, { threadTs: silentTarget, reason: action.reason }, sessionId);
           } catch (err) {
             console.warn(`[open-everywhere:slack] no_reply audit write failed: ${String(err)}`);
           }
@@ -391,7 +392,7 @@ const slackMentionChannel = slackChannel({
               workspace: p.workspace,
               surface: p.surface,
               action: "turn.bare_stop",
-              detail: { threadTs },
+              detail: { threadTs, ...(sessionId ? { sessionId } : {}) },
             });
           } catch (err) {
             console.warn(`[open-everywhere:slack] bare-stop audit write failed: ${String(err)}`);
@@ -453,7 +454,7 @@ const slackMentionChannel = slackChannel({
                 workspace: partition.workspace,
                 surface: partition.surface,
                 action: "turn.supervisor_prose_dropped",
-                detail: { threadTs: target?.threadTs, chars: action.text.length },
+                detail: { threadTs: target?.threadTs, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
               });
             } catch (err) {
               console.warn(`[open-everywhere:slack] supervisor prose-dropped audit write failed: ${String(err)}`);
@@ -500,7 +501,7 @@ const slackMentionChannel = slackChannel({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
           });
-          await auditChatReply(p, { threadTs: channel.state.threadTs ?? null, chars: action.text.length });
+          await auditChatReply(p, { threadTs: channel.state.threadTs ?? null, chars: action.text.length }, sessionId);
         } catch (err) {
           console.warn(`[open-everywhere:slack] replied audit write failed: ${String(err)}`);
         }

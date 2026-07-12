@@ -55,7 +55,8 @@ const native = teamsChannel({
     return { auth };
   },
   events: {
-    "message.completed": async (data, channel) => {
+    "message.completed": async (data, channel, ctx) => {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       const repliedThisTurn = consumeRepliedThisTurn();
       if (action.kind !== "post") {
@@ -64,7 +65,7 @@ const native = teamsChannel({
         }
         if (action.kind === "silent" && shouldAuditChatSilence(action.reason, repliedThisTurn)) {
           const p = auditPartitionForState(channel.state);
-          if (p) await auditChatSilence(p, { conversationId: channel.state.conversationId, reason: action.reason });
+          if (p) await auditChatSilence(p, { conversationId: channel.state.conversationId, reason: action.reason }, sessionId);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(
@@ -78,7 +79,7 @@ const native = teamsChannel({
       }
       {
         const p = auditPartitionForState(channel.state);
-        if (p) await auditChatReply(p, { conversationId: channel.state.conversationId, chars: action.text.length });
+        if (p) await auditChatReply(p, { conversationId: channel.state.conversationId, chars: action.text.length }, sessionId);
       }
     },
   },

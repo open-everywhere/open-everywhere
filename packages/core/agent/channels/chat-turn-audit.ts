@@ -7,24 +7,28 @@ export function shouldAuditChatSilence(reason: string, actedThisTurn: boolean): 
   return !(reason === "empty final message" && actedThisTurn);
 }
 
-export async function auditChatSilence(p: ChatAuditPartition, detail: Record<string, unknown>): Promise<void> {
+function withSessionId(detail: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> {
+  return sessionId ? { ...detail, sessionId } : detail;
+}
+
+export async function auditChatSilence(p: ChatAuditPartition, detail: Record<string, unknown>, sessionId?: string): Promise<void> {
   await appendAudit({
     org: p.org,
     platform: p.platform,
     workspace: p.workspace,
     surface: p.surface,
     action: `${p.platform}.no_reply`,
-    detail,
+    detail: withSessionId(detail, sessionId),
   });
 }
 
-export async function auditChatReply(p: ChatAuditPartition, detail: Record<string, unknown>): Promise<void> {
+export async function auditChatReply(p: ChatAuditPartition, detail: Record<string, unknown>, sessionId?: string): Promise<void> {
   await appendAudit({
     org: p.org,
     platform: p.platform,
     workspace: p.workspace,
     surface: p.surface,
     action: `${p.platform}.replied`,
-    detail,
+    detail: withSessionId(detail, sessionId),
   });
 }

@@ -59,6 +59,7 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   ok(slackSilences.length === 1, "slack: a supervisor judged silence writes a slack.no_reply audit row");
   ok(slackSilences[0]!.platform === "slack" && slackSilences[0]!.workspace === "T_AUD" && slackSilences[0]!.surface === "C_AUD", "slack: the no_reply row carries the real partition (workspace=team, surface=channel)");
   ok(String(slackSilences[0]!.detail?.reason ?? "").includes("NO_REPLY sentinel"), "slack: the no_reply row records the silence reason");
+  ok(slackSilences[0]!.detail?.sessionId === "chat-audit-test", "slack: the no_reply row STAMPS the eve sessionId (audit→transcript join key)");
   ok(posts.length === 0, "slack: the audited silence still posts NOTHING (silence stays silence)");
 
   await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
@@ -66,6 +67,7 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   ok(posts.length === 1 && posts[0] === "here's the answer", "slack: the default terminal post still delivers");
   ok(slackReplies.length === 1, "slack: a posted reply writes a slack.replied audit row");
   ok(slackReplies[0]!.detail?.chars === "here's the answer".length, "slack: the replied row records the reply size");
+  ok(slackReplies[0]!.detail?.sessionId === "chat-audit-test", "slack: the replied row STAMPS the eve sessionId (audit→transcript join key)");
 
   await inSession(async () => {
     markRepliedThisTurn();

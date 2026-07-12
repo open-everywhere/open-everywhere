@@ -54,7 +54,8 @@ const discordInteractionChannel = discordChannel({
     return { auth };
   },
   events: {
-    "message.completed": async (data, channel) => {
+    "message.completed": async (data, channel, ctx) => {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const repliedThisTurn = consumeRepliedThisTurn();
@@ -64,7 +65,7 @@ const discordInteractionChannel = discordChannel({
         }
         if (action.kind === "silent" && shouldAuditChatSilence(action.reason, repliedThisTurn)) {
           const p = auditPartitionForState(channel.state);
-          if (p) await auditChatSilence(p, { channelId: channel.state.channelId, reason: action.reason });
+          if (p) await auditChatSilence(p, { channelId: channel.state.channelId, reason: action.reason }, sessionId);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(
@@ -76,7 +77,7 @@ const discordInteractionChannel = discordChannel({
       await channel.discord.post(action.text);
       {
         const p = auditPartitionForState(channel.state);
-        if (p) await auditChatReply(p, { channelId: channel.state.channelId, chars: action.text.length });
+        if (p) await auditChatReply(p, { channelId: channel.state.channelId, chars: action.text.length }, sessionId);
       }
     },
   },

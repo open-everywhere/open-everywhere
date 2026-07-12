@@ -22,7 +22,7 @@ delete process.env.OE_CONTROL_READ_TOKENS;
 const prevPricing = process.env.OE_MODEL_PRICING;
 process.env.OE_MODEL_PRICING = JSON.stringify({ "test/model-a": { inPerMtok: 1, outPerMtok: 2 } });
 
-const { handleUsageWindowRead, handleAuditWindowRead, CONTROL_READ_USAGE_PATH, CONTROL_READ_AUDIT_PATH } = await import("../agent/control/read-route.js");
+const { handleUsageWindowRead, handleAuditWindowRead, handleSessionTranscriptRead, CONTROL_READ_USAGE_PATH, CONTROL_READ_AUDIT_PATH, CONTROL_READ_TRANSCRIPT_PATH } = await import("../agent/control/read-route.js");
 const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
 const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
@@ -174,13 +174,113 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
 }
 
 {
+  const makeStream = (events: unknown[], park = false): ReadableStream<unknown> => {
+    let i = 0;
+    return new ReadableStream<unknown>({
+      pull(controller) {
+        if (i < events.length) {
+          controller.enqueue(events[i++]);
+          return;
+        }
+        if (!park) controller.close();
+      },
+    });
+  };
+  const ev = (type: string, data: unknown, at = "2026-03-07T16:10:00.000Z") => ({ type, data, meta: { at } });
+  const completedEvents = [
+    ev("session.started", {}),
+    ev("turn.started", { turnId: "t1", sequence: 1 }),
+    ev("message.received", { message: "hi", turnId: "t1", sequence: 1 }),
+    ev("reasoning.completed", { reasoning: "thinking about it" }),
+    ev("actions.requested", { actions: [{ callId: "c1", toolName: "memory_read", input: {} }], turnId: "t1" }),
+    ev("action.result", { status: "completed", result: { callId: "c1", toolName: "memory_read", output: "recalled X" } }),
+    ev("message.completed", { message: "the answer", finishReason: "stop" }),
+    ev("step.completed", { usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.01 }, generationId: "gen_1" }),
+    ev("session.completed", {}),
+  ];
+  const parkedEvents = [ev("session.started", {}), ev("turn.started", { turnId: "t1" }), ev("message.received", { message: "parked" })];
+  let lastStartIndex = -1;
+  const getSession = ((id: string) => ({
+    getEventStream: async (o?: { startIndex?: number }) => {
+      lastStartIndex = o?.startIndex ?? 0;
+      if (id === "wrun_missing") throw new Error("no such session");
+      if (id === "wrun_parked") return makeStream(parkedEvents, true);
+      return makeStream(completedEvents, false);
+    },
+  })) as unknown as Parameters<typeof handleSessionTranscriptRead>[1];
+
+  function getTranscript(sessionId: string, query = "", token: string | null = SECRET): Promise<Response> {
+    return handleSessionTranscriptRead(
+      new Request(`https://oe.example/control/v1/session/${sessionId}/transcript${query}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      }),
+      getSession,
+      { sessionId },
+    );
+  }
+
+  {
+    const saved = process.env.OE_CONTROL_READ_TOKENS;
+    delete process.env.OE_CONTROL_READ_TOKENS;
+    ok((await getTranscript("wrun_done", "", SECRET)).status === 404, "transcript: no OE_CONTROL_READ_TOKENS → 404 (mode off)");
+    process.env.OE_CONTROL_READ_TOKENS = saved;
+  }
+
+  ok((await getTranscript("wrun_done", "", null)).status === 401, "transcript: configured + no bearer → 401");
+  ok((await getTranscript("wrun_done", "", "not-the-token")).status === 401, "transcript: wrong token → 401");
+
+  const done = await getTranscript("wrun_done", "", SECRET);
+  ok(done.status === 200, "transcript: configured + bearer + known session → 200");
+  ok((done.headers.get("content-type") ?? "").includes("application/json"), "transcript 200 is JSON");
+  const body = (await done.json()) as {
+    sessionId: string;
+    startIndex: number;
+    nextIndex: number;
+    complete: boolean;
+    count: number;
+    events: { index: number; at: string | null; type: string; data: unknown }[];
+  };
+  ok(body.sessionId === "wrun_done" && body.startIndex === 0, "transcript: body echoes sessionId + startIndex");
+  ok(body.count === completedEvents.length && body.events.length === completedEvents.length, "transcript: replays every recorded event");
+  ok(body.complete === true && body.nextIndex === completedEvents.length, "transcript: a terminal session.completed sets complete:true + nextIndex");
+  ok(body.events[0]!.type === "session.started" && body.events[0]!.index === 0, "transcript: events keep stream order + carry a 0-based index");
+  ok(body.events.every((e, i) => e.index === i), "transcript: indices are contiguous from startIndex");
+  ok(body.events[0]!.at === "2026-03-07T16:10:00.000Z", "transcript: each event hoists its meta.at timestamp");
+  const actionResult = body.events.find((e) => e.type === "action.result");
+  ok((actionResult?.data as { status?: string } | undefined)?.status === "completed", "transcript: tool-result data (status/output) is preserved unmodified");
+  const stepDone = body.events.find((e) => e.type === "step.completed");
+  ok((stepDone?.data as { generationId?: string } | undefined)?.generationId === "gen_1", "transcript: step.completed usage/generationId is preserved");
+
+  const capped = (await (await getTranscript("wrun_done", "?limit=2", SECRET)).json()) as { count: number; complete: boolean; nextIndex: number };
+  ok(capped.count === 2 && capped.complete === false && capped.nextIndex === 2, "transcript: ?limit caps the page (complete:false, nextIndex=cursor)");
+
+  const paged = (await (await getTranscript("wrun_done", "?startIndex=5", SECRET)).json()) as { startIndex: number; nextIndex: number; count: number };
+  ok(lastStartIndex === 5 && paged.startIndex === 5 && paged.nextIndex === 5 + paged.count, "transcript: ?startIndex is passed to getEventStream + drives nextIndex");
+
+  const parked = (await (await getTranscript("wrun_parked", "?idleMs=50", SECRET)).json()) as { count: number; complete: boolean };
+  ok(parked.count === parkedEvents.length && parked.complete === false, "transcript: a parked session returns recorded events with complete:false (idle-stop, no hang)");
+
+  ok((await getTranscript("wrun_done", "?startIndex=-1", SECRET)).status === 400, "transcript: negative startIndex → 400");
+  ok((await getTranscript("wrun_done", "?limit=0", SECRET)).status === 400, "transcript: limit=0 → 400");
+  ok((await getTranscript("wrun_missing", "", SECRET)).status === 404, "transcript: unknown/unreadable session → 404 (non-enumeration)");
+
+  const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
+  const transcriptRows = svc.filter((e) => (e.detail as { view?: string }).view === "transcript");
+  ok(
+    transcriptRows.some((e) => (e.detail as { sessionId?: string }).sessionId === "wrun_done"),
+    "transcript: authenticated read is self-audited (view=transcript, sessionId stamped)",
+  );
+}
+
+{
   const channel = (await import("../agent/channels/control-read.js")).default as unknown as {
     routes: { method: string; path: string }[];
   };
-  ok(channel.routes.length === 3 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly three GET routes (usage + audit + unified-audit)");
+  ok(channel.routes.length === 4 && channel.routes.every((r) => r.method === "GET"), "the channel mounts exactly four GET routes (usage + audit + unified-audit + transcript)");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_USAGE_PATH), "…one at /control/v1/usage");
   ok(channel.routes.some((r) => r.path === CONTROL_READ_AUDIT_PATH), "…one at /control/v1/audit");
   ok(channel.routes.some((r) => r.path === "/control/v1/unified-audit"), "…one at /control/v1/unified-audit");
+  ok(channel.routes.some((r) => r.path === CONTROL_READ_TRANSCRIPT_PATH), "…one at /control/v1/session/:sessionId/transcript");
 
   const agentDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "agent");
   for (const file of ["control/read-route.ts", "channels/control-read.ts"]) {

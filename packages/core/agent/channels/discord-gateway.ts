@@ -1054,7 +1054,8 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         "⚠️ I hit an error while handling that and couldn't finish. Please try again — and if it keeps failing, check the deployment logs.",
       );
     },
-    "message.completed": async (data, channel) => {
+    "message.completed": async (data, channel, ctx) => {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageAction(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       openTypingGate(channel.channelId);
@@ -1078,12 +1079,12 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
         if (auditP) {
           const text = action.kind === "post" ? action.text : plan.delivery.chunks.join("\n");
-          await auditChatReply(auditP, { channelId: channel.channelId, chars: text.length });
+          await auditChatReply(auditP, { channelId: channel.channelId, chars: text.length }, sessionId);
         }
       } else if (action.kind === "silent") {
         if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
         if (auditP && shouldAuditChatSilence(action.reason, repliedThisTurn || cardPostedThisTurn)) {
-          await auditChatSilence(auditP, { channelId: channel.channelId, reason: action.reason });
+          await auditChatSilence(auditP, { channelId: channel.channelId, reason: action.reason }, sessionId);
         }
       }
 

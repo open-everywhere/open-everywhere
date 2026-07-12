@@ -65,6 +65,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
   },
   events: {
     async "message.completed"(data, channel, ctx) {
+      const sessionId = ctx?.session?.id;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const replied = consumeRepliedThisTurn();
@@ -77,7 +78,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           workspace,
           surface,
           action: "unified.no_reply",
-          detail: { reason: action.reason, replied },
+          detail: { reason: action.reason, replied, ...(sessionId ? { sessionId } : {}) },
         }).catch(() => undefined);
         return;
       }
@@ -95,7 +96,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
               workspace,
               surface,
               action: "turn.direct_mention_prose_delivered",
-              detail: { chars: action.text.length, platform: origin.platform },
+              detail: { chars: action.text.length, platform: origin.platform, ...(sessionId ? { sessionId } : {}) },
             }).catch(() => undefined);
             return;
           } catch (err) {
@@ -110,7 +111,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         workspace,
         surface,
         action: "turn.supervisor_prose_dropped",
-        detail: { chars: action.text.length, replied },
+        detail: { chars: action.text.length, replied, ...(sessionId ? { sessionId } : {}) },
       }).catch(() => undefined);
     },
     async "turn.failed"(data, channel) {

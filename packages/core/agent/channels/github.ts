@@ -324,11 +324,12 @@ const native: GitHubChannel = githubChannel({
       }
       st.oeReplyTarget = { issueNumber: n };
     },
-    async "message.completed"(data, channel) {
+    async "message.completed"(data, channel, ctx) {
       if (!isSupervisorGitHubState(channel.state)) {
         await defaultEvent("message.completed")?.(data, channel);
         return;
       }
+      const sessionId = ctx?.session?.id;
       const st = channel.state as GitHubSupervisorSessionState;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
@@ -345,7 +346,7 @@ const native: GitHubChannel = githubChannel({
           workspace: auditOwner,
           surface: `github/${auditOwner}/${auditRepo}`,
           action: "github.no_reply",
-          detail: { issueNumber: target?.issueNumber ?? null, reason: action.reason },
+          detail: { issueNumber: target?.issueNumber ?? null, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
         });
         return;
       }
@@ -362,7 +363,7 @@ const native: GitHubChannel = githubChannel({
           workspace: auditOwner,
           surface: `github/${auditOwner}/${auditRepo}`,
           action: "turn.supervisor_prose_dropped",
-          detail: { issueNumber: target.issueNumber, chars: action.text.length },
+          detail: { issueNumber: target.issueNumber, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
         }).catch(() => undefined);
         return;
       }
@@ -389,7 +390,7 @@ const native: GitHubChannel = githubChannel({
           workspace: postOwner,
           surface: `github/${postOwner}/${postRepo}`,
           action: "github.replied",
-          detail: { issueNumber: target.issueNumber, chars: action.text.length },
+          detail: { issueNumber: target.issueNumber, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
         });
       } catch (err) {
         slog(`reply delivery failed: ${String(err)}`);

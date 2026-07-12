@@ -527,11 +527,12 @@ const native: LinearChannel = linearChannel({
       }
       slog("supervisor turn requested input — unsupported on a judged ambient turn; ignored");
     },
-    async "message.completed"(data, channel) {
+    async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
         await defaultEvent("message.completed")?.(data, channel);
         return;
       }
+      const sessionId = ctx?.session?.id;
       const st = channel.state as LinearSupervisorSessionState;
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
@@ -547,7 +548,7 @@ const native: LinearChannel = linearChannel({
           workspace: auditOrgId ?? "unknown",
           surface,
           action: "linear.no_reply",
-          detail: { issueId: target?.issueId ?? null, reason: action.reason },
+          detail: { issueId: target?.issueId ?? null, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
         });
         return;
       }
@@ -564,7 +565,7 @@ const native: LinearChannel = linearChannel({
           workspace: auditOrgId ?? "unknown",
           surface,
           action: "turn.supervisor_prose_dropped",
-          detail: { issueId: target.issueId, chars: action.text.length },
+          detail: { issueId: target.issueId, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
         }).catch(() => undefined);
         return;
       }
@@ -591,7 +592,7 @@ const native: LinearChannel = linearChannel({
           workspace: auditOrgId ?? "unknown",
           surface,
           action: "linear.replied",
-          detail: { issueId: target.issueId, parentId: target.parentId ?? null, chars: action.text.length },
+          detail: { issueId: target.issueId, parentId: target.parentId ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
         });
       } catch (err) {
         slog(`reply delivery failed: ${String(err)}`);

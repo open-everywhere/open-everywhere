@@ -521,6 +521,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
+  const { buildTranscriptQuery, transcriptPath, findEvents } = await import("./e2e/transcript-read.js");
+  const q = new URLSearchParams(buildTranscriptQuery({ startIndex: 5, limit: 100, idleMs: 2000 }));
+  ok(q.get("startIndex") === "5" && q.get("limit") === "100" && q.get("idleMs") === "2000", "transcript query carries startIndex + limit + idleMs");
+  ok(buildTranscriptQuery({}) === "", "transcript query omits absent options (a bare full-replay read)");
+  ok(transcriptPath("wrun_abc") === "/control/v1/session/wrun_abc/transcript", "transcript path is /control/v1/session/<id>/transcript with no query when bare");
+  ok(transcriptPath("wr un/x", { startIndex: 0 }) === "/control/v1/session/wr%20un%2Fx/transcript?startIndex=0", "transcript path URL-encodes the sessionId + appends the query");
+  const events = [
+    { index: 0, at: "2026-03-15T23:30:00Z", type: "message.received", data: { message: "hi" } },
+    { index: 1, at: "2026-03-15T23:30:01Z", type: "actions.requested", data: { actions: [{ toolName: "memory_read" }] } },
+    { index: 2, at: "2026-03-15T23:30:02Z", type: "message.completed", data: { message: "answer" } },
+  ];
+  ok(findEvents(events, "message.completed").length === 1, "findEvents locates events by type");
+  ok(findEvents(events, "actions.requested", (e) => JSON.stringify(e.data).includes("memory_read")).length === 1, "findEvents supports a predicate (did the turn call a tool?)");
+  ok(findEvents(events, "reasoning.completed").length === 0, "findEvents returns empty for an absent type");
+}
+
+{
   const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("./e2e/slack-driver.js");
   const upd = new URLSearchParams(buildChatUpdateBody({ channel: "C1", ts: "1.2", text: "edited" }));
   ok(upd.get("channel") === "C1" && upd.get("ts") === "1.2" && upd.get("text") === "edited", "chat.update body carries channel + ts + new text");

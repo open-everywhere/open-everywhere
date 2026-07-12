@@ -1,3 +1,4 @@
+import type { GetSessionFn } from "eve/channels";
 import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
 import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
@@ -7,8 +8,14 @@ import { deploymentOrg } from "../identity/binding.js";
 export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
 export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
+export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
+const TRANSCRIPT_DEFAULT_LIMIT = 2000;
+const TRANSCRIPT_MAX_LIMIT = 10000;
+const TRANSCRIPT_DEFAULT_IDLE_MS = 1500;
+const TRANSCRIPT_MAX_IDLE_MS = 10000;
+const TRANSCRIPT_WALL_MS = 30000;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -139,6 +146,119 @@ export async function handleUnifiedAuditRead(req: Request): Promise<Response> {
 
   try {
     return json(200, await unifiedDomainAudit({ domain, org: deploymentOrg(), ...(sinceDays ? { sinceDays } : {}) }));
+  } catch (err) {
+    return json(400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+export interface TranscriptEvent {
+  readonly index: number;
+  readonly at: string | null;
+  readonly type: string;
+  readonly data: unknown;
+}
+
+interface SourceStreamEvent {
+  readonly type: string;
+  readonly data?: unknown;
+  readonly meta?: { readonly at?: string };
+}
+
+function nonNegIntParam(raw: string | null, def: number): number | null {
+  const v = (raw ?? "").trim();
+  if (v.length === 0) return def;
+  const n = Number.parseInt(v, 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+function posIntCappedParam(raw: string | null, def: number, cap: number): number | null {
+  const v = (raw ?? "").trim();
+  if (v.length === 0) return def;
+  const n = Number.parseInt(v, 10);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  return Math.min(n, cap);
+}
+
+async function drainSessionStream(
+  stream: ReadableStream<SourceStreamEvent>,
+  startIndex: number,
+  maxEvents: number,
+  idleMs: number,
+): Promise<{ events: TranscriptEvent[]; complete: boolean }> {
+  const reader = stream.getReader();
+  const events: TranscriptEvent[] = [];
+  let complete = false;
+  const deadline = Date.now() + TRANSCRIPT_WALL_MS;
+  try {
+    while (events.length < maxEvents) {
+      const budget = Math.min(idleMs, deadline - Date.now());
+      if (budget <= 0) break;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<"idle">((resolve) => {
+        timer = setTimeout(() => resolve("idle"), budget);
+      });
+      const next = await Promise.race([reader.read(), idle]);
+      if (timer) clearTimeout(timer);
+      if (next === "idle") break;
+      if (next.done) {
+        complete = true;
+        break;
+      }
+      const ev = next.value;
+      events.push({ index: startIndex + events.length, at: ev.meta?.at ?? null, type: ev.type, data: ev.data ?? null });
+      if (ev.type === "session.completed" || ev.type === "session.failed") {
+        complete = true;
+        break;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return { events, complete };
+}
+
+export async function handleSessionTranscriptRead(
+  req: Request,
+  getSession: GetSessionFn,
+  params: Readonly<Record<string, string>>,
+): Promise<Response> {
+  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  if (entries.length === 0) return new Response("not found", { status: 404 });
+
+  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
+  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
+
+  const sessionId = (params["sessionId"] ?? "").trim();
+  if (!sessionId) return json(400, { error: "expected path param: sessionId" });
+
+  const url = new URL(req.url);
+  const startIndex = nonNegIntParam(url.searchParams.get("startIndex"), 0);
+  if (startIndex === null) return json(400, { error: "startIndex must be a non-negative integer" });
+  const limit = posIntCappedParam(url.searchParams.get("limit"), TRANSCRIPT_DEFAULT_LIMIT, TRANSCRIPT_MAX_LIMIT);
+  if (limit === null) return json(400, { error: `limit must be a positive integer (≤ ${TRANSCRIPT_MAX_LIMIT})` });
+  const idleMs = posIntCappedParam(url.searchParams.get("idleMs"), TRANSCRIPT_DEFAULT_IDLE_MS, TRANSCRIPT_MAX_IDLE_MS);
+  if (idleMs === null) return json(400, { error: `idleMs must be a positive integer (≤ ${TRANSCRIPT_MAX_IDLE_MS})` });
+
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "control",
+    workspace: "control",
+    principalId: identity.subject,
+    action: "control.service_call",
+    detail: { service: identity.subject, view: "transcript", sessionId, startIndex, limit },
+  });
+
+  let stream: ReadableStream<SourceStreamEvent>;
+  try {
+    stream = (await getSession(sessionId).getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
+  } catch {
+    return new Response("not found", { status: 404 });
+  }
+
+  try {
+    const { events, complete } = await drainSessionStream(stream, startIndex, limit, idleMs);
+    return json(200, { sessionId, startIndex, nextIndex: startIndex + events.length, complete, count: events.length, events });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }
