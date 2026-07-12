@@ -45,15 +45,18 @@ ok(classifyGitHubAmbientComment(base, "  ").addressing === "drop", "blank bot sl
 ok(classifyGitHubAmbientComment({ ...base, authorType: "Bot", authorLogin: `${SLUG}[bot]` }, SLUG).addressing === "drop", "self-authored ([bot] reply) -> DROP");
 ok(classifyGitHubAmbientComment({ ...base, authorType: "Bot", authorLogin: "dependabot[bot]" }, SLUG).addressing === "drop", "other bot-authored -> DROP (bot-to-bot loop guard)");
 ok(classifyGitHubAmbientComment({ ...base, authorType: "User", authorLogin: `${SLUG.toUpperCase()}[BOT]` }, SLUG).addressing === "drop", "own login under a mislabelled type still DROPs (belt-and-braces, case-insensitive)");
-ok(classifyGitHubAmbientComment({ ...base, repoPrivate: false }, SLUG).addressing === "drop", "PUBLIC repo -> DROP (no drive-by ambient wakes)");
-ok(classifyGitHubAmbientComment({ ...base, repoPrivate: undefined }, SLUG).addressing === "drop", "UNKNOWN repo privacy -> DROP (fail closed)");
+ok(classifyGitHubAmbientComment({ ...base, repoPrivate: false }, SLUG).addressing === "drop", "PUBLIC + un-vouched repo -> DROP (no drive-by ambient wakes)");
+ok(classifyGitHubAmbientComment({ ...base, repoPrivate: undefined }, SLUG).addressing === "drop", "UNKNOWN privacy + un-vouched repo -> DROP (fail closed)");
+ok(classifyGitHubAmbientComment({ ...base, repoPrivate: false }, SLUG, { vouched: true }).addressing === "channel-watch", "PUBLIC but VOUCHED repo -> channel-watch (vouch widens ambient; private flag is just a signal)");
+ok(classifyGitHubAmbientComment({ ...base, repoPrivate: true }, SLUG, { vouched: false }).addressing === "channel-watch", "PRIVATE un-vouched repo still ambient-wakes (per-repo path unchanged — never narrowed)");
 
 const mention = { ...base, body: `hey @${SLUG} does this match what we agreed in Slack?` };
-ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true }).addressing === "direct", "single-window @mention on a PRIVATE repo -> direct (the unified window answers it, native suppressed)");
+ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true, vouched: true }).addressing === "direct", "single-window @mention on a VOUCHED repo -> direct (the unified window answers it, native suppressed)");
+ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: false }, SLUG, { treatMentionAsDirect: true, vouched: true }).addressing === "direct", "single-window @mention on a VOUCHED PUBLIC repo -> direct (vouch is the floor; private flag ignored — the Free-plan case)");
 ok(classifyGitHubAmbientComment(mention, SLUG).addressing === "drop", "the SAME @mention WITHOUT treatMentionAsDirect -> DROP (byte-identical default; native path owns it)");
-ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: false }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention on a PUBLIC repo -> DROP (native NOT suppressed there — no double-handle)");
-ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: undefined }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention on UNKNOWN-privacy repo -> DROP (fail closed)");
-ok(classifyGitHubAmbientComment(base, SLUG, { treatMentionAsDirect: true }).addressing === "channel-watch", "a NON-mention comment is unaffected by treatMentionAsDirect -> channel-watch (judged)");
+ok(classifyGitHubAmbientComment(mention, SLUG, { treatMentionAsDirect: true, vouched: false }).addressing === "drop", "single-window @mention on an UN-VOUCHED repo -> DROP (native NOT suppressed there — no double-handle, fail-closed)");
+ok(classifyGitHubAmbientComment({ ...mention, repoPrivate: true }, SLUG, { treatMentionAsDirect: true }).addressing === "drop", "single-window @mention, PRIVATE but un-vouched -> DROP (private flag never admits the window — the vouch is the floor)");
+ok(classifyGitHubAmbientComment(base, SLUG, { treatMentionAsDirect: true, vouched: true }).addressing === "channel-watch", "a NON-mention comment is unaffected by treatMentionAsDirect -> channel-watch (judged)");
 
 const trigger = { id: "ic-42", authorLogin: "human-dev", sentAt: "2026-03-24T18:51:00Z", text: "should we bump the retry budget here?" };
 {
@@ -252,9 +255,8 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
   };
 
   const { shouldSuppressNativeMention } = await import("../agent/channels/github.js");
-  ok(shouldSuppressNativeMention(true, true) === true, "single-window PRIVATE repo -> native mention SUPPRESSED (the unified window answers it instead)");
-  ok(shouldSuppressNativeMention(true, false) === false, "single-window PUBLIC repo -> native KEPT (ambient drops mentions there — no gap, no reply lost)");
-  ok(shouldSuppressNativeMention(true, undefined) === false, "single-window UNKNOWN-privacy -> native KEPT (fail-soft to today's native path)");
+  ok(shouldSuppressNativeMention(true, true) === true, "single-window VOUCHED repo -> native mention SUPPRESSED (the unified window answers it instead)");
+  ok(shouldSuppressNativeMention(true, false) === false, "single-window UN-VOUCHED repo -> native KEPT (ambient drops mentions there — no gap, no reply lost; fail-closed)");
   ok(shouldSuppressNativeMention(false, true) === false, "NON-single-window repo -> native KEPT (byte-identical: the native mention session engages exactly as today)");
   const turnStarted = (ctx: unknown) => githubChannelModule.adapter["turn.started"]!({}, ctx);
   const completed = (message: string | null, ctx: unknown) =>

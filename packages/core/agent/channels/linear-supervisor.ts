@@ -176,9 +176,9 @@ export type LinearAgentSessionRouting = "native" | "suppress-and-divert";
 export function routeLinearAgentSession(
   sig: LinearAgentSessionSignal,
   singleWindow: boolean,
-  teamPrivate: boolean | undefined,
+  vouched: boolean,
 ): LinearAgentSessionRouting {
-  if (!singleWindow || teamPrivate !== true) return "native";
+  if (!singleWindow || !vouched) return "native";
   if (!sig.agentSessionId || !sig.organizationId || !sig.teamId) return "native";
   if (sig.action === "created") return sig.sourceCommentId ? "suppress-and-divert" : "native";
   if (sig.action === "prompted") return sig.promptSourceCommentId ? "suppress-and-divert" : "native";

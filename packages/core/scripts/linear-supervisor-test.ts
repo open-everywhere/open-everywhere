@@ -111,16 +111,15 @@ const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt
 
 {
   const base = { action: "created", agentSessionId: "as-1", organizationId: "org-1", teamId: TEAM, sourceCommentId: "c-mention" };
-  ok(routeLinearAgentSession(base, false, true) === "native", "singleWindow OFF -> native (byte-identical, whatever the event/privacy)");
-  ok(routeLinearAgentSession(base, true, true) === "suppress-and-divert", "created mention on a singleWindow PRIVATE team -> suppress-and-divert");
-  ok(routeLinearAgentSession(base, true, false) === "native", "M1: singleWindow but team is PUBLIC (private===false) -> native (never leak a public surface into the shared window)");
-  ok(routeLinearAgentSession(base, true, undefined) === "native", "M1: singleWindow but team privacy UNKNOWN -> native (fail-closed on unknown)");
+  ok(routeLinearAgentSession(base, false, true) === "native", "singleWindow OFF -> native (byte-identical, whatever the event/vouch)");
+  ok(routeLinearAgentSession(base, true, true) === "suppress-and-divert", "created mention on a singleWindow VOUCHED team -> suppress-and-divert");
+  ok(routeLinearAgentSession(base, true, false) === "native", "M1: singleWindow but team is UN-VOUCHED -> native (never leak an un-vouched surface into the shared window; fail-closed)");
   ok(routeLinearAgentSession({ ...base, sourceCommentId: undefined }, true, true) === "native", "comment-less created (assignment/delegation) -> native (not a mention; keep the native session)");
   ok(routeLinearAgentSession({ ...base, agentSessionId: undefined }, true, true) === "native", "no session id -> native (under-identified; fail-open to the path that answers)");
   ok(routeLinearAgentSession({ ...base, organizationId: undefined }, true, true) === "native", "no organization id -> native (can't key the surface)");
   ok(routeLinearAgentSession({ ...base, teamId: undefined }, true, true) === "native", "no team id -> native (can't resolve the grain)");
-  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, true) === "suppress-and-divert", "S3: comment-backed prompted on a private team -> suppress-and-divert (self-diverts, no separate Comment webhook)");
-  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, false) === "native", "M1 applies to prompted too: a PUBLIC team prompt -> native");
+  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, true) === "suppress-and-divert", "S3: comment-backed prompted on a vouched team -> suppress-and-divert (self-diverts, no separate Comment webhook)");
+  ok(routeLinearAgentSession({ ...base, action: "prompted", promptSourceCommentId: "c-reply" }, true, false) === "native", "M1 applies to prompted too: an UN-VOUCHED team prompt -> native");
   ok(routeLinearAgentSession({ ...base, action: "prompted" }, true, true) === "native", "comment-LESS prompted -> native (nothing to divert; never lose a user message)");
   ok(routeLinearAgentSession({ ...base, action: "updated" }, true, true) === "native", "unknown actions -> native (unchanged behaviour)");
 }
@@ -350,25 +349,30 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
 {
   const { registerConfig } = await import("../agent/access/config.js");
   const { defineDomain } = await import("../agent/memory/domain.js");
+  const { registerTrustedSurfaces, _resetTrustedSurfacesForTest } = await import("../agent/identity/trust.js");
   const { computeMentionRouting } = (await import("../agent/channels/linear.js")) as unknown as {
     computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; isPrivate?: boolean }>;
   };
 
   const ORG = "O_WIN";
   const T_PRIV = "T_PRIV";
+  const T_FREE = "T_FREE";
   const T_PUB = "T_PUB";
   const T_PLAIN = "T_PLAIN";
   const skFor = (t: string) => `linear/${ORG}/${t}`;
 
   const ISSUE_TEAM: Record<string, { teamId: string; isPrivate: boolean }> = {
     "issue-priv": { teamId: T_PRIV, isPrivate: true },
-    "issue-pub": { teamId: T_PUB, isPrivate: false },
+    "issue-free": { teamId: T_FREE, isPrivate: false },
+    "issue-pub": { teamId: T_PUB, isPrivate: true },
     "issue-plain": { teamId: T_PLAIN, isPrivate: true },
   };
 
+  registerTrustedSurfaces([skFor(T_PRIV), skFor(T_FREE), skFor(T_PLAIN)]);
+
   const windowDomain = defineDomain({
     name: "payments",
-    channels: [skFor(T_PRIV), skFor(T_PUB)],
+    channels: [skFor(T_PRIV), skFor(T_FREE), skFor(T_PUB)],
     ambientSupervisor: true,
     unifiedSupervisor: true,
     crossSurfaceWindow: true,
@@ -400,7 +404,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     }
     if (parsed.query?.includes("TeamPrivacy")) {
       teamPrivacyCalls++;
-      return new Response(JSON.stringify({ data: { team: { private: id === T_PRIV } } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { team: { private: id !== T_FREE } } }), { status: 200 });
     }
     return new Response(JSON.stringify({ data: {} }), { status: 200 });
   }) as typeof fetch;
@@ -421,30 +425,37 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
       const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
-      ok(v.routing === "suppress-and-divert", "FIX: raw parse missed the team → issue→team resolution → private single-window mention routes suppress-and-divert (was: native — the dead gate)");
-      ok(v.isPrivate === true, "the verdict carries the authoritative team privacy (reused by the native binding — enriched at most once)");
-      ok(issueTeamCalls === 1 && teamPrivacyCalls === 0, "team + privacy came from ONE issue→team query (no separate TeamPrivacy call)");
+      ok(v.routing === "suppress-and-divert", "FIX: raw parse missed the team → issue→team resolution → VOUCHED single-window mention routes suppress-and-divert (was: native — the dead gate)");
+      ok(v.isPrivate === true, "the verdict carries the authoritative team-private SIGNAL (reused by the native binding — enriched at most once)");
+      ok(issueTeamCalls === 1 && teamPrivacyCalls === 0, "team + private signal came from ONE issue→team query (no separate TeamPrivacy call)");
+    }
+
+    issueTeamCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-free"), undefined);
+      ok(v.routing === "suppress-and-divert", "WIDEN: a VOUCHED PUBLIC single-window team DIVERTS (vouch is the floor; team.private===false is just a signal — the Free-plan case)");
+      ok(v.isPrivate === false, "the public team's private signal is surfaced (false) but did NOT gate the divert");
     }
 
     issueTeamCalls = 0;
     {
       const v = await computeMentionRouting(mkEvent("issue-pub"), undefined);
-      ok(v.routing === "native", "M1 floor: an API-resolved PUBLIC single-window team routes native (never leaks a public surface into the shared window)");
-      ok(v.isPrivate === false, "the public team's privacy is surfaced (false) — the router floored on it");
+      ok(v.routing === "native", "FAIL-CLOSED: an UN-VOUCHED single-window team routes native even though team.private===true (private never admits — the vouch is the sole floor)");
+      ok(v.isPrivate === true, "the un-vouched team's private signal is still surfaced (true) but did NOT admit the window");
     }
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
       const v = await computeMentionRouting(mkEvent("issue-plain"), undefined);
       ok(v.routing === "native", "a resolved team with NO crossSurfaceWindow domain routes native (singleWindow false)");
-      ok(teamPrivacyCalls === 0, "non-single-window ⇒ privacy is never fetched (the floor input isn't needed)");
+      ok(teamPrivacyCalls === 0, "non-single-window ⇒ the private signal is never fetched (not needed off the window path)");
     }
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
       const v = await computeMentionRouting(mkEvent("issue-priv"), T_PRIV);
-      ok(v.routing === "suppress-and-divert", "raw fast-path: team already parsed → private single-window → suppress-and-divert");
-      ok(issueTeamCalls === 0 && teamPrivacyCalls === 1, "fast path makes NO issue→team call and enriches privacy by team id (byte-identical to pre-fix)");
+      ok(v.routing === "suppress-and-divert", "raw fast-path: team already parsed → VOUCHED single-window → suppress-and-divert");
+      ok(issueTeamCalls === 0 && teamPrivacyCalls === 1, "fast path makes NO issue→team call and enriches the private signal by team id (byte-identical to pre-fix)");
     }
 
     registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, orgOff] });
@@ -456,6 +467,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     }
   } finally {
     globalThis.fetch = realFetch;
+    _resetTrustedSurfacesForTest();
   }
 }
 

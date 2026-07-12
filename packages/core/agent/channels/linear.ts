@@ -28,6 +28,7 @@ import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-event
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
+import { isVouchedInternal } from "../identity/trust.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, crossSurfaceWindowOrgGateEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -212,6 +213,10 @@ function linearGrainFor(surfaceKey: string): SupervisorGrain {
   }
 }
 
+function linearTeamVouched(organizationId: string, teamId: string): boolean {
+  return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || process.env.OE_TRUST === "internal";
+}
+
 function liveLinearSupervisorDeps(
   send: SendFn<LinearChannelState>,
   teamId: string,
@@ -325,7 +330,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
       engagementTier: linearEngagementTier(surfaceKey),
       unified: linearGrainFor(surfaceKey).unified,
       window:
-        linearGrainFor(surfaceKey).singleWindow === true
+        linearGrainFor(surfaceKey).singleWindow === true && linearTeamVouched(signal.organizationId, c.teamId)
           ? ({
               wakeId: mintWakeId(),
               origin: {
@@ -345,7 +350,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     surface: surfaceKey,
     principalId: c.authorId,
     action: "linear.dispatched",
-    detail: { addressing: cls.addressing, issueId: c.issueId },
+    detail: { addressing: cls.addressing, issueId: c.issueId, teamPrivate: c.teamPrivate === true, vouched: linearTeamVouched(signal.organizationId, c.teamId) },
   });
   slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) → judged wake dispatched`);
 }
@@ -399,8 +404,10 @@ export async function computeMentionRouting(event: LinearAgentSessionEvent, team
   const routingSig = resolvedTeamId === sig.teamId ? sig : { ...sig, teamId: resolvedTeamId };
   const sk = routingSig.organizationId && resolvedTeamId ? `linear/${routingSig.organizationId}/${resolvedTeamId}` : undefined;
   const singleWindow = sk ? linearGrainFor(sk).singleWindow === true : false;
+  const vouched = singleWindow && !!routingSig.organizationId && !!resolvedTeamId && linearTeamVouched(routingSig.organizationId, resolvedTeamId);
   const isPrivate = singleWindow ? (enrichedPrivate ?? (await enrichTeamPrivacy(resolvedTeamId))) : undefined;
-  return { routing: routeLinearAgentSession(routingSig, singleWindow, isPrivate), isPrivate };
+  if (singleWindow && sk) slog(`agent-session routing ${sk}: singleWindow, vouched=${vouched}, teamPrivate=${isPrivate === true} (signal) → ${vouched ? "may divert" : "native"}`);
+  return { routing: routeLinearAgentSession(routingSig, singleWindow, vouched), isPrivate };
 }
 
 function mentionRoutingFor(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
@@ -441,7 +448,9 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (grain.singleWindow !== true) throw new Error("singleWindow does not hold for the enriched team (config raced or team mismatch)");
-    if (c.teamPrivate !== true) throw new Error("enriched team is not positively private (M1 privacy floor) — refusing the divert");
+    const vouched = linearTeamVouched(organizationId, c.teamId);
+    slog(`mention divert linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}): vouched=${vouched}, teamPrivate=${c.teamPrivate === true} (signal)`);
+    if (!vouched) throw new Error("enriched team is not operator-vouched internal (M1 window floor) — refusing the divert");
     const auth = buildLinearAuth({
       agentSessionId,
       organizationId,

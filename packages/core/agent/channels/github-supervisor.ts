@@ -31,7 +31,7 @@ export interface GitHubAmbientComment {
 export function classifyGitHubAmbientComment(
   c: GitHubAmbientComment,
   botSlug: string | undefined,
-  opts?: { treatMentionAsDirect?: boolean },
+  opts?: { treatMentionAsDirect?: boolean; vouched?: boolean },
 ): GitHubAmbientClassification {
   const slug = botSlug?.trim();
   if (!slug) return { addressing: "drop", reason: "no bot slug configured — fail-closed loop guard" };
@@ -39,14 +39,17 @@ export function classifyGitHubAmbientComment(
   if (c.authorLogin && c.authorLogin.toLowerCase() === `${slug}[bot]`.toLowerCase()) {
     return { addressing: "drop", reason: "self-authored comment (our own reply)" };
   }
+  const vouched = opts?.vouched === true;
   if (githubBotMentioned(c.body, slug, { login: c.authorLogin, type: c.authorType })) {
-    if (singleWindowMentionPolicy(opts?.treatMentionAsDirect === true, true, c.repoPrivate === true).addressing === "direct-mention") {
-      return { addressing: "direct", reason: "bot @mention on a single-window private repo — answered by the unified window" };
+    if (singleWindowMentionPolicy(opts?.treatMentionAsDirect === true, true, vouched).addressing === "direct-mention") {
+      return { addressing: "direct", reason: "bot @mention on a single-window vouched repo — answered by the unified window" };
     }
     return { addressing: "drop", reason: "bot @mention — owned by the native githubChannel path" };
   }
-  if (c.repoPrivate !== true) return { addressing: "drop", reason: "repo not positively private — fail-closed (no public-repo ambient)" };
-  return { addressing: "channel-watch", reason: "ambient comment on a private repo — judged by the repo supervisor" };
+  if (c.repoPrivate !== true && !vouched) {
+    return { addressing: "drop", reason: "repo neither positively private nor operator-vouched — fail-closed (no drive-by ambient)" };
+  }
+  return { addressing: "channel-watch", reason: `ambient comment — judged by the repo supervisor (private=${c.repoPrivate === true}, vouched=${vouched})` };
 }
 
 export interface GitHubSupervisorWakeInput {
