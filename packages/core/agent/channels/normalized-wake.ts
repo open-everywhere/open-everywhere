@@ -15,6 +15,16 @@ export const PREFER_NO_REPLY_TOOL =
   `If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare ` +
   `${NO_REPLY_SENTINEL} text — it's audited and unambiguous; the text sentinel still works if you don't.`;
 
+export const SINGLE_WINDOW_REPLY_MANDATE =
+  `You are a cross-surface session, so you MUST deliver any answer by CALLING THE \`reply\` TOOL: ` +
+  `set \`text\` to your message and \`wake\` to the \`wake-id\` shown in the wake envelope below. ` +
+  `Do NOT put your answer in your turn-final text — on this session your turn-final text is DISCARDED ` +
+  `and nothing is posted; the \`reply\` tool call is the ONLY way your words reach anyone. This holds ` +
+  `even when no one @mentioned you (some surfaces, like a Notion doc, cannot @mention a bot at all): ` +
+  `the moment you decide to respond, it must be a \`reply\` call naming this wake's \`wake-id\`, or the ` +
+  `people here hear nothing. Deciding to stay silent is still fine — end with ${NO_REPLY_SENTINEL} or ` +
+  `the no_reply tool.`;
+
 export type NormalizedWakeTrigger = {
   readonly kind: "message";
   readonly message: WakeMessageInput;
@@ -155,13 +165,9 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
 function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean): string {
   return (
     `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
-    `you and is asking for a response, so answer it. You are a cross-surface session, so you MUST ` +
-    `deliver your answer by CALLING THE \`reply\` TOOL: set \`text\` to your answer and \`wake\` to ` +
-    `the \`wake-id\` shown in the wake envelope below. Do NOT put your answer in your turn-final ` +
-    `text — on this session turn-final text is DISCARDED and nothing is posted; the \`reply\` tool ` +
-    `call is the ONLY way your answer reaches them. Stay silent only if the mention turns out to be ` +
-    `purely social or needs nothing from you — then output exactly ${NO_REPLY_SENTINEL} and nothing ` +
-    `else. ${PREFER_NO_REPLY_TOOL}` +
+    `you and is asking for a response, so answer it. ${SINGLE_WINDOW_REPLY_MANDATE} Stay silent only ` +
+    `if the mention turns out to be purely social or needs nothing from you — then output exactly ` +
+    `${NO_REPLY_SENTINEL} and nothing else. ${PREFER_NO_REPLY_TOOL}` +
     unifiedDisclosureLine(unifiedDisclosure) +
     handoffLine(hasHandoff)
   );
@@ -197,24 +203,30 @@ function nameDropPreamble(botName: string, followUp: NonNullable<NormalizedWake[
 function judgedPreamble(nw: NormalizedWake): string {
   const isEdit = Boolean(nw.trigger.message.edited);
   const hasHandoff = nw.handoff !== undefined;
-  switch (nw.addressing) {
-    case "direct-mention":
-      return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure);
-    case "thread-follow":
-      return threadFollowPreamble(isEdit, hasHandoff);
-    case "channel-watch":
-      return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun, nw.engagementTier, nw.unifiedDisclosure);
-    case "name-drop": {
-      if (!nw.nameDrop) throw new Error("renderWake: name-drop addressing requires a nameDrop field");
-      return nameDropPreamble(nw.nameDrop.botName, nw.nameDrop.followUp);
+  const base = ((): string => {
+    switch (nw.addressing) {
+      case "direct-mention":
+        return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure);
+      case "thread-follow":
+        return threadFollowPreamble(isEdit, hasHandoff);
+      case "channel-watch":
+        return channelWatchPreamble(isEdit, hasHandoff, nw.containerNoun, nw.engagementTier, nw.unifiedDisclosure);
+      case "name-drop": {
+        if (!nw.nameDrop) throw new Error("renderWake: name-drop addressing requires a nameDrop field");
+        return nameDropPreamble(nw.nameDrop.botName, nw.nameDrop.followUp);
+      }
+      case "direct":
+        throw new Error("renderWake: judgedPreamble is not defined for direct addressing");
+      default: {
+        const _exhaustive: never = nw.addressing;
+        throw new Error(`renderWake: unknown addressing ${String(_exhaustive)}`);
+      }
     }
-    case "direct":
-      throw new Error("renderWake: judgedPreamble is not defined for direct addressing");
-    default: {
-      const _exhaustive: never = nw.addressing;
-      throw new Error(`renderWake: unknown addressing ${String(_exhaustive)}`);
-    }
+  })();
+  if (nw.wakeId !== undefined && nw.addressing !== "direct-mention") {
+    return `${base}\n\n${SINGLE_WINDOW_REPLY_MANDATE}`;
   }
+  return base;
 }
 
 export function renderWake(nw: NormalizedWake, now: () => string = () => new Date().toISOString()): RenderedWake {

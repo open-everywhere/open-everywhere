@@ -152,7 +152,11 @@ const siblings: NotionWakeMessage[] = [
   ok(watch.message.startsWith("[channel-watch]"), "directMention alongside channel-watch addressing is ignored (guarded on `direct`)");
   const watchId = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings, wakeId: "wake-notion-2" }), NOW);
   ok(watchId.message.includes(`wake-id="wake-notion-2"`), "a Leg-A judged wake carries its wake-id in the envelope");
-  ok(!renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW).message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (byte-identical render)");
+  ok(watchId.message.includes("must be a `reply` call"), "ambient single-window Leg-A wake carries the reply-tool delivery mandate (the model must call `reply`, not answer in dropped prose)");
+  ok(watchId.message.includes("turn-final text is DISCARDED"), "ambient single-window Leg-A wake states the hard consequence: turn-final text is discarded on this session");
+  const watchNoWindow = renderWake(buildNotionSupervisorWake({ addressing: "channel-watch", pageId: PAGE, discussionId: DISCUSSION, trigger, threadComments: siblings }), NOW);
+  ok(!watchNoWindow.message.includes("wake-id"), "no window → the envelope carries NO wake-id attribute (byte-identical render)");
+  ok(!watchNoWindow.message.includes("must be a `reply` call") && !watchNoWindow.message.includes("turn-final text is DISCARDED"), "no window → the reply-tool mandate is NOT appended (byte-identical to the per-surface path — turn-final prose still posts there)");
 }
 
 const AUTH: OpenEverywhereNotionAuth = { authenticator: "notion", principalId: AUTHOR, principalType: "notion-user", attributes: { page_id: PAGE, discussion_id: DISCUSSION } };

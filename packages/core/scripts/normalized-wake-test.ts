@@ -232,6 +232,18 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 }
 
 {
+  const ambient: NormalizedWake = { platform: "notion", reason: "channel-activity", addressing: "channel-watch", containerNoun: "doc", unifiedDisclosure: true, wakeId: "wk-amb", locus: { channel: { id: "page-1", platform: "notion" }, thread: { ts: "disc-1" } }, trigger: trig("does this section still hold?") };
+  const m = renderWake(ambient, NOW).message;
+  ok(m.startsWith("[channel-watch]"), "ambient single-window wake KEEPS the silence-biased watch preamble (the bar to speak is unchanged — message-tool-only is not weakened)");
+  ok(m.includes("`reply`") && m.includes("`wake`") && m.includes("`text`"), "ambient single-window wake ALSO names the reply tool + wake/text args (so a decision to answer routes through the tool, not dropped prose)");
+  ok(m.includes("turn-final text is DISCARDED"), "ambient single-window wake states the hard consequence: turn-final prose is discarded on this session");
+  ok(m.includes("cannot @mention a bot at all"), "ambient mandate calls out the no-mention surface (Notion) case explicitly — the reason the addressed-prose bridge can never fire here");
+  ok(m.includes(`wake-id="wk-amb"`), "the wake-id the model must pass to `reply` is present in the envelope");
+  const noWindow = renderWake({ ...ambient, wakeId: undefined, unifiedDisclosure: undefined }, NOW).message;
+  ok(!noWindow.includes("`reply`") && !noWindow.includes("turn-final text is DISCARDED"), "no wakeId (non-single-window) → NO reply-tool mandate appended (byte-identical to the per-surface channel-watch render)");
+}
+
+{
   const nd = (followUp: NonNullable<NormalizedWake["nameDrop"]>["followUp"]): NormalizedWake => ({ platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { botName: "Bot", followUp }, trigger: trig("hi") });
   ok(renderWake(nd("follows-on-reply"), NOW).message.startsWith(`[name-drop] A top-level channel message said your name ("Bot")`), "name-drop: core text is Slack's");
   ok(renderWake(nd("follows-on-reply"), NOW).message.includes("you will be following the thread from then on"), "name-drop: follows-on-reply closing sentence");
