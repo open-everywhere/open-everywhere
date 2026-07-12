@@ -23,6 +23,13 @@ export type UnifiedWakeOrigin =
       readonly discussionId: string;
       readonly pageId?: string;
       readonly workspaceId?: string;
+    }
+  | {
+      readonly platform: "teams";
+      readonly serviceUrl: string;
+      readonly conversationId: string;
+      readonly replyToActivityId?: string;
+      readonly tenantId?: string;
     };
 
 export const WAKE_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
@@ -91,6 +98,16 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
       o.discussionId.length > 0 &&
       (o.pageId === undefined || typeof o.pageId === "string") &&
       (o.workspaceId === undefined || typeof o.workspaceId === "string")
+    );
+  }
+  if (o.platform === "teams") {
+    return (
+      typeof o.serviceUrl === "string" &&
+      o.serviceUrl.startsWith("https://") &&
+      typeof o.conversationId === "string" &&
+      o.conversationId.length > 0 &&
+      (o.replyToActivityId === undefined || typeof o.replyToActivityId === "string") &&
+      (o.tenantId === undefined || typeof o.tenantId === "string")
     );
   }
   return false;

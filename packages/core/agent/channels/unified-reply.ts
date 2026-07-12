@@ -1,5 +1,6 @@
 import { slackForm } from "./slack-events.js";
 import { callLinearGraphQL } from "eve/channels/linear";
+import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { createCommentReply } from "./notion-api.js";
@@ -9,12 +10,14 @@ type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
 type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
+type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
 export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
   readonly postGitHub?: (origin: GitHubOrigin, text: string) => Promise<string>;
   readonly postLinear?: (origin: LinearOrigin, text: string) => Promise<string>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
+  readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
 }
 
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
@@ -27,7 +30,38 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
   if (origin.platform === "notion") {
     return (deps.postNotion ?? liveNotionPost)(origin, text);
   }
+  if (origin.platform === "teams") {
+    return (deps.postTeams ?? liveTeamsPost)(origin, text);
+  }
   return (deps.postGitHub ?? liveGitHubPost)(origin, text);
+}
+
+async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string> {
+  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
+    throw new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`);
+  }
+  if (!origin.serviceUrl.startsWith("https://")) {
+    throw new Error(`unified reply couldn't post to Teams — non-https serviceUrl on the wake origin (conversation ${origin.conversationId})`);
+  }
+  let id: string;
+  try {
+    const res = origin.replyToActivityId
+      ? await replyToTeamsActivity({
+          serviceUrl: origin.serviceUrl,
+          conversationId: origin.conversationId,
+          activityId: origin.replyToActivityId,
+          body: { type: "message", text },
+        })
+      : await sendTeamsActivity({
+          serviceUrl: origin.serviceUrl,
+          conversationId: origin.conversationId,
+          body: { type: "message", text },
+        });
+    id = res.id;
+  } catch {
+    throw new Error(`unified reply couldn't post to Teams — the Connector post failed (conversation ${origin.conversationId})`);
+  }
+  return id || "unknown";
 }
 
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {

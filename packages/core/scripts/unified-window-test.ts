@@ -55,6 +55,16 @@ import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSuper
 import { buildLinearAuth } from "../agent/channels/linear-identity.js";
 import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "../agent/channels/notion-supervisor.js";
 import { buildNotionAuth } from "../agent/channels/notion-identity.js";
+import {
+  handleTeamsSingleWindowDispatch,
+  teamsSupervisorToken,
+  teamsSingleWindowPrivacyOk,
+  teamsSingleWindowMentionPolicy,
+  planTeamsSingleWindow,
+  type TeamsSupervisorDeps,
+  type TeamsSingleWindowFacts,
+} from "../agent/channels/teams-supervisor.js";
+import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
@@ -95,15 +105,17 @@ const SLACK_KEY = "slack/T_WIN/C_WINA";
 const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
+const TEAMS_KEY = "teams/TEN_WIN/19-winchan.tacv2";
+const ALL_KEYS = [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, TEAMS_KEY];
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY],
+  channels: ALL_KEYS,
   ambientSupervisor: true,
   unifiedSupervisor: true,
   crossSurfaceWindow: true,
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true, unifiedSupervisor: true });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true });
+const unifiedTwin = defineDomain({ name: "payments", channels: ALL_KEYS, ambientSupervisor: true, unifiedSupervisor: true });
+const ambientTwin = defineDomain({ name: "payments", channels: ALL_KEYS, ambientSupervisor: true });
 const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
 const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgPlain = defineDomain({ name: "org", match: "org" });
@@ -115,7 +127,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, orgBoth],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
 });
 
 await withGates({}, () => {
@@ -160,11 +172,17 @@ await withGates({}, () => {
   ok(gLin.registryKey === gSlack.registryKey, "the Linear surface shares the one domain registry row");
   const gNot = supervisorGrainFor(NOTION_KEY, [winDomain, orgBoth]);
   ok(gNot.unified && gNot.singleWindow === true && gNot.registryKey === gSlack.registryKey, "gates ON: the Notion page's grain is unified + singleWindow and shares the one domain registry row");
+  const gTeams = supervisorGrainFor(TEAMS_KEY, [winDomain, orgBoth]);
+  ok(gTeams.unified && gTeams.singleWindow === true && gTeams.registryKey === gSlack.registryKey, "gates ON: the Teams channel's grain is unified + singleWindow and shares the one domain registry row");
   const rawSlack = supervisorTokenForGrain(gSlack, 3, () => supervisorToken("C_WINA", 3));
   const rawGh = supervisorTokenForGrain(gGh, 3, () => githubSupervisorToken("acme", "payments-api", 3));
   const rawLin = supervisorTokenForGrain(gLin, 3, () => linearSupervisorToken("T_WINX", 3));
   const rawNot = supervisorTokenForGrain(gNot, 3, () => notionSupervisorToken("P_WINPAGE", 3));
-  ok(rawSlack === rawGh && rawSlack === rawLin && rawSlack === rawNot && rawSlack === unifiedSupervisorToken("payments", 3), "IDENTICAL raw token from the Slack, GitHub, Linear AND Notion dispatch paths");
+  const rawTeams = supervisorTokenForGrain(gTeams, 3, () => teamsSupervisorToken("19-winchan.tacv2", 3));
+  ok(
+    rawSlack === rawGh && rawSlack === rawLin && rawSlack === rawNot && rawSlack === rawTeams && rawSlack === unifiedSupervisorToken("payments", 3),
+    "IDENTICAL raw token from the Slack, GitHub, Linear, Notion AND Teams dispatch paths",
+  );
   ok(
     effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === effectiveEveToken(UNIFIED_CHANNEL_NAME, rawGh) &&
       effectiveEveToken(UNIFIED_CHANNEL_NAME, rawSlack) === "unified:oe-dom:payments:oe-sup:g3",
@@ -409,6 +427,100 @@ await handleNotionSupervisorDispatch(
   ok(typeof a.discussion_id === "string" && a.discussion_id === "disc-win-1", "notion: the surface's own auth attributes ride verbatim (identity binding unchanged)");
 }
 
+const teamsAuth = buildTeamsAuth({
+  userId: "29:sam-teams",
+  userName: "Sam",
+  tenantId: "TEN_WIN",
+  conversationId: "19:winchan.tacv2;messageid=170001",
+  channelId: "19:winchan@thread.tacv2",
+  teamId: "team-win",
+  serviceUrl: "https://smba.trafficmanager.net/emea/",
+  scope: "channel",
+});
+const vouchedFacts: TeamsSingleWindowFacts = { scope: "channel", membershipType: undefined, tenantId: "TEN_WIN", vouched: true };
+const teamsWindow = planTeamsSingleWindow(true, true, vouchedFacts, {
+  serviceUrl: "https://smba.trafficmanager.net/emea/",
+  conversationId: "19:winchan.tacv2;messageid=170001",
+  replyToActivityId: "170001",
+  tenantId: "TEN_WIN",
+})!;
+ok(teamsWindow !== undefined && teamsWindow.addressing === "direct-mention", "teams: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED channel");
+const teamsDeps: TeamsSupervisorDeps = {
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  wake: async ({ token, auth, message, context, window }) => {
+    await divertToUnifiedWindow(captureReceive, {
+      message,
+      context: [...context],
+      token,
+      window,
+      surfaceKey: TEAMS_KEY,
+      auth: auth as unknown as { attributes?: Record<string, unknown> },
+    });
+  },
+  now: () => "2026-01-14T02:00:11Z",
+};
+await handleTeamsSingleWindowDispatch(
+  {
+    surfaceKey: TEAMS_KEY,
+    channelId: "19:winchan@thread.tacv2",
+    auth: teamsAuth,
+    trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE what was the deploy window token we agreed?", trust: "peer" },
+    threadRootId: "170001",
+    window: teamsWindow,
+  },
+  teamsDeps,
+);
+{
+  ok(received.length === 5 && received[4].channel === unifiedChannel, "teams: the diversion targets the SAME unified channel value");
+  ok(received[4].target.token === RAW_TOKEN, "teams: the diverted wake carries the SAME raw domain token");
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token),
+    "💥 SINGLE CONTEXT: the Slack wake and the Teams wake resolve ONE identical effective eve token — the fifth-surface proof",
+  );
+  ok(received[4].message.startsWith("[direct]") && received[4].message.includes(`wake-id="${teamsWindow.wakeId}"`), "teams: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  const a = received[4].auth.attributes ?? {};
+  ok(a[OE_PLATFORM_ATTR] === "teams" && a[OE_WAKE_ID_ATTR] === teamsWindow.wakeId, "teams: the forwarded auth is stamped with oe_platform + oe_wake_id");
+  ok(a[OE_ADDRESSING_ATTR] === "direct-mention", "teams: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
+  ok(
+    received[4].target.origin.platform === "teams" &&
+      (received[4].target.origin as { conversationId?: string }).conversationId === "19:winchan.tacv2;messageid=170001" &&
+      (received[4].target.origin as { replyToActivityId?: string }).replyToActivityId === "170001" &&
+      (received[4].target.origin as { serviceUrl?: string }).serviceUrl === "https://smba.trafficmanager.net/emea/",
+    "teams: the frozen origin names the conversation + reply-chain root + connector host (the reply target)",
+  );
+  ok(typeof a.conversation_id === "string" && a.conversation_id === "19:winchan.tacv2;messageid=170001", "teams: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+}
+
+{
+  const f = (over: Partial<TeamsSingleWindowFacts>): TeamsSingleWindowFacts => ({ ...vouchedFacts, ...over });
+  ok(teamsSingleWindowPrivacyOk(f({})), "teams floor: vouched + channel scope + tenant → ADMIT");
+  ok(teamsSingleWindowPrivacyOk(f({ membershipType: "standard" })) && teamsSingleWindowPrivacyOk(f({ membershipType: "private" })), "teams floor: a positively standard/private channel still needs (and has) the vouch — membershipType alone never admits");
+  ok(!teamsSingleWindowPrivacyOk(f({ vouched: false })), "teams floor: UN-VOUCHED → refuse (guest visibility is not knowable in-band — the operator vouches, code enforces)");
+  ok(!teamsSingleWindowPrivacyOk(f({ vouched: false, membershipType: "standard" })), "teams floor: membershipType 'standard' does NOT substitute for the vouch (standard channels are guest-visible)");
+  ok(!teamsSingleWindowPrivacyOk(f({ membershipType: "shared" })), "teams floor: a SHARED (cross-tenant Teams Connect) channel refuses EVEN WHEN VOUCHED — a positive external fact beats a standing assertion");
+  ok(!teamsSingleWindowPrivacyOk(f({ scope: "personal" })) && !teamsSingleWindowPrivacyOk(f({ scope: "groupChat" })) && !teamsSingleWindowPrivacyOk(f({ scope: "unknown" })) && !teamsSingleWindowPrivacyOk(f({ scope: undefined })), "teams floor: personal/groupChat/unknown scopes never join the shared window (channels only)");
+  ok(!teamsSingleWindowPrivacyOk(f({ tenantId: undefined })), "teams floor: no tenant anchor → refuse (the org boundary can't be established)");
+
+  const p = (sw: boolean, m: boolean, facts: TeamsSingleWindowFacts) => teamsSingleWindowMentionPolicy(sw, m, facts);
+  ok(p(true, true, f({})).suppressNative === true && p(true, true, f({})).addressing === "direct-mention", "teams policy (sw=1,m=1,floor=1): native forward SUPPRESSED and the wake is addressed 'direct-mention'");
+  ok(p(true, true, f({ vouched: false })).suppressNative === false && p(true, true, f({ vouched: false })).addressing === undefined, "teams policy (sw=1,m=1,floor=0): un-vouched — native KEPT, no addressed stamp (fail-closed)");
+  ok(p(true, false, f({})).suppressNative === false && p(true, false, f({})).addressing === undefined, "teams policy (sw=1,m=0,floor=1): a non-mention never suppresses and is never addressed (ambient treatment)");
+  ok(p(false, true, f({})).suppressNative === false && p(false, true, f({})).addressing === undefined, "teams policy (sw=0,m=1,floor=1): single-window OFF — byte-identical split (native owns the mention)");
+  for (const sw of [true, false]) for (const m of [true, false]) for (const vouched of [true, false]) {
+    const pol = p(sw, m, f({ vouched }));
+    ok((pol.addressing === "direct-mention") === pol.suppressNative, `teams policy complementarity: addressing ⟺ suppressNative (sw=${sw},m=${m},vouched=${vouched})`);
+  }
+
+  const target = { serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "19:winchan.tacv2;messageid=170001", replyToActivityId: "170001" };
+  const legA = planTeamsSingleWindow(true, false, f({}), target);
+  ok(legA !== undefined && legA.addressing === undefined, "teams plan: Leg A — an ambient channel message on a vouched singleWindow channel diverts WITHOUT the addressed stamp");
+  ok(planTeamsSingleWindow(false, true, f({}), target) === undefined, "teams plan: singleWindow OFF → NO window (byte-identical native path)");
+  ok(planTeamsSingleWindow(true, true, f({ vouched: false }), target) === undefined, "teams plan: un-vouched → NO window (fail-closed — never routed to the shared window)");
+  ok(planTeamsSingleWindow(true, true, f({ membershipType: "shared" }), target) === undefined, "teams plan: a shared channel plans NO window even when vouched");
+  ok(planTeamsSingleWindow(true, false, f({ scope: "groupChat" }), target) === undefined, "teams plan: a group chat plans NO window (Leg A floor too)");
+  ok(planTeamsSingleWindow(true, true, f({}), { ...target, serviceUrl: "" }) === undefined, "teams plan: no serviceUrl → NO window (no frozen reply target, fail closed)");
+}
+
 const store = getOperationalStore();
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
@@ -446,6 +558,13 @@ const store = getOperationalStore();
   const notRegistered = await resolveUnifiedWakeTarget(store, "default", received[3].target.wakeId);
   ok(notRegistered !== null && notRegistered.platform === "notion", "receive: the Notion origin round-trips from the real store");
 
+  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+    await unifiedChannel.receive!({ message: received[4].message, target: received[4].target, auth: received[4].auth as never }, { send: fakeSend });
+  });
+  ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Teams wake delivers under the SAME raw token (same session)");
+  const teamsRegistered = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
+  ok(teamsRegistered !== null && teamsRegistered.platform === "teams", "receive: the Teams origin round-trips from the real store");
+
   await assert.rejects(
     unifiedChannel.receive!(
       { message: "m", target: { ...received[0].target, surfaceKey: "slack/T_OTHER/C_NOPE" }, auth: received[0].auth as never },
@@ -474,6 +593,7 @@ const store = getOperationalStore();
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
   const linPosts: Array<{ issueId: string; parentId?: string; text: string }> = [];
   const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
+  const teamsPosts: Array<{ serviceUrl: string; conversationId: string; replyToActivityId?: string; text: string }> = [];
   const deps = {
     postSlack: async (o: { channelId: string; threadTs?: string }, text: string) => {
       slackPosts.push({ channelId: o.channelId, threadTs: o.threadTs, text });
@@ -491,22 +611,35 @@ const store = getOperationalStore();
       notPosts.push({ discussionId: o.discussionId, pageId: o.pageId, text });
       return "nc-reply-1";
     },
+    postTeams: async (o: { serviceUrl: string; conversationId: string; replyToActivityId?: string }, text: string) => {
+      teamsPosts.push({ serviceUrl: o.serviceUrl, conversationId: o.conversationId, replyToActivityId: o.replyToActivityId, text });
+      return "ta-reply-1";
+    },
   };
   const slackOrigin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
   const ghOrigin = await resolveUnifiedWakeTarget(store, "default", ghWindow.wakeId);
   const linOrigin = await resolveUnifiedWakeTarget(store, "default", linWindow.wakeId);
   const notOrigin = await resolveUnifiedWakeTarget(store, "default", notWindow.wakeId);
-  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null, "coalesced turn: ALL FOUR pending wakeIds resolve from the map");
+  const teamsOrigin = await resolveUnifiedWakeTarget(store, "default", teamsWindow.wakeId);
+  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null && teamsOrigin !== null, "coalesced turn: ALL FIVE pending wakeIds resolve from the map");
   ok((await postUnifiedReply(slackOrigin!, "answer for slack", deps)) === "ts-1", "reply(slack wakeId) returns the Slack post id");
   ok((await postUnifiedReply(ghOrigin!, "answer for github", deps)) === "c-1", "reply(github wakeId) returns the GitHub comment id");
   ok((await postUnifiedReply(linOrigin!, "answer for linear", deps)) === "lc-1", "reply(linear wakeId) returns the Linear comment id");
   ok((await postUnifiedReply(notOrigin!, "answer for notion", deps)) === "nc-reply-1", "reply(notion wakeId) returns the Notion comment id");
+  ok((await postUnifiedReply(teamsOrigin!, "answer for teams", deps)) === "ta-reply-1", "reply(teams wakeId) returns the Teams activity id");
   ok(slackPosts.length === 1 && slackPosts[0].channelId === "C_WINA" && slackPosts[0].threadTs === undefined, "Slack reply landed in the Slack channel (top-level, matching the trigger)");
   ok(ghPosts.length === 1 && ghPosts[0].owner === "acme" && ghPosts[0].repo === "payments-api" && ghPosts[0].issueNumber === 55, "GitHub reply landed on the GitHub issue that woke it");
   ok(linPosts.length === 1 && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1", "Linear reply landed on the issue + thread-root that woke it (commentCreate issueId + parentId)");
   ok(notPosts.length === 1 && notPosts[0].discussionId === "disc-win-1", "Notion reply landed in the discussion thread that woke it (createCommentReply discussion_id)");
   ok(
-    slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion",
+    teamsPosts.length === 1 &&
+      teamsPosts[0].conversationId === "19:winchan.tacv2;messageid=170001" &&
+      teamsPosts[0].replyToActivityId === "170001" &&
+      teamsPosts[0].serviceUrl === "https://smba.trafficmanager.net/emea/",
+    "Teams reply landed in the reply chain that woke it (replyToTeamsActivity conversation + root activity)",
+  );
+  ok(
+    slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion" && teamsPosts[0].text === "answer for teams",
     "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn",
   );
 
@@ -533,8 +666,10 @@ const store = getOperationalStore();
       isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
       isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }) &&
       isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1" }) &&
-      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }),
-    "all four origin variants validate (linear ± parentId; notion ± page/workspace)",
+      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }) &&
+      isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "19:c1" }) &&
+      isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "19:c1", replyToActivityId: "1", tenantId: "t1" }),
+    "all five origin variants validate (linear ± parentId; notion ± page/workspace; teams ± root/tenant)",
   );
   ok(
     !isUnifiedWakeOrigin({ platform: "slack" }) &&
@@ -545,9 +680,13 @@ const store = getOperationalStore();
       !isUnifiedWakeOrigin({ platform: "notion" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: 7 }) &&
+      !isUnifiedWakeOrigin({ platform: "teams" }) &&
+      !isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "" }) &&
+      !isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "http://evil.example/", conversationId: "19:c1" }) &&
+      !isUnifiedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "19:c1", replyToActivityId: 5 }) &&
       !isUnifiedWakeOrigin(null) &&
       !isUnifiedWakeOrigin("slack"),
-    "missing/invalid fields fail validation (incl. notion without/empty discussionId / non-string pageId)",
+    "missing/invalid fields fail validation (incl. a teams origin with an empty conversation or a NON-HTTPS serviceUrl — the Connector token must never leave over plaintext)",
   );
 }
 
@@ -563,9 +702,14 @@ const store = getOperationalStore();
   const offGhToken: string = supervisorTokenForGrain(supervisorGrainFor(GH_KEY, [ambientTwin, orgPlain]), 1, () => githubSupervisorToken("acme", "payments-api", 1));
   const offLinToken: string = supervisorTokenForGrain(supervisorGrainFor(LINEAR_KEY, [ambientTwin, orgPlain]), 1, () => linearSupervisorToken("T_WINX", 1));
   const offNotToken: string = supervisorTokenForGrain(supervisorGrainFor(NOTION_KEY, [ambientTwin, orgPlain]), 1, () => notionSupervisorToken("P_WINPAGE", 1));
+  const offTeamsToken: string = supervisorTokenForGrain(supervisorGrainFor(TEAMS_KEY, [ambientTwin, orgPlain]), 1, () => teamsSupervisorToken("19-winchan.tacv2", 1));
   ok(
-    offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1" && offLinToken === "linear:T_WINX:oe-sup:g1" && offNotToken === "notion:P_WINPAGE:oe-sup:g1",
-    "gates OFF: the four surfaces resolve DIFFERENT per-container tokens exactly as today",
+    offToken === "C_WINA:oe-sup:g1" &&
+      offGhToken === "github:acme/payments-api:oe-sup:g1" &&
+      offLinToken === "linear:T_WINX:oe-sup:g1" &&
+      offNotToken === "notion:P_WINPAGE:oe-sup:g1" &&
+      offTeamsToken === "teams:19-winchan.tacv2:oe-sup:g1",
+    "gates OFF: the five surfaces resolve DIFFERENT per-container tokens exactly as today",
   );
 }
 {
@@ -606,6 +750,7 @@ const store = getOperationalStore();
   });
   ok(channelPlatform(mk("channel:unified", { oe_platform: "slack", team_id: "T_WIN", channel_id: "C_WINA" })) === "slack", "unified hop: a stamped delivery binds as its ORIGIN platform (hook-context kind form)");
   ok(channelPlatform(mk("unified", { oe_platform: "github" })) === "github", "unified hop: bare kind form too");
+  ok(channelPlatform(mk("unified", { oe_platform: "teams" })) === "teams", "unified hop: a teams-stamped delivery binds as its ORIGIN platform (the Teams mapper runs)");
   ok(channelPlatform(mk("unified", {})) === "unified", "unified hop: NO stamp → stays 'unified' (no mapper → env-stand-in binding, never a guessed platform)");
   ok(channelPlatform(mk("slack", { oe_platform: "github" })) === "slack", "a NORMAL surface session ignores the stamp entirely (hop is unified-kind-gated)");
   ok(isUnifiedWindowContext(mk("channel:unified", {})) && isUnifiedWindowContext(mk("unified", {})), "isUnifiedWindowContext: true for both unified kind forms");

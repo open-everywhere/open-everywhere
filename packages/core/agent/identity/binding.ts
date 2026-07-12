@@ -173,6 +173,7 @@ const bindTeams: Mapper = (ctx) => {
   return {
     workspace: tenantId,
     surface: conversationId,
+    domainSurface: attr(a, ["channel_id", "channelId"]),
     mode,
     visibility: teamsVisibility(scope, membershipType, mode),
     trust: teamsTrust(scope, membershipType, mode, tenantId),
