@@ -33,7 +33,7 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-ok(NO_REPLY_REASONS.length === 5, "no_reply: exactly 5 reasons in the closed enum");
+ok(NO_REPLY_REASONS.length === 9, "no_reply: exactly 9 reasons in the closed enum");
 for (const r of NO_REPLY_REASONS) {
   ok(noReply.inputSchema.safeParse({ reason: r }).success, `no_reply: "${r}" is a valid reason`);
 }

@@ -4,7 +4,17 @@ import { z } from "zod";
 import { markNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 
-export const NO_REPLY_REASONS = ["addressed_to_other", "nothing_to_add", "awaiting_context", "duplicate", "noise_reduction"] as const;
+export const NO_REPLY_REASONS = [
+  "addressed_to_other",
+  "reacted_instead",
+  "nothing_to_add",
+  "not_relevant",
+  "duplicate",
+  "user_requested_silence",
+  "awaiting_context",
+  "noise_reduction",
+  "other",
+] as const;
 
 export default defineTool({
   description:
@@ -12,12 +22,16 @@ export default defineTool({
     "literal text NO_REPLY (both still work during the transition, but this is audited and " +
     "unambiguous). Call it, then say nothing else — the tool call IS the whole outcome; any text " +
     "after it is discarded. Pick the reason that best fits: `addressed_to_other` — the message " +
-    "wasn't for you (someone else was tagged/asked); `nothing_to_add` — you have no useful " +
-    "contribution right now; `awaiting_context` — you need more information before you could " +
-    "usefully respond, and nobody's asked you a direct question yet; `duplicate` — this would " +
-    "just repeat something you (or the thread) already said; `noise_reduction` — a reply here " +
-    "would just be noise in a busy thread (a react via the `react` tool is often a better fit " +
-    "than either replying or going fully silent).",
+    "wasn't for you (someone else was tagged/asked) in a multi-party thread; `reacted_instead` — " +
+    "you acknowledged with an emoji react via the `react` tool instead of replying; `nothing_to_add` " +
+    "— you have no useful contribution right now (you'd just be agreeing or restating with no new " +
+    "information); `not_relevant` — this is an auto-respond, firehose, or automated message that " +
+    "doesn't warrant a response; `duplicate` — this is already covered by an earlier reply or " +
+    "another participant; `user_requested_silence` — a user explicitly asked you to stop or stay " +
+    "quiet; `awaiting_context` — you're passively observing and will weigh in once humans add more, " +
+    "and nobody's asked you a direct question yet; `noise_reduction` — a reply here would just be " +
+    "noise in a busy thread (a react via the `react` tool is often a better fit than either " +
+    "replying or going fully silent); `other` — none of the above fit.",
   inputSchema: z.object({
     reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
   }),
