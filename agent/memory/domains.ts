@@ -30,14 +30,6 @@ const rawDomains: Domain[] = [
     models: { primary: { id: "deepseek/deepseek-v4-flash" } } }),
 
   defineDomain({
-    name: "e2e",
-    channels: ["discord/1300000000000000100/1300000000000000101"],
-    memory: "e2e-brain",
-    nameDropWake: true,
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
-  }),
-
-  defineDomain({
     name: "e2e-b",
     channels: ["slack/T0EXAMPLE/C0EXCHAN005"],
     memory: "e2e-b-brain",
@@ -58,7 +50,7 @@ const rawDomains: Domain[] = [
 
   defineDomain({
     name: "e2e-unified",
-    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "github/example-owner/e2e-scratch"],
+    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101"],
     memory: "e2e-ambient-brain",
     ambientSupervisor: true,
     unifiedSupervisor: true,
