@@ -63,7 +63,16 @@ import {
   type DiscordRelayMessage,
   type DiscordGatewaySend,
 } from "../agent/channels/discord-gateway.js";
-import { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import {
+  handleTeamsSingleWindowDispatch,
+  teamsSingleWindowPrivacyOk,
+  planTeamsSingleWindow,
+  type TeamsSupervisorDeps,
+  type TeamsSingleWindowFacts,
+} from "../agent/channels/teams-supervisor.js";
+import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
+import { isTrustedTeamsServiceUrl } from "../agent/channels/unified-window.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
@@ -105,15 +114,17 @@ const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
 const DISCORD_KEY = "discord/G_WIN/CH_WIN";
+const TEAMS_KEY = "teams/TEN_WIN/19-winchan.tacv2";
+const TEAMS_WS_KEY = "teams/TEN_WIN";
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY],
+  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY],
   ambientSupervisor: true,
   unifiedSupervisor: true,
   crossSurfaceWindow: true,
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY], ambientSupervisor: true, unifiedSupervisor: true });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY], ambientSupervisor: true });
+const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true, unifiedSupervisor: true });
+const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true });
 const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
 const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgPlain = defineDomain({ name: "org", match: "org" });
@@ -125,7 +136,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, orgBoth],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
 });
 
 await withGates({}, () => {
@@ -528,6 +539,105 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
         const q = singleWindowMentionPolicy(sw, m, priv);
         ok(p.suppressNative === q.suppressNative && p.addressing === q.addressing, `discord mention policy ≡ the shared seam (sw=${sw},m=${m},priv=${priv})`);
       }
+}
+
+const teamsAuth = buildTeamsAuth({
+  userId: "29:sam-teams",
+  userName: "Sam",
+  tenantId: "TEN_WIN",
+  conversationId: "19:winchan.tacv2;messageid=170001",
+  channelId: "19:winchan@thread.tacv2",
+  teamId: "team-win",
+  serviceUrl: "https://smba.trafficmanager.net/emea/",
+  scope: "channel",
+});
+const vouchedFacts: TeamsSingleWindowFacts = { scope: "channel", membershipType: undefined, tenantId: "TEN_WIN", vouched: true };
+const teamsWindow = planTeamsSingleWindow(true, true, vouchedFacts, {
+  serviceUrl: "https://smba.trafficmanager.net/emea/",
+  conversationId: "19:winchan.tacv2;messageid=170001",
+  replyToActivityId: "170001",
+  tenantId: "TEN_WIN",
+})!;
+ok(teamsWindow !== undefined && teamsWindow.addressing === "direct-mention", "teams: the REAL plan mints an ADDRESSED window for a mention on a singleWindow VOUCHED channel");
+const teamsDeps: TeamsSupervisorDeps = {
+  getOrCreateSession: async () => ({ token: RAW_TOKEN, generation: 1, freshGeneration: false }),
+  wake: async ({ token, auth, message, context, window }) => {
+    await divertToUnifiedWindow(captureReceive, {
+      message,
+      context: [...context],
+      token,
+      window,
+      surfaceKey: TEAMS_KEY,
+      auth: auth as unknown as { attributes?: Record<string, unknown> },
+    });
+  },
+  now: () => "2026-01-14T02:00:11Z",
+};
+const teamsIdx = received.length;
+await handleTeamsSingleWindowDispatch(
+  {
+    surfaceKey: TEAMS_KEY,
+    channelId: "19:winchan@thread.tacv2",
+    auth: teamsAuth,
+    trigger: { id: "170002", authorId: "29:sam-teams", authorName: "Sam", sentAt: "2026-01-14T02:00:10Z", text: "@OE what was the deploy window token we agreed?", trust: "peer" },
+    threadRootId: "170001",
+    window: teamsWindow,
+  },
+  teamsDeps,
+);
+{
+  ok(received.length === teamsIdx + 1 && received[teamsIdx].channel === unifiedChannel, "teams: the diversion targets the SAME unified channel value");
+  ok(received[teamsIdx].target.token === RAW_TOKEN, "teams: the diverted wake carries the SAME raw domain token");
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[teamsIdx].target.token),
+    "💥 SINGLE CONTEXT: the Slack wake and the Teams wake resolve ONE identical effective eve token — the sixth-surface proof",
+  );
+  ok(received[teamsIdx].message.startsWith("[direct]") && received[teamsIdx].message.includes(`wake-id="${teamsWindow.wakeId}"`), "teams: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  const a = received[teamsIdx].auth.attributes ?? {};
+  ok(a[OE_PLATFORM_ATTR] === "teams" && a[OE_WAKE_ID_ATTR] === teamsWindow.wakeId, "teams: the forwarded auth is stamped with oe_platform + oe_wake_id");
+  ok(a[OE_ADDRESSING_ATTR] === "direct-mention", "teams: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
+  ok(
+    received[teamsIdx].target.origin.platform === "teams" &&
+      (received[teamsIdx].target.origin as { conversationId?: string }).conversationId === "19:winchan.tacv2;messageid=170001" &&
+      (received[teamsIdx].target.origin as { replyToActivityId?: string }).replyToActivityId === "170001" &&
+      (received[teamsIdx].target.origin as { serviceUrl?: string }).serviceUrl === "https://smba.trafficmanager.net/emea/",
+    "teams: the frozen origin names the conversation + reply-chain root + connector host (the reply target)",
+  );
+  ok(typeof a.conversation_id === "string" && a.conversation_id === "19:winchan.tacv2;messageid=170001", "teams: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+}
+
+{
+  const f = (over: Partial<TeamsSingleWindowFacts>): TeamsSingleWindowFacts => ({ ...vouchedFacts, ...over });
+  ok(teamsSingleWindowPrivacyOk(f({})), "teams floor: vouched + channel scope + tenant → ADMIT");
+  ok(teamsSingleWindowPrivacyOk(f({ membershipType: "standard" })) && teamsSingleWindowPrivacyOk(f({ membershipType: "private" })), "teams floor: a positively standard/private channel still needs (and has) the vouch — membershipType alone never admits");
+  ok(!teamsSingleWindowPrivacyOk(f({ vouched: false })), "teams floor: UN-VOUCHED → refuse (guest visibility is not knowable in-band — the operator vouches, code enforces)");
+  ok(!teamsSingleWindowPrivacyOk(f({ vouched: false, membershipType: "standard" })), "teams floor: membershipType 'standard' does NOT substitute for the vouch (standard channels are guest-visible)");
+  ok(!teamsSingleWindowPrivacyOk(f({ membershipType: "shared" })), "teams floor: a SHARED (cross-tenant Teams Connect) channel refuses EVEN WHEN VOUCHED — a positive external fact beats a standing assertion");
+  ok(!teamsSingleWindowPrivacyOk(f({ scope: "personal" })) && !teamsSingleWindowPrivacyOk(f({ scope: "groupChat" })) && !teamsSingleWindowPrivacyOk(f({ scope: "unknown" })) && !teamsSingleWindowPrivacyOk(f({ scope: undefined })), "teams floor: personal/groupChat/unknown scopes never join the shared window (channels only)");
+  ok(!teamsSingleWindowPrivacyOk(f({ tenantId: undefined })), "teams floor: no tenant anchor → refuse (the org boundary can't be established)");
+
+  _resetTrustedSurfacesForTest();
+  registerTrustedSurfaces([TEAMS_WS_KEY]);
+  ok(isVouchedInternal(TEAMS_WS_KEY, TEAMS_KEY), "teams vouch: a tenant-wide vouch satisfies isVouchedInternal (the any-grain check)");
+  ok(!isVouchedSurface(TEAMS_KEY), "teams vouch: a tenant-wide vouch does NOT satisfy isVouchedSurface — so teams-front REFUSES the channel (a Connect channel can't be swept in by a coarse vouch)");
+  registerTrustedSurfaces([TEAMS_KEY]);
+  ok(isVouchedSurface(TEAMS_KEY), "teams vouch: a SURFACE-grain vouch admits — the operator asserted this specific channel is internal");
+  _resetTrustedSurfacesForTest();
+
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the canonical regional Bot Connector host is trusted");
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net"), "serviceUrl: the bare smba.trafficmanager.net host is trusted");
+  ok(isTrustedTeamsServiceUrl("https://sub.botframework.com/v3/"), "serviceUrl: a *.botframework.com host is trusted");
+  ok(!isTrustedTeamsServiceUrl("https://evil.example/v3/conversations"), "serviceUrl: an arbitrary https host is REJECTED (no token exfil)");
+  ok(!isTrustedTeamsServiceUrl("https://smba.trafficmanager.net.evil.com/"), "serviceUrl: a look-alike suffix host is REJECTED (endsWith is dot-anchored)");
+  ok(!isTrustedTeamsServiceUrl("http://smba.trafficmanager.net/"), "serviceUrl: a non-https Bot Framework host is REJECTED");
+  ok(!isTrustedTeamsServiceUrl("not a url") && !isTrustedTeamsServiceUrl("") && !isTrustedTeamsServiceUrl(undefined), "serviceUrl: unparseable / empty / non-string → REJECTED (fail-closed)");
+  ok(!isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: a GCC-High host is REJECTED by default (global cloud only)");
+  process.env.OE_TEAMS_SERVICE_HOSTS = "smba.infra.gov.teams.microsoft.us, .infra.dod.teams.microsoft.us";
+  ok(isTrustedTeamsServiceUrl("https://smba.infra.gov.teams.microsoft.us/v3/"), "serviceUrl: OE_TEAMS_SERVICE_HOSTS admits an exact sovereign host");
+  ok(isTrustedTeamsServiceUrl("https://smba.infra.dod.teams.microsoft.us/v3/"), "serviceUrl: OE_TEAMS_SERVICE_HOSTS admits a .suffix sovereign host");
+  ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the global default still admits alongside the env additions");
+  ok(!isTrustedTeamsServiceUrl("https://evil.example/"), "serviceUrl: the env seam does NOT widen to arbitrary hosts");
+  delete process.env.OE_TEAMS_SERVICE_HOSTS;
 }
 
 const store = getOperationalStore();

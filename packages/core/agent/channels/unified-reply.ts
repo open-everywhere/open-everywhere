@@ -1,16 +1,19 @@
 import { slackForm } from "./slack-events.js";
 import { callLinearGraphQL } from "eve/channels/linear";
+import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { createCommentReply } from "./notion-api.js";
 import { discordPostMessage, splitForDiscord } from "./discord-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
+import { isTrustedTeamsServiceUrl } from "./unified-window.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;
 type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;
 type DiscordOrigin = Extract<UnifiedWakeOrigin, { platform: "discord" }>;
+type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;
 
 export interface UnifiedReplyDeps {
   readonly postSlack?: (origin: SlackOrigin, text: string) => Promise<string>;
@@ -18,6 +21,7 @@ export interface UnifiedReplyDeps {
   readonly postLinear?: (origin: LinearOrigin, text: string) => Promise<string>;
   readonly postNotion?: (origin: NotionOrigin, text: string) => Promise<string>;
   readonly postDiscord?: (origin: DiscordOrigin, text: string) => Promise<string>;
+  readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
 }
 
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
@@ -32,6 +36,9 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
   }
   if (origin.platform === "discord") {
     return (deps.postDiscord ?? liveDiscordPost)(origin, text);
+  }
+  if (origin.platform === "teams") {
+    return (deps.postTeams ?? liveTeamsPost)(origin, text);
   }
   return (deps.postGitHub ?? liveGitHubPost)(origin, text);
 }
@@ -51,6 +58,34 @@ async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<str
     throw new Error(`unified reply couldn't post to Discord — nothing to post (empty reply) for channel ${origin.channelId}`);
   }
   return first;
+}
+
+async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string> {
+  if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
+    throw new Error(`unified reply couldn't post to Teams — MICROSOFT_APP_ID is not set (conversation ${origin.conversationId})`);
+  }
+  if (!isTrustedTeamsServiceUrl(origin.serviceUrl)) {
+    throw new Error(`unified reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${origin.conversationId})`);
+  }
+  let id: string;
+  try {
+    const res = origin.replyToActivityId
+      ? await replyToTeamsActivity({
+          serviceUrl: origin.serviceUrl,
+          conversationId: origin.conversationId,
+          activityId: origin.replyToActivityId,
+          body: { type: "message", text },
+        })
+      : await sendTeamsActivity({
+          serviceUrl: origin.serviceUrl,
+          conversationId: origin.conversationId,
+          body: { type: "message", text },
+        });
+    id = res.id;
+  } catch {
+    throw new Error(`unified reply couldn't post to Teams — the Connector post failed (conversation ${origin.conversationId})`);
+  }
+  return id || "unknown";
 }
 
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {

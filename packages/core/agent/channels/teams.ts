@@ -1,4 +1,5 @@
 import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
+import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
@@ -34,7 +35,8 @@ function auditPartitionForState(state: {
   }
 }
 
-export default teamsChannel({
+const native = teamsChannel({
+  route: INTERNAL_TEAMS_ROUTE,
   onMessage: (_ctx, message) => {
     if (message.scope !== "personal" && !message.isBotMentioned) return null;
 
@@ -81,3 +83,5 @@ export default teamsChannel({
     },
   },
 });
+
+export default frontTeamsChannel(native);
