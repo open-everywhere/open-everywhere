@@ -347,4 +347,116 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
   }
 }
 
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { computeMentionRouting } = (await import("../agent/channels/linear.js")) as unknown as {
+    computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; isPrivate?: boolean }>;
+  };
+
+  const ORG = "O_WIN";
+  const T_PRIV = "T_PRIV";
+  const T_PUB = "T_PUB";
+  const T_PLAIN = "T_PLAIN";
+  const skFor = (t: string) => `linear/${ORG}/${t}`;
+
+  const ISSUE_TEAM: Record<string, { teamId: string; isPrivate: boolean }> = {
+    "issue-priv": { teamId: T_PRIV, isPrivate: true },
+    "issue-pub": { teamId: T_PUB, isPrivate: false },
+    "issue-plain": { teamId: T_PLAIN, isPrivate: true },
+  };
+
+  const windowDomain = defineDomain({
+    name: "payments",
+    channels: [skFor(T_PRIV), skFor(T_PUB)],
+    ambientSupervisor: true,
+    unifiedSupervisor: true,
+    crossSurfaceWindow: true,
+  });
+  const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
+  const orgOff = defineDomain({ name: "org", match: "org" });
+
+  const baseAppConfig = {
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  };
+
+  process.env.LINEAR_ACCESS_TOKEN = "lin_test_token";
+  const realFetch = globalThis.fetch;
+  let issueTeamCalls = 0;
+  let teamPrivacyCalls = 0;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    if (!String(input).includes("api.linear.app")) return new Response("unexpected", { status: 500 });
+    const parsed = JSON.parse(String(init?.body ?? "{}")) as { query?: string; variables?: { id?: string } };
+    const id = parsed.variables?.id ?? "";
+    if (parsed.query?.includes("OeIssueTeam")) {
+      issueTeamCalls++;
+      const hit = ISSUE_TEAM[id];
+      return new Response(JSON.stringify({ data: { issue: hit ? { team: { id: hit.teamId, private: hit.isPrivate } } : null } }), { status: 200 });
+    }
+    if (parsed.query?.includes("TeamPrivacy")) {
+      teamPrivacyCalls++;
+      return new Response(JSON.stringify({ data: { team: { private: id === T_PRIV } } }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ data: {} }), { status: 200 });
+  }) as typeof fetch;
+
+  const mkEvent = (issueId: string, sourceCommentId: string | null = "c-mention") => ({
+    action: "created",
+    kind: "agent_session",
+    organizationId: ORG,
+    agentSession: { id: "as-1", issueId, sourceCommentId },
+    delivery: { event: "AgentSessionEvent", id: `dlv-${issueId}` },
+    previousComments: [],
+    raw: {},
+  });
+
+  try {
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, orgBoth] });
+
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
+      ok(v.routing === "suppress-and-divert", "FIX: raw parse missed the team → issue→team resolution → private single-window mention routes suppress-and-divert (was: native — the dead gate)");
+      ok(v.isPrivate === true, "the verdict carries the authoritative team privacy (reused by the native binding — enriched at most once)");
+      ok(issueTeamCalls === 1 && teamPrivacyCalls === 0, "team + privacy came from ONE issue→team query (no separate TeamPrivacy call)");
+    }
+
+    issueTeamCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-pub"), undefined);
+      ok(v.routing === "native", "M1 floor: an API-resolved PUBLIC single-window team routes native (never leaks a public surface into the shared window)");
+      ok(v.isPrivate === false, "the public team's privacy is surfaced (false) — the router floored on it");
+    }
+
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-plain"), undefined);
+      ok(v.routing === "native", "a resolved team with NO crossSurfaceWindow domain routes native (singleWindow false)");
+      ok(teamPrivacyCalls === 0, "non-single-window ⇒ privacy is never fetched (the floor input isn't needed)");
+    }
+
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-priv"), T_PRIV);
+      ok(v.routing === "suppress-and-divert", "raw fast-path: team already parsed → private single-window → suppress-and-divert");
+      ok(issueTeamCalls === 0 && teamPrivacyCalls === 1, "fast path makes NO issue→team call and enriches privacy by team id (byte-identical to pre-fix)");
+    }
+
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, orgOff] });
+    issueTeamCalls = 0; teamPrivacyCalls = 0;
+    {
+      const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
+      ok(v.routing === "native", "org master gate OFF → mention routes native (single-window inert)");
+      ok(issueTeamCalls === 0 && teamPrivacyCalls === 0, "feature OFF ⇒ ZERO Linear API calls (byte-identical: no network added on non-single-window deployments)");
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 console.log(`\n✓ linear-supervisor: ${passed} assertions passed`);

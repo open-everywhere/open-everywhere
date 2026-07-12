@@ -29,7 +29,7 @@ import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { getConfig } from "../access/config.js";
-import { ambientSupervisorEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
+import { ambientSupervisorEnabled, crossSurfaceWindowOrgGateEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 
@@ -67,6 +67,28 @@ export async function enrichTeamPrivacy(
       variables: { id: teamId },
     });
     return teamFactsFromTeam(data).isPrivate;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function enrichIssueTeam(
+  issueId: string | undefined,
+  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials },
+): Promise<{ readonly teamId: string; readonly isPrivate: boolean | undefined } | undefined> {
+  if (!issueId) return undefined;
+  try {
+    const d = await callLinearGraphQL<{ issue?: { team?: { id?: string; private?: boolean } } }>({
+      api: opts?.api,
+      credentials: opts?.credentials,
+      query: "query OeIssueTeam($id: String!) { issue(id: $id) { team { id private } } }",
+      queryName: "OeIssueTeam",
+      variables: { id: issueId },
+    });
+    const team = d.issue?.team;
+    const teamId = str(team?.id);
+    if (!teamId) return undefined;
+    return { teamId, isPrivate: typeof team?.private === "boolean" ? team.private : undefined };
   } catch {
     return undefined;
   }
@@ -352,12 +374,33 @@ function deliveryMemoKey(event: LinearAgentSessionEvent): string | undefined {
   return `s:${sid}:${act}:${promptC}:${srcC}`;
 }
 
-async function computeMentionRouting(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
+function agentSessionIssueId(event: LinearAgentSessionEvent): string | undefined {
+  const s = event.agentSession;
+  return str(s.issueId) ?? str(s.issue?.id);
+}
+
+function crossSurfaceWindowPossible(): boolean {
+  try {
+    return crossSurfaceWindowOrgGateEnabled(getConfig().loadDomains());
+  } catch {
+    return false;
+  }
+}
+
+export async function computeMentionRouting(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
   const sig = linearAgentSessionSignal(event, teamId);
-  const sk = sig.organizationId && sig.teamId ? `linear/${sig.organizationId}/${sig.teamId}` : undefined;
+  let resolvedTeamId = sig.teamId;
+  let enrichedPrivate: boolean | undefined;
+  if (!resolvedTeamId && crossSurfaceWindowPossible()) {
+    const t = await enrichIssueTeam(agentSessionIssueId(event));
+    resolvedTeamId = t?.teamId;
+    enrichedPrivate = t?.isPrivate;
+  }
+  const routingSig = resolvedTeamId === sig.teamId ? sig : { ...sig, teamId: resolvedTeamId };
+  const sk = routingSig.organizationId && resolvedTeamId ? `linear/${routingSig.organizationId}/${resolvedTeamId}` : undefined;
   const singleWindow = sk ? linearGrainFor(sk).singleWindow === true : false;
-  const isPrivate = singleWindow ? await enrichTeamPrivacy(sig.teamId) : undefined;
-  return { routing: routeLinearAgentSession(sig, singleWindow, isPrivate), isPrivate };
+  const isPrivate = singleWindow ? (enrichedPrivate ?? (await enrichTeamPrivacy(resolvedTeamId))) : undefined;
+  return { routing: routeLinearAgentSession(routingSig, singleWindow, isPrivate), isPrivate };
 }
 
 function mentionRoutingFor(event: LinearAgentSessionEvent, teamId: string | undefined): Promise<MentionRoutingVerdict> {
