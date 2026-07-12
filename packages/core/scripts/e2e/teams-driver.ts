@@ -169,6 +169,13 @@ export class TeamsDriver {
     return toMessage(json);
   }
 
+  async postPlainRoot(text: string): Promise<TeamsMessage> {
+    const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages`, {
+      body: { contentType: "html", content: htmlEscape(text) },
+    })) as GraphChatMessage;
+    return toMessage(json);
+  }
+
   async postReply(rootMessageId: string, text: string): Promise<TeamsMessage> {
     const json = (await this.graph("POST", `/teams/${this.cfg.teamId}/channels/${this.cfg.channelId}/messages/${rootMessageId}/replies`, {
       body: { contentType: "html", content: htmlEscape(text) },
