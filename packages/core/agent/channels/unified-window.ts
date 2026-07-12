@@ -23,6 +23,12 @@ export type UnifiedWakeOrigin =
       readonly discussionId: string;
       readonly pageId?: string;
       readonly workspaceId?: string;
+    }
+  | {
+      readonly platform: "discord";
+      readonly channelId: string;
+      readonly guildId: string;
+      readonly messageId?: string;
     };
 
 export const WAKE_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
@@ -91,6 +97,15 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
       o.discussionId.length > 0 &&
       (o.pageId === undefined || typeof o.pageId === "string") &&
       (o.workspaceId === undefined || typeof o.workspaceId === "string")
+    );
+  }
+  if (o.platform === "discord") {
+    return (
+      typeof o.channelId === "string" &&
+      o.channelId.length > 0 &&
+      typeof o.guildId === "string" &&
+      o.guildId.length > 0 &&
+      (o.messageId === undefined || typeof o.messageId === "string")
     );
   }
   return false;

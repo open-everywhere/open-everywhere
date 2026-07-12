@@ -55,6 +55,15 @@ import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSuper
 import { buildLinearAuth } from "../agent/channels/linear-identity.js";
 import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "../agent/channels/notion-supervisor.js";
 import { buildNotionAuth } from "../agent/channels/notion-identity.js";
+import {
+  dispatchTurn,
+  authForRelayMessage,
+  discordSingleWindowMentionPolicy,
+  discordSingleWindowPrivacyOk,
+  type DiscordRelayMessage,
+  type DiscordGatewaySend,
+} from "../agent/channels/discord-gateway.js";
+import { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
@@ -95,15 +104,16 @@ const SLACK_KEY = "slack/T_WIN/C_WINA";
 const GH_KEY = "github/acme/payments-api";
 const LINEAR_KEY = "linear/O_WIN/T_WINX";
 const NOTION_KEY = "notion/W_WIN/P_WINPAGE";
+const DISCORD_KEY = "discord/G_WIN/CH_WIN";
 const winDomain = defineDomain({
   name: "payments",
-  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY],
+  channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY],
   ambientSupervisor: true,
   unifiedSupervisor: true,
   crossSurfaceWindow: true,
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true, unifiedSupervisor: true });
-const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY], ambientSupervisor: true });
+const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY], ambientSupervisor: true, unifiedSupervisor: true });
+const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY], ambientSupervisor: true });
 const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
 const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgPlain = defineDomain({ name: "org", match: "org" });
@@ -115,7 +125,7 @@ registerConfig({
   skillContent: {},
   loadDomains: () => [winDomain, orgBoth],
   loadSilos: () => [],
-  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE"].includes(surface) ? ["payments"] : []),
+  domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN"].includes(surface) ? ["payments"] : []),
 });
 
 await withGates({}, () => {
@@ -160,6 +170,8 @@ await withGates({}, () => {
   ok(gLin.registryKey === gSlack.registryKey, "the Linear surface shares the one domain registry row");
   const gNot = supervisorGrainFor(NOTION_KEY, [winDomain, orgBoth]);
   ok(gNot.unified && gNot.singleWindow === true && gNot.registryKey === gSlack.registryKey, "gates ON: the Notion page's grain is unified + singleWindow and shares the one domain registry row");
+  const gDis = supervisorGrainFor(DISCORD_KEY, [winDomain, orgBoth]);
+  ok(gDis.unified && gDis.singleWindow === true && gDis.registryKey === gSlack.registryKey, "gates ON: the Discord channel's grain is unified + singleWindow and shares the one domain registry row");
   const rawSlack = supervisorTokenForGrain(gSlack, 3, () => supervisorToken("C_WINA", 3));
   const rawGh = supervisorTokenForGrain(gGh, 3, () => githubSupervisorToken("acme", "payments-api", 3));
   const rawLin = supervisorTokenForGrain(gLin, 3, () => linearSupervisorToken("T_WINX", 3));
@@ -409,6 +421,115 @@ await handleNotionSupervisorDispatch(
   ok(typeof a.discussion_id === "string" && a.discussion_id === "disc-win-1", "notion: the surface's own auth attributes ride verbatim (identity binding unchanged)");
 }
 
+const discordMsg = (over: Partial<DiscordRelayMessage>): DiscordRelayMessage => ({
+  id: "5001",
+  content: "<@BOT9> what was the deploy window token we agreed?",
+  channelId: "CH_WIN",
+  channelType: "0",
+  guildId: "G_WIN",
+  author: { id: "U_D1", username: "dana", bot: false },
+  mentionsBot: true,
+  botName: "OE",
+  botId: "BOT9",
+  ...over,
+});
+const discordBaseSends: unknown[] = [];
+const discordSend = (async (...args: unknown[]) => void discordBaseSends.push(args)) as unknown as DiscordGatewaySend;
+let discordThreadAttempts = 0;
+const stubCreateThread = async (): Promise<string | null> => {
+  discordThreadAttempts++;
+  return null;
+};
+const stubResolveParent = async (): Promise<string | undefined> => undefined;
+{
+  _resetTrustedSurfacesForTest();
+  delete process.env.OE_TRUST;
+  const m1 = discordMsg({});
+  await dispatchTurn(m1, authForRelayMessage(m1)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
+  ok(
+    received.length === 4 && discordBaseSends.length === 1 && discordThreadAttempts === 1,
+    "discord: an UN-VOUCHED guild channel takes the NATIVE path (auto-thread attempted, base send used, NOTHING diverted) — the privacy floor fails closed",
+  );
+
+  registerTrustedSurfaces(["discord/G_WIN"]);
+  discordBaseSends.length = 0;
+  discordThreadAttempts = 0;
+  const m2 = discordMsg({ id: "5002" });
+  await dispatchTurn(m2, authForRelayMessage(m2)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
+  ok(discordBaseSends.length === 0 && discordThreadAttempts === 0, "discord: a vouched mention SUPPRESSES the native dispatch — no base send, no auto-thread (the divert owns it)");
+  ok(received.length === 5 && received[4].channel === unifiedChannel, "discord: the diversion targets the SAME unified channel value (module identity)");
+  ok(received[4].target.token === unifiedSupervisorToken("payments", 1), "discord: the diverted wake carries the raw domain token (generation 1, minted in the REAL registry row)");
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[0].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token),
+    "💥 SINGLE CONTEXT: the Slack wake and the Discord wake resolve ONE identical effective eve token — the fifth-surface proof",
+  );
+  const dOrigin = received[4].target.origin as { platform: string; channelId?: string; guildId?: string; messageId?: string };
+  ok(
+    dOrigin.platform === "discord" && dOrigin.channelId === "CH_WIN" && dOrigin.guildId === "G_WIN" && dOrigin.messageId === "5002",
+    "discord: the frozen origin names the triggering channel + guild + message (the reply target + its message_reference anchor)",
+  );
+  ok(received[4].message.startsWith("[direct]") && received[4].message.includes(`wake-id="${received[4].target.wakeId}"`), "discord: the delivered wake is the ADDRESSED direct-mention render with the wake-id envelope");
+  const da = received[4].auth.attributes ?? {};
+  ok(da[OE_PLATFORM_ATTR] === "discord" && da[OE_WAKE_ID_ATTR] === received[4].target.wakeId, "discord: the forwarded auth is stamped with oe_platform + oe_wake_id");
+  ok(da[OE_ADDRESSING_ATTR] === "direct-mention", "discord: the forwarded auth carries oe_addressing='direct-mention' (the terminal-prose delivery bridge's arm)");
+  ok(da.channel_id === "CH_WIN" && da.guild_id === "G_WIN", "discord: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+
+  const m3 = discordMsg({ id: "5003", mentionsBot: false, content: "and the fallback window as well please" });
+  await dispatchTurn(m3, authForRelayMessage(m3)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
+  ok(discordBaseSends.length === 0 && received.length === 6, "discord: an ENGAGED non-mention follow-up ALSO diverts (Leg A ambient — one shared brain, not just mentions)");
+  ok(received[5].auth.attributes?.[OE_ADDRESSING_ATTR] === undefined, "discord: the ambient wake carries NO oe_addressing — every watch turn's terminal prose stays hard-dropped");
+  ok(!received[5].message.startsWith("[direct]") && received[5].message.includes(`wake-id="${received[5].target.wakeId}"`), "discord: the ambient wake is the judged watch render, wake-id kept for the reply tool");
+  const dOrigin3 = received[5].target.origin as { platform: string; guildId?: string };
+  ok(dOrigin3.platform === "discord" && dOrigin3.guildId === "G_WIN", "discord: the ambient wake's origin is discord-shaped too (guild carried)");
+
+  const m4 = discordMsg({ id: "5004", guildId: undefined, channelType: "1", content: "psst, what was that token?" });
+  await dispatchTurn(m4, authForRelayMessage(m4)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
+  ok(received.length === 6 && discordBaseSends.length === 1, "discord: a DM stays on the NATIVE path (never a personal surface into a team-shared window)");
+  discordBaseSends.length = 0;
+
+  const m5 = discordMsg({ id: "5005", channelId: "TH_WIN", channelType: "11" });
+  await dispatchTurn(m5, authForRelayMessage(m5)!, discordSend, stubCreateThread, async () => "CH_WIN", captureReceive);
+  ok(
+    received.length === 7 && discordBaseSends.length === 0,
+    "discord: a mention INSIDE a thread DIVERTS (domain-grain key resolves the parent; the receive gate does NOT refuse) — no orphaned silence, forum channels work",
+  );
+  const dOrigin5 = received[6].target.origin as { platform: string; channelId?: string; messageId?: string };
+  ok(
+    dOrigin5.platform === "discord" && dOrigin5.channelId === "TH_WIN" && dOrigin5.messageId === "5005",
+    "discord: the thread wake's reply targets the thread's OWN channel + message (not the parent) — the answer lands where the human asked",
+  );
+  ok(
+    effectiveEveToken(UNIFIED_CHANNEL_NAME, received[4].target.token) === effectiveEveToken(UNIFIED_CHANNEL_NAME, received[6].target.token),
+    "discord: the thread wake shares the SAME effective unified token as the base-channel wake (one context window across channel + thread)",
+  );
+  discordBaseSends.length = 0;
+}
+
+{
+  const vouch = (keys: string[]) => (w: string, s: string) => keys.includes(w) || keys.includes(s);
+  const G = { workspaceKey: "discord/G1", surfaceKey: "discord/G1/C1" };
+  ok(
+    !discordSingleWindowPrivacyOk({ guildId: undefined, ...G }, { vouched: vouch(["discord/G1", "discord/G1/C1"]), trustEnv: "internal" }),
+    "floor: a guildless (DM/group-DM) surface NEVER passes — even vouched AND OE_TRUST=internal (unconditional)",
+  );
+  ok(!discordSingleWindowPrivacyOk({ guildId: "G1", ...G }, { vouched: vouch([]), trustEnv: undefined }), "floor: an un-vouched guild channel fails CLOSED (no positive internal signal exists in the payload — never inferred)");
+  ok(discordSingleWindowPrivacyOk({ guildId: "G1", ...G }, { vouched: vouch(["discord/G1"]), trustEnv: undefined }), "floor: a workspace-level vouch admits the guild's channels");
+  ok(discordSingleWindowPrivacyOk({ guildId: "G1", ...G }, { vouched: vouch(["discord/G1/C1"]), trustEnv: undefined }), "floor: a surface-level vouch admits exactly that channel");
+  ok(!discordSingleWindowPrivacyOk({ guildId: "G1", workspaceKey: "discord/G1", surfaceKey: "discord/G1/C2" }, { vouched: vouch(["discord/G1/C1"]), trustEnv: undefined }), "floor: a surface-level vouch does NOT leak to a sibling channel");
+  ok(
+    discordSingleWindowPrivacyOk({ guildId: "G1", workspaceKey: "discord/G1", surfaceKey: "discord/G1/TH9", domainKey: "discord/G1/C1" }, { vouched: vouch(["discord/G1/C1"]), trustEnv: undefined }),
+    "floor: a THREAD inherits its parent channel's vouch (the domain-grain key)",
+  );
+  ok(discordSingleWindowPrivacyOk({ guildId: "G1", ...G }, { vouched: vouch([]), trustEnv: "internal" }), "floor: OE_TRUST=internal (the internal-only-deploy blanket) admits guild surfaces");
+  for (const sw of [true, false])
+    for (const m of [true, false])
+      for (const priv of [true, false]) {
+        const p = discordSingleWindowMentionPolicy(sw, m, priv);
+        const q = singleWindowMentionPolicy(sw, m, priv);
+        ok(p.suppressNative === q.suppressNative && p.addressing === q.addressing, `discord mention policy ≡ the shared seam (sw=${sw},m=${m},priv=${priv})`);
+      }
+}
+
 const store = getOperationalStore();
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
@@ -446,6 +567,13 @@ const store = getOperationalStore();
   const notRegistered = await resolveUnifiedWakeTarget(store, "default", received[3].target.wakeId);
   ok(notRegistered !== null && notRegistered.platform === "notion", "receive: the Notion origin round-trips from the real store");
 
+  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+    await unifiedChannel.receive!({ message: received[4].message, target: received[4].target, auth: received[4].auth as never }, { send: fakeSend });
+  });
+  ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Discord wake delivers under the SAME raw token (same session)");
+  const disRegistered = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
+  ok(disRegistered !== null && disRegistered.platform === "discord", "receive: the Discord origin round-trips from the real store");
+
   await assert.rejects(
     unifiedChannel.receive!(
       { message: "m", target: { ...received[0].target, surfaceKey: "slack/T_OTHER/C_NOPE" }, auth: received[0].auth as never },
@@ -474,7 +602,12 @@ const store = getOperationalStore();
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
   const linPosts: Array<{ issueId: string; parentId?: string; text: string }> = [];
   const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
+  const disPosts: Array<{ channelId: string; guildId: string; messageId?: string; text: string }> = [];
   const deps = {
+    postDiscord: async (o: { channelId: string; guildId: string; messageId?: string }, text: string) => {
+      disPosts.push({ channelId: o.channelId, guildId: o.guildId, messageId: o.messageId, text });
+      return "dmsg-1";
+    },
     postSlack: async (o: { channelId: string; threadTs?: string }, text: string) => {
       slackPosts.push({ channelId: o.channelId, threadTs: o.threadTs, text });
       return "ts-1";
@@ -496,17 +629,23 @@ const store = getOperationalStore();
   const ghOrigin = await resolveUnifiedWakeTarget(store, "default", ghWindow.wakeId);
   const linOrigin = await resolveUnifiedWakeTarget(store, "default", linWindow.wakeId);
   const notOrigin = await resolveUnifiedWakeTarget(store, "default", notWindow.wakeId);
-  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null, "coalesced turn: ALL FOUR pending wakeIds resolve from the map");
+  const disOrigin = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
+  ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null && disOrigin !== null, "coalesced turn: ALL FIVE pending wakeIds resolve from the map");
   ok((await postUnifiedReply(slackOrigin!, "answer for slack", deps)) === "ts-1", "reply(slack wakeId) returns the Slack post id");
   ok((await postUnifiedReply(ghOrigin!, "answer for github", deps)) === "c-1", "reply(github wakeId) returns the GitHub comment id");
   ok((await postUnifiedReply(linOrigin!, "answer for linear", deps)) === "lc-1", "reply(linear wakeId) returns the Linear comment id");
   ok((await postUnifiedReply(notOrigin!, "answer for notion", deps)) === "nc-reply-1", "reply(notion wakeId) returns the Notion comment id");
+  ok((await postUnifiedReply(disOrigin!, "answer for discord", deps)) === "dmsg-1", "reply(discord wakeId) returns the Discord message id");
   ok(slackPosts.length === 1 && slackPosts[0].channelId === "C_WINA" && slackPosts[0].threadTs === undefined, "Slack reply landed in the Slack channel (top-level, matching the trigger)");
   ok(ghPosts.length === 1 && ghPosts[0].owner === "acme" && ghPosts[0].repo === "payments-api" && ghPosts[0].issueNumber === 55, "GitHub reply landed on the GitHub issue that woke it");
   ok(linPosts.length === 1 && linPosts[0].issueId === "issue-uuid-77" && linPosts[0].parentId === "comment-uuid-1", "Linear reply landed on the issue + thread-root that woke it (commentCreate issueId + parentId)");
   ok(notPosts.length === 1 && notPosts[0].discussionId === "disc-win-1", "Notion reply landed in the discussion thread that woke it (createCommentReply discussion_id)");
   ok(
-    slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion",
+    disPosts.length === 1 && disPosts[0].channelId === "CH_WIN" && disPosts[0].guildId === "G_WIN" && disPosts[0].messageId === "5002",
+    "Discord reply landed in the channel that woke it (message_reference anchor carried on the origin)",
+  );
+  ok(
+    slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion" && disPosts[0].text === "answer for discord",
     "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn",
   );
 
@@ -533,8 +672,10 @@ const store = getOperationalStore();
       isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) &&
       isUnifiedWakeOrigin({ platform: "linear", issueId: "i1", parentId: "p1" }) &&
       isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1" }) &&
-      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }),
-    "all four origin variants validate (linear ± parentId; notion ± page/workspace)",
+      isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: "p1", workspaceId: "w1" }) &&
+      isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "G1" }) &&
+      isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "G1", messageId: "M1" }),
+    "all five origin variants validate (linear ± parentId; notion ± page/workspace; discord ± messageId)",
   );
   ok(
     !isUnifiedWakeOrigin({ platform: "slack" }) &&
@@ -545,9 +686,13 @@ const store = getOperationalStore();
       !isUnifiedWakeOrigin({ platform: "notion" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "" }) &&
       !isUnifiedWakeOrigin({ platform: "notion", discussionId: "d1", pageId: 7 }) &&
+      !isUnifiedWakeOrigin({ platform: "discord", channelId: "C1" }) &&
+      !isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "" }) &&
+      !isUnifiedWakeOrigin({ platform: "discord", guildId: "G1" }) &&
+      !isUnifiedWakeOrigin({ platform: "discord", channelId: "C1", guildId: "G1", messageId: 5 }) &&
       !isUnifiedWakeOrigin(null) &&
       !isUnifiedWakeOrigin("slack"),
-    "missing/invalid fields fail validation (incl. notion without/empty discussionId / non-string pageId)",
+    "missing/invalid fields fail validation (incl. a GUILDLESS discord origin — the DM fence holds on the reply path too)",
   );
 }
 

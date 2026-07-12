@@ -1,13 +1,26 @@
-import { defineChannel, POST } from "eve/channels";
+import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { threadParentChannelId } from "./discord-channel-info.js";
-import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, type FinalMessageAction } from "./slack-events.js";
+import { splitForDiscord } from "./discord-post.js";
+import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, shouldRotate, type FinalMessageAction } from "./slack-events.js";
+import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
+import type { WakeTrust } from "./wake-envelope.js";
+import { classifySessionSendError } from "./session-death.js";
+import { supervisorGrainFor, unifiedSupervisorToken, type SupervisorGrain } from "./unified-supervisor.js";
+import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { divertToUnifiedWindow } from "./unified.js";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { domainKeyOf, resolvePartition, type Partition } from "../memory/partition.js";
-import { nameDropWakeEnabled } from "../memory/domain.js";
+import { nameDropWakeEnabled, engagementTierFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
+import { isVouchedInternal } from "../identity/trust.js";
+import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
+import { getOperationalStore } from "../operational/provider.js";
+import { appendAudit } from "../audit/audit.js";
 import { ingestUntrusted } from "../access/untrusted.js";
+
+export { splitForDiscord };
 import {
   bumpThreadSilentStreak,
   disengageThread,
@@ -261,20 +274,6 @@ export function renderNameDropTurn(content: string, botName: string, followsThre
     "",
     ingestUntrusted(content, { source: "discord-message" }),
   ].join("\n");
-}
-
-export function splitForDiscord(text: string, max = 2000): string[] {
-  if (text.length <= max) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf("\n", max);
-    if (cut <= 0) cut = max;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n/, "");
-  }
-  if (rest.length > 0) chunks.push(rest);
-  return chunks;
 }
 
 function botAuthHeaders(token: string): Record<string, string> {
@@ -542,6 +541,193 @@ export function takeTurnStatus(state: DiscordGatewayState): {
   return { original };
 }
 
+export type UnifiedReceive = RouteHandlerArgs["receive"];
+
+function discordGrainFor(domainKey: string): SupervisorGrain {
+  try {
+    return supervisorGrainFor(domainKey, getConfig().loadDomains());
+  } catch {
+    return { unified: false, registryKey: domainKey };
+  }
+}
+
+function discordEngagementTier(domainKey: string): WakeEngagementTier | undefined {
+  try {
+    return engagementTierFor(domainKey, getConfig().loadDomains());
+  } catch {
+    return undefined;
+  }
+}
+
+export function discordSingleWindowPrivacyOk(
+  input: {
+    readonly guildId: string | undefined;
+    readonly workspaceKey: string;
+    readonly surfaceKey: string;
+    readonly domainKey?: string;
+  },
+  deps: { readonly vouched?: (workspaceKey: string, surfaceKey: string) => boolean; readonly trustEnv?: string | undefined } = {},
+): boolean {
+  if (!input.guildId) return false;
+  const vouched = deps.vouched ?? isVouchedInternal;
+  const trustEnv = "trustEnv" in deps ? deps.trustEnv : process.env.OE_TRUST;
+  if (trustEnv === "internal") return true;
+  if (vouched(input.workspaceKey, input.surfaceKey)) return true;
+  return input.domainKey !== undefined && input.domainKey !== input.surfaceKey && vouched(input.workspaceKey, input.domainKey);
+}
+
+export function discordSingleWindowMentionPolicy(singleWindow: boolean, isMention: boolean, privacyOk: boolean): SingleWindowMentionPolicy {
+  return singleWindowMentionPolicy(singleWindow, isMention, privacyOk);
+}
+
+export interface DiscordUnifiedWakeInput {
+  readonly guildId: string;
+  readonly channelId: string;
+  readonly parentChannelId?: string;
+  readonly isThread: boolean;
+  readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
+  readonly wakeId: string;
+  readonly engagementTier?: WakeEngagementTier;
+  readonly handoffNote?: string;
+  readonly handoffFromGeneration?: number;
+  readonly botName?: string;
+  readonly trigger: {
+    readonly id: string;
+    readonly author: string;
+    readonly authorId: string;
+    readonly sentAt: string;
+    readonly text: string;
+    readonly trust?: WakeTrust;
+  };
+}
+
+export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): NormalizedWake {
+  const direct = input.addressing === "direct-mention";
+  return {
+    platform: "discord",
+    reason: direct ? "mention" : "channel-activity",
+    addressing: input.addressing,
+    engagementTier: input.addressing === "channel-watch" ? input.engagementTier : undefined,
+    unifiedDisclosure: true,
+    wakeId: input.wakeId,
+    locus: {
+      channel: { id: input.parentChannelId ?? input.channelId, platform: "discord" },
+      ...(input.isThread ? { thread: { ts: input.channelId } } : {}),
+    },
+    ...(input.addressing === "name-drop" && input.botName
+      ? {
+          nameDrop: {
+            botName: input.botName,
+            followUp: input.isThread ? ("thread-engaged" as const) : ("channel-not-following" as const),
+          },
+        }
+      : {}),
+    handoff: input.handoffNote ? { note: input.handoffNote, fromGeneration: input.handoffFromGeneration ?? 0 } : undefined,
+    trigger: mkMessageTrigger({
+      from: "human",
+      author: input.trigger.author,
+      authorId: input.trigger.authorId,
+      id: input.trigger.id,
+      sentAt: input.trigger.sentAt,
+      trust: input.trigger.trust ?? (direct ? "principal" : "peer"),
+      mention: direct ? true : undefined,
+      body: input.trigger.text,
+    }),
+  };
+}
+
+async function divertDiscordWakeToUnifiedWindow(input: {
+  readonly msg: DiscordRelayMessage;
+  readonly auth: OpenEverywhereDiscordAuth;
+  readonly partition: Partition;
+  readonly grain: SupervisorGrain;
+  readonly addressing: "direct-mention" | "channel-watch" | "name-drop";
+  readonly receive: UnifiedReceive;
+  readonly context: readonly string[];
+}): Promise<void> {
+  const { msg, grain } = input;
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const atIso = new Date().toISOString();
+  const domainName = grain.domainName ?? "unknown";
+  const tokenFor = (gen: number) => unifiedSupervisorToken(domainName, gen);
+
+  const existing = await store.getChannelSession(org, grain.registryKey);
+  let session: { token: string; generation: number; fresh: boolean; handoffNote?: string | null };
+  if (!existing) {
+    const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(1), atIso);
+    session = { token: row.token, generation: row.generation, fresh: true, handoffNote: row.handoffNote };
+  } else if (shouldRotate(existing, atIso)) {
+    const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(existing.generation + 1), atIso);
+    session = { token: row.token, generation: row.generation, fresh: true, handoffNote: row.handoffNote };
+  } else {
+    session = { token: existing.token, generation: existing.generation, fresh: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
+  }
+
+  const trust = resolveWakeTrustFromContext(ctxFromAuth(input.auth), { id: msg.author.id, isBot: msg.author.bot }, { principalFallback: true });
+
+  const doWake = async (token: string, generation: number, handoffNote: string | null | undefined): Promise<void> => {
+    const wakeId = mintWakeId();
+    const origin: UnifiedWakeOrigin = {
+      platform: "discord",
+      channelId: msg.channelId,
+      guildId: msg.guildId ?? "",
+      ...(msg.id ? { messageId: msg.id } : {}),
+    };
+    const rendered = renderWake(
+      buildDiscordUnifiedWake({
+        guildId: msg.guildId ?? "",
+        channelId: msg.channelId,
+        parentChannelId: str(input.auth.attributes.parent_channel_id),
+        isThread: isThreadChannelType(msg.channelType),
+        addressing: input.addressing,
+        wakeId,
+        engagementTier: discordEngagementTier(domainKeyOf(input.partition)),
+        handoffNote: handoffNote ?? undefined,
+        handoffFromGeneration: generation - 1,
+        botName: msg.botName,
+        trigger: {
+          id: msg.id || "unknown",
+          author: msg.author.username ?? msg.author.id,
+          authorId: msg.author.id,
+          sentAt: atIso,
+          text: msg.content,
+          trust,
+        },
+      }),
+    );
+    await divertToUnifiedWindow(input.receive, {
+      message: rendered.message,
+      context: [...(rendered.context ?? []), ...input.context],
+      token,
+      window: {
+        wakeId,
+        origin,
+        ...(input.addressing === "direct-mention" ? { addressing: "direct-mention" as const } : {}),
+      } satisfies UnifiedWindowWake,
+      surfaceKey: domainKeyOf(input.partition),
+      auth: input.auth as unknown as { attributes?: Record<string, unknown> },
+    });
+  };
+
+  try {
+    await doWake(session.token, session.generation, session.fresh ? session.handoffNote : undefined);
+  } catch (err) {
+    if (classifySessionSendError(err) !== "terminal") throw err;
+    await appendAudit({
+      org,
+      platform: "discord",
+      workspace: msg.guildId ?? "unknown",
+      surface: input.partition.surfaceKey,
+      action: "discord.session_terminal_death",
+      detail: { token: session.token, generation: session.generation },
+    }).catch(() => undefined);
+    const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(session.generation + 1), atIso);
+    await doWake(row.token, row.generation, row.handoffNote);
+  }
+  await store.touchChannelSession(org, grain.registryKey, atIso).catch(() => undefined);
+}
+
 export type DiscordGatewaySend = (
   message: string | { readonly message: string; readonly context?: readonly string[] },
   options: {
@@ -557,6 +743,7 @@ export async function dispatchTurn(
   send: DiscordGatewaySend,
   createThread: (channelId: string, messageId: string, name: string) => Promise<string | null> = createDiscordThread,
   resolveParent: (channelId: string) => Promise<string | undefined> = threadParentChannelId,
+  receive?: UnifiedReceive,
 ): Promise<void> {
   if (isThreadChannelType(msg.channelType)) {
     const parentChannelId = await resolveParent(msg.channelId);
@@ -637,6 +824,52 @@ export async function dispatchTurn(
       }
     }
   } catch {
+  }
+
+  const windowGrain = discordGrainFor(domainKeyOf(partition));
+  if (windowGrain.singleWindow === true && windowGrain.domainName !== undefined && receive) {
+    const privacyOk = discordSingleWindowPrivacyOk({
+      guildId: msg.guildId,
+      workspaceKey: partition.workspaceKey,
+      surfaceKey: partition.surfaceKey,
+      domainKey: domainKeyOf(partition),
+    });
+    const mentionPolicy = discordSingleWindowMentionPolicy(true, msg.mentionsBot, privacyOk);
+    if (privacyOk) {
+      if (msg.mentionsBot) {
+        await markThreadEngaged(partition, key, new Date().toISOString(), { participating: true });
+      }
+      const windowContext =
+        nameDrop || msg.mentionsBot
+          ? await fetchDiscordBackscroll({
+              channelId: msg.channelId,
+              triggerMessageId: msg.id,
+              isThread: isThreadChannelType(msg.channelType),
+              botId: msg.botId,
+            }).catch(() => [])
+          : [];
+      const addressing = mentionPolicy.addressing ?? (nameDrop && msg.botName ? "name-drop" : "channel-watch");
+      await divertDiscordWakeToUnifiedWindow({
+        msg,
+        auth,
+        partition,
+        grain: windowGrain,
+        addressing,
+        receive,
+        context: windowContext,
+      });
+      await appendAudit({
+        org: deploymentOrg(),
+        platform: "discord",
+        workspace: msg.guildId ?? "unknown",
+        surface: partition.surfaceKey,
+        principalId: msg.author.id,
+        action: "discord.dispatched",
+        detail: { addressing, singleWindow: true, channelId: msg.channelId },
+      }).catch(() => undefined);
+      log(`single-window divert ${partition.surfaceKey} (${addressing})`);
+      return;
+    }
   }
 
   const statusUx = statusUxEnabled();
@@ -753,7 +986,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     state,
   }),
   routes: [
-    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { send, waitUntil }) => {
+    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { send, waitUntil, receive }) => {
       const rawBody = await req.text();
 
       const rejection = relayGate(req.headers.get("x-oe-relay-signature"), rawBody);
@@ -785,7 +1018,11 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (!auth) return new Response("ignored (bot author)", { status: 200 });
       if (msg.content.trim().length === 0) return new Response("ignored (empty content)", { status: 200 });
 
-      waitUntil(dispatchTurn(msg, auth, send as unknown as DiscordGatewaySend));
+      waitUntil(
+        dispatchTurn(msg, auth, send as unknown as DiscordGatewaySend, undefined, undefined, receive).catch((err) =>
+          log(`dispatch failed: ${String(err)}`),
+        ),
+      );
       return new Response("ok", { status: 200 });
     }),
   ],
