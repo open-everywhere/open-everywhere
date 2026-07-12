@@ -3,6 +3,7 @@ import {
   notionSupervisorToken,
   notionSupervisorSentinel,
   classifyNotionComment,
+  notionNameDrop,
   buildNotionSupervisorWake,
   handleNotionSupervisorDispatch,
   planNotionSingleWindow,
@@ -40,14 +41,29 @@ ok(notionSupervisorToken(PAGE, 1) === `notion:${PAGE}:oe-sup:g1`, "token is noti
 ok(notionSupervisorToken(PAGE, 2).includes(":oe-sup:g"), "token carries the :oe-sup:g infix hooks/spend keys on");
 
 const mentionRT = [{ type: "mention", plain_text: "@OE", mention: { type: "user", user: { id: BOT } } }, { type: "text", plain_text: " summarise", text: { content: " summarise" } }];
-const nameDropRT = [{ type: "text", plain_text: "maybe Aria can help here", text: { content: "maybe Aria can help here" } }];
+const nameDropRT = [{ type: "text", plain_text: "hey Open Everywhere, can you check section 2?", text: { content: "hey Open Everywhere, can you check section 2?" } }];
+const oeTokenRT = [{ type: "text", plain_text: "oe what did we decide on the ship date?", text: { content: "oe what did we decide on the ship date?" } }];
+const botNameRT = [{ type: "text", plain_text: "maybe Aria can help here", text: { content: "maybe Aria can help here" } }];
 const plainRT = [{ type: "text", plain_text: "looks good to me", text: { content: "looks good to me" } }];
 
 const base: NotionComment = { id: "c1", discussion_id: DISCUSSION, created_by: { id: AUTHOR, object: "user", type: "person" }, rich_text: plainRT };
 
 ok(classifyNotionComment({ ...base, rich_text: mentionRT }, BOT).addressing === "direct", "structured bot @mention -> direct (guaranteed engage)");
 ok(classifyNotionComment(base, BOT).addressing === "channel-watch", "plain comment -> channel-watch (judged)");
-ok(classifyNotionComment({ ...base, rich_text: nameDropRT }, BOT, "Aria").addressing === "channel-watch", "name-drop text -> channel-watch (judged input, NOT a direct bypass)");
+ok(classifyNotionComment({ ...base, rich_text: nameDropRT }, BOT).addressing === "direct", "brand name-drop ('Open Everywhere') -> direct (synthetic mention)");
+ok(classifyNotionComment({ ...base, rich_text: oeTokenRT }, BOT).addressing === "direct", "bare 'oe' token name-drop -> direct");
+ok(classifyNotionComment({ ...base, rich_text: botNameRT }, BOT, "Aria").addressing === "direct", "configured botName name-drop -> direct");
+ok(classifyNotionComment({ ...base, rich_text: botNameRT }, BOT).addressing === "channel-watch", "botName name-drop with NO configured name -> stays channel-watch");
+
+ok(notionNameDrop("hey Open Everywhere please help") === true, "matches the brand phrase");
+ok(notionNameDrop("openeverywhere can you summarise") === true, "matches the no-space brand token");
+ok(notionNameDrop("oe, thoughts?") === true, "matches the bare 'oe' token");
+ok(notionNameDrop("Zoe said the poet does it well") === false, "does NOT fire inside Zoe/poet/does (word-boundary guard)");
+ok(notionNameDrop("looks good to me") === false, "plain text does not match");
+ok(notionNameDrop("ping Aria about this", "Aria") === true, "matches a configured botName");
+ok(notionNameDrop("ping Ariana about this", "Aria") === false, "botName is word-boundary matched (Ariana != Aria)");
+ok(notionNameDrop("anything?", "a") === false, "a 1-char botName is ignored (too noisy)");
+ok(notionNameDrop("") === false, "empty text never matches");
 ok(classifyNotionComment(base, undefined).addressing === "drop", "unresolved bot user id -> DROP (fail-closed loop guard — the critical hardening)");
 ok(classifyNotionComment({ ...base, created_by: { id: BOT, object: "user", type: "person" } }, BOT).addressing === "drop", "self-authored -> DROP (our own reply)");
 ok(classifyNotionComment({ ...base, created_by: { id: "other-bot", object: "user", type: "bot" } }, BOT).addressing === "drop", "bot/integration-authored -> DROP (created_by.type != person)");

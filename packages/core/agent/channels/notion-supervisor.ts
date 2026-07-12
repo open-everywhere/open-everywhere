@@ -2,7 +2,7 @@ import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementT
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
 import { shouldRotate } from "./slack-events.js";
 import { classifySessionSendError } from "./session-death.js";
-import { mentionsUser, type NotionComment } from "./notion-api.js";
+import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionSessionState } from "./notion-webhook.js";
@@ -22,13 +22,26 @@ export interface NotionClassification {
   readonly reason: string;
 }
 
+export function notionNameDrop(text: string, botName?: string): boolean {
+  if (!text) return false;
+  const patterns: RegExp[] = [/\bopen\s?everywhere\b/iu, /\boe\b/iu];
+  const name = botName?.trim();
+  if (name && name.length >= 2) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    patterns.push(new RegExp(`\\b${escaped}\\b`, "iu"));
+  }
+  return patterns.some((re) => re.test(text));
+}
+
 export function classifyNotionComment(comment: NotionComment, botUserId: string | undefined, botName?: string): NotionClassification {
-  void botName;
   if (!botUserId) return { addressing: "drop", reason: "unresolved bot user id — fail-closed loop guard" };
   const author = comment.created_by;
   if (author?.id === botUserId) return { addressing: "drop", reason: "self-authored comment (our own reply)" };
   if (author?.type && author.type !== "person") return { addressing: "drop", reason: `bot/integration-authored (${author.type})` };
   if (mentionsUser(comment.rich_text, botUserId)) return { addressing: "direct", reason: "structured bot @mention" };
+  if (notionNameDrop(richTextToPlainText(comment.rich_text), botName)) {
+    return { addressing: "direct", reason: "bot name-drop (synthetic mention — Notion has no @mention for integrations)" };
+  }
   return { addressing: "channel-watch", reason: "ambient comment — judged by the doc supervisor" };
 }
 
