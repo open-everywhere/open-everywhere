@@ -1,5 +1,6 @@
-import { ENV } from "./env.js";
+import { DEFAULT_TEAMS_REFRESH_SINK, ENV } from "./env.js";
 import { sleep } from "./poll.js";
+import { writeRefreshSidecar } from "./teams-driver.js";
 
 const TOKEN_BASE = "https://login.microsoftonline.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -138,6 +139,12 @@ async function main(): Promise<void> {
   console.log("\n✓ signed in — refresh token minted.\n");
   console.log("Set this in your shell / CI secrets (NEVER commit it):\n");
   console.log(`export ${ENV.teamsRefreshToken}='${token.refresh_token}'\n`);
+
+  const sink = process.env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
+  if (token.refresh_token) {
+    writeRefreshSidecar(sink, token.refresh_token);
+    console.log(`(Also written to the gitignored sidecar ${sink} — the driver self-heals rotation from there, so this mint is one-time.)\n`);
+  }
 
   if (token.access_token) await listTeamsAndChannels(token.access_token);
 

@@ -32,7 +32,9 @@ const {
   resolveNotionAmbient,
   resolveSlackUnified,
   resolveCapabilities,
+  DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("./e2e/env.js");
+const { readRefreshSidecar, writeRefreshSidecar } = await import("./e2e/teams-driver.js");
 const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
 const {
   signSlackRequest,
@@ -152,6 +154,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
       teamsCfg.cfg.botAppId === "bot-app-1",
     "teams cfg carries all six fields (tenant/client/refresh/team/channel/botApp)",
   );
+  ok(
+    teamsCfg.ok && teamsCfg.cfg.refreshTokenFile === DEFAULT_TEAMS_REFRESH_SINK,
+    "teams cfg defaults the rotated-token sidecar to .env.e2e.teams-refresh",
+  );
+  const teamsSink = resolveTeams({ ...full, [ENV.teamsRefreshTokenFile]: "/tmp/custom-teams-sink" });
+  ok(
+    teamsSink.ok && teamsSink.cfg.refreshTokenFile === "/tmp/custom-teams-sink",
+    "E2E_TEAMS_REFRESH_TOKEN_FILE overrides the sidecar path",
+  );
+  const sinkPath = join(tmpdir(), `oe-teams-refresh-${process.pid}`);
+  rmSync(sinkPath, { force: true });
+  ok(readRefreshSidecar(sinkPath) === undefined, "absent sidecar reads as undefined (seed fallback)");
+  writeRefreshSidecar(sinkPath, "rotated-token-2");
+  ok(readRefreshSidecar(sinkPath) === "rotated-token-2", "sidecar round-trips the rotated token");
+  writeRefreshSidecar(sinkPath, "rotated-token-3");
+  ok(readRefreshSidecar(sinkPath) === "rotated-token-3", "sidecar overwrite wins (latest rotation)");
+  rmSync(sinkPath, { force: true });
   const user2 = resolveSlackUser2(full);
   ok(user2.ok && user2.cfg.userId === "U2NONADMIN", "user2 cfg carries the non-admin id");
   const dmCfg = resolveSyntheticDm(full);

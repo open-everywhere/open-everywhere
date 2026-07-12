@@ -26,6 +26,7 @@ export const ENV = {
   teamsTeamId: "E2E_TEAMS_TEAM_ID",
   teamsChannelId: "E2E_TEAMS_CHANNEL_ID",
   teamsBotAppId: "E2E_TEAMS_BOT_APP_ID",
+  teamsRefreshTokenFile: "E2E_TEAMS_REFRESH_TOKEN_FILE",
 
   githubDriverToken: "E2E_GITHUB_DRIVER_TOKEN",
   githubRepo: "E2E_GITHUB_REPO",
@@ -89,6 +90,7 @@ export interface TeamsDriverConfig {
   readonly refreshToken: string;
   readonly teamId: string;
   readonly channelId: string;
+  readonly refreshTokenFile: string;
   readonly botAppId: string;
 }
 
@@ -198,11 +200,22 @@ export function resolveTeams(env: Env = process.env): Resolved<TeamsDriverConfig
     ENV.teamsBotAppId,
   ]);
   if (missing.length > 0) return { ok: false, missing };
+  const refreshTokenFile = env[ENV.teamsRefreshTokenFile]?.trim() || DEFAULT_TEAMS_REFRESH_SINK;
   return {
     ok: true,
-    cfg: { tenantId: values[0], clientId: values[1], refreshToken: values[2], teamId: values[3], channelId: values[4], botAppId: values[5] },
+    cfg: {
+      tenantId: values[0],
+      clientId: values[1],
+      refreshToken: values[2],
+      teamId: values[3],
+      channelId: values[4],
+      refreshTokenFile,
+      botAppId: values[5],
+    },
   };
 }
+
+export const DEFAULT_TEAMS_REFRESH_SINK = ".env.e2e.teams-refresh";
 
 export function resolveSynthetic(env: Env = process.env): Resolved<SyntheticConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel]);

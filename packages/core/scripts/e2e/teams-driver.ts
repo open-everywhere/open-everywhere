@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+
 import type { TeamsDriverConfig } from "./env.js";
 import { pollUntil, sleep } from "./poll.js";
 
@@ -51,17 +53,57 @@ function toMessage(m: GraphChatMessage): TeamsMessage {
   };
 }
 
+export function readRefreshSidecar(path: string): string | undefined {
+  try {
+    if (!existsSync(path)) return undefined;
+    const value = readFileSync(path, "utf8").trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function writeRefreshSidecar(path: string, token: string): void {
+  try {
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (err) {
+    console.warn(`[e2e:teams] could not persist rotated refresh token to ${path}: ${String(err instanceof Error ? err.message : err)}`);
+  }
+}
+
 export class TeamsDriver {
-  constructor(private readonly cfg: TeamsDriverConfig) {}
+  private currentRefreshToken: string;
+
+  constructor(private readonly cfg: TeamsDriverConfig) {
+    this.currentRefreshToken = readRefreshSidecar(cfg.refreshTokenFile) ?? cfg.refreshToken;
+  }
 
   private cached?: { token: string; expiresAt: number };
 
   private async accessToken(): Promise<string> {
     if (this.cached && Date.now() < this.cached.expiresAt - TOKEN_SKEW_MS) return this.cached.token;
+    try {
+      return await this.exchangeRefresh(this.currentRefreshToken);
+    } catch (err) {
+      if (this.currentRefreshToken !== this.cfg.refreshToken) {
+        console.warn(
+          `[e2e:teams] sidecar refresh token failed (${String(err instanceof Error ? err.message : err)}); ` +
+            "falling back to the seed E2E_TEAMS_REFRESH_TOKEN.",
+        );
+        this.currentRefreshToken = this.cfg.refreshToken;
+        return await this.exchangeRefresh(this.currentRefreshToken);
+      }
+      throw err;
+    }
+  }
+
+  private async exchangeRefresh(refreshToken: string): Promise<string> {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       client_id: this.cfg.clientId,
-      refresh_token: this.cfg.refreshToken,
+      refresh_token: refreshToken,
       scope: "https://graph.microsoft.com/.default",
     });
     const res = await fetch(`${TOKEN_BASE}/${this.cfg.tenantId}/oauth2/v2.0/token`, {
@@ -80,10 +122,9 @@ export class TeamsDriver {
       const detail = json.error_description ?? json.error ?? `http ${res.status}`;
       throw new Error(`teams token exchange failed: ${detail}`);
     }
-    if (json.refresh_token && json.refresh_token !== this.cfg.refreshToken) {
-      console.warn(
-        "[e2e:teams] Azure returned a rotated refresh_token — this run keeps the configured one; re-run `npm run e2e:teams-auth` if auth later starts failing.",
-      );
+    if (json.refresh_token && json.refresh_token !== this.currentRefreshToken) {
+      this.currentRefreshToken = json.refresh_token;
+      writeRefreshSidecar(this.cfg.refreshTokenFile, json.refresh_token);
     }
     const expiresAt = Date.now() + (json.expires_in ?? 3600) * 1_000;
     this.cached = { token: json.access_token, expiresAt };
