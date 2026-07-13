@@ -5,14 +5,31 @@ import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableConte
 import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
+import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 
 function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
+}
+
+let rememberedReceive: RouteHandlerArgs["receive"] | undefined;
+function rememberUnifiedReceive(receive: RouteHandlerArgs["receive"]): void {
+  rememberedReceive = receive;
+}
+
+function pickRedriveSurfaceKey(domain: string | undefined, platform: string): string | null {
+  if (!domain) return null;
+  try {
+    const d = getConfig().loadDomains().find((dm) => dm.name === domain && dm.channels && dm.channels.length > 0);
+    if (!d?.channels || d.channels.length === 0) return null;
+    return d.channels.find((c) => c.startsWith(`${platform}/`)) ?? d.channels[0];
+  } catch {
+    return null;
+  }
 }
 
 export interface UnifiedReceiveTarget {
@@ -147,6 +164,36 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         action: "turn.supervisor_prose_dropped",
         detail: { chars: action.text.length, replied, ...(sessionId ? { sessionId } : {}) },
       }).catch(() => undefined);
+
+      if (redriveEnabled() && !replied) {
+        const wakeId = currentWakeId(bind);
+        const rawToken = channel.continuationToken;
+        const domain = unifiedDomainFromToken(rawToken);
+        const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
+        delete baseAttrs[OE_ADDRESSING_ATTR];
+        const reinject: RedriveReinject = rememberedReceive
+          ? async (origin, message) => {
+              const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform);
+              if (!surfaceKey) throw new Error(`unified redrive: no crossSurfaceWindow surface key for domain ${domain ?? "?"}`);
+              await divertToUnifiedWindow(rememberedReceive!, {
+                message,
+                token: rawToken,
+                window: { wakeId: wakeId!, origin },
+                surfaceKey,
+                auth: { attributes: baseAttrs },
+              });
+            }
+          : null;
+        const outcome = await maybeRedrive(
+          { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied },
+          { store: getOperationalStore(), reinject },
+        );
+        if (outcome.status === "redriven") {
+          ulog(`auto-redrive: re-injected a corrective wake for wake ${outcome.originalWakeId} (dropped ${action.text.length} chars) — one more turn to reply`);
+        } else if (outcome.status !== "disabled" && outcome.status !== "skip-replied") {
+          ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
+        }
+      }
     },
     async "turn.failed"(data, channel) {
       const { workspace, surface } = auditLabels(channel.continuationToken);
@@ -188,6 +235,7 @@ export async function divertToUnifiedWindow(
     readonly auth: { attributes?: Record<string, unknown> };
   },
 ): Promise<void> {
+  rememberUnifiedReceive(receive);
   const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing);
   const target: UnifiedReceiveTarget = {
     token: input.token,

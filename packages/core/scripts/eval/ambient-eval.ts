@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
 import { fetchAudit, type AuditWireEntry } from "../e2e/audit-read.js";
+import { fetchTranscript, type TranscriptWireEvent } from "../e2e/transcript-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "../e2e/rotate-window-lib.js";
 import { isModelUsable, clampReasoning, type ModelPolicy } from "../../agent/model/policy.js";
 import type { ModelReasoning } from "../../agent/memory/domain.js";
@@ -59,6 +60,7 @@ type ScenarioId = "S1" | "S2" | "S3" | "S4";
 type Expected = "LANDED" | "SILENT_OK";
 type Outcome =
   | "LANDED_VIA_REPLY_TOOL"
+  | "LANDED_VIA_REDRIVE"
   | "LANDED_VIA_BRIDGE"
   | "DROP"
   | "JUDGED_SILENT"
@@ -66,6 +68,8 @@ type Outcome =
   | "OVER_REPLY"
   | "NO_ACTION"
   | "SKIP";
+
+type FailureClass = "ANSWER_NO_TOOL" | "DELIBERATE_SILENCE" | "RECALL_MISS" | "OTHER" | "unjudged" | "n/a";
 
 interface ScenarioSpec { id: ScenarioId; label: string; expected: Expected; needs: readonly ("slack" | "notion")[]; }
 const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
@@ -133,6 +137,7 @@ const A_PROSE_DROPPED = "turn.supervisor_prose_dropped";
 const A_NO_REPLY = "unified.no_reply";
 const A_BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
 const A_BRIDGE_FAILED = "turn.direct_mention_bridge_post_failed";
+const A_REDRIVE = "unified.turn.redrive";
 const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED, A_BRIDGE_UNRESOLVED, A_BRIDGE_FAILED]);
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
@@ -144,6 +149,7 @@ interface Attribution {
   readonly replyPostsOf: ReadonlyMap<string, readonly AuditWireEntry[]>;
   readonly sessionId: string | null;
   readonly completions: readonly AuditWireEntry[];
+  readonly redrivenWakeIds: ReadonlySet<string>;
   readonly notes: readonly string[];
 }
 
@@ -171,6 +177,24 @@ function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireE
     const before = completions.length;
     completions = completions.filter((r) => (dS(r, "sessionId") ?? sessionId) === sessionId);
     if (completions.length !== before) notes.push(`${before - completions.length} completion row(s) from other session(s) excluded (eval session ${sessionId})`);
+  }
+
+  const redriveRows = asc.filter((r) => r.platform === "unified" && r.action === A_REDRIVE && (sessionId === null || (dS(r, "sessionId") ?? sessionId) === sessionId));
+  const redrivenWakeIds = new Set(redriveRows.map((r) => dS(r, "originalWakeId")).filter((w): w is string => !!w));
+  if (redriveRows.length > 0) {
+    const timeline = [
+      ...completions.map((row) => ({ kind: "c" as const, row })),
+      ...redriveRows.map((row) => ({ kind: "r" as const, row })),
+    ].sort((a, b) => a.row.ts.localeCompare(b.row.ts) || (a.kind === b.kind ? 0 : a.kind === "c" ? -1 : 1));
+    const corrective = new Set<AuditWireEntry>();
+    let armed = 0;
+    for (const item of timeline) {
+      if (item.kind === "r") armed++;
+      else if (armed > 0) { corrective.add(item.row); armed--; }
+    }
+    const before = completions.length;
+    completions = completions.filter((c) => !corrective.has(c));
+    notes.push(`${redriveRows.length} auto-redrive(s) fired → ${before - completions.length} corrective-turn completion(s) pulled out of the FIFO (kept 1:1 with injections)`);
   }
 
   const sortedInjs = injs.slice().sort((a, b) => a.injectedAt.localeCompare(b.injectedAt));
@@ -212,7 +236,7 @@ function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireE
     });
   }
 
-  return { completionOf, replyPostsOf, sessionId, completions, notes };
+  return { completionOf, replyPostsOf, sessionId, completions, redrivenWakeIds, notes };
 }
 
 function outcomeFor(
@@ -226,9 +250,13 @@ function outcomeFor(
   const lat = (row: AuditWireEntry): number => new Date(row.ts).getTime() - new Date(inj.injectedAt).getTime();
 
   if (posts.length > 0) {
-    return expected === "SILENT_OK"
-      ? { outcome: "OVER_REPLY", latencyMs: lat(posts[0]), notes: `reply.post (wakeId-joined) on a silence-warranted turn`, matched }
-      : { outcome: "LANDED_VIA_REPLY_TOOL", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined → ${dS(posts[0], "platform") ?? "?"}`, matched };
+    if (expected === "SILENT_OK") {
+      return { outcome: "OVER_REPLY", latencyMs: lat(posts[0]), notes: `reply.post (wakeId-joined) on a silence-warranted turn`, matched };
+    }
+    if (attribution.redrivenWakeIds.has(inj.wakeId)) {
+      return { outcome: "LANDED_VIA_REDRIVE", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined AFTER auto-redrive → ${dS(posts[0], "platform") ?? "?"} (first-try was a prose drop; the redrive rescued it)`, matched };
+    }
+    return { outcome: "LANDED_VIA_REPLY_TOOL", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined → ${dS(posts[0], "platform") ?? "?"}`, matched };
   }
   if (!c) return { outcome: "NO_ACTION", latencyMs: null, notes: "no completion attributable (pending or timed out)", matched };
 
@@ -270,29 +298,41 @@ interface TurnResult {
   recall: { code: boolean; date: boolean; ref: boolean } | null;
   matchedRows: AuditWireEntry[];
   notes: string;
+  failureClass?: FailureClass;
+  failureRationale?: string;
+  droppedProse?: string | null;
+  reasoningSlice?: string | null;
 }
 
 function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
   const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP");
   const landedTool = rExp.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL");
+  const landedRedrive = rExp.filter((t) => t.outcome === "LANDED_VIA_REDRIVE");
   const landedBridge = rExp.filter((t) => t.outcome === "LANDED_VIA_BRIDGE");
   const judgedSilent = rExp.filter((t) => t.outcome === "JUDGED_SILENT");
   const sExp = turns.filter((t) => t.expected === "SILENT_OK" && t.outcome !== "SKIP");
   const silent = sExp.filter((t) => t.outcome === "SILENT_OK");
   const dropRows = allRows.filter((r) => r.action === A_PROSE_DROPPED && (sessionId === null || (dS(r, "sessionId") ?? sessionId) === sessionId));
-  const lRec = [...landedTool, ...landedBridge].filter((t) => t.recall);
+  const redriveRows = allRows.filter((r) => r.action === A_REDRIVE && (sessionId === null || (dS(r, "sessionId") ?? sessionId) === sessionId));
+  const lRec = [...landedTool, ...landedRedrive, ...landedBridge].filter((t) => t.recall);
   const full = lRec.filter((t) => t.recall!.code && t.recall!.date && t.recall!.ref);
+  const landedTotal = landedTool.length + landedRedrive.length + landedBridge.length;
   const rate = (a: number, b: number): number | null => (b === 0 ? null : Math.round((a / b) * 1000) / 1000);
+  const nonLanded = rExp.filter((t) => t.outcome === "DROP" || t.outcome === "JUDGED_SILENT" || t.outcome === "NO_ACTION");
+  const fcCount = (c: FailureClass): number => nonLanded.filter((t) => t.failureClass === c).length;
   return {
     reply_landed_rate: {
-      landed: landedTool.length + landedBridge.length,
+      landed: landedTotal,
       of: rExp.length,
-      rate: rate(landedTool.length + landedBridge.length, rExp.length),
+      rate: rate(landedTotal, rExp.length),
       via_reply_tool: landedTool.length,
+      via_redrive: landedRedrive.length,
       via_bridge: landedBridge.length,
     },
     reply_tool_adherence: { via_reply_tool: landedTool.length, of: rExp.length, rate: rate(landedTool.length, rExp.length) },
+    adherence_after_redrive: { via_reply_tool_or_redrive: landedTool.length + landedRedrive.length, of: rExp.length, rate: rate(landedTool.length + landedRedrive.length, rExp.length), redrives_fired: redriveRows.length },
     judged_silent_count: judgedSilent.length,
+    failure_class: { ANSWER_NO_TOOL: fcCount("ANSWER_NO_TOOL"), DELIBERATE_SILENCE: fcCount("DELIBERATE_SILENCE"), RECALL_MISS: fcCount("RECALL_MISS"), OTHER: fcCount("OTHER"), unjudged: fcCount("unjudged"), of: nonLanded.length },
     prose_drop_count: {
       total: dropRows.length,
       repliedFalse: dropRows.filter((r) => dB(r, "replied") === false).length,
@@ -436,17 +476,165 @@ async function rescoreRun(cli: Cli): Promise<void> {
   console.log(`\nwrote ${outPath}`);
 }
 
+interface TurnTexts { atEnd: string | null; prose: string; reasoning: string }
+
+function evStr(data: unknown, keys: readonly string[]): string {
+  if (!data || typeof data !== "object") return "";
+  const d = data as Record<string, unknown>;
+  for (const k of keys) {
+    const v = d[k];
+    if (typeof v === "string" && v.length > 0) return v;
+    if (v && typeof v === "object") {
+      const inner = evStr(v, ["text", "content", "value"]);
+      if (inner) return inner;
+    }
+  }
+  return "";
+}
+
+function segmentTurns(events: readonly TranscriptWireEvent[]): TurnTexts[] {
+  const turns: TurnTexts[] = [];
+  let reasoning = "";
+  let prose = "";
+  for (const e of events) {
+    const t = e.type;
+    if (t.includes("reasoning")) {
+      reasoning += evStr(e.data, ["delta", "text", "content"]);
+    } else if (t === "message.appended" || t === "message.delta") {
+      prose += evStr(e.data, ["delta", "text", "content", "message"]);
+    } else if (t === "message.completed") {
+      const finalProse = evStr(e.data, ["message", "text", "content"]) || prose;
+      turns.push({ atEnd: e.at, prose: finalProse, reasoning });
+      reasoning = "";
+      prose = "";
+    }
+  }
+  return turns;
+}
+
+function turnTextsFor(c: AuditWireEntry | undefined, segments: readonly TurnTexts[]): TurnTexts | null {
+  if (!c || segments.length === 0) return null;
+  const target = new Date(c.ts).getTime();
+  let best: TurnTexts | null = null;
+  let bestDelta = Infinity;
+  for (const s of segments) {
+    if (!s.atEnd) continue;
+    const delta = Math.abs(new Date(s.atEnd).getTime() - target);
+    if (delta < bestDelta) { bestDelta = delta; best = s; }
+  }
+  return best;
+}
+
+interface JudgeVerdict { failureClass: FailureClass; rationale: string }
+
+async function judgeFailure(input: { probe: string; expectedFact: string; prose: string; reasoning: string }): Promise<JudgeVerdict | null> {
+  const key = process.env.AI_GATEWAY_API_KEY;
+  if (!key) return null;
+  const base = (process.env.AI_GATEWAY_BASE_URL ?? "https://ai-gateway.vercel.sh/v1").replace(/\/+$/, "");
+  const model = process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini";
+  const sys =
+    "You classify why an ambient team-assistant turn failed to deliver a reply. You are given the user's probe, " +
+    "the fact the assistant should have recalled, the assistant's terminal prose (may be empty), and its reasoning trace. " +
+    "Reply with STRICT JSON {\"class\":\"ANSWER_NO_TOOL|DELIBERATE_SILENCE|RECALL_MISS|OTHER\",\"why\":\"one line\"}. " +
+    "ANSWER_NO_TOOL = it produced the answer (the fact) as prose but never called the reply tool. " +
+    "DELIBERATE_SILENCE = it reasoned that no reply was warranted. " +
+    "RECALL_MISS = it tried to answer but did not have/find the fact. OTHER = none of these.";
+  const user = `PROBE:\n${input.probe}\n\nFACT TO RECALL:\n${input.expectedFact}\n\nTERMINAL PROSE:\n${input.prose || "(none)"}\n\nREASONING TRACE (truncated):\n${input.reasoning.slice(0, 6000) || "(none)"}`;
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+      body: JSON.stringify({ model, temperature: 0, max_tokens: 200, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const content = body.choices?.[0]?.message?.content ?? "";
+    const m = /\{[\s\S]*\}/.exec(content);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]) as { class?: string; why?: string };
+    const cls = parsed.class;
+    const failureClass: FailureClass =
+      cls === "ANSWER_NO_TOOL" || cls === "DELIBERATE_SILENCE" || cls === "RECALL_MISS" || cls === "OTHER" ? cls : "OTHER";
+    return { failureClass, rationale: (parsed.why ?? "").slice(0, 200) };
+  } catch {
+    return null;
+  }
+}
+
+async function classifyFailures(turns: TurnResult[], attribution: Attribution): Promise<{ judged: boolean; note: string }> {
+  const targets = turns.filter((t) => t.expected === "LANDED" && (t.outcome === "DROP" || t.outcome === "JUDGED_SILENT" || t.outcome === "NO_ACTION"));
+  for (const t of turns) if (!targets.includes(t)) t.failureClass = "n/a";
+  if (targets.length === 0) return { judged: true, note: "no non-landed reply-warranted turns to classify" };
+
+  let segments: TurnTexts[] = [];
+  let transcriptOk = false;
+  if (attribution.sessionId) {
+    try {
+      const tr = await fetchTranscript(TARGET, READ, attribution.sessionId, { limit: 10000, idleMs: 1000 });
+      segments = segmentTurns(tr.events);
+      transcriptOk = true;
+    } catch (e) {
+      console.warn(`  [failure-class] transcript fetch failed (${(e as Error).message}) — stage 1 degraded, judging on prose=none`);
+    }
+  }
+
+  let judgeReachable = !!process.env.AI_GATEWAY_API_KEY;
+  let judgedAny = false;
+  for (const t of targets) {
+    const c = t.probe ? attribution.completionOf.get(t.probe.wakeId) : undefined;
+    const seg = transcriptOk ? turnTextsFor(c, segments) : null;
+    const prose = seg?.prose ?? null;
+    const reasoning = seg?.reasoning ?? null;
+    t.droppedProse = prose;
+    t.reasoningSlice = reasoning ? reasoning.slice(0, 4000) : null;
+    const code = t.state ? extractCodeFromFact(t.state.text) : null;
+    const codeInProse = code && prose ? prose.toLowerCase().includes(code.toLowerCase()) : false;
+    if (codeInProse) {
+      t.failureClass = "ANSWER_NO_TOOL";
+      t.failureRationale = "deterministic: the terminal prose contains the planted codename — the model answered but never called the reply tool";
+      continue;
+    }
+    if (!judgeReachable) { t.failureClass = "unjudged"; t.failureRationale = "no AI_GATEWAY_API_KEY reachable — stage-2 skipped"; continue; }
+    const verdict = await judgeFailure({
+      probe: t.probe?.text ?? "",
+      expectedFact: t.state?.text ?? "(none)",
+      prose: prose ?? "",
+      reasoning: reasoning ?? "",
+    });
+    if (!verdict) { judgeReachable = false; t.failureClass = "unjudged"; t.failureRationale = "judge call failed/unreachable — stage-2 skipped from here on"; continue; }
+    judgedAny = true;
+    t.failureClass = verdict.failureClass;
+    t.failureRationale = `judge(${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini"}): ${verdict.rationale}`;
+  }
+
+  const note = process.env.AI_GATEWAY_API_KEY
+    ? judgedAny
+      ? `stage-1 deterministic + stage-2 LLM judge (${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini"})${transcriptOk ? "" : "; transcript unavailable → prose=none"}`
+      : `stage-1 deterministic only (no turn needed the judge)${transcriptOk ? "" : "; transcript unavailable"}`
+    : `stage-1 deterministic only — NO judge credential (AI_GATEWAY_API_KEY) reachable; stage-2 turns marked "unjudged"`;
+  return { judged: !!process.env.AI_GATEWAY_API_KEY, note };
+}
+
+function extractCodeFromFact(factText: string | null): string | null {
+  if (!factText) return null;
+  const m = /codename\s+([A-Z]+ [A-Z]+-[a-z0-9]+)/i.exec(factText);
+  return m ? m[1] : null;
+}
+
 function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof summarize>, attribution: Attribution): void {
   console.log(`\n=== TRAJECTORY (session ${attribution.sessionId ?? "?"}) ===`);
   for (const t of turns) {
     const rec = t.recall ? `${t.recall.code ? "c" : "·"}${t.recall.date ? "d" : "·"}${t.recall.ref ? "r" : "·"}` : "—";
-    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(22)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(6)} rec:${rec}  ${t.notes}`);
+    const fc = t.failureClass && t.failureClass !== "n/a" ? `  ✗${t.failureClass}` : "";
+    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(22)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(6)} rec:${rec}  ${t.notes}${fc}`);
   }
   console.log(`\n=== SUMMARY ===`);
   const s = summary;
-  console.log(`reply_landed_rate ⭐  : ${s.reply_landed_rate.landed}/${s.reply_landed_rate.of} = ${s.reply_landed_rate.rate ?? "n/a"}  (reply_tool ${s.reply_landed_rate.via_reply_tool} + bridge ${s.reply_landed_rate.via_bridge})`);
-  console.log(`reply_tool_adherence  : ${s.reply_tool_adherence.via_reply_tool}/${s.reply_tool_adherence.of} = ${s.reply_tool_adherence.rate ?? "n/a"}  (strict axis — bridge rescues excluded)`);
+  console.log(`reply_landed_rate ⭐  : ${s.reply_landed_rate.landed}/${s.reply_landed_rate.of} = ${s.reply_landed_rate.rate ?? "n/a"}  (reply_tool ${s.reply_landed_rate.via_reply_tool} + redrive ${s.reply_landed_rate.via_redrive} + bridge ${s.reply_landed_rate.via_bridge})`);
+  console.log(`reply_tool_adherence  : ${s.reply_tool_adherence.via_reply_tool}/${s.reply_tool_adherence.of} = ${s.reply_tool_adherence.rate ?? "n/a"}  (strict FIRST-TRY axis — redrive + bridge rescues excluded)`);
+  console.log(`adherence_after_redrive: ${s.adherence_after_redrive.via_reply_tool_or_redrive}/${s.adherence_after_redrive.of} = ${s.adherence_after_redrive.rate ?? "n/a"}  (first-try + auto-redrive rescues; ${s.adherence_after_redrive.redrives_fired} redrive(s) fired)`);
   console.log(`judged_silent_count   : ${s.judged_silent_count} (reply-warranted probes the model chose silence on)`);
+  console.log(`failure_class         : ANSWER_NO_TOOL ${s.failure_class.ANSWER_NO_TOOL} · DELIBERATE_SILENCE ${s.failure_class.DELIBERATE_SILENCE} · RECALL_MISS ${s.failure_class.RECALL_MISS} · OTHER ${s.failure_class.OTHER} · unjudged ${s.failure_class.unjudged}  (of ${s.failure_class.of} non-landed)`);
   console.log(`prose_drop_count      : ${s.prose_drop_count.total} window-wide (replied=false ${s.prose_drop_count.repliedFalse} ← real, replied=true ${s.prose_drop_count.repliedTrue})`);
   console.log(`silence_precision     : ${s.silence_precision.silent}/${s.silence_precision.of} = ${s.silence_precision.rate ?? "n/a"}`);
   console.log(`recall_accuracy       : ${s.recall_accuracy.full}/${s.recall_accuracy.ofLandedRead} = ${s.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
@@ -568,7 +756,7 @@ async function main() {
       }
       const o = outcomeFor(p.probe, spec.expected, finalAttribution);
       let recall: TurnResult["recall"] = null;
-      if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_BRIDGE") {
+      if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_REDRIVE" || o.outcome === "LANDED_VIA_BRIDGE") {
         const platform = o.matched.map((r) => dS(r, "platform")).find((x) => x) ?? null;
         if (platform === "slack") {
           const body = await readSlackReplyBody(p.probe.injectedAt);
@@ -577,6 +765,9 @@ async function main() {
       }
       turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, recall, matchedRows: o.matched, notes: o.notes });
     }
+
+    const fc = await classifyFailures(turns, finalAttribution);
+    console.log(`  [failure-class] ${fc.note}`);
 
     const summary = summarize(turns, finalRows, finalAttribution.sessionId);
     printReport(turns, summary, finalAttribution);
@@ -591,6 +782,7 @@ async function main() {
       finishedAt: new Date().toISOString(),
       sessionId: finalAttribution.sessionId,
       attributionNotes: finalAttribution.notes,
+      failureClassNote: fc.note,
       injections,
       turns,
       completions: finalAttribution.completions,
