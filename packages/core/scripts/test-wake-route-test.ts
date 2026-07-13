@@ -179,6 +179,67 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ok(c.auth.attributes?.team_id === "T1", "un-overridden derived attrs remain");
 }
 
+const norm = (s: string): string =>
+  s
+    .replace(/sent-at="[^"]*"/g, 'sent-at="TS"')
+    .replace(/current-time="[^"]*"/g, 'current-time="TS"')
+    .replace(/wake-id="[^"]*"/g, 'wake-id="WID"')
+    .replace(/id="test-[^"]*"/g, 'id="MID"');
+
+{
+  captured.length = 0;
+  const res = await post(
+    goodBody({
+      messages: [
+        { text: "kicking off the release thread", author: "sam" },
+        { text: "anyone got the changelog?", author: "priya" },
+        { text: "here it is — is this everything we're shipping?", author: "jo" },
+      ],
+      text: undefined,
+    }),
+    SECRET,
+  );
+  ok(res.status === 200, "coalesced messages injection → 200");
+  const jb = (await res.json()) as { messageCount: number };
+  ok(jb.messageCount === 3, "200 body reports messageCount=3");
+  const msg = captured[0].message;
+  const blocks = msg.match(/<message[ >]/g) ?? [];
+  ok(blocks.length === 3, "renders exactly 3 <message> blocks");
+  const triggers = msg.match(/<message[^>]*\btrigger="true"/g) ?? [];
+  ok(triggers.length === 1, "exactly one message carries trigger=true");
+  ok(
+    msg.indexOf("kicking off the release thread") < msg.indexOf("anyone got the changelog?") &&
+      msg.indexOf("anyone got the changelog?") < msg.indexOf("here it is"),
+    "messages render in order (oldest first)",
+  );
+  ok(
+    msg.indexOf('trigger="true"') > msg.indexOf("anyone got the changelog?"),
+    "the trigger flag is on the LAST (newest) message, not an earlier one",
+  );
+  ok(msg.includes("here it is — is this everything we"), "trigger body is the last entry's text (apostrophe XML-escaped)");
+}
+
+{
+  captured.length = 0;
+  const tooMany = Array.from({ length: 11 }, (_, i) => ({ text: `m${i}` }));
+  ok((await post(goodBody({ messages: tooMany }), SECRET)).status === 400, "messages.length > 10 → 400");
+  ok((await post(goodBody({ messages: [] }), SECRET)).status === 400, "empty messages array → 400");
+  ok((await post(goodBody({ messages: [{ text: "" }] }), SECRET)).status === 400, "empty message text → 400");
+  ok((await post(goodBody({ messages: [{ text: "x".repeat(4001) }] }), SECRET)).status === 400, "message text > 4000 chars → 400");
+  ok(captured.length === 0, "no divert on any rejected coalesced request");
+}
+
+{
+  captured.length = 0;
+  await post(goodBody({ text: "one line only", author: "sam" }), SECRET);
+  const single = norm(captured[0].message);
+  captured.length = 0;
+  await post(goodBody({ messages: [{ text: "one line only", author: "sam" }], text: undefined }), SECRET);
+  const oneEntry = norm(captured[0].message);
+  ok(single === oneEntry, "single-text render == single-entry coalesced render (byte-identical, single path untouched)");
+  ok(single.includes("[channel-watch]"), "the frozen single-text render is still the judged channel-watch envelope");
+}
+
 {
   const audit = await readAudit({ org: ORG });
   const rows = audit.filter((e) => e.action === "control.service_call" && (e.detail as { view?: string })?.view === "test_wake");

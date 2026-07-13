@@ -33,6 +33,7 @@ let DOMAIN = "e2e-unified";
 
 interface Cli {
   model: string; effort: ModelReasoning; turns: number; fill: number; repeats: number;
+  fillWakes: number; fillMsgs: number; dumpSeed?: string; seed?: string;
   domain: string; org: string; plan: boolean; rotate: boolean; restore: boolean;
   rescore?: string; since?: string; until?: string;
 }
@@ -45,6 +46,10 @@ function parseCli(argv: readonly string[]): Cli {
     effort: (effRaw === "med" ? "medium" : effRaw) as ModelReasoning,
     turns: Math.max(1, Number.parseInt(get("--turns") ?? String(SERIES_PATTERN.length), 10)),
     fill: Math.max(0, Number.parseInt(get("--fill") ?? "0", 10)),
+    fillWakes: Math.max(0, Number.parseInt(get("--fill-wakes") ?? "0", 10)),
+    fillMsgs: Math.min(10, Math.max(1, Number.parseInt(get("--fill-msgs") ?? "5", 10))),
+    dumpSeed: get("--dump-seed"),
+    seed: get("--seed"),
     repeats: Math.max(1, Number.parseInt(get("--repeats") ?? "1", 10)),
     domain: get("--domain") ?? process.env.E2E_UNIFIED_DOMAIN ?? "e2e-unified",
     org: get("--org") ?? process.env.E2E_ORG ?? "default",
@@ -107,12 +112,16 @@ interface Injection {
   readonly addressing: "channel-watch" | "direct-mention";
   readonly platform: string;
   readonly text: string | null;
+  readonly messages?: readonly { readonly author?: string; readonly text: string }[];
 }
 const injections: Injection[] = [];
 
+interface FillMsg { author?: string; text: string }
+
 interface InjectBody {
-  domain: string; platform: string; surfaceKey: string; text: string;
+  domain: string; platform: string; surfaceKey: string; text?: string;
   addressing?: string; origin: Record<string, unknown>; mention?: boolean; author?: string; threadTs?: string;
+  messages?: FillMsg[];
 }
 async function injectWake(b: InjectBody, kind: InjectionKind, turn: number, scenario?: ScenarioId): Promise<Injection> {
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
@@ -122,6 +131,7 @@ async function injectWake(b: InjectBody, kind: InjectionKind, turn: number, scen
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   const jb = (await res.json()) as { wakeId: string };
+  const coalesced = b.messages && b.messages.length > 0 ? b.messages : null;
   const inj: Injection = {
     wakeId: jb.wakeId,
     injectedAt: new Date().toISOString(),
@@ -130,10 +140,105 @@ async function injectWake(b: InjectBody, kind: InjectionKind, turn: number, scen
     ...(scenario !== undefined ? { scenario } : {}),
     addressing: b.addressing === "direct-mention" ? "direct-mention" : "channel-watch",
     platform: b.platform,
-    text: b.text,
+    text: coalesced ? coalesced[coalesced.length - 1].text : (b.text ?? null),
+    ...(coalesced ? { messages: coalesced.map((m) => ({ ...(m.author !== undefined ? { author: m.author } : {}), text: m.text })) } : {}),
   };
   injections.push(inj);
   return inj;
+}
+
+const FILL_WAIT_MS = Number.parseInt(process.env.AMBIENT_FILL_WAIT_MS ?? "1500", 10);
+
+const FILLER_LINES: readonly string[] = [
+  "standup done — I'm heads-down on the invoice export today, no blockers from me.",
+  "anyone else seeing the flaky payments test on CI? third re-run this morning already.",
+  "grabbing lunch from the Thai place at 12:30 if anyone wants to join.",
+  "moving our 3pm sync to 3:30 — clashes with the vendor call, sorry for the churn.",
+  "coffee run in 5, who wants what? oat flat white for me.",
+  "PR for the retry-backoff change is up whenever someone has a sec, nothing urgent.",
+  "reminder the office is closed Friday for the bank holiday, plan accordingly.",
+  "my train's delayed so I'll be ~15 late to standup, carry on without me.",
+  "the staging deploy went out clean, smoke tests all green.",
+  "does anyone have the Figma link for the new onboarding flow? can't find it.",
+  "lol the coffee machine is broken again, third time this month.",
+  "quick heads up: I'm on holiday next week, Priya's covering my reviews.",
+  "CI queue is backed up, builds are taking ~20 min right now, be patient.",
+  "who's dialling into the retro later? want to make sure we're quorate.",
+  "just merged the docs tidy-up, nothing behavioural, safe to ignore.",
+  "kettle's on if anyone fancies a tea before the demo.",
+];
+const FILLER_AUTHORS: readonly string[] = ["fill-sam", "fill-priya", "fill-jo", "fill-alex", "fill-nina", "fill-raj"];
+
+function fillerMessages(wakeIndex: number, m: number): FillMsg[] {
+  const out: FillMsg[] = [];
+  for (let j = 0; j < m; j++) {
+    const k = wakeIndex * 7 + j;
+    out.push({ author: FILLER_AUTHORS[(wakeIndex * 2 + j) % FILLER_AUTHORS.length], text: FILLER_LINES[k % FILLER_LINES.length] });
+  }
+  return out;
+}
+
+function originForPlatform(platform: string): Record<string, unknown> | null {
+  if (platform === "slack") return { platform: "slack", channelId: SLACK_CHANNEL_ID };
+  if (platform === "notion") return { platform: "notion", discussionId: NOTION_DISCUSSION };
+  return null;
+}
+
+interface SeedFill {
+  platform: string;
+  surfaceKey: string;
+  addressing: string;
+  messages: FillMsg[];
+}
+interface SeedFile {
+  version: 1;
+  createdAt: string;
+  domain: string;
+  fills: SeedFill[];
+}
+
+function seedFillOf(b: InjectBody): SeedFill {
+  const messages: FillMsg[] =
+    b.messages && b.messages.length > 0
+      ? b.messages.map((m) => ({ ...(m.author !== undefined ? { author: m.author } : {}), text: m.text }))
+      : [{ ...(b.author !== undefined ? { author: b.author } : {}), text: b.text ?? "" }];
+  return { platform: b.platform, surfaceKey: b.surfaceKey, addressing: b.addressing ?? "channel-watch", messages };
+}
+
+async function replaySeed(path: string, fillLog: SeedFill[]): Promise<number> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(path, "utf8")); }
+  catch (e) { throw new Error(`--seed ${path}: could not read/parse (${(e as Error).message})`); }
+  const seed = parsed as Partial<SeedFile>;
+  if (!seed || seed.version !== 1 || !Array.isArray(seed.fills)) {
+    throw new Error(`--seed ${path}: expected { version: 1, fills: [...] } (got version=${(seed as { version?: unknown })?.version})`);
+  }
+  console.log(`\nreplaying ${seed.fills.length} seed fill(s) from ${path} (created ${seed.createdAt ?? "?"}, domain ${seed.domain ?? "?"})...`);
+  let n = 0;
+  for (let i = 0; i < seed.fills.length; i++) {
+    const f = seed.fills[i] as Partial<SeedFill> | undefined;
+    if (!f || typeof f.platform !== "string" || typeof f.surfaceKey !== "string" || !Array.isArray(f.messages) || f.messages.length === 0) {
+      throw new Error(`--seed ${path}: fills[${i}] malformed — need { platform, surfaceKey, messages: [{ text, author? }] }`);
+    }
+    for (let j = 0; j < f.messages.length; j++) {
+      if (typeof (f.messages[j] as { text?: unknown })?.text !== "string") throw new Error(`--seed ${path}: fills[${i}].messages[${j}].text must be a string`);
+    }
+    const origin = originForPlatform(f.platform);
+    if (!origin) { console.warn(`  seed fills[${i}]: no origin for platform "${f.platform}" — skipped`); continue; }
+    const msgs = f.messages as FillMsg[];
+    const body: InjectBody = {
+      domain: DOMAIN, platform: f.platform, surfaceKey: f.surfaceKey,
+      addressing: f.addressing === "direct-mention" ? "direct-mention" : "channel-watch",
+      origin,
+      ...(f.platform === "notion" && NOTION_DISCUSSION ? { threadTs: NOTION_DISCUSSION } : {}),
+      ...(msgs.length === 1 ? { text: msgs[0].text, ...(msgs[0].author !== undefined ? { author: msgs[0].author } : {}) } : { messages: msgs }),
+    };
+    try { await injectWake(body, "filler", 0); fillLog.push(seedFillOf(body)); n++; }
+    catch (e) { console.warn(`  seed fills[${i}] failed: ${(e as Error).message}`); }
+    await sleep(FILL_WAIT_MS);
+  }
+  console.log(`  seed replay injected ${n}/${seed.fills.length} fill(s)`);
+  return n;
 }
 
 const A_REPLY_POST = "reply.post";
@@ -721,16 +826,55 @@ async function runOneSeries(
     console.log(`\nrotated window: ${r.oldToken ?? "none"} → ${r.newRow.token}`);
   } else console.log(`\n(--no-rotate: running on the ACCUMULATED window)`);
 
+  const fillLog: SeedFill[] = [];
+  let didFill = false;
+
+  if (cli.seed) { await replaySeed(cli.seed, fillLog); didFill = true; }
+
   if (cli.fill > 0) {
     console.log(`\ninjecting ${cli.fill} filler ambient wakes to grow the window...`);
     const slackOrigin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
     for (let i = 0; i < cli.fill; i++) {
+      const body: InjectBody = { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin: slackOrigin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` };
       try {
-        await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin: slackOrigin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` }, "filler", 0);
-        await sleep(1500);
+        await injectWake(body, "filler", 0);
+        fillLog.push(seedFillOf(body));
       } catch (e) { console.warn(`  filler ${i} failed: ${(e as Error).message}`); }
+      await sleep(FILL_WAIT_MS);
     }
-    await sleep(FACT_WAIT_MS);
+    didFill = true;
+  }
+
+  if (cli.fillWakes > 0) {
+    const alt = surf.notion ? "alternating slack/notion" : "slack only (EVAL_NOTION_SURFACE unset)";
+    console.log(`\ninjecting ${cli.fillWakes} coalesced filler wake(s) × ${cli.fillMsgs} msgs each (${alt})...`);
+    for (let i = 0; i < cli.fillWakes; i++) {
+      const toNotion = surf.notion && i % 2 === 1;
+      const platform = toNotion ? "notion" : "slack";
+      const surfaceKey = toNotion ? NOTION_SURFACE : SLACK_SURFACE;
+      const origin = originForPlatform(platform);
+      if (!origin) { console.warn(`  filler wake ${i}: no origin for "${platform}" — skipped`); continue; }
+      const body: InjectBody = {
+        domain: DOMAIN, platform, surfaceKey, addressing: "channel-watch", origin,
+        messages: fillerMessages(i, cli.fillMsgs),
+        ...(toNotion && NOTION_DISCUSSION ? { threadTs: NOTION_DISCUSSION } : {}),
+      };
+      try {
+        await injectWake(body, "filler", 0);
+        fillLog.push(seedFillOf(body));
+      } catch (e) { console.warn(`  filler wake ${i} failed: ${(e as Error).message}`); }
+      await sleep(FILL_WAIT_MS);
+    }
+    didFill = true;
+  }
+
+  if (didFill) await sleep(FACT_WAIT_MS);
+
+  if (cli.dumpSeed) {
+    const seed: SeedFile = { version: 1, createdAt: new Date().toISOString(), domain: cli.domain, fills: fillLog };
+    mkdirSync(dirname(cli.dumpSeed), { recursive: true });
+    writeFileSync(cli.dumpSeed, JSON.stringify(seed, null, 2));
+    console.log(`\nwrote seed (${fillLog.length} fill(s)) → ${cli.dumpSeed}`);
   }
 
   for (let i = 0; i < series.length; i++) {
@@ -803,7 +947,7 @@ async function runOneSeries(
   const repeatSuffix = totalRepeats > 1 ? `-r${repeat}` : "";
   const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${seriesStartedAt.replace(/[:.]/g, "-")}${repeatSuffix}.json`);
   writeFileSync(outPath, JSON.stringify({
-    config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, rotate: cli.rotate, repeat, totalRepeats },
+    config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, fillWakes: cli.fillWakes, fillMsgs: cli.fillMsgs, seed: cli.seed ?? null, rotate: cli.rotate, repeat, totalRepeats },
     series,
     seriesStartedAt,
     finishedAt: new Date().toISOString(),
@@ -896,6 +1040,7 @@ async function main() {
   console.log(`model:   ${cli.model} @ ${effort}`);
   console.log(`domain:  ${cli.domain}   org: ${cli.org}`);
   console.log(`turns:   ${cli.turns}   fill: ${cli.fill}   repeats: ${cli.repeats}   rotate: ${cli.rotate}   plan-only: ${cli.plan}`);
+  console.log(`fill:    legacy=${cli.fill}   coalesced fill-wakes=${cli.fillWakes} × fill-msgs=${cli.fillMsgs}   seed=${cli.seed ?? "none"}   dump-seed=${cli.dumpSeed ?? "none"}`);
   console.log(`surfaces: slack=${surf.slack}${surf.slack ? ` (${SLACK_SURFACE})` : ""}  notion=${surf.notion}${surf.notion ? ` (${NOTION_SURFACE})` : ""}`);
   console.log(`waits:   fact=${FACT_WAIT_MS}ms reply-timeout=${REPLY_TIMEOUT_MS}ms poll=${POLL_MS}ms`);
   console.log(`\nseries (turn → scenario):`);

@@ -8,7 +8,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
 import { mintWakeId, isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeAddressing } from "../channels/normalized-wake.js";
-import type { WakeReason, WakeTrust, WakeParticipant } from "../channels/wake-envelope.js";
+import type { WakeReason, WakeTrust, WakeParticipant, WakeMessageInput } from "../channels/wake-envelope.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
 
 export const CONTROL_TEST_WAKE_PATH = "/control/v1/test/wake";
@@ -28,7 +28,8 @@ export interface TestWakeRequest {
   readonly surfaceKey: string;
   readonly addressing?: WakeAddressing;
   readonly reason?: WakeReason;
-  readonly text: string;
+  readonly text?: string;
+  readonly messages?: readonly { readonly text: string; readonly author?: string; readonly authorId?: string }[];
   readonly author?: string;
   readonly authorId?: string;
   readonly trust?: WakeTrust;
@@ -99,8 +100,34 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   const platform = body.platform;
   const surfaceKey = typeof body.surfaceKey === "string" ? body.surfaceKey.trim() : "";
   const text = typeof body.text === "string" ? body.text : "";
-  if (!domain || !platform || !surfaceKey || text.length === 0) {
-    return json(400, { error: "expected body: { domain, platform, surfaceKey, text, origin, … }" });
+
+  const MSG_CAP = 10;
+  const MSG_MAX_CHARS = 4000;
+  let coalesced: { text: string; author?: string; authorId?: string }[] | null = null;
+  if (body.messages !== undefined) {
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      return json(400, { error: "`messages` must be a non-empty array of { text, author?, authorId? }" });
+    }
+    if (body.messages.length > MSG_CAP) {
+      return json(400, { error: `\`messages\` is capped at ${MSG_CAP} entries (got ${body.messages.length})` });
+    }
+    const out: { text: string; author?: string; authorId?: string }[] = [];
+    for (let i = 0; i < body.messages.length; i++) {
+      const m = body.messages[i] as { text?: unknown; author?: unknown; authorId?: unknown } | undefined;
+      const mt = typeof m?.text === "string" ? m.text : "";
+      if (mt.length === 0) return json(400, { error: `messages[${i}].text must be a non-empty string` });
+      if (mt.length > MSG_MAX_CHARS) return json(400, { error: `messages[${i}].text exceeds ${MSG_MAX_CHARS} chars (got ${mt.length})` });
+      out.push({
+        text: mt,
+        ...(typeof m?.author === "string" ? { author: m.author } : {}),
+        ...(typeof m?.authorId === "string" ? { authorId: m.authorId } : {}),
+      });
+    }
+    coalesced = out;
+  }
+
+  if (!domain || !platform || !surfaceKey || (coalesced === null && text.length === 0)) {
+    return json(400, { error: "expected body: { domain, platform, surfaceKey, text|messages, origin, … }" });
   }
   if (!isUnifiedWakeOrigin(body.origin)) {
     return json(400, { error: "invalid or missing `origin` (must be a valid UnifiedWakeOrigin for the platform)" });
@@ -134,6 +161,48 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   const containerId = surfaceKey.split("/").slice(2).join("/") || surfaceKey;
   const containerNoun = body.containerNoun ?? defaultContainerNoun(platform);
   const unifiedDisclosure = body.unifiedDisclosure ?? true;
+  const trust = (body.trust ?? "peer") as WakeTrust;
+
+  let trigger: ReturnType<typeof mkMessageTrigger>;
+  let backscroll: WakeMessageInput[] | undefined;
+  if (coalesced) {
+    const base = Date.now();
+    const n = coalesced.length;
+    const authorIdOf = (a?: string): string | undefined => a ?? body.authorId;
+    const mkBackscroll = (e: { text: string; author?: string; authorId?: string }, i: number): WakeMessageInput => ({
+      from: "human",
+      author: e.author ?? body.author ?? "tester",
+      ...(authorIdOf(e.authorId) !== undefined ? { authorId: authorIdOf(e.authorId) } : {}),
+      id: `test-${wakeId}-b${i}`,
+      sentAt: new Date(base - (n - i) * 1000).toISOString(),
+      trust,
+      body: e.text,
+    });
+    backscroll = n > 1 ? coalesced.slice(0, n - 1).map((e, i) => mkBackscroll(e, i)) : undefined;
+    const last = coalesced[n - 1];
+    trigger = mkMessageTrigger({
+      from: "human",
+      author: last.author ?? body.author ?? "tester",
+      ...(authorIdOf(last.authorId) !== undefined ? { authorId: authorIdOf(last.authorId) } : {}),
+      id: `test-${wakeId}`,
+      sentAt: new Date(base).toISOString(),
+      trust,
+      ...(body.mention !== undefined ? { mention: body.mention } : {}),
+      body: last.text,
+    });
+  } else {
+    trigger = mkMessageTrigger({
+      from: "human",
+      author: body.author ?? "tester",
+      ...(body.authorId !== undefined ? { authorId: body.authorId } : {}),
+      id: `test-${wakeId}`,
+      sentAt: new Date().toISOString(),
+      trust,
+      ...(body.mention !== undefined ? { mention: body.mention } : {}),
+      body: text,
+    });
+  }
+
   const nw: NormalizedWake = {
     platform,
     reason,
@@ -143,20 +212,12 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
     ...(body.engagementTier !== undefined ? { engagementTier: body.engagementTier } : {}),
     unifiedDisclosure,
     ...(body.participants !== undefined ? { participants: body.participants } : {}),
+    ...(backscroll !== undefined ? { backscroll } : {}),
     locus: {
       channel: { id: containerId, platform, ...(body.channelType !== undefined ? { type: body.channelType } : {}) },
       ...(body.threadTs !== undefined ? { thread: { ts: body.threadTs } } : {}),
     },
-    trigger: mkMessageTrigger({
-      from: "human",
-      author: body.author ?? "tester",
-      ...(body.authorId !== undefined ? { authorId: body.authorId } : {}),
-      id: `test-${wakeId}`,
-      sentAt: new Date().toISOString(),
-      trust: (body.trust ?? "peer") as WakeTrust,
-      ...(body.mention !== undefined ? { mention: body.mention } : {}),
-      body: text,
-    }),
+    trigger,
   };
   const rendered = renderWake(nw);
 
@@ -168,7 +229,7 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
     workspace: "control",
     principalId: identity.subject,
     action: "control.service_call",
-    detail: { service: identity.subject, view: "test_wake", domain, injectedPlatform: platform, surfaceKey, addressing, wakeId },
+    detail: { service: identity.subject, view: "test_wake", domain, injectedPlatform: platform, surfaceKey, addressing, wakeId, messageCount: coalesced ? coalesced.length : 1 },
   }).catch(() => undefined);
 
   try {
@@ -184,5 +245,5 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
     return json(500, { error: `injection failed: ${err instanceof Error ? err.message : String(err)}` });
   }
 
-  return json(200, { ok: true, wakeId, token, domain, platform, surfaceKey, addressing, messageChars: rendered.message.length });
+  return json(200, { ok: true, wakeId, token, domain, platform, surfaceKey, addressing, messageChars: rendered.message.length, messageCount: coalesced ? coalesced.length : 1 });
 }
