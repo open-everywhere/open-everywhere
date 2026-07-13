@@ -8,7 +8,6 @@ export type NoReplyReason =
   | "duplicate"
   | "user_requested_silence"
   | "awaiting_context"
-  | "noise_reduction"
   | "other";
 
 const slot = defineState<NoReplyReason | null>("open-everywhere.no-reply-tool-called", () => null);

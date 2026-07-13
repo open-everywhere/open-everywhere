@@ -12,7 +12,6 @@ export const NO_REPLY_REASONS = [
   "duplicate",
   "user_requested_silence",
   "awaiting_context",
-  "noise_reduction",
   "other",
 ] as const;
 
@@ -29,9 +28,9 @@ export default defineTool({
     "doesn't warrant a response; `duplicate` — this is already covered by an earlier reply or " +
     "another participant; `user_requested_silence` — a user explicitly asked you to stop or stay " +
     "quiet; `awaiting_context` — you're passively observing and will weigh in once humans add more, " +
-    "and nobody's asked you a direct question yet; `noise_reduction` — a reply here would just be " +
-    "noise in a busy thread (a react via the `react` tool is often a better fit than either " +
-    "replying or going fully silent); `other` — none of the above fit.",
+    "and nobody's asked you a direct question yet; `other` — none of the above fit. (In a busy " +
+    "thread where a reply would just add noise, a react via the `react` tool then `reacted_instead` " +
+    "is usually the better shape than going fully silent.)",
   inputSchema: z.object({
     reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
   }),

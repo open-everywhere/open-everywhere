@@ -33,7 +33,7 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-ok(NO_REPLY_REASONS.length === 9, "no_reply: exactly 9 reasons in the closed enum");
+ok(NO_REPLY_REASONS.length === 8, "no_reply: exactly 8 reasons in the closed enum (no noise_reduction)");
 for (const r of NO_REPLY_REASONS) {
   ok(noReply.inputSchema.safeParse({ reason: r }).success, `no_reply: "${r}" is a valid reason`);
 }
@@ -78,10 +78,10 @@ await inSession(async () => {
   const sentinelOnly = finalMessageActionForTurn("stop", `${NO_REPLY_SENTINEL} — nothing for me here`);
   ok(sentinelOnly.kind === "silent" && sentinelOnly.reason.includes("NO_REPLY sentinel"), "finalMessageActionForTurn: the bare NO_REPLY sentinel route still works");
 
-  markNoReplyThisTurn("noise_reduction");
+  markNoReplyThisTurn("awaiting_context");
   const toolRouteWithTrailingText = finalMessageActionForTurn("stop", "actually let me also add a note");
   ok(
-    toolRouteWithTrailingText.kind === "silent" && toolRouteWithTrailingText.reason.includes("no_reply tool: noise_reduction"),
+    toolRouteWithTrailingText.kind === "silent" && toolRouteWithTrailingText.reason.includes("no_reply tool: awaiting_context"),
     "finalMessageActionForTurn: calling no_reply suppresses the turn even over trailing model text (tool call IS the decision)",
   );
 
