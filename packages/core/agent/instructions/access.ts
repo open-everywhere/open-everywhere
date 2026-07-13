@@ -73,27 +73,26 @@ const SURFACE_GUIDES: Record<string, string> = {
   slack: [
     "## Formatting & tools here",
     "Slack mrkdwn, not standard Markdown: `*bold*`, `_italic_`, `` `code` ``, `<https://url|link text>`, " +
-      "`<@U123>` to mention someone (renders as a real @mention). `reply` posts a new message and returns " +
-      "its id; `update_reply` silently edits that message later — keep one status message current instead " +
-      "of stacking new posts. In a busy thread a single `react` emoji can be your whole response. Threads " +
-      "follow `thread_ts` — a `reply` always lands in the thread that woke you, never a different one.",
+      "`<@U123>` to mention someone (renders as a real @mention). `reply` posts a new message — posts are " +
+      "final, so prefer one curated message over stacking new posts. In a busy thread a single `react` " +
+      "emoji can be your whole response. Threads follow `thread_ts` — a `reply` always lands in the " +
+      "thread that woke you, never a different one.",
   ].join("\n"),
   discord: [
     "## Formatting & tools here",
     "Standard Discord Markdown: `**bold**`, `_italic_`, `` `code` ``, and the same `<@id>` token as Slack " +
-      "to mention someone. Discord hard-caps a single message at 2000 characters and `reply`/`update_reply` " +
-      "don't split for you — keep each message under that or the post/edit fails. `reply` posts and returns " +
-      "an id; `update_reply` silently edits it later — same one-status-message pattern as Slack. There's no " +
-      "`react` tool on this surface. A Discord thread IS its own channel — you're just replying in the " +
-      "channel you were woken in, no separate thread id to track.",
+      "to mention someone. Discord hard-caps a single message at 2000 characters and `reply` doesn't " +
+      "split for you — keep each message under that or the post fails. Posts are final — prefer one " +
+      "curated message over a stack. There's no `react` tool on this surface. A Discord thread IS its " +
+      "own channel — you're just replying in the channel you were woken in, no separate thread id to track.",
   ].join("\n"),
   teams: [
     "## Formatting & tools here",
     "Standard Markdown (`**bold**`, `_italic_`, `` `code` ``), not Slack mrkdwn. There's no mention token " +
-      "here — `<@id>` won't render as a mention on this surface — so address people by name instead. No " +
-      "`reply`, `update_reply`, or `react` tools either: this surface has no silent-edit or reaction " +
-      "primitive wired, so your ending turn text is what gets posted (auto-split into chunks if it's " +
-      "unusually long, which in practice it won't be).",
+      "here — `<@id>` won't render as a mention on this surface — so address people by name instead. " +
+      "`reply` posts a message into this conversation; posts are final, so prefer one curated message " +
+      "over a stack. There's no `react` tool on this surface (no reaction primitive wired). Your ending " +
+      "turn text also posts (auto-split into chunks if it's unusually long, which in practice it won't be).",
   ].join("\n"),
 };
 
@@ -127,18 +126,14 @@ a result, a question, or a blocker, and deciding to stay silent is still correct
 
 The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
 them, every wake, without exception. Never conclude that a reply "isn't possible here": if a wake
-has a \`wake-id\`, \`reply\` delivers to it. Only the extras vary by surface: \`update_reply\`
-(silent edit) and \`react\` need a surface with edit/reaction primitives — the wake's
-\`<channel platform>\` tells you which surface it is.`
+has a \`wake-id\`, \`reply\` delivers to it.`
     : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
 so you can answer, keep working, and still finish with \`no_reply\` — a silent finish after
 useful work is a normal shape, not an unfinished one. A \`reply\` notifies the channel, so
-keep those for a result, a question, or a blocker. For progress on work that takes a
-while, post one \`reply\` and keep it current with \`update_reply\`, which edits silently —
-nobody is pinged for a tick. Never edit a result into a status message, and prefer one
-message you keep curated over a stack of new ones.`;
+keep those for a result, a question, or a blocker — never a mere progress tick. Posts are
+final: prefer one curated message over a stack of new ones.`;
   return `## This channel
 
 You are the standing session for this channel — its ambient teammate, not a thread

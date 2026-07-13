@@ -35,11 +35,15 @@ export default defineTool({
   inputSchema: z.object({
     reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
   }),
-  outputSchema: z.object({ acknowledged: z.boolean(), reason: z.string() }),
+  outputSchema: z.object({ acknowledged: z.boolean(), reason: z.string(), note: z.string() }),
   approval: never(),
   async execute(input, ctx) {
     markNoReplyThisTurn(input.reason as NoReplyReason);
     await auditToolAction(ctx, "reply.no_reply", { reason: input.reason });
-    return { acknowledged: true, reason: input.reason };
+    return {
+      acknowledged: true,
+      reason: input.reason,
+      note: "Turn reply requirement satisfied — silence recorded as this turn's answer.",
+    };
   },
 });

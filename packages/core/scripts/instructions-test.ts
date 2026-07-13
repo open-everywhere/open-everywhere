@@ -71,20 +71,22 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
 {
   const md = renderSurfaceGuide("slack");
   ok(md.includes("mrkdwn") && md.includes("`<@U123>`"), "slack guide names mrkdwn + the mention token");
-  ok(md.includes("update_reply") && md.includes("react"), "slack guide names its reply/update_reply/react primitives");
+  ok(md.includes("`reply`") && md.includes("react"), "slack guide names its reply/react primitives");
+  ok(!md.includes("update_reply"), "slack guide never mentions the dropped update_reply verb");
   ok(!md.includes("2000 characters"), "slack guide doesn't carry Discord's char cap");
 }
 
 {
   const md = renderSurfaceGuide("discord");
   ok(md.includes("**bold**") && md.includes("2000 characters"), "discord guide names Markdown bold + the 2000-char cap");
-  ok(md.includes("update_reply") && md.includes("no `react` tool"), "discord guide has update_reply but states there's no react tool");
+  ok(md.includes("no `react` tool") && !md.includes("update_reply"), "discord guide states there's no react tool and never mentions update_reply");
 }
 
 {
   const md = renderSurfaceGuide("teams");
   ok(md.includes("**bold**") && md.includes("not Slack mrkdwn"), "teams guide is plain Markdown, explicitly not Slack mrkdwn");
-  ok(md.includes("No `reply`, `update_reply`, or `react` tools"), "teams guide states it has none of the reply-family tools");
+  ok(md.includes("`reply` posts a message") && md.includes("no `react` tool"), "teams guide has reply but no react tool");
+  ok(!md.includes("update_reply"), "teams guide never mentions the dropped update_reply verb");
 }
 
 ok(renderSurfaceGuide("telegram") === "", "an unlisted platform (e.g. telegram) renders no surface guide");
@@ -128,6 +130,9 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   ok(slackMd.includes("turn-final text is DISCARDED"), "unified persona Reporting section is message-tool-only (agrees with the per-wake mandate)");
   ok(!slackMd.includes("reply` posts into the channel mid-turn"), "unified persona drops the per-surface dual-mode Reporting wording");
+
+  ok(slackMd.includes("works on EVERY surface"), "unified persona keeps the reply-works-everywhere affirmation");
+  ok(!slackMd.includes("Only the extras vary by surface"), "unified persona no longer hedges react availability in prose (per-turn runtime fence instead)");
 
   ok(slackMd.includes("payments-notes"), "unified block carries the domain-anchored memory index (frozen snapshot)");
 }

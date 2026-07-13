@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { capabilitiesFor } from "../identity/capabilities.js";
+import { bindFrom, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../identity/binding.js";
+import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
@@ -11,7 +11,8 @@ const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (!capabilitiesFor(ctx as BindableContext).reactions) return null;
+      const c = ctx as BindableContext;
+      if (!isUnifiedWindowContext(c) && !capabilitiesFor(c).reactions) return null;
       return defineTool({
         description:
           'React to a message with a Slack emoji, instead of (or as) your reply. In a busy or ' +
@@ -33,8 +34,16 @@ export default defineDynamic({
             .describe('Bare Slack emoji name, no colons — e.g. "eyes", "thumbsup", "white_check_mark".'),
           ts: z.string().min(1).optional().describe("The message ts to react to. Defaults to the message that triggered this turn."),
         }),
-        outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string() }),
+        outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string(), note: z.string() }),
         async execute(input, ctx) {
+          if (isUnifiedWindowContext(ctx as BindableContext)) {
+            const origin = channelPlatform(ctx as BindableContext);
+            if (!capabilitiesForPlatform(origin).reactions) {
+              throw new Error(
+                `this wake came from ${origin ?? "another surface"}, which has no reaction primitive — if acknowledgement is needed, use \`reply\`, otherwise \`no_reply\`.`,
+              );
+            }
+          }
           const binding = bindFrom(ctx);
           const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
           if (!channelId) {
@@ -58,7 +67,12 @@ export default defineDynamic({
           }
           markReactedThisTurn();
           await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts });
-          return { reacted: true, emoji: input.emoji, ts };
+          return {
+            reacted: true,
+            emoji: input.emoji,
+            ts,
+            note: "Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement.",
+          };
         },
       });
     },

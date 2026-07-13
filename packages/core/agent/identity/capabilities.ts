@@ -2,20 +2,19 @@ import { channelPlatform, type BindableContext } from "./binding.js";
 
 export interface CapabilityManifest {
   readonly midTurnPost: boolean;
-  readonly silentEdit: boolean;
   readonly reactions: boolean;
 }
 
-const NONE: CapabilityManifest = { midTurnPost: false, silentEdit: false, reactions: false };
+const NONE: CapabilityManifest = { midTurnPost: false, reactions: false };
 
 const MANIFESTS: Readonly<Record<string, CapabilityManifest>> = {
-  slack: { midTurnPost: true, silentEdit: true, reactions: true },
-  discord: { midTurnPost: true, silentEdit: true, reactions: false },
-  teams: { midTurnPost: true, silentEdit: false, reactions: false },
-  linear: { midTurnPost: true, silentEdit: false, reactions: false },
-  github: { midTurnPost: false, silentEdit: false, reactions: false },
-  telegram: { midTurnPost: true, silentEdit: false, reactions: false },
-  notion: { midTurnPost: true, silentEdit: false, reactions: false },
+  slack: { midTurnPost: true, reactions: true },
+  discord: { midTurnPost: true, reactions: false },
+  teams: { midTurnPost: true, reactions: false },
+  linear: { midTurnPost: true, reactions: false },
+  github: { midTurnPost: false, reactions: false },
+  telegram: { midTurnPost: true, reactions: false },
+  notion: { midTurnPost: true, reactions: false },
 };
 
 export function capabilitiesForPlatform(platform: string | undefined): CapabilityManifest {

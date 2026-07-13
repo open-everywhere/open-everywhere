@@ -14,28 +14,28 @@ function ok(cond: boolean, label: string): void {
 
 function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): void {
   ok(
-    m.midTurnPost === expect.midTurnPost && m.silentEdit === expect.silentEdit && m.reactions === expect.reactions,
-    `${label} → midTurnPost=${expect.midTurnPost} silentEdit=${expect.silentEdit} reactions=${expect.reactions}`,
+    m.midTurnPost === expect.midTurnPost && m.reactions === expect.reactions,
+    `${label} → midTurnPost=${expect.midTurnPost} reactions=${expect.reactions}`,
   );
 }
 
-eq(capabilitiesForPlatform("slack"), { midTurnPost: true, silentEdit: true, reactions: true }, "slack");
-eq(capabilitiesForPlatform("discord"), { midTurnPost: true, silentEdit: true, reactions: false }, "discord");
-eq(capabilitiesForPlatform("teams"), { midTurnPost: true, silentEdit: false, reactions: false }, "teams");
-eq(capabilitiesForPlatform("telegram"), { midTurnPost: true, silentEdit: false, reactions: false }, "telegram");
-eq(capabilitiesForPlatform("linear"), { midTurnPost: true, silentEdit: false, reactions: false }, "linear");
-eq(capabilitiesForPlatform("github"), { midTurnPost: false, silentEdit: false, reactions: false }, "github");
-eq(capabilitiesForPlatform("notion"), { midTurnPost: true, silentEdit: false, reactions: false }, "notion");
+eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack");
+eq(capabilitiesForPlatform("discord"), { midTurnPost: true, reactions: false }, "discord");
+eq(capabilitiesForPlatform("teams"), { midTurnPost: true, reactions: false }, "teams");
+eq(capabilitiesForPlatform("telegram"), { midTurnPost: true, reactions: false }, "telegram");
+eq(capabilitiesForPlatform("linear"), { midTurnPost: true, reactions: false }, "linear");
+eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
+eq(capabilitiesForPlatform("notion"), { midTurnPost: true, reactions: false }, "notion");
 
-eq(capabilitiesForPlatform("local"), { midTurnPost: false, silentEdit: false, reactions: false }, "local → NONE");
-eq(capabilitiesForPlatform("nope"), { midTurnPost: false, silentEdit: false, reactions: false }, "unknown platform → NONE");
-eq(capabilitiesForPlatform(undefined), { midTurnPost: false, silentEdit: false, reactions: false }, "undefined platform → NONE");
+eq(capabilitiesForPlatform("local"), { midTurnPost: false, reactions: false }, "local → NONE");
+eq(capabilitiesForPlatform("nope"), { midTurnPost: false, reactions: false }, "unknown platform → NONE");
+eq(capabilitiesForPlatform(undefined), { midTurnPost: false, reactions: false }, "undefined platform → NONE");
 
 const ctxFor = (kind: string): BindableContext => ({ channel: { kind } });
 ok(capabilitiesFor(ctxFor("slack")).reactions === true, "capabilitiesFor: bare 'slack' kind resolves the slack manifest");
 ok(capabilitiesFor(ctxFor("channel:slack")).reactions === true, "capabilitiesFor: namespaced 'channel:slack' resolves the slack manifest");
 ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "capabilitiesFor: namespaced 'channel:discord' resolves the discord manifest");
-ok(capabilitiesFor(ctxFor("discord-gateway")).silentEdit === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
+ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
 ok(capabilitiesFor(ctxFor("teams")).midTurnPost === true, "capabilitiesFor: teams honours mid-turn post (sendTeamsActivity)");
 ok(capabilitiesFor(ctxFor("github")).midTurnPost === false, "capabilitiesFor: github honours no optional verb (no public proactive comment seam)");
 

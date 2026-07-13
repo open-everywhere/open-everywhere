@@ -38,6 +38,19 @@ const armEvent = (react as unknown as { events: Record<string, Handler> }).event
 const armed = (await armEvent({}, { channel: { kind: "slack" } })) as ArmedTool;
 ok(armed !== null && typeof armed.execute === "function", "react arms on a Slack session");
 
+ok((await armEvent({}, { channel: { kind: "discord" } })) === null, "react stays hidden on a Discord session (manifest reactions=false — presence gate unchanged)");
+ok((await armEvent({}, { channel: { kind: "notion" } })) === null, "react stays hidden on a Notion session (presence gate unchanged)");
+
+const unifiedArmed = (await armEvent({}, { channel: { kind: "unified" } })) as ArmedTool;
+ok(unifiedArmed !== null && typeof unifiedArmed.execute === "function", "react arms on a unified session (per-turn fence, not a presence gate)");
+ok(
+  (await armEvent({}, {
+    channel: { kind: "unified" },
+    session: { auth: { current: { attributes: { oe_platform: "notion" }, principalId: "U1", principalType: "notion-user" } } },
+  })) !== null,
+  "react arms on a unified session even when the OPENER's origin (notion) has no reaction primitive",
+);
+
 ok(armed.inputSchema.safeParse({ emoji: "thumbsup" }).success, "valid bare emoji name accepted");
 ok(armed.inputSchema.safeParse({ emoji: "white_check_mark" }).success, "underscored emoji name accepted");
 ok(armed.inputSchema.safeParse({ emoji: "+1" }).success, "Slack's +1 shortcode (digits/+ only) accepted");
@@ -179,4 +192,47 @@ await inSession(async () => {
 });
 restoreFetch();
 
-console.log(`\n✓ react: ${n} assertions passed (gate, validation, execute, react-signal, audit)\n`);
+function unifiedCtx(originPlatform: string, extra: Record<string, string> = {}) {
+  return {
+    channel: { kind: "unified" },
+    session: {
+      auth: {
+        current: { attributes: { oe_platform: originPlatform, ...extra }, principalId: "U1", principalType: `${originPlatform}-user` },
+      },
+    },
+  };
+}
+
+await inSession(async () => {
+  await assert.rejects(
+    () => unifiedArmed.execute({ emoji: "eyes" }, unifiedCtx("notion", { workspace_id: "W1", page_id: "P1", discussion_id: "disc-1" })),
+    (err: unknown) =>
+      err instanceof Error &&
+      /came from notion/.test(err.message) &&
+      err.message.includes("no reaction primitive") &&
+      err.message.includes("`reply`") &&
+      err.message.includes("`no_reply`"),
+    "react: a unified notion-origin turn throws an instructive error naming the origin + the reply/no_reply alternatives",
+  );
+  n++;
+  await assert.rejects(
+    () => unifiedArmed.execute({ emoji: "eyes" }, unifiedCtx("discord", { guild_id: "G1", channel_id: "D1", channel_type: "0" })),
+    /came from discord.*no reaction primitive/,
+    "react: a unified discord-origin turn is fenced too (manifest reactions=false there — no widening of what react can do)",
+  );
+  n++;
+});
+
+calls = [];
+nextResponse = { ok: true };
+fakeSlack();
+await inSession(async () => {
+  const res = await unifiedArmed.execute({ emoji: "eyes" }, unifiedCtx("slack", { team_id: "T1", channel_id: "C9", thread_ts: "333.444", channel_type: "channel" }));
+  ok(res.reacted === true && res.ts === "333.444", "react: a unified slack-origin turn reacts (origin capability satisfied)");
+  ok(calls.length === 1 && calls[0].url.endsWith("/reactions.add"), "react: the unified slack-origin turn routes reactions.add as usual");
+  const params = new URLSearchParams(calls[0].body);
+  ok(params.get("channel") === "C9" && params.get("timestamp") === "333.444", "react: the unified turn targets the ORIGIN delivery's channel + ts (per-delivery binding)");
+});
+restoreFetch();
+
+console.log(`\n✓ react: ${n} assertions passed (gate, validation, execute, react-signal, audit, unified fence)\n`);

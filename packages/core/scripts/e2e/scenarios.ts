@@ -108,7 +108,7 @@ export function skipReason(
 export const SCENARIOS: readonly Scenario[] = [
   {
     id: "J1",
-    title: "Slack core journey: wake+continuity, reply/update_reply silent edit, react, no_reply silence+revive, stop (absorbs S1/S2/S3/S21/S22)",
+    title: "Slack core journey: wake+continuity, reply tool post, react, no_reply silence+revive, stop (absorbs S1/S2/S3/S21/S22)",
     requires: ["slack"],
     surface: "slack",
     suite: "core",
@@ -132,23 +132,15 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const alpha = factToken("alpha");
-      const bravo = factToken("bravo");
-      const { ts: editAskTs } = await slack.post(
-        slack.mention(
-          `post a reply that says exactly ${alpha} — then, using update_reply, silently EDIT that same message so it says exactly ${bravo} instead. Do not post a second message.`,
-        ),
+      const { ts: replyAskTs } = await slack.post(
+        slack.mention(`post a reply that says exactly ${alpha}. Do not post a second message.`),
       );
       const alphaMsg = await slack.awaitThreadMessage(
-        editAskTs,
+        replyAskTs,
         { timeoutMs: REPLY_WAIT, what: `a bot reply containing ${alpha}` },
         (msgs) => msgs.find((m) => slack.isBotReply(m) && m.text.includes(alpha)),
       );
-      const edited = await slack.awaitThreadMessage(
-        editAskTs,
-        { timeoutMs: REPLY_WAIT, what: `message ts ${alphaMsg.ts} silently edited ${alpha}→${bravo}` },
-        (msgs) => msgs.find((m) => m.ts === alphaMsg.ts && m.text.includes(bravo) && !m.text.includes(alpha)),
-      );
-      ctx.gate(edited.ts === alphaMsg.ts, "reply/update_reply: the SAME message mutated in place (silent edit, no new post)");
+      ctx.gate(alphaMsg.text.includes(alpha), "reply: the driven token landed in a bot reply (mid-turn post path)");
 
       const { ts: reactAskTs } = await slack.post(
         slack.mention('react to THIS message with the "raised_hands" emoji to confirm — a reaction alone is enough, no text reply needed.'),

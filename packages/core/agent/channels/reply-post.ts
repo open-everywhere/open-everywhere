@@ -1,7 +1,7 @@
 import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { slackForm } from "./slack-events.js";
-import { discordPostMessage, discordEditMessage } from "./discord-post.js";
+import { discordPostMessage } from "./discord-post.js";
 import { createCommentReply } from "./notion-api.js";
 import { sendTelegramMessage } from "eve/channels/telegram";
 import { sendTeamsActivity } from "eve/channels/teams";
@@ -102,17 +102,3 @@ export async function postReply(target: ReplyTarget, text: string): Promise<stri
   return res.id;
 }
 
-export async function editReply(target: ReplyTarget, id: string, text: string): Promise<void> {
-  if (target.platform === "slack") {
-    const res = await slackForm("chat.update", new URLSearchParams({ channel: target.channelId, ts: id, text }).toString());
-    if (res?.ok !== true) {
-      throw new Error(`update_reply couldn't edit the Slack message — ${(res?.error as string) ?? "unknown error (check the id and SLACK_BOT_TOKEN)"}`);
-    }
-    return;
-  }
-  if (target.platform === "discord") {
-    await discordEditMessage(target.channelId, id, text);
-    return;
-  }
-  throw new Error(`update_reply isn't available on ${target.platform} — it has no silent-edit primitive.`);
-}

@@ -18,7 +18,6 @@ process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
 const reply = (await import("../agent/tools/reply.js")).default;
-const updateReply = (await import("../agent/tools/update_reply.js")).default;
 const { resolveReplyTarget } = await import("../agent/channels/reply-post.js");
 const { markRepliedThisTurn, consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { isBareStop, finalMessageActionForTurn } = await import("../agent/channels/slack-events.js");
@@ -196,18 +195,12 @@ ok(armReply(reply, { channel: { kind: "teams" } }) !== null, "reply arms on a Te
 ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
 ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
-ok(armReply(updateReply, { channel: { kind: "slack" } }) !== null, "update_reply arms on a Slack session");
-ok(armReply(updateReply, { channel: { kind: "discord" } }) !== null, "update_reply arms on a Discord session");
-ok(armReply(updateReply, { channel: { kind: "notion" } }) === null, "update_reply is hidden on Notion (no silent-edit primitive)");
-ok(armReply(updateReply, { channel: { kind: "telegram" } }) === null, "update_reply is hidden on Telegram (no silent-edit primitive armed)");
-ok(armReply(updateReply, { channel: { kind: "teams" } }) === null, "update_reply is hidden on Teams (no silent-edit primitive armed)");
-ok(armReply(updateReply, { channel: { kind: "linear" } }) === null, "update_reply is hidden on Linear (no silent-edit primitive)");
-
 {
   const notionArmed = armReply(reply, { channel: { kind: "notion" } });
-  ok(notionArmed !== null && /FINAL/.test(notionArmed.description) && !/edit a status message with/.test(notionArmed.description), "reply: Notion description says posts are FINAL, no update_reply");
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(slackArmed !== null && /`update_reply` to silently edit/.test(slackArmed.description), "reply: Slack description points at update_reply for silent status edits");
+  ok(notionArmed !== null && /FINAL/.test(notionArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(slackArmed !== null && slackArmed.description === notionArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
+  ok(!/update_reply/.test(notionArmed!.description), "reply: description never mentions the dropped update_reply verb");
 }
 
 {
@@ -282,20 +275,6 @@ ok(isBareStop({ kind: "silent", reason: "empty final message" }, false) === true
 }
 
 calls = [];
-slackResponse = { ok: true };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(updateReply, slackCtx("C1", "111.222"))!;
-  const res = await armed.execute({ id: "222.333", text: "updated status" }, slackCtx("C1", "111.222"));
-  ok(res.updated === true && res.id === "222.333", "update_reply: returns the edited message id");
-  ok(calls.length === 1 && calls[0].url.endsWith("/chat.update"), "update_reply: edits via chat.update (silent — no notification)");
-  const params = new URLSearchParams(calls[0].body);
-  ok(params.get("channel") === "C1" && params.get("ts") === "222.333" && params.get("text") === "updated status", "update_reply: targets the prior ts with new text");
-  ok(consumeRepliedThisTurn() === true, "update_reply: also marks the reply-signal (a silent edit still acted)");
-});
-restoreHttp();
-
-calls = [];
 discordResponse = { status: 200, body: { id: "d-42" } };
 fakeHttp();
 await inSession(async () => {
@@ -304,17 +283,6 @@ await inSession(async () => {
   ok(res.posted === true && res.id === "d-42", "reply: on Discord returns the created message id");
   ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("/channels/D1/messages"), "reply: on Discord POSTs to /channels/{id}/messages");
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
-});
-restoreHttp();
-
-calls = [];
-discordResponse = { status: 200, body: {} };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(updateReply, discordCtx("D1"))!;
-  const res = await armed.execute({ id: "d-42", text: "edited" }, discordCtx("D1"));
-  ok(res.updated === true, "update_reply: on Discord resolves ok");
-  ok(calls.length === 1 && calls[0].method === "PATCH" && calls[0].url.includes("/channels/D1/messages/d-42"), "update_reply: on Discord PATCHes /channels/{id}/messages/{messageId} (silent edit)");
 });
 restoreHttp();
 
@@ -410,10 +378,11 @@ restoreHttp();
 {
   const supervisorCtx = { channel: { kind: "slack", continuationToken: "oe-sup:g3" } };
   const persona = renderSupervisorPersona(supervisorCtx as never);
-  ok(persona.includes("### Reporting") && persona.includes("`update_reply`"), "persona: the reply/silent-edit paragraph renders for a supervisor session");
-  ok(persona.includes("edits silently") && persona.includes("Never edit a result into a status"), "persona: the paragraph carries the notify-vs-silent-edit discipline");
+  ok(persona.includes("### Reporting") && persona.includes("`reply`"), "persona: the Reporting paragraph renders for a supervisor session");
+  ok(persona.includes("never a mere progress tick") && persona.includes("one curated message"), "persona: the paragraph carries the result/question/blocker + don't-stack discipline");
+  ok(!persona.includes("update_reply"), "persona: never mentions the dropped update_reply verb");
   ok(renderSupervisorPersona({ channel: { kind: "slack" } } as never) === "", "persona: renders NOTHING for a non-supervisor Slack session");
   ok(renderSupervisorPersona({ channel: { kind: "discord" } } as never) === "", "persona: renders nothing for a non-supervisor session on another surface");
 }
 
-console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply/update on slack+discord, dual-mode, persona)\n`);
+console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona)\n`);

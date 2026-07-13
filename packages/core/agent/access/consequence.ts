@@ -46,7 +46,6 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   no_reply: open("ends the turn silently; posts nothing"),
   react: open("an emoji in the asking room"),
   reply: open("a visible, ordinary reply in the asking room — same class as the terminal text it replaces; audited"),
-  update_reply: open("silent edit of the bot's own message in the asking room; audited"),
   update_status: open("ephemeral status line in the asking room"),
   browser_qa: open("screenshots the agent's own workspace UI and posts them into the asking thread"),
   post_file: {

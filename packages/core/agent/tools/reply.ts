@@ -22,7 +22,7 @@ function unifiedReplyTool() {
       text: z.string().min(1).describe("The message to post (the target surface's markdown). One curated message, not a stack."),
       wake: z.string().min(1).describe("The `wake-id` from the envelope of the wake you are answering — your reply posts into that wake's conversation."),
     }),
-    outputSchema: z.object({ posted: z.boolean(), id: z.string() }),
+    outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
     async execute(input, ctx) {
       const turnWake = currentWakeId(ctx as BindableContext);
       if (!turnWake || input.wake !== turnWake) {
@@ -39,7 +39,11 @@ function unifiedReplyTool() {
       const id = await postUnifiedReply(origin, input.text);
       markRepliedThisTurn();
       await auditToolAction(ctx, "reply.post", { id, platform: origin.platform, wakeId: input.wake });
-      return { posted: true, id };
+      return {
+        posted: true,
+        id,
+        note: `Turn reply requirement satisfied — posted to ${origin.platform}. Keep working if needed; your terminal prose is still discarded.`,
+      };
     },
   });
 }
@@ -48,24 +52,15 @@ export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
       if (isUnifiedWindowContext(ctx as BindableContext)) return unifiedReplyTool();
-      const caps = capabilitiesFor(ctx as BindableContext);
-      if (!caps.midTurnPost) return null;
-      const description = caps.silentEdit
-        ? "Post a message into this conversation NOW, without ending your turn. Posting is an " +
+      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
+      return defineTool({
+        description:
+          "Post a message into this conversation NOW, without ending your turn. Posting is an " +
           "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
           "you're done. A reply NOTIFIES the channel — use it for an answer, a question, a " +
-          "result, or a blocker, never for a mere progress tick (edit a status message with " +
-          "`update_reply` for that). Returns the posted message's `id` — pass it to " +
-          "`update_reply` to silently edit this message later (e.g. a live status you keep " +
-          "current). Posts into the conversation that woke you; you can't target another channel."
-        : "Post a message into this conversation NOW, without ending your turn. Posting is an " +
-          "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
-          "you're done. A reply NOTIFIES the thread — use it for an answer, a question, a " +
-          "result, or a blocker. Posts here are FINAL (no silent edit on this surface, so there " +
-          "is no `update_reply`) — send fewer, curated messages rather than a running status. " +
-          "Posts into the conversation that woke you; you can't target another place.";
-      return defineTool({
-        description,
+          "result, or a blocker, never for a mere progress tick. Posts are FINAL — send fewer, " +
+          "curated messages rather than a running status. Posts into the conversation that woke " +
+          "you; you can't target another place.",
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
         }),

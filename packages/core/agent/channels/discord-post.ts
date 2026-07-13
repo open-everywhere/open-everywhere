@@ -7,7 +7,7 @@ function botHeaders(token: string): Record<string, string> {
 function botToken(): string {
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    throw new Error("DISCORD_BOT_TOKEN is not set — the reply tools need the bot token to post to Discord.");
+    throw new Error("DISCORD_BOT_TOKEN is not set — the reply tool needs the bot token to post to Discord.");
   }
   return token;
 }
@@ -42,11 +42,3 @@ export async function discordPostMessage(channelId: string, content: string, opt
   return id;
 }
 
-export async function discordEditMessage(channelId: string, messageId: string, content: string): Promise<void> {
-  const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
-    method: "PATCH",
-    headers: botHeaders(botToken()),
-    body: JSON.stringify({ content }),
-  });
-  if (!res.ok) throw new Error(`Discord edit-message failed (${res.status}) for channel ${channelId} / message ${messageId}`);
-}
