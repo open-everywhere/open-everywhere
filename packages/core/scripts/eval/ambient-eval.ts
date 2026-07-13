@@ -32,7 +32,7 @@ const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 let DOMAIN = "e2e-unified";
 
 interface Cli {
-  model: string; effort: ModelReasoning; turns: number; fill: number;
+  model: string; effort: ModelReasoning; turns: number; fill: number; repeats: number;
   domain: string; org: string; plan: boolean; rotate: boolean; restore: boolean;
   rescore?: string; since?: string; until?: string;
 }
@@ -43,8 +43,9 @@ function parseCli(argv: readonly string[]): Cli {
   return {
     model: get("--model") ?? "deepseek/deepseek-v4-flash",
     effort: (effRaw === "med" ? "medium" : effRaw) as ModelReasoning,
-    turns: Math.max(1, Number.parseInt(get("--turns") ?? "8", 10)),
+    turns: Math.max(1, Number.parseInt(get("--turns") ?? String(SERIES_PATTERN.length), 10)),
     fill: Math.max(0, Number.parseInt(get("--fill") ?? "0", 10)),
+    repeats: Math.max(1, Number.parseInt(get("--repeats") ?? "1", 10)),
     domain: get("--domain") ?? process.env.E2E_UNIFIED_DOMAIN ?? "e2e-unified",
     org: get("--org") ?? process.env.E2E_ORG ?? "default",
     plan: has("--plan") || has("--dry-run"),
@@ -56,7 +57,7 @@ function parseCli(argv: readonly string[]): Cli {
   };
 }
 
-type ScenarioId = "S1" | "S2" | "S3" | "S4";
+type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5";
 type Expected = "LANDED" | "SILENT_OK";
 type Outcome =
   | "LANDED_VIA_REPLY_TOOL"
@@ -71,14 +72,18 @@ type Outcome =
 
 type FailureClass = "ANSWER_NO_TOOL" | "DELIBERATE_SILENCE" | "RECALL_MISS" | "OTHER" | "unjudged" | "n/a";
 
-interface ScenarioSpec { id: ScenarioId; label: string; expected: Expected; needs: readonly ("slack" | "notion")[]; }
+interface ScenarioSpec {
+  id: ScenarioId; label: string; expected: Expected; needs: readonly ("slack" | "notion")[];
+  soft?: boolean;
+}
 const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
   S1: { id: "S1", label: "reply @mention (Slack direct-mention; fact stated ambient on Slack)", expected: "LANDED", needs: ["slack"] },
-  S2: { id: "S2", label: "ambient recall (Notion channel-watch; the flaky reply-tool path)", expected: "LANDED", needs: ["notion"] },
+  S2: { id: "S2", label: "namedrop recall (Notion direct-mention — Notion's addressed path, matches real namedrop ingest)", expected: "LANDED", needs: ["notion"] },
   S3: { id: "S3", label: "silence (Slack human↔human chatter, not addressed)", expected: "SILENT_OK", needs: ["slack"] },
   S4: { id: "S4", label: "cross-surface recall (fact on Notion → recalled on Slack @mention)", expected: "LANDED", needs: ["slack", "notion"] },
+  S5: { id: "S5", label: "TRUE ambient step-in (Notion channel-watch, no namedrop; reply helpful, silence defensible)", expected: "LANDED", soft: true, needs: ["slack", "notion"] },
 };
-const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S2", "S3", "S2"];
+const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
 
 const ADJ = ["SCARLET", "COBALT", "AMBER", "JADE", "CRIMSON", "AZURE", "IVORY", "ONYX", "SABLE", "TOPAZ"];
@@ -305,7 +310,9 @@ interface TurnResult {
 }
 
 function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
-  const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP");
+  const isSoft = (t: TurnResult): boolean => SCENARIOS[t.scenario].soft === true;
+  const softTurns = turns.filter((t) => isSoft(t) && t.outcome !== "SKIP");
+  const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP" && !isSoft(t));
   const landedTool = rExp.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL");
   const landedRedrive = rExp.filter((t) => t.outcome === "LANDED_VIA_REDRIVE");
   const landedBridge = rExp.filter((t) => t.outcome === "LANDED_VIA_BRIDGE");
@@ -320,7 +327,16 @@ function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntr
   const rate = (a: number, b: number): number | null => (b === 0 ? null : Math.round((a / b) * 1000) / 1000);
   const nonLanded = rExp.filter((t) => t.outcome === "DROP" || t.outcome === "JUDGED_SILENT" || t.outcome === "NO_ACTION");
   const fcCount = (c: FailureClass): number => nonLanded.filter((t) => t.failureClass === c).length;
+  const softLanded = softTurns.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL" || t.outcome === "LANDED_VIA_REDRIVE" || t.outcome === "LANDED_VIA_BRIDGE");
   return {
+    soft_reply_rate: {
+      landed: softLanded.length,
+      of: softTurns.length,
+      rate: rate(softLanded.length, softTurns.length),
+      judged_silent: softTurns.filter((t) => t.outcome === "JUDGED_SILENT").length,
+      drop: softTurns.filter((t) => t.outcome === "DROP").length,
+      no_action: softTurns.filter((t) => t.outcome === "NO_ACTION").length,
+    },
     reply_landed_rate: {
       landed: landedTotal,
       of: rExp.length,
@@ -391,16 +407,22 @@ async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; da
   } catch (e) { console.warn(`  state-wake failed: ${(e as Error).message}`); }
   await sleep(FACT_WAIT_MS);
 
-  const probe = id === "S2"
-    ? await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "sam", origin: notionOrigin, threadTs: NOTION_DISCUSSION, text: `open everywhere — ${ask}` }, "probe", turn, id)
-    : await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: ask }, "probe", turn, id);
+  let probe: Injection;
+  if (id === "S2") {
+    probe = await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: notionOrigin, threadTs: NOTION_DISCUSSION, text: `open everywhere — ${ask}` }, "probe", turn, id);
+  } else if (id === "S5") {
+    probe = await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "alex", origin: notionOrigin, threadTs: NOTION_DISCUSSION, text: `hmm, does anyone remember the codename, date and ref we locked in earlier? I can't find them anywhere.` }, "probe", turn, id);
+  } else {
+    probe = await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: ask }, "probe", turn, id);
+  }
   return { probe, state };
 }
 
 interface OldResults {
   config: Record<string, unknown>;
   series: ScenarioId[];
-  turns: { turn: number; scenario: ScenarioId; wakeId?: string | null; probe?: { wakeId: string } | null; expected: Expected }[];
+  turns: { turn: number; scenario: ScenarioId; wakeId?: string | null; probe?: { wakeId: string } | null; expected: Expected; outcome?: Outcome }[];
+  injections?: Injection[];
   startedAt?: string;
   seriesStartedAt?: string;
   finishedAt?: string;
@@ -423,23 +445,29 @@ async function rescoreRun(cli: Cli): Promise<void> {
     const w = t.probe?.wakeId ?? t.wakeId;
     if (w) probeByWake.set(w, { turn: t.turn, scenario: t.scenario, expected: t.expected });
   }
+
   injections.length = 0;
-  for (const r of rows.slice().sort((a, b) => a.ts.localeCompare(b.ts))) {
-    if (r.action !== "control.service_call" || dS(r, "view") !== "test_wake") continue;
-    const wakeId = dS(r, "wakeId") ?? "";
-    const probe = probeByWake.get(wakeId);
-    injections.push({
-      wakeId,
-      injectedAt: r.ts,
-      kind: probe ? (probe.scenario === "S3" ? "chatter" : "probe") : "state",
-      turn: probe?.turn ?? 0,
-      ...(probe ? { scenario: probe.scenario } : {}),
-      addressing: dS(r, "addressing") === "direct-mention" ? "direct-mention" : "channel-watch",
-      platform: dS(r, "injectedPlatform") ?? "?",
-      text: null,
-    });
+  if (Array.isArray(old.injections) && old.injections.length > 0) {
+    injections.push(...old.injections);
+    console.log(`using the results file's own injection log: ${injections.length} injections (authoritative)`);
+  } else {
+    for (const r of rows.slice().sort((a, b) => a.ts.localeCompare(b.ts))) {
+      if (r.action !== "control.service_call" || dS(r, "view") !== "test_wake") continue;
+      const wakeId = dS(r, "wakeId") ?? "";
+      const probe = probeByWake.get(wakeId);
+      injections.push({
+        wakeId,
+        injectedAt: r.ts,
+        kind: probe ? (probe.scenario === "S3" ? "chatter" : "probe") : "state",
+        turn: probe?.turn ?? 0,
+        ...(probe ? { scenario: probe.scenario } : {}),
+        addressing: dS(r, "addressing") === "direct-mention" ? "direct-mention" : "channel-watch",
+        platform: dS(r, "injectedPlatform") ?? "?",
+        text: null,
+      });
+    }
+    console.log(`reconstructed ${injections.length} injections from audit (legacy file without injections[]; ${injections.filter((i) => i.kind !== "state").length} probes/chatter)`);
   }
-  console.log(`reconstructed ${injections.length} injections from audit (${injections.filter((i) => i.kind !== "state").length} probes/chatter)`);
 
   const attribution = attributeOutcomes(injections, rows);
   for (const n of attribution.notes) console.log(`  [attribution] ${n}`);
@@ -450,11 +478,32 @@ async function rescoreRun(cli: Cli): Promise<void> {
     const probe = injections.find((i) => i.wakeId === w) ?? null;
     const state = injections.find((i) => i.kind === "state" && i.turn === t.turn) ?? null;
     if (!probe) {
-      return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: "SKIP" as Outcome, probe: null, state, latencyMs: null, recall: null, matchedRows: [], notes: "probe wakeId not found in the audit window" };
+      return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: "SKIP" as Outcome, probe: null, state, latencyMs: null, recall: null, matchedRows: [], notes: "probe wakeId not found in the injection log / audit window" };
     }
     const o = outcomeFor(probe, t.expected, attribution);
     return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: o.outcome, probe, state, latencyMs: o.latencyMs, recall: null, matchedRows: o.matched, notes: `[rescored] ${o.notes}` };
   });
+
+  const disagreements: string[] = [];
+  const freshFormat = Array.isArray(old.injections) && old.injections.length > 0;
+  if (freshFormat) {
+    for (const t of old.turns) {
+      if (!t.outcome || t.outcome === "SKIP") continue;
+      const rescored = turns.find((x) => x.turn === t.turn);
+      if (rescored && rescored.outcome !== t.outcome) {
+        disagreements.push(`T${t.turn} ${t.scenario}: live=${t.outcome} rescored=${rescored.outcome}`);
+      }
+    }
+    if (disagreements.length > 0) {
+      console.warn(`\n⚠ RESCORE DISAGREES with the live outcomes the file carries (${disagreements.length} turn(s)) — suspect attribution (window bleed / FIFO break), NOT the model:`);
+      for (const d of disagreements) console.warn(`  ${d}`);
+    } else if (old.turns.some((t) => t.outcome)) {
+      console.log(`rescore reproduces the live outcomes 1:1 ✓`);
+    }
+  }
+
+  const fc = await classifyFailures(turns, attribution);
+  console.log(`  [failure-class] ${fc.note}`);
 
   const summary = summarize(turns, rows, attribution.sessionId);
   printReport(turns, summary, attribution);
@@ -468,7 +517,9 @@ async function rescoreRun(cli: Cli): Promise<void> {
     series: old.series,
     sessionId: attribution.sessionId,
     attributionNotes: attribution.notes,
-    injections,
+    liveDisagreements: disagreements,
+    failureClassNote: fc.note,
+    injections: [...injections],
     turns,
     completions: attribution.completions,
     summary,
@@ -633,14 +684,194 @@ function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof su
   console.log(`reply_landed_rate ⭐  : ${s.reply_landed_rate.landed}/${s.reply_landed_rate.of} = ${s.reply_landed_rate.rate ?? "n/a"}  (reply_tool ${s.reply_landed_rate.via_reply_tool} + redrive ${s.reply_landed_rate.via_redrive} + bridge ${s.reply_landed_rate.via_bridge})`);
   console.log(`reply_tool_adherence  : ${s.reply_tool_adherence.via_reply_tool}/${s.reply_tool_adherence.of} = ${s.reply_tool_adherence.rate ?? "n/a"}  (strict FIRST-TRY axis — redrive + bridge rescues excluded)`);
   console.log(`adherence_after_redrive: ${s.adherence_after_redrive.via_reply_tool_or_redrive}/${s.adherence_after_redrive.of} = ${s.adherence_after_redrive.rate ?? "n/a"}  (first-try + auto-redrive rescues; ${s.adherence_after_redrive.redrives_fired} redrive(s) fired)`);
-  console.log(`judged_silent_count   : ${s.judged_silent_count} (reply-warranted probes the model chose silence on)`);
-  console.log(`failure_class         : ANSWER_NO_TOOL ${s.failure_class.ANSWER_NO_TOOL} · DELIBERATE_SILENCE ${s.failure_class.DELIBERATE_SILENCE} · RECALL_MISS ${s.failure_class.RECALL_MISS} · OTHER ${s.failure_class.OTHER} · unjudged ${s.failure_class.unjudged}  (of ${s.failure_class.of} non-landed)`);
+  console.log(`judged_silent_count   : ${s.judged_silent_count} (strict reply-warranted probes the model chose silence on)`);
+  console.log(`soft_reply_rate (S5)  : ${s.soft_reply_rate.landed}/${s.soft_reply_rate.of} = ${s.soft_reply_rate.rate ?? "n/a"}  (judged_silent ${s.soft_reply_rate.judged_silent} defensible · drop ${s.soft_reply_rate.drop} · no_action ${s.soft_reply_rate.no_action}) — observation, silence is OK here`);
+  console.log(`failure_class         : ANSWER_NO_TOOL ${s.failure_class.ANSWER_NO_TOOL} · DELIBERATE_SILENCE ${s.failure_class.DELIBERATE_SILENCE} · RECALL_MISS ${s.failure_class.RECALL_MISS} · OTHER ${s.failure_class.OTHER} · unjudged ${s.failure_class.unjudged}  (of ${s.failure_class.of} non-landed strict)`);
   console.log(`prose_drop_count      : ${s.prose_drop_count.total} window-wide (replied=false ${s.prose_drop_count.repliedFalse} ← real, replied=true ${s.prose_drop_count.repliedTrue})`);
   console.log(`silence_precision     : ${s.silence_precision.silent}/${s.silence_precision.of} = ${s.silence_precision.rate ?? "n/a"}`);
   console.log(`recall_accuracy       : ${s.recall_accuracy.full}/${s.recall_accuracy.ofLandedRead} = ${s.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
 }
 
 const slug = (m: string): string => m.replace(/[^a-z0-9]+/gi, "-");
+
+interface SeriesRunResult {
+  readonly repeat: number;
+  readonly turns: TurnResult[];
+  readonly summary: ReturnType<typeof summarize>;
+  readonly sessionId: string | null;
+  readonly outPath: string;
+}
+
+async function runOneSeries(
+  cli: Cli,
+  effort: ModelReasoning,
+  surf: Surfaces,
+  store: OperationalStore,
+  series: readonly ScenarioId[],
+  repeat: number,
+  totalRepeats: number,
+): Promise<SeriesRunResult> {
+  injections.length = 0;
+  const run = Date.now().toString().slice(-5);
+  const seriesStartedAt = new Date().toISOString();
+  const pending: { turn: number; scenario: ScenarioId; probe: Injection | null; state: Injection | null; skip?: string; fact: ReturnType<typeof freshFact> }[] = [];
+
+  if (cli.rotate) {
+    const r = await rotateUnifiedWindow(store, cli.org, cli.domain);
+    console.log(`\nrotated window: ${r.oldToken ?? "none"} → ${r.newRow.token}`);
+  } else console.log(`\n(--no-rotate: running on the ACCUMULATED window)`);
+
+  if (cli.fill > 0) {
+    console.log(`\ninjecting ${cli.fill} filler ambient wakes to grow the window...`);
+    const slackOrigin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
+    for (let i = 0; i < cli.fill; i++) {
+      try {
+        await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin: slackOrigin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` }, "filler", 0);
+        await sleep(1500);
+      } catch (e) { console.warn(`  filler ${i} failed: ${(e as Error).message}`); }
+    }
+    await sleep(FACT_WAIT_MS);
+  }
+
+  for (let i = 0; i < series.length; i++) {
+    const fact = freshFact(run, i + 1);
+    console.log(`\n── [r${repeat}] T${i + 1}/${series.length} ${series[i]} ${SCENARIOS[series[i]].label} ─ fact ${fact.code}`);
+    try {
+      const t = await injectTurn(series[i], i + 1, fact, surf);
+      pending.push({ turn: i + 1, scenario: series[i], ...t, fact });
+      if (t.skip) { console.log(`   → SKIP  ${t.skip}`); continue; }
+      const deadline = Date.now() + REPLY_TIMEOUT_MS;
+      let resolved = false;
+      while (Date.now() < deadline) {
+        const rows = await auditSince(seriesStartedAt);
+        const attribution = attributeOutcomes(injections, rows);
+        if (t.probe && (attribution.completionOf.has(t.probe.wakeId) || (attribution.replyPostsOf.get(t.probe.wakeId)?.length ?? 0) > 0)) {
+          const o = outcomeFor(t.probe, SCENARIOS[series[i]].expected, attribution);
+          console.log(`   → ${o.outcome}  (lat ${o.latencyMs ? Math.round(o.latencyMs / 1000) + "s" : "-"})  ${o.notes}  [interim — final pass below settles it]`);
+          resolved = true;
+          break;
+        }
+        await sleep(POLL_MS);
+      }
+      if (!resolved) console.log(`   → (no completion yet — the final attribution pass will settle it)`);
+    } catch (e) {
+      console.error(`   → turn ERROR: ${(e as Error).message}`);
+      pending.push({ turn: i + 1, scenario: series[i], probe: null, state: null, skip: `ERROR: ${(e as Error).message}`, fact });
+    }
+  }
+
+  console.log(`\nsettling (up to ${Math.round(REPLY_TIMEOUT_MS / 1000)}s for trailing completions)...`);
+  const settleDeadline = Date.now() + REPLY_TIMEOUT_MS;
+  let finalRows: readonly AuditWireEntry[] = [];
+  let finalAttribution: Attribution = attributeOutcomes(injections, []);
+  for (;;) {
+    finalRows = await auditSince(seriesStartedAt);
+    finalAttribution = attributeOutcomes(injections, finalRows);
+    const unresolved = pending.filter((p) => p.probe && !finalAttribution.completionOf.has(p.probe.wakeId) && (finalAttribution.replyPostsOf.get(p.probe.wakeId)?.length ?? 0) === 0);
+    if (unresolved.length === 0 || Date.now() >= settleDeadline) break;
+    await sleep(POLL_MS);
+  }
+  for (const n of finalAttribution.notes) console.log(`  [attribution] ${n}`);
+
+  const turns: TurnResult[] = [];
+  for (const p of pending) {
+    const spec = SCENARIOS[p.scenario];
+    if (p.skip || !p.probe) {
+      turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: "SKIP", probe: p.probe, state: p.state, latencyMs: null, recall: null, matchedRows: [], notes: p.skip ?? "no probe injected" });
+      continue;
+    }
+    const o = outcomeFor(p.probe, spec.expected, finalAttribution);
+    let recall: TurnResult["recall"] = null;
+    if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_REDRIVE" || o.outcome === "LANDED_VIA_BRIDGE") {
+      const platform = o.matched.map((r) => dS(r, "platform")).find((x) => x) ?? null;
+      if (platform === "slack") {
+        const body = await readSlackReplyBody(p.probe.injectedAt);
+        if (body) recall = recallHit(body, p.fact);
+      }
+    }
+    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, recall, matchedRows: o.matched, notes: o.notes });
+  }
+
+  const fc = await classifyFailures(turns, finalAttribution);
+  console.log(`  [failure-class] ${fc.note}`);
+
+  const summary = summarize(turns, finalRows, finalAttribution.sessionId);
+  printReport(turns, summary, finalAttribution);
+
+  const outDir = join(process.cwd(), "scripts/eval/results");
+  mkdirSync(outDir, { recursive: true });
+  const repeatSuffix = totalRepeats > 1 ? `-r${repeat}` : "";
+  const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${seriesStartedAt.replace(/[:.]/g, "-")}${repeatSuffix}.json`);
+  writeFileSync(outPath, JSON.stringify({
+    config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, rotate: cli.rotate, repeat, totalRepeats },
+    series,
+    seriesStartedAt,
+    finishedAt: new Date().toISOString(),
+    sessionId: finalAttribution.sessionId,
+    attributionNotes: finalAttribution.notes,
+    failureClassNote: fc.note,
+    injections: [...injections],
+    turns,
+    completions: finalAttribution.completions,
+    summary,
+  }, null, 2));
+  console.log(`\nwrote ${outPath}`);
+  return { repeat, turns, summary, sessionId: finalAttribution.sessionId, outPath };
+}
+
+function aggStat(vals: readonly (number | null)[]): { mean: number | null; min: number | null; max: number | null; n: number } {
+  const nums = vals.filter((v): v is number => typeof v === "number");
+  if (nums.length === 0) return { mean: null, min: null, max: null, n: 0 };
+  const mean = Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 1000) / 1000;
+  return { mean, min: Math.min(...nums), max: Math.max(...nums), n: nums.length };
+}
+
+function writeAggregate(
+  cli: Cli,
+  effort: ModelReasoning,
+  startedAt: string,
+  ok: readonly SeriesRunResult[],
+  errored: readonly { repeat: number; error: string }[],
+): void {
+  const s = (f: (x: SeriesRunResult) => number | null) => aggStat(ok.map(f));
+  const metrics = {
+    reply_landed_rate: s((x) => x.summary.reply_landed_rate.rate),
+    reply_tool_adherence: s((x) => x.summary.reply_tool_adherence.rate),
+    adherence_after_redrive: s((x) => x.summary.adherence_after_redrive.rate),
+    silence_precision: s((x) => x.summary.silence_precision.rate),
+    soft_reply_rate: s((x) => x.summary.soft_reply_rate.rate),
+    recall_accuracy: s((x) => x.summary.recall_accuracy.rate),
+    prose_drops_replied_false: s((x) => x.summary.prose_drop_count.repliedFalse),
+    judged_silent_count: s((x) => x.summary.judged_silent_count),
+  };
+  const perScenario: Record<string, Record<string, number>> = {};
+  for (const r of ok) {
+    for (const t of r.turns) {
+      perScenario[t.scenario] ??= {};
+      perScenario[t.scenario][t.outcome] = (perScenario[t.scenario][t.outcome] ?? 0) + 1;
+    }
+  }
+  const outDir = join(process.cwd(), "scripts/eval/results");
+  const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${startedAt.replace(/[:.]/g, "-")}-aggregate.json`);
+  writeFileSync(outPath, JSON.stringify({
+    config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, repeats: cli.repeats },
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    repeats: {
+      requested: cli.repeats,
+      succeeded: ok.map((r) => ({ repeat: r.repeat, outPath: r.outPath, sessionId: r.sessionId, summary: r.summary })),
+      errored: [...errored],
+    },
+    metrics,
+    perScenario,
+  }, null, 2));
+  console.log(`\n=== AGGREGATE (${ok.length}/${cli.repeats} repeats succeeded${errored.length ? `, ${errored.length} ERRORED` : ""}) ===`);
+  for (const [k, v] of Object.entries(metrics)) {
+    console.log(`${k.padEnd(26)}: mean ${v.mean ?? "n/a"}  min ${v.min ?? "n/a"}  max ${v.max ?? "n/a"}  (n=${v.n})`);
+  }
+  for (const e of errored) console.log(`repeat ${e.repeat}: ERRORED — ${e.error}`);
+  console.log(`wrote ${outPath}`);
+}
 
 async function main() {
   const cli = parseCli(process.argv.slice(2));
@@ -664,7 +895,7 @@ async function main() {
   console.log(`\n=== ambient-eval (spoofed-wake injection) ===`);
   console.log(`model:   ${cli.model} @ ${effort}`);
   console.log(`domain:  ${cli.domain}   org: ${cli.org}`);
-  console.log(`turns:   ${cli.turns}   fill: ${cli.fill}   rotate: ${cli.rotate}   plan-only: ${cli.plan}`);
+  console.log(`turns:   ${cli.turns}   fill: ${cli.fill}   repeats: ${cli.repeats}   rotate: ${cli.rotate}   plan-only: ${cli.plan}`);
   console.log(`surfaces: slack=${surf.slack}${surf.slack ? ` (${SLACK_SURFACE})` : ""}  notion=${surf.notion}${surf.notion ? ` (${NOTION_SURFACE})` : ""}`);
   console.log(`waits:   fact=${FACT_WAIT_MS}ms reply-timeout=${REPLY_TIMEOUT_MS}ms poll=${POLL_MS}ms`);
   console.log(`\nseries (turn → scenario):`);
@@ -686,109 +917,21 @@ async function main() {
   await store.setDomainModel(cli.org, cli.domain, { modelId: cli.model, reasoning: effort }, "ambient-eval");
   console.log(`set  pick: ${JSON.stringify({ modelId: cli.model, reasoning: effort })}`);
 
-  const run = Date.now().toString().slice(-5);
-  const seriesStartedAt = new Date().toISOString();
-  const pending: { turn: number; scenario: ScenarioId; probe: Injection | null; state: Injection | null; skip?: string; fact: ReturnType<typeof freshFact> }[] = [];
+  const startedAt = new Date().toISOString();
+  const okRuns: SeriesRunResult[] = [];
+  const errored: { repeat: number; error: string }[] = [];
   try {
-    if (cli.rotate) {
-      const r = await rotateUnifiedWindow(store, cli.org, cli.domain);
-      console.log(`\nrotated window: ${r.oldToken ?? "none"} → ${r.newRow.token}`);
-    } else console.log(`\n(--no-rotate: running on the ACCUMULATED window)`);
-
-    if (cli.fill > 0) {
-      console.log(`\ninjecting ${cli.fill} filler ambient wakes to grow the window...`);
-      const slackOrigin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
-      for (let i = 0; i < cli.fill; i++) {
-        try {
-          await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin: slackOrigin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` }, "filler", 0);
-          await sleep(1500);
-        } catch (e) { console.warn(`  filler ${i} failed: ${(e as Error).message}`); }
-      }
-      await sleep(FACT_WAIT_MS);
-    }
-
-    for (let i = 0; i < series.length; i++) {
-      const fact = freshFact(run, i + 1);
-      console.log(`\n── T${i + 1}/${series.length} ${series[i]} ${SCENARIOS[series[i]].label} ─ fact ${fact.code}`);
+    for (let r = 1; r <= cli.repeats; r++) {
+      if (cli.repeats > 1) console.log(`\n════════ REPEAT ${r}/${cli.repeats} ════════`);
       try {
-        const t = await injectTurn(series[i], i + 1, fact, surf);
-        pending.push({ turn: i + 1, scenario: series[i], ...t, fact });
-        if (t.skip) { console.log(`   → SKIP  ${t.skip}`); continue; }
-        const deadline = Date.now() + REPLY_TIMEOUT_MS;
-        let resolved = false;
-        while (Date.now() < deadline) {
-          const rows = await auditSince(seriesStartedAt);
-          const attribution = attributeOutcomes(injections, rows);
-          if (t.probe && (attribution.completionOf.has(t.probe.wakeId) || (attribution.replyPostsOf.get(t.probe.wakeId)?.length ?? 0) > 0)) {
-            const o = outcomeFor(t.probe, SCENARIOS[series[i]].expected, attribution);
-            console.log(`   → ${o.outcome}  (lat ${o.latencyMs ? Math.round(o.latencyMs / 1000) + "s" : "-"})  ${o.notes}  [interim — final pass below settles it]`);
-            resolved = true;
-            break;
-          }
-          await sleep(POLL_MS);
-        }
-        if (!resolved) console.log(`   → (no completion yet — the final attribution pass will settle it)`);
+        okRuns.push(await runOneSeries(cli, effort, surf, store, series, r, cli.repeats));
       } catch (e) {
-        console.error(`   → turn ERROR: ${(e as Error).message}`);
-        pending.push({ turn: i + 1, scenario: series[i], probe: null, state: null, skip: `ERROR: ${(e as Error).message}`, fact });
+        const msg = (e as Error).message;
+        console.error(`\n✗ repeat ${r} ERRORED: ${msg}`);
+        errored.push({ repeat: r, error: msg });
       }
     }
-
-    console.log(`\nsettling (up to ${Math.round(REPLY_TIMEOUT_MS / 1000)}s for trailing completions)...`);
-    const settleDeadline = Date.now() + REPLY_TIMEOUT_MS;
-    let finalRows: readonly AuditWireEntry[] = [];
-    let finalAttribution: Attribution = attributeOutcomes(injections, []);
-    for (;;) {
-      finalRows = await auditSince(seriesStartedAt);
-      finalAttribution = attributeOutcomes(injections, finalRows);
-      const unresolved = pending.filter((p) => p.probe && !finalAttribution.completionOf.has(p.probe.wakeId) && (finalAttribution.replyPostsOf.get(p.probe.wakeId)?.length ?? 0) === 0);
-      if (unresolved.length === 0 || Date.now() >= settleDeadline) break;
-      await sleep(POLL_MS);
-    }
-    for (const n of finalAttribution.notes) console.log(`  [attribution] ${n}`);
-
-    const turns: TurnResult[] = [];
-    for (const p of pending) {
-      const spec = SCENARIOS[p.scenario];
-      if (p.skip || !p.probe) {
-        turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: "SKIP", probe: p.probe, state: p.state, latencyMs: null, recall: null, matchedRows: [], notes: p.skip ?? "no probe injected" });
-        continue;
-      }
-      const o = outcomeFor(p.probe, spec.expected, finalAttribution);
-      let recall: TurnResult["recall"] = null;
-      if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_REDRIVE" || o.outcome === "LANDED_VIA_BRIDGE") {
-        const platform = o.matched.map((r) => dS(r, "platform")).find((x) => x) ?? null;
-        if (platform === "slack") {
-          const body = await readSlackReplyBody(p.probe.injectedAt);
-          if (body) recall = recallHit(body, p.fact);
-        }
-      }
-      turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, recall, matchedRows: o.matched, notes: o.notes });
-    }
-
-    const fc = await classifyFailures(turns, finalAttribution);
-    console.log(`  [failure-class] ${fc.note}`);
-
-    const summary = summarize(turns, finalRows, finalAttribution.sessionId);
-    printReport(turns, summary, finalAttribution);
-
-    const outDir = join(process.cwd(), "scripts/eval/results");
-    mkdirSync(outDir, { recursive: true });
-    const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${seriesStartedAt.replace(/[:.]/g, "-")}.json`);
-    writeFileSync(outPath, JSON.stringify({
-      config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, rotate: cli.rotate },
-      series,
-      seriesStartedAt,
-      finishedAt: new Date().toISOString(),
-      sessionId: finalAttribution.sessionId,
-      attributionNotes: finalAttribution.notes,
-      failureClassNote: fc.note,
-      injections,
-      turns,
-      completions: finalAttribution.completions,
-      summary,
-    }, null, 2));
-    console.log(`\nwrote ${outPath}`);
+    if (cli.repeats > 1) writeAggregate(cli, effort, startedAt, okRuns, errored);
   } finally {
     if (cli.restore) {
       try {

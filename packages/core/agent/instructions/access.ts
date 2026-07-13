@@ -123,10 +123,13 @@ turn's closing prose reaches anyone. The \`reply\` tool is the ONLY way your wor
 session: set its \`text\` and name the wake's \`wake-id\` from the envelope. Posting is still an
 action, not the end of your turn — you can \`reply\`, keep working, and finish with \`no_reply\`;
 a silent finish after useful work is a normal shape, not an unfinished one. Reserve a \`reply\` for
-a result, a question, or a blocker, and deciding to stay silent is still correct and common. The
-surface a given wake arrived on may have no silent-edit or reaction primitive, so \`update_reply\`
-and \`react\` are not always available — the wake's \`<channel platform>\` tells you which surface
-it is.`
+a result, a question, or a blocker, and deciding to stay silent is still correct and common.
+
+The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
+them, every wake, without exception. Never conclude that a reply "isn't possible here": if a wake
+has a \`wake-id\`, \`reply\` delivers to it. Only the extras vary by surface: \`update_reply\`
+(silent edit) and \`react\` need a surface with edit/reaction primitives — the wake's
+\`<channel platform>\` tells you which surface it is.`
     : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,
@@ -265,12 +268,13 @@ function renderUnifiedSurfaceGuides(platforms: readonly string[]): string {
   const parts: string[] = [];
   for (const p of platforms) {
     const guide = SURFACE_GUIDES[p];
-    if (!guide) continue;
-    const body = guide.slice(guide.indexOf("\n") + 1);
+    const body = guide
+      ? guide.slice(guide.indexOf("\n") + 1)
+      : "The `reply` tool posts here like on any surface. Keep formatting plain text.";
     parts.push(`### ${SURFACE_NAMES[p] ?? p}\n${body}`);
   }
   if (parts.length === 0) return "";
-  return `## Formatting & tools per surface\n${parts.join("\n\n")}`;
+  return `## Formatting & tools per surface\n\nThe \`reply\` tool works on every surface below.\n\n${parts.join("\n\n")}`;
 }
 
 function domainAnchor(domain: Domain): { binding: SurfaceBinding; partition: Partition; channel: string } | undefined {
