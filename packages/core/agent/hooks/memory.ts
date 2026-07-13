@@ -93,6 +93,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   const sessionId = ctx.session.id;
   const principalId = binding.principalId;
   const request = sessionLog.get().firstMessage?.trim().replace(/\n+/g, " ").slice(0, 200);
+  const continuationToken = ctx.channel?.continuationToken;
 
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   try {
@@ -130,7 +131,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
           surface: p.surface,
           principalId,
           action: "memory.write",
-          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(conflicts.length ? { conflicts } : {}) },
+          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}) },
         });
       }
     } catch (err) {

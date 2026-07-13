@@ -31,6 +31,7 @@ import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { isVouchedInternal } from "../identity/trust.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, crossSurfaceWindowOrgGateEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
+import { liveMemoryDeltaDep } from "../memory/wake-delta.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 
@@ -238,7 +239,8 @@ function liveLinearSupervisorDeps(
         const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => linearSupervisorToken(team, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
-      return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
+      const fresh = existing.firstWakeAt == null;
+      return { token: existing.token, generation: existing.generation, freshGeneration: fresh, handoffNote: existing.handoffNote, ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, linearGrainFor(surfaceKey).registryKey, atIso),
     async forceRotate(surfaceKey, team, atIso) {
@@ -250,6 +252,7 @@ function liveLinearSupervisorDeps(
     },
     audit: (action, detail) =>
       appendAudit({ org, platform: "linear", workspace: organizationId, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
+    memoryDelta: liveMemoryDeltaDep(org, `linear/${organizationId}/${teamId}`),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
       if (window && receive) {

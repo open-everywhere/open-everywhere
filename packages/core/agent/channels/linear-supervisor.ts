@@ -190,6 +190,7 @@ export interface LinearSupervisorSession {
   readonly generation: number;
   readonly freshGeneration: boolean;
   readonly handoffNote?: string | null;
+  readonly lastWakeAt?: string | null;
 }
 
 export interface LinearSupervisorDeps {
@@ -204,6 +205,7 @@ export interface LinearSupervisorDeps {
     window?: UnifiedWindowWake;
   }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly memoryDelta?: (sinceIso: string, atIso: string, selfKey?: string) => Promise<string | null>;
   readonly now?: () => string;
 }
 
@@ -225,20 +227,32 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
   const atIso = deps.now ? deps.now() : new Date().toISOString();
   const session = await deps.getOrCreateSession(d.surfaceKey, d.teamId, atIso);
 
+  let memoryDelta: string | undefined;
+  if (deps.memoryDelta && session.lastWakeAt) {
+    try {
+      memoryDelta = (await deps.memoryDelta(session.lastWakeAt, atIso, session.token)) ?? undefined;
+    } catch {
+      memoryDelta = undefined;
+    }
+  }
+
   const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
-    const nw = buildLinearSupervisorWake({
-      teamId: d.teamId,
-      issueId: d.issueId,
-      issueIdentifier: d.issueIdentifier,
-      issueTitle: d.issueTitle,
-      trigger: d.trigger,
-      engagementTier: d.engagementTier,
-      unified: d.unified,
-      wakeId: d.window?.wakeId,
-      directMention: d.directMention,
-      handoffNote: handoffNote ?? undefined,
-      handoffFromGeneration: generation - 1,
-    });
+    const nw: NormalizedWake = {
+      ...buildLinearSupervisorWake({
+        teamId: d.teamId,
+        issueId: d.issueId,
+        issueIdentifier: d.issueIdentifier,
+        issueTitle: d.issueTitle,
+        trigger: d.trigger,
+        engagementTier: d.engagementTier,
+        unified: d.unified,
+        wakeId: d.window?.wakeId,
+        directMention: d.directMention,
+        handoffNote: handoffNote ?? undefined,
+        handoffFromGeneration: generation - 1,
+      }),
+      ...(memoryDelta ? { memoryDelta } : {}),
+    };
     const { message, context } = renderWake(nw, deps.now);
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };

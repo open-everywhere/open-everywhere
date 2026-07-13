@@ -149,6 +149,7 @@ export interface NotionSupervisorSession {
   readonly generation: number;
   readonly freshGeneration: boolean;
   readonly handoffNote?: string | null;
+  readonly lastWakeAt?: string | null;
 }
 
 export interface NotionSupervisorDeps {
@@ -164,6 +165,7 @@ export interface NotionSupervisorDeps {
     window?: UnifiedWindowWake;
   }) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly memoryDelta?: (sinceIso: string, atIso: string, selfKey?: string) => Promise<string | null>;
   readonly now?: () => string;
 }
 
@@ -192,20 +194,32 @@ export async function handleNotionSupervisorDispatch(d: NotionSupervisorDispatch
     ...(d.unified ? { oeUnified: true } : {}),
   };
 
+  let memoryDelta: string | undefined;
+  if (deps.memoryDelta && session.lastWakeAt) {
+    try {
+      memoryDelta = (await deps.memoryDelta(session.lastWakeAt, atIso, session.token)) ?? undefined;
+    } catch {
+      memoryDelta = undefined;
+    }
+  }
+
   const doWake = async (token: string, generation: number, handoffNote: string | null | undefined) => {
-    const nw = buildNotionSupervisorWake({
-      addressing: d.addressing,
-      pageId: d.pageId,
-      discussionId: d.discussionId,
-      trigger: d.trigger,
-      threadComments: d.threadComments,
-      engagementTier: d.engagementTier,
-      unified: d.unified,
-      wakeId: d.window?.wakeId,
-      directMention: d.directMention,
-      handoffNote: handoffNote ?? undefined,
-      handoffFromGeneration: generation - 1,
-    });
+    const nw: NormalizedWake = {
+      ...buildNotionSupervisorWake({
+        addressing: d.addressing,
+        pageId: d.pageId,
+        discussionId: d.discussionId,
+        trigger: d.trigger,
+        threadComments: d.threadComments,
+        engagementTier: d.engagementTier,
+        unified: d.unified,
+        wakeId: d.window?.wakeId,
+        directMention: d.directMention,
+        handoffNote: handoffNote ?? undefined,
+        handoffFromGeneration: generation - 1,
+      }),
+      ...(memoryDelta ? { memoryDelta } : {}),
+    };
     const { message, context } = renderWake(nw, deps.now);
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], state, window: d.window });
   };

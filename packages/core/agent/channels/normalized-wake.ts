@@ -58,6 +58,7 @@ export interface NormalizedWake {
     readonly botName: string;
     readonly followUp: "follows-on-reply" | "thread-engaged" | "channel-not-following";
   };
+  readonly memoryDelta?: string;
   readonly trigger: NormalizedWakeTrigger;
 }
 
@@ -257,6 +258,10 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
       const _exhaustive: never = nw.trigger.kind;
       throw new Error(`renderWake: unknown trigger kind ${String(_exhaustive)}`);
     }
+  }
+
+  if (nw.memoryDelta !== undefined && nw.addressing !== "direct") {
+    message = `${message}\n\n${nw.memoryDelta}`;
   }
 
   if (nw.contextLines && nw.contextLines.length > 0) {

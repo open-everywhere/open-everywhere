@@ -244,6 +244,22 @@ const trig = (body: string, extra: Partial<WakeMessageInput> = {}): NormalizedWa
 }
 
 {
+  const DELTA =
+    "<system-reminder>\nShared memory changed since your last wake — these are POINTERS, not content:\n" +
+    "- memory/acme-eng — silo \"acme-eng\" (updated)\n</system-reminder>";
+  const base: NormalizedWake = { platform: "linear", reason: "channel-activity", addressing: "channel-watch", containerNoun: "team", locus: { channel: { id: "T1" }, thread: { ts: "ENG-1" } }, trigger: trig("did the schema change land?") };
+  const without = renderWake(base, NOW).message;
+  const withDelta = renderWake({ ...base, memoryDelta: DELTA }, NOW).message;
+  ok(withDelta.includes(DELTA), "memoryDelta: the trusted <system-reminder> block appears verbatim in the message");
+  ok(withDelta.endsWith(DELTA), "memoryDelta: appended AFTER the envelope (a trailing block on the trusted frame)");
+  ok(withDelta.indexOf(DELTA) > withDelta.indexOf("<wake "), "memoryDelta: sits AFTER the wake envelope, in the trusted frame");
+  ok(withDelta === `${without}\n\n${DELTA}`, "memoryDelta: appended on its own blank-line-separated line; everything before it is byte-identical");
+  ok(renderWake({ ...base, memoryDelta: undefined }, NOW).message === without, "memoryDelta UNDEFINED ⇒ byte-identical to today (the goldens don't move)");
+  const direct: NormalizedWake = { platform: "linear", reason: "mention", addressing: "direct", locus: { channel: { id: "T1" } }, trigger: trig("verbatim body") };
+  ok(renderWake({ ...direct, memoryDelta: DELTA }, NOW).message === "verbatim body", "memoryDelta: NOT appended to a raw 'direct' body (stays verbatim — W4)");
+}
+
+{
   const nd = (followUp: NonNullable<NormalizedWake["nameDrop"]>["followUp"]): NormalizedWake => ({ platform: "x", reason: "channel-activity", addressing: "name-drop", locus: { channel: { id: "C1" } }, nameDrop: { botName: "Bot", followUp }, trigger: trig("hi") });
   ok(renderWake(nd("follows-on-reply"), NOW).message.startsWith(`[name-drop] A top-level channel message said your name ("Bot")`), "name-drop: core text is Slack's");
   ok(renderWake(nd("follows-on-reply"), NOW).message.includes("you will be following the thread from then on"), "name-drop: follows-on-reply closing sentence");
