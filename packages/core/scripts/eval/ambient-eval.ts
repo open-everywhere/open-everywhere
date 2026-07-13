@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { join, basename, dirname } from "node:path";
 import { fetchAudit, type AuditWireEntry } from "../e2e/audit-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "../e2e/rotate-window-lib.js";
 import { isModelUsable, clampReasoning, type ModelPolicy } from "../../agent/model/policy.js";
@@ -20,7 +20,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const FACT_WAIT_MS = Number.parseInt(process.env.AMBIENT_FACT_WAIT_MS ?? "35000", 10);
-const REPLY_TIMEOUT_MS = Number.parseInt(process.env.AMBIENT_REPLY_TIMEOUT_MS ?? "150000", 10);
+const REPLY_TIMEOUT_MS = Number.parseInt(process.env.AMBIENT_REPLY_TIMEOUT_MS ?? "240000", 10);
 const POLL_MS = Number.parseInt(process.env.AMBIENT_POLL_MS ?? "7000", 10);
 
 const SLACK_SURFACE = (process.env.EVAL_SLACK_SURFACE ?? "").trim();
@@ -33,6 +33,7 @@ let DOMAIN = "e2e-unified";
 interface Cli {
   model: string; effort: ModelReasoning; turns: number; fill: number;
   domain: string; org: string; plan: boolean; rotate: boolean; restore: boolean;
+  rescore?: string; since?: string; until?: string;
 }
 function parseCli(argv: readonly string[]): Cli {
   const get = (f: string): string | undefined => { const i = argv.indexOf(f); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined; };
@@ -48,12 +49,23 @@ function parseCli(argv: readonly string[]): Cli {
     plan: has("--plan") || has("--dry-run"),
     rotate: !has("--no-rotate"),
     restore: !has("--no-restore"),
+    rescore: get("--rescore"),
+    since: get("--since"),
+    until: get("--until"),
   };
 }
 
 type ScenarioId = "S1" | "S2" | "S3" | "S4";
 type Expected = "LANDED" | "SILENT_OK";
-type Outcome = "LANDED" | "SILENT_OK" | "DROP" | "OVER_REPLY" | "NO_ACTION" | "SKIP";
+type Outcome =
+  | "LANDED_VIA_REPLY_TOOL"
+  | "LANDED_VIA_BRIDGE"
+  | "DROP"
+  | "JUDGED_SILENT"
+  | "SILENT_OK"
+  | "OVER_REPLY"
+  | "NO_ACTION"
+  | "SKIP";
 
 interface ScenarioSpec { id: ScenarioId; label: string; expected: Expected; needs: readonly ("slack" | "notion")[]; }
 const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
@@ -76,69 +88,224 @@ function recallHit(body: string, m: { code: string; date: string; ref: string })
   return { code: b.includes(m.code.toLowerCase()), date: b.includes(m.date), ref: b.includes(m.ref.toLowerCase()) };
 }
 
+type InjectionKind = "state" | "probe" | "chatter" | "filler";
+interface Injection {
+  readonly wakeId: string;
+  readonly injectedAt: string;
+  readonly kind: InjectionKind;
+  readonly turn: number;
+  readonly scenario?: ScenarioId;
+  readonly addressing: "channel-watch" | "direct-mention";
+  readonly platform: string;
+  readonly text: string | null;
+}
+const injections: Injection[] = [];
+
 interface InjectBody {
   domain: string; platform: string; surfaceKey: string; text: string;
-  addressing?: string; origin: Record<string, unknown>; mention?: boolean; author?: string;
+  addressing?: string; origin: Record<string, unknown>; mention?: boolean; author?: string; threadTs?: string;
 }
-interface InjectResult { ok: boolean; wakeId: string; token: string; }
-async function injectWake(b: InjectBody): Promise<InjectResult> {
+async function injectWake(b: InjectBody, kind: InjectionKind, turn: number, scenario?: ScenarioId): Promise<Injection> {
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
     headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
     body: JSON.stringify(b),
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
-  return (await res.json()) as InjectResult;
+  const jb = (await res.json()) as { wakeId: string };
+  const inj: Injection = {
+    wakeId: jb.wakeId,
+    injectedAt: new Date().toISOString(),
+    kind,
+    turn,
+    ...(scenario !== undefined ? { scenario } : {}),
+    addressing: b.addressing === "direct-mention" ? "direct-mention" : "channel-watch",
+    platform: b.platform,
+    text: b.text,
+  };
+  injections.push(inj);
+  return inj;
 }
 
 const A_REPLY_POST = "reply.post";
 const A_PROSE_DELIVERED = "turn.direct_mention_prose_delivered";
 const A_PROSE_DROPPED = "turn.supervisor_prose_dropped";
 const A_NO_REPLY = "unified.no_reply";
+const A_BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
+const A_BRIDGE_FAILED = "turn.direct_mention_bridge_post_failed";
+const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED, A_BRIDGE_UNRESOLVED, A_BRIDGE_FAILED]);
+
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
 const dB = (e: AuditWireEntry, k: string): boolean | undefined => (typeof e.detail?.[k] === "boolean" ? (e.detail![k] as boolean) : undefined);
 const dN = (e: AuditWireEntry, k: string): number | undefined => (typeof e.detail?.[k] === "number" ? (e.detail![k] as number) : undefined);
 
-async function auditWindow(sinceIso: string): Promise<readonly AuditWireEntry[]> {
-  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 400 }); }
-  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
+interface Attribution {
+  readonly completionOf: ReadonlyMap<string, AuditWireEntry>;
+  readonly replyPostsOf: ReadonlyMap<string, readonly AuditWireEntry[]>;
+  readonly sessionId: string | null;
+  readonly completions: readonly AuditWireEntry[];
+  readonly notes: readonly string[];
 }
-function landedFor(rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | undefined {
-  return rows.find((e) => (e.action === A_REPLY_POST || e.action === A_PROSE_DELIVERED) && (dS(e, "wakeId") === wakeId || dS(e, "wakeId") === undefined));
+
+function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireEntry[]): Attribution {
+  const notes: string[] = [];
+  const asc = rows.slice().sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const replyPostsOf = new Map<string, AuditWireEntry[]>();
+  for (const r of asc) {
+    if (r.action !== A_REPLY_POST) continue;
+    const w = dS(r, "wakeId");
+    if (!w) continue;
+    if (!replyPostsOf.has(w)) replyPostsOf.set(w, []);
+    replyPostsOf.get(w)!.push(r);
+  }
+
+  let completions = asc.filter((r) => r.platform === "unified" && COMPLETION_ACTIONS.has(r.action));
+  const sidCounts = new Map<string, number>();
+  for (const r of completions) {
+    const sid = dS(r, "sessionId");
+    if (sid) sidCounts.set(sid, (sidCounts.get(sid) ?? 0) + 1);
+  }
+  const sessionId = [...sidCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  if (sessionId) {
+    const before = completions.length;
+    completions = completions.filter((r) => (dS(r, "sessionId") ?? sessionId) === sessionId);
+    if (completions.length !== before) notes.push(`${before - completions.length} completion row(s) from other session(s) excluded (eval session ${sessionId})`);
+  }
+
+  const sortedInjs = injs.slice().sort((a, b) => a.injectedAt.localeCompare(b.injectedAt));
+  const completionOf = new Map<string, AuditWireEntry>();
+
+  const isBridgeRow = (c: AuditWireEntry): boolean =>
+    c.action === A_PROSE_DELIVERED || c.action === A_BRIDGE_UNRESOLVED || c.action === A_BRIDGE_FAILED;
+
+  const fifoValid =
+    completions.length === sortedInjs.length &&
+    completions.every((c, i) => !isBridgeRow(c) || sortedInjs[i].addressing === "direct-mention");
+
+  if (fifoValid) {
+    completions.forEach((c, i) => completionOf.set(sortedInjs[i].wakeId, c));
+  } else {
+    notes.push(
+      `FIFO 1:1 broke (${sortedInjs.length} injections vs ${completions.length} completions${completions.length === sortedInjs.length ? ", bridge-row misalignment" : ""}) — semantic fallback used; treat per-turn attribution as approximate`,
+    );
+    const usedC = new Set<number>();
+    const usedI = new Set<number>();
+    const dmInjs = sortedInjs.map((inj, i) => ({ inj, i })).filter((x) => x.inj.addressing === "direct-mention");
+    let dmCursor = 0;
+    completions.forEach((c, ci) => {
+      if (isBridgeRow(c) && dmCursor < dmInjs.length) {
+        const { inj, i } = dmInjs[dmCursor++];
+        completionOf.set(inj.wakeId, c);
+        usedC.add(ci);
+        usedI.add(i);
+      }
+    });
+    let icur = 0;
+    completions.forEach((c, ci) => {
+      if (usedC.has(ci)) return;
+      while (icur < sortedInjs.length && usedI.has(icur)) icur++;
+      if (icur >= sortedInjs.length) return;
+      completionOf.set(sortedInjs[icur].wakeId, c);
+      usedI.add(icur);
+      icur++;
+    });
+  }
+
+  return { completionOf, replyPostsOf, sessionId, completions, notes };
 }
-function proseDrops(rows: readonly AuditWireEntry[]): { chars: number; replied: boolean }[] {
-  return rows.filter((e) => e.action === A_PROSE_DROPPED).map((e) => ({ chars: dN(e, "chars") ?? 0, replied: dB(e, "replied") ?? false }));
+
+function outcomeFor(
+  inj: Injection,
+  expected: Expected,
+  attribution: Attribution,
+): { outcome: Outcome; latencyMs: number | null; notes: string; matched: AuditWireEntry[] } {
+  const posts = attribution.replyPostsOf.get(inj.wakeId) ?? [];
+  const c = attribution.completionOf.get(inj.wakeId);
+  const matched = [...posts, ...(c ? [c] : [])];
+  const lat = (row: AuditWireEntry): number => new Date(row.ts).getTime() - new Date(inj.injectedAt).getTime();
+
+  if (posts.length > 0) {
+    return expected === "SILENT_OK"
+      ? { outcome: "OVER_REPLY", latencyMs: lat(posts[0]), notes: `reply.post (wakeId-joined) on a silence-warranted turn`, matched }
+      : { outcome: "LANDED_VIA_REPLY_TOOL", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined → ${dS(posts[0], "platform") ?? "?"}`, matched };
+  }
+  if (!c) return { outcome: "NO_ACTION", latencyMs: null, notes: "no completion attributable (pending or timed out)", matched };
+
+  switch (c.action) {
+    case A_PROSE_DELIVERED:
+      return expected === "SILENT_OK"
+        ? { outcome: "OVER_REPLY", latencyMs: lat(c), notes: `bridge delivery attributed to a silence-warranted turn (${dN(c, "chars")}c)`, matched }
+        : { outcome: "LANDED_VIA_BRIDGE", latencyMs: lat(c), notes: `prose bridged to ${dS(c, "platform") ?? "?"} (${dN(c, "chars")}c) — model used PROSE on a mention (rescued, adherence-relevant)`, matched };
+    case A_PROSE_DROPPED: {
+      const replied = dB(c, "replied") ?? false;
+      if (expected === "SILENT_OK") {
+        return { outcome: "SILENT_OK", latencyMs: null, notes: `silence held EXTERNALLY but the model wrote prose (${dN(c, "chars")}c, replied=${replied}) — gated drop`, matched };
+      }
+      return { outcome: "DROP", latencyMs: null, notes: `prose dropped (${dN(c, "chars")}c, replied=${replied})${replied ? " — after a real reply (harmless wrap-up?)" : ""}`, matched };
+    }
+    case A_BRIDGE_UNRESOLVED:
+    case A_BRIDGE_FAILED:
+      return { outcome: "DROP", latencyMs: null, notes: `${c.action} — answer owed and lost (delivery failure, not model judgment)`, matched };
+    case A_NO_REPLY: {
+      const reason = dS(c, "reason") ?? "";
+      return expected === "SILENT_OK"
+        ? { outcome: "SILENT_OK", latencyMs: null, notes: `no_reply (${reason})`, matched }
+        : { outcome: "JUDGED_SILENT", latencyMs: null, notes: `no_reply (${reason}) on a reply-warranted probe — judgment/recall miss, NOT a drop`, matched };
+    }
+    default:
+      return { outcome: "NO_ACTION", latencyMs: null, notes: `unrecognised completion ${c.action}`, matched };
+  }
 }
 
 interface TurnResult {
-  turn: number; scenario: ScenarioId; label: string; expected: Expected; outcome: Outcome;
-  wakeId: string | null; latencyMs: number | null; recall: { code: boolean; date: boolean; ref: boolean } | null;
-  drops: { chars: number; replied: boolean }[]; replyPlatform: string | null; notes: string;
+  turn: number;
+  scenario: ScenarioId;
+  label: string;
+  expected: Expected;
+  outcome: Outcome;
+  probe: Injection | null;
+  state: Injection | null;
+  latencyMs: number | null;
+  recall: { code: boolean; date: boolean; ref: boolean } | null;
+  matchedRows: AuditWireEntry[];
+  notes: string;
 }
 
-async function scoreProbe(wakeId: string, sinceIso: string, expected: Expected, t0: number): Promise<{ outcome: Outcome; latencyMs: number | null; drops: { chars: number; replied: boolean }[]; replyPlatform: string | null; notes: string; landedRow?: AuditWireEntry }> {
-  const deadline = Date.now() + REPLY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const rows = await auditWindow(sinceIso);
-    const landed = landedFor(rows, wakeId);
-    const drops = proseDrops(rows);
-    const silent = rows.some((e) => e.action === A_NO_REPLY);
-    if (expected === "LANDED") {
-      if (landed) return { outcome: "LANDED", latencyMs: Date.now() - t0, drops, replyPlatform: dS(landed, "platform") ?? null, notes: "reply.post joined by wakeId", landedRow: landed };
-      const realDrop = drops.find((d) => !d.replied);
-      if (realDrop) return { outcome: "DROP", latencyMs: null, drops, replyPlatform: null, notes: `prose dropped (${realDrop.chars} chars, replied=false)` };
-      if (silent) return { outcome: "NO_ACTION", latencyMs: null, drops, replyPlatform: null, notes: "no_reply on a reply-warranted probe (judged silent — recall miss or over-cautious)" };
-    } else {
-      if (landed) return { outcome: "OVER_REPLY", latencyMs: Date.now() - t0, drops, replyPlatform: dS(landed, "platform") ?? null, notes: "posted despite human↔human chatter" };
-      if (silent) return { outcome: "SILENT_OK", latencyMs: null, drops, replyPlatform: null, notes: "unified.no_reply audited, nothing posted" };
-    }
-    await sleep(POLL_MS);
-  }
-  const rows = await auditWindow(sinceIso);
-  const drops = proseDrops(rows);
-  const realDrop = drops.find((d) => !d.replied);
-  if (expected === "SILENT_OK") return { outcome: "SILENT_OK", latencyMs: null, drops, replyPlatform: null, notes: "timeout with no post (treated as silence held)" };
-  return { outcome: realDrop ? "DROP" : "NO_ACTION", latencyMs: null, drops, replyPlatform: null, notes: realDrop ? `prose dropped (${realDrop.chars} chars)` : "timeout, no terminal signal" };
+function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
+  const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP");
+  const landedTool = rExp.filter((t) => t.outcome === "LANDED_VIA_REPLY_TOOL");
+  const landedBridge = rExp.filter((t) => t.outcome === "LANDED_VIA_BRIDGE");
+  const judgedSilent = rExp.filter((t) => t.outcome === "JUDGED_SILENT");
+  const sExp = turns.filter((t) => t.expected === "SILENT_OK" && t.outcome !== "SKIP");
+  const silent = sExp.filter((t) => t.outcome === "SILENT_OK");
+  const dropRows = allRows.filter((r) => r.action === A_PROSE_DROPPED && (sessionId === null || (dS(r, "sessionId") ?? sessionId) === sessionId));
+  const lRec = [...landedTool, ...landedBridge].filter((t) => t.recall);
+  const full = lRec.filter((t) => t.recall!.code && t.recall!.date && t.recall!.ref);
+  const rate = (a: number, b: number): number | null => (b === 0 ? null : Math.round((a / b) * 1000) / 1000);
+  return {
+    reply_landed_rate: {
+      landed: landedTool.length + landedBridge.length,
+      of: rExp.length,
+      rate: rate(landedTool.length + landedBridge.length, rExp.length),
+      via_reply_tool: landedTool.length,
+      via_bridge: landedBridge.length,
+    },
+    reply_tool_adherence: { via_reply_tool: landedTool.length, of: rExp.length, rate: rate(landedTool.length, rExp.length) },
+    judged_silent_count: judgedSilent.length,
+    prose_drop_count: {
+      total: dropRows.length,
+      repliedFalse: dropRows.filter((r) => dB(r, "replied") === false).length,
+      repliedTrue: dropRows.filter((r) => dB(r, "replied") === true).length,
+    },
+    silence_precision: { silent: silent.length, of: sExp.length, rate: rate(silent.length, sExp.length) },
+    recall_accuracy: { full: full.length, ofLandedRead: lRec.length, rate: rate(full.length, lRec.length) },
+  };
+}
+
+async function auditSince(sinceIso: string): Promise<readonly AuditWireEntry[]> {
+  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 1000 }); }
+  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
 }
 
 async function readSlackReplyBody(sinceIso: string): Promise<string | null> {
@@ -157,10 +324,10 @@ async function readSlackReplyBody(sinceIso: string): Promise<string | null> {
 
 interface Surfaces { slack: boolean; notion: boolean; }
 
-async function runScenario(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<TurnResult> {
+async function injectTurn(id: ScenarioId, turn: number, fact: { code: string; date: string; ref: string }, surf: Surfaces): Promise<{ probe: Injection | null; state: Injection | null; skip?: string }> {
   const spec = SCENARIOS[id];
-  const base: TurnResult = { turn, scenario: id, label: spec.label, expected: spec.expected, outcome: "NO_ACTION", wakeId: null, latencyMs: null, recall: null, drops: [], replyPlatform: null, notes: "" };
-  if (spec.needs.some((n) => !surf[n])) return { ...base, outcome: "SKIP", notes: `missing surface(s): ${spec.needs.filter((n) => !surf[n]).join(",")}` };
+  const missing = spec.needs.filter((n) => !surf[n]);
+  if (missing.length > 0) return { probe: null, state: null, skip: `missing surface(s): ${missing.join(",")}` };
 
   const slackOrigin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
   const notionOrigin = { platform: "notion", discussionId: NOTION_DISCUSSION };
@@ -168,68 +335,121 @@ async function runScenario(id: ScenarioId, turn: number, fact: { code: string; d
   const ask = `what codename, date and ref did we just lock in? reply here with all three.`;
 
   if (id === "S3") {
-    const sinceIso = new Date().toISOString();
-    const t0 = Date.now();
-    const { wakeId } = await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: `morning all — anyone grabbing coffee before standup? heading down in 5.` });
-    const s = await scoreProbe(wakeId, sinceIso, "SILENT_OK", t0);
-    return { ...base, wakeId, outcome: s.outcome, latencyMs: s.latencyMs, drops: s.drops, replyPlatform: s.replyPlatform, notes: s.notes };
+    const probe = await injectWake(
+      { domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "alex", origin: slackOrigin, text: `morning all — anyone grabbing coffee before standup? heading down in 5.` },
+      "chatter", turn, id,
+    );
+    return { probe, state: null };
   }
 
   const stateOn = id === "S4" ? "notion" : "slack";
-  if (stateOn === "notion") {
-    await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "sam", origin: notionOrigin, text: factLine }).catch((e) => console.warn(`  state-wake failed: ${(e as Error).message}`));
-  } else {
-    await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "sam", origin: slackOrigin, text: factLine }).catch((e) => console.warn(`  state-wake failed: ${(e as Error).message}`));
-  }
+  let state: Injection | null = null;
+  try {
+    state = stateOn === "notion"
+      ? await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "sam", origin: notionOrigin, threadTs: NOTION_DISCUSSION, text: factLine }, "state", turn, id)
+      : await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: "sam", origin: slackOrigin, text: factLine }, "state", turn, id);
+  } catch (e) { console.warn(`  state-wake failed: ${(e as Error).message}`); }
   await sleep(FACT_WAIT_MS);
 
-  const sinceIso = new Date().toISOString();
-  const t0 = Date.now();
-  let wakeId: string;
-  if (id === "S2") {
-    const r = await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "sam", origin: notionOrigin, text: `open everywhere — ${ask}` });
-    wakeId = r.wakeId;
-  } else {
-    const r = await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: ask });
-    wakeId = r.wakeId;
-  }
-  const s = await scoreProbe(wakeId, sinceIso, "LANDED", t0);
-  let recall: TurnResult["recall"] = null;
-  if (s.outcome === "LANDED" && s.replyPlatform === "slack") {
-    const body = await readSlackReplyBody(sinceIso);
-    if (body) recall = recallHit(body, fact);
-  }
-  return { ...base, wakeId, outcome: s.outcome, latencyMs: s.latencyMs, drops: s.drops, replyPlatform: s.replyPlatform, recall, notes: s.notes + (recall ? ` recall:${recall.code ? "c" : "·"}${recall.date ? "d" : "·"}${recall.ref ? "r" : "·"}` : "") };
+  const probe = id === "S2"
+    ? await injectWake({ domain: DOMAIN, platform: "notion", surfaceKey: NOTION_SURFACE, addressing: "channel-watch", author: "sam", origin: notionOrigin, threadTs: NOTION_DISCUSSION, text: `open everywhere — ${ask}` }, "probe", turn, id)
+    : await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "sam", origin: slackOrigin, text: ask }, "probe", turn, id);
+  return { probe, state };
 }
 
-async function injectFiller(n: number): Promise<number> {
-  let ok = 0;
-  const origin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
-  for (let i = 0; i < n; i++) {
-    try {
-      await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` });
-      ok++;
-      await sleep(1500);
-    } catch (e) { console.warn(`  filler ${i} failed: ${(e as Error).message}`); }
-  }
-  return ok;
+interface OldResults {
+  config: Record<string, unknown>;
+  series: ScenarioId[];
+  turns: { turn: number; scenario: ScenarioId; wakeId?: string | null; probe?: { wakeId: string } | null; expected: Expected }[];
+  startedAt?: string;
+  seriesStartedAt?: string;
+  finishedAt?: string;
 }
 
-function summarize(turns: readonly TurnResult[]) {
-  const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP");
-  const landed = rExp.filter((t) => t.outcome === "LANDED");
-  const sExp = turns.filter((t) => t.expected === "SILENT_OK" && t.outcome !== "SKIP");
-  const silent = sExp.filter((t) => t.outcome === "SILENT_OK");
-  const drops = turns.flatMap((t) => t.drops);
-  const lRec = landed.filter((t) => t.recall);
-  const full = lRec.filter((t) => t.recall!.code && t.recall!.date && t.recall!.ref);
-  const rate = (a: number, b: number): number | null => (b === 0 ? null : Math.round((a / b) * 1000) / 1000);
-  return {
-    reply_landed_rate: { landed: landed.length, of: rExp.length, rate: rate(landed.length, rExp.length) },
-    prose_drop_count: { total: drops.length, repliedFalse: drops.filter((d) => !d.replied).length, repliedTrue: drops.filter((d) => d.replied).length },
-    silence_precision: { silent: silent.length, of: sExp.length, rate: rate(silent.length, sExp.length) },
-    recall_accuracy: { full: full.length, ofLandedRead: lRec.length, rate: rate(full.length, lRec.length) },
-  };
+async function rescoreRun(cli: Cli): Promise<void> {
+  const path = cli.rescore!;
+  const old = JSON.parse(readFileSync(path, "utf8")) as OldResults;
+  const anchor = old.seriesStartedAt ?? old.startedAt ?? new Date().toISOString();
+  const since = cli.since ?? new Date(new Date(anchor).getTime() - 20 * 60_000).toISOString();
+  const until = cli.until ?? (old.finishedAt ? new Date(new Date(old.finishedAt).getTime() + 5 * 60_000).toISOString() : new Date(new Date(anchor).getTime() + 10 * 60_000).toISOString());
+  console.log(`\n=== ambient-eval RESCORE ===\nfile:   ${path}\nwindow: ${since} → ${until}`);
+
+  const rows = (await auditSince(since)).filter((r) => r.ts <= until);
+  if (rows.length === 0) { console.error("no audit rows in the window — check --since/--until"); process.exit(1); }
+  console.log(`audit rows in window: ${rows.length}`);
+
+  const probeByWake = new Map<string, { turn: number; scenario: ScenarioId; expected: Expected }>();
+  for (const t of old.turns) {
+    const w = t.probe?.wakeId ?? t.wakeId;
+    if (w) probeByWake.set(w, { turn: t.turn, scenario: t.scenario, expected: t.expected });
+  }
+  injections.length = 0;
+  for (const r of rows.slice().sort((a, b) => a.ts.localeCompare(b.ts))) {
+    if (r.action !== "control.service_call" || dS(r, "view") !== "test_wake") continue;
+    const wakeId = dS(r, "wakeId") ?? "";
+    const probe = probeByWake.get(wakeId);
+    injections.push({
+      wakeId,
+      injectedAt: r.ts,
+      kind: probe ? (probe.scenario === "S3" ? "chatter" : "probe") : "state",
+      turn: probe?.turn ?? 0,
+      ...(probe ? { scenario: probe.scenario } : {}),
+      addressing: dS(r, "addressing") === "direct-mention" ? "direct-mention" : "channel-watch",
+      platform: dS(r, "injectedPlatform") ?? "?",
+      text: null,
+    });
+  }
+  console.log(`reconstructed ${injections.length} injections from audit (${injections.filter((i) => i.kind !== "state").length} probes/chatter)`);
+
+  const attribution = attributeOutcomes(injections, rows);
+  for (const n of attribution.notes) console.log(`  [attribution] ${n}`);
+
+  const turns: TurnResult[] = old.turns.map((t) => {
+    const spec = SCENARIOS[t.scenario];
+    const w = t.probe?.wakeId ?? t.wakeId;
+    const probe = injections.find((i) => i.wakeId === w) ?? null;
+    const state = injections.find((i) => i.kind === "state" && i.turn === t.turn) ?? null;
+    if (!probe) {
+      return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: "SKIP" as Outcome, probe: null, state, latencyMs: null, recall: null, matchedRows: [], notes: "probe wakeId not found in the audit window" };
+    }
+    const o = outcomeFor(probe, t.expected, attribution);
+    return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: o.outcome, probe, state, latencyMs: o.latencyMs, recall: null, matchedRows: o.matched, notes: `[rescored] ${o.notes}` };
+  });
+
+  const summary = summarize(turns, rows, attribution.sessionId);
+  printReport(turns, summary, attribution);
+
+  const outPath = join(dirname(path), basename(path).replace(/\.json$/, "-rescored.json"));
+  writeFileSync(outPath, JSON.stringify({
+    rescoredFrom: path,
+    rescoredAt: new Date().toISOString(),
+    window: { since, until },
+    config: old.config,
+    series: old.series,
+    sessionId: attribution.sessionId,
+    attributionNotes: attribution.notes,
+    injections,
+    turns,
+    completions: attribution.completions,
+    summary,
+  }, null, 2));
+  console.log(`\nwrote ${outPath}`);
+}
+
+function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof summarize>, attribution: Attribution): void {
+  console.log(`\n=== TRAJECTORY (session ${attribution.sessionId ?? "?"}) ===`);
+  for (const t of turns) {
+    const rec = t.recall ? `${t.recall.code ? "c" : "·"}${t.recall.date ? "d" : "·"}${t.recall.ref ? "r" : "·"}` : "—";
+    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(22)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(6)} rec:${rec}  ${t.notes}`);
+  }
+  console.log(`\n=== SUMMARY ===`);
+  const s = summary;
+  console.log(`reply_landed_rate ⭐  : ${s.reply_landed_rate.landed}/${s.reply_landed_rate.of} = ${s.reply_landed_rate.rate ?? "n/a"}  (reply_tool ${s.reply_landed_rate.via_reply_tool} + bridge ${s.reply_landed_rate.via_bridge})`);
+  console.log(`reply_tool_adherence  : ${s.reply_tool_adherence.via_reply_tool}/${s.reply_tool_adherence.of} = ${s.reply_tool_adherence.rate ?? "n/a"}  (strict axis — bridge rescues excluded)`);
+  console.log(`judged_silent_count   : ${s.judged_silent_count} (reply-warranted probes the model chose silence on)`);
+  console.log(`prose_drop_count      : ${s.prose_drop_count.total} window-wide (replied=false ${s.prose_drop_count.repliedFalse} ← real, replied=true ${s.prose_drop_count.repliedTrue})`);
+  console.log(`silence_precision     : ${s.silence_precision.silent}/${s.silence_precision.of} = ${s.silence_precision.rate ?? "n/a"}`);
+  console.log(`recall_accuracy       : ${s.recall_accuracy.full}/${s.recall_accuracy.ofLandedRead} = ${s.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
 }
 
 const slug = (m: string): string => m.replace(/[^a-z0-9]+/gi, "-");
@@ -237,6 +457,13 @@ const slug = (m: string): string => m.replace(/[^a-z0-9]+/gi, "-");
 async function main() {
   const cli = parseCli(process.argv.slice(2));
   DOMAIN = cli.domain;
+
+  if (cli.rescore) {
+    if (!TARGET || !READ) { console.error("✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
+    await rescoreRun(cli);
+    return;
+  }
+
   const series = seriesOf(cli.turns);
   const effort = clampReasoning(cli.effort, DOMAIN_CEILING) ?? cli.effort;
   if (effort !== cli.effort) console.warn(`⚠ --effort "${cli.effort}" > ceiling "${DOMAIN_CEILING}" — clamped to "${effort}".`);
@@ -272,7 +499,8 @@ async function main() {
   console.log(`set  pick: ${JSON.stringify({ modelId: cli.model, reasoning: effort })}`);
 
   const run = Date.now().toString().slice(-5);
-  const turns: TurnResult[] = [];
+  const seriesStartedAt = new Date().toISOString();
+  const pending: { turn: number; scenario: ScenarioId; probe: Injection | null; state: Injection | null; skip?: string; fact: ReturnType<typeof freshFact> }[] = [];
   try {
     if (cli.rotate) {
       const r = await rotateUnifiedWindow(store, cli.org, cli.domain);
@@ -281,20 +509,94 @@ async function main() {
 
     if (cli.fill > 0) {
       console.log(`\ninjecting ${cli.fill} filler ambient wakes to grow the window...`);
-      const filled = await injectFiller(cli.fill);
-      console.log(`  ${filled}/${cli.fill} filler wakes injected`);
+      const slackOrigin = { platform: "slack", channelId: SLACK_CHANNEL_ID };
+      for (let i = 0; i < cli.fill; i++) {
+        try {
+          await injectWake({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "channel-watch", author: `fill${i}`, origin: slackOrigin, text: `filler ${i}: just chatting about the weekend plans, nothing actionable here.` }, "filler", 0);
+          await sleep(1500);
+        } catch (e) { console.warn(`  filler ${i} failed: ${(e as Error).message}`); }
+      }
       await sleep(FACT_WAIT_MS);
     }
 
     for (let i = 0; i < series.length; i++) {
       const fact = freshFact(run, i + 1);
       console.log(`\n── T${i + 1}/${series.length} ${series[i]} ${SCENARIOS[series[i]].label} ─ fact ${fact.code}`);
-      let res: TurnResult;
-      try { res = await runScenario(series[i], i + 1, fact, surf); }
-      catch (e) { res = { turn: i + 1, scenario: series[i], label: SCENARIOS[series[i]].label, expected: SCENARIOS[series[i]].expected, outcome: "NO_ACTION", wakeId: null, latencyMs: null, recall: null, drops: [], replyPlatform: null, notes: `ERROR: ${(e as Error).message}` }; }
-      turns.push(res);
-      console.log(`   → ${res.outcome}  (lat ${res.latencyMs ? Math.round(res.latencyMs / 1000) + "s" : "-"})  ${res.notes}`);
+      try {
+        const t = await injectTurn(series[i], i + 1, fact, surf);
+        pending.push({ turn: i + 1, scenario: series[i], ...t, fact });
+        if (t.skip) { console.log(`   → SKIP  ${t.skip}`); continue; }
+        const deadline = Date.now() + REPLY_TIMEOUT_MS;
+        let resolved = false;
+        while (Date.now() < deadline) {
+          const rows = await auditSince(seriesStartedAt);
+          const attribution = attributeOutcomes(injections, rows);
+          if (t.probe && (attribution.completionOf.has(t.probe.wakeId) || (attribution.replyPostsOf.get(t.probe.wakeId)?.length ?? 0) > 0)) {
+            const o = outcomeFor(t.probe, SCENARIOS[series[i]].expected, attribution);
+            console.log(`   → ${o.outcome}  (lat ${o.latencyMs ? Math.round(o.latencyMs / 1000) + "s" : "-"})  ${o.notes}  [interim — final pass below settles it]`);
+            resolved = true;
+            break;
+          }
+          await sleep(POLL_MS);
+        }
+        if (!resolved) console.log(`   → (no completion yet — the final attribution pass will settle it)`);
+      } catch (e) {
+        console.error(`   → turn ERROR: ${(e as Error).message}`);
+        pending.push({ turn: i + 1, scenario: series[i], probe: null, state: null, skip: `ERROR: ${(e as Error).message}`, fact });
+      }
     }
+
+    console.log(`\nsettling (up to ${Math.round(REPLY_TIMEOUT_MS / 1000)}s for trailing completions)...`);
+    const settleDeadline = Date.now() + REPLY_TIMEOUT_MS;
+    let finalRows: readonly AuditWireEntry[] = [];
+    let finalAttribution: Attribution = attributeOutcomes(injections, []);
+    for (;;) {
+      finalRows = await auditSince(seriesStartedAt);
+      finalAttribution = attributeOutcomes(injections, finalRows);
+      const unresolved = pending.filter((p) => p.probe && !finalAttribution.completionOf.has(p.probe.wakeId) && (finalAttribution.replyPostsOf.get(p.probe.wakeId)?.length ?? 0) === 0);
+      if (unresolved.length === 0 || Date.now() >= settleDeadline) break;
+      await sleep(POLL_MS);
+    }
+    for (const n of finalAttribution.notes) console.log(`  [attribution] ${n}`);
+
+    const turns: TurnResult[] = [];
+    for (const p of pending) {
+      const spec = SCENARIOS[p.scenario];
+      if (p.skip || !p.probe) {
+        turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: "SKIP", probe: p.probe, state: p.state, latencyMs: null, recall: null, matchedRows: [], notes: p.skip ?? "no probe injected" });
+        continue;
+      }
+      const o = outcomeFor(p.probe, spec.expected, finalAttribution);
+      let recall: TurnResult["recall"] = null;
+      if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_BRIDGE") {
+        const platform = o.matched.map((r) => dS(r, "platform")).find((x) => x) ?? null;
+        if (platform === "slack") {
+          const body = await readSlackReplyBody(p.probe.injectedAt);
+          if (body) recall = recallHit(body, p.fact);
+        }
+      }
+      turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, recall, matchedRows: o.matched, notes: o.notes });
+    }
+
+    const summary = summarize(turns, finalRows, finalAttribution.sessionId);
+    printReport(turns, summary, finalAttribution);
+
+    const outDir = join(process.cwd(), "scripts/eval/results");
+    mkdirSync(outDir, { recursive: true });
+    const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${seriesStartedAt.replace(/[:.]/g, "-")}.json`);
+    writeFileSync(outPath, JSON.stringify({
+      config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, rotate: cli.rotate },
+      series,
+      seriesStartedAt,
+      finishedAt: new Date().toISOString(),
+      sessionId: finalAttribution.sessionId,
+      attributionNotes: finalAttribution.notes,
+      injections,
+      turns,
+      completions: finalAttribution.completions,
+      summary,
+    }, null, 2));
+    console.log(`\nwrote ${outPath}`);
   } finally {
     if (cli.restore) {
       try {
@@ -304,24 +606,6 @@ async function main() {
       } catch (e) { console.error(`⚠ FAILED to restore pick — domain left on ${cli.model}@${effort}. Fix manually. (${(e as Error).message})`); }
     }
   }
-
-  const summary = summarize(turns);
-  console.log(`\n=== TRAJECTORY (${cli.model}@${effort}) ===`);
-  for (const t of turns) {
-    const rec = t.recall ? `${t.recall.code ? "c" : "·"}${t.recall.date ? "d" : "·"}${t.recall.ref ? "r" : "·"}` : "—";
-    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(11)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(5)} rec:${rec}  ${t.notes}`);
-  }
-  console.log(`\n=== SUMMARY ===`);
-  console.log(`reply_landed_rate ⭐ : ${summary.reply_landed_rate.landed}/${summary.reply_landed_rate.of} = ${summary.reply_landed_rate.rate ?? "n/a"}`);
-  console.log(`prose_drop_count     : ${summary.prose_drop_count.total} (replied=false ${summary.prose_drop_count.repliedFalse} ← real, replied=true ${summary.prose_drop_count.repliedTrue} harmless)`);
-  console.log(`silence_precision    : ${summary.silence_precision.silent}/${summary.silence_precision.of} = ${summary.silence_precision.rate ?? "n/a"}`);
-  console.log(`recall_accuracy      : ${summary.recall_accuracy.full}/${summary.recall_accuracy.ofLandedRead} = ${summary.recall_accuracy.rate ?? "n/a"} (best-effort read-back)`);
-
-  const outDir = join(process.cwd(), "scripts/eval/results");
-  mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, `ambient-eval-${slug(cli.model)}-${effort}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
-  writeFileSync(outPath, JSON.stringify({ config: { model: cli.model, effort, domain: cli.domain, org: cli.org, turns: cli.turns, fill: cli.fill, rotate: cli.rotate }, series, turns, summary, startedAt: new Date().toISOString() }, null, 2));
-  console.log(`\nwrote ${outPath}`);
 }
 
 main().catch((e) => { console.error("AMBIENT-EVAL FAILED:", e); process.exit(1); });

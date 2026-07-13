@@ -71,6 +71,15 @@ function defaultReason(addressing: WakeAddressing): WakeReason {
   return "channel-activity";
 }
 
+function defaultContainerNoun(platform: string): string | undefined {
+  switch (platform) {
+    case "notion": return "doc";
+    case "linear": return "team";
+    case "github": return "repo";
+    default: return undefined;
+  }
+}
+
 export async function handleTestWakeInjection(req: Request, receive: RouteHandlerArgs["receive"]): Promise<Response> {
   const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
   if (!testWakeEnabled() || entries.length === 0) return new Response("not found", { status: 404 });
@@ -123,14 +132,16 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   const reason: WakeReason = body.reason ?? defaultReason(addressing);
   const wakeId = mintWakeId();
   const containerId = surfaceKey.split("/").slice(2).join("/") || surfaceKey;
+  const containerNoun = body.containerNoun ?? defaultContainerNoun(platform);
+  const unifiedDisclosure = body.unifiedDisclosure ?? true;
   const nw: NormalizedWake = {
     platform,
     reason,
     addressing,
     wakeId,
-    ...(body.containerNoun !== undefined ? { containerNoun: body.containerNoun } : {}),
+    ...(containerNoun !== undefined ? { containerNoun } : {}),
     ...(body.engagementTier !== undefined ? { engagementTier: body.engagementTier } : {}),
-    ...(body.unifiedDisclosure !== undefined ? { unifiedDisclosure: body.unifiedDisclosure } : {}),
+    unifiedDisclosure,
     ...(body.participants !== undefined ? { participants: body.participants } : {}),
     locus: {
       channel: { id: containerId, platform, ...(body.channelType !== undefined ? { type: body.channelType } : {}) },

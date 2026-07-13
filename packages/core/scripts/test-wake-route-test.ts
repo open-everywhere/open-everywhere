@@ -138,6 +138,27 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   ok(c.auth.attributes?.team_id === "T1" && c.auth.attributes?.channel_id === "C1", "auth carries partition attrs derived from surfaceKey");
   ok(c.message.includes("[channel-watch]"), "rendered message is the judged channel-watch envelope (byte-identical to a real ambient wake)");
   ok(c.message.includes("hello team, is anything blocked?"), "rendered message contains the trigger body");
+  ok(c.message.includes("Cross-surface disclosure:"), "unifiedDisclosure defaults TRUE (matches every real unified dispatch)");
+  ok(c.message.includes("this channel's standing session"), "slack containerNoun stays 'channel' (renderWake default)");
+}
+
+{
+  captured.length = 0;
+  await post(goodBody({ unifiedDisclosure: false }), SECRET);
+  ok(!captured[0].message.includes("Cross-surface disclosure:"), "unifiedDisclosure:false renders without the disclosure sentence");
+}
+
+{
+  captured.length = 0;
+  const notionSurface = "notion/W1/P1";
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE, notionSurface], ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true })],
+    loadSilos: () => [], loadRoles: () => [], domainsForSurface: () => [],
+  });
+  const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, SECRET);
+  ok(res.status === 200, "notion injection → 200");
+  ok(captured[0].message.includes("this doc's standing session"), "notion containerNoun defaults to 'doc' (matches notion-supervisor)");
 }
 
 {
