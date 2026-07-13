@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { markNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
+import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
 
 export const NO_REPLY_REASONS = [
@@ -56,6 +56,19 @@ export default defineTool({
         "`reply` IS in your toolset on every surface in this session — never conclude it's unavailable. " +
           "If you believe it can't deliver, call it and read the error; otherwise pick a named reason for silence.",
       );
+    }
+    const already = peekNoReplyThisTurn();
+    if (already !== null) {
+      await auditToolAction(ctx, "reply.no_reply_redundant", {
+        reason: input.reason,
+        already,
+        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+      });
+      return {
+        acknowledged: true,
+        reason: input.reason,
+        note: "Silence already recorded this turn; no second no_reply logged.",
+      };
     }
     markNoReplyThisTurn(input.reason as NoReplyReason);
     await auditToolAction(ctx, "reply.no_reply", {

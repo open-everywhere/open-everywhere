@@ -17,7 +17,7 @@ const noReply = (await import("../agent/tools/no_reply.js")).default as unknown 
 };
 const { NO_REPLY_REASONS } = await import("../agent/tools/no_reply.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { markNoReplyThisTurn, consumeNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
+const { markNoReplyThisTurn, consumeNoReplyThisTurn, peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
 const { markReactedThisTurn } = await import("../agent/channels/react-signal.js");
 const { finalMessageActionForTurn, isBareStop, isNoReply, NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
 
@@ -108,6 +108,30 @@ await inSession(async () => {
   ok(
     withExplanation?.detail?.explanation === "the question was rhetorical and already answered itself",
     "no_reply: the explanation is preserved verbatim in the audit row",
+  );
+});
+
+await inSession(async () => {
+  const before = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
+  const beforeRedundant = (await readAudit({ org: "default", action: "reply.no_reply_redundant" })).length;
+
+  const r1 = await noReply.execute({ reason: "nothing_to_add" }, ctx());
+  ok(r1.acknowledged === true, "no_reply redundant-guard: the first call this turn acknowledges");
+  ok(peekNoReplyThisTurn() === "nothing_to_add", "no_reply redundant-guard: the first call marks the signal");
+
+  const r2 = await noReply.execute({ reason: "duplicate" }, ctx());
+  ok(r2.acknowledged === true, "no_reply redundant-guard: a redundant second call still acknowledges (never throws)");
+  ok((r2 as { note?: string }).note?.includes("already recorded") === true, "no_reply redundant-guard: the redundant note states silence was already recorded this turn");
+  ok(peekNoReplyThisTurn() === "nothing_to_add", "no_reply redundant-guard: the redundant call does not re-mark (first reason preserved)");
+
+  const afterNoReply = await readAudit({ org: "default", action: "reply.no_reply" });
+  ok(afterNoReply.length - before === 1, "no_reply redundant-guard: exactly ONE reply.no_reply row is written for the turn");
+  const afterRedundant = await readAudit({ org: "default", action: "reply.no_reply_redundant" });
+  ok(afterRedundant.length - beforeRedundant === 1, "no_reply redundant-guard: the redundant call is still audited, as reply.no_reply_redundant");
+  const red = afterRedundant.find((r: { detail?: { reason?: string; already?: string } }) => r.detail?.reason === "duplicate");
+  ok(
+    red?.detail?.reason === "duplicate" && red?.detail?.already === "nothing_to_add",
+    "no_reply redundant-guard: the redundant audit row records both reasons (new reason + the already-recorded one)",
   );
 });
 
