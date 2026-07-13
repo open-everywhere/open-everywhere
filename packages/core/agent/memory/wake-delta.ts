@@ -87,6 +87,57 @@ export async function renderMemoryDelta(opts: RenderMemoryDeltaOpts): Promise<st
   }
 }
 
+export interface IndexDeltaChanges {
+  readonly healed: readonly string[];
+}
+
+export interface RenderIndexDeltaOpts {
+  readonly org: string;
+  readonly sinceIso: string;
+  readonly atIso?: string;
+  readonly selfKey?: string;
+  readonly readAudit?: (filter: { org: string; action: string; since: string }) => Promise<AuditEntry[]>;
+}
+
+function strArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : [];
+}
+
+export function selectIndexChanges(rows: readonly AuditEntry[], opts: RenderIndexDeltaOpts): IndexDeltaChanges {
+  const healed = new Set<string>();
+  for (const row of rows) {
+    if (!(row.ts > opts.sinceIso)) continue;
+    if (opts.atIso && row.ts > opts.atIso) continue;
+    const detail = row.detail ?? {};
+    if (opts.selfKey && str(detail.continuationToken) !== opts.selfKey) continue;
+    for (const name of strArray(detail.healed)) healed.add(name);
+  }
+  return { healed: [...healed] };
+}
+
+export function formatIndexDelta(changes: IndexDeltaChanges): string | null {
+  if (changes.healed.length === 0) return null;
+  const names = changes.healed.map((n) => `"${n}"`).join(", ");
+  return (
+    "<system-reminder>\n" +
+    "Your memory index changed since your last wake — a silo that was unavailable earlier this " +
+    `session is back: ${names}. The index and files on disk at /workspace/memory/MEMORY.md are ` +
+    "already refreshed; re-read the relevant path before answering from memory if it bears on the " +
+    "current message.\n" +
+    "</system-reminder>"
+  );
+}
+
+export async function renderIndexDelta(opts: RenderIndexDeltaOpts): Promise<string | null> {
+  try {
+    const read = opts.readAudit ?? defaultReadAudit;
+    const rows = await read({ org: opts.org, action: "memory.index_change", since: opts.sinceIso });
+    return formatIndexDelta(selectIndexChanges(rows, opts));
+  } catch {
+    return null;
+  }
+}
+
 export function sessionReadSilos(surfaceKey: string, domains: readonly Domain[]): MemoryDeltaSilo[] {
   const domain = domainForChannel(surfaceKey, domains) ?? criteriaDomain("org", domains);
   if (!domain) return [];
@@ -111,5 +162,12 @@ export function liveMemoryDeltaDep(
   if (!unifiedSupervisorOrgGateEnabled(domains)) return undefined;
   const silos = sessionReadSilos(surfaceKey, domains);
   if (silos.length === 0) return undefined;
-  return (sinceIso, atIso, selfKey) => renderMemoryDelta({ org, silos, sinceIso, atIso, selfKey });
+  return async (sinceIso, atIso, selfKey) => {
+    const [content, index] = await Promise.all([
+      renderMemoryDelta({ org, silos, sinceIso, atIso, selfKey }),
+      renderIndexDelta({ org, sinceIso, atIso, selfKey }),
+    ]);
+    const parts = [content, index].filter((x): x is string => x !== null);
+    return parts.length > 0 ? parts.join("\n\n") : null;
+  };
 }

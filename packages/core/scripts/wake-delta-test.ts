@@ -5,6 +5,9 @@ import {
   selectChangedSilos,
   renderMemoryDelta,
   sessionReadSilos,
+  selectIndexChanges,
+  formatIndexDelta,
+  renderIndexDelta,
   type MemoryDeltaSilo,
   type RenderMemoryDeltaOpts,
 } from "../agent/memory/wake-delta.js";
@@ -125,6 +128,54 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   ok(withOrg.some((s) => s.siloName === "org-baseline"), "sessionReadSilos: includeOrg pulls the org pseudo-domain's silos");
   ok(sessionReadSilos("linear/org/unassigned", [orgD]).some((s) => s.siloName === "org-baseline"), "sessionReadSilos: an unassigned surface falls back to the org default silos");
   ok(sessionReadSilos("linear/org/team-1", [defineDomain({ name: "eng", channels: ["linear/org/team-1"] })]).length === 0, "sessionReadSilos: a memory-less domain resolves no silos");
+}
+
+function indexRow(over: { ts: string; healed?: string[]; continuationToken?: string }): AuditEntry {
+  const { ts, healed, continuationToken } = over;
+  return {
+    ts,
+    org: "acme",
+    platform: "notion",
+    workspace: "W1",
+    action: "memory.index_change",
+    detail: { ...(healed ? { healed } : {}), ...(continuationToken ? { continuationToken } : {}) },
+  };
+}
+
+ok(formatIndexDelta({ healed: [] }) === null, "index formatter: no healed silos → null");
+{
+  const s = formatIndexDelta({ healed: ["handbook"] });
+  ok(s !== null && s.startsWith("<system-reminder>") && s.endsWith("</system-reminder>"), "index formatter: a healed silo → a fully-formed <system-reminder>");
+  ok(s!.includes("\"handbook\"") && s!.includes("/workspace/memory/MEMORY.md"), "index formatter: names the healed silo + points at the refreshed on-disk index");
+  ok(!s!.includes("<untrusted"), "index formatter: silo NAMES only — no content / untrusted-wrap (the taint rule)");
+}
+
+const SELF = "oe-dom:eng:oe-sup:g3";
+{
+  const rows: AuditEntry[] = [
+    indexRow({ ts: "2026-07-13T10:04:00.000Z", healed: ["handbook"], continuationToken: SELF }),
+    indexRow({ ts: "2026-07-13T10:03:00.000Z", healed: ["acme-eng"], continuationToken: SELF }),
+  ];
+  const c = selectIndexChanges(rows, { org: "acme", sinceIso: CURSOR, selfKey: SELF });
+  ok(c.healed.length === 2 && c.healed.includes("handbook") && c.healed.includes("acme-eng"), "index selector: aggregates healed silo names from this session's rows");
+}
+{
+  ok(selectIndexChanges([indexRow({ ts: CURSOR, healed: ["handbook"], continuationToken: SELF })], { org: "acme", sinceIso: CURSOR, selfKey: SELF }).healed.length === 0, "index selector: a row exactly AT the cursor is excluded (strictly-after) — fires once per change, not every turn");
+}
+{
+  ok(selectIndexChanges([indexRow({ ts: "2026-07-13T10:06:00.000Z", healed: ["handbook"], continuationToken: SELF })], { org: "acme", sinceIso: CURSOR, atIso: AT, selfKey: SELF }).healed.length === 0, "index selector: a row after atIso (this dispatch) is excluded");
+}
+{
+  ok(selectIndexChanges([indexRow({ ts: "2026-07-13T10:04:00.000Z", healed: ["handbook"], continuationToken: "other:oe-sup:g1" })], { org: "acme", sinceIso: CURSOR, selfKey: SELF }).healed.length === 0, "index selector: only THIS session's plan changes are surfaced (selfKey match, not exclude)");
+}
+
+{
+  const s = await renderIndexDelta({ org: "acme", sinceIso: CURSOR, atIso: AT, selfKey: SELF, readAudit: async () => [indexRow({ ts: "2026-07-13T10:04:00.000Z", healed: ["handbook"], continuationToken: SELF })] });
+  ok(s !== null && s.includes("\"handbook\""), "renderIndexDelta: names the healed silo via the injected audit reader");
+}
+{
+  ok((await renderIndexDelta({ org: "acme", sinceIso: CURSOR, selfKey: SELF, readAudit: async () => [] })) === null, "renderIndexDelta: no rows → null");
+  ok((await renderIndexDelta({ org: "acme", sinceIso: CURSOR, selfKey: SELF, readAudit: async () => { throw new Error("audit down"); } })) === null, "renderIndexDelta: a failing audit read fails SOFT to null");
 }
 
 assert.ok(passed > 0);

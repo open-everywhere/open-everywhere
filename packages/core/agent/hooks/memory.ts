@@ -290,10 +290,24 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
     try {
       const okReads = plan.reads.filter((r) => !stillFailed[tierId(r.tier)]);
       const failedNames = plan.reads.filter((r) => stillFailed[tierId(r.tier)]).map((r) => r.silo.name);
+      const healedNames = plan.reads.filter((r) => healed.includes(tierId(r.tier))).map((r) => r.silo.name);
       await sandbox.run({ command: unlockCommand("memory/MEMORY.md") });
       await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedNames) });
       await lock(sandbox, "memory/MEMORY.md");
       log(`turn.started healed ${healed.length} previously-failed silo(s) [${healed.join(", ")}]; refreshed memory index for ${p.key}`);
+      try {
+        await appendAudit({
+          org: p.org,
+          platform: p.platform,
+          workspace: p.workspace,
+          surface: p.surface,
+          principalId: binding.principalId,
+          action: "memory.index_change",
+          detail: { healed: healedNames, ...(ctx.channel?.continuationToken ? { continuationToken: ctx.channel.continuationToken } : {}) },
+        });
+      } catch (err) {
+        log(`turn.started index_change audit skipped (index already refreshed on disk): ${String(err)}`);
+      }
     } catch (err) {
       log(`turn.started index refresh after heal failed (silos still materialised): ${String(err)}`);
     }
