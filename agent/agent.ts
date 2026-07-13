@@ -17,7 +17,7 @@ const GATEWAY_DEFAULTS = {
   zeroDataRetention: true,
   caching: "auto",
 } as const;
-const DEFAULT_MODEL = "zai/glm-5.2";
+const DEFAULT_MODEL = process.env.OE_PRIMARY_MODEL?.trim() || "zai/glm-5.2";
 
 const UTILITY_MODEL = "deepseek/deepseek-v4-flash";
 const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
