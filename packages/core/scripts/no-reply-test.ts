@@ -13,7 +13,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
   readonly description: string;
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean } };
-  readonly execute: (input: { reason: string }, ctx: unknown) => Promise<{ acknowledged: boolean; reason: string }>;
+  readonly execute: (input: { reason: string; explanation?: string }, ctx: unknown) => Promise<{ acknowledged: boolean; reason: string }>;
 };
 const { NO_REPLY_REASONS } = await import("../agent/tools/no_reply.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -35,10 +35,22 @@ const ok = (cond: boolean, label: string) => {
 
 ok(NO_REPLY_REASONS.length === 8, "no_reply: exactly 8 reasons in the closed enum (no noise_reduction)");
 for (const r of NO_REPLY_REASONS) {
+  if (r === "other") continue;
   ok(noReply.inputSchema.safeParse({ reason: r }).success, `no_reply: "${r}" is a valid reason`);
 }
 ok(!noReply.inputSchema.safeParse({ reason: "because" }).success, "no_reply: an out-of-enum reason is rejected");
 ok(!noReply.inputSchema.safeParse({}).success, "no_reply: reason is required");
+
+ok(!noReply.inputSchema.safeParse({ reason: "other" }).success, 'no_reply: bare "other" is rejected — an explanation is required');
+ok(!noReply.inputSchema.safeParse({ reason: "other", explanation: "short" }).success, 'no_reply: a sub-10-char "other" explanation is rejected');
+ok(
+  noReply.inputSchema.safeParse({ reason: "other", explanation: "the thread resolved itself while I was reading it" }).success,
+  'no_reply: "other" with a real explanation parses',
+);
+ok(
+  noReply.inputSchema.safeParse({ reason: "nothing_to_add", explanation: "they already have the answer" }).success,
+  "no_reply: named reasons may still carry an optional explanation",
+);
 
 function ctx() {
   return {
@@ -69,6 +81,34 @@ await inSession(async () => {
 
   const audit = await readAudit({ org: "default", action: "reply.no_reply" });
   ok(audit.length === 1 && audit[0]?.detail?.reason === "awaiting_context", "no_reply: audits exactly one reply.no_reply row with the reason");
+});
+
+await inSession(async () => {
+  for (const bad of [
+    "the reply tool isn't available on this Notion surface",
+    "reply is unavailable for channel-watch wakes",
+    "I can't reply to this wake",
+    "there is no way to reply on this surface",
+  ]) {
+    let threw = false;
+    try {
+      await noReply.execute({ reason: "other", explanation: bad }, ctx());
+    } catch (e) {
+      threw = String(e).includes("IS in your toolset");
+    }
+    ok(threw, `no_reply: confabulated-unavailability explanation is refused with the corrective ("${bad.slice(0, 32)}…")`);
+  }
+  ok(consumeNoReplyThisTurn() === null, "no_reply: a fenced call never marks the silence signal");
+
+  const res = await noReply.execute({ reason: "other", explanation: "the question was rhetorical and already answered itself" }, ctx());
+  ok(res.acknowledged === true, 'no_reply: a legitimate "other" explanation is accepted');
+  ok(consumeNoReplyThisTurn() === "other", 'no_reply: legitimate "other" marks the signal');
+  const audit2 = await readAudit({ org: "default", action: "reply.no_reply" });
+  const withExplanation = audit2.find((r: { detail?: { explanation?: string } }) => typeof r.detail?.explanation === "string");
+  ok(
+    withExplanation?.detail?.explanation === "the question was rhetorical and already answered itself",
+    "no_reply: the explanation is preserved verbatim in the audit row",
+  );
 });
 
 await inSession(async () => {

@@ -28,17 +28,46 @@ export default defineTool({
     "doesn't warrant a response; `duplicate` — this is already covered by an earlier reply or " +
     "another participant; `user_requested_silence` — a user explicitly asked you to stop or stay " +
     "quiet; `awaiting_context` — you're passively observing and will weigh in once humans add more, " +
-    "and nobody's asked you a direct question yet; `other` — none of the above fit. (In a busy " +
-    "thread where a reply would just add noise, a react via the `react` tool then `reacted_instead` " +
-    "is usually the better shape than going fully silent.)",
-  inputSchema: z.object({
-    reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
-  }),
+    "and nobody's asked you a direct question yet; `other` — none of the above fit, and you MUST " +
+    "say why in `explanation` (one sentence). (In a busy thread where a reply would just add " +
+    "noise, a react via the `react` tool then `reacted_instead` is usually the better shape than " +
+    "going fully silent.)",
+  inputSchema: z
+    .object({
+      reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
+      explanation: z
+        .string()
+        .min(10)
+        .max(500)
+        .optional()
+        .describe('REQUIRED when reason is "other": one sentence on why none of the named reasons fit. Optional otherwise.'),
+    })
+    .superRefine((v, ctx) => {
+      if (v.reason === "other" && (v.explanation === undefined || v.explanation.trim().length < 10)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["explanation"],
+          message: 'reason "other" requires an explanation — one sentence on why none of the named reasons fit.',
+        });
+      }
+    }),
   outputSchema: z.object({ acknowledged: z.boolean(), reason: z.string(), note: z.string() }),
   approval: never(),
   async execute(input, ctx) {
+    const confabulated =
+      /\breply\b[^.]{0,60}?\b(unavailable|not available|isn'?t available|can'?t|cannot)\b/i;
+    const confabulatedInverted = /\b(can'?t|cannot|unable to|no way to)\b[^.]{0,30}?\breply\b/i;
+    if (input.explanation && (confabulated.test(input.explanation) || confabulatedInverted.test(input.explanation))) {
+      throw new Error(
+        "`reply` IS in your toolset on every surface in this session — never conclude it's unavailable. " +
+          "If you believe it can't deliver, call it and read the error; otherwise pick a named reason for silence.",
+      );
+    }
     markNoReplyThisTurn(input.reason as NoReplyReason);
-    await auditToolAction(ctx, "reply.no_reply", { reason: input.reason });
+    await auditToolAction(ctx, "reply.no_reply", {
+      reason: input.reason,
+      ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+    });
     return {
       acknowledged: true,
       reason: input.reason,
