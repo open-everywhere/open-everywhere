@@ -17,21 +17,15 @@ export const NO_REPLY_REASONS = [
 
 export default defineTool({
   description:
-    "End this turn WITHOUT posting a reply — prefer this over ending your final message with the " +
-    "literal text NO_REPLY (both still work during the transition, but this is audited and " +
-    "unambiguous). Call it, then say nothing else — the tool call IS the whole outcome; any text " +
-    "after it is discarded. Pick the reason that best fits: `addressed_to_other` — the message " +
-    "wasn't for you (someone else was tagged/asked) in a multi-party thread; `reacted_instead` — " +
-    "you acknowledged with an emoji react via the `react` tool instead of replying; `nothing_to_add` " +
-    "— you have no useful contribution right now (you'd just be agreeing or restating with no new " +
-    "information); `not_relevant` — this is an auto-respond, firehose, or automated message that " +
-    "doesn't warrant a response; `duplicate` — this is already covered by an earlier reply or " +
-    "another participant; `user_requested_silence` — a user explicitly asked you to stop or stay " +
-    "quiet; `awaiting_context` — you're passively observing and will weigh in once humans add more, " +
-    "and nobody's asked you a direct question yet; `other` — none of the above fit, and you MUST " +
-    "say why in `explanation` (one sentence). (In a busy thread where a reply would just add " +
-    "noise, a react via the `react` tool then `reacted_instead` is usually the better shape than " +
-    "going fully silent.)",
+    "End this turn without posting a reply. Call it, then stop — text after it is discarded. " +
+    "`addressed_to_other` — multi-party thread, message is for someone else; " +
+    "`reacted_instead` — acknowledged with an emoji react instead of a reply; " +
+    "`nothing_to_add` — would just be agreeing/restating, no new information; " +
+    "`not_relevant` — auto-respond/firehose message doesn't warrant a response; " +
+    "`duplicate` — already covered by an earlier reply or another participant; " +
+    "`user_requested_silence` — user asked you to stop / stay quiet; " +
+    "`awaiting_context` — passively observing the thread, will weigh in once humans add more; " +
+    "`other` — none of the above (say why in `explanation`).",
   inputSchema: z
     .object({
       reason: z.enum(NO_REPLY_REASONS).describe("Why you're not replying — see the tool description for what each value means."),
@@ -40,7 +34,7 @@ export default defineTool({
         .min(10)
         .max(500)
         .optional()
-        .describe('REQUIRED when reason is "other": one sentence on why none of the named reasons fit. Optional otherwise.'),
+        .describe('Required when reason is "other": why none of the named reasons fit.'),
     })
     .superRefine((v, ctx) => {
       if (v.reason === "other" && (v.explanation === undefined || v.explanation.trim().length < 10)) {
