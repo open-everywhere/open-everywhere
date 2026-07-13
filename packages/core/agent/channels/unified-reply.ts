@@ -1,5 +1,5 @@
 import { slackForm } from "./slack-events.js";
-import { createLinearAgentActivity, LinearApiError } from "eve/channels/linear";
+import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
@@ -115,12 +115,14 @@ function describeLinearError(err: unknown): string {
 }
 
 export async function completeLinearSessionSilently(origin: LinearOrigin, deps: UnifiedReplyDeps = {}): Promise<void> {
+  if (origin.ambient) return;
   return (deps.closeLinear ?? liveLinearSilentClose)(origin);
 }
 
 const LINEAR_SILENT_CLOSE_STATUS = "(no reply — nothing to add here)";
 
 async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
+  if (!origin.agentSessionId) return;
   try {
     await createLinearAgentActivity({
       activity: {
@@ -136,6 +138,23 @@ async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
 }
 
 async function liveLinearPost(origin: LinearOrigin, text: string): Promise<string> {
+  if (origin.ambient) {
+    let data: { commentCreate?: { success?: boolean } };
+    try {
+      data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+        query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+        queryName: "OeUnifiedAmbientReply",
+        variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
+      });
+    } catch (err) {
+      throw new Error(`unified reply couldn't post to Linear — ambient commentCreate failed on issue ${origin.issueId} (${describeLinearError(err)})`);
+    }
+    if (data.commentCreate?.success !== true) {
+      throw new Error(`unified reply couldn't post to Linear — ambient commentCreate returned no success on issue ${origin.issueId}`);
+    }
+    return "comment";
+  }
+  if (!origin.agentSessionId) throw new Error(`unified reply: linear origin for issue ${origin.issueId} has neither an agent session nor the ambient flag (invariant broken)`);
   let res: { id: string; success: boolean };
   try {
     res = await createLinearAgentActivity({

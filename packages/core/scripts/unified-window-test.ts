@@ -711,7 +711,7 @@ const store = getOperationalStore();
 {
   const slackPosts: Array<{ channelId: string; threadTs?: string; text: string }> = [];
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
-  const linPosts: Array<{ agentSessionId: string; issueId: string; parentId?: string; text: string }> = [];
+  const linPosts: Array<{ agentSessionId?: string; ambient?: true; issueId: string; parentId?: string; text: string }> = [];
   const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
   const disPosts: Array<{ channelId: string; guildId: string; messageId?: string; text: string }> = [];
   const deps = {
@@ -727,9 +727,9 @@ const store = getOperationalStore();
       ghPosts.push({ owner: o.owner, repo: o.repo, issueNumber: o.issueNumber, text });
       return "c-1";
     },
-    postLinear: async (o: { agentSessionId: string; issueId: string; parentId?: string }, text: string) => {
-      linPosts.push({ agentSessionId: o.agentSessionId, issueId: o.issueId, parentId: o.parentId, text });
-      return "lc-1";
+    postLinear: async (o: { agentSessionId?: string; ambient?: true; issueId: string; parentId?: string }, text: string) => {
+      linPosts.push({ agentSessionId: o.agentSessionId, ambient: o.ambient, issueId: o.issueId, parentId: o.parentId, text });
+      return o.ambient ? "lc-ambient" : "lc-1";
     },
     postNotion: async (o: { discussionId: string; pageId?: string }, text: string) => {
       notPosts.push({ discussionId: o.discussionId, pageId: o.pageId, text });
@@ -764,11 +764,30 @@ const store = getOperationalStore();
   );
 
   {
-    const closed: Array<{ agentSessionId: string; issueId: string }> = [];
-    const closeDeps = { closeLinear: async (o: { agentSessionId: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
+    const closed: Array<{ agentSessionId?: string; issueId: string }> = [];
+    const closeDeps = { closeLinear: async (o: { agentSessionId?: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
     await completeLinearSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
     ok(closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent close: completeLinearSessionSilently closes the wake's OPEN agent session (no visible reply posted)");
   }
+
+  {
+    const ambWakeId = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", ambWakeId, { platform: "linear", ambient: true, issueId: "issue-amb-9", parentId: "c-amb-1" }, new Date().toISOString());
+    const ambOrigin = await resolveUnifiedWakeTarget(store, "default", ambWakeId);
+    ok(ambOrigin !== null && ambOrigin.platform === "linear" && ambOrigin.ambient === true, "ambient linear origin round-trips + validates (isUnifiedWakeOrigin accepts the ambient variant)");
+    ok((await postUnifiedReply(ambOrigin!, "ambient answer", deps)) === "lc-ambient", "reply(ambient linear wakeId) routes to the ambient commentCreate arm");
+    const last = linPosts[linPosts.length - 1];
+    ok(last.ambient === true && last.agentSessionId === undefined && last.issueId === "issue-amb-9" && last.parentId === "c-amb-1", "ambient linear reply carries issueId+parentId (commentCreate target), NO agentSessionId");
+    const closedAmb: Array<{ issueId: string }> = [];
+    await completeLinearSessionSilently(ambOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, { closeLinear: async (o: { issueId: string }) => void closedAmb.push({ issueId: o.issueId }) });
+    ok(closedAmb.length === 0, "silent turn on an AMBIENT linear origin closes nothing (no agent session to stop)");
+  }
+
+  ok(isUnifiedWakeOrigin({ platform: "linear", ambient: true, issueId: "i1" }) === true, "validator: ambient linear origin (ambient+issueId, no session) is VALID");
+  ok(isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "s1", issueId: "i1" }) === true, "validator: mention linear origin (session+issueId) is VALID");
+  ok(isUnifiedWakeOrigin({ platform: "linear", ambient: true, agentSessionId: "s1", issueId: "i1" }) === false, "validator: ambient+session together is INVALID (XOR)");
+  ok(isUnifiedWakeOrigin({ platform: "linear", issueId: "i1" }) === false, "validator: neither ambient nor session is INVALID");
+  ok(isUnifiedWakeOrigin({ platform: "linear", ambient: true }) === false, "validator: ambient WITHOUT issueId is INVALID (no commentCreate target)");
 
   const threadedId = mintWakeId();
   await registerUnifiedWakeTarget(store, "default", threadedId, { platform: "slack", channelId: "C_WINA", threadTs: "99.5" }, new Date().toISOString());

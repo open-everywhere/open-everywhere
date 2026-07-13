@@ -311,6 +311,14 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     { id: c.authorId, isBot: false },
     { principalFallback: true },
   );
+  const singleWindow = linearGrainFor(surfaceKey).singleWindow === true;
+  const ambientVouched = singleWindow && !!receive && linearTeamVouched(signal.organizationId, c.teamId);
+  const ambientWindow: UnifiedWindowWake | undefined = ambientVouched
+    ? {
+        wakeId: mintWakeId(),
+        origin: { platform: "linear", ambient: true, issueId: c.issueId, ...(c.parentId ? { parentId: c.parentId } : {}) },
+      }
+    : undefined;
   await handleLinearSupervisorDispatch(
     {
       surfaceKey,
@@ -329,6 +337,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
       },
       engagementTier: linearEngagementTier(surfaceKey),
       unified: linearGrainFor(surfaceKey).unified,
+      window: ambientWindow,
     },
     liveLinearSupervisorDeps(send, c.teamId, signal.organizationId, receive),
   );
@@ -339,7 +348,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     surface: surfaceKey,
     principalId: c.authorId,
     action: "linear.dispatched",
-    detail: { addressing: cls.addressing, issueId: c.issueId, teamPrivate: c.teamPrivate === true, vouched: linearTeamVouched(signal.organizationId, c.teamId) },
+    detail: { addressing: cls.addressing, issueId: c.issueId, teamPrivate: c.teamPrivate === true, vouched: linearTeamVouched(signal.organizationId, c.teamId), diverted: ambientWindow !== undefined },
   });
   slog(`comment on ${surfaceKey} (${c.issueIdentifier ?? c.issueId}) → judged wake dispatched`);
 }

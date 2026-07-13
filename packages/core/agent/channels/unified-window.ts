@@ -15,7 +15,8 @@ export type UnifiedWakeOrigin =
     }
   | {
       readonly platform: "linear";
-      readonly agentSessionId: string;
+      readonly agentSessionId?: string;
+      readonly ambient?: true;
       readonly issueId: string;
       readonly parentId?: string;
     }
@@ -125,13 +126,11 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
     );
   }
   if (o.platform === "linear") {
-    return (
-      typeof o.agentSessionId === "string" &&
-      o.agentSessionId.length > 0 &&
-      typeof o.issueId === "string" &&
-      o.issueId.length > 0 &&
-      (o.parentId === undefined || typeof o.parentId === "string")
-    );
+    if (typeof o.issueId !== "string" || o.issueId.length === 0) return false;
+    if (o.parentId !== undefined && typeof o.parentId !== "string") return false;
+    const isAmbient = o.ambient === true && o.agentSessionId === undefined;
+    const isMention = o.ambient === undefined && typeof o.agentSessionId === "string" && o.agentSessionId.length > 0;
+    return isAmbient || isMention;
   }
   if (o.platform === "notion") {
     return (

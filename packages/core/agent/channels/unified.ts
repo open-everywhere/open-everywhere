@@ -76,7 +76,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const wakeId = currentWakeId(bind);
         const silentOrigin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         let linearClosed: boolean | undefined;
-        if (silentOrigin?.platform === "linear") {
+        if (silentOrigin?.platform === "linear" && !silentOrigin.ambient) {
           try {
             await completeLinearSessionSilently(silentOrigin);
             linearClosed = true;
