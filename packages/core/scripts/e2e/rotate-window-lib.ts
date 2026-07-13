@@ -1,0 +1,48 @@
+import {
+  unifiedDomainSessionKey,
+  unifiedSupervisorToken,
+} from "../../agent/channels/unified-supervisor.js";
+import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
+import type { PgClient } from "../../agent/operational/postgres.js";
+import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
+
+export async function wireNeonOperationalStore(dbUrl: string): Promise<OperationalStore> {
+  const pkg = "@neondatabase/serverless";
+  const { neon } = (await import(pkg)) as {
+    neon: (url: string) => { query(text: string, params?: unknown[]): Promise<unknown> };
+  };
+  const sql = neon(dbUrl);
+  const client: PgClient = {
+    query: async (text, params) => ({ rows: (await sql.query(text, (params ?? []) as unknown[])) as unknown[] }),
+  };
+  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+  registerOperationalPostgres(client);
+  return getOperationalStore();
+}
+
+export interface RotateResult {
+  readonly registryKey: string;
+  readonly oldGeneration: number | null;
+  readonly oldToken: string | null;
+  readonly mintedGeneration: number;
+  readonly newRow: ChannelSessionRow;
+}
+
+export async function rotateUnifiedWindow(
+  store: OperationalStore,
+  org: string,
+  domain: string,
+): Promise<RotateResult> {
+  const registryKey = unifiedDomainSessionKey(domain);
+  const cur = await store.getChannelSession(org, registryKey);
+  const generation = Date.now();
+  const newToken = unifiedSupervisorToken(domain, generation);
+  const newRow = await store.rotateChannelSession(org, registryKey, newToken, new Date().toISOString());
+  return {
+    registryKey,
+    oldGeneration: cur ? cur.generation : null,
+    oldToken: cur?.token ?? null,
+    mintedGeneration: generation,
+    newRow,
+  };
+}

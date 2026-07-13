@@ -255,5 +255,28 @@ function deps(opts: {
   ok("resolver: with no policy, a pick's model id passes through unclamped", r.id === "some/unlisted-model");
 }
 
+{
+  const r = await resolveRoute("supervisor", C_ENG, undefined, DEFAULT_ID, deps({
+    policy: POLICY,
+    pick: async () => ({ modelId: "deepseek/deepseek-v4-flash" }),
+  }), "primary");
+  ok("resolver: an in-envelope pick OVERRIDES the supervisor slot (fallbackRole path)", r.id === "deepseek/deepseek-v4-flash");
+}
+{
+  const r = await resolveRoute("supervisor", C_ENG, undefined, DEFAULT_ID, deps({
+    policy: POLICY,
+    pick: async () => ({ reasoning: "high" }),
+  }), "primary");
+  ok("resolver: a reasoning pick drives the supervisor slot (within the domain ceiling)", r.reasoning === "high");
+}
+{
+  let seen: string | undefined;
+  await resolveRoute("supervisor", C_ENG, undefined, DEFAULT_ID, deps({
+    policy: POLICY,
+    pick: async (name) => { seen = name; return null; },
+  }), "primary");
+  ok("resolver: domainModelPick is consulted for the supervisor role with the domain name", seen === "eng");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✓ domain model self-serve: ${n} assertions passed (RBAC + SET-time envelope clamp + resolver slotting + fail-soft)\n`);

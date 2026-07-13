@@ -1,9 +1,4 @@
-import {
-  unifiedDomainSessionKey,
-  unifiedSupervisorToken,
-} from "../../agent/channels/unified-supervisor.js";
-import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
-import type { PgClient } from "../../agent/operational/postgres.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 
 async function main() {
   const domain = process.argv[2];
@@ -18,40 +13,20 @@ async function main() {
     process.exit(1);
   }
 
-  const pkg = "@neondatabase/serverless";
-  const { neon } = (await import(pkg)) as {
-    neon: (url: string) => { query(text: string, params?: unknown[]): Promise<unknown> };
-  };
-  const sql = neon(dbUrl);
-  const client: PgClient = {
-    query: async (text, params) => ({ rows: (await sql.query(text, (params ?? []) as unknown[])) as unknown[] }),
-  };
-
-  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
-  registerOperationalPostgres(client);
-  const store = getOperationalStore();
-
-  const key = unifiedDomainSessionKey(domain);
-  const cur = await store.getChannelSession(org, key);
-  const generation = Date.now();
-  const newToken = unifiedSupervisorToken(domain, generation);
-
-  const row = await store.rotateChannelSession(org, key, newToken, new Date().toISOString());
+  const store = await wireNeonOperationalStore(dbUrl);
+  const r = await rotateUnifiedWindow(store, org, domain);
 
   console.log("=== rotate-window ===");
   console.log(`org:            ${org}`);
   console.log(`domain:         ${domain}`);
-  console.log(`registry key:   ${key}`);
-  console.log(`old generation: ${cur ? cur.generation : "none (no prior row)"}`);
-  console.log(`old token:      ${cur?.token ?? "none"}`);
-  console.log(`minted generation (in token): ${generation}`);
-  console.log(`NEW token:      ${row.token}   <- eve session key (never seen before ⇒ fresh window)`);
-  console.log(`row int counter: ${row.generation}   (separate bookkeeping, not the eve key)`);
-  console.log(`createdAt:      ${row.createdAt}`);
-  console.log(`handoffNote:    ${row.handoffNote ?? "null (empty window ✓)"}`);
-  if (row.token !== newToken) {
-    console.error(`WARN: stored token ${row.token} != minted ${newToken}`);
-  }
+  console.log(`registry key:   ${r.registryKey}`);
+  console.log(`old generation: ${r.oldGeneration ?? "none (no prior row)"}`);
+  console.log(`old token:      ${r.oldToken ?? "none"}`);
+  console.log(`minted generation (in token): ${r.mintedGeneration}`);
+  console.log(`NEW token:      ${r.newRow.token}   <- eve session key (never seen before ⇒ fresh window)`);
+  console.log(`row int counter: ${r.newRow.generation}   (separate bookkeeping, not the eve key)`);
+  console.log(`createdAt:      ${r.newRow.createdAt}`);
+  console.log(`handoffNote:    ${r.newRow.handoffNote ?? "null (empty window ✓)"}`);
 }
 
 main().catch((e) => {
