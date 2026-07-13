@@ -21,7 +21,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const FACT_WAIT_MS = Number.parseInt(process.env.AMBIENT_FACT_WAIT_MS ?? "35000", 10);
-const REPLY_TIMEOUT_MS = Number.parseInt(process.env.AMBIENT_REPLY_TIMEOUT_MS ?? "240000", 10);
+let REPLY_TIMEOUT_MS = Number.parseInt(process.env.AMBIENT_REPLY_TIMEOUT_MS ?? "240000", 10);
 const POLL_MS = Number.parseInt(process.env.AMBIENT_POLL_MS ?? "7000", 10);
 
 const SLACK_SURFACE = (process.env.EVAL_SLACK_SURFACE ?? "").trim();
@@ -35,7 +35,7 @@ interface Cli {
   model: string; effort: ModelReasoning; turns: number; fill: number; repeats: number;
   fillWakes: number; fillMsgs: number; dumpSeed?: string; seed?: string;
   domain: string; org: string; plan: boolean; rotate: boolean; restore: boolean;
-  rescore?: string; since?: string; until?: string;
+  rescore?: string; since?: string; until?: string; replyTimeoutMs: number;
 }
 function parseCli(argv: readonly string[]): Cli {
   const get = (f: string): string | undefined => { const i = argv.indexOf(f); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined; };
@@ -59,6 +59,7 @@ function parseCli(argv: readonly string[]): Cli {
     rescore: get("--rescore"),
     since: get("--since"),
     until: get("--until"),
+    replyTimeoutMs: Math.max(1, Number.parseInt(get("--reply-timeout-ms") ?? String(REPLY_TIMEOUT_MS), 10)),
   };
 }
 
@@ -1020,6 +1021,7 @@ function writeAggregate(
 async function main() {
   const cli = parseCli(process.argv.slice(2));
   DOMAIN = cli.domain;
+  REPLY_TIMEOUT_MS = cli.replyTimeoutMs;
 
   if (cli.rescore) {
     if (!TARGET || !READ) { console.error("✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
