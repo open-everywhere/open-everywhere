@@ -4,6 +4,8 @@ import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/mem
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { setBlobPutter } from "@open-everywhere/core/agent/blob/hosting.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
+import { registerAuditDropCounter } from "@open-everywhere/core/agent/audit/audit.js";
+import { emitTelemetry } from "@open-everywhere/core/agent/observability/telemetry.js";
 import { loadBundles } from "../access/bundles.js";
 
 registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
@@ -18,5 +20,7 @@ if (
 ) {
   await registerNeon();
 }
+
+registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
 
 setBlobPutter(vercelBlobPutter);
