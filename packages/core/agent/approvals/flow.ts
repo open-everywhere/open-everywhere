@@ -114,6 +114,12 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
 
   if (!messageTs) {
     await store.decidePendingAction(input.org, row.id, "expired", "system", new Date().toISOString()).catch(() => {});
+    await appendAudit({
+      ...whereFromScope(input.org, input.scopeKey),
+      principalId: input.requestedBy,
+      action: "approval.expired",
+      detail: { id: row.id, kind: input.kind, cause: "card_post_failed" },
+    });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "failed" });
     throw new Error(`requestApproval: failed to post the approval card for "${input.kind}" (${input.scopeKey}) — marked expired, nothing is awaiting a click.`);
   }
@@ -229,6 +235,12 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     const cas = await store.decidePendingAction(input.org, row.id, "expired", "system", nowIso);
     if (!cas) return { outcome: "expired-race" };
     const expiredRow: PendingActionRow = { ...row, status: "expired", decidedBy: "system", decidedAt: nowIso };
+    await appendAudit({
+      ...whereFromScope(input.org, row.scopeKey),
+      principalId: "system",
+      action: "approval.expired",
+      detail: { id: row.id, kind: row.kind, cause: "ttl" },
+    });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "expired" });
     return { outcome: "expired", row: expiredRow, summaryLines: summaryLinesFor(expiredRow) };
   }
@@ -268,6 +280,29 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "failed" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: `FAILED: ${message}` };
   }
+}
+
+export async function sweepExpiredPendings(org: string, now: Date = new Date()): Promise<number> {
+  const store = getOperationalStore();
+  const nowIso = now.toISOString();
+  const expired = await store.listExpiredPendingActions(org, nowIso);
+  let count = 0;
+  for (const row of expired) {
+    try {
+      const won = await store.decidePendingAction(org, row.id, "expired", "system", nowIso);
+      if (!won) continue;
+      await appendAudit({
+        ...whereFromScope(org, row.scopeKey),
+        principalId: "system",
+        action: "approval.expired",
+        detail: { id: row.id, kind: row.kind, cause: "ttl" },
+      });
+      count++;
+    } catch (err) {
+      console.warn(`[open-everywhere:approvals] sweepExpiredPendings: failed to expire ${row.id}: ${String(err)}`);
+    }
+  }
+  return count;
 }
 
 export async function handleApprovalPayload(payload: unknown, deps: HandleApprovalDeps = {}): Promise<boolean> {

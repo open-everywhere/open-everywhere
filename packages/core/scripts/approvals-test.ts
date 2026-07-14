@@ -14,7 +14,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { parseApprovalAction, requestApproval, handleApprovalPayload, clickerMayDecide, OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
+const { parseApprovalAction, requestApproval, handleApprovalPayload, clickerMayDecide, OE_APPROVAL_PREFIX, sweepExpiredPendings } = await import("../agent/approvals/flow.js");
 const { pendingCardBlocks, decidedCardBlocks } = await import("../agent/approvals/card.js");
 const { registerActionKind, actionKind } = await import("../agent/approvals/actions.js");
 const { effectiveCaps } = await import("../agent/spend/caps.js");
@@ -240,6 +240,8 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const after = await store.getPendingAction("default", "p-expired");
   ok(after?.status === "expired" && after?.decidedBy === "system", "handleApprovalPayload: a click on an aged-out pending CAS-expires it");
   ok(calls.some((c) => c.method === "chat.update" && (bodyField(c.body, "text") ?? "").includes("Expired")), "handleApprovalPayload: the card is updated to the expired state");
+  const ttlExpiry = (await readAudit({ org: "default", action: "approval.expired" })).find((e) => e.detail?.id === "p-expired");
+  ok(ttlExpiry?.detail?.cause === "ttl" && ttlExpiry?.principalId === "system", "a late click past TTL audits approval.expired with cause \"ttl\"");
 }
 
 {
@@ -392,6 +394,8 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     ok(/failed to post/.test(String(err)), "requestApproval: throws an explanatory error when the card never posts");
   }
   ok(threw, "requestApproval: throws when the Slack post fails (a pending nobody can see must not linger)");
+  const postFailExpiry = (await readAudit({ org: "default", action: "approval.expired" })).find((e) => e.detail?.cause === "card_post_failed");
+  ok(postFailExpiry?.detail?.kind === "spend.set" && postFailExpiry?.principalId === "U_REQUESTER", "requestApproval: a failed card post audits approval.expired with cause \"card_post_failed\"");
 }
 
 {
@@ -429,4 +433,18 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   });
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal)\n`);
+{
+  const store = getOperationalStore();
+  await store.addPendingAction(row({ id: "p-sweep", org: "sweeporg", scopeKey: "slack/T9/C9", expiresAt: new Date(Date.now() + 3_600_000).toISOString() }));
+  const noneYet = await sweepExpiredPendings("sweeporg", new Date(Date.now() - 3_600_000));
+  ok(noneYet === 0 && (await store.getPendingAction("sweeporg", "p-sweep"))?.status === "pending", "sweepExpiredPendings: a pending still inside its TTL is left pending");
+  const swept = await sweepExpiredPendings("sweeporg", new Date(Date.now() + 7_200_000));
+  ok(swept === 1, "sweepExpiredPendings: an aged-out pending is expired by the sweep (count 1)");
+  const after = await store.getPendingAction("sweeporg", "p-sweep");
+  ok(after?.status === "expired" && after?.decidedBy === "system", "sweepExpiredPendings: the swept row flips to expired (decidedBy system)");
+  const swExpiry = (await readAudit({ org: "sweeporg", action: "approval.expired" })).find((e) => e.detail?.id === "p-sweep");
+  ok(swExpiry?.detail?.cause === "ttl", "sweepExpiredPendings: the sweep audits approval.expired with cause \"ttl\"");
+  ok((await sweepExpiredPendings("sweeporg", new Date(Date.now() + 7_200_000))) === 0, "sweepExpiredPendings: a second sweep expires nothing (row already terminal)");
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep)\n`);

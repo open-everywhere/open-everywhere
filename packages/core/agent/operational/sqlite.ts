@@ -867,6 +867,16 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => pendingActionFromRow(org, r));
   },
 
+  async listExpiredPendingActions(org, nowIso) {
+    const rows = getDb()
+      .prepare(
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+         FROM pending_actions WHERE org_id = ? AND status = 'pending' AND expires_at <= ? ORDER BY created_at ASC`,
+      )
+      .all(org, nowIso) as PendingActionSqlRow[];
+    return rows.map((r) => pendingActionFromRow(org, r));
+  },
+
   async setPendingActionMessage(org, id, messageTs) {
     getDb().prepare("UPDATE pending_actions SET message_ts = ? WHERE org_id = ? AND id = ?").run(messageTs, org, id);
   },

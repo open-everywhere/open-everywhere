@@ -8,6 +8,7 @@ import { dreamJudge } from "../memory/dream/judge.js";
 import { DEFAULT_CANDIDATE_CAP } from "../memory/dream/candidates.js";
 import { recordMemoryOpProposals, DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { appendAudit } from "../audit/audit.js";
+import { sweepExpiredPendings } from "../approvals/flow.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:dream/tidy] ${msg}`);
@@ -44,6 +45,7 @@ export interface TidyTickReport {
   readonly proposed: number;
   readonly changed: number;
   readonly judged: JudgeStats;
+  readonly expiredApprovals: number;
 }
 
 export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: readonly string[] } = {}): Promise<TidyTickReport> {
@@ -55,7 +57,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
     silos = getConfig().loadSilos();
   } catch (err) {
     log(`tick skipped — config not registered: ${String(err)}`);
-    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge };
+    return { orgs: 0, silos: 0, applied: 0, proposed: 0, changed: 0, judged: noJudge, expiredApprovals: 0 };
   }
 
   const judge = dreamJudge();
@@ -66,6 +68,7 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
   let proposed = 0;
   let changed = 0;
   let judged = noJudge;
+  let expiredApprovals = 0;
 
   for (const org of orgs) {
     const p = partitionForOrg(org);
@@ -127,13 +130,18 @@ export async function tidyTick(opts: { readonly now?: Date; readonly orgs?: read
       applied += result.applied.length;
       proposed += await recordMemoryOpProposals(org, silo.name, result.proposals);
     }
+    try {
+      expiredApprovals += await sweepExpiredPendings(org, now);
+    } catch (err) {
+      log(`skip approval-sweep ${org} — ${String(err)}`);
+    }
   }
 
   const judgeNote = judge
     ? ` (judge: ${judged.candidates} candidate(s), ${judged.confirmed} confirmed, ${judged.rejected} rejected, ${judged.failed} failed-quiet)`
     : " (no judge registered — zero-LLM heuristics)";
-  log(`tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ${proposed} proposal(s) recorded${judgeNote}`);
-  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged };
+  log(`tick: ${orgs.length} org(s), ${siloCount} silo(s) — ${applied} safe op(s) applied, ${changed} silo(s) written, ${proposed} proposal(s) recorded, ${expiredApprovals} approval(s) expired${judgeNote}`);
+  return { orgs: orgs.length, silos: siloCount, applied, proposed, changed, judged, expiredApprovals };
 }
 
 export default defineSchedule({
