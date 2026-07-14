@@ -15,7 +15,8 @@ import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } fro
 import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import { isVouchedInternal } from "../identity/trust.js";
 import { divertToUnifiedWindow } from "./unified.js";
-import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./slack-events.js";
+import { completeSupervisorTurn, auditSupervisorFailure } from "./supervisor-complete.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -337,70 +338,44 @@ const native: GitHubChannel = githubChannel({
       }
       const sessionId = ctx?.session?.id;
       const st = channel.state as GitHubSupervisorSessionState;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
-      if (action.kind === "buffer-tool-status") return;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
       const postOwner = st.oeUnified === true ? target?.owner : st.owner;
       const postRepo = st.oeUnified === true ? target?.repo : st.repo;
       const auditOwner = (st.oeUnified === true ? target?.owner : undefined) ?? st.owner;
       const auditRepo = (st.oeUnified === true ? target?.repo : undefined) ?? st.repo;
-      if (action.kind === "silent") {
-        await appendAudit({
-          org,
-          platform: "github",
-          workspace: auditOwner,
-          surface: `github/${auditOwner}/${auditRepo}`,
-          action: "github.no_reply",
-          detail: { issueNumber: target?.issueNumber ?? null, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
-        });
-        return;
-      }
-      if (!target || !postOwner || !postRepo) {
-        slog(`reply not posted — no per-turn ${!target ? "issue" : "repo"} target (turn.started snapshot empty); FAIL SAFE`);
-        return;
-      }
-      const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("github").midTurnPost);
-      if (!delivery.postText) {
-        slog(`supervisor message-tool-only: DROPPED terminal prose (reply must come from the reply tool) — nothing posted (${postOwner}/${postRepo}#${target.issueNumber})`);
-        await appendAudit({
-          org,
-          platform: "github",
-          workspace: auditOwner,
-          surface: `github/${auditOwner}/${auditRepo}`,
-          action: "turn.supervisor_prose_dropped",
-          detail: { issueNumber: target.issueNumber, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-        }).catch(() => undefined);
-        return;
-      }
-      try {
-        await postOnce({
-          org,
-          key: outboundKey({
-            surface: "github",
-            channel: `${postOwner}/${postRepo}`,
-            threadTs: `#${target.issueNumber}`,
-            action: "github.supervisor-reply",
-            payload: action.text,
-          }),
-          run: () =>
-            channel.github.request({
-              method: "POST",
-              path: `/repos/${postOwner}/${postRepo}/issues/${target.issueNumber}/comments`,
-              body: { body: action.text },
+      await completeSupervisorTurn({
+        action: finalMessageActionForTurn(data.finishReason, data.message),
+        ...(sessionId ? { sessionId } : {}),
+        hasTarget: !!(target && postOwner && postRepo),
+        midTurnPost: capabilitiesForPlatform("github").midTurnPost,
+        noReplyAction: "github.no_reply",
+        repliedAction: "github.replied",
+        contextRow: { org, platform: "github", workspace: auditOwner, surface: `github/${auditOwner}/${auditRepo}` },
+        repliedRow: { org, platform: "github", workspace: postOwner ?? auditOwner, surface: `github/${postOwner ?? auditOwner}/${postRepo ?? auditRepo}` },
+        silentAnchor: { issueNumber: target?.issueNumber ?? null },
+        droppedAnchor: { issueNumber: target?.issueNumber },
+        repliedAnchor: { issueNumber: target?.issueNumber },
+        post: async (text) => {
+          await postOnce({
+            org,
+            key: outboundKey({
+              surface: "github",
+              channel: `${postOwner}/${postRepo}`,
+              threadTs: `#${target!.issueNumber}`,
+              action: "github.supervisor-reply",
+              payload: text,
             }),
-        });
-        await appendAudit({
-          org,
-          platform: "github",
-          workspace: postOwner,
-          surface: `github/${postOwner}/${postRepo}`,
-          action: "github.replied",
-          detail: { issueNumber: target.issueNumber, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-        });
-      } catch (err) {
-        slog(`reply delivery failed: ${String(err)}`);
-      }
+            run: () =>
+              channel.github.request({
+                method: "POST",
+                path: `/repos/${postOwner}/${postRepo}/issues/${target!.issueNumber}/comments`,
+                body: { body: text },
+              }),
+          });
+        },
+        log: (m) => slog(m),
+      });
     },
     async "turn.failed"(data, channel) {
       if (!isSupervisorGitHubState(channel.state)) {
@@ -409,14 +384,11 @@ const native: GitHubChannel = githubChannel({
       }
       const st = channel.state as GitHubSupervisorSessionState;
       slog(`supervisor turn failed on ${st.owner}/${st.repo} (audited, no comment posted)`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "github",
-        workspace: st.owner,
-        surface: `github/${st.owner}/${st.repo}`,
-        action: "github.supervisor_turn_failed",
-        detail: {},
-      }).catch(() => undefined);
+      await auditSupervisorFailure(
+        { org: deploymentOrg(), platform: "github", workspace: st.owner, surface: `github/${st.owner}/${st.repo}` },
+        "github.supervisor_turn_failed",
+        {},
+      );
     },
     async "session.failed"(data, channel) {
       if (!isSupervisorGitHubState(channel.state)) {
@@ -425,14 +397,11 @@ const native: GitHubChannel = githubChannel({
       }
       const st = channel.state as GitHubSupervisorSessionState;
       slog(`supervisor session failed on ${st.owner}/${st.repo} (audited, no comment posted; next wake force-rotates)`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "github",
-        workspace: st.owner,
-        surface: `github/${st.owner}/${st.repo}`,
-        action: "github.supervisor_session_failed",
-        detail: {},
-      }).catch(() => undefined);
+      await auditSupervisorFailure(
+        { org: deploymentOrg(), platform: "github", workspace: st.owner, surface: `github/${st.owner}/${st.repo}` },
+        "github.supervisor_session_failed",
+        {},
+      );
     },
   },
 });
