@@ -470,7 +470,7 @@ async function auditSince(sinceIso: string): Promise<readonly AuditWireEntry[]> 
   catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
 }
 
-async function readSlackReplyBody(sinceIso: string): Promise<string | null> {
+async function readSlackReplyBody(sinceIso: string, replyTs?: string | null): Promise<string | null> {
   try {
     const { resolveSlack } = await import("../e2e/env.js");
     const { SlackDriver } = await import("../e2e/slack-driver.js");
@@ -479,8 +479,12 @@ async function readSlackReplyBody(sinceIso: string): Promise<string | null> {
     const drv = new SlackDriver({ token: r.cfg.token, channel: SLACK_CHANNEL_ID, botUserId: r.cfg.botUserId });
     const floorTs = `${Math.floor(new Date(sinceIso).getTime() / 1000)}.000000`;
     const hist = await drv.history(floorTs).catch(() => []);
-    const bot = hist.find((m) => drv.isBotReply(m));
-    return bot?.text ?? null;
+    if (replyTs) {
+      const exact = hist.find((m) => m.ts === replyTs);
+      if (exact) return exact.text || null;
+    }
+    const bots = hist.filter((m) => drv.isBotReply(m));
+    return bots.length > 0 ? bots[bots.length - 1]!.text || null : null;
   } catch { return null; }
 }
 
@@ -928,9 +932,9 @@ async function runOneSeries(
     const o = outcomeFor(p.probe, spec.expected, finalAttribution);
     let recall: TurnResult["recall"] = null;
     if (o.outcome === "LANDED_VIA_REPLY_TOOL" || o.outcome === "LANDED_VIA_REDRIVE" || o.outcome === "LANDED_VIA_BRIDGE") {
-      const platform = o.matched.map((r) => dS(r, "platform")).find((x) => x) ?? null;
-      if (platform === "slack") {
-        const body = await readSlackReplyBody(p.probe.injectedAt);
+      const post = o.matched.find((r) => (r.action === A_REPLY_POST || r.action === A_PROSE_DELIVERED) && dS(r, "platform") === "slack");
+      if (post) {
+        const body = await readSlackReplyBody(p.probe.injectedAt, dS(post, "id"));
         if (body) recall = recallHit(body, p.fact);
       }
     }
