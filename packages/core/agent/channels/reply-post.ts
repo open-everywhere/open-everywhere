@@ -55,6 +55,11 @@ export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
 }
 
 export async function postReply(target: ReplyTarget, text: string): Promise<string> {
+  if (process.env.OE_EGRESS_SPOOF === "1") {
+    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${target.platform} reply (${text.length}c)`);
+    return `spoof-${target.platform}-${Date.now()}`;
+  }
   if (target.platform === "slack") {
     const body = new URLSearchParams({ channel: target.channelId, text });
     if (target.threadTs) body.set("thread_ts", target.threadTs);
