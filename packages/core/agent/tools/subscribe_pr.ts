@@ -27,16 +27,14 @@ export function subscribePrPrompt(opts: {
     ``,
     `Last known status: ${opts.baseline}`,
     ``,
-    `1. Call check_pr_status with repo="${opts.repo}" and number=${opts.number} to get the CURRENT status.`,
-    `2. Compare it to the "Last known status" above. If it changed (state, merged, draft, or title), post a ` +
-      `short update here saying what changed. If it's UNCHANGED, don't post anything — silence is fine, this ` +
-      `is a background check, not a conversation.`,
-    `3. If the PR is now MERGED or CLOSED, post the final outcome and STOP — do not create a new routine, the ` +
-      `subscription is done.`,
-    `4. Otherwise (still open), call create_routine with a "once" trigger (\`at\`: ${opts.intervalMinutes} ` +
-      `minutes from now, ISO 8601 UTC) whose prompt repeats this exact same 4-step procedure for the SAME PR ` +
-      `(repo="${opts.repo}", number=${opts.number}), with the status you just observed in step 1 as the new ` +
-      `"Last known status" baseline — that's how the subscription keeps itself going, one check at a time.`,
+    `1. Call subscribe_pr with repo="${opts.repo}", number=${opts.number}, checkIntervalMinutes=${opts.intervalMinutes}. ` +
+      `It re-reads the CURRENT status and — unless the PR has settled — arms the NEXT check itself, so you never ` +
+      `write a routine by hand: that's how the subscription keeps itself going, one check at a time.`,
+    `2. Compare the status it returns to the "Last known status" above. If it changed (state, merged, draft, or ` +
+      `title), post a short update here saying what changed. If it's UNCHANGED, don't post anything — silence is ` +
+      `fine, this is a background check, not a conversation.`,
+    `3. If the call comes back with subscribed:false — the PR is now MERGED or CLOSED — post the final outcome and ` +
+      `STOP. Nothing was armed and the subscription is done.`,
   ].join("\n");
 }
 
@@ -89,6 +87,7 @@ export default defineTool({
     const at = new Date(now.getTime() + interval * 60_000);
     const target = bindFrom(ctx).target;
 
+    const createdBy = principalIdOf(ctx);
     const routine: Routine = {
       id: newRoutineId(),
       org: p.org,
@@ -96,7 +95,7 @@ export default defineTool({
       target,
       trigger: { kind: "once", at: at.toISOString() },
       prompt: subscribePrPrompt({ repo: input.repo, number: input.number, url: status.url, baseline: summary, intervalMinutes: interval }),
-      createdBy: principalIdOf(ctx),
+      ...(createdBy ? { createdBy } : {}),
       createdAt: now.toISOString(),
       status: "active",
       nextRunAt: at.toISOString(),

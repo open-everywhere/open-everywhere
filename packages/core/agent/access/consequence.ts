@@ -61,7 +61,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
 
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
-  subscribe_pr: open("arms a self-serve check-back that posts into this same surface; cancellable with cancel_routine"),
+  subscribe_pr: open(
+    "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; cancellable with cancel_routine",
+  ),
   extend_workspace_time: open("extends this session's own sandbox window; capped (OE_SANDBOX_EXTEND_MAX_MIN) and audited"),
 
   create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),

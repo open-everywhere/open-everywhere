@@ -6,6 +6,7 @@ import { defineBundle, defineBinding } from "../agent/access/bundle.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { resolvePartition } from "../agent/memory/partition.js";
+import { principalIdOf } from "../agent/access/request.js";
 import { listRoutines } from "../agent/routines/store.js";
 import { fetchPullRequestStatus, describePrStatus, prIsSettled, type PrStatusSnapshot } from "../agent/scm/pr-status.js";
 import checkPrStatusTool from "../agent/tools/check_pr_status.js";
@@ -33,6 +34,12 @@ const ctx = (attrOver: Record<string, unknown> = {}): BindableContext =>
   ({
     channel: { kind: "slack" },
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", ...attrOver }, principalId: "U1", principalType: "slack-user" } } },
+  }) as unknown as BindableContext;
+
+const routineCtx = (): BindableContext =>
+  ({
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" } } } },
   }) as unknown as BindableContext;
 
 {
@@ -78,9 +85,10 @@ const ctx = (attrOver: Record<string, unknown> = {}): BindableContext =>
   const prompt = subscribePrPrompt({ repo: "acme/web", number: 42, url: "https://github.com/acme/web/pull/42", baseline: "OPEN — test", intervalMinutes: 15 });
   ok(prompt.includes("PR #42 in acme/web"), "prompt names the repo + PR number");
   ok(prompt.includes("Last known status: OPEN — test"), "prompt embeds the baseline");
-  ok(prompt.includes("check_pr_status"), "prompt instructs calling check_pr_status");
+  ok(prompt.includes("subscribe_pr"), "prompt instructs re-arming via subscribe_pr itself");
+  ok(!prompt.includes("create_routine"), "prompt does NOT delegate the re-arm to the gated create_routine");
   ok(prompt.includes("MERGED or CLOSED") && prompt.includes("STOP"), "prompt instructs stopping on a terminal state");
-  ok(prompt.includes('create_routine') && prompt.includes("15 minutes from now"), "prompt instructs the re-arm via create_routine, with the interval");
+  ok(prompt.includes("checkIntervalMinutes=15"), "prompt passes the interval back into subscribe_pr");
   ok(prompt.includes('repo="acme/web"') && prompt.includes("number=42"), "prompt repeats the exact repo/number so the re-armed check targets the same PR");
 }
 
@@ -166,6 +174,44 @@ const ctx = (attrOver: Record<string, unknown> = {}): BindableContext =>
   ok(res3.subscribed === false && res3.routineId === undefined, "subscribe_pr: an already-merged PR is NOT subscribed");
   ok(res3.status.includes("already settled"), "subscribe_pr: reports why nothing was created");
   ok((await listRoutines(p)).length === 2, "subscribe_pr: the settled-PR call added no new routine");
+
+  globalThis.fetch = originalFetch;
+}
+
+{
+  const originalFetch = globalThis.fetch;
+  let prJson: Record<string, unknown> = {
+    html_url: "https://github.com/acme/web/pull/77",
+    title: "Refactor the widget",
+    state: "open",
+    merged: false,
+    draft: false,
+    updated_at: "2026-07-09T09:00:00Z",
+  };
+  globalThis.fetch = (async () => ({ ok: true, status: 200, text: async () => "", json: async () => prJson })) as unknown as typeof fetch;
+
+  const rctx = routineCtx();
+  ok(principalIdOf(rctx) === undefined, "regression: a routine-fired ctx resolves NO principal (matches dispatch.ts)");
+
+  const p = resolvePartition(rctx);
+  const before = (await listRoutines(p)).length;
+
+  const res = (await subscribePrTool.execute({ repo: "acme/web", number: 77 }, rctx as never)) as { subscribed: boolean; routineId?: string };
+  ok(res.subscribed === true && !!res.routineId, "regression: subscribe_pr arms the next check with no principal — the re-arm path WORKS");
+
+  const after = await listRoutines(p);
+  ok(after.length === before + 1, "regression: exactly one new routine was armed by the principal-less re-arm");
+  const armed = after.find((r) => r.id === res.routineId)!;
+  ok(armed.trigger.kind === "once", "regression: the re-armed routine is a one-shot (`once`)");
+  ok(armed.createdBy === undefined, "regression: no creator stamped on a principal-less re-arm (routines are surface-owned)");
+  ok(armed.prompt.includes("PR #77 in acme/web") && armed.prompt.includes("Last known status: OPEN"), "regression: the re-armed prompt is code-templated with the fresh baseline");
+  ok(armed.prompt.includes("subscribe_pr") && !armed.prompt.includes("create_routine"), "regression: the re-armed prompt loops through subscribe_pr, never the gated create_routine");
+
+  prJson = { ...prJson, merged: true, state: "closed" };
+  const settledBefore = (await listRoutines(p)).length;
+  const res2 = (await subscribePrTool.execute({ repo: "acme/web", number: 77 }, rctx as never)) as { subscribed: boolean; routineId?: string };
+  ok(res2.subscribed === false && res2.routineId === undefined, "regression: a settled PR arms nothing on a fired turn (chain self-terminates)");
+  ok((await listRoutines(p)).length === settledBefore, "regression: no routine added for a settled PR");
 
   globalThis.fetch = originalFetch;
 }
