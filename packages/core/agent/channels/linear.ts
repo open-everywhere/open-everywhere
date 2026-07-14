@@ -24,7 +24,8 @@ import {
 import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
 import { divertToUnifiedWindow } from "./unified.js";
-import { finalMessageActionForTurn, supervisorTextDelivery } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./slack-events.js";
+import { completeSupervisorTurn, auditSupervisorFailure } from "./supervisor-complete.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
@@ -587,69 +588,44 @@ const native: LinearChannel = linearChannel({
       }
       const sessionId = ctx?.session?.id;
       const st = channel.state as LinearSupervisorSessionState;
-      const action = finalMessageActionForTurn(data.finishReason, data.message);
-      if (action.kind === "buffer-tool-status") return;
       const target = st.oeReplyTarget;
       const org = deploymentOrg();
       const auditTeamId = (st.oeUnified === true ? target?.teamId : undefined) ?? st.oeTeamId;
       const auditOrgId = (st.oeUnified === true ? target?.organizationId : undefined) ?? st.organizationId;
       const surface = auditTeamId ? `linear/${auditOrgId ?? "unknown"}/${auditTeamId}` : undefined;
-      if (action.kind === "silent") {
-        await appendAudit({
-          org,
-          platform: "linear",
-          workspace: auditOrgId ?? "unknown",
-          surface,
-          action: "linear.no_reply",
-          detail: { issueId: target?.issueId ?? null, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
-        });
-        return;
-      }
-      if (!target) {
-        slog("reply not posted — no per-turn thread target (turn.started snapshot empty); FAIL SAFE");
-        return;
-      }
-      const delivery = supervisorTextDelivery(true, false);
-      if (!delivery.postText) {
-        slog(`supervisor message-tool-only: DROPPED terminal prose — nothing posted (issue ${target.issueId})`);
-        await appendAudit({
-          org,
-          platform: "linear",
-          workspace: auditOrgId ?? "unknown",
-          surface,
-          action: "turn.supervisor_prose_dropped",
-          detail: { issueId: target.issueId, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-        }).catch(() => undefined);
-        return;
-      }
-      try {
-        await postOnce({
-          org,
-          key: outboundKey({
-            surface: "linear",
-            channel: auditTeamId ?? "",
-            threadTs: target.parentId ?? target.issueId,
-            action: "linear.supervisor-reply",
-            payload: action.text,
-          }),
-          run: () =>
-            callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
-              query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
-              queryName: "OeAmbientReply",
-              variables: { input: { issueId: target.issueId, ...(target.parentId ? { parentId: target.parentId } : {}), body: action.text } },
+      const row = { org, platform: "linear", workspace: auditOrgId ?? "unknown", surface };
+      await completeSupervisorTurn({
+        action: finalMessageActionForTurn(data.finishReason, data.message),
+        ...(sessionId ? { sessionId } : {}),
+        hasTarget: !!target,
+        midTurnPost: false,
+        noReplyAction: "linear.no_reply",
+        repliedAction: "linear.replied",
+        contextRow: row,
+        repliedRow: row,
+        silentAnchor: { issueId: target?.issueId ?? null },
+        droppedAnchor: { issueId: target?.issueId },
+        repliedAnchor: { issueId: target?.issueId, parentId: target?.parentId ?? null },
+        post: async (text) => {
+          await postOnce({
+            org,
+            key: outboundKey({
+              surface: "linear",
+              channel: auditTeamId ?? "",
+              threadTs: target!.parentId ?? target!.issueId,
+              action: "linear.supervisor-reply",
+              payload: text,
             }),
-        });
-        await appendAudit({
-          org,
-          platform: "linear",
-          workspace: auditOrgId ?? "unknown",
-          surface,
-          action: "linear.replied",
-          detail: { issueId: target.issueId, parentId: target.parentId ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-        });
-      } catch (err) {
-        slog(`reply delivery failed: ${String(err)}`);
-      }
+            run: () =>
+              callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+                query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                queryName: "OeAmbientReply",
+                variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },
+              }),
+          });
+        },
+        log: (m) => slog(m),
+      });
     },
     async "turn.failed"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
@@ -658,13 +634,11 @@ const native: LinearChannel = linearChannel({
       }
       const st = channel.state as LinearSupervisorSessionState;
       slog(`supervisor turn failed on team ${st.oeTeamId ?? "unknown"} (audited, nothing posted)`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "linear",
-        workspace: st.organizationId ?? "unknown",
-        action: "linear.supervisor_turn_failed",
-        detail: { teamId: st.oeTeamId ?? null },
-      }).catch(() => undefined);
+      await auditSupervisorFailure(
+        { org: deploymentOrg(), platform: "linear", workspace: st.organizationId ?? "unknown" },
+        "linear.supervisor_turn_failed",
+        { teamId: st.oeTeamId ?? null },
+      );
     },
     async "session.failed"(data, channel) {
       if (!isSupervisorLinearState(channel.state)) {
@@ -673,13 +647,11 @@ const native: LinearChannel = linearChannel({
       }
       const st = channel.state as LinearSupervisorSessionState;
       slog(`supervisor session failed on team ${st.oeTeamId ?? "unknown"} (audited; next wake force-rotates)`);
-      await appendAudit({
-        org: deploymentOrg(),
-        platform: "linear",
-        workspace: st.organizationId ?? "unknown",
-        action: "linear.supervisor_session_failed",
-        detail: { teamId: st.oeTeamId ?? null },
-      }).catch(() => undefined);
+      await auditSupervisorFailure(
+        { org: deploymentOrg(), platform: "linear", workspace: st.organizationId ?? "unknown" },
+        "linear.supervisor_session_failed",
+        { teamId: st.oeTeamId ?? null },
+      );
     },
   },
 });
