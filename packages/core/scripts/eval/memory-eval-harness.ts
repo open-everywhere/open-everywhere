@@ -57,7 +57,7 @@ export interface Injection {
 
 export async function injectWake(b: InjectBody, kind: InjectionKind, tag: string, log: Injection[]): Promise<Injection> {
   const body: InjectBody = b.platform === "slack"
-    ? { ...b, authAttributes: { trust_checked: "true", is_ext_shared: "false", ...(b.authAttributes ?? {}) } }
+    ? { ...b, authAttributes: { trust_checked: "true", is_ext_shared: "false", user_id: "UE2EMEMLEAD", ...(b.authAttributes ?? {}) } }
     : b;
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
