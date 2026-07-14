@@ -77,4 +77,39 @@ const ok = (label: string, cond: boolean) => {
   rmSync(dir, { recursive: true, force: true });
 }
 
-console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, tailored plan, env merge, scaffold via MCP)\n`);
+{
+  const { RUNTIME_ROLE_NAME, OWNER_URL_ENV, generateRuntimePassword, deriveRuntimeUrl, twoRoleProvisioningSql } = await import("../agent/ops/two-role.js");
+
+  const pw = generateRuntimePassword();
+  ok("generateRuntimePassword returns a non-empty URL-safe secret", pw.length >= 20 && /^[A-Za-z0-9_-]+$/.test(pw));
+  ok("two generated passwords differ (random)", generateRuntimePassword() !== generateRuntimePassword());
+
+  const owner = "postgres://neondb_owner:ownerpass@ep-cool-123.us-east-2.aws.neon.tech/neondb?sslmode=require";
+  const runtime = deriveRuntimeUrl(owner, RUNTIME_ROLE_NAME, pw);
+  const ru = new URL(runtime);
+  ok("deriveRuntimeUrl swaps in the runtime role", ru.username === RUNTIME_ROLE_NAME);
+  ok("deriveRuntimeUrl sets the generated password", ru.password === pw);
+  ok("deriveRuntimeUrl keeps host/db/params", ru.host === "ep-cool-123.us-east-2.aws.neon.tech" && ru.pathname === "/neondb" && ru.searchParams.get("sslmode") === "require");
+
+  let threw = false;
+  try {
+    deriveRuntimeUrl("https://not-postgres.example/db", RUNTIME_ROLE_NAME, pw);
+  } catch {
+    threw = true;
+  }
+  ok("deriveRuntimeUrl rejects a non-postgres URL (wizard then falls back to single-role)", threw);
+
+  const sql = twoRoleProvisioningSql(RUNTIME_ROLE_NAME, pw);
+  ok("provisioning SQL creates the runtime role first", /^CREATE ROLE oe_runtime LOGIN PASSWORD '/.test(sql[0]));
+  ok("provisioning SQL grants append-only tables SELECT,INSERT only", sql.some((s) => /GRANT SELECT, INSERT ON audit_entry, usage_events/.test(s)));
+  ok("provisioning SQL revokes schema CREATE (no DDL for the runtime role)", sql.some((s) => /REVOKE CREATE ON SCHEMA public/.test(s)));
+
+  const single = preflight({ OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: owner });
+  const singleCheck = single.checks.find((c) => c.name === "append-only role posture");
+  ok("preflight flags single-role posture as info advice", singleCheck?.status === "info" && /single-role/.test(singleCheck?.detail ?? ""));
+  const dual = preflight({ OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: runtime, [OWNER_URL_ENV]: owner });
+  const dualCheck = dual.checks.find((c) => c.name === "append-only role posture");
+  ok("preflight marks two-role posture ok when OE_DB_OWNER_URL is parked", dualCheck?.status === "ok");
+}
+
+console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, tailored plan, env merge, scaffold via MCP, two-role provisioning)\n`);

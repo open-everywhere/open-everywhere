@@ -39,6 +39,15 @@ export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check
       detail: set(env.DATABASE_URL) ? "set" : "missing",
       fix: "create a Neon Postgres DB and set DATABASE_URL (register the client at startup)",
     });
+    if (set(env.DATABASE_URL)) {
+      const twoRole = set(env.OE_DB_OWNER_URL);
+      checks.push({
+        name: "append-only role posture",
+        status: twoRole ? "ok" : "info",
+        detail: twoRole ? "two-role (app runs as a non-owner runtime role)" : "single-role (owner-DDL escape open)",
+        fix: twoRole ? undefined : "harden: run the two-role split so the app's credential can't disable append-only — docs/extending/database.md",
+      });
+    }
   }
 
   const hasAdminAuth =

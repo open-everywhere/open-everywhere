@@ -1,5 +1,12 @@
 import type { StepContext, WizardIO, WizardStep } from "../engine.js";
 import { isSet, mergedEnv, writeEnvLocal } from "../env-file.js";
+import {
+  RUNTIME_ROLE_NAME,
+  OWNER_URL_ENV,
+  generateRuntimePassword,
+  deriveRuntimeUrl,
+  twoRoleProvisioningSql,
+} from "@open-everywhere/core/agent/ops/two-role.js";
 
 function needsDb(env: Record<string, string | undefined>): boolean {
   const memProvider = env.OE_MEMORY_PROVIDER ?? "git";
@@ -28,13 +35,42 @@ export const databaseStep: WizardStep = {
   async automate(ctx: StepContext, io: WizardIO) {
     const wantsHosted = await io.confirm("Set up hosted Postgres now? (say no if you're just running locally)");
     if (!wantsHosted) return { ran: false, ok: false, detail: "skipped — local git/sqlite backing" };
-    const url = await io.askSecret("Paste your Neon/Postgres DATABASE_URL");
+    const url = await io.askSecret("Paste your Neon/Postgres DATABASE_URL (the OWNER string — e.g. neondb_owner)");
     if (!url) return { ran: true, ok: false, detail: "no value entered" };
-    writeEnvLocal(ctx.cwd, {
-      DATABASE_URL: url,
-      OE_MEMORY_PROVIDER: "postgres",
-      OE_OPERATIONAL_PROVIDER: "postgres",
-    });
-    return { ran: true, ok: true, detail: "saved to .env.local (value not shown here or ever logged)" };
+
+    const wantsTwoRole = await io.confirm(
+      "Harden append-only with the two-role split? (recommended — the app runs as a non-owner role the owner-DDL escape can't reach)",
+    );
+    if (wantsTwoRole) {
+      let runtimeUrl: string;
+      const password = generateRuntimePassword();
+      try {
+        runtimeUrl = deriveRuntimeUrl(url, RUNTIME_ROLE_NAME, password);
+      } catch (err) {
+        writeEnvLocal(ctx.cwd, { DATABASE_URL: url, OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres" });
+        return { ran: true, ok: true, detail: `single-role (couldn't derive a runtime URL: ${err instanceof Error ? err.message : String(err)}). See docs/extending/database.md to adopt the split later.` };
+      }
+      io.print("");
+      io.print("── Two-role provisioning ────────────────────────────────────────────────");
+      io.print("1. Boot ONCE with the owner DATABASE_URL so the schema applies as the owner.");
+      io.print(`2. Then run this SQL AS THE OWNER (creates the "${RUNTIME_ROLE_NAME}" role + its grants):`);
+      io.print("");
+      for (const stmt of twoRoleProvisioningSql(RUNTIME_ROLE_NAME, password)) io.print(`   ${stmt};`);
+      io.print("");
+      io.print(`   Generated runtime-role password (shown ONCE, not stored): ${password}`);
+      io.print("   Re-run the GRANT statements after any upgrade that adds a table.");
+      io.print("─────────────────────────────────────────────────────────────────────────");
+      io.print("");
+      writeEnvLocal(ctx.cwd, {
+        DATABASE_URL: runtimeUrl,
+        [OWNER_URL_ENV]: url,
+        OE_MEMORY_PROVIDER: "postgres",
+        OE_OPERATIONAL_PROVIDER: "postgres",
+      });
+      return { ran: true, ok: true, detail: `two-role: DATABASE_URL = the ${RUNTIME_ROLE_NAME} runtime role; owner parked as ${OWNER_URL_ENV} (both in .env.local, never a tracked file)` };
+    }
+
+    writeEnvLocal(ctx.cwd, { DATABASE_URL: url, OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres" });
+    return { ran: true, ok: true, detail: "single-role saved to .env.local (adopt the two-role split anytime — docs/extending/database.md)" };
   },
 };

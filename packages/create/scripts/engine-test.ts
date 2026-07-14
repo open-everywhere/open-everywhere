@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
+import { databaseStep } from "../src/steps/database.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -162,6 +166,54 @@ function step(overrides: Partial<WizardStep> & { id: string }): WizardStep {
   const third = await runWizard([realWorldStep], ctx, fakeIO());
   ok(third.results[0].outcome === "satisfied", "resume: re-running the wizard skips an already-satisfied step");
   ok(automateInvocations === 1, "resume: automate() is NOT re-invoked once the step is satisfied");
+}
+
+function scriptedIO(confirms: boolean[], secret: string): WizardIO & { printed: string[] } {
+  const printed: string[] = [];
+  let ci = 0;
+  return {
+    printed,
+    print: (line: string) => void printed.push(line),
+    ask: async () => "",
+    askSecret: async () => secret,
+    confirm: async () => confirms[ci++] ?? false,
+  };
+}
+const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/neondb?sslmode=require";
+{
+  const dir = mkdtempSync(join(tmpdir(), "oe-dbstep-tworole-"));
+  try {
+    const io = scriptedIO([true, true], OWNER);
+    const res = await databaseStep.automate!({ cwd: dir, env: {} }, io);
+    ok(res.ran && res.ok, "databaseStep two-role: reports ran+ok");
+    const envText = readFileSync(join(dir, ".env.local"), "utf-8");
+    ok(/DATABASE_URL=postgres:\/\/oe_runtime:/.test(envText), "databaseStep two-role: DATABASE_URL points at the oe_runtime runtime role");
+    ok(envText.includes("OE_DB_OWNER_URL=") && envText.includes("neondb_owner:ownerpass@"), "databaseStep two-role: the owner URL is parked as OE_DB_OWNER_URL");
+    ok(!envText.includes("neondb_owner:ownerpass@ep-x") || envText.split("neondb_owner:ownerpass@").length === 2, "databaseStep two-role: the owner credential appears only in the parked owner var, not DATABASE_URL");
+    ok(io.printed.some((l) => l.includes("CREATE ROLE oe_runtime LOGIN PASSWORD")), "databaseStep two-role: prints the CREATE ROLE provisioning SQL");
+    ok(io.printed.some((l) => l.includes("shown ONCE")), "databaseStep two-role: prints the generated password once");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const dir2 = mkdtempSync(join(tmpdir(), "oe-dbstep-single-"));
+  try {
+    const res = await databaseStep.automate!({ cwd: dir2, env: {} }, scriptedIO([true, false], OWNER));
+    ok(res.ran && res.ok, "databaseStep single-role: reports ran+ok");
+    const envText = readFileSync(join(dir2, ".env.local"), "utf-8");
+    ok(envText.includes(`DATABASE_URL=${OWNER}`), "databaseStep single-role: DATABASE_URL is the owner string");
+    ok(!envText.includes("OE_DB_OWNER_URL"), "databaseStep single-role: no OE_DB_OWNER_URL parked (single-role posture)");
+  } finally {
+    rmSync(dir2, { recursive: true, force: true });
+  }
+
+  const dir3 = mkdtempSync(join(tmpdir(), "oe-dbstep-skip-"));
+  try {
+    const res = await databaseStep.automate!({ cwd: dir3, env: {} }, scriptedIO([false], ""));
+    ok(!res.ran, "databaseStep skip: hosted=no does nothing (local git/sqlite backing)");
+  } finally {
+    rmSync(dir3, { recursive: true, force: true });
+  }
 }
 
 console.log(`✓ ${n} engine assertions passed`);
