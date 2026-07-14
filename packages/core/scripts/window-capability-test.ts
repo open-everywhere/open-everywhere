@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { TOOL_CONSEQUENCE, type ConsequenceTier } from "../agent/access/consequence.js";
-import { defineDomain } from "../agent/memory/domain.js";
+import { defineDomain, assertWindowSourcesVouched } from "../agent/memory/domain.js";
 import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
 import { isVouchedInternal, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
@@ -17,9 +17,6 @@ const eq = (a: unknown, b: unknown, label: string) => {
 const noThrow = (fn: () => unknown, label: string) => {
   assert.doesNotThrow(fn, label);
   n++;
-};
-const todo = (label: string) => {
-  console.log(`  · TODO (refactor-coupled, pends the gate): ${label}`);
 };
 
 const withWindowEnv = <T>(fn: () => T): T => {
@@ -100,28 +97,23 @@ _resetTrustedSurfacesForTest();
     "[P0-d] TODAY: assertUnifiedDomainTrust does NOT throw on an unvouched source in a multi-source window (config-load vouch gap)",
   );
 
-  const assertWindowSourcesVouched = domainMod.assertWindowSourcesVouched as
-    | ((d: readonly unknown[], vouched: readonly string[]) => void)
-    | undefined;
-  if (typeof assertWindowSourcesVouched === "function") {
-    assert.throws(
-      () => assertWindowSourcesVouched([multiSourceUnvouched, orgGate] as never, ["slack/T1/C_VOUCHED"]),
-      /github\/acme\/secret/,
-      "[P0-d] multi-source window with an unvouched source throws at config load",
-    );
-    n++;
-    const soloUnvouched = defineDomain({
-      name: "solo",
-      channels: ["github/acme/secret"],
-      ambientSupervisor: true,
-      unifiedSupervisor: true,
-      crossSurfaceWindow: true,
-    });
-    assert.doesNotThrow(() => assertWindowSourcesVouched([soloUnvouched, orgGate] as never, []), "[P0-d] a SOLO window over the same unvouched source does NOT throw (vouch gates multi-source only)");
-    n++;
-  } else {
-    todo("assertWindowSourcesVouched not yet built — multi-source-unvouched-throws / solo-of-same-does-not twin pends the config-validation code");
-  }
+  const assertWindowSourcesVouched = domainMod.assertWindowSourcesVouched as (d: readonly unknown[], vouched: readonly string[]) => void;
+  ok(typeof assertWindowSourcesVouched === "function", "[P0-d] assertWindowSourcesVouched is now exported (config-load vouch validation landed)");
+  assert.throws(
+    () => assertWindowSourcesVouched([multiSourceUnvouched, orgGate] as never, ["slack/T1/C_VOUCHED"]),
+    /github\/acme\/secret/,
+    "[P0-d] multi-source window with an unvouched source throws at config load",
+  );
+  n++;
+  const soloUnvouched = defineDomain({
+    name: "solo",
+    channels: ["github/acme/secret"],
+    ambientSupervisor: true,
+    unifiedSupervisor: true,
+    crossSurfaceWindow: true,
+  });
+  assert.doesNotThrow(() => assertWindowSourcesVouched([soloUnvouched, orgGate] as never, []), "[P0-d] a SOLO window over the same unvouched source does NOT throw (vouch gates multi-source only)");
+  n++;
 }
 
 console.log("P1-c — native-DM full-capability golden (pre-fold baseline):");
@@ -147,5 +139,79 @@ for (const name of Object.keys(NATIVE_DM_CAPABILITY_GOLDEN)) {
   nativeActual[name] = entry.tier;
 }
 eq(nativeActual, NATIVE_DM_CAPABILITY_GOLDEN, "[P1-c] native-DM full-capability golden — the pre-fold set the post-fold solo-window session must match byte-for-byte");
+
+console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
+{
+  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
+  const win = (channels: string[], name = "win") =>
+    defineDomain({ name, channels, ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true });
+
+  noThrow(
+    () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], ["github/acme", "notion/ws"]),
+    "[P0-e] workspace-grain vouch (github/acme, notion/ws) satisfies surfaces under it",
+  );
+  noThrow(
+    () => assertWindowSourcesVouched([win(["github/acme/one", "linear/org/team"]), orgGate], ["github/acme/one", "linear/org/team"]),
+    "[P0-e] surface-grain vouch satisfies the exact source",
+  );
+  {
+    const prev = process.env.OE_TRUST;
+    process.env.OE_TRUST = "internal";
+    noThrow(
+      () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], []),
+      "[P0-e] OE_TRUST=internal blanket satisfies all sources with an EMPTY vouch set",
+    );
+    if (prev === undefined) delete process.env.OE_TRUST;
+    else process.env.OE_TRUST = prev;
+  }
+  noThrow(
+    () => assertWindowSourcesVouched([win(["slack/T1/C_X", "github/acme/one"]), orgGate], ["github/acme/one"]),
+    "[P0-e] a Slack source is EXEMPT from the register check (internal-by-binding) — only github must be vouched",
+  );
+  assert.throws(
+    () => assertWindowSourcesVouched([win(["slack/T1/C_X", "telegram/g123/topic"]), orgGate], []),
+    /telegram\/g123\/topic/,
+    "[P0-e] a NON-binding-trusted platform (telegram) still throws when unvouched",
+  );
+  n++;
+  assert.throws(
+    () => assertWindowSourcesVouched([win(["github/a/x", "notion/b/y"]), orgGate], []),
+    /github\/a\/x[\s\S]*notion\/b\/y/,
+    "[P0-e] all unvouched sources are listed in a single error",
+  );
+  n++;
+  noThrow(() => assertWindowSourcesVouched([win(["github/a/x"], "solo"), orgGate], []), "[P0-e] solo (1-channel) window over an unvouched source does NOT throw");
+  noThrow(
+    () => assertWindowSourcesVouched([defineDomain({ name: "plain", channels: ["github/a/x", "github/b/y"] }), orgGate], []),
+    "[P0-e] a non-window (no crossSurfaceWindow) multi-channel domain is never vouch-checked",
+  );
+}
+
+console.log("P0-f — per-channel STANDING seat mounts the full toolset (characterization):");
+{
+  const STANDING_KEPT = [
+    "reply", "no_reply", "update_status", "react",
+    "remember", "forget",
+    "create_routine", "subscribe_pr", "cancel_routine",
+    "describe_image",
+    "read_slack_channel", "read_slack_thread", "read_notion_page", "check_pr_status",
+    "list_repos", "list_routines", "list_skills", "session_cost", "spend_report", "usage_report",
+  ] as const;
+  const STANDING_WITHHELD = [
+    "checkout_repo", "bash", "glob", "grep", "read_file", "write_file",
+    "web_fetch", "open_pull_request", "post_file", "browser_qa",
+    "create_skill", "delete_skill",
+  ] as const;
+  for (const name of [...STANDING_KEPT, ...STANDING_WITHHELD]) {
+    const entry = TOOL_CONSEQUENCE[name];
+    ok(entry !== undefined, `[P0-f] standing-seat tool "${name}" is registered (present on every session)`);
+    ok(isMountedTier(entry.tier), `[P0-f] "${name}" is MOUNTED (tier=${entry?.tier}) — callable-in-principle from a per-channel standing seat today`);
+  }
+  ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] no spawn/dispatch/delegate tool exists yet (D0 prerequisite) — added to the standing-seat kept set when it lands");
+
+  const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
+  ok(standingGrain.unified === false, "[P0-f] a plain ambient channel resolves a per-container (non-unified) standing grain");
+  eq(Object.keys(standingGrain).sort(), ["registryKey", "unified"], "[P0-f] the standing-seat grain carries NO tool-narrowing field today (topology resolved, tools untouched)");
+}
 
 console.log(`\nwindow-capability: ${n} assertions passed.`);

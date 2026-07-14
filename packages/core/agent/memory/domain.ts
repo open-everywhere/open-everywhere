@@ -176,6 +176,38 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   }
 }
 
+const BINDING_TRUSTED_PLATFORMS: ReadonlySet<string> = new Set(["slack", "local"]);
+
+export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[]): void {
+  const vset = new Set(vouched);
+  const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
+  const bad: string[] = [];
+  for (const d of domains) {
+    if (d.crossSurfaceWindow !== true) continue;
+    const channels = d.channels ?? [];
+    if (channels.length <= 1) continue;
+    for (const ch of channels) {
+      const segs = ch.split("/");
+      const platform = segs[0] ?? "";
+      if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
+      const workspaceKey = segs.slice(0, 2).join("/");
+      const okay = vset.has(workspaceKey) || vset.has(ch) || trustEnv;
+      if (!okay) {
+        bad.push(
+          `  domain "${d.name}" includes UN-vouched source "${ch}" in a multi-source (${channels.length}-channel) cross-surface window — vouch it in agent/identity/trusted-surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`,
+        );
+      }
+    }
+  }
+  if (bad.length > 0) {
+    throw new Error(
+      "open-everywhere: multi-source cross-surface window has un-vouched source(s):\n" +
+        bad.join("\n") +
+        "\n(memory/domain.ts assertWindowSourcesVouched).",
+    );
+  }
+}
+
 const PLATFORM_ENGAGEMENT_TIER_DEFAULTS: Readonly<Record<string, EngagementTier>> = {
   github: "reserved",
 };

@@ -1,5 +1,7 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
+import { assertWindowSourcesVouched } from "@open-everywhere/core/agent/memory/domain.js";
+import { vouchedSurfaces } from "@open-everywhere/core/agent/identity/trust.js";
 import { loadBundles, loadBindings } from "../access/bundles.js";
 import { loadProviders } from "../access/providers.js";
 import { loadAccessRequests } from "../access/access-requests.js";
@@ -43,3 +45,5 @@ registerConfig({
 });
 
 assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
+
+assertWindowSourcesVouched(loadDomains(), vouchedSurfaces());
