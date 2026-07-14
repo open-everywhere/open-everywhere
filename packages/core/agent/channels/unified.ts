@@ -8,6 +8,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
+import { parseWindowToken } from "./window-key.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
@@ -49,8 +50,8 @@ function windowEnabledFor(surfaceKey: string): boolean {
 }
 
 function auditLabels(rawToken: string): { workspace: string; surface: string | undefined } {
-  const domain = unifiedDomainFromToken(rawToken);
-  return { workspace: domain ?? "unknown", surface: domain ? unifiedDomainSessionKey(domain) : undefined };
+  const key = parseWindowToken(rawToken);
+  return { workspace: key?.domain ?? "unknown", surface: key ? unifiedDomainSessionKey(key.windowId) : undefined };
 }
 
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({

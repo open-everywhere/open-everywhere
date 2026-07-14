@@ -1,4 +1,5 @@
 import { unifiedDomainFor, crossSurfaceWindowEnabled, type Domain } from "../memory/domain.js";
+import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain } from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
 
@@ -11,31 +12,29 @@ export function unifiedSupervisorSentinel(generation: number): string {
 }
 
 export function unifiedSupervisorToken(domainName: string, generation: number): string {
-  return `oe-dom:${domainName}:${unifiedSupervisorSentinel(generation)}`;
+  return formatWindowToken(windowKeyForDomain(domainName, generation));
 }
 
-const UNIFIED_SUPERVISOR_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)$/;
-
 export function isUnifiedSupervisorToken(token: unknown): token is string {
-  return typeof token === "string" && UNIFIED_SUPERVISOR_TOKEN_RE.test(token);
+  return isWindowToken(token);
 }
 
 export function unifiedDomainFromToken(token: unknown): string | undefined {
-  if (typeof token !== "string") return undefined;
-  const m = UNIFIED_SUPERVISOR_TOKEN_RE.exec(token);
-  return m ? m[1] : undefined;
+  return parseWindowToken(token)?.domain;
+}
+
+export function unifiedWindowFromToken(token: unknown): string | undefined {
+  return parseWindowToken(token)?.windowId;
 }
 
 export function unifiedGenerationFromToken(token: unknown): number | undefined {
-  if (typeof token !== "string") return undefined;
-  const m = UNIFIED_SUPERVISOR_TOKEN_RE.exec(token);
-  return m ? Number(m[2]) : undefined;
+  return parseWindowToken(token)?.generation;
 }
 
 const UNIFIED_DOMAIN_KEY_PREFIX = "oe-domain::";
 
-export function unifiedDomainSessionKey(domainName: string): string {
-  return `${UNIFIED_DOMAIN_KEY_PREFIX}${domainName}`;
+export function unifiedDomainSessionKey(windowId: string): string {
+  return `${UNIFIED_DOMAIN_KEY_PREFIX}${windowId}`;
 }
 
 export function domainFromSessionKey(key: string): string | undefined {

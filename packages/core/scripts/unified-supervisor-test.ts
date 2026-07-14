@@ -13,6 +13,7 @@ import {
   unifiedSupervisorSentinel,
   isUnifiedSupervisorToken,
   unifiedDomainFromToken,
+  unifiedWindowFromToken,
   unifiedGenerationFromToken,
   unifiedDomainSessionKey,
   domainFromSessionKey,
@@ -130,6 +131,15 @@ ok(unifiedDomainFromToken("C_PAY:oe-sup:g3") === undefined, "no domain from a pe
 const WEIRD = unifiedSupervisorToken("team:sub", 12);
 ok(unifiedDomainFromToken(WEIRD) === "team:sub", "colon-bearing domain round-trips");
 ok(unifiedGenerationFromToken(WEIRD) === 12, "generation still parses with a colon-bearing domain");
+
+ok(unifiedWindowFromToken(TOK) === "payments", "windowId parses back out of the degenerate token (=== domain)");
+ok(unifiedWindowFromToken("C_PAY:oe-sup:g3") === undefined, "no windowId from a per-container token");
+ok(unifiedDomainSessionKey(unifiedWindowFromToken(TOK)!) === unifiedDomainSessionKey("payments"), "a legacy token's window registry key is byte-identical to the domain key (windowId === domain in step 1)");
+const EXPLICIT = "oe-dom:payments:win:chan-hr:oe-sup:g8";
+ok(unifiedDomainFromToken(EXPLICIT) === "payments", "explicit-window token still yields the domain (memory/access anchor survives the key split)");
+ok(unifiedWindowFromToken(EXPLICIT) === "chan-hr", "explicit-window token yields a windowId distinct from the domain");
+ok(unifiedGenerationFromToken(EXPLICIT) === 8, "explicit-window token yields its generation");
+ok(isUnifiedSupervisorToken(EXPLICIT), "isUnifiedSupervisorToken true for an explicit-window token too");
 
 const KEY = unifiedDomainSessionKey("payments");
 ok(KEY === "oe-domain::payments", "synthetic domain-session registry key shape");
