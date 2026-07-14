@@ -25,7 +25,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { auditChatReply } from "./chat-turn-audit.js";
+import { postTerminalProse } from "./reply-post.js";
 import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -481,15 +481,19 @@ const slackMentionChannel = slackChannel({
         return;
       }
       if (effects.postText) {
-        await channel.thread.post(action.text);
-        try {
+        const channelId = channel.state.channelId ?? undefined;
+        if (channelId) {
           const p = resolvePartition({
             channel: { kind: "slack" },
-            session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
+            session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
           });
-          await auditChatReply(p, { threadTs: channel.state.threadTs ?? null, chars: action.text.length }, sessionId);
-        } catch (err) {
-          console.warn(`[open-everywhere:slack] replied audit write failed: ${String(err)}`);
+          await postTerminalProse(
+            { platform: "slack", channelId, ...(channel.state.threadTs ? { threadTs: channel.state.threadTs } : {}) },
+            action.text,
+            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+          );
+        } else {
+          await channel.thread.post(action.text);
         }
       } else {
         console.log(

@@ -2,10 +2,10 @@ import { bindFrom, channelPlatform, type BindableContext } from "../identity/bin
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { slackForm } from "./slack-events.js";
-import { discordPostMessage } from "./discord-post.js";
+import { discordPostMessage, splitForDiscord } from "./discord-post.js";
 import { createCommentReply } from "./notion-api.js";
 import { sendTelegramMessage } from "eve/channels/telegram";
-import { sendTeamsActivity } from "eve/channels/teams";
+import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText } from "eve/channels/teams";
 import { createLinearAgentActivity } from "eve/channels/linear";
 
 export type ReplyTarget =
@@ -13,7 +13,7 @@ export type ReplyTarget =
   | { readonly platform: "discord"; readonly channelId: string }
   | { readonly platform: "notion"; readonly discussionId: string }
   | { readonly platform: "telegram"; readonly chatId: string; readonly messageThreadId?: number }
-  | { readonly platform: "teams"; readonly serviceUrl: string; readonly conversationId: string }
+  | { readonly platform: "teams"; readonly serviceUrl: string; readonly conversationId: string; readonly replyToActivityId?: string }
   | { readonly platform: "linear"; readonly agentSessionId: string };
 
 export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
@@ -132,16 +132,40 @@ async function dispatchReply(target: ReplyTarget, text: string): Promise<string>
     if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
       throw new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set.");
     }
-    const res = await sendTeamsActivity({
-      serviceUrl: target.serviceUrl,
-      conversationId: target.conversationId,
-      body: { type: "message", text },
-    });
+    const res = target.replyToActivityId
+      ? await replyToTeamsActivity({
+          serviceUrl: target.serviceUrl,
+          conversationId: target.conversationId,
+          activityId: target.replyToActivityId,
+          body: { type: "message", text },
+        })
+      : await sendTeamsActivity({
+          serviceUrl: target.serviceUrl,
+          conversationId: target.conversationId,
+          body: { type: "message", text },
+        });
     return res.id;
   }
   const res = await createLinearAgentActivity({
     activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
   });
   return res.id;
+}
+
+export async function postTerminalProse(target: ReplyTarget, text: string, audit: ReplyAudit): Promise<void> {
+  const chunks =
+    target.platform === "discord"
+      ? splitForDiscord(text)
+      : target.platform === "teams"
+        ? splitTeamsMessageText(text)
+        : [text];
+  let firstId: string | undefined;
+  for (const chunk of chunks) {
+    if (!chunk.trim()) continue;
+    const id = await dispatchReply(target, chunk);
+    firstId ??= id;
+  }
+  if (firstId === undefined) return;
+  await auditReplyPost(audit, firstId, target.platform, text.length);
 }
 

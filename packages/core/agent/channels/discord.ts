@@ -7,7 +7,8 @@ import { buildDiscordAuth, threadParentFromRawChannel, type OpenEverywhereDiscor
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
-import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { type ChatAuditPartition } from "./chat-turn-audit.js";
+import { postTerminalProse } from "./reply-post.js";
 import { resolvePartition } from "../memory/partition.js";
 
 function auditPartitionForState(state: { channelId: string | null; guildId: string | null }): ChatAuditPartition | null {
@@ -70,10 +71,17 @@ const discordInteractionChannel = discordChannel({
         }
         return;
       }
-      await channel.discord.post(action.text);
       {
         const p = auditPartitionForState(channel.state);
-        if (p) await auditChatReply(p, { channelId: channel.state.channelId, chars: action.text.length }, sessionId);
+        if (p && channel.state.channelId) {
+          await postTerminalProse(
+            { platform: "discord", channelId: channel.state.channelId },
+            action.text,
+            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+          );
+        } else {
+          await channel.discord.post(action.text);
+        }
       }
     },
   },

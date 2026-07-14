@@ -2,7 +2,8 @@ import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
-import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { type ChatAuditPartition } from "./chat-turn-audit.js";
+import { postTerminalProse } from "./reply-post.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -70,12 +71,19 @@ const native = teamsChannel({
         }
         return;
       }
-      for (const part of splitTeamsMessageText(action.text)) {
-        await channel.thread.post(part);
-      }
       {
         const p = auditPartitionForState(channel.state);
-        if (p) await auditChatReply(p, { conversationId: channel.state.conversationId, chars: action.text.length }, sessionId);
+        if (p && channel.state.serviceUrl && channel.state.conversationId) {
+          await postTerminalProse(
+            { platform: "teams", serviceUrl: channel.state.serviceUrl, conversationId: channel.state.conversationId, ...(channel.state.replyToActivityId ? { replyToActivityId: channel.state.replyToActivityId } : {}) },
+            action.text,
+            { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+          );
+        } else {
+          for (const part of splitTeamsMessageText(action.text)) {
+            await channel.thread.post(part);
+          }
+        }
       }
     },
   },

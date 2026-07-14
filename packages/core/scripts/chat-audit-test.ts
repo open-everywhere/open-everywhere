@@ -10,6 +10,8 @@ for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_
   delete process.env[k];
 }
 delete process.env.OE_AUDIT_SILENCES;
+process.env.OE_EGRESS_SPOOF = "1";
+delete process.env.VERCEL;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -37,6 +39,10 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { markRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
 
+async function replyPosts(platform: string): Promise<Array<{ detail?: Record<string, unknown> }>> {
+  return (await readAudit({ action: "reply.post" })).filter((r) => r.platform === platform);
+}
+
 {
   const slackChannel = (await import("../agent/channels/slack.js")).default as unknown as AdapterChannel;
   const completed = (message: string | null, ctx: unknown) => inSession(() => slackChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
@@ -53,16 +59,17 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
   ok(posts.length === 0, "slack: the judged silence posts NOTHING (silence stays silence)");
 
   await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
-  const slackReplies = await readAudit({ action: "slack.replied" });
-  ok(posts.length === 1 && posts[0] === "here's the answer", "slack: the default terminal post still delivers");
-  ok(slackReplies.length === 1, "slack: a posted reply writes a slack.replied audit row");
-  ok(slackReplies[0]!.detail?.chars === "here's the answer".length, "slack: the replied row records the reply size");
-  ok(slackReplies[0]!.detail?.sessionId === "chat-audit-test", "slack: the replied row STAMPS the eve sessionId (audit→transcript join key)");
+  const sp = await replyPosts("slack");
+  ok(sp.length === 1, "slack: a terminal-prose reply writes exactly ONE reply.post row (choke point)");
+  ok(sp[0]!.detail?.route === "terminal" && sp[0]!.detail?.chars === "here's the answer".length, "slack: the reply.post row carries route:\"terminal\" + chars");
+  ok(sp[0]!.detail?.sessionId === "chat-audit-test", "slack: the reply.post row STAMPS the eve sessionId (audit→transcript join key)");
+  ok((await readAudit({ action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
 
   await inSession(async () => {
     markRepliedThisTurn();
     await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   });
+  ok((await replyPosts("slack")).length === 1, "slack: a reply-tool turn's empty terminal writes NO terminal reply.post row");
   ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
 }
 
@@ -76,9 +83,9 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
   ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord: a judged silence writes NO discord.no_reply row (actions-only)");
 
   await completed("rolled back to v42", ctx);
-  const replies = await readAudit({ action: "discord.replied" });
-  ok(posts.length === 1, "discord: the default terminal post still delivers");
-  ok(replies.length === 1 && replies[0]!.detail?.chars === "rolled back to v42".length, "discord: a posted reply writes a discord.replied audit row");
+  const dp = await replyPosts("discord");
+  ok(dp.length === 1 && dp[0]!.detail?.route === "terminal" && dp[0]!.detail?.chars === "rolled back to v42".length, "discord: a terminal-prose reply writes ONE reply.post row (route:terminal)");
+  ok((await readAudit({ action: "discord.replied" })).length === 0, "discord: the legacy discord.replied row is GONE");
 }
 
 {
@@ -95,7 +102,7 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
   const completed = (message: string | null, ctx: unknown) => inSession(() => teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
   const posts: string[] = [];
   const ctx = {
-    state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel" },
+    state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.test.local", replyToActivityId: "act-root-1" },
     thread: { post: async (t: string) => void posts.push(t) },
   };
 
@@ -103,9 +110,9 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
   ok((await readAudit({ action: "teams.no_reply" })).length === 0, "teams: a judged silence writes NO teams.no_reply row (actions-only)");
 
   await completed("done — deployed", ctx);
-  const replies = await readAudit({ action: "teams.replied" });
-  ok(posts.length === 1, "teams: the default terminal post still delivers");
-  ok(replies.length === 1 && replies[0]!.detail?.chars === "done — deployed".length, "teams: a posted reply writes a teams.replied audit row");
+  const tp = await replyPosts("teams");
+  ok(tp.length === 1 && tp[0]!.detail?.route === "terminal" && tp[0]!.detail?.chars === "done — deployed".length, "teams: a terminal-prose reply writes ONE reply.post row (route:terminal, choke point via serviceUrl+replyToActivityId)");
+  ok((await readAudit({ action: "teams.replied" })).length === 0, "teams: the legacy teams.replied row is GONE");
 }
 
 {
@@ -121,9 +128,9 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
   ok((await readAudit({ action: "telegram.no_reply" })).length === 0, "telegram: a judged silence writes NO telegram.no_reply row (actions-only)");
 
   await completed("watch fired: build green", ctx);
-  const replies = await readAudit({ action: "telegram.replied" });
-  ok(posts.length === 1, "telegram: the default terminal post still delivers");
-  ok(replies.length === 1 && replies[0]!.detail?.chars === "watch fired: build green".length, "telegram: a posted reply writes a telegram.replied audit row");
+  const gp = await replyPosts("telegram");
+  ok(gp.length === 1 && gp[0]!.detail?.route === "terminal" && gp[0]!.detail?.chars === "watch fired: build green".length, "telegram: a terminal-prose reply writes ONE reply.post row (route:terminal)");
+  ok((await readAudit({ action: "telegram.replied" })).length === 0, "telegram: the legacy telegram.replied row is GONE");
 }
 
 rmSync(tmp, { recursive: true, force: true });

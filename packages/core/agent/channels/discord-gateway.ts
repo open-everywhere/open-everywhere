@@ -35,7 +35,8 @@ import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { type ChatAuditPartition } from "./chat-turn-audit.js";
+import { postTerminalProse } from "./reply-post.js";
 import { isAllowedDriver } from "../testing/driver-allowlist.js";
 import {
   buildIngestedReaction,
@@ -1076,10 +1077,15 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         ? auditPartitionForGatewayState(channel.state)
         : null;
       if (plan.delivery.kind === "post") {
-        await postDiscordReply(channel.channelId, action.kind === "post" ? action.text : plan.delivery.chunks.join("\n"));
-        if (auditP) {
-          const text = action.kind === "post" ? action.text : plan.delivery.chunks.join("\n");
-          await auditChatReply(auditP, { channelId: channel.channelId, chars: text.length }, sessionId);
+        const text = action.kind === "post" ? action.text : plan.delivery.chunks.join("\n");
+        if (auditP && channel.channelId) {
+          await postTerminalProse(
+            { platform: "discord", channelId: channel.channelId },
+            text,
+            { org: auditP.org, platform: auditP.platform, workspace: auditP.workspace, surface: auditP.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
+          );
+        } else {
+          await postDiscordReply(channel.channelId, text);
         }
       } else if (action.kind === "silent") {
         if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
