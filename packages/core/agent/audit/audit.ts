@@ -7,8 +7,17 @@ export async function appendAudit(entry: AuditInput): Promise<void> {
   const record: AuditEntry = { ...entry, ts: entry.ts ?? new Date().toISOString() };
   try {
     await getOperationalStore().appendAudit(record);
-  } catch (err) {
-    console.warn(`[open-everywhere:audit] dropped a "${record.action}" entry for ${record.org}/${record.platform}/${record.workspace}: ${String(err)}`);
+  } catch (firstErr) {
+    try {
+      await getOperationalStore().appendAudit(record);
+    } catch (secondErr) {
+      try {
+        const { emitTelemetry } = await import("../observability/telemetry.js");
+        emitTelemetry("oe.audit.dropped", { "oe.action": record.action, "oe.platform": record.platform });
+      } catch {
+      }
+      console.warn(`[open-everywhere:audit] dropped a "${record.action}" entry for ${record.org}/${record.platform}/${record.workspace} after one retry: ${String(secondErr)} (first: ${String(firstErr)})`);
+    }
   }
 }
 

@@ -74,5 +74,40 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   for (const k of ["OE_ORG", "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_PRINCIPAL", "OE_MODE"]) delete process.env[k];
 }
 
+{
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const store = getOperationalStore() as { appendAudit: (rec: unknown) => Promise<void> };
+  const realAppend = store.appendAudit.bind(store);
+
+  let calls = 0;
+  store.appendAudit = async (rec: unknown) => {
+    calls++;
+    if (calls === 1) throw new Error("transient store blip");
+    return realAppend(rec);
+  };
+  await appendAudit({ ts: "2026-06-25T00:00:00Z", org: "retryorg", platform: "slack", workspace: "TR", action: "memory.write" });
+  ok(calls === 2, "appendAudit re-attempts exactly once on a transient store failure");
+  store.appendAudit = realAppend;
+  ok((await readAudit({ org: "retryorg" })).length === 1, "appendAudit: the retry LANDS the row (best-effort recovered)");
+
+  const { __resetTelemetryForTest, __setInstanceForTest, __queueLengthForTest } = await import("../agent/observability/telemetry.js");
+  __resetTelemetryForTest();
+  __setInstanceForTest({ id: "audit-drop-test", ephemeral: false });
+  const before = __queueLengthForTest();
+  store.appendAudit = async () => {
+    throw new Error("store down");
+  };
+  let threw = false;
+  try {
+    await appendAudit({ org: "droporg", platform: "discord", workspace: "TD", action: "reply.post" });
+  } catch {
+    threw = true;
+  }
+  ok(!threw, "appendAudit: a second failure never throws (best-effort held)");
+  store.appendAudit = realAppend;
+  ok((await readAudit({ org: "droporg" })).length === 0, "appendAudit: a twice-failing write drops the row (no partial)");
+  ok(__queueLengthForTest() === before + 1, "appendAudit: a dropped line emits exactly one oe.audit.dropped telemetry event");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ audit: ${passed} assertions passed`);

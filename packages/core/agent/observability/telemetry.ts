@@ -26,6 +26,7 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   "oe.turn.failed": Object.freeze(["oe.surface", "oe.error.code"]),
   "oe.error.uncaught": Object.freeze(["oe.component", "oe.error.name"]),
   "oe.feature.used": Object.freeze(["oe.feature", "oe.outcome"]),
+  "oe.audit.dropped": Object.freeze(["oe.action", "oe.platform"]),
   "oe.reaction.added": Object.freeze(["oe.surface", "oe.on_bot_reply", "oe.emoji_class"]),
   "oe.reaction.removed": Object.freeze(["oe.surface", "oe.on_bot_reply", "oe.emoji_class"]),
   "wizard.started": Object.freeze(["oe.wizard.version", "oe.wizard.platform"]),
