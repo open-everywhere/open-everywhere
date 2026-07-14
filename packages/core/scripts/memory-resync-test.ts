@@ -7,6 +7,7 @@ import { registerConfig } from "../agent/access/config.js";
 import { registerProvider, type MemoryProvider } from "../agent/memory/provider.js";
 import { siloTier, tierId, type MemoryFiles, type Tier } from "../agent/memory/store.js";
 import { resolvePartition, type Partition } from "../agent/memory/partition.js";
+import { readAudit } from "../agent/audit/audit.js";
 import type { HookContext } from "eve/hooks";
 
 let n = 0;
@@ -438,10 +439,14 @@ process.env.OE_UNIFIED_SUPERVISOR = "1";
   await fire(ext, "turn.started");
   ok(pubStore.calls.tierVersion > pubP0, "external resync probes the public silo");
   ok(brain.calls.tierVersion === brainP0 && engStore.calls.tierVersion === engP0, "ISOLATION: an external resync NEVER probes an internal silo (the trust gate holds through re-sync too)");
+  const extGate = (await readAudit({ action: "memory.trust_gate" })).find((e) => e.detail?.sessionId === "sup-ext");
+  ok(!!extGate, "WS-4: an external session.started audits a memory.trust_gate row");
+  ok(typeof extGate?.detail?.reason === "string" && typeof extGate?.detail?.reads === "number" && extGate?.detail?.sessionId === "sup-ext" && (extGate?.detail as { mode?: unknown }).mode !== undefined, "WS-4: the trust_gate detail carries mode/reads/reason/sessionId (taint-clean — no memory content)");
 
   const engP1 = engStore.calls.tierVersion;
   const a = makeSession("sup-a", SUP_TOKEN);
   await fire(a, "session.started");
+  ok((await readAudit({ action: "memory.trust_gate" })).every((e) => e.detail?.sessionId !== "sup-a"), "WS-4: an internal (trusted) session.started writes NO memory.trust_gate row");
   await brain.provider.writeTier(partition, BRAIN, { "a-only.md": "x" }, "bump A");
   await fire(a, "turn.started");
   ok(engStore.calls.tierVersion === engP1, "ISOLATION: a domain-A supervisor never probes domain-B's silo");

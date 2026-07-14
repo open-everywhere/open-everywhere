@@ -321,6 +321,21 @@ export default defineHook({
         const binding = bindFrom(ctx);
         const p = resolvePartition(ctx);
         const plan = planFor(binding, p);
+        if (binding.trust === "external" && binding.platform !== "local") {
+          try {
+            await appendAudit({
+              org: p.org,
+              platform: p.platform,
+              workspace: p.workspace,
+              surface: p.surface,
+              principalId: binding.principalId,
+              action: "memory.trust_gate",
+              detail: { mode: binding.mode, reads: plan.reads.length, reason: plan.reason, ...(ctx.session?.id ? { sessionId: ctx.session.id } : {}) },
+            });
+          } catch (err) {
+            log(`session.started trust_gate audit skipped: ${String(err)}`);
+          }
+        }
         if (plan.reads.length === 0) {
           log(`session.started: no memory synced — ${plan.reason}`);
           return;
