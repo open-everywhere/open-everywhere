@@ -2,7 +2,8 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
-import { finalMessageActionForTurn, supervisorTextDelivery, isSupervisorProseLeak } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./slack-events.js";
+import { completeSupervisorTurn } from "./supervisor-complete.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";
 import { liveMemoryDeltaDep } from "../memory/wake-delta.js";
@@ -234,53 +235,28 @@ export default defineChannel<NotionState, { state: NotionState }>({
       const target = channel.state.oeReplyTarget;
       const discussionId = target?.discussionId;
       const repliedThisTurn = consumeRepliedThisTurn();
-      if (action.kind === "silent") {
-        await appendAudit({
-          org: deploymentOrg(),
-          platform: "notion",
-          workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
-          surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
-          action: "notion.no_reply",
-          detail: { discussionId: discussionId ?? channel.state.discussionId, reason: action.reason, ...(sessionId ? { sessionId } : {}) },
-        });
-        return;
-      }
-      if (channel.state.oeUnified === true) {
-        const delivery = supervisorTextDelivery(true, capabilitiesForPlatform("notion").midTurnPost);
-        if (!delivery.postText) {
-          if (isSupervisorProseLeak(true, repliedThisTurn, false)) {
-            log(`supervisor message-tool-only: DROPPED terminal prose (judge emitted text without calling reply) — nothing posted (${discussionId ?? "?"})`);
-            await appendAudit({
-              org: deploymentOrg(),
-              platform: "notion",
-              workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
-              surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
-              action: "turn.supervisor_prose_dropped",
-              detail: { discussionId: discussionId ?? null, chars: action.text.length, ...(sessionId ? { sessionId } : {}) },
-            }).catch(() => undefined);
-          }
-          return;
-        }
-      }
-      const message = action.text;
-      const apiKey = notionApiKey();
-      if (!discussionId || !apiKey) {
-        log(`reply not posted — ${!apiKey ? "NOTION_API_KEY unset" : "no per-turn discussion target (turn.started snapshot empty)"}`);
-        return;
-      }
-      try {
-        await createCommentReply({ discussionId, text: message, apiKey });
-        await appendAudit({
-          org: deploymentOrg(),
-          platform: "notion",
-          workspace: target?.workspaceId ?? channel.state.workspaceId ?? "unknown",
-          surface: target?.pageId ?? channel.state.pageId ?? discussionId,
-          action: "notion.replied",
-          detail: { discussionId, chars: message.length, ...(sessionId ? { sessionId } : {}) },
-        });
-      } catch (err) {
-        log(`reply delivery failed: ${String(err)}`);
-      }
+      const org = deploymentOrg();
+      const workspace = target?.workspaceId ?? channel.state.workspaceId ?? "unknown";
+      await completeSupervisorTurn({
+        action,
+        ...(sessionId ? { sessionId } : {}),
+        hasTarget: !!discussionId,
+        midTurnPost: channel.state.oeUnified === true ? capabilitiesForPlatform("notion").midTurnPost : false,
+        proseLeak: { repliedThisTurn },
+        noReplyAction: "notion.no_reply",
+        repliedAction: "notion.replied",
+        contextRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown" },
+        repliedRow: { org, platform: "notion", workspace, surface: target?.pageId ?? channel.state.pageId ?? discussionId },
+        silentAnchor: { discussionId: discussionId ?? channel.state.discussionId },
+        droppedAnchor: { discussionId: discussionId ?? null },
+        repliedAnchor: { discussionId },
+        post: async (text) => {
+          const apiKey = notionApiKey();
+          if (!apiKey) throw new Error("reply couldn't post to Notion — NOTION_API_KEY is not set.");
+          await createCommentReply({ discussionId: discussionId!, text, apiKey });
+        },
+        log: (m) => log(m),
+      });
     },
   },
 });

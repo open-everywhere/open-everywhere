@@ -44,11 +44,6 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
     return;
   }
 
-  if (!spec.hasTarget) {
-    spec.log("reply not posted — no per-turn target (turn.started snapshot empty); FAIL SAFE");
-    return;
-  }
-
   const delivery = supervisorTextDelivery(true, spec.midTurnPost);
   if (!delivery.postText) {
     const isLeak = spec.proseLeak ? isSupervisorProseLeak(true, spec.proseLeak.repliedThisTurn, false) : true;
@@ -64,6 +59,11 @@ export async function completeSupervisorTurn(spec: SupervisorCompletionSpec): Pr
         detail: { ...spec.droppedAnchor, chars: action.text.length, ...sid },
       }).catch(() => undefined);
     }
+    return;
+  }
+
+  if (!spec.hasTarget) {
+    spec.log("reply not posted — no per-turn target (turn.started snapshot empty); FAIL SAFE");
     return;
   }
 
