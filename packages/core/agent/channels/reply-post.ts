@@ -1,5 +1,6 @@
 import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
+import { appendAudit } from "../audit/audit.js";
 import { slackForm } from "./slack-events.js";
 import { discordPostMessage } from "./discord-post.js";
 import { createCommentReply } from "./notion-api.js";
@@ -54,7 +55,44 @@ export function resolveReplyTarget(ctx: BindableContext): ReplyTarget | null {
   }
 }
 
-export async function postReply(target: ReplyTarget, text: string): Promise<string> {
+export interface ReplyAudit {
+  readonly org: string;
+  readonly platform: string;
+  readonly workspace: string;
+  readonly surface?: string;
+  readonly principalId?: string;
+  readonly sessionId?: string;
+  readonly wakeId?: string;
+  readonly route: "tool" | "terminal" | "bridge";
+}
+
+export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, platform: string, chars: number): Promise<void> {
+  if (!audit) return;
+  await appendAudit({
+    org: audit.org,
+    platform: audit.platform,
+    workspace: audit.workspace,
+    surface: audit.surface,
+    principalId: audit.principalId,
+    action: "reply.post",
+    detail: {
+      id,
+      platform,
+      chars,
+      route: audit.route,
+      ...(audit.wakeId ? { wakeId: audit.wakeId } : {}),
+      ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
+export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit): Promise<string> {
+  const id = await dispatchReply(target, text);
+  await auditReplyPost(audit, id, target.platform, text.length);
+  return id;
+}
+
+async function dispatchReply(target: ReplyTarget, text: string): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${target.platform} reply (${text.length}c)`);

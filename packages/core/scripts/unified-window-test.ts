@@ -794,6 +794,23 @@ const store = getOperationalStore();
   await postUnifiedReply((await resolveUnifiedWakeTarget(store, "default", threadedId))!, "threaded answer", deps);
   ok(slackPosts.length === 2 && slackPosts[1].threadTs === "99.5", "a threaded trigger's reply posts into ITS thread");
 
+  {
+    await postUnifiedReply(slackOrigin!, "audited answer", deps, {
+      org: "default", platform: "unified", workspace: "dom-win", surface: "oe-dom:dom-win",
+      sessionId: "sess-choke", wakeId: received[0].target.wakeId, route: "tool",
+    });
+    const rows = await store.readAudit({ org: "default", action: "reply.post" });
+    const row = rows.find((r) => r.detail?.wakeId === received[0].target.wakeId && r.detail?.sessionId === "sess-choke");
+    ok(!!row, "choke point: postUnifiedReply(audit) writes a reply.post row joined by wakeId + sessionId");
+    ok(row?.detail?.route === "tool" && row?.detail?.platform === "slack" && row?.detail?.id === "ts-1" && row?.detail?.chars === 14, "choke point: reply.post detail carries route/platform/id/chars (taint-clean)");
+    await postUnifiedReply(slackOrigin!, "bridged prose", deps, {
+      org: "default", platform: "unified", workspace: "dom-win", surface: "oe-dom:dom-win",
+      sessionId: "sess-bridge", wakeId: received[0].target.wakeId, route: "bridge",
+    });
+    const bridgeRow = (await store.readAudit({ org: "default", action: "reply.post" })).find((r) => r.detail?.sessionId === "sess-bridge");
+    ok(bridgeRow?.detail?.route === "bridge", "choke point: the addressed-mention bridge writes reply.post with route:\"bridge\" (no separate prose_delivered row)");
+  }
+
   ok((await resolveUnifiedWakeTarget(store, "default", "no-such-wake")) === null, "an unknown wakeId resolves null (never guessed)");
   await store.putUnifiedWakeTarget("default", "corrupt", "{not json", new Date().toISOString(), WAKE_TARGET_TTL_MS);
   ok((await resolveUnifiedWakeTarget(store, "default", "corrupt")) === null, "a corrupt map row resolves null");

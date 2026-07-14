@@ -265,6 +265,7 @@ await inSession(async () => {
   );
   const audit = await readAudit({ org: "default", action: "reply.post" });
   ok(audit.length === 1 && audit[0]?.detail?.id === "222.333" && audit[0]?.detail?.platform === "slack", "reply: audits one reply.post row with id + platform");
+  ok(audit[0]?.detail?.route === "tool" && audit[0]?.detail?.chars === 17, "reply: the choke-point reply.post row carries route:\"tool\" + chars (single owner, no tool-layer duplicate)");
 });
 restoreHttp();
 

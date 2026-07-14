@@ -130,16 +130,16 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           return;
         }
         try {
-          const id = await postUnifiedReply(origin, action.text);
-          ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
-          await appendAudit({
+          const id = await postUnifiedReply(origin, action.text, {}, {
             org,
             platform: "unified",
             workspace,
             surface,
-            action: "turn.direct_mention_prose_delivered",
-            detail: { chars: action.text.length, platform: origin.platform, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
-          }).catch(() => undefined);
+            ...(sessionId ? { sessionId } : {}),
+            ...(wakeId ? { wakeId } : {}),
+            route: "bridge",
+          });
+          ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
           return;
         } catch (err) {
           const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);

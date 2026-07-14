@@ -308,25 +308,31 @@ function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireE
     notes.push(`${redriveRows.length} auto-redrive(s) fired → ${before - completions.length} corrective-turn completion(s) pulled out of the FIFO (kept 1:1 with injections)`);
   }
 
+  const bridgeWakeIds = new Set<string>();
+  for (const [w, posts] of replyPostsOf) {
+    if (posts.some((p) => dS(p, "route") === "bridge")) bridgeWakeIds.add(w);
+  }
+
   const sortedInjs = injs.slice().sort((a, b) => a.injectedAt.localeCompare(b.injectedAt));
+  const fifoInjs = sortedInjs.filter((inj) => !bridgeWakeIds.has(inj.wakeId));
   const completionOf = new Map<string, AuditWireEntry>();
 
   const isBridgeRow = (c: AuditWireEntry): boolean =>
     c.action === A_PROSE_DELIVERED || c.action === A_BRIDGE_UNRESOLVED || c.action === A_BRIDGE_FAILED;
 
   const fifoValid =
-    completions.length === sortedInjs.length &&
-    completions.every((c, i) => !isBridgeRow(c) || sortedInjs[i].addressing === "direct-mention");
+    completions.length === fifoInjs.length &&
+    completions.every((c, i) => !isBridgeRow(c) || fifoInjs[i].addressing === "direct-mention");
 
   if (fifoValid) {
-    completions.forEach((c, i) => completionOf.set(sortedInjs[i].wakeId, c));
+    completions.forEach((c, i) => completionOf.set(fifoInjs[i].wakeId, c));
   } else {
     notes.push(
-      `FIFO 1:1 broke (${sortedInjs.length} injections vs ${completions.length} completions${completions.length === sortedInjs.length ? ", bridge-row misalignment" : ""}) — semantic fallback used; treat per-turn attribution as approximate`,
+      `FIFO 1:1 broke (${fifoInjs.length} FIFO injections vs ${completions.length} completions${completions.length === fifoInjs.length ? ", bridge-row misalignment" : ""}) — semantic fallback used; treat per-turn attribution as approximate`,
     );
     const usedC = new Set<number>();
     const usedI = new Set<number>();
-    const dmInjs = sortedInjs.map((inj, i) => ({ inj, i })).filter((x) => x.inj.addressing === "direct-mention");
+    const dmInjs = fifoInjs.map((inj, i) => ({ inj, i })).filter((x) => x.inj.addressing === "direct-mention");
     let dmCursor = 0;
     completions.forEach((c, ci) => {
       if (isBridgeRow(c) && dmCursor < dmInjs.length) {
@@ -339,9 +345,9 @@ function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireE
     let icur = 0;
     completions.forEach((c, ci) => {
       if (usedC.has(ci)) return;
-      while (icur < sortedInjs.length && usedI.has(icur)) icur++;
-      if (icur >= sortedInjs.length) return;
-      completionOf.set(sortedInjs[icur].wakeId, c);
+      while (icur < fifoInjs.length && usedI.has(icur)) icur++;
+      if (icur >= fifoInjs.length) return;
+      completionOf.set(fifoInjs[icur].wakeId, c);
       usedI.add(icur);
       icur++;
     });
@@ -361,11 +367,15 @@ function outcomeFor(
   const lat = (row: AuditWireEntry): number => new Date(row.ts).getTime() - new Date(inj.injectedAt).getTime();
 
   if (posts.length > 0) {
+    const bridged = posts.some((p) => dS(p, "route") === "bridge");
     if (expected === "SILENT_OK") {
-      return { outcome: "OVER_REPLY", latencyMs: lat(posts[0]), notes: `reply.post (wakeId-joined) on a silence-warranted turn`, matched };
+      return { outcome: "OVER_REPLY", latencyMs: lat(posts[0]), notes: bridged ? `bridge delivery (route:bridge) on a silence-warranted turn` : `reply.post (wakeId-joined) on a silence-warranted turn`, matched };
     }
     if (attribution.redrivenWakeIds.has(inj.wakeId)) {
       return { outcome: "LANDED_VIA_REDRIVE", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined AFTER auto-redrive → ${dS(posts[0], "platform") ?? "?"} (first-try was a prose drop; the redrive rescued it)`, matched };
+    }
+    if (bridged) {
+      return { outcome: "LANDED_VIA_BRIDGE", latencyMs: lat(posts[0]), notes: `prose bridged to ${dS(posts[0], "platform") ?? "?"} (${dN(posts[0], "chars")}c) — model used PROSE on a mention (rescued via route:bridge reply.post)`, matched };
     }
     return { outcome: "LANDED_VIA_REPLY_TOOL", latencyMs: lat(posts[0]), notes: `reply.post wakeId-joined → ${dS(posts[0], "platform") ?? "?"}`, matched };
   }

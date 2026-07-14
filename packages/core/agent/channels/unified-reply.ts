@@ -7,6 +7,7 @@ import { createCommentReply } from "./notion-api.js";
 import { discordPostMessage, splitForDiscord } from "./discord-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import { isTrustedTeamsServiceUrl } from "./unified-window.js";
+import { auditReplyPost, type ReplyAudit } from "./reply-post.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
@@ -25,7 +26,13 @@ export interface UnifiedReplyDeps {
   readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
 }
 
-export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
+export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, audit?: ReplyAudit): Promise<string> {
+  const id = await dispatchUnifiedReply(origin, text, deps);
+  await auditReplyPost(audit, id, origin.platform, text.length);
+  return id;
+}
+
+async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
     if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
