@@ -12,6 +12,10 @@ export async function appendAudit(entry: AuditInput): Promise<void> {
   }
 }
 
+export function auditSilencesEnabled(): boolean {
+  return process.env.OE_AUDIT_SILENCES === "1";
+}
+
 export async function readAudit(filter: AuditFilter = {}): Promise<AuditEntry[]> {
   return getOperationalStore().readAudit(filter);
 }

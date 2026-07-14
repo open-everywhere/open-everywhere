@@ -2,7 +2,7 @@ import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
-import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { resolvePartition } from "../memory/partition.js";
 
@@ -62,10 +62,6 @@ const native = teamsChannel({
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:teams] judged silence (${action.reason}) — nothing posted (conversation ${channel.state.conversationId ?? "?"})`);
-        }
-        if (action.kind === "silent" && shouldAuditChatSilence(action.reason, repliedThisTurn)) {
-          const p = auditPartitionForState(channel.state);
-          if (p) await auditChatSilence(p, { conversationId: channel.state.conversationId, reason: action.reason }, sessionId);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(

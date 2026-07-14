@@ -25,7 +25,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { auditChatSilence, auditChatReply, shouldAuditChatSilence } from "./chat-turn-audit.js";
+import { auditChatReply } from "./chat-turn-audit.js";
 import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
 import { SURFACE, tierId } from "../memory/store.js";
 import { getProvider, providerById } from "../memory/provider.js";
@@ -359,20 +359,6 @@ const slackMentionChannel = slackChannel({
         console.log(
           `[open-everywhere:slack] judged silence (${action.reason}) — nothing posted (${channel.state.channelId ?? "?"}/${channel.state.threadTs ?? "?"})`,
         );
-        if (shouldAuditChatSilence(action.reason, reactedThisTurn || repliedThisTurn || cardPostedThisTurn)) {
-          try {
-            const p = resolvePartition({
-              channel: { kind: "slack" },
-              session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channel.state.channelId ?? "" }, principalId: "", principalType: "slack-user" } } },
-            });
-            const silentTarget = isSupervisorReplyTurn(channel.state)
-              ? ((channel.state as unknown as Record<string, unknown>).oeReplyTarget as SupervisorReplyTarget | undefined)?.threadTs ?? null
-              : channel.state.threadTs ?? null;
-            await auditChatSilence(p, { threadTs: silentTarget, reason: action.reason }, sessionId);
-          } catch (err) {
-            console.warn(`[open-everywhere:slack] no_reply audit write failed: ${String(err)}`);
-          }
-        }
         if (isBareStop(action, reactedThisTurn || repliedThisTurn)) {
           const channelId = channel.state.channelId ?? undefined;
           const threadTs = channel.state.threadTs ?? undefined;

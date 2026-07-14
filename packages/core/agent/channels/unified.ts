@@ -1,6 +1,6 @@
 import { defineChannel, GET } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
-import { appendAudit } from "../audit/audit.js";
+import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
@@ -103,14 +103,16 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             ulog(`silent turn: FAILED to close the Linear session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
           }
         }
-        await appendAudit({
-          org,
-          platform: "unified",
-          workspace,
-          surface,
-          action: "unified.no_reply",
-          detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
-        }).catch(() => undefined);
+        if (auditSilencesEnabled()) {
+          await appendAudit({
+            org,
+            platform: "unified",
+            workspace,
+            surface,
+            action: "unified.no_reply",
+            detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
+          }).catch(() => undefined);
+        }
         return;
       }
       const bind = { session: ctx.session } as unknown as BindableContext;

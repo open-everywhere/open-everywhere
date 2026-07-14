@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
+import { auditSilencesEnabled } from "../audit/audit.js";
 import { currentWakeId, type BindableContext } from "../identity/binding.js";
 
 export const NO_REPLY_REASONS = [
@@ -60,11 +61,13 @@ export default defineTool({
     }
     const already = peekNoReplyThisTurn();
     if (already !== null) {
-      await auditToolAction(ctx, "reply.no_reply_redundant", {
-        reason: input.reason,
-        already,
-        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
-      });
+      if (auditSilencesEnabled()) {
+        await auditToolAction(ctx, "reply.no_reply_redundant", {
+          reason: input.reason,
+          already,
+          ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+        });
+      }
       return {
         acknowledged: true,
         reason: input.reason,
@@ -73,11 +76,13 @@ export default defineTool({
     }
     markNoReplyThisTurn(input.reason as NoReplyReason);
     const wakeId = currentWakeId(ctx as BindableContext);
-    await auditToolAction(ctx, "reply.no_reply", {
-      reason: input.reason,
-      ...(wakeId ? { wakeId } : {}),
-      ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
-    });
+    if (auditSilencesEnabled()) {
+      await auditToolAction(ctx, "reply.no_reply", {
+        reason: input.reason,
+        ...(wakeId ? { wakeId } : {}),
+        ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
+      });
+    }
     return {
       acknowledged: true,
       reason: input.reason,

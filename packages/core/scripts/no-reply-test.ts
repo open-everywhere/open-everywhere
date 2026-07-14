@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 const dir = join(tmpdir(), `open-everywhere-no-reply-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+process.env.OE_AUDIT_SILENCES = "1";
 
 const noReply = (await import("../agent/tools/no_reply.js")).default as unknown as {
   readonly description: string;
@@ -80,7 +81,21 @@ await inSession(async () => {
   ok(consumeNoReplyThisTurn() === "awaiting_context", "no_reply: execute() marks the signal for message.completed to consume");
 
   const audit = await readAudit({ org: "default", action: "reply.no_reply" });
-  ok(audit.length === 1 && audit[0]?.detail?.reason === "awaiting_context", "no_reply: audits exactly one reply.no_reply row with the reason");
+  ok(audit.length === 1 && audit[0]?.detail?.reason === "awaiting_context", "no_reply: audits exactly one reply.no_reply row with the reason (flag ON)");
+});
+
+await inSession(async () => {
+  delete process.env.OE_AUDIT_SILENCES;
+  try {
+    const before = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
+    const res = await noReply.execute({ reason: "nothing_to_add" }, ctx());
+    ok(res.acknowledged === true, "no_reply: flag OFF still acknowledges (turn termination unaffected)");
+    ok(consumeNoReplyThisTurn() === "nothing_to_add", "no_reply: flag OFF still marks the silence signal");
+    const after = (await readAudit({ org: "default", action: "reply.no_reply" })).length;
+    ok(after === before, "no_reply: flag OFF (actions-only) writes NO reply.no_reply row");
+  } finally {
+    process.env.OE_AUDIT_SILENCES = "1";
+  }
 });
 
 await inSession(async () => {

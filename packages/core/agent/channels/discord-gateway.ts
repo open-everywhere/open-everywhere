@@ -35,7 +35,7 @@ import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
 import { isAllowedDriver } from "../testing/driver-allowlist.js";
 import {
   buildIngestedReaction,
@@ -1083,9 +1083,6 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
         }
       } else if (action.kind === "silent") {
         if (data.message) log(`judged silence (NO_REPLY) — nothing posted (channel ${channel.channelId || "?"})`);
-        if (auditP && shouldAuditChatSilence(action.reason, repliedThisTurn || cardPostedThisTurn)) {
-          await auditChatSilence(auditP, { channelId: channel.channelId, reason: action.reason }, sessionId);
-        }
       }
 
       if (action.kind === "post") {

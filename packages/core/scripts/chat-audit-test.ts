@@ -9,6 +9,7 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
   delete process.env[k];
 }
+delete process.env.OE_AUDIT_SILENCES;
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -33,15 +34,8 @@ const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
 };
 
 const { readAudit } = await import("../agent/audit/audit.js");
-const { shouldAuditChatSilence } = await import("../agent/channels/chat-turn-audit.js");
 const { markRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
-
-ok(shouldAuditChatSilence("NO_REPLY sentinel — judged not warranted", false), "sentinel silence always audits");
-ok(shouldAuditChatSilence("NO_REPLY sentinel — judged not warranted", true), "an EXPLAINED silence audits even after a mid-turn act");
-ok(shouldAuditChatSilence("no_reply tool: quiet", true), "the no_reply tool route audits (explained silence)");
-ok(shouldAuditChatSilence("empty final message", false), "an unexplained bare stop IS a silence — audits");
-ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's merely-empty terminal is an answered turn, NOT a silence");
 
 {
   const slackChannel = (await import("../agent/channels/slack.js")).default as unknown as AdapterChannel;
@@ -55,12 +49,8 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   });
 
   await completed(NO_REPLY_SENTINEL, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "oe-sup:g1", oeSupervisor: true, oeUninvited: true }));
-  const slackSilences = await readAudit({ action: "slack.no_reply" });
-  ok(slackSilences.length === 1, "slack: a supervisor judged silence writes a slack.no_reply audit row");
-  ok(slackSilences[0]!.platform === "slack" && slackSilences[0]!.workspace === "T_AUD" && slackSilences[0]!.surface === "C_AUD", "slack: the no_reply row carries the real partition (workspace=team, surface=channel)");
-  ok(String(slackSilences[0]!.detail?.reason ?? "").includes("NO_REPLY sentinel"), "slack: the no_reply row records the silence reason");
-  ok(slackSilences[0]!.detail?.sessionId === "chat-audit-test", "slack: the no_reply row STAMPS the eve sessionId (audit→transcript join key)");
-  ok(posts.length === 0, "slack: the audited silence still posts NOTHING (silence stays silence)");
+  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a supervisor judged silence writes NO slack.no_reply row (actions-only)");
+  ok(posts.length === 0, "slack: the judged silence posts NOTHING (silence stays silence)");
 
   await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   const slackReplies = await readAudit({ action: "slack.replied" });
@@ -73,7 +63,7 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
     markRepliedThisTurn();
     await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
   });
-  ok((await readAudit({ action: "slack.no_reply" })).length === 1, "slack: a reply-tool turn's empty terminal writes NO no_reply row (the turn answered)");
+  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
 }
 
 {
@@ -83,9 +73,7 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   const ctx = { state: { channelId: "C_D1", guildId: "G_D1", conversationId: null }, discord: { post: async (t: string) => void posts.push(t) } };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  const silences = await readAudit({ action: "discord.no_reply" });
-  ok(silences.length === 1, "discord: a judged silence writes a discord.no_reply audit row");
-  ok(silences[0]!.platform === "discord" && silences[0]!.workspace === "G_D1" && silences[0]!.surface === "C_D1", "discord: the no_reply row carries the real partition (workspace=guild, surface=channel)");
+  ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord: a judged silence writes NO discord.no_reply row (actions-only)");
 
   await completed("rolled back to v42", ctx);
   const replies = await readAudit({ action: "discord.replied" });
@@ -99,9 +87,7 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   const ctx = { channelId: "C_G1", state: { channelId: "C_G1", guildId: "G_G1" } };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  const silences = await readAudit({ action: "discord.no_reply" });
-  ok(silences.length === 2 && silences[0]!.surface === "C_G1", "discord gateway: an ambient judged silence writes a discord.no_reply audit row");
-  ok(String(silences[0]!.detail?.reason ?? "").includes("NO_REPLY sentinel"), "discord gateway: the no_reply row records the silence reason");
+  ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord gateway: an ambient judged silence writes NO discord.no_reply row (actions-only)");
 }
 
 {
@@ -114,20 +100,12 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  const silences = await readAudit({ action: "teams.no_reply" });
-  ok(silences.length === 1, "teams: a judged silence writes a teams.no_reply audit row");
-  ok(silences[0]!.platform === "teams" && silences[0]!.workspace === "TEN1", "teams: the no_reply row carries the real partition (workspace=tenant)");
+  ok((await readAudit({ action: "teams.no_reply" })).length === 0, "teams: a judged silence writes NO teams.no_reply row (actions-only)");
 
   await completed("done — deployed", ctx);
   const replies = await readAudit({ action: "teams.replied" });
   ok(posts.length === 1, "teams: the default terminal post still delivers");
   ok(replies.length === 1 && replies[0]!.detail?.chars === "done — deployed".length, "teams: a posted reply writes a teams.replied audit row");
-
-  await inSession(async () => {
-    markRepliedThisTurn();
-    await teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctx);
-  });
-  ok((await readAudit({ action: "teams.no_reply" })).length === 1, "teams: a reply-tool turn's empty terminal writes NO teams.no_reply row (the turn answered)");
 }
 
 {
@@ -140,20 +118,12 @@ ok(!shouldAuditChatSilence("empty final message", true), "a reply-tool turn's me
   };
 
   await completed(NO_REPLY_SENTINEL, ctx);
-  const silences = await readAudit({ action: "telegram.no_reply" });
-  ok(silences.length === 1, "telegram: a judged silence writes a telegram.no_reply audit row");
-  ok(silences[0]!.platform === "telegram" && silences[0]!.workspace === "g100555", "telegram: the no_reply row keys the sign-encoded chat partition");
+  ok((await readAudit({ action: "telegram.no_reply" })).length === 0, "telegram: a judged silence writes NO telegram.no_reply row (actions-only)");
 
   await completed("watch fired: build green", ctx);
   const replies = await readAudit({ action: "telegram.replied" });
   ok(posts.length === 1, "telegram: the default terminal post still delivers");
   ok(replies.length === 1 && replies[0]!.detail?.chars === "watch fired: build green".length, "telegram: a posted reply writes a telegram.replied audit row");
-
-  await inSession(async () => {
-    markRepliedThisTurn();
-    await telegramChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctx);
-  });
-  ok((await readAudit({ action: "telegram.no_reply" })).length === 1, "telegram: a reply-tool turn's empty terminal writes NO telegram.no_reply row (the turn answered)");
 }
 
 rmSync(tmp, { recursive: true, force: true });

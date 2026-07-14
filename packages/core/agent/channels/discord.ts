@@ -7,7 +7,7 @@ import { buildDiscordAuth, threadParentFromRawChannel, type OpenEverywhereDiscor
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
-import { auditChatSilence, auditChatReply, shouldAuditChatSilence, type ChatAuditPartition } from "./chat-turn-audit.js";
+import { auditChatReply, type ChatAuditPartition } from "./chat-turn-audit.js";
 import { resolvePartition } from "../memory/partition.js";
 
 function auditPartitionForState(state: { channelId: string | null; guildId: string | null }): ChatAuditPartition | null {
@@ -62,10 +62,6 @@ const discordInteractionChannel = discordChannel({
       if (action.kind !== "post") {
         if (action.kind === "silent" && action.reason !== "empty final message") {
           console.log(`[open-everywhere:discord] judged silence (${action.reason}) — nothing posted (channel ${channel.state.channelId ?? "?"})`);
-        }
-        if (action.kind === "silent" && shouldAuditChatSilence(action.reason, repliedThisTurn)) {
-          const p = auditPartitionForState(channel.state);
-          if (p) await auditChatSilence(p, { channelId: channel.state.channelId, reason: action.reason }, sessionId);
         }
         if (action.kind === "silent" && isBareStop(action, repliedThisTurn)) {
           console.warn(
