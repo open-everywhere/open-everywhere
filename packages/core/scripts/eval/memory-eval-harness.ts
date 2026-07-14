@@ -41,6 +41,7 @@ export interface InjectBody {
   readonly trust?: "principal" | "peer" | "relay";
   readonly threadTs?: string;
   readonly messages?: readonly HarnessMsg[];
+  readonly authAttributes?: Readonly<Record<string, string>>;
 }
 
 export interface Injection {
@@ -55,10 +56,13 @@ export interface Injection {
 }
 
 export async function injectWake(b: InjectBody, kind: InjectionKind, tag: string, log: Injection[]): Promise<Injection> {
+  const body: InjectBody = b.platform === "slack"
+    ? { ...b, authAttributes: { trust_checked: "true", is_ext_shared: "false", ...(b.authAttributes ?? {}) } }
+    : b;
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
     headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
-    body: JSON.stringify(b),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
   const jb = (await res.json()) as { wakeId: string };
@@ -129,6 +133,21 @@ export function extractMemoryPathReads(events: readonly TranscriptWireEvent[]): 
     collectPaths(e.data, false, out);
   }
   return out;
+}
+
+export function replyText(events: readonly TranscriptWireEvent[]): string | null {
+  const out: string[] = [];
+  for (const e of events) {
+    if (e.type !== "actions.requested") continue;
+    const acts = (e.data as { actions?: unknown; calls?: unknown } | null);
+    const list = Array.isArray(acts?.actions) ? acts.actions : Array.isArray(acts?.calls) ? acts.calls : [];
+    for (const a of list) {
+      const name = (a as { toolName?: unknown; name?: unknown }).toolName ?? (a as { name?: unknown }).name;
+      const args = ((a as { args?: unknown; input?: unknown }).args ?? (a as { input?: unknown }).input) as { text?: unknown } | undefined;
+      if (name === "reply" && typeof args?.text === "string" && args.text.trim().length > 0) out.push(args.text);
+    }
+  }
+  return out.length > 0 ? out.join("\n") : null;
 }
 
 export function terminalProse(events: readonly TranscriptWireEvent[]): string | null {

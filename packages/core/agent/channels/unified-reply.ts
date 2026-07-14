@@ -26,6 +26,11 @@ export interface UnifiedReplyDeps {
 }
 
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
+  if (process.env.OE_EGRESS_SPOOF === "1") {
+    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
+    return `spoof-unified-${origin.platform}-${Date.now()}`;
+  }
   if (origin.platform === "slack") {
     return (deps.postSlack ?? liveSlackPost)(origin, text);
   }
