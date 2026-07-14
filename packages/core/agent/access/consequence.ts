@@ -68,6 +68,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   spawn_task: open(
     "delegation: mints an async thread-grain worker and dispatches to it, non-blocking. Escapes nothing this table doesn't re-gate INSIDE the child (egress + every L2 consequence gate fire again there); widens hands, not consequence, and delegation IS the standing seat's job — so open, fully audited (task.spawned). Taint is forwarded onto the child, not gated here",
   ),
+  complete_task: open(
+    "a task worker releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-spawns), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (task.completed)",
+  ),
 
   create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
   create_routine: member("routine.create", "self-modification: a standing scheduled behaviour that outlives the turn"),

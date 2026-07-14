@@ -97,6 +97,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at  text NOT NULL,
      PRIMARY KEY (org_id, wake_id)
    )`,
+  `CREATE TABLE IF NOT EXISTS thread_ownership (
+     org_id      text NOT NULL,
+     channel_key text NOT NULL,
+     thread_key  text NOT NULL,
+     task_token  text NOT NULL,
+     created_at  text NOT NULL,
+     PRIMARY KEY (org_id, channel_key, thread_key)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -177,6 +185,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -193,6 +202,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
+  `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -222,6 +232,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY unified_wake_target_org_isolation ON unified_wake_target
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY thread_ownership_org_isolation ON thread_ownership
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -1100,6 +1113,30 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } = await client.query("SELECT target_json FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2", [org, wakeId]);
       const r = (rows as { target_json: string }[])[0];
       return r ? r.target_json : null;
+    },
+
+    async putThreadOwner(org, channelKey, threadKey, taskToken, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM thread_ownership WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
+      await client.query(
+        `INSERT INTO thread_ownership (org_id, channel_key, thread_key, task_token, created_at) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET task_token = EXCLUDED.task_token, created_at = EXCLUDED.created_at`,
+        [org, channelKey, threadKey, taskToken, at],
+      );
+    },
+
+    async getThreadOwner(org, channelKey, threadKey) {
+      const { rows } = await client.query("SELECT task_token FROM thread_ownership WHERE org_id = $1 AND channel_key = $2 AND thread_key = $3", [org, channelKey, threadKey]);
+      const r = (rows as { task_token: string }[])[0];
+      return r ? r.task_token : null;
+    },
+
+    async clearThreadOwner(org, channelKey, threadKey) {
+      const { rows } = await client.query(
+        "DELETE FROM thread_ownership WHERE org_id = $1 AND channel_key = $2 AND thread_key = $3 RETURNING task_token",
+        [org, channelKey, threadKey],
+      );
+      return rows.length > 0;
     },
 
     async addPendingAction(row: PendingActionRow) {

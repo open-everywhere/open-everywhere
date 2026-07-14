@@ -111,6 +111,14 @@ function getDb(): DatabaseSync {
       created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
       PRIMARY KEY (org_id, wake_id)
     );
+    CREATE TABLE IF NOT EXISTS thread_ownership (
+      org_id      TEXT NOT NULL,
+      channel_key TEXT NOT NULL,              -- the container (unifiedThreadRef.channelKey)
+      thread_key  TEXT NOT NULL,              -- the thread within it (unifiedThreadRef.threadKey)
+      task_token  TEXT NOT NULL,              -- the owning task window token (embeds its generation)
+      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, channel_key, thread_key)
+    );
     CREATE TABLE IF NOT EXISTS pending_actions (
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,
@@ -819,6 +827,29 @@ export const sqliteOperationalStore: OperationalStore = {
       | { target_json: string }
       | undefined;
     return row?.target_json ?? null;
+  },
+
+  async putThreadOwner(org, channelKey, threadKey, taskToken, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM thread_ownership WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+    handle
+      .prepare(
+        `INSERT INTO thread_ownership (org_id, channel_key, thread_key, task_token, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, channel_key, thread_key) DO UPDATE SET task_token = excluded.task_token, created_at = excluded.created_at`,
+      )
+      .run(org, channelKey, threadKey, taskToken, at);
+  },
+
+  async getThreadOwner(org, channelKey, threadKey) {
+    const row = getDb().prepare("SELECT task_token FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").get(org, channelKey, threadKey) as
+      | { task_token: string }
+      | undefined;
+    return row?.task_token ?? null;
+  },
+
+  async clearThreadOwner(org, channelKey, threadKey) {
+    return getDb().prepare("DELETE FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(org, channelKey, threadKey).changes > 0;
   },
 
   async addPendingAction(row) {

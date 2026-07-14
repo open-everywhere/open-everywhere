@@ -209,6 +209,7 @@ console.log("P0-f — per-channel STANDING seat mounts the full toolset (charact
     ok(isMountedTier(entry.tier), `[P0-f] "${name}" is MOUNTED (tier=${entry?.tier}) — callable-in-principle from a per-channel standing seat today`);
   }
   ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task (the D0 delegation primitive) is registered `open` — Stage A landed it into the standing-seat kept set");
+  ok(TOOL_CONSEQUENCE.complete_task?.tier === "open", "[P0-f] complete_task (the task-side ownership release) is registered `open` — Stage A landed it (task-scoped; the grain gate confines it in Stage C)");
   ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the primitive is spawn_task specifically — no bare spawn/dispatch/delegate alias");
 
   const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);

@@ -227,6 +227,10 @@ export interface OperationalStore {
   putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number): Promise<void>;
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
 
+  putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;
+  getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
+  clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
+
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
   listPendingActions(org: string): Promise<readonly PendingActionRow[]>;

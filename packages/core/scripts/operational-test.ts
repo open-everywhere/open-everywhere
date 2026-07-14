@@ -246,6 +246,26 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const CK = "slack/C_OWN";
+  const TOK = "oe-dom:payments:win:t/slack~C_OWN/170.5:oe-sup:g3";
+  ok((await store.getThreadOwner("acme", CK, "170.5")) === null, "pg: a fresh thread has no owner");
+  await store.putThreadOwner("acme", CK, "170.5", TOK, "2026-07-15T10:00:00Z", 7 * 24 * 60 * 60 * 1000);
+  ok((await store.getThreadOwner("acme", CK, "170.5")) === TOK, "pg: putThreadOwner then getThreadOwner returns the task token");
+  ok((await store.getThreadOwner("globex", CK, "170.5")) === null, "pg: thread ownership is org-partitioned");
+  const TOK2 = "oe-dom:payments:win:t/slack~C_OWN/170.5:oe-sup:g4";
+  await store.putThreadOwner("acme", CK, "170.5", TOK2, "2026-07-15T11:00:00Z", 7 * 24 * 60 * 60 * 1000);
+  ok((await store.getThreadOwner("acme", CK, "170.5")) === TOK2, "pg: a second put on the same thread replaces the owner (rotation re-key)");
+  ok((await store.clearThreadOwner("acme", CK, "170.5")) === true, "pg: clearThreadOwner removes the row");
+  ok((await store.getThreadOwner("acme", CK, "170.5")) === null, "pg: gone after clear");
+  ok((await store.clearThreadOwner("acme", CK, "170.5")) === false, "pg: clearing an absent row returns false");
+  await store.putThreadOwner("acme", CK, "old", TOK, "2026-01-01T00:00:00Z", 7 * 24 * 60 * 60 * 1000);
+  await store.putThreadOwner("acme", CK, "new", TOK, "2026-03-01T00:00:00Z", 7 * 24 * 60 * 60 * 1000);
+  ok((await store.getThreadOwner("acme", CK, "old")) === null, "pg: a row past its TTL is pruned on the next same-org write");
+  ok((await store.getThreadOwner("acme", CK, "new")) === TOK, "pg: the fresh row survives the prune");
+  await store.clearThreadOwner("acme", CK, "new");
+}
+
+{
   const sk = "slack/T/CW";
   await store.markEngaged("acme", sk, "w.1", "2026-07-08T10:00:00Z");
   let row = await store.getEngagement("acme", sk, "w.1");
