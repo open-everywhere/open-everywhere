@@ -1,4 +1,4 @@
-import { bindFrom, slackMode, slackVisibility, slackTrust, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
+import { bindFrom, bindBridged, slackMode, slackVisibility, slackTrust, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { teamsTrust } from "../agent/channels/teams-identity.js";
@@ -320,6 +320,38 @@ const bridgedSlug = bindFrom(
 );
 ok(bridgedSlug.platform === "discord" && bridgedSlug.workspace === "G7" && bridgedSlug.surface === "C7",
   "binding-bridge: a channel-slug platform stamp ('discord-gateway') normalizes to the discord mapper");
+
+const uniHop = bindBridged({
+  platform: "unified",
+  principalId: "U1",
+  principalType: "slack-user",
+  attributes: { oe_platform: "slack", team_id: "T9", channel_id: "C9", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" },
+});
+ok(uniHop.platform === "slack" && uniHop.raw.workspace === "T9" && uniHop.raw.surface === "C9" && uniHop.raw.trust === "internal",
+  "binding-bridge: a unified stamp WITH oe_platform hops to the ORIGIN (slack) mapper → real partition + internal trust (memory WRITE no longer fails closed)");
+const uniBind = bindFrom(bridgedContext({
+  platform: "unified",
+  principalId: "U1",
+  principalType: "slack-user",
+  attributes: { oe_platform: "slack", team_id: "T9", channel_id: "C9", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" },
+}));
+ok(uniBind.platform === "slack" && uniBind.workspace === "T9" && uniBind.surface === "C9" && uniBind.trust === "internal",
+  "binding-bridge: bindFrom on a unified+oe_platform stamp resolves the real Slack partition, internal trust");
+const uniNoStamp = bindBridged({
+  platform: "unified",
+  principalId: "U1",
+  principalType: "slack-user",
+  attributes: { team_id: "T9", channel_id: "C9", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" },
+});
+ok(uniNoStamp.platform === "unified",
+  "binding-bridge: a unified stamp WITHOUT oe_platform stays 'unified' — no origin to hop to, so no surface mapper resolves (falls to the env stand-in → bindFrom fails it closed to external, asserted below)");
+ok(bindFrom(bridgedContext({
+  platform: "unified",
+  principalId: "U1",
+  principalType: "slack-user",
+  attributes: { team_id: "T9", channel_id: "C9", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" },
+})).trust === "external",
+  "binding-bridge: bindFrom on a unified stamp WITHOUT oe_platform fails closed to external (no origin recovered)");
 
 ok(normalizePlatform("slack-qabot") === "slack", "platform: slack-* slug collapses via the prefix rule");
 ok(normalizePlatform("discord-databot") === "discord", "platform: discord-* slug collapses via the prefix rule");

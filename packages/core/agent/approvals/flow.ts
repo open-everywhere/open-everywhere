@@ -95,6 +95,10 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   let messageTs: string | undefined;
   if (deps.postCard) {
     messageTs = await deps.postCard(row, summaryLines);
+  } else if (process.env.OE_EGRESS_SPOOF === "1") {
+    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    console.warn(`[oe] OE_EGRESS_SPOOF: swallowed an approval-card post for "${input.kind}" (${input.scopeKey})`);
+    messageTs = `spoof-card-${Date.now()}`;
   } else {
     const { blocks, text } = pendingCardBlocks(row, summaryLines);
 

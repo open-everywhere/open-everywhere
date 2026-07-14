@@ -1,5 +1,5 @@
 import type { SessionMode } from "../access/resolver.js";
-import { readBindingBridge, bridgedContext } from "./binding-bridge.js";
+import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { githubVisibility, githubTrust } from "../channels/github-identity.js";
@@ -331,14 +331,20 @@ export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   }
 }
 
+export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: RawIdentity } {
+  const bctx = bridgedContext(bridged);
+  const platform = seg(channelPlatform(bctx), "local");
+  const raw = (MAPPERS[platform] ?? bindLocal)(bctx);
+  return { platform, raw };
+}
+
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
   let raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   if (raw.workspace === undefined && raw.surface === undefined) {
     const bridged = readBindingBridge();
     if (bridged) {
-      platform = seg(normalizePlatform(bridged.platform), "local");
-      raw = (MAPPERS[platform] ?? bindLocal)(bridgedContext(bridged));
+      ({ platform, raw } = bindBridged(bridged));
       console.warn(
         `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
       );
