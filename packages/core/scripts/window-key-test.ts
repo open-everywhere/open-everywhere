@@ -4,6 +4,9 @@ import {
   parseWindowToken,
   isWindowToken,
   windowKeyForDomain,
+  taskWindowId,
+  isTaskWindowId,
+  isTaskWindowToken,
   type WindowKey,
 } from "../agent/channels/window-key.js";
 
@@ -58,5 +61,33 @@ ok(isWindowToken(LEGACY), "isWindowToken true for a legacy token");
 ok(isWindowToken("oe-dom:payments:win:hr:oe-sup:g1"), "isWindowToken true for an explicit-window token");
 ok(!isWindowToken("C_PAY:oe-sup:g3"), "isWindowToken false for a per-container token");
 ok(!isWindowToken(undefined), "isWindowToken false for undefined");
+
+const taskWin = taskWindowId("slack/T1/C_PAY", "1720000000.001");
+eq(taskWin, "t/slack/T1/C_PAY/1720000000.001", "taskWindowId is t/<channelKey>/<threadTs> (slashes, colon-free)");
+
+const taskKey: WindowKey = { domain: "payments", windowId: taskWin, generation: 4 };
+const taskToken = formatWindowToken(taskKey);
+eq(taskToken, "oe-dom:payments:win:t/slack/T1/C_PAY/1720000000.001:oe-sup:g4", "a task key serialises to an explicit :win: token whose windowId is the t/ composite");
+eq(parseWindowToken(taskToken), taskKey, "a task token round-trips (the slash-bearing t/ windowId satisfies [^:]+)");
+ok(parseWindowToken(taskToken)!.domain === "payments", "a task token still anchors its DOMAIN (memory/access unchanged)");
+ok(formatWindowToken(taskKey).endsWith(":oe-sup:g4"), "a task token keeps the :oe-sup:g suffix (suffix detectors untouched)");
+
+ok(isTaskWindowId(taskWin), "isTaskWindowId true for a t/ windowId");
+ok(!isTaskWindowId("slack/T1/C_HR"), "isTaskWindowId false for a bare surface-key windowId (a solo window, NOT a task)");
+ok(!isTaskWindowId("payments"), "isTaskWindowId false for a domain windowId (degenerate/standing)");
+ok(isTaskWindowToken(taskToken), "isTaskWindowToken true for a task token");
+ok(!isTaskWindowToken("oe-dom:payments:win:slack/T1/C_HR:oe-sup:g9"), "isTaskWindowToken false for a SOLO-window token (bare surface key windowId, not t/)");
+ok(!isTaskWindowToken(LEGACY), "isTaskWindowToken false for a legacy/degenerate standing token");
+ok(!isTaskWindowToken("C_PAY:oe-sup:g3"), "isTaskWindowToken false for a per-container (non-window) token");
+ok(!isTaskWindowToken(undefined), "isTaskWindowToken fails soft on undefined");
+
+assert.throws(() => taskWindowId("teams/T/19:meeting@thread.v2", "act1"), /colon-free/, "taskWindowId throws on a colon in channelKey");
+n++;
+assert.throws(() => taskWindowId("slack/T/C", "a:b"), /colon-free/, "taskWindowId throws on a colon in threadTs");
+n++;
+assert.throws(() => taskWindowId("", "t"), /non-empty/, "taskWindowId throws on an empty channelKey");
+n++;
+assert.throws(() => taskWindowId("c", ""), /non-empty/, "taskWindowId throws on an empty threadTs");
+n++;
 
 console.log(`window-key-test: ${n} assertions passed`);

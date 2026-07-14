@@ -30,3 +30,25 @@ export function isWindowToken(token: unknown): token is string {
 export function windowKeyForDomain(domain: string, generation: number): WindowKey {
   return { domain, windowId: domain, generation };
 }
+
+export const TASK_WINDOW_ID_RE = /^t\//;
+
+export function taskWindowId(channelKey: string, threadTs: string): string {
+  if (channelKey.length === 0 || threadTs.length === 0) {
+    throw new Error("taskWindowId: channelKey and threadTs must both be non-empty");
+  }
+  if (channelKey.includes(":") || threadTs.includes(":")) {
+    throw new Error(
+      `taskWindowId: a windowId is colon-free ([^:]+) — got channelKey="${channelKey}", threadTs="${threadTs}" (sanitise colons before minting)`,
+    );
+  }
+  return `t/${channelKey}/${threadTs}`;
+}
+export function isTaskWindowId(windowId: string): boolean {
+  return TASK_WINDOW_ID_RE.test(windowId);
+}
+
+export function isTaskWindowToken(token: unknown): boolean {
+  const key = parseWindowToken(token);
+  return key !== undefined && isTaskWindowId(key.windowId);
+}
