@@ -161,6 +161,30 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   return false;
 }
 
+export interface UnifiedThreadRef {
+  readonly channelKey: string;
+  readonly threadKey: string;
+}
+
+const noColon = (s: string): string => s.replace(/:/g, "_");
+
+export function unifiedThreadRef(origin: UnifiedWakeOrigin): UnifiedThreadRef {
+  switch (origin.platform) {
+    case "slack":
+      return { channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) };
+    case "discord":
+      return { channelKey: noColon(`discord/${origin.guildId}/${origin.channelId}`), threadKey: noColon(origin.channelId) };
+    case "github":
+      return { channelKey: noColon(`github/${origin.owner}/${origin.repo}`), threadKey: String(origin.issueNumber) };
+    case "linear":
+      return { channelKey: noColon(`linear/${origin.issueId}`), threadKey: noColon(origin.parentId ?? origin.issueId) };
+    case "notion":
+      return { channelKey: noColon(`notion/${origin.pageId ?? origin.discussionId}`), threadKey: noColon(origin.discussionId) };
+    case "teams":
+      return { channelKey: noColon(`teams/${origin.conversationId}`), threadKey: noColon(origin.replyToActivityId ?? origin.conversationId) };
+  }
+}
+
 export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";

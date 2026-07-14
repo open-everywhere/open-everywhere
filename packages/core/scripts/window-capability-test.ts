@@ -194,6 +194,7 @@ console.log("P0-f — per-channel STANDING seat mounts the full toolset (charact
     "remember", "forget",
     "create_routine", "subscribe_pr", "cancel_routine",
     "describe_image",
+    "spawn_task",
     "read_slack_channel", "read_slack_thread", "read_notion_page", "check_pr_status",
     "list_repos", "list_routines", "list_skills", "session_cost", "spend_report", "usage_report",
   ] as const;
@@ -207,7 +208,8 @@ console.log("P0-f — per-channel STANDING seat mounts the full toolset (charact
     ok(entry !== undefined, `[P0-f] standing-seat tool "${name}" is registered (present on every session)`);
     ok(isMountedTier(entry.tier), `[P0-f] "${name}" is MOUNTED (tier=${entry?.tier}) — callable-in-principle from a per-channel standing seat today`);
   }
-  ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] no spawn/dispatch/delegate tool exists yet (D0 prerequisite) — added to the standing-seat kept set when it lands");
+  ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task (the D0 delegation primitive) is registered `open` — Stage A landed it into the standing-seat kept set");
+  ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the primitive is spawn_task specifically — no bare spawn/dispatch/delegate alias");
 
   const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
   ok(standingGrain.unified === false, "[P0-f] a plain ambient channel resolves a per-container (non-unified) standing grain");

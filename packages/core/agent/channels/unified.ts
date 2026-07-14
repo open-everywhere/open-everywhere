@@ -249,3 +249,34 @@ export async function divertToUnifiedWindow(
   };
   await receive(channel, { message: input.message, target, auth: auth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
 }
+
+export const OE_SPAWN_TAINTED_ATTR = "oe_spawn_tainted";
+
+export async function dispatchTaskWindow(input: {
+  readonly token: string;
+  readonly message: string;
+  readonly wakeId: string;
+  readonly domain: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly parentAuthAttributes?: Record<string, unknown>;
+  readonly tainted: boolean;
+}): Promise<void> {
+  if (!rememberedReceive) {
+    throw new Error(
+      "spawn_task: no live cross-surface dispatch is available on this instance yet — retry from a message-driven turn (the async worker seam is armed by the first webhook a process handles).",
+    );
+  }
+  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
+  if (!surfaceKey) {
+    throw new Error(`spawn_task: couldn't resolve a window-enabled surface for domain "${input.domain}" — the task cannot be dispatched.`);
+  }
+  const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
+  if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
+  await divertToUnifiedWindow(rememberedReceive, {
+    message: input.message,
+    token: input.token,
+    window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
+    surfaceKey,
+    auth: { attributes },
+  });
+}
