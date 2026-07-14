@@ -164,6 +164,49 @@ export function terminalProse(events: readonly TranscriptWireEvent[]): string | 
   return best ?? (msgs.length > 0 ? "" : null);
 }
 
+export function anyStringContains(value: unknown, needle: string): boolean {
+  if (typeof value === "string") return value.includes(needle);
+  if (Array.isArray(value)) return value.some((v) => anyStringContains(v, needle));
+  if (value && typeof value === "object") return Object.values(value as Record<string, unknown>).some((v) => anyStringContains(v, needle));
+  return false;
+}
+
+export function transcriptServedWake(events: readonly TranscriptWireEvent[], wakeId: string): boolean {
+  if (!wakeId) return false;
+  const needle = `wake-id="${wakeId}"`;
+  for (const e of events) {
+    const t = e.type.toLowerCase();
+    if (!(t.includes("message.received") || t.includes("wake") || t.includes("user"))) continue;
+    if (anyStringContains(e.data, needle)) return true;
+  }
+  return false;
+}
+
+export type RowAttribution = "wakeId" | "session" | "reject";
+export function attributeRow(
+  rowWakeId: string | null | undefined,
+  rowSessionId: string | null | undefined,
+  probeWakeId: string,
+  sessionVerified: boolean | null,
+): RowAttribution {
+  if (rowWakeId != null && rowWakeId.length > 0) return rowWakeId === probeWakeId ? "wakeId" : "reject";
+  if (rowSessionId != null && rowSessionId.length > 0) return sessionVerified === true ? "session" : "reject";
+  return "reject";
+}
+
+export function newTierContent(before: Readonly<Record<string, string>>, after: Readonly<Record<string, string>>): string {
+  const parts: string[] = [];
+  for (const [path, content] of Object.entries(after)) {
+    const prior = before[path];
+    if (prior === undefined) { parts.push(content); continue; }
+    if (prior === content) continue;
+    const priorLines = new Set(prior.split("\n"));
+    const added = content.split("\n").filter((ln) => !priorLines.has(ln));
+    if (added.length > 0) parts.push(added.join("\n"));
+  }
+  return parts.join("\n");
+}
+
 export async function readTranscript(sessionId: string): Promise<readonly TranscriptWireEvent[]> {
   try {
     const all: TranscriptWireEvent[] = [];

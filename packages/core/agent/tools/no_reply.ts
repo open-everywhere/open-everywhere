@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { markNoReplyThisTurn, peekNoReplyThisTurn, type NoReplyReason } from "../channels/no-reply-signal.js";
 import { auditToolAction } from "../audit/tool-action.js";
+import { currentWakeId, type BindableContext } from "../identity/binding.js";
 
 export const NO_REPLY_REASONS = [
   "addressed_to_other",
@@ -71,8 +72,10 @@ export default defineTool({
       };
     }
     markNoReplyThisTurn(input.reason as NoReplyReason);
+    const wakeId = currentWakeId(ctx as BindableContext);
     await auditToolAction(ctx, "reply.no_reply", {
       reason: input.reason,
+      ...(wakeId ? { wakeId } : {}),
       ...(input.explanation !== undefined ? { explanation: input.explanation } : {}),
     });
     return {

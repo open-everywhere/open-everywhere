@@ -11,6 +11,7 @@ import { tierSandboxDir } from "../../agent/memory/sandbox-sync.js";
 import {
   TARGET, READ, sleep, injectWake, auditSince, dS, rowsForWake,
   readTranscript, extractMemoryPathReads, terminalProse, replyText, scoreNavigation,
+  transcriptServedWake, attributeRow, newTierContent, type RowAttribution,
   type Injection, type InjectBody, type HarnessMsg,
 } from "./memory-eval-harness.js";
 import { buildTopology, type Topology, type PlantedFact } from "./seed-silo.js";
@@ -186,6 +187,7 @@ interface ProbeRun {
   readonly navReads: string[];
   readonly windowRows: AuditWireEntry[];
   readonly probeStart: string;
+  readonly m2Baseline?: Record<string, string>;
   readonly skip?: string;
 }
 
@@ -198,7 +200,7 @@ function surfaceFor(platform: Platform): string {
   return platform === "slack" ? SLACK_SURFACE : NOTION_SURFACE;
 }
 
-async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore): Promise<ProbeRun> {
+async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore, provider: MemProvider | null, topology: Topology): Promise<ProbeRun> {
   const origin = originFor(probe.platform);
   const surfaceKey = surfaceFor(probe.platform);
   if (!origin || !surfaceKey) {
@@ -208,6 +210,15 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore): Pr
   await rotateUnifiedWindow(store, cli.org, cli.domain);
   await sleep(1500);
   const probeStart = new Date().toISOString();
+
+  let m2Baseline: Record<string, string> | undefined;
+  if (probe.m === "M2" && provider) {
+    const primarySilo = topology.silos.find((s) => !s.readOnly);
+    if (primarySilo) {
+      m2Baseline = await provider.readTier(controlPartition(topology.org), siloTier(primarySilo.name), { name: primarySilo.name, provider: "postgres" }).catch(() => ({}));
+    }
+  }
+
   const log: Injection[] = [];
   const body: InjectBody = {
     domain: cli.domain, platform: probe.platform, surfaceKey, origin,
@@ -219,21 +230,60 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore): Pr
   };
   const injection = await injectWake(body, probe.m === "M2" ? "chatter" : "probe", probe.tag, log);
 
+  const sessionServed = new Map<string, boolean>();
+  const verifySession = async (sid: string): Promise<boolean> => {
+    const cached = sessionServed.get(sid);
+    if (cached !== undefined) return cached;
+    const served = transcriptServedWake(await readTranscript(sid), injection.wakeId);
+    sessionServed.set(sid, served);
+    return served;
+  };
+  const attribute = async (r: AuditWireEntry): Promise<RowAttribution> => {
+    const rw = dS(r, "wakeId") ?? null;
+    const rs = dS(r, "sessionId") ?? null;
+    const verified = rw === null && rs !== null ? await verifySession(rs) : null;
+    return attributeRow(rw, rs, injection.wakeId, verified);
+  };
+
   const deadline = Date.now() + REPLY_TIMEOUT_MS;
   let sessionId: string | null = null;
   while (Date.now() < deadline) {
     const rows = await auditSince(probeStart);
-    const completion = rows.filter((r) => r.ts >= probeStart && COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts))[0];
-    if (completion) { sessionId = dS(completion, "sessionId") ?? null; break; }
+    const candidates = rows.filter((r) => r.ts >= probeStart && COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts));
+    for (const r of candidates) {
+      const verdict = await attribute(r);
+      if (verdict === "reject") {
+        const rw = dS(r, "wakeId");
+        if (rw && rw !== injection.wakeId) {
+          console.warn(`  [cascade-guard] ${probe.id}: ignoring a late ${r.action} row from a PREVIOUS probe (row wakeId=${rw} ≠ probe wakeId=${injection.wakeId})`);
+        }
+        continue;
+      }
+      const rs = dS(r, "sessionId");
+      if (rs) { sessionId = rs; break; }
+    }
+    if (sessionId) break;
     await sleep(POLL_MS);
   }
   await sleep(SETTLE_MS);
 
-  const windowRows = [...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart);
+  const allRows = [...(await auditSince(probeStart))].filter((r) => r.ts >= probeStart);
   if (!sessionId) {
-    const c = windowRows.filter((r) => COMPLETION_ACTIONS.has(r.action)).map((r) => dS(r, "sessionId")).find((s) => s);
-    sessionId = c ?? null;
+    for (const r of allRows.filter((r) => COMPLETION_ACTIONS.has(r.action)).sort((a, b) => a.ts.localeCompare(b.ts))) {
+      if ((await attribute(r)) === "reject") continue;
+      const rs = dS(r, "sessionId");
+      if (rs) { sessionId = rs; break; }
+    }
   }
+
+  const windowRows = allRows.filter((r) => {
+    const rw = dS(r, "wakeId");
+    if (rw != null && rw.length > 0) return rw === injection.wakeId;
+    const rs = dS(r, "sessionId");
+    if (rs != null && rs.length > 0) return sessionId != null && rs === sessionId;
+    return true;
+  });
+
   const replyPost = rowsForWake(windowRows, injection.wakeId).find((r) => r.action === "reply.post")
     ?? windowRows.find((r) => r.action === "reply.post" && (dS(r, "sessionId") ?? sessionId) === sessionId);
   const replied = Boolean(replyPost) || windowRows.some((r) => r.action === "turn.direct_mention_prose_delivered" && (dS(r, "sessionId") ?? sessionId) === sessionId);
@@ -247,7 +297,7 @@ async function drive(probe: BatteryProbe, cli: Cli, store: OperationalStore): Pr
     spoken = replyText(events);
     navReads = extractMemoryPathReads(events);
   }
-  return { probe, injection, sessionId, replied, replyPlatform: replyPost ? (dS(replyPost, "platform") ?? probe.platform) : null, prose, replyText: spoken, navReads, windowRows, probeStart };
+  return { probe, injection, sessionId, replied, replyPlatform: replyPost ? (dS(replyPost, "platform") ?? probe.platform) : null, prose, replyText: spoken, navReads, windowRows, probeStart, ...(m2Baseline !== undefined ? { m2Baseline } : {}) };
 }
 
 function writeRowsIn(run: ProbeRun): AuditWireEntry[] {
@@ -307,8 +357,8 @@ async function scoreProbe(run: ProbeRun, topology: Topology, provider: MemProvid
       const texts: string[] = [];
       if (provider && primarySilo) {
         const files = await provider.readTier(controlPartition(topology.org), siloTier(primarySilo.name), { name: primarySilo.name, provider: "postgres" });
-        const combined = Object.values(files).join("\n");
-        if (combined.trim().length > 0) texts.push(combined);
+        const saved = newTierContent(run.m2Baseline ?? {}, files);
+        if (saved.trim().length > 0) texts.push(saved);
       }
       const pending = await pendingRememberIn(store, topology.org, run);
       for (const p of pending) texts.push(p.fact);
@@ -487,7 +537,7 @@ async function main(): Promise<void> {
       const p = battery[i];
       console.log(`\n── [${i + 1}/${battery.length}] ${p.id} (${p.m}) ${p.expected}`);
       try {
-        const run = await drive(p, cli, store);
+        const run = await drive(p, cli, store, provider, topology);
         const result = await scoreProbe(run, topology, provider, store);
         console.log(`   → ${result.outcome}${result.pass === null ? "" : result.pass ? "  ✓" : "  ✗"}  ${JSON.stringify(result.detail).slice(0, 140)}`);
         results.push(result);

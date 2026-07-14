@@ -5,6 +5,7 @@ import {
 } from "./eval/memory-eval.js";
 import {
   scoreNavigation, extractMemoryPathReads, terminalProse, siloOfPath, normaliseMemoryPath, mulberry32,
+  attributeRow, transcriptServedWake, newTierContent, anyStringContains,
 } from "./eval/memory-eval-harness.js";
 import { buildTopology } from "./eval/seed-silo.js";
 import type { TranscriptWireEvent } from "./e2e/transcript-read.js";
@@ -133,6 +134,44 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   ok(reads[0] === "memory/payments-brain/MEMORY.md" && reads[1] === "memory/payments-brain/refunds/chargebacks/decisions.md", "extractMemoryPathReads: preserves read order + normalises /workspace/");
   ok(terminalProse(events) === "the codename is SCARLET WEASEL-123, ship 2030-05-01, ref R-4242", "terminalProse: returns the last assistant message text");
   ok(terminalProse([{ index: 0, at: null, type: "tool.call", data: {} }]) === null, "terminalProse: no prose → null");
+}
+
+{
+  const mine = "wake-AAAA";
+  ok(attributeRow(mine, null, mine, null) === "wakeId", "attributeRow: detail.wakeId equals the probe's wakeId → accept via wakeId (no session needed)");
+  ok(attributeRow(mine, "sess-1", mine, null) === "wakeId", "attributeRow: a matching wakeId wins even when a sessionId is present (wakeId is authoritative)");
+  ok(attributeRow("wake-BBBB", "sess-1", mine, true) === "reject", "attributeRow: a DIFFERENT probe's wakeId is the cascade row → reject even if the session verifies");
+  ok(attributeRow(null, "sess-1", mine, true) === "session", "attributeRow: no wakeId but a transcript-VERIFIED session → accept via session");
+  ok(attributeRow(null, "sess-1", mine, false) === "reject", "attributeRow: no wakeId and the session did NOT serve this wake → reject");
+  ok(attributeRow(null, "sess-1", mine, null) === "reject", "attributeRow: no wakeId and an unresolved (null) session verdict → reject (fail-closed)");
+  ok(attributeRow(null, null, mine, null) === "reject", "attributeRow: neither a wakeId nor a sessionId → never accepted");
+  ok(attributeRow("", "", mine, true) === "reject", "attributeRow: empty-string fields are treated as absent (no wakeId, no session) → reject");
+}
+
+{
+  const wakeId = "0d9f-uuid-1234";
+  const events: TranscriptWireEvent[] = [
+    { index: 0, at: null, type: "message.received", data: { message: `<wake reason="mention" wake-id="${wakeId}">\n  <channel>hi</channel>\n</wake>` } },
+    { index: 1, at: null, type: "tool.call", data: { name: "read_file", input: { file_path: "/workspace/memory/x/MEMORY.md" } } },
+  ];
+  ok(transcriptServedWake(events, wakeId) === true, "transcriptServedWake: the received envelope carries wake-id=\"…\" → served");
+  ok(transcriptServedWake(events, "some-other-wake") === false, "transcriptServedWake: a different wake id is NOT found in this session's envelope");
+  ok(transcriptServedWake([{ index: 0, at: null, type: "tool.call", data: { input: { file_path: "wake-id=\"" + wakeId + "\"" } } }], wakeId) === false, "transcriptServedWake: only the wake/received/user events are scanned, NOT a tool-call arg that happens to echo the id");
+  ok(transcriptServedWake(events, "") === false, "transcriptServedWake: empty wake id → false (never a spurious match)");
+  ok(anyStringContains({ a: [{ b: 'wake-id="Z"' }] }, 'wake-id="Z"') === true, "anyStringContains: finds a needle in a deeply-nested string leaf");
+  ok(anyStringContains({ a: 1, b: null }, "x") === false, "anyStringContains: no string leaf matches → false");
+}
+
+{
+  const baseline = { "MEMORY.md": "# silo\n- filler: lunch-and-learn ideas\n- on-call rotation notes\n" };
+  const unchanged = newTierContent(baseline, { "MEMORY.md": baseline["MEMORY.md"] });
+  ok(unchanged === "", "newTierContent: an UNCHANGED file (baseline noise needle survives) contributes no scannable text");
+  ok(scoreCapture(unchanged.trim() ? [unchanged] : [], [["deploy freeze", "december 20"]], [["lunch"]]).noiseCaptured === 0, "newTierContent → scoreCapture: pre-seeded 'lunch-and-learn' filler in the baseline is NOT counted as a captured noise needle");
+  const grew = newTierContent(baseline, { "MEMORY.md": baseline["MEMORY.md"] + "- decision: deploy freeze from December 20 through year-end\n" });
+  ok(grew.includes("deploy freeze from December 20") && !grew.includes("on-call rotation"), "newTierContent: a grown file contributes its NEW content (the model's save), and the diff is whole-file so context rides along");
+  ok(scoreCapture([grew], [["deploy freeze", "december 20"]], [["lunch"]]).worthyCaptured === 1, "newTierContent → scoreCapture: a newly-saved dated bullet with a worthy needle scores 1 worthy");
+  const added = newTierContent(baseline, { ...baseline, "new-topic/MEMORY.md": "- postgres 16 standardised\n" });
+  ok(added.includes("postgres 16"), "newTierContent: a brand-NEW file (absent from baseline) contributes its full content");
 }
 
 {

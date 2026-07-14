@@ -109,7 +109,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           workspace,
           surface,
           action: "unified.no_reply",
-          detail: { reason: action.reason, replied, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
+          detail: { reason: action.reason, replied, wakeId: wakeId ?? null, ...(linearClosed !== undefined ? { linearClosed } : {}), ...(sessionId ? { sessionId } : {}) },
         }).catch(() => undefined);
         return;
       }
@@ -138,7 +138,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             workspace,
             surface,
             action: "turn.direct_mention_prose_delivered",
-            detail: { chars: action.text.length, platform: origin.platform, ...(sessionId ? { sessionId } : {}) },
+            detail: { chars: action.text.length, platform: origin.platform, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
           }).catch(() => undefined);
           return;
         } catch (err) {
@@ -150,7 +150,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             workspace,
             surface,
             action: "turn.direct_mention_bridge_post_failed",
-            detail: { platform: origin.platform, chars: action.text.length, error: errMsg, ...(sessionId ? { sessionId } : {}) },
+            detail: { platform: origin.platform, chars: action.text.length, error: errMsg, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
           }).catch(() => undefined);
           return;
         }
@@ -162,7 +162,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         workspace,
         surface,
         action: "turn.supervisor_prose_dropped",
-        detail: { chars: action.text.length, replied, ...(sessionId ? { sessionId } : {}) },
+        detail: { chars: action.text.length, replied, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
       }).catch(() => undefined);
 
       if (redriveEnabled() && !replied) {
