@@ -1,5 +1,5 @@
 import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
-import { clusterBackscroll, type NormalizedMessage } from "./backscroll-cluster.js";
+import { clusterBackscroll, type NormalizedMessage, type BackscrollTrustFor } from "./backscroll-cluster.js";
 import type { WakeMessageInput } from "./wake-envelope.js";
 
 export interface DiscordBackscrollInput {
@@ -198,12 +198,13 @@ export async function fetchDiscordBackscrollWindow(
 export async function fetchDiscordWakeEnvelopeBackscroll(
   input: DiscordBackscrollWindowInput,
   deps: DiscordBackscrollDeps = liveDeps,
+  trustFor?: BackscrollTrustFor,
 ): Promise<WakeMessageInput[]> {
   try {
     const window = await fetchDiscordBackscrollWindow(input, deps);
     if (window.length === 0) return [];
     const nowMs = snowflakeToMs(input.triggerMessageId) ?? Date.now();
-    return clusterBackscroll(window, nowMs);
+    return clusterBackscroll(window, nowMs, undefined, trustFor);
   } catch {
     return [];
   }

@@ -1,4 +1,5 @@
 import type { WakeTrust } from "../channels/wake-envelope.js";
+import type { BackscrollTrustFor } from "../channels/backscroll-cluster.js";
 import type { BindableContext } from "./binding.js";
 import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
@@ -13,8 +14,8 @@ export interface WakeTrustFacts {
 
 export function wakeTrustFor(f: WakeTrustFacts): WakeTrust {
   if (f.authorIsBot) return "relay";
-  if (!f.authorId) return "relay";
-  if (!f.surfaceInternal) return "relay";
+  if (!f.authorId) return "unauth";
+  if (!f.surfaceInternal) return "unauth";
   return f.authorIsAdmin ? "principal" : "peer";
 }
 
@@ -72,4 +73,19 @@ export function resolveWakeTrustFromContext(
   } catch {
     return "relay";
   }
+}
+
+export function backscrollTrustResolver(surface: {
+  readonly surfaceInternal: boolean;
+  readonly channelKey?: string;
+  readonly domains?: readonly Domain[];
+}): BackscrollTrustFor {
+  return (m) =>
+    resolveWakeTrust({
+      authorIsBot: m.sender !== "human",
+      authorId: m.authorId,
+      surfaceInternal: surface.surfaceInternal,
+      channelKey: surface.channelKey,
+      domains: surface.domains,
+    });
 }

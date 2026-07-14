@@ -202,7 +202,8 @@ function pagingStub(pages: Msg[][], rec?: { calls: number }): DiscordRequester {
   );
   ok(out.length === 3, "single-cluster envelope backscroll: all 3 messages");
   ok(out.every((m) => m.sessionId === undefined), "single cluster → NO sessionId (renders flat)");
-  ok(out.every((m) => m.trust === "peer" && !m.trigger), "backscroll messages are trust=peer and never the trigger");
+  ok(out.every((m) => !m.trigger), "backscroll messages are never the trigger");
+  ok(out.every((m) => m.trust === (m.from === "human" ? "unauth" : "relay")), "with NO resolver, the fail-closed default tags humans unauth and the bot's own (self) posts relay");
   ok(out[0].body === "first" && out[2].body === "third", "emitted oldest-first (core sorts by ms)");
   ok(out[0].from === "self" && out[1].from === "human", "sender kinds map onto envelope `from` (self/human/bot)");
 }

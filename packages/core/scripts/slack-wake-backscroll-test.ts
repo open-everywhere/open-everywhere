@@ -164,7 +164,7 @@ const routing = (
   ok(bodies.includes("a foreign bot post"), "VISIBILITY GATE: an ATTRIBUTABLE foreign bot's message IS surfaced (marked awareness)");
   const foreignBot = out.find((m) => m.body === "a foreign bot post");
   ok(foreignBot?.from === "bot" && foreignBot?.author === "BFOREIGN" && foreignBot?.authorId === "BFOREIGN", "the foreign bot message is tagged from=bot with its bot id as author");
-  ok(foreignBot?.trigger === undefined && foreignBot?.trust === "peer", "the foreign bot message is CONTEXT-ONLY (never a trigger)");
+  ok(foreignBot?.trigger === undefined && foreignBot?.trust === "relay", "the foreign bot message is CONTEXT-ONLY (never a trigger) and a machine author → relay under the no-resolver default");
   ok(!bodies.includes("orphan message"), "VISIBILITY GATE: an unattributable (no author) message is STILL NOT surfaced (fail closed)");
   ok(bodies.includes("my own spine post"), "the bot's OWN prior post IS surfaced (tagged self)");
   ok(bodies.includes("older-burst-1") && bodies.includes("spine-newest"), "spine + the in-36h older burst both surface");
@@ -176,7 +176,8 @@ const routing = (
   ok(self?.from === "self" && self?.author === "unknown" && self?.authorId === undefined, "own post → from=self, no foreign author id");
   const human = out.find((m) => m.body === "older-burst-1");
   ok(human?.from === "human" && human?.author === "UB" && human?.authorId === "UB", "a human message → from=human with the raw id in author/author-id (name resolved later by the route)");
-  ok(out.every((m) => m.trust === "peer" && m.trigger === undefined), "every backscroll entry is trust=peer with no trigger flag");
+  ok(out.every((m) => m.trigger === undefined), "no backscroll entry carries the trigger flag");
+  ok(out.every((m) => m.trust === (m.from === "human" ? "unauth" : "relay")), "with NO resolver wired, the fail-closed default tags humans unauth and machine authors (self/foreign-bot) relay");
   ok(out.every((m) => m.type === "channel"), "top-level messages are tagged type=channel");
 }
 

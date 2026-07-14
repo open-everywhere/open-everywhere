@@ -8,6 +8,7 @@ import {
   resolveWakeTrust,
   loadDomainsForWakeTrust,
   resolveWakeTrustFromContext,
+  backscrollTrustResolver,
 } from "../agent/identity/wake-trust.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -32,9 +33,9 @@ const DOMAINS: readonly Domain[] = [
 ];
 
 ok(wakeTrustFor({ authorIsBot: true, authorId: "B1", surfaceInternal: true, authorIsAdmin: true }) === "relay", "bot author → relay, even a rostered one (machine-authored never speaks with standing)");
-ok(wakeTrustFor({ authorIsBot: false, authorId: undefined, surfaceInternal: true, authorIsAdmin: false }) === "relay", "unidentifiable author → relay (fail closed)");
-ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: false, authorIsAdmin: false }) === "relay", "external/unverified surface → relay (the existing gate's fail-closed posture)");
-ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: false, authorIsAdmin: true }) === "relay", "an admin on an UNVERIFIED surface is still relay — surface gate first, never up");
+ok(wakeTrustFor({ authorIsBot: false, authorId: undefined, surfaceInternal: true, authorIsAdmin: false }) === "unauth", "unidentifiable HUMAN → unauth (a human but unvouched — below peer, above the machine relay floor)");
+ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: false, authorIsAdmin: false }) === "unauth", "HUMAN on an external/unverified surface → unauth (fail-closed down, not the machine relay floor)");
+ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: false, authorIsAdmin: true }) === "unauth", "a HUMAN admin on an UNVERIFIED surface is still unauth — surface gate first, never up");
 ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: false }) === "peer", "identified internal member → peer");
 ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: true }) === "principal", "rostered admin on an internal surface → principal");
 
@@ -51,8 +52,8 @@ ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceIntern
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ENG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "principal", "resolveWakeTrust: domain admin on their channel → principal");
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ENG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_OTHER", domains: DOMAINS }) === "peer", "resolveWakeTrust: domain admin elsewhere → peer");
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_MEMBER", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "peer", "resolveWakeTrust: member → peer");
-ok(resolveWakeTrust({ authorIsBot: true, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "relay", "resolveWakeTrust: bot → relay");
-ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: false, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "relay", "resolveWakeTrust: unconfirmed surface → relay");
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "relay", "resolveWakeTrust: bot → relay (machine floor)");
+ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: false, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "unauth", "resolveWakeTrust: human admin on an unconfirmed surface → unauth (unvouched, not the machine floor)");
 
 ok(loadDomainsForWakeTrust().length === 0, "unregistered config → empty rosters (fail-closed direction)");
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG" }) === "peer", "unregistered config: an internal human is peer, NEVER principal");
@@ -65,16 +66,16 @@ const VERIFIED = { team_id: "T1", channel_id: "C_ENG", channel_type: "channel", 
 ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "principal", "ctx form: verified-internal Slack channel + org admin (human) → principal");
 ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ENG_ADMIN", isBot: false }, { domains: DOMAINS }) === "principal", "ctx form: domain admin on the domain's channel (binding-derived channelKey) → principal");
 ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_MEMBER", isBot: false }, { domains: DOMAINS }) === "peer", "ctx form: verified-internal member → peer");
-ok(resolveWakeTrustFromContext(slackCtx({ team_id: "T1", channel_id: "C_ENG", channel_type: "channel" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: trust never checked → the binding fails closed → relay, even for an admin");
-ok(resolveWakeTrustFromContext(slackCtx({ ...VERIFIED, is_ext_shared: "true" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: externally-shared channel → relay");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: true }, { domains: DOMAINS }) === "relay", "ctx form: explicit bot author → relay");
-ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { isBot: false }, { domains: [] }) === "relay", "ctx form: no author id anywhere → relay (fail closed)");
+ok(resolveWakeTrustFromContext(slackCtx({ team_id: "T1", channel_id: "C_ENG", channel_type: "channel" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "unauth", "ctx form: trust never checked → the binding fails closed → a HUMAN admin is unauth (unvouched surface), never up");
+ok(resolveWakeTrustFromContext(slackCtx({ ...VERIFIED, is_ext_shared: "true" }), { id: "U_ORG_ADMIN", isBot: false }, { domains: DOMAINS }) === "unauth", "ctx form: externally-shared channel → a human is unauth (unvouched)");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN", isBot: true }, { domains: DOMAINS }) === "relay", "ctx form: explicit bot author → relay (machine floor)");
+ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { isBot: false }, { domains: [] }) === "unauth", "ctx form: a HUMAN with no author id anywhere → unauth (unidentifiable human, fail closed down)");
 
 ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN" }, { domains: DOMAINS }) === "relay", "ctx form: unknown bot-ness (isBot undefined) fails closed → relay, even for a rostered admin");
 
 const adminPrincipalCtx = slackCtx({ ...VERIFIED, user_id: "U_ORG_ADMIN" });
 ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { principalFallback: true, domains: DOMAINS }) === "principal", "ctx form: a TRIGGER (principalFallback on) with no explicit author id borrows the bound admin principal → principal");
-ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { domains: DOMAINS }) === "relay", "ctx form: a SIBLING (no fallback) with no author id does NOT borrow the principal → relay (the notion-sibling escalation fix)");
+ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { domains: DOMAINS }) === "unauth", "ctx form: a SIBLING (no fallback) HUMAN with no author id does NOT borrow the principal → unauth, never the trigger author's principal tier (the notion-sibling escalation fix — floor is now the unvouched-human unauth, still below peer)");
 
 const ghWake = buildGitHubSupervisorWake({
   owner: "acme", repo: "api", issueNumber: 7,
@@ -115,13 +116,22 @@ ok(slackThreadFollowWake(ev, { trust: "relay" }).trigger.message.trust === "rela
 const msgs: NormalizedMessage[] = [
   { id: "1", ms: 1000, sender: "human", authorId: "U_ORG_ADMIN", text: "a", type: "channel" },
   { id: "2", ms: 2000, sender: "bot", authorId: "B9", text: "b", type: "channel" },
+  { id: "3", ms: 3000, sender: "human", authorId: "U_STRANGER", text: "c", type: "channel" },
+  { id: "4", ms: 4000, sender: "self", authorId: undefined, text: "d", type: "channel" },
 ] as unknown as NormalizedMessage[];
+
 const plain = clusterBackscroll(msgs, 10_000);
-ok(plain.every((m) => m.trust === "peer"), "clusterBackscroll without a resolver keeps the legacy peer (goldens byte-identical)");
-const resolved = clusterBackscroll(msgs, 10_000, undefined, (m) =>
-  m.sender === "human" ? resolveWakeTrust({ authorIsBot: false, authorId: m.authorId, surfaceInternal: true, domains: DOMAINS }) : "relay",
-);
-ok(resolved.find((m) => m.id === "1")?.trust === "principal", "clusterBackscroll trustFor: a rostered human backscroll author resolves principal");
-ok(resolved.find((m) => m.id === "2")?.trust === "relay", "clusterBackscroll trustFor: a bot backscroll author resolves relay");
+ok(plain.find((m) => m.id === "1")?.trust === "unauth" && plain.find((m) => m.id === "3")?.trust === "unauth", "clusterBackscroll without a resolver: human authors fail closed to unauth (never peer)");
+ok(plain.find((m) => m.id === "2")?.trust === "relay" && plain.find((m) => m.id === "4")?.trust === "relay", "clusterBackscroll without a resolver: self + foreign-bot machine authors → relay");
+
+const resolved = clusterBackscroll(msgs, 10_000, undefined, backscrollTrustResolver({ surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
+ok(resolved.find((m) => m.id === "1")?.trust === "principal", "backscrollTrustResolver: a rostered admin backscroll author resolves principal");
+ok(resolved.find((m) => m.id === "2")?.trust === "relay", "backscrollTrustResolver: a foreign-bot author resolves relay");
+ok(resolved.find((m) => m.id === "3")?.trust === "peer", "backscrollTrustResolver: an identified internal human member resolves peer");
+ok(resolved.find((m) => m.id === "4")?.trust === "relay", "backscrollTrustResolver: the bot's OWN (self) post resolves relay — our own words are the machine floor, never misread as unauth");
+
+const unvouched = clusterBackscroll(msgs, 10_000, undefined, backscrollTrustResolver({ surfaceInternal: false, channelKey: "slack/T1/C_ENG", domains: DOMAINS }));
+ok(unvouched.find((m) => m.id === "1")?.trust === "unauth" && unvouched.find((m) => m.id === "3")?.trust === "unauth", "backscrollTrustResolver on an unvouched surface: identified human authors → unauth (unvouched, not peer)");
+ok(unvouched.find((m) => m.id === "2")?.trust === "relay" && unvouched.find((m) => m.id === "4")?.trust === "relay", "backscrollTrustResolver on an unvouched surface: machine authors (bot/self) still relay");
 
 console.log(`wake-trust tests passed (${passed})`);

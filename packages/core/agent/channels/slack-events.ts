@@ -1,6 +1,6 @@
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
-import { resolveWakeTrust } from "../identity/wake-trust.js";
+import { resolveWakeTrust, backscrollTrustResolver } from "../identity/wake-trust.js";
 import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
@@ -881,7 +881,12 @@ export interface SupervisorRouteDeps {
     atIso: string,
   ) => Promise<{ token: string; generation: number; freshGeneration: boolean; handoffNote?: string | null }>;
   readonly touchSession?: (org: string, surfaceKey: string, atIso: string) => Promise<void>;
-  readonly fetchBackscroll?: (input: { channelId: string; ts: string }) => Promise<readonly WakeMessageInput[]>;
+  readonly fetchBackscroll?: (input: {
+    channelId: string;
+    ts: string;
+    surfaceInternal: boolean;
+    channelKey?: string;
+  }) => Promise<readonly WakeMessageInput[]>;
   readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
   readonly forceRotate?: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
@@ -923,7 +928,7 @@ export async function routeSupervisorEvent(
   const session = await deps.getOrCreateSession(p.org, p.surfaceKey, ev.channelId, atIso);
 
   const backscroll = session.freshGeneration && deps.fetchBackscroll
-    ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts }).catch(() => [] as readonly WakeMessageInput[])
+    ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
     : [];
 
   const auth = authForEvent(ev, { isExternal: false, trustChecked: true });
@@ -982,7 +987,7 @@ export async function routeSupervisorEvent(
     if (deps.audit) await deps.audit("session.terminal_death", { surfaceKey: p.surfaceKey, token: session.token, generation: session.generation });
     const fresh = await deps.forceRotate(p.org, p.surfaceKey, ev.channelId, atIso);
     const freshBackscroll = deps.fetchBackscroll
-      ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts }).catch(() => [] as readonly WakeMessageInput[])
+      ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
       : [];
     await doWake(fresh.token, fresh.generation, freshBackscroll, fresh.handoffNote);
     if (deps.touchSession) await deps.touchSession(p.org, p.surfaceKey, atIso);
@@ -1036,8 +1041,10 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     },
     touchSession: (org, surfaceKey, atIso) => getOperationalStore().touchChannelSession(org, grainFor(surfaceKey).registryKey, atIso),
     fetchBackscroll: (input) =>
-      fetchWakeEnvelopeBackscroll(input, undefined, (m) =>
-        m.sender === "human" ? resolveWakeTrust({ authorIsBot: false, authorId: m.authorId, surfaceInternal: true }) : "relay",
+      fetchWakeEnvelopeBackscroll(
+        input,
+        undefined,
+        backscrollTrustResolver({ surfaceInternal: input.surfaceInternal, channelKey: input.channelKey }),
       ),
     async forceRotate(org, surfaceKey, channelId, atIso) {
       const grain = grainFor(surfaceKey);
