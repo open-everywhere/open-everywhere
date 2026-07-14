@@ -164,6 +164,10 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   const manyActions = new Set(many.entries.map((e) => e.action));
   ok(manyActions.has("notion.no_reply") && manyActions.has("github.dispatched") && !manyActions.has("notion.replied"), "audit actions=<csv> keeps only the named actions (in-process match)");
 
+  await appendAudit({ org: "other", platform: "notion", workspace: "wsOther", action: "notion.cross_tenant_marker", detail: {} });
+  const crossOrg = (await (await getAudit(`${sinceQ}&org=other&actions=notion.cross_tenant_marker`, SECRET)).json()) as { entries: unknown[] };
+  ok(crossOrg.entries.length === 0, "audit ?org=other is IGNORED (pinned to the deployment org) — a cross-tenant row is never returned (F10)");
+
   const gh = (await (await getAudit(`${sinceQ}&platform=github`, SECRET)).json()) as { entries: { platform: string }[] };
   ok(gh.entries.length > 0 && gh.entries.every((e) => e.platform === "github"), "audit platform=github narrows to the github surface");
   const capped = (await (await getAudit(`${sinceQ}&limit=1`, SECRET)).json()) as { entries: unknown[]; capped: boolean };

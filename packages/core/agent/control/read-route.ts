@@ -85,7 +85,7 @@ export async function handleAuditWindowRead(req: Request): Promise<Response> {
     .map((s) => s.trim())
     .filter(Boolean);
   const base: AuditFilter = {
-    org: p("org") ?? deploymentOrg(),
+    org: deploymentOrg(),
     since,
     ...(p("platform") ? { platform: p("platform") } : {}),
     ...(p("workspace") ? { workspace: p("workspace") } : {}),
