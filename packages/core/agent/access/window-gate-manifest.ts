@@ -68,7 +68,6 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "todo",
   "load_skill",
   "connection_search",
-  "workflow",
 ]);
 
 export function withheldFromGrain(grain: WindowGrain): string[] {
