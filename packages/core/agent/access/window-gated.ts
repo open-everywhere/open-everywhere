@@ -119,7 +119,7 @@ function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
   return defineTool({ ...entry, execute: gatedExecute(name, entry) } as unknown as ToolDefinition) as unknown as GatedToolEntry;
 }
 
-export function windowGated(name: string, entry: GatedToolEntry): unknown {
+export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ctx: BindableContext) => boolean): unknown {
   const grains = WINDOW_GATED_TOOLS[name];
   if (grains === undefined) {
     throw new Error(`windowGated("${name}"): not in WINDOW_GATED_TOOLS — add the kit row (the table is the single source of truth)`);
@@ -135,6 +135,7 @@ export function windowGated(name: string, entry: GatedToolEntry): unknown {
           if (grain === "standing") await auditGateOnce(c, grain);
           return null;
         }
+        if (mountGate && !mountGate(c)) return null;
         return armed;
       },
     },

@@ -174,7 +174,7 @@ async function f3(): Promise<void> {
     legB = `leg B drive error (${(e as Error).message}) — Leg A remains the binding proof`;
   }
 
-  record("F3", "PASS", `root DM seat NARROWED via the REAL ingress stamp — buildSlackAuth(im) stamps oe_grain=standing; windowGrainOf on a NATIVE-shaped DM token ⇒ standing (the stamp narrows, not the token); the 12 wide-hands are withheld and spawn_task is KEPT. This exercises the actual production stamp (the former documented caveat is now a real pass). ${legB}. Not covered here: a fully-live DM eve session (needs a real Slack DM drive) — pinned by window-tool-gate-test.ts §3b (all surfaces) + the prod pack.`);
+  record("F3", "PASS", `root DM seat NARROWED via the REAL ingress stamp — buildSlackAuth(im) stamps oe_grain=standing; windowGrainOf on a NATIVE-shaped DM token ⇒ standing (the stamp narrows, not the token); the 12 wide-hands are withheld and spawn_task is kept BY GRAIN (table level). NB spawn_task's token-aware mount gate then keeps it structurally ABSENT on a DM's native token — a DM is chat-only until the G1 fold gives DMs window tokens (pinned in window-capability-test.ts P0-a(1b)). This exercises the actual production stamp (the former documented caveat is now a real pass). ${legB}. Not covered here: a fully-live DM eve session (needs a real Slack DM drive) — pinned by window-tool-gate-test.ts §3b (all surfaces) + the prod pack.`);
 }
 
 async function f4(): Promise<void> {

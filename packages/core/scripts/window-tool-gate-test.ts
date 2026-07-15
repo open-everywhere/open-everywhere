@@ -123,8 +123,8 @@ for (const [label, auth] of [["slack channel", slackChan], ["discord guild chann
 }
 
 const dmWithheld = new Set(withheldFromGrain("standing"));
-ok(!dmWithheld.has("spawn_task"), "a standing (DM) seat KEEPS spawn_task — WINDOW_GATED_TOOLS[spawn_task] includes standing");
-ok(WINDOW_GATED_TOOLS.spawn_task.includes("standing"), "spawn_task is mounted on the standing grain (manifest)");
+ok(!dmWithheld.has("spawn_task"), "a standing (DM) seat is not withheld spawn_task BY GRAIN — WINDOW_GATED_TOOLS[spawn_task] includes standing (the token-aware mount gate then withholds it on a DM's native token)");
+ok(WINDOW_GATED_TOOLS.spawn_task.includes("standing"), "spawn_task is grain-gated to standing (manifest) — the mount gate is layered on top, not a table change");
 const WIDE_HANDS_12 = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"];
 for (const wide of WIDE_HANDS_12) {
   ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);

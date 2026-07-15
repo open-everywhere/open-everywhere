@@ -112,6 +112,35 @@ async function mountedGatedNames(grain: "standing" | "task" | "native"): Promise
   eq(TOOL_CONSEQUENCE.checkout_repo?.tier, "open", "[P0-a] checkout_repo stays `open` in the registry — the narrowing is the GRAIN gate, not a tier change");
 }
 
+console.log("P0-a(1b) — spawn_task token-aware mount (DM dead-affordance fix):");
+{
+  const spawnMod = gatedModules.spawn_task;
+  const standingAttrs = { oe_grain: "standing" };
+  const dmNativeStanding = {
+    channel: { kind: "slack", continuationToken: "cse_dm_native_seat" },
+    session: { id: "cap-dm-standing", auth: { current: { attributes: standingAttrs } } },
+  } as BindableContext;
+  const windowStanding = {
+    channel: { kind: "unified", continuationToken: `unified:${formatWindowToken({ domain: "payments", windowId: "payments", generation: 7 })}` },
+    session: { id: "cap-window-standing", auth: { current: { attributes: standingAttrs } } },
+  } as BindableContext;
+  const blankStanding = {
+    channel: { kind: "unified" },
+    session: { id: "cap-blank-standing", auth: { current: { attributes: standingAttrs } } },
+  } as BindableContext;
+  const perContainerStanding = {
+    channel: { kind: "slack", continuationToken: "slack/T1/C_PAY:oe-sup:g7" },
+    session: { id: "cap-percontainer-standing", auth: { current: { attributes: {} } } },
+  } as BindableContext;
+
+  eq(windowGrainOf(dmNativeStanding), "standing", "[P0-a(1b)] the DM native-token seat is grain STANDING (the oe_grain stamp)");
+  eq(windowGrainOf(windowStanding), "standing", "[P0-a(1b)] the window-token seat is grain STANDING");
+  eq(await resolveWindowGated(spawnMod, dmNativeStanding), null, "[P0-a(1b)] spawn_task is ABSENT on a native-token (DM) standing seat — no window to mint into, so no mounted-then-refusing dead affordance");
+  ok((await resolveWindowGated(spawnMod, windowStanding)) !== null, "[P0-a(1b)] spawn_task IS mounted on a window-token standing seat (delegation is the seat's job — the fix must not over-remove)");
+  ok((await resolveWindowGated(spawnMod, blankStanding)) !== null, "[P0-a(1b)] spawn_task fails OPEN on a blank-token standing seat (a degraded window-seat token is never wrongly stripped; the execute guard is the wall)");
+  eq(await resolveWindowGated(spawnMod, perContainerStanding), null, "[P0-a(1b)] spawn_task is ABSENT on a per-container standing seat (its token is not a window token, so it too can't mint a child)");
+}
+
 withWindowEnv(() => {
   const SLACK = "slack/T1/C_PAY";
   const GH = "github/acme/payments-api";
@@ -292,7 +321,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   } as BindableContext;
   eq(await resolveWindowGated(gatedModules.checkout_repo, perContainerCtx), null, "[P0-f] checkout_repo resolves NULL on a per-container standing seat (not on the unified channel — the grain predicate reaches it anyway)");
   eq(await resolveWindowGated(sandboxKit, perContainerCtx), null, "[P0-f] the sandbox six resolve NULL on a per-container standing seat");
-  ok((await resolveWindowGated(gatedModules.spawn_task, perContainerCtx)) !== null, "[P0-f] spawn_task resolves on the per-container standing seat");
+  eq(await resolveWindowGated(gatedModules.spawn_task, perContainerCtx), null, "[P0-f] spawn_task is ABSENT on a per-container standing seat (its `<chan>:oe-sup:g` token is not a window token — no domain to mint a child into, so no dead affordance)");
   eq(await resolveWindowGated(gatedModules.complete_task, perContainerCtx), null, "[P0-f] complete_task does NOT resolve on a standing seat");
 
   const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
