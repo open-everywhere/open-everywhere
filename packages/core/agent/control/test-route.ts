@@ -10,6 +10,9 @@ import { mintWakeId, isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "../chan
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeAddressing } from "../channels/normalized-wake.js";
 import type { WakeReason, WakeTrust, WakeParticipant, WakeMessageInput } from "../channels/wake-envelope.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
+import { parseWindowToken, formatWindowToken, taskWindowId } from "../channels/window-key.js";
+import { OE_GRAIN_ATTR } from "../channels/unified-window.js";
+import type { WindowGrain } from "../identity/binding.js";
 
 export const CONTROL_TEST_WAKE_PATH = "/control/v1/test/wake";
 
@@ -42,6 +45,8 @@ export interface TestWakeRequest {
   readonly participants?: readonly WakeParticipant[];
   readonly channelType?: string;
   readonly threadTs?: string;
+  readonly soloWindowId?: string;
+  readonly taskThread?: string;
 }
 
 function attrsFromSurfaceKey(platform: string, surfaceKey: string): Record<string, string> {
@@ -150,14 +155,41 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   const org = deploymentOrg();
   const store = getOperationalStore();
   const sessionRow = await store.getChannelSession(org, unifiedDomainSessionKey(domain)).catch(() => null);
-  const token = sessionRow?.token;
-  if (!token) {
+  const standingToken = sessionRow?.token;
+  if (!standingToken) {
     return json(400, { error: `no unified session for domain "${domain}" — rotate/seed the window first (channel_session row absent)` });
+  }
+  const wakeId = mintWakeId();
+
+  const selectors = [body.soloWindowId, body.taskThread].filter((v) => v !== undefined).length;
+  if (selectors > 1) {
+    return json(400, { error: "at most ONE of soloWindowId / taskThread may be set (they re-mint the dispatched token for a single grain route)" });
+  }
+  let token = standingToken;
+  let grainStamp: WindowGrain | undefined;
+  if (body.soloWindowId !== undefined || body.taskThread !== undefined) {
+    const key = parseWindowToken(standingToken);
+    const noColon = (s: string): string => s.replace(/:/g, "_");
+    if (!key) {
+      return json(400, { error: `cannot re-mint a grain-route token: the live standing token "${standingToken}" is not a parseable window token` });
+    } else if (body.taskThread !== undefined) {
+      const chan = noColon(surfaceKey);
+      const thread = noColon(body.taskThread);
+      if (thread.length === 0) return json(400, { error: "`taskThread` must be a non-empty string" });
+      token = formatWindowToken({ domain: key.domain, windowId: taskWindowId(chan, thread), generation: key.generation });
+      grainStamp = "task";
+    } else if (body.soloWindowId !== undefined) {
+      const wid = noColon(body.soloWindowId);
+      if (wid.length === 0 || wid === key.domain) {
+        return json(400, { error: "`soloWindowId` must be a non-empty windowId distinct from the domain (else it degenerates to the standing token)" });
+      }
+      token = formatWindowToken({ domain: key.domain, windowId: wid, generation: key.generation });
+      grainStamp = "standing";
+    }
   }
 
   const addressing: WakeAddressing = body.addressing ?? "channel-watch";
   const reason: WakeReason = body.reason ?? defaultReason(addressing);
-  const wakeId = mintWakeId();
   const containerId = surfaceKey.split("/").slice(2).join("/") || surfaceKey;
   const containerNoun = body.containerNoun ?? defaultContainerNoun(platform);
   const unifiedDisclosure = body.unifiedDisclosure ?? true;
@@ -221,7 +253,11 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   };
   const rendered = renderWake(nw);
 
-  const authAttributes = { ...attrsFromSurfaceKey(platform, surfaceKey), ...(body.authAttributes ?? {}) };
+  const authAttributes = {
+    ...attrsFromSurfaceKey(platform, surfaceKey),
+    ...(grainStamp !== undefined ? { [OE_GRAIN_ATTR]: grainStamp } : {}),
+    ...(body.authAttributes ?? {}),
+  };
 
   await appendAudit({
     org,
