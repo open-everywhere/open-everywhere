@@ -4,6 +4,8 @@ import { defineDomain, assertWindowSourcesVouched } from "../agent/memory/domain
 import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
 import { isVouchedInternal, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
+import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -215,6 +217,24 @@ console.log("P0-f — per-channel STANDING seat mounts the full toolset (charact
   const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
   ok(standingGrain.unified === false, "[P0-f] a plain ambient channel resolves a per-container (non-unified) standing grain");
   eq(Object.keys(standingGrain).sort(), ["registryKey", "unified"], "[P0-f] the standing-seat grain carries NO tool-narrowing field today (topology resolved, tools untouched)");
+}
+
+console.log("P0-g — grain classification per seat type (Stage B §S3):");
+{
+  const ctxFor = (token: string | undefined, grain?: string): BindableContext => ({
+    channel: token === undefined ? { kind: "unified" } : { kind: "unified", continuationToken: token },
+    session: { auth: { current: { attributes: grain ? { oe_grain: grain } : {} } } },
+  });
+  const uni = formatWindowToken({ domain: "payments", windowId: "payments", generation: 4 });
+  const solo = formatWindowToken({ domain: "payments", windowId: "slack/T1/C_PAY", generation: 4 });
+  const task = formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720000000.5"), generation: 4 });
+  eq(windowGrainOf(ctxFor(`unified:${uni}`, "standing")), "standing", "[P0-g] multi-source unified window (stamp standing) ⇒ standing ⇒ NARROW");
+  eq(windowGrainOf(ctxFor(`unified:${solo}`, "standing")), "standing", "[P0-g] per-domain solo window ⇒ standing ⇒ NARROW");
+  eq(windowGrainOf(ctxFor("slack/T1/C_PAY:oe-sup:g4")), "standing", "[P0-g] per-container ambient (T1) seat ⇒ standing ⇒ NARROW (backstop, no stamp)");
+  eq(windowGrainOf(ctxFor("slack/T1/D_DM:oe-sup:g4")), "standing", "[P0-g] root DM standing seat ⇒ standing ⇒ NARROW");
+  eq(windowGrainOf(ctxFor(`unified:${task}`, "task")), "task", "[P0-g] task/thread session (§S1) ⇒ task ⇒ FULL");
+  eq(windowGrainOf(ctxFor("cse_native123")), "native", "[P0-g] native mention `cse_…` session ⇒ native ⇒ FULL");
+  eq(windowGrainOf(ctxFor("slack/T1/C_PAY:oe-sup:g4", "task")), "standing", "[P0-g] a `task` stamp on a standing token ⇒ standing (fail-closed; grain is unforgeable)");
 }
 
 console.log(`\nwindow-capability: ${n} assertions passed.`);

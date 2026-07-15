@@ -5,7 +5,7 @@ import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableConte
 import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken } from "./window-key.js";
@@ -271,6 +271,7 @@ export async function dispatchTaskWindow(input: {
     throw new Error(`spawn_task: couldn't resolve a window-enabled surface for domain "${input.domain}" — the task cannot be dispatched.`);
   }
   const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
+  attributes[OE_GRAIN_ATTR] = "task";
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await divertToUnifiedWindow(rememberedReceive, {
     message: input.message,

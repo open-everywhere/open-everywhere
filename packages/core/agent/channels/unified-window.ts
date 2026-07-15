@@ -188,6 +188,7 @@ export function unifiedThreadRef(origin: UnifiedWakeOrigin): UnifiedThreadRef {
 export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";
+export const OE_GRAIN_ATTR = "oe_grain";
 
 export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, unknown> }>(
   auth: A,
@@ -201,6 +202,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
       ...(auth.attributes ?? {}),
       [OE_PLATFORM_ATTR]: platform,
       [OE_WAKE_ID_ATTR]: wakeId,
+      [OE_GRAIN_ATTR]: (auth.attributes?.[OE_GRAIN_ATTR] as string | undefined) ?? "standing",
       ...(addressing ? { [OE_ADDRESSING_ATTR]: addressing } : {}),
     },
   };
