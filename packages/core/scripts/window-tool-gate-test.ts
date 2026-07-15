@@ -7,7 +7,7 @@ process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-tool-gat
 delete process.env.OE_ORG;
 
 import { windowGrainOf, type WindowGrain, type BindableContext } from "../agent/identity/binding.js";
-import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
+import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { auditWindowToolGate } from "../agent/audit/window-tool-gate.js";
 import { readAudit } from "../agent/audit/audit.js";
 import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "../agent/channels/unified-window.js";
@@ -35,6 +35,7 @@ const ctxFor = (token: string | undefined, grain?: string): BindableContext => (
 const LEGACY = formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 });
 const EXPLICIT = formatWindowToken({ domain: "payments", windowId: "slack/T1/C_PAY", generation: 3 });
 const TASK = formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720000000.001"), generation: 3 });
+const THREAD_SEAT = formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("slack/C1", "1720000000.001"), generation: 3 });
 const PER_CONTAINER = "slack/T1/C_PAY:oe-sup:g3";
 const NATIVE = "cse_abc123def";
 
@@ -42,6 +43,7 @@ console.log("1. windowGrainOf backstop (token classification, no stamp):");
 eq(windowGrainOf(ctxFor(LEGACY)), "standing", "legacy/degenerate window token ⇒ standing");
 eq(windowGrainOf(ctxFor(EXPLICIT)), "standing", "explicit solo-window token ⇒ standing");
 eq(windowGrainOf(ctxFor(TASK)), "task", "task (t/…) window token ⇒ task");
+eq(windowGrainOf(ctxFor(THREAD_SEAT)), "thread", "thread-seat (s/…) window token ⇒ thread (Stage T2 — a conversational presence, narrow hands)");
 eq(windowGrainOf(ctxFor(PER_CONTAINER)), "standing", "per-container ambient (`<chan>:oe-sup:g`, not a window token) ⇒ standing");
 eq(windowGrainOf(ctxFor(NATIVE)), "native", "native `cse_…` mention token (no supervisor suffix) ⇒ native");
 eq(windowGrainOf(ctxFor(`unified:${LEGACY}`)), "standing", "a `unified:`-prefixed window token ⇒ standing after the strip");
@@ -60,6 +62,11 @@ console.log("3. windowGrainOf spoof-resistance (fail-closed to narrow):");
 eq(windowGrainOf(ctxFor(PER_CONTAINER, "task")), "standing", "stamp task on a STANDING (per-container) token ⇒ standing (the spoof/bug case, fail-closed)");
 eq(windowGrainOf(ctxFor(LEGACY, "task")), "standing", "stamp task on a STANDING window token ⇒ standing (fail-closed)");
 eq(windowGrainOf(ctxFor(LEGACY, "native")), "standing", "stamp native on a STANDING window token ⇒ standing (a full claim loses to a standing token)");
+eq(windowGrainOf(ctxFor(THREAD_SEAT, "task")), "thread", "stamp task on a THREAD-SEAT token ⇒ thread (Stage T2 — a forged wide claim never re-widens a narrow seat; fail-closed to the token's narrow grain)");
+eq(windowGrainOf(ctxFor(THREAD_SEAT, "thread")), "thread", "stamp thread + thread-seat token ⇒ thread (primary + backstop agree)");
+eq(windowGrainOf(ctxFor(NATIVE, "task")), "native", "stamp task on a PRESENT native (cse_…) token ⇒ native (F2 — narrowed; a task stamp on a real @mention seat is a bug, since a legit worker always rides a t/ token)");
+eq(windowGrainOf(ctxFor("garbage", "task")), "native", "stamp task on a PRESENT unrecognised token ⇒ native (F2 — a present non-t/ token is not a legit worker; narrowed, unlike a blank token)");
+eq(windowGrainOf(ctxFor(undefined, "task")), "task", "stamp task + BLANK token ⇒ task (F2 counterpart — degradation keeps stamp primacy; the present-token narrowing must NOT fire on an absent token)");
 eq(windowGrainOf(ctxFor(PER_CONTAINER, "garbage")), "standing", "an unrecognised stamp value ⇒ falls through to the token backstop (standing here)");
 eq(windowGrainOf(ctxFor(NATIVE, "garbage")), "native", "an unrecognised stamp value ⇒ token backstop (native here) — never task");
 ok(windowGrainOf(ctxFor(PER_CONTAINER)) !== "task" && windowGrainOf(ctxFor(NATIVE)) !== "task", "a non-task token never yields task grain without a host task-stamp on a task token");
@@ -130,7 +137,8 @@ for (const wide of WIDE_HANDS_12) {
   ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);
 }
 ok(dmWithheld.has("complete_task"), "complete_task (task-only) is also absent from a standing DM seat");
-eq(dmWithheld.size, WIDE_HANDS_12.length + 1, "a standing (DM) seat withholds exactly the 12 wide-hands tools + complete_task");
+ok(dmWithheld.has("complete_thread"), "complete_thread (thread-only) is also absent from a standing DM seat");
+eq(dmWithheld.size, WIDE_HANDS_12.length + 2, "a standing (DM) seat withholds exactly the 12 wide-hands tools + complete_task + complete_thread");
 
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });

@@ -4,7 +4,8 @@ import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-l
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
 import { buildSlackAuth } from "../../agent/channels/slack-identity.js";
 import { windowGrainOf, type BindableContext } from "../../agent/identity/binding.js";
-import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken } from "../../agent/channels/window-key.js";
+import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken, isThreadSeatWindowToken } from "../../agent/channels/window-key.js";
+import { workerSubagentEnabled } from "../../agent/access/worker-subagent.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "../../agent/channels/thread-ownership.js";
 import { ROUTINE_MARKER } from "../../agent/routines/routine.js";
 import { OE_GRAIN_ATTR } from "../../agent/channels/unified-window.js";
@@ -264,7 +265,31 @@ async function f7(): Promise<void> {
 }
 
 async function f8(): Promise<void> {
-  record("F8", "SKIP", `native @mention (cse_… session) is not injectable via the unified test-wake seam — a native seat runs on the surface's own eve channel and the unified receive refuses non-supervisor tokens (isUnifiedSupervisorToken). The over-narrowing guard for grain "native" is covered by the windowGrainOf unit (suffix-less token ⇒ native ⇒ full kit) + a real-surface @mention e2e in the prod pack (live Slack drive). Not faked here.`);
+  record("F8", "SKIP", `native @mention (cse_… session) is not injectable via the unified test-wake seam — a native seat runs on the surface's own eve channel and the unified receive refuses non-supervisor tokens (isUnifiedSupervisorToken). Grain "native" is unit-pinned: flag-OFF a suffix-less token ⇒ native ⇒ FULL kit (Stage-C byte-identical, window-capability-test.ts P1-c); flag-ON (Stage T2 Resolution A) native LOSES the wide hands (FULL_KIT drops it — window-gate-lint-test.ts's injectable-wideHandsGrains crafted case + window-gated-test.ts's flag-off/on split). The live-surface @mention e2e (prod pack, real Slack drive) is the end-to-end confirmation. Not faked here.`);
+}
+
+async function f9(): Promise<void> {
+  if (!workerSubagentEnabled()) {
+    return record("F9", "SKIP", "OE_WORKER_SUBAGENT is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target started with OE_WORKER_SUBAGENT=1.");
+  }
+  const since = new Date().toISOString();
+  const brief = `We'll be going back and forth in this thread for a while about the ${RUN} rollout — please open a lasting presence here to keep track, then say READY-${RUN}.`;
+  const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: brief });
+  console.log(`  F9 injected standing wake ${wakeId} → token ${token}`);
+  const deadline = Date.now() + REPLY_TIMEOUT_MS;
+  let row: AuditWireEntry | null = null;
+  while (Date.now() < deadline && !row) {
+    await sleep(POLL_MS);
+    row = (await rowsSince(since)).find((r) => r.action === "thread_seat.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId)) ?? null;
+  }
+  if (!row) {
+    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_WORKER_SUBAGENT=1. Re-run with the flag ON.`);
+  }
+  const seatId = dS(row, "seatId") ?? "";
+  if (!isThreadSeatWindowToken(seatId)) {
+    return record("F9", "FAIL", `thread_seat.spawned present but seatId=${seatId} is NOT a thread-seat window token (s/… windowId) — a lost oe_grain stamp would then re-widen the seat to task instead of failing closed to thread`);
+  }
+  record("F9", "PASS", `spawn_thread_session opened a persistent thread seat — thread_seat.spawned (seatId=${seatId.slice(0, 48)}…) whose token classifies grain THREAD (s/ windowId ⇒ fail-closed narrow, never task). The seat holds the conversational kit + agent + complete_thread, NO wide hands, and cannot recurse (spawn_thread_session is standing-only).`);
 }
 
 async function main(): Promise<void> {
@@ -272,7 +297,7 @@ async function main(): Promise<void> {
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} surface=${SURFACE}`);
   if (!TARGET || !READ) {
     console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN — cannot drive any route.");
-    for (const id of ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN");
+    for (const id of ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN");
     return summary();
   }
 
@@ -292,7 +317,7 @@ async function main(): Promise<void> {
 
   const steps: [string, () => Promise<void>][] = [
     ["F1", f1], ["F2", f2], ["F3", f3], ["F4", f4], ["F5", f5],
-    ["F6", () => f6(store)], ["F7", f7], ["F8", f8],
+    ["F6", () => f6(store)], ["F7", f7], ["F8", f8], ["F9", f9],
   ];
   for (const [id, fn] of steps) {
     if (!want(id)) continue;

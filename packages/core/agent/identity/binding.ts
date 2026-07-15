@@ -7,7 +7,7 @@ import { discordMode, discordVisibility } from "../channels/discord-identity.js"
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { notionMode, notionVisibility } from "../channels/notion-identity.js";
 import { isVouchedInternal } from "./trust.js";
-import { isTaskWindowToken, parseWindowToken } from "../channels/window-key.js";
+import { isTaskWindowToken, isThreadSeatWindowToken, parseWindowToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -334,7 +334,7 @@ export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   }
 }
 
-export type WindowGrain = "standing" | "task" | "native";
+export type WindowGrain = "standing" | "task" | "native" | "thread";
 
 const STANDING_TOKEN_SUFFIX_RE = /(?:^|:)oe-sup:g\d+$/;
 
@@ -342,15 +342,20 @@ function classifyTokenGrain(token: unknown): WindowGrain {
   if (typeof token !== "string") return "native";
   const raw = token.startsWith("unified:") ? token.slice("unified:".length) : token;
   if (isTaskWindowToken(raw)) return "task";
+  if (isThreadSeatWindowToken(raw)) return "thread";
   if (STANDING_TOKEN_SUFFIX_RE.test(raw)) return "standing";
   return "native";
 }
 
 export function windowGrainOf(ctx: BindableContext): WindowGrain {
+  const rawToken = ctx.channel?.continuationToken;
   const stamped = attr(authOf(ctx)?.attributes, ["oe_grain", "oeGrain"]);
-  const tokenGrain = classifyTokenGrain(ctx.channel?.continuationToken);
-  if (stamped === "standing" || stamped === "task" || stamped === "native") {
+  const tokenGrain = classifyTokenGrain(rawToken);
+  const tokenPresent = typeof rawToken === "string" && rawToken.length > 0;
+  if (stamped === "standing" || stamped === "task" || stamped === "native" || stamped === "thread") {
     if ((stamped === "task" || stamped === "native") && tokenGrain === "standing") return "standing";
+    if (stamped === "task" && tokenGrain === "thread") return "thread";
+    if (stamped === "task" && tokenGrain === "native" && tokenPresent) return "native";
     return stamped;
   }
   return tokenGrain;

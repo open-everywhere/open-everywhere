@@ -153,21 +153,65 @@ firesWith(
 );
 
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_task]) === JSON.stringify(["standing"]), "spawn_task is standing-only");
+ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringify(["standing"]), "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
-ok(JSON.stringify([...WINDOW_GATED_TOOLS.agent]) === JSON.stringify(["standing"]), "agent is standing-only (§B2 delegation tool)");
-ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native");
-ok(withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task"), "a standing seat withholds the wide-hands set + complete_task");
-ok(withheldFromGrain("native").length === 3, "a native seat withholds only the delegation trio spawn_task/complete_task/agent (over-narrowing guard)");
+ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
+ok(JSON.stringify([...WINDOW_GATED_TOOLS.agent]) === JSON.stringify(["standing", "thread"]), "agent mounts on the conversational-root delegators (standing + thread)");
+ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native, flag-OFF (byte-identical Stage C; the T2 narrowing to task-only is flag-ON, pinned by the crafted case below)");
+ok(
+  withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
+  "a standing seat withholds the wide-hands set + complete_task + complete_thread",
+);
+ok(
+  withheldFromGrain("native").length === 5,
+  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/agent) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below)",
+);
 
 firesWith(
   checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["task"] }), u()),
-  'agent"] must be exactly ["standing"]',
-  "agent scoped to a non-standing grain FAILS (a delegation tool must not spawn recursively)",
+  'agent"] must be exactly ["standing","thread"]',
+  "agent scoped to the wrong grain FAILS (it mounts on the conversational-root delegators, never a task worker leaf)",
 );
 {
-  const problems = checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing"] }), u());
-  ok(problems.length === 0, "agent standing-scoped + windowGated-wrapped is clean");
+  const problems = checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing", "thread"] }), u());
+  ok(problems.length === 0, "agent scoped [standing,thread] + windowGated-wrapped is clean");
 }
+
+firesWith(
+  checkWindowGateManifest([{ name: "spawn_thread_session", source: wrapped("spawn_thread_session") }], new Map([["spawn_thread_session", ""]]), [], g({ spawn_thread_session: ["thread"] }), u()),
+  'spawn_thread_session"] must be exactly ["standing"]',
+  "spawn_thread_session on a non-standing grain FAILS (window-only spawner; a thread seat must not recurse)",
+);
+firesWith(
+  checkWindowGateManifest([{ name: "complete_thread", source: wrapped("complete_thread") }], new Map([["complete_thread", ""]]), [], g({ complete_thread: ["standing"] }), u()),
+  'complete_thread"] must be exactly ["thread"]',
+  "complete_thread leaking off the thread grain FAILS",
+);
+
+for (const badGrain of [["task", "native"], ["standing", "task"], ["task", "thread"], ["native"]] as WindowGrain[][]) {
+  firesWith(
+    checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: badGrain }), u(), new Map(), ["task"]),
+    'must be exactly ["task"]',
+    `flag-ON: a wide-hands tool on grain [${badGrain.join(",")}] FAILS (no wide hands on any conversational-root grain — standing/native/thread)`,
+  );
+}
+{
+  const clean = checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["task"] }), u(), new Map(), ["task"]);
+  ok(clean.length === 0, "flag-ON: a wide-hands tool on EXACTLY [task] (the async worker) is clean — task is the one root grain permitted wide hands");
+}
+
+firesWith(
+  checkWindowGateManifest(
+    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
+    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
+    [],
+    g({ open_pull_request: FULL_KIT }),
+    u(),
+    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
+  ),
+  "must mount the UN-gated tool via workerToolFrom",
+  "a worker shim that bare-re-exports the grain-gated default (no workerToolFrom) FAILS (the sync worker would silently disarm)",
+);
 
 {
   const notInKit = checkWindowGateManifest(

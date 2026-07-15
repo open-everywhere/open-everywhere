@@ -7,6 +7,9 @@ import {
   taskWindowId,
   isTaskWindowId,
   isTaskWindowToken,
+  threadSeatWindowId,
+  isThreadSeatWindowId,
+  isThreadSeatWindowToken,
   type WindowKey,
 } from "../agent/channels/window-key.js";
 
@@ -88,6 +91,29 @@ n++;
 assert.throws(() => taskWindowId("", "t"), /non-empty/, "taskWindowId throws on an empty channelKey");
 n++;
 assert.throws(() => taskWindowId("c", ""), /non-empty/, "taskWindowId throws on an empty threadTs");
+n++;
+
+const seatWin = threadSeatWindowId("slack/T1/C_PAY", "1720000000.001");
+eq(seatWin, "s/slack/T1/C_PAY/1720000000.001", "threadSeatWindowId is s/<channelKey>/<threadTs> (slashes, colon-free)");
+
+const seatKey: WindowKey = { domain: "payments", windowId: seatWin, generation: 4 };
+const seatToken = formatWindowToken(seatKey);
+eq(seatToken, "oe-dom:payments:win:s/slack/T1/C_PAY/1720000000.001:oe-sup:g4", "a thread-seat key serialises to an explicit :win: token whose windowId is the s/ composite");
+eq(parseWindowToken(seatToken), seatKey, "a thread-seat token round-trips (the slash-bearing s/ windowId satisfies [^:]+)");
+ok(parseWindowToken(seatToken)!.domain === "payments", "a thread-seat token still anchors its DOMAIN (memory/access unchanged)");
+
+ok(isThreadSeatWindowId(seatWin), "isThreadSeatWindowId true for an s/ windowId");
+ok(!isThreadSeatWindowId(taskWin), "isThreadSeatWindowId false for a t/ (task) windowId — the two prefixes are disjoint");
+ok(!isTaskWindowId(seatWin), "isTaskWindowId false for an s/ (thread-seat) windowId — a thread seat never classifies task");
+ok(isThreadSeatWindowToken(seatToken), "isThreadSeatWindowToken true for a thread-seat token");
+ok(!isThreadSeatWindowToken(taskToken), "isThreadSeatWindowToken false for a task token (fail-closed: a task token is NOT a thread seat)");
+ok(!isTaskWindowToken(seatToken), "isTaskWindowToken false for a thread-seat token (a lost stamp on an s/ token never re-widens to task)");
+ok(!isThreadSeatWindowToken(LEGACY), "isThreadSeatWindowToken false for a legacy/degenerate standing token");
+ok(!isThreadSeatWindowToken(undefined), "isThreadSeatWindowToken fails soft on undefined");
+
+assert.throws(() => threadSeatWindowId("teams/T/19:meeting@thread.v2", "act1"), /colon-free/, "threadSeatWindowId throws on a colon in channelKey");
+n++;
+assert.throws(() => threadSeatWindowId("c", ""), /non-empty/, "threadSeatWindowId throws on an empty threadTs");
 n++;
 
 console.log(`window-key-test: ${n} assertions passed`);

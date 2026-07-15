@@ -11,9 +11,25 @@ export interface GatedToolEntry {
 import { windowGrainOf, currentWakeId, deploymentOrg, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { parseWindowToken } from "../channels/window-key.js";
-import { WINDOW_GATED_TOOLS, withheldFromGrain } from "./window-gate-manifest.js";
-export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest } from "./window-gate-manifest.js";
+import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
+export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
+
+function isNarrowedGrain(grain: WindowGrain): boolean {
+  return !FULL_KIT.includes(grain);
+}
+
+const RAW_GATED_ENTRY = Symbol.for("@open-everywhere/window-gated:raw-entry");
+
+export function workerToolFrom(gatedDefault: unknown): unknown {
+  const raw = (gatedDefault as Record<symbol, unknown> | null | undefined)?.[RAW_GATED_ENTRY];
+  if (raw === undefined) {
+    throw new Error(
+      "workerToolFrom: not a windowGated() default — a worker subagent shim must import a grain-gated core tool's default and re-export its raw body (`export default workerToolFrom(gated)`).",
+    );
+  }
+  return raw;
+}
 
 function grainOf(ctx: BindableContext): WindowGrain {
   try {
@@ -126,13 +142,13 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
   }
   const armed = armEntry(name, entry);
   preRegisterReplay(name, "_single", armed);
-  return defineDynamic({
+  const dyn = defineDynamic({
     events: {
       "session.started": async (_event, ctx) => {
         const c = ctx as BindableContext;
         const grain = grainOf(c);
         if (!grains.includes(grain)) {
-          if (grain === "standing") await auditGateOnce(c, grain);
+          if (isNarrowedGrain(grain)) await auditGateOnce(c, grain);
           return null;
         }
         if (mountGate && !mountGate(c)) return null;
@@ -140,6 +156,8 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
       },
     },
   });
+  Object.defineProperty(dyn, RAW_GATED_ENTRY, { value: entry, enumerable: false });
+  return dyn;
 }
 
 export function windowGatedKit(slug: string, entries: Readonly<Record<string, GatedToolEntry>>): unknown {
@@ -162,7 +180,7 @@ export function windowGatedKit(slug: string, entries: Readonly<Record<string, Ga
           if (WINDOW_GATED_TOOLS[name].includes(grain)) mounted[name] = armed[name];
           else withheldAny = true;
         }
-        if (withheldAny && grain === "standing") await auditGateOnce(c, grain);
+        if (withheldAny && isNarrowedGrain(grain)) await auditGateOnce(c, grain);
         return Object.keys(mounted).length > 0 ? mounted : null;
       },
     },

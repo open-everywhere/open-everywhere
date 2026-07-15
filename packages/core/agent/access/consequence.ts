@@ -74,6 +74,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   complete_task: open(
     "a task worker releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-spawns), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (task.completed)",
   ),
+  spawn_thread_session: open(
+    "presence (§B1, Stage T2): mints a persistent CONVERSATIONAL thread seat (narrow hands) and dispatches to it, non-blocking. Widens PRESENCE, not consequence — the seat has no wide hands and re-gates every L2 consequence itself; delegation/presence IS the standing seat's job. Open, fully audited (thread_seat.spawned); taint forwarded onto the child, not gated here",
+  ),
+  complete_thread: open(
+    "a thread seat releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-opens), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (thread_seat.completed)",
+  ),
   agent: open(
     "delegation (§B2): async re-points the spawn_task machinery at a full-hands worker (same rationale as spawn_task — re-gates every L2 consequence INSIDE the child, forwards taint, widens hands not consequence); sync routes to the framework Workflow tool. Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned on the async path",
   ),

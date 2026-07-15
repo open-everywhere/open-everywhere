@@ -275,6 +275,7 @@ export async function dispatchTaskWindow(input: {
   readonly origin: UnifiedWakeOrigin;
   readonly parentAuthAttributes?: Record<string, unknown>;
   readonly tainted: boolean;
+  readonly grain?: "task" | "thread";
 }): Promise<void> {
   if (!rememberedReceive) {
     throw new Error(
@@ -286,7 +287,7 @@ export async function dispatchTaskWindow(input: {
     throw new Error(`spawn_task: couldn't resolve a window-enabled surface for domain "${input.domain}" — the task cannot be dispatched.`);
   }
   const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
-  attributes[OE_GRAIN_ATTR] = "task";
+  attributes[OE_GRAIN_ATTR] = input.grain ?? "task";
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
   await divertToUnifiedWindow(rememberedReceive, {
     message: input.message,

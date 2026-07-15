@@ -15,12 +15,13 @@ import {
   withheldFromGrain,
   windowGated,
   windowGatedKit,
+  workerToolFrom,
   replayStepNames,
   resolveWindowGated,
   _resetWindowGateAuditForTest,
   type GatedToolEntry,
 } from "../agent/access/window-gated.js";
-import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
+import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext, WindowGrain } from "../agent/identity/binding.js";
 
@@ -37,6 +38,7 @@ const eq = (a: unknown, b: unknown, label: string) => {
 const STANDING_TOKEN = `unified:${formatWindowToken({ domain: "payments", windowId: "payments", generation: 2 })}`;
 const PER_CONTAINER_TOKEN = "slack/T1/C_PAY:oe-sup:g2";
 const TASK_TOKEN = `unified:${formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720.5"), generation: 2 })}`;
+const THREAD_TOKEN = `unified:${formatWindowToken({ domain: "payments", windowId: threadSeatWindowId("slack/C1", "1720.5"), generation: 2 })}`;
 const NATIVE_TOKEN = "cse_native123";
 
 let sessionSeq = 0;
@@ -54,6 +56,7 @@ const grainCtx: Record<WindowGrain, () => BindableContext> = {
   standing: () => ctxOf(STANDING_TOKEN),
   task: () => ctxOf(TASK_TOKEN, { grainStamp: "task" }),
   native: () => ctxOf(NATIVE_TOKEN),
+  thread: () => ctxOf(THREAD_TOKEN, { grainStamp: "thread" }),
 };
 
 function stubEntry(name: string): GatedToolEntry {
@@ -70,20 +73,23 @@ function stubEntry(name: string): GatedToolEntry {
 console.log("0. WINDOW_GATED_TOOLS table pins:");
 const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"] as const;
 for (const name of WIDE_HANDS) {
-  eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `"${name}" mounts on task+native only (withheld from standing)`);
+  eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `"${name}" mounts on task+native only, flag-off (withheld from standing)`);
 }
 eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "spawn_task is standing-only (no recursive spawn; native has no window to mint into)");
+eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "complete_task is task-only (only a worker owns a thread)");
-eq(WINDOW_GATED_TOOLS.agent, ["standing"], "agent is standing-only (§B2 delegation tool; window-only mount is its own predicate)");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 3, "the gated table is EXACTLY the 12 wide-hands tools + the delegation trio (spawn_task/complete_task/agent) — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task"].sort(), "standing withholds the 12 wide-hands tools + complete_task (agent is standing-mounted, so NOT withheld)");
-eq([...withheldFromGrain("task")].sort(), ["agent", "spawn_task"], "task withholds the standing-only delegation tools (spawn_task + agent)");
-eq([...withheldFromGrain("native")].sort(), ["agent", "complete_task", "spawn_task"], "native withholds the delegation trio (full wide-hands kit otherwise — the F8 over-narrowing guard)");
+eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
+eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent mounts on the conversational-root seats that delegate (standing + thread); window-only mount is its own predicate");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 5, "the gated table is EXACTLY the 12 wide-hands tools + the 5 delegation/lifecycle tools (spawn_task/spawn_thread_session/complete_task/complete_thread/agent) — nothing else narrows");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread"].sort(), "standing withholds the 12 wide-hands tools + complete_task + complete_thread (the spawners + agent are standing-mounted)");
+eq([...withheldFromGrain("task")].sort(), ["agent", "complete_thread", "spawn_task", "spawn_thread_session"].sort(), "task (the worker) withholds the standing-only spawners + agent + complete_thread (it has its own wide hands + complete_task)");
+eq([...withheldFromGrain("native")].sort(), ["agent", "complete_task", "complete_thread", "spawn_task", "spawn_thread_session"].sort(), "native withholds the delegation/lifecycle set; flag-off it KEEPS the wide hands (the byte-identical Stage-C state — narrowing is flag-on)");
+eq([...withheldFromGrain("thread")].sort(), [...WIDE_HANDS, "complete_task", "spawn_task", "spawn_thread_session"].sort(), "a thread seat withholds the wide hands + complete_task + the spawners (it keeps the conversational kit + agent + complete_thread)");
 
 console.log("1. presence/absence matrix (windowGated):");
 for (const [name, grains] of Object.entries(WINDOW_GATED_TOOLS)) {
   const gated = windowGated(name, stubEntry(name));
-  for (const grain of ["standing", "task", "native"] as const) {
+  for (const grain of ["standing", "task", "native", "thread"] as const) {
     const resolved = await resolveWindowGated(gated, grainCtx[grain]());
     if (grains.includes(grain)) {
       ok(resolved !== null && typeof (resolved as GatedToolEntry).execute === "function", `"${name}" RESOLVES on ${grain}`);
@@ -229,6 +235,16 @@ console.log("5. replay pre-registration (eve step registry):");
   ]);
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
+}
+
+console.log("6. workerToolFrom (the worker un-gate seam):");
+{
+  const gatedDefault = windowGated("checkout_repo", stubEntry("checkout_repo"));
+  const raw = workerToolFrom(gatedDefault) as GatedToolEntry;
+  ok(raw !== null && typeof raw.execute === "function", "workerToolFrom returns a mountable tool (has execute) from a windowGated default");
+  eq(await raw.execute({ v: "x" }, grainCtx.native()), { ran: "checkout_repo" }, "the raw entry runs on a NATIVE-classified ctx (no grain backstop — the sync worker keeps hands even after the root narrows native)");
+  assert.throws(() => workerToolFrom(defineTool({ description: "x", inputSchema: z.object({}), async execute() { return {}; } })), /not a windowGated/, "workerToolFrom THROWS on a plain (non-windowGated) tool — a worker fork/mistake is caught");
+  n++;
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

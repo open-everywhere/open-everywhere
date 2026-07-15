@@ -307,12 +307,15 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   for (const name of STANDING_WITHHELD) {
     eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `[P0-f] withheld tool "${name}" is grain-gated to task+native (absent on standing)`);
   }
-  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task (task-only)");
+  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task", "complete_thread"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task + complete_thread (thread-lifecycle, task/thread-only)");
 
   ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task stays `open` — delegation is the standing seat's job");
   eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "[P0-f] spawn_task is grain-gated STANDING-only (no recursive spawn)");
+  eq(WINDOW_GATED_TOOLS.spawn_thread_session, ["standing"], "[P0-f] spawn_thread_session is grain-gated STANDING-only (window-only mint; no recursive thread trees)");
   ok(TOOL_CONSEQUENCE.complete_task?.tier === "open", "[P0-f] complete_task stays `open`");
   eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "[P0-f] complete_task is grain-gated TASK-only");
+  eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "[P0-f] complete_thread is grain-gated THREAD-only");
+  eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "[P0-f] agent mounts on the conversational-root seats that delegate (standing + thread)");
   ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the primitive is spawn_task specifically — no bare spawn/dispatch/delegate alias");
 
   const perContainerCtx = {

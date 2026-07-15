@@ -1,6 +1,9 @@
 import type { WindowGrain } from "../identity/binding.js";
+import { workerSubagentEnabled } from "./worker-subagent.js";
 
-export const FULL_KIT = ["task", "native"] as const;
+export const FULL_KIT: readonly WindowGrain[] = workerSubagentEnabled() ? (["task"] as const) : (["task", "native"] as const);
+
+export const CONVERSATIONAL_ROOT_GRAINS = ["standing", "native", "thread"] as const;
 
 export const WORKER_FRAMEWORK_TOOLS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"] as const;
 export const WORKER_AUTHORED_TOOLS = ["checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"] as const;
@@ -21,8 +24,10 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   create_skill: FULL_KIT,
   delete_skill: FULL_KIT,
   spawn_task: ["standing"],
+  spawn_thread_session: ["standing"],
   complete_task: ["task"],
-  agent: ["standing"],
+  complete_thread: ["thread"],
+  agent: ["standing", "thread"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -74,7 +79,8 @@ export interface WindowToolSource {
 }
 
 const grainKey = (grains: readonly WindowGrain[]): string => [...grains].sort().join(",");
-const WIDE_HANDS_KEY = grainKey(FULL_KIT);
+const grainList = (grains: readonly WindowGrain[]): string => grains.map((g) => `"${g}"`).join(",");
+const AGENT_KEY = grainKey(["standing", "thread"]);
 
 export function checkWindowGateManifest(
   coreTools: readonly WindowToolSource[],
@@ -83,7 +89,9 @@ export function checkWindowGateManifest(
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
   workerShims: ReadonlyMap<string, string> = new Map(),
+  wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
 ): string[] {
+  const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
   const coreByName = new Map(coreTools.map((t) => [t.name, t.source] as const));
   const sandboxKit = coreByName.get("sandbox_tools") ?? "";
@@ -117,17 +125,25 @@ export function checkWindowGateManifest(
   }
 
   for (const [name, grains] of Object.entries(gated)) {
-    if (name === "spawn_task" || name === "agent") {
+    if (name === "spawn_task" || name === "spawn_thread_session") {
       if (grainKey(grains) !== "standing") {
-        problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (a delegation tool: a task/native session must never spawn recursively) — got [${grains.join(", ")}]`);
+        problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (a window-only spawner: no recursive spawn from a task/native/thread seat) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "agent") {
+      if (grainKey(grains) !== AGENT_KEY) {
+        problems.push(`WINDOW_GATED_TOOLS["agent"] must be exactly ["standing","thread"] (the worker-delegation tool: the conversational-root seats that delegate — not native until T5, never a task leaf) — got [${grains.join(", ")}]`);
       }
     } else if (name === "complete_task") {
       if (grainKey(grains) !== "task") {
-        problems.push(`WINDOW_GATED_TOOLS["complete_task"] must be exactly ["task"] (only a worker owns a thread) — got [${grains.join(", ")}]`);
+        problems.push(`WINDOW_GATED_TOOLS["complete_task"] must be exactly ["task"] (only a task worker owns a thread) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "complete_thread") {
+      if (grainKey(grains) !== "thread") {
+        problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
       }
     } else if (grainKey(grains) !== WIDE_HANDS_KEY) {
       problems.push(
-        `WINDOW_GATED_TOOLS["${name}"] is a wide-hands tool and must be exactly ["task","native"] (withheld from every standing seat) — got [${grains.join(", ")}]; mounting it on "standing" would give an always-on ambient watcher heavy hands`,
+        `WINDOW_GATED_TOOLS["${name}"] is a wide-hands tool and must be exactly [${grainList(wideHandsGrains)}] (the worker grain(s); withheld from every CONVERSATIONAL-ROOT seat — standing/native/thread) — got [${grains.join(", ")}]; mounting it on any conversational-root grain would give a talking seat heavy hands`,
       );
     }
   }
@@ -176,9 +192,13 @@ export function checkWindowGateManifest(
       }
       const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
       if (!m) {
-        problems.push(`agent/subagents/worker/tools/${slug}.ts must re-export a core tool (\`export { default } from "@open-everywhere/core/agent/tools/${slug}.js"\`) — the worker carries the SAME tool the root authors, not a fork`);
+        problems.push(`agent/subagents/worker/tools/${slug}.ts must re-export a core tool (import from "@open-everywhere/core/agent/tools/${slug}.js") — the worker carries the SAME tool the root authors, not a fork`);
       } else if (!coreByName.has(m[1])) {
         problems.push(`agent/subagents/worker/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling worker shim)`);
+      } else if (!/workerToolFrom\s*\(/.test(src)) {
+        problems.push(
+          `agent/subagents/worker/tools/${slug}.ts must mount the UN-gated tool via workerToolFrom(...) (\`import gated from "@open-everywhere/core/agent/tools/${slug}.js"; export default workerToolFrom(gated)\`) — a bare re-export of the grain-gated default vanishes on the subagent once the root narrows native (§B4 Resolution A)`,
+        );
       }
     }
     for (const name of WORKER_AUTHORED_TOOLS) {

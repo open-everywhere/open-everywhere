@@ -52,3 +52,26 @@ export function isTaskWindowToken(token: unknown): boolean {
   const key = parseWindowToken(token);
   return key !== undefined && isTaskWindowId(key.windowId);
 }
+
+export const THREAD_SEAT_WINDOW_ID_RE = /^s\//;
+
+export function threadSeatWindowId(channelKey: string, threadTs: string): string {
+  if (channelKey.length === 0 || threadTs.length === 0) {
+    throw new Error("threadSeatWindowId: channelKey and threadTs must both be non-empty");
+  }
+  if (channelKey.includes(":") || threadTs.includes(":")) {
+    throw new Error(
+      `threadSeatWindowId: a windowId is colon-free ([^:]+) — got channelKey="${channelKey}", threadTs="${threadTs}" (sanitise colons before minting)`,
+    );
+  }
+  return `s/${channelKey}/${threadTs}`;
+}
+
+export function isThreadSeatWindowId(windowId: string): boolean {
+  return THREAD_SEAT_WINDOW_ID_RE.test(windowId);
+}
+
+export function isThreadSeatWindowToken(token: unknown): boolean {
+  const key = parseWindowToken(token);
+  return key !== undefined && isThreadSeatWindowId(key.windowId);
+}
