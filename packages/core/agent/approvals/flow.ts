@@ -14,6 +14,7 @@ import "./access-request.js";
 import "./skill-create.js";
 import "./routine-create.js";
 import "./memory-remember.js";
+import "./memory-float.js";
 import "./pr-open.js";
 import "./skill-delete.js";
 import "./routine-cancel.js";
