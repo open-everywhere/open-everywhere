@@ -7,7 +7,9 @@ import { discordMode, discordVisibility } from "../channels/discord-identity.js"
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { notionMode, notionVisibility } from "../channels/notion-identity.js";
 import { isVouchedInternal } from "./trust.js";
-import { isTaskWindowToken } from "../channels/window-key.js";
+import { isTaskWindowToken, parseWindowToken } from "../channels/window-key.js";
+import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
+import type { Domain } from "../memory/domain.js";
 
 export type Visibility = "public" | "private";
 
@@ -352,6 +354,27 @@ export function windowGrainOf(ctx: BindableContext): WindowGrain {
     return stamped;
   }
   return tokenGrain;
+}
+
+export function windowSourcesOf(ctx: BindableContext): readonly string[] | undefined {
+  const a = authOf(ctx)?.attributes;
+  if (!a) return undefined;
+  const decoded = decodeSources(a["oe_sources"] ?? a["oeSources"]);
+  return decoded.length > 0 ? decoded : undefined;
+}
+
+export function resolveWindowSources(ctx: BindableContext, domains: readonly Domain[]): readonly string[] {
+  const stamped = windowSourcesOf(ctx);
+  if (stamped) return stamped;
+  const tok = ctx.channel?.continuationToken;
+  const raw = typeof tok === "string" && tok.startsWith("unified:") ? tok.slice("unified:".length) : tok;
+  const key = parseWindowToken(raw);
+  if (key) {
+    const recomputed = sourcesForWindow(key.windowId, key.domain, domains);
+    if (recomputed.length > 0) return recomputed;
+  }
+  const origin = channelPlatform(ctx);
+  return origin ? [origin] : [];
 }
 
 export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: RawIdentity } {

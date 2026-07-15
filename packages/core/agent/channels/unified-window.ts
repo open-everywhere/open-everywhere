@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { encodeSources } from "./window-sources.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -189,6 +190,7 @@ export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";
 export const OE_GRAIN_ATTR = "oe_grain";
+export const OE_SOURCES_ATTR = "oe_sources";
 
 export function rootDmGrainAttrs(isDm: boolean): Record<string, string> {
   return isDm ? { [OE_GRAIN_ATTR]: "standing" } : {};
@@ -199,6 +201,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
   platform: UnifiedWakeOrigin["platform"],
   wakeId: string,
   addressing?: "direct-mention",
+  sources?: readonly string[],
 ): A {
   return {
     ...auth,
@@ -208,6 +211,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
       [OE_WAKE_ID_ATTR]: wakeId,
       [OE_GRAIN_ATTR]: (auth.attributes?.[OE_GRAIN_ATTR] as string | undefined) ?? "standing",
       ...(addressing ? { [OE_ADDRESSING_ATTR]: addressing } : {}),
+      ...(sources && sources.length > 0 ? { [OE_SOURCES_ATTR]: encodeSources(sources) } : {}),
     },
   };
 }

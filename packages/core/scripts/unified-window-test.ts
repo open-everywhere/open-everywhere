@@ -36,8 +36,10 @@ import {
   OE_PLATFORM_ATTR,
   OE_WAKE_ID_ATTR,
   OE_ADDRESSING_ATTR,
+  OE_SOURCES_ATTR,
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
+import { decodeSources } from "../agent/channels/window-sources.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "../agent/channels/unified-reply.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -73,7 +75,7 @@ import {
 } from "../agent/channels/teams-supervisor.js";
 import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
 import { isTrustedTeamsServiceUrl } from "../agent/channels/unified-window.js";
-import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, type BindableContext } from "../agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "../agent/identity/binding.js";
 import replyTool from "../agent/tools/reply.js";
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -252,6 +254,10 @@ const slackBaseDeps: SupervisorRouteDeps = {
   const a = received[0].auth.attributes ?? {};
   ok(a[OE_PLATFORM_ATTR] === "slack" && a[OE_WAKE_ID_ATTR] === received[0].target.wakeId, "slack: the forwarded auth is stamped with oe_platform + oe_wake_id");
   ok(typeof a.channel_id === "string" && a.channel_id === "C_WINA", "slack: the surface's own auth attributes ride verbatim (identity binding unchanged)");
+  ok(
+    JSON.stringify([...decodeSources(a[OE_SOURCES_ATTR])].sort()) === JSON.stringify(["discord", "github", "linear", "notion", "slack", "teams"]),
+    "slack: the diverted wake is stamped with oe_sources = the domain's distinct channel platforms (multi-source window)",
+  );
 }
 
 const ghAuth = buildGitHubAuth({
@@ -918,6 +924,10 @@ const store = getOperationalStore();
   ok(b.platform === "slack" && b.workspace === "T_WIN" && b.surface === "C_WINA" && b.trust === "internal", "bindFrom on a stamped unified delivery resolves the REAL Slack partition (memory/spend/audit unchanged)");
   const stamped = stampUnifiedWindowAuth({ attributes: { team_id: "T1" } as Record<string, unknown> }, "slack", "w-1");
   ok(stamped.attributes?.team_id === "T1" && stamped.attributes?.[OE_PLATFORM_ATTR] === "slack" && stamped.attributes?.[OE_WAKE_ID_ATTR] === "w-1", "stampUnifiedWindowAuth adds the two stamps and preserves existing attributes");
+  ok(stamped.attributes?.[OE_SOURCES_ATTR] === undefined, "stampUnifiedWindowAuth stamps NO oe_sources when the arg is omitted (byte-identical to the pre-sources shape — every existing golden untouched)");
+  ok(stampUnifiedWindowAuth({ attributes: {} as Record<string, unknown> }, "slack", "w-1", undefined, []).attributes?.[OE_SOURCES_ATTR] === undefined, "stampUnifiedWindowAuth stamps NO oe_sources for an EMPTY vector (spread-safe, still byte-identical-off)");
+  const withSources = stampUnifiedWindowAuth({ attributes: { [OE_SOURCES_ATTR]: "stale" } as Record<string, unknown> }, "github", "w-9", undefined, ["github"]);
+  ok(withSources.attributes?.[OE_SOURCES_ATTR] === "github", "stampUnifiedWindowAuth stamps oe_sources from the vector and OVERRIDES a forwarded value (single-source child re-derivation)");
   ok(stamped.attributes?.[OE_ADDRESSING_ATTR] === undefined, "stampUnifiedWindowAuth stamps NO oe_addressing for an ambient/watch wake (no addressing arg) — prose stays hard-dropped");
   const addressed = stampUnifiedWindowAuth({ attributes: { team_id: "T1" } as Record<string, unknown> }, "github", "w-2", "direct-mention");
   ok(addressed.attributes?.[OE_ADDRESSING_ATTR] === "direct-mention" && addressed.attributes?.[OE_WAKE_ID_ATTR] === "w-2", "stampUnifiedWindowAuth stamps oe_addressing='direct-mention' for an addressed mention (alongside the platform + wake id)");
@@ -997,6 +1007,33 @@ const store = getOperationalStore();
     "read_slack_channel EXECUTE refuses a GitHub-origin turn on a unified session (finding 1b — before any Slack API call)",
   );
   n++;
+}
+
+{
+  const withStamp: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: "unified:oe-dom:payments:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "slack", oe_sources: "slack,github" }, principalId: "U", principalType: "slack-user" } } },
+  };
+  ok(JSON.stringify(windowSourcesOf(withStamp)) === JSON.stringify(["slack", "github"]), "windowSourcesOf reads the oe_sources stamp back to a vector");
+  ok(JSON.stringify(resolveWindowSources(withStamp, [winDomain, orgBoth])) === JSON.stringify(["slack", "github"]), "resolveWindowSources returns the stamp verbatim when present (PRIMARY)");
+
+  const noStamp: BindableContext = { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_platform: "slack" }, principalId: "U", principalType: "slack-user" } } } };
+  ok(windowSourcesOf(noStamp) === undefined, "windowSourcesOf is undefined with no oe_sources stamp (a normal/pre-stamp session)");
+
+  const stampless: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: "unified:oe-dom:payments:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "slack" }, principalId: "U", principalType: "slack-user" } } },
+  };
+  ok(
+    JSON.stringify([...resolveWindowSources(stampless, [winDomain, orgBoth])].sort()) === JSON.stringify(["discord", "github", "linear", "notion", "slack", "teams"]),
+    "resolveWindowSources recomputes the domain's platforms from the token when the stamp is absent",
+  );
+
+  const unresolvable: BindableContext = {
+    channel: { kind: "channel:unified", continuationToken: "C_PAY:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "github" }, principalId: "U", principalType: "github-user" } } },
+  };
+  ok(JSON.stringify(resolveWindowSources(unresolvable, [winDomain, orgBoth])) === JSON.stringify(["github"]), "resolveWindowSources fails closed to the SINGLE origin platform when neither stamp nor token resolves");
 }
 
 console.log(`unified-window: ${n} assertions passed`);

@@ -9,6 +9,7 @@ import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigi
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken } from "./window-key.js";
+import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
@@ -52,6 +53,19 @@ function windowEnabledFor(surfaceKey: string): boolean {
 function auditLabels(rawToken: string): { workspace: string; surface: string | undefined } {
   const key = parseWindowToken(rawToken);
   return { workspace: key?.domain ?? "unknown", surface: key ? unifiedDomainSessionKey(key.windowId) : undefined };
+}
+
+function windowSourcesForDivert(token: string, originPlatform: string): readonly string[] {
+  try {
+    const key = parseWindowToken(token);
+    if (key) {
+      const domains = key.windowId === key.domain ? getConfig().loadDomains() : [];
+      const s = sourcesForWindow(key.windowId, key.domain, domains);
+      if (s.length > 0) return s;
+    }
+  } catch {
+  }
+  return [originPlatform];
 }
 
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
@@ -239,7 +253,8 @@ export async function divertToUnifiedWindow(
   },
 ): Promise<void> {
   rememberUnifiedReceive(receive);
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing);
+  const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
+  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources);
   const target: UnifiedReceiveTarget = {
     token: input.token,
     wakeId: input.window.wakeId,
