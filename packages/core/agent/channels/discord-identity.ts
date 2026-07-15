@@ -30,7 +30,8 @@ export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDis
   if (input.channelType) attributes.channel_type = input.channelType;
   if (typeof input.everyoneCanView === "boolean") attributes.everyone_can_view = String(input.everyoneCanView);
   if (input.parentChannelId) attributes.parent_channel_id = input.parentChannelId;
-  Object.assign(attributes, rootDmGrainAttrs(discordMode(input.channelType, input.guildId) === "dm"));
+  const dmMode = discordMode(input.channelType, input.guildId);
+  Object.assign(attributes, rootDmGrainAttrs(dmMode === "dm" || dmMode === "mpim"));
   return { authenticator: "discord", principalId: input.userId, principalType: "discord-user", attributes };
 }
 

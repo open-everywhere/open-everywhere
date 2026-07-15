@@ -34,7 +34,8 @@ export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAu
   if (input.serviceUrl) attributes.service_url = input.serviceUrl;
   if (input.scope) attributes.scope = input.scope;
   if (input.membershipType) attributes.membership_type = input.membershipType;
-  Object.assign(attributes, rootDmGrainAttrs(teamsMode(input.scope) === "dm"));
+  const teamsScopeMode = teamsMode(input.scope);
+  Object.assign(attributes, rootDmGrainAttrs(teamsScopeMode === "dm" || teamsScopeMode === "mpim"));
   return { authenticator: "teams", principalId: input.userId, principalType: "teams-user", attributes };
 }
 

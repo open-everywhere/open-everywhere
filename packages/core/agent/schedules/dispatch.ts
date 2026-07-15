@@ -222,7 +222,7 @@ export async function dispatchTick(
           ...appAuth.attributes,
           ...dest.attributes,
           ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
-          ...rootDmGrainAttrs(mode === "dm"),
+          ...rootDmGrainAttrs(mode === "dm" || mode === "mpim" || dest.attributes.chat_type === "group" || dest.attributes.chat_type === "supergroup"),
           [ROUTINE_MARKER.id]: r.id,
           [ROUTINE_MARKER.surface]: r.surfaceKey,
           [ROUTINE_MARKER.org]: r.org,

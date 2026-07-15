@@ -86,25 +86,41 @@ const teamsChan = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenant
 const teamsGroup = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "groupChat" });
 const tgDm = buildTelegramAuth({ userId: "U1", chatId: "12345", chatType: "private" });
 const tgGroup = buildTelegramAuth({ userId: "U1", chatId: "-100999", chatType: "supergroup" });
+const tgGroupPlain = buildTelegramAuth({ userId: "U1", chatId: "-100888", chatType: "group" });
+const tgChan = buildTelegramAuth({ userId: "U1", chatId: "-100777", chatType: "channel" });
 
 eq(slackDm.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(im) stamps oe_grain=standing");
 eq(slackDm.attributes.channel_id, "D0001", "buildSlackAuth(im) still captures the raw DM channel id (identity/memory unchanged)");
 ok(!(OE_GRAIN_ATTR in slackChan.attributes), "buildSlackAuth(channel) does NOT stamp a grain (native/full preserved)");
-ok(!(OE_GRAIN_ATTR in slackMpim.attributes), "buildSlackAuth(mpim/group-DM) does NOT stamp (D-DM is 1:1 only — no over-narrowing)");
+eq(slackMpim.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(mpim/group-DM) stamps oe_grain=standing (widened: group DMs narrow too)");
 eq(discordDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(DM type 1) stamps oe_grain=standing");
 ok(!(OE_GRAIN_ATTR in discordChan.attributes), "buildDiscordAuth(guild channel) does NOT stamp");
-ok(!(OE_GRAIN_ATTR in discordGroupDm.attributes), "buildDiscordAuth(group DM type 3 ⇒ mpim) does NOT stamp");
+eq(discordGroupDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(group DM type 3 ⇒ mpim) stamps oe_grain=standing (widened)");
 eq(teamsDm.attributes[OE_GRAIN_ATTR], "standing", "buildTeamsAuth(personal) stamps oe_grain=standing");
 ok(!(OE_GRAIN_ATTR in teamsChan.attributes), "buildTeamsAuth(channel) does NOT stamp");
-ok(!(OE_GRAIN_ATTR in teamsGroup.attributes), "buildTeamsAuth(groupChat ⇒ mpim) does NOT stamp");
+eq(teamsGroup.attributes[OE_GRAIN_ATTR], "standing", "buildTeamsAuth(groupChat ⇒ mpim) stamps oe_grain=standing (widened)");
 eq(tgDm.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(private) stamps oe_grain=standing");
-ok(!(OE_GRAIN_ATTR in tgGroup.attributes), "buildTelegramAuth(supergroup) does NOT stamp");
+eq(tgGroup.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(supergroup) stamps oe_grain=standing (widened)");
+eq(tgGroupPlain.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(group) stamps oe_grain=standing (widened)");
+ok(!(OE_GRAIN_ATTR in tgChan.attributes), "buildTelegramAuth(broadcast channel) does NOT stamp (a true channel surface, not a closed conversation)");
 
-for (const [label, auth] of [["slack", slackDm], ["discord", discordDm], ["teams", teamsDm], ["telegram", tgDm]] as const) {
-  eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "standing", `${label} DM (stamped) on a native token ⇒ windowGrainOf standing (the stamp narrows, not the token)`);
+const STAMPED_SEATS = [
+  ["slack DM", slackDm],
+  ["slack mpim", slackMpim],
+  ["discord DM", discordDm],
+  ["discord group DM", discordGroupDm],
+  ["teams DM", teamsDm],
+  ["teams groupChat", teamsGroup],
+  ["telegram DM", tgDm],
+  ["telegram supergroup", tgGroup],
+  ["telegram group", tgGroupPlain],
+] as const;
+for (const [label, auth] of STAMPED_SEATS) {
+  eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "standing", `${label} (stamped) on a native token ⇒ windowGrainOf standing (the stamp narrows, not the token)`);
 }
-eq(windowGrainOf(ctxWithAuth(slackChan.attributes, DM_NATIVE_TOKEN)), "native", "an UNstamped native-token seat stays native/FULL (F8 over-narrowing guard intact)");
-eq(windowGrainOf(ctxWithAuth(slackMpim.attributes, DM_NATIVE_TOKEN)), "native", "an mpim seat (no stamp) stays native/FULL — not over-narrowed");
+for (const [label, auth] of [["slack channel", slackChan], ["discord guild channel", discordChan], ["teams channel", teamsChan], ["telegram broadcast channel", tgChan]] as const) {
+  eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "native", `an UNstamped ${label} native-token seat stays native/FULL (F8 over-narrowing guard intact)`);
+}
 
 const dmWithheld = new Set(withheldFromGrain("standing"));
 ok(!dmWithheld.has("spawn_task"), "a standing (DM) seat KEEPS spawn_task — WINDOW_GATED_TOOLS[spawn_task] includes standing");
