@@ -12,7 +12,10 @@ import { resetGitHubApp } from "../agent/scm/provider.js";
 import { checkoutCommandBrokered, CHECKOUT_OK } from "../agent/scm/git.js";
 import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, GIT_BROKER_HOSTS } from "../agent/scm/broker.js";
 import { stampEnforcement, isEnforced } from "../agent/access/enforcement.js";
-import checkoutRepoTool from "../agent/tools/checkout_repo.js";
+import checkoutRepoGated from "../agent/tools/checkout_repo.js";
+import { resolveWindowGated } from "../agent/access/window-gated.js";
+
+const checkoutRepoTool = (await resolveWindowGated(checkoutRepoGated, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

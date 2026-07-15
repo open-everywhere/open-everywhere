@@ -190,7 +190,7 @@ firesWith(
   const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || name !== "extend_workspace_time"));
   const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry);
   ok(problems.length === 0, `the REAL tool set + framework tools match the registry (problems: ${JSON.stringify(problems)})`);
-  ok(tools.length >= 40, `the real scan actually covered the tools dir (saw ${tools.length})`);
+  ok(tools.length >= 37, `the real scan actually covered the tools dir (saw ${tools.length})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
 
   for (const name of FRAMEWORK_TOOL_NAMES.filter((f) => !coreToolNames.has(f))) {

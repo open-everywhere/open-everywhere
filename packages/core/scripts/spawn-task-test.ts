@@ -18,6 +18,7 @@ import {
 import { divertToUnifiedWindow, dispatchTaskWindow, OE_SPAWN_TAINTED_ATTR, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken } from "../agent/channels/window-key.js";
 import spawnTask from "../agent/tools/spawn_task.js";
+import { resolveWindowGated } from "../agent/access/window-gated.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 let n = 0;
@@ -119,12 +120,21 @@ await dispatchTaskWindow({
 ok(received[0].auth.attributes?.[OE_SPAWN_TAINTED_ATTR] === undefined, "untainted parent ⇒ NO taint stamp on the child auth");
 
 console.log("3. spawn_task structural guards:");
-const tool = spawnTask as unknown as { execute: (input: { brief: string; thread?: string }, ctx: unknown) => Promise<unknown> };
+const standingCtx = { channel: { kind: "unified", continuationToken: unifiedSupervisorToken("payments", 1) }, session: { auth: { current: { attributes: {} } } } };
+const tool = (await resolveWindowGated(spawnTask, standingCtx as never)) as { execute: (input: { brief: string; thread?: string }, ctx: unknown) => Promise<unknown> };
+
+eq(await resolveWindowGated(spawnTask, { channel: { kind: "unified", continuationToken: `unified:${taskToken}` }, session: { auth: { current: { attributes: { oe_grain: "task" } } } } } as never), null, "a task-grain session resolves NO spawn_task (structurally absent)");
 
 await assert.rejects(
   () => tool.execute({ brief: "x" }, { channel: { kind: "unified", continuationToken: `unified:${taskToken}` }, session: {} }),
+  /not available on a task session/,
+  "a task worker (task token) is refused at execute — the grain backstop",
+);
+n++;
+await assert.rejects(
+  () => tool.execute({ brief: "x" }, { channel: { kind: "unified", continuationToken: `unified:${taskToken}` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } } } }),
   /cannot spawn further tasks/,
-  "a task worker (task token) is refused — no recursive spawn",
+  "a standing-stamped task token is still refused by the Stage-A recursion guard (defence-in-depth)",
 );
 n++;
 await assert.rejects(

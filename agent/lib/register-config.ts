@@ -15,16 +15,14 @@ import { loadModelPolicy } from "../model/policy.js";
 import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import "../identity/trusted-surfaces.js";
-import postFile from "@open-everywhere/core/agent/tools/post_file.js";
+import postFileGated from "@open-everywhere/core/agent/tools/post_file.js";
 import { setScreenshotPoster } from "@open-everywhere/core/agent/tools/browser_qa.js";
-setScreenshotPoster((input, ctx) =>
-  Promise.resolve(
-    postFile.execute(
-      input as Parameters<typeof postFile.execute>[0],
-      ctx as Parameters<typeof postFile.execute>[1],
-    ),
-  ),
-);
+import { resolveWindowGated } from "@open-everywhere/core/agent/access/window-gated.js";
+setScreenshotPoster(async (input, ctx) => {
+  const entry = (await resolveWindowGated(postFileGated, ctx as never)) as { execute(i: unknown, c: unknown): Promise<unknown> } | null;
+  if (!entry) throw new Error("post_file is not available on this seat — deliver the screenshot path instead.");
+  return entry.execute(input, ctx);
+});
 
 registerConfig({
   loadBundles,

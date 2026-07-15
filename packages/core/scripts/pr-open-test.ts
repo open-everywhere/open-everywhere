@@ -12,7 +12,9 @@ delete process.env.OE_PRINCIPAL;
 const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { executePrOpen } = await import("../agent/approvals/pr-open.js");
-const { default: openPullRequestTool } = await import("../agent/tools/open_pull_request.js");
+const { default: openPullRequestGated } = await import("../agent/tools/open_pull_request.js");
+const { resolveWindowGated } = await import("../agent/access/window-gated.js");
+const openPullRequestTool = (await resolveWindowGated(openPullRequestGated, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as { execute(input: unknown, ctx: unknown): Promise<any> };
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
 type PrOpenArgs = import("../agent/approvals/pr-open.js").PrOpenArgs;
@@ -221,7 +223,7 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
 
 {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../agent/tools/open_pull_request.ts"), "utf8");
-  ok(/approval:\s*never\(\)/.test(src), "open_pull_request no longer rides eve HITL (approval: never())");
+  ok(!/^\s*approval:(?!\s*never\()/m.test(src), "open_pull_request rides NO eve HITL (no non-never approval:)");
   ok(src.includes('kind: "pr.open"') && /\brequestApproval\s*\(/.test(src), "open_pull_request proposes via requestApproval(pr.open)");
   ok(src.includes("stagePushCommand"), "the propose half stage-pushes (hidden ref) rather than publishing");
   ok(src.includes("hasApprovalCardPath"), "fail-closed off surfaces with no approval-card path");

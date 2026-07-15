@@ -12,7 +12,8 @@ delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "test-bot-token";
 
-const postFile = (await import("../agent/tools/post_file.js")).default as unknown as {
+const { resolveWindowGated } = await import("../agent/access/window-gated.js");
+const postFile = (await resolveWindowGated((await import("../agent/tools/post_file.js")).default, { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } } as never)) as unknown as {
   readonly description: string;
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean } };
   readonly execute: (input: unknown, ctx: unknown) => Promise<{ posted: boolean; count: number; platform: string }>;

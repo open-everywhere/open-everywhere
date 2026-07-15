@@ -1,4 +1,5 @@
 import { defineTool } from "eve/tools";
+import { windowGated } from "../access/window-gated.js";
 import type { Approval } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
@@ -200,7 +201,7 @@ const approvalPolicy: Approval<PostFileInput> = (approvalCtx) => {
   return willPublish ? "user-approval" : "not-applicable";
 };
 
-export default defineTool({
+export default windowGated("post_file", defineTool({
   description:
     "Post one or more FILES/artifacts (screenshots, images, docs, data) to the current conversation " +
     "on this surface — the delivery channel for things a text reply can't carry. Give each file a " +
@@ -285,4 +286,4 @@ export default defineTool({
     });
     return { posted: true, count: resolved.length, platform, ...(hostedUrls.length > 0 ? { urls: hostedUrls } : {}) };
   },
-});
+}));

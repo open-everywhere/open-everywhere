@@ -21,9 +21,15 @@ import { resolveSkillEntries } from "../agent/skills/scoped.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { Partition } from "../agent/memory/partition.js";
-import createSkillTool from "../agent/tools/create_skill.js";
+import createSkillGated from "../agent/tools/create_skill.js";
 import listSkillsTool from "../agent/tools/list_skills.js";
-import deleteSkillTool from "../agent/tools/delete_skill.js";
+import deleteSkillGated from "../agent/tools/delete_skill.js";
+import { resolveWindowGated } from "../agent/access/window-gated.js";
+
+const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } };
+type ExecTool = { execute(input: unknown, ctx: unknown): Promise<any> };
+const createSkillTool = (await resolveWindowGated(createSkillGated, FULL_GRAIN_TEST_CTX as never)) as ExecTool;
+const deleteSkillTool = (await resolveWindowGated(deleteSkillGated, FULL_GRAIN_TEST_CTX as never)) as ExecTool;
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

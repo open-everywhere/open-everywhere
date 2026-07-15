@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
 import { compileNetworkPolicy } from "../access/egress.js";
@@ -12,7 +12,7 @@ import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.
 import { checkoutCommand, checkoutCommandBrokered, isSafeCheckoutDir, redactSecret, CHECKOUT_OK, parseConventionProbe, parseSkillsProbe, parseAgentsProbe } from "../scm/git.js";
 import { recordRepoSkills, parseRepoAgent, REPO_SKILL_SEP, type RepoAgentDef } from "../scm/repo-skills.js";
 
-export default defineTool({
+export default windowGated("checkout_repo", defineTool({
   description:
     "Clone one of the allowed repositories (see list_repos) into your workspace so you can read and change its code. Only granted repos can be cloned. After it returns, work in the given directory with bash — branch, edit, commit — then call open_pull_request, which pushes your branch and opens the PR after human approval (the checkout credential is read-only; plain `git push` will be rejected). If the result flags a convention file (AGENTS.md or CLAUDE.md), READ it before changing code — it carries the repo's own rules. If the result lists skills or delegation personas shipped in the repo, those become invocable skills from your next turn.",
   inputSchema: z.object({
@@ -33,7 +33,6 @@ export default defineTool({
       .object({ count: z.number(), names: z.array(z.string()), truncated: z.boolean() })
       .optional(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -129,4 +128,4 @@ export default defineTool({
         `Branch and commit there, then open_pull_request — it pushes your branch and opens the PR after approval (plain git push is not authorized).${conventionNote}${skillNote}${agentNote}`,
     };
   },
-});
+}));

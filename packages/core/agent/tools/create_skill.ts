@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -17,7 +17,7 @@ import {
   withDescription,
 } from "../skills/domain-skills.js";
 
-export default defineTool({
+export default windowGated("create_skill", defineTool({
   description:
     "PROPOSE creating or updating a SKILL for this channel's memory domain — a reusable markdown instruction package any future turn in the domain can invoke by its bare name. This does NOT arm the skill: a skill is a procedure the agent loads and FOLLOWS, so a human in the domain must read and approve it first — an approval card posts with the full body, and the skill arms only when someone clicks. Any domain member can propose one, and it becomes invocable once armed. Can't be authored from a DM, a group chat, or an externally-shared/unconfirmed channel, or a surface with no approval-card path (Slack/Discord only) — author from a channel that's actually in the target domain. Write one worth keeping: a trigger-rich description in the words a teammate would use, the intent behind the ask (not just the commands you ran), the edge cases you hit, and one coherent job per skill. The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
@@ -39,7 +39,6 @@ export default defineTool({
     pendingId: z.string().optional(),
     message: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const name = input.name.trim();
     if (!isSafeSkillName(name)) {
@@ -108,4 +107,4 @@ export default defineTool({
       message: `card posted — skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },
-});
+}));

@@ -22,6 +22,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   grep: open("sandbox-local file search"),
   read_file: open("sandbox-local read"),
   write_file: open("sandbox-local write — durable effects leave only via gated verbs"),
+  sandbox_tools: open(
+    "the resolver FILE that re-provides the six disabled framework sandbox tools per session grain (access/window-gated.ts windowGatedKit); mounts nothing beyond the six names above, each at its own open tier",
+  ),
 
   web_search: open("read of the public web via eve's provider; a read, escapes nothing"),
   ask_question: open("asks the ROOM a clarifying question — stays in the asking conversation"),

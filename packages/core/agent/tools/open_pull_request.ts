@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -23,7 +23,7 @@ async function resolvePrToken(repo: string): Promise<string> {
   }
   return pat;
 }
-export default defineTool({
+export default windowGated("open_pull_request", defineTool({
   description:
     "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first. This does NOT open the PR: your commits are parked on a hidden staging ref and an approval card posts with the exact repo, branches, commit and description — the branch and PR publish only when a human in the channel approves. Write a clear body: what changed, why, how you verified it, and link the request that prompted it. If a PR is already open for that branch, approval updates it with your new commits instead. The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
@@ -42,7 +42,6 @@ export default defineTool({
     pendingId: z.string().optional(),
     message: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
@@ -132,4 +131,4 @@ export default defineTool({
       message: `card posted — PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""} awaiting a human to approve the publish (pending ${posted.id}).`,
     };
   },
-});
+}));

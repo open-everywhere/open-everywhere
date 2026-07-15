@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-window-capability-")), "ops.sqlite3");
+
 import { TOOL_CONSEQUENCE, type ConsequenceTier } from "../agent/access/consequence.js";
+import { WINDOW_GATED_TOOLS, withheldFromGrain, resolveWindowGated } from "../agent/access/window-gated.js";
 import { defineDomain, assertWindowSourcesVouched } from "../agent/memory/domain.js";
 import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
@@ -40,14 +47,70 @@ const FULL_CAPABILITY_TOOLS = ["checkout_repo", "bash", "web_fetch", "write_file
 
 const isMountedTier = (t: ConsequenceTier) => t === "open" || t === "gate:member";
 
-console.log("P0-a — multi-source window CAN reach the full toolset (characterization):");
+console.log("P0-a — standing window seat is structurally NARROWED (Stage C flip):");
 
-for (const name of FULL_CAPABILITY_TOOLS) {
-  const entry = TOOL_CONSEQUENCE[name];
-  ok(entry !== undefined, `[P0-a] full-capability tool "${name}" is registered (present on every session)`);
-  ok(isMountedTier(entry.tier), `[P0-a] "${name}" is MOUNTED (tier=${entry?.tier}) — callable-in-principle from ANY session incl. a multi-source window`);
+const gatedModules: Record<string, unknown> = {
+  checkout_repo: (await import("../agent/tools/checkout_repo.js")).default,
+  open_pull_request: (await import("../agent/tools/open_pull_request.js")).default,
+  post_file: (await import("../agent/tools/post_file.js")).default,
+  browser_qa: (await import("../agent/tools/browser_qa.js")).default,
+  create_skill: (await import("../agent/tools/create_skill.js")).default,
+  delete_skill: (await import("../agent/tools/delete_skill.js")).default,
+  spawn_task: (await import("../agent/tools/spawn_task.js")).default,
+  complete_task: (await import("../agent/tools/complete_task.js")).default,
+};
+const sandboxKit = (await import("../agent/tools/sandbox_tools.js")).default;
+const SANDBOX_SIX = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"] as const;
+
+const grainCtxOf = (grain: "standing" | "task" | "native"): BindableContext => {
+  const token =
+    grain === "standing"
+      ? `unified:${formatWindowToken({ domain: "payments", windowId: "payments", generation: 5 })}`
+      : grain === "task"
+        ? `unified:${formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "1720.9"), generation: 5 })}`
+        : "cse_example3_native";
+  return {
+    channel: { kind: "unified", continuationToken: token },
+    session: { id: `cap-${grain}`, auth: { current: { attributes: grain === "task" ? { oe_grain: "task" } : {} } } },
+  } as BindableContext;
+};
+
+async function mountedGatedNames(grain: "standing" | "task" | "native"): Promise<Set<string>> {
+  const mounted = new Set<string>();
+  for (const [name, mod] of Object.entries(gatedModules)) {
+    if ((await resolveWindowGated(mod, grainCtxOf(grain))) !== null) mounted.add(name);
+  }
+  const kit = (await resolveWindowGated(sandboxKit, grainCtxOf(grain))) as Record<string, unknown> | null;
+  for (const name of Object.keys(kit ?? {})) mounted.add(name);
+  return mounted;
 }
-eq(TOOL_CONSEQUENCE.checkout_repo?.tier, "open", "[P0-a] checkout_repo is `open` (auto-approved) on EVERY session — the permissive reality the refactor narrows for multi-source windows");
+
+{
+  const standing = await mountedGatedNames("standing");
+  const task = await mountedGatedNames("task");
+  const native = await mountedGatedNames("native");
+  for (const name of FULL_CAPABILITY_TOOLS) {
+    const entry = TOOL_CONSEQUENCE[name];
+    ok(entry !== undefined, `[P0-a] "${name}" keeps its consequence-registry row (tier is orthogonal to the gate)`);
+    ok(isMountedTier(entry.tier), `[P0-a] "${name}" keeps its mounted tier (tier=${entry?.tier}) — availability now comes from the GRAIN, not this table`);
+  }
+  for (const name of withheldFromGrain("standing")) {
+    ok(!standing.has(name), `[P0-a] "${name}" is STRUCTURALLY ABSENT on the standing window seat (resolved null — no tool to see, reach for, or retry into)`);
+  }
+  ok(standing.has("spawn_task"), "[P0-a] spawn_task IS mounted on the standing seat — delegation is the seat's job");
+  eq([...standing].sort(), ["spawn_task"], "[P0-a] the standing seat's gated-kit residue is EXACTLY spawn_task (all wide hands gone)");
+  eq(
+    [...task].sort(),
+    [...SANDBOX_SIX, "browser_qa", "checkout_repo", "complete_task", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    "[P0-a] the task worker mounts the FULL wide-hands kit + complete_task, minus spawn_task",
+  );
+  eq(
+    [...native].sort(),
+    [...SANDBOX_SIX, "browser_qa", "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    "[P0-a] the native mention keeps the FULL wide-hands kit (over-narrowing a native seat is the F8 failure mode)",
+  );
+  eq(TOOL_CONSEQUENCE.checkout_repo?.tier, "open", "[P0-a] checkout_repo stays `open` in the registry — the narrowing is the GRAIN gate, not a tier change");
+}
 
 withWindowEnv(() => {
   const SLACK = "slack/T1/C_PAY";
@@ -63,7 +126,7 @@ withWindowEnv(() => {
   const grain = supervisorGrainFor(SLACK, [multiSourceWindow, orgGate]);
   ok(grain.unified === true && grain.singleWindow === true, "[P0-a] a 2-source crossSurfaceWindow domain resolves a single-window supervisor grain");
   const keys = Object.keys(grain).sort();
-  eq(keys, ["domainName", "registryKey", "singleWindow", "unified"], "[P0-a] the window grain carries NO tool-narrowing field today (topology is resolved, tools are not touched)");
+  eq(keys, ["domainName", "registryKey", "singleWindow", "unified"], "[P0-a] the supervisor grain carries no tool field — narrowing lives at the windowGrainOf/session.started seam, not in dispatch data");
 });
 
 console.log("P0-d — vouch is runtime today; config-validation twin staged:");
@@ -118,7 +181,7 @@ _resetTrustedSurfacesForTest();
   n++;
 }
 
-console.log("P1-c — native-DM full-capability golden (pre-fold baseline):");
+console.log("P1-c — native-DM full-capability golden (over-narrowing guard):");
 
 eq(singleWindowMentionPolicy(false, true, true), { suppressNative: false, addressing: undefined }, "[P1-c] non-window session: native handler OWNS the mention (full-capability path)");
 eq(singleWindowMentionPolicy(false, false, true), { suppressNative: false, addressing: undefined }, "[P1-c] non-window ambient: unchanged (native split)");
@@ -140,7 +203,7 @@ for (const name of Object.keys(NATIVE_DM_CAPABILITY_GOLDEN)) {
   ok(entry !== undefined, `[P1-c] native session mounts "${name}"`);
   nativeActual[name] = entry.tier;
 }
-eq(nativeActual, NATIVE_DM_CAPABILITY_GOLDEN, "[P1-c] native-DM full-capability golden — the pre-fold set the post-fold solo-window session must match byte-for-byte");
+eq(nativeActual, NATIVE_DM_CAPABILITY_GOLDEN, "[P1-c] native-DM full-capability golden — the registry tiers the gate must never re-tier");
 
 console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
 {
@@ -189,14 +252,13 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
   );
 }
 
-console.log("P0-f — per-channel STANDING seat mounts the full toolset (characterization):");
+console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
 {
   const STANDING_KEPT = [
     "reply", "no_reply", "update_status", "react",
     "remember", "forget",
     "create_routine", "subscribe_pr", "cancel_routine",
     "describe_image",
-    "spawn_task",
     "read_slack_channel", "read_slack_thread", "read_notion_page", "check_pr_status",
     "list_repos", "list_routines", "list_skills", "session_cost", "spend_report", "usage_report",
   ] as const;
@@ -207,16 +269,35 @@ console.log("P0-f — per-channel STANDING seat mounts the full toolset (charact
   ] as const;
   for (const name of [...STANDING_KEPT, ...STANDING_WITHHELD]) {
     const entry = TOOL_CONSEQUENCE[name];
-    ok(entry !== undefined, `[P0-f] standing-seat tool "${name}" is registered (present on every session)`);
-    ok(isMountedTier(entry.tier), `[P0-f] "${name}" is MOUNTED (tier=${entry?.tier}) — callable-in-principle from a per-channel standing seat today`);
+    ok(entry !== undefined, `[P0-f] "${name}" keeps its consequence-registry row`);
+    ok(isMountedTier(entry.tier), `[P0-f] "${name}" keeps its mounted tier (tier=${entry?.tier}) — availability is the grain's job, not the registry's`);
   }
-  ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task (the D0 delegation primitive) is registered `open` — Stage A landed it into the standing-seat kept set");
-  ok(TOOL_CONSEQUENCE.complete_task?.tier === "open", "[P0-f] complete_task (the task-side ownership release) is registered `open` — Stage A landed it (task-scoped; the grain gate confines it in Stage C)");
+  for (const name of STANDING_KEPT) {
+    ok(WINDOW_GATED_TOOLS[name] === undefined, `[P0-f] kept tool "${name}" is NOT grain-gated (mounts on every seat)`);
+  }
+  for (const name of STANDING_WITHHELD) {
+    eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `[P0-f] withheld tool "${name}" is grain-gated to task+native (absent on standing)`);
+  }
+  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task (task-only)");
+
+  ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task stays `open` — delegation is the standing seat's job");
+  eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "[P0-f] spawn_task is grain-gated STANDING-only (no recursive spawn)");
+  ok(TOOL_CONSEQUENCE.complete_task?.tier === "open", "[P0-f] complete_task stays `open`");
+  eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "[P0-f] complete_task is grain-gated TASK-only");
   ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the primitive is spawn_task specifically — no bare spawn/dispatch/delegate alias");
+
+  const perContainerCtx = {
+    channel: { kind: "slack", continuationToken: "slack/T1/C_STANDING:oe-sup:g3" },
+    session: { id: "cap-per-container", auth: { current: { attributes: {} } } },
+  } as BindableContext;
+  eq(await resolveWindowGated(gatedModules.checkout_repo, perContainerCtx), null, "[P0-f] checkout_repo resolves NULL on a per-container standing seat (not on the unified channel — the grain predicate reaches it anyway)");
+  eq(await resolveWindowGated(sandboxKit, perContainerCtx), null, "[P0-f] the sandbox six resolve NULL on a per-container standing seat");
+  ok((await resolveWindowGated(gatedModules.spawn_task, perContainerCtx)) !== null, "[P0-f] spawn_task resolves on the per-container standing seat");
+  eq(await resolveWindowGated(gatedModules.complete_task, perContainerCtx), null, "[P0-f] complete_task does NOT resolve on a standing seat");
 
   const standingGrain = supervisorGrainFor("slack/T1/C_STANDING", [defineDomain({ name: "plain", channels: ["slack/T1/C_STANDING"], ambientSupervisor: true })]);
   ok(standingGrain.unified === false, "[P0-f] a plain ambient channel resolves a per-container (non-unified) standing grain");
-  eq(Object.keys(standingGrain).sort(), ["registryKey", "unified"], "[P0-f] the standing-seat grain carries NO tool-narrowing field today (topology resolved, tools untouched)");
+  eq(Object.keys(standingGrain).sort(), ["registryKey", "unified"], "[P0-f] the standing-seat grain carries no tool field — narrowing lives at windowGrainOf/session.started");
 }
 
 console.log("P0-g — grain classification per seat type (Stage B §S3):");

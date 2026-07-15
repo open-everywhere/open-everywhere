@@ -1,5 +1,5 @@
 import { defineTool } from "eve/tools";
-import { never } from "eve/tools/approval";
+import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
@@ -8,7 +8,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { requestApproval } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
-export default defineTool({
+export default windowGated("delete_skill", defineTool({
   description:
     "PROPOSE deleting a domain skill created with create_skill, by its bare name (see list_skills). Any member of the domain may propose it, but this does NOT delete on the spot: an approval card posts naming the exact skill, and it's removed only when a human in the domain confirms (deleting a skill removes a guardrail, so it's gated like creating one). Can't be used from a DM, a group chat, an externally-shared/unconfirmed channel, or a surface with no approval-card path (Slack/Discord only). The posted card IS the reply — do not add narration after this call.",
   inputSchema: z.object({
@@ -21,7 +21,6 @@ export default defineTool({
     name: z.string(),
     message: z.string(),
   }),
-  approval: never(),
   async execute(input, ctx) {
     const resolved = resolveSkillDomainDetailed(ctx);
     if (resolved.domain === null) {
@@ -71,4 +70,4 @@ export default defineTool({
       message: `card posted — delete of skill "${name}" (domain "${domain}") awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
-});
+}));
