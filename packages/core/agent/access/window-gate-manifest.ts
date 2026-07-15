@@ -2,6 +2,11 @@ import type { WindowGrain } from "../identity/binding.js";
 
 export const FULL_KIT = ["task", "native"] as const;
 
+export const WORKER_FRAMEWORK_TOOLS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"] as const;
+export const WORKER_AUTHORED_TOOLS = ["checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"] as const;
+
+export const WORKER_KIT: ReadonlySet<string> = new Set<string>([...WORKER_FRAMEWORK_TOOLS, ...WORKER_AUTHORED_TOOLS]);
+
 export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>> = {
   bash: FULL_KIT,
   glob: FULL_KIT,
@@ -17,6 +22,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   delete_skill: FULL_KIT,
   spawn_task: ["standing"],
   complete_task: ["task"],
+  agent: ["standing"],
 };
 
 export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
@@ -55,6 +61,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "todo",
   "load_skill",
   "connection_search",
+  "workflow",
 ]);
 
 export function withheldFromGrain(grain: WindowGrain): string[] {
@@ -75,6 +82,7 @@ export function checkWindowGateManifest(
   frameworkToolNames: readonly string[],
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
+  workerShims: ReadonlyMap<string, string> = new Map(),
 ): string[] {
   const problems: string[] = [];
   const coreByName = new Map(coreTools.map((t) => [t.name, t.source] as const));
@@ -109,9 +117,9 @@ export function checkWindowGateManifest(
   }
 
   for (const [name, grains] of Object.entries(gated)) {
-    if (name === "spawn_task") {
+    if (name === "spawn_task" || name === "agent") {
       if (grainKey(grains) !== "standing") {
-        problems.push(`WINDOW_GATED_TOOLS["spawn_task"] must be exactly ["standing"] (a task/native session must never spawn recursively) — got [${grains.join(", ")}]`);
+        problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (a delegation tool: a task/native session must never spawn recursively) — got [${grains.join(", ")}]`);
       }
     } else if (name === "complete_task") {
       if (grainKey(grains) !== "task") {
@@ -156,6 +164,29 @@ export function checkWindowGateManifest(
     const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
     if (m && !coreByName.has(m[1])) {
       problems.push(`agent/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling shim)`);
+    }
+  }
+
+  if (workerShims.size > 0) {
+    for (const [slug, src] of workerShims) {
+      if (!WORKER_KIT.has(slug)) {
+        problems.push(
+          `agent/subagents/worker/tools/${slug}.ts is not a declared WORKER_KIT member — add "${slug}" to WORKER_AUTHORED_TOOLS in access/window-gate-manifest.ts (or remove the shim). A worker tool must state that it belongs to the worker surface.`,
+        );
+      }
+      const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
+      if (!m) {
+        problems.push(`agent/subagents/worker/tools/${slug}.ts must re-export a core tool (\`export { default } from "@open-everywhere/core/agent/tools/${slug}.js"\`) — the worker carries the SAME tool the root authors, not a fork`);
+      } else if (!coreByName.has(m[1])) {
+        problems.push(`agent/subagents/worker/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling worker shim)`);
+      }
+    }
+    for (const name of WORKER_AUTHORED_TOOLS) {
+      if (!workerShims.has(name)) {
+        problems.push(
+          `WORKER_AUTHORED_TOOLS names "${name}" but agent/subagents/worker/tools/${name}.ts is missing — the worker would not carry it; add the shim \`export { default } from "@open-everywhere/core/agent/tools/${name}.js"\``,
+        );
+      }
     }
   }
 

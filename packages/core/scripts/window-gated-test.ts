@@ -74,10 +74,11 @@ for (const name of WIDE_HANDS) {
 }
 eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "spawn_task is standing-only (no recursive spawn; native has no window to mint into)");
 eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "complete_task is task-only (only a worker owns a thread)");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 2, "the gated table is EXACTLY the 12 wide-hands tools + the delegation pair — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task"].sort(), "standing withholds the 12 wide-hands tools + complete_task");
-eq(withheldFromGrain("task"), ["spawn_task"], "task withholds only spawn_task");
-eq(withheldFromGrain("native"), ["spawn_task", "complete_task"], "native withholds only the delegation pair (full kit otherwise — the F8 over-narrowing guard)");
+eq(WINDOW_GATED_TOOLS.agent, ["standing"], "agent is standing-only (§B2 delegation tool; window-only mount is its own predicate)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 3, "the gated table is EXACTLY the 12 wide-hands tools + the delegation trio (spawn_task/complete_task/agent) — nothing else narrows");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task"].sort(), "standing withholds the 12 wide-hands tools + complete_task (agent is standing-mounted, so NOT withheld)");
+eq([...withheldFromGrain("task")].sort(), ["agent", "spawn_task"], "task withholds the standing-only delegation tools (spawn_task + agent)");
+eq([...withheldFromGrain("native")].sort(), ["agent", "complete_task", "spawn_task"], "native withholds the delegation trio (full wide-hands kit otherwise — the F8 over-narrowing guard)");
 
 console.log("1. presence/absence matrix (windowGated):");
 for (const [name, grains] of Object.entries(WINDOW_GATED_TOOLS)) {

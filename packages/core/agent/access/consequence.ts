@@ -74,6 +74,12 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   complete_task: open(
     "a task worker releasing its own thread's ownership — the next message then wakes the standing seat instead. Reversible (the seat re-spawns), touches no memory/spend/audience beyond the ownership index; a conversational verb, audited (task.completed)",
   ),
+  agent: open(
+    "delegation (§B2): async re-points the spawn_task machinery at a full-hands worker (same rationale as spawn_task — re-gates every L2 consequence INSIDE the child, forwards taint, widens hands not consequence); sync routes to the framework Workflow tool. Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned on the async path",
+  ),
+  workflow: open(
+    "the framework `Workflow` ENABLER (experimental_workflow) — the §B2 sync entry to the `worker` subagent. Invoking a subagent escapes nothing the worker doesn't re-gate internally (it inherits the parent's egress + re-fires every L2 gate); the enabler itself carries no gate. Armed only by OE_WORKER_SUBAGENT",
+  ),
 
   create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
   create_routine: member("routine.create", "self-modification: a standing scheduled behaviour that outlives the turn"),

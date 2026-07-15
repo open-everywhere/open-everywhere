@@ -154,9 +154,41 @@ firesWith(
 
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_task]) === JSON.stringify(["standing"]), "spawn_task is standing-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
+ok(JSON.stringify([...WINDOW_GATED_TOOLS.agent]) === JSON.stringify(["standing"]), "agent is standing-only (§B2 delegation tool)");
 ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native");
 ok(withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task"), "a standing seat withholds the wide-hands set + complete_task");
-ok(withheldFromGrain("native").length === 2, "a native seat withholds only the delegation pair (over-narrowing guard)");
+ok(withheldFromGrain("native").length === 3, "a native seat withholds only the delegation trio spawn_task/complete_task/agent (over-narrowing guard)");
+
+firesWith(
+  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["task"] }), u()),
+  'agent"] must be exactly ["standing"]',
+  "agent scoped to a non-standing grain FAILS (a delegation tool must not spawn recursively)",
+);
+{
+  const problems = checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing"] }), u());
+  ok(problems.length === 0, "agent standing-scoped + windowGated-wrapped is clean");
+}
+
+{
+  const notInKit = checkWindowGateManifest(
+    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
+    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
+    [],
+    g({ open_pull_request: FULL_KIT }),
+    u(),
+    new Map([["mystery_tool", 'export { default } from "@open-everywhere/core/agent/tools/mystery_tool.js";']]),
+  );
+  firesWith(notInKit, "not a declared WORKER_KIT member", "a worker shim absent from WORKER_KIT FAILS");
+  const notReexport = checkWindowGateManifest(
+    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
+    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
+    [],
+    g({ open_pull_request: FULL_KIT }),
+    u(),
+    new Map([["open_pull_request", "export default defineTool({});"]]),
+  );
+  firesWith(notReexport, "must re-export a core tool", "a worker shim that forks instead of re-exporting FAILS");
+}
 for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   ok(!WINDOW_UNGATED_TOOLS.has(name), `"${name}" is not double-declared`);
 }
@@ -172,8 +204,17 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   for (const f of readdirSync(appDir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
     appShims.set(f.replace(/\.ts$/u, ""), readFileSync(join(appDir, f), "utf8"));
   }
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES);
+  const workerDir = join(here, "../../../agent/subagents/worker/tools");
+  const workerShims = new Map<string, string>();
+  try {
+    for (const f of readdirSync(workerDir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
+      workerShims.set(f.replace(/\.ts$/u, ""), readFileSync(join(workerDir, f), "utf8"));
+    }
+  } catch {
+  }
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, workerShims);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
+  ok(workerShims.size >= 6, `the real scan covered the worker subagent's authored shims (saw ${workerShims.size})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
