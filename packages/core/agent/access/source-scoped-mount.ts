@@ -10,6 +10,15 @@ export function sourceScopedToolsEnabled(): boolean {
   return v !== "" && v !== "0" && v !== "false";
 }
 
+export const OE_GENERIC_READ_VERBS_ENV = "OE_GENERIC_READ_VERBS";
+
+export function genericReadVerbsEnabled(): boolean {
+  const raw = process.env[OE_GENERIC_READ_VERBS_ENV];
+  if (raw === undefined) return false;
+  const v = raw.trim().toLowerCase();
+  return v !== "" && v !== "0" && v !== "false";
+}
+
 export function sourceScopedMount(ctx: BindableContext, platform: string, domains: () => readonly Domain[]): boolean {
   if (!sourceScopedToolsEnabled()) {
     return isUnifiedWindowContext(ctx) || channelPlatform(ctx) === platform;

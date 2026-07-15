@@ -41,6 +41,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "list_routines",
   "list_skills",
   "read_notion_page",
+  "read_channel",
+  "read_thread",
   "read_slack_channel",
   "read_slack_thread",
   "session_cost",

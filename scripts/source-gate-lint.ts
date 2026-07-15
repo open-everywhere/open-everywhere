@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkSourceGate, SOURCE_SCOPED_TOOLS, type SourceToolFile } from "@open-everywhere/core/agent/access/source-gate-manifest.js";
+import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, type SourceToolFile } from "@open-everywhere/core/agent/access/source-gate-manifest.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreToolsDir = join(root, "packages", "core", "agent", "tools");
@@ -18,5 +18,7 @@ if (problems.length > 0) {
   process.exit(1);
 }
 console.log(
-  `✓ source-gate-lint: every per-surface tool (${Object.keys(SOURCE_SCOPED_TOOLS).length} declared, scanned across ${coreTools.length} core-authored tools) gates its mount on X ∈ sources via sourceScopedMount, and no un-declared tool blanket-mounts on a unified window.`,
+  `✓ source-gate-lint: every per-surface tool (${Object.keys(SOURCE_SCOPED_TOOLS).length} declared) gates its mount on X ∈ sources via sourceScopedMount, ` +
+    `every generic read verb (${GENERIC_READ_VERBS.length} declared) gates per-platform in execute (resolveWindowSources + assertTurnSurface), ` +
+    `scanned across ${coreTools.length} core-authored tools, and no un-declared tool blanket-mounts on a unified window.`,
 );

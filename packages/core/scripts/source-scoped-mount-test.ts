@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sourceScopedMount, OE_SOURCE_SCOPED_TOOLS_ENV } from "../agent/access/source-scoped-mount.js";
-import { checkSourceGate, SOURCE_SCOPED_TOOLS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
+import { checkSourceGate, SOURCE_SCOPED_TOOLS, GENERIC_READ_VERBS, type SourceToolFile } from "../agent/access/source-gate-manifest.js";
 import { assertTurnSurface, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../agent/identity/binding.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
@@ -120,6 +120,8 @@ firesWith(
     { name: "read_slack_channel", source: gated("slack") },
     { name: "read_slack_thread", source: gated("slack") },
     { name: "read_notion_page", source: gated("notion") },
+    { name: "read_channel", source: "resolveReadAdapter();" },
+    { name: "read_thread", source: "resolveReadAdapter();" },
     { name: "request_access", source: cardGuard },
     { name: "forget", source: cardGuard },
     { name: "clear_connector_override", source: cardGuard },
@@ -134,6 +136,39 @@ firesWith(
 );
 
 ok(JSON.stringify(SOURCE_SCOPED_TOOLS) === JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion" }), "SOURCE_SCOPED_TOOLS pins the three per-surface readers → their platforms");
+
+ok(JSON.stringify([...GENERIC_READ_VERBS]) === JSON.stringify(["read_channel", "read_thread"]), "GENERIC_READ_VERBS pins the two generic read verbs");
+
+const perSurfaceOk = [
+  { name: "read_slack_channel", source: gated("slack") },
+  { name: "read_slack_thread", source: gated("slack") },
+  { name: "read_notion_page", source: gated("notion") },
+];
+
+firesWith(
+  checkSourceGate([...perSurfaceOk, { name: "read_channel", source: "export default defineDynamic({ async execute() {} });" }, { name: "read_thread", source: "resolveReadAdapter(); assertTurnSurface();" }]),
+  "must route its per-platform access through the sources gate in execute",
+  "a generic read verb that skips the execute-time source/fence gate FAILS",
+);
+
+{
+  const genericOk = (name: string) => ({ name, source: "const { platform, adapter } = resolveReadAdapter(bctx, input.target.platform, safeDomains());" });
+  ok(checkSourceGate([...perSurfaceOk, genericOk("read_channel"), genericOk("read_thread")]).length === 0, "generic verbs gating via resolveReadAdapter pass the source-gate lint");
+  firesWith(
+    checkSourceGate([...perSurfaceOk, genericOk("read_channel")]),
+    'GENERIC_READ_VERBS names "read_thread"',
+    "a missing generic verb (stale GENERIC_READ_VERBS row) FAILS",
+  );
+}
+
+ok(
+  checkSourceGate([
+    ...perSurfaceOk,
+    { name: "read_channel", source: "resolveWindowSources(); assertTurnSurface();" },
+    { name: "read_thread", source: "resolveReadAdapter();" },
+  ]).length === 0,
+  "a generic verb gating via resolveWindowSources+assertTurnSurface directly also passes",
+);
 
 {
   const here = dirname(fileURLToPath(import.meta.url));

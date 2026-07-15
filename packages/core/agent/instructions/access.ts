@@ -10,6 +10,7 @@ import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { readableChannelList } from "../channels/slack-read.js";
+import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { botDisplayName } from "../channels/slack-events.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
@@ -26,10 +27,12 @@ function renderChannelScope(ctx: BindableContext): string {
   if (channelPlatform(ctx) !== "slack") return "";
   const channels = readableChannelList(ctx);
   if (channels.length < 2) return "";
+  const tools = genericReadVerbsEnabled() ? "`read_channel` / `read_thread`" : "`read_slack_channel` / `read_slack_thread`";
   return (
     "## Slack channels you can read\n" +
     "Your memory domain spans these channels — you may read any of them with " +
-    "`read_slack_channel` / `read_slack_thread`, and no others:\n" +
+    tools +
+    ", and no others:\n" +
     channels.map((c) => `- ${c}`).join("\n")
   );
 }
