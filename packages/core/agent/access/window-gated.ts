@@ -11,29 +11,9 @@ export interface GatedToolEntry {
 import { windowGrainOf, currentWakeId, deploymentOrg, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { parseWindowToken } from "../channels/window-key.js";
-
-const FULL_KIT = ["task", "native"] as const;
-
-export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>> = {
-  bash: FULL_KIT,
-  glob: FULL_KIT,
-  grep: FULL_KIT,
-  read_file: FULL_KIT,
-  write_file: FULL_KIT,
-  web_fetch: FULL_KIT,
-  checkout_repo: FULL_KIT,
-  open_pull_request: FULL_KIT,
-  post_file: FULL_KIT,
-  browser_qa: FULL_KIT,
-  create_skill: FULL_KIT,
-  delete_skill: FULL_KIT,
-  spawn_task: ["standing"],
-  complete_task: ["task"],
-};
-
-export function withheldFromGrain(grain: WindowGrain): string[] {
-  return Object.keys(WINDOW_GATED_TOOLS).filter((name) => !WINDOW_GATED_TOOLS[name].includes(grain));
-}
+import { WINDOW_GATED_TOOLS, withheldFromGrain } from "./window-gate-manifest.js";
+export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest } from "./window-gate-manifest.js";
+export type { WindowToolSource } from "./window-gate-manifest.js";
 
 function grainOf(ctx: BindableContext): WindowGrain {
   try {
