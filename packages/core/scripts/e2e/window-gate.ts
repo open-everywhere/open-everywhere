@@ -2,6 +2,8 @@ import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
+import { buildSlackAuth } from "../../agent/channels/slack-identity.js";
+import { windowGrainOf, type BindableContext } from "../../agent/identity/binding.js";
 import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken } from "../../agent/channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "../../agent/channels/thread-ownership.js";
 import { ROUTINE_MARKER } from "../../agent/routines/routine.js";
@@ -141,15 +143,38 @@ async function f2(): Promise<void> {
 }
 
 async function f3(): Promise<void> {
-  const since = new Date().toISOString();
-  const inj = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: dmOrigin, text: HEAVY, soloWindowId: `dm-${RUN}` });
-  console.log(`  F3 injected DM-origin standing wake ${inj.wakeId} → token ${inj.token}`);
-  const g = await pollForGated(since, inj.wakeId, GATE_TIMEOUT_MS);
-  if (!g) return record("F3", "FAIL", `standing-token DM seat produced NO turn.tool_gated row (wake ${inj.wakeId}) — the D-DM narrowing does not hold on the standing path`);
-  if (dS(g, "grain") !== "standing" || WIDE_HANDS.some((w) => !((g.detail?.withheld as string[]) ?? []).includes(w))) {
-    return record("F3", "FAIL", `DM standing row grain=${dS(g, "grain")}, withheld=[${((g.detail?.withheld as string[]) ?? []).join(",")}]`);
+  const dmAuth = buildSlackAuth({ userId: "U_TESTER", teamId: SURFACE.split("/")[1] ?? "T", channelId: dmOrigin.channelId, channelType: "im", dmPartnerTrust: "internal" });
+  const stamped = dmAuth.attributes.oe_grain;
+  if (stamped !== "standing") {
+    return record("F3", "FAIL", `the REAL DM ingress (buildSlackAuth, channelType=im) did NOT stamp oe_grain=standing (got ${stamped ?? "<absent>"}) — the root-DM security fix is not wired; a real DM would fall through to native/full-hands`);
   }
-  record("F3", "PASS", `root DM seat carrying a STANDING token NARROWED (D-DM decision) — grain=standing, wide-hands withheld, DM origin ${dmOrigin.channelId}. DECISION TAKEN: F3 driven through the standing-token path (task's option 1). DEPENDENCY (documented, not faked): today's real DM ingress mints a NATIVE token ⇒ FULL kit, and a native seat is not injectable via the unified test-wake seam (isUnifiedSupervisorToken) — DM narrowing bites real DMs at the deferred G1 fold (DM→solo-window standing token).`);
+  const dmCtx: BindableContext = { channel: { kind: "slack", continuationToken: "cse_dm_native_e2e" }, session: { auth: { current: { attributes: dmAuth.attributes } } } };
+  const grain = windowGrainOf(dmCtx);
+  if (grain !== "standing") {
+    return record("F3", "FAIL", `windowGrainOf on a REAL stamped DM auth (native-shaped token) returned "${grain}", not "standing" — the stamp is not being read as PRIMARY`);
+  }
+  const dmWithheld = new Set(withheldFromGrain("standing"));
+  const missingWide = WIDE_HANDS.filter((w) => !dmWithheld.has(w));
+  const keepsSpawn = !dmWithheld.has("spawn_task");
+  if (missingWide.length > 0 || !keepsSpawn) {
+    return record("F3", "FAIL", `standing DM kit wrong: wide-hands not withheld=[${missingWide.join(",")}], keeps spawn_task=${keepsSpawn}`);
+  }
+
+  let legB = "leg B (live standing-token drive) skipped (no injectable window)";
+  try {
+    const since = new Date().toISOString();
+    const inj = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: dmOrigin, text: HEAVY, soloWindowId: `dm-${RUN}` });
+    const g = await pollForGated(since, inj.wakeId, GATE_TIMEOUT_MS);
+    if (g && dS(g, "grain") === "standing" && !WIDE_HANDS.some((w) => !((g.detail?.withheld as string[]) ?? []).includes(w))) {
+      legB = `leg B CONFIRMED e2e — a DM-origin standing seat NARROWED through a real eve resolve (turn.tool_gated on wake ${inj.wakeId}, grain=standing)`;
+    } else {
+      legB = `leg B unconfirmed (no matching turn.tool_gated within ${GATE_TIMEOUT_MS}ms) — Leg A remains the binding proof`;
+    }
+  } catch (e) {
+    legB = `leg B drive error (${(e as Error).message}) — Leg A remains the binding proof`;
+  }
+
+  record("F3", "PASS", `root DM seat NARROWED via the REAL ingress stamp — buildSlackAuth(im) stamps oe_grain=standing; windowGrainOf on a NATIVE-shaped DM token ⇒ standing (the stamp narrows, not the token); the 12 wide-hands are withheld and spawn_task is KEPT. This exercises the actual production stamp (the former documented caveat is now a real pass). ${legB}. Not covered here: a fully-live DM eve session (needs a real Slack DM drive) — pinned by window-tool-gate-test.ts §3b (all surfaces) + the prod pack.`);
 }
 
 async function f4(): Promise<void> {

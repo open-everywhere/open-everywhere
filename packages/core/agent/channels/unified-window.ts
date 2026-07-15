@@ -190,6 +190,10 @@ export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";
 export const OE_GRAIN_ATTR = "oe_grain";
 
+export function rootDmGrainAttrs(isDm: boolean): Record<string, string> {
+  return isDm ? { [OE_GRAIN_ATTR]: "standing" } : {};
+}
+
 export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, unknown> }>(
   auth: A,
   platform: UnifiedWakeOrigin["platform"],

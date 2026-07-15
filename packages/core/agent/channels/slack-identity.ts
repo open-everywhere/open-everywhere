@@ -1,3 +1,5 @@
+import { rootDmGrainAttrs } from "./unified-window.js";
+
 export interface OpenEverywhereSlackAuth {
   readonly authenticator: string;
   readonly principalId: string;
@@ -29,6 +31,8 @@ export function buildSlackAuth(input: SlackIdentityInput): OpenEverywhereSlackAu
   if (typeof input.isExternal === "boolean") attributes.is_ext_shared = String(input.isExternal);
   if (typeof input.trustChecked === "boolean") attributes.trust_checked = String(input.trustChecked);
   if (input.dmPartnerTrust) attributes.dm_partner_trust = input.dmPartnerTrust;
+  const isDm = input.channelType === "im" || (input.channelType === undefined && input.channelId.startsWith("D"));
+  Object.assign(attributes, rootDmGrainAttrs(isDm));
   return { authenticator: "slack", principalId: input.userId, principalType: "slack-user", attributes };
 }
 

@@ -1,5 +1,6 @@
 import type { SessionMode } from "../access/resolver.js";
 import type { Visibility } from "../identity/binding.js";
+import { rootDmGrainAttrs } from "./unified-window.js";
 
 export interface OpenEverywhereDiscordAuth {
   readonly authenticator: string;
@@ -29,6 +30,7 @@ export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDis
   if (input.channelType) attributes.channel_type = input.channelType;
   if (typeof input.everyoneCanView === "boolean") attributes.everyone_can_view = String(input.everyoneCanView);
   if (input.parentChannelId) attributes.parent_channel_id = input.parentChannelId;
+  Object.assign(attributes, rootDmGrainAttrs(discordMode(input.channelType, input.guildId) === "dm"));
   return { authenticator: "discord", principalId: input.userId, principalType: "discord-user", attributes };
 }
 

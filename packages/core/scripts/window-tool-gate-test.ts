@@ -10,6 +10,12 @@ import { windowGrainOf, type WindowGrain, type BindableContext } from "../agent/
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 import { auditWindowToolGate } from "../agent/audit/window-tool-gate.js";
 import { readAudit } from "../agent/audit/audit.js";
+import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "../agent/channels/unified-window.js";
+import { buildSlackAuth } from "../agent/channels/slack-identity.js";
+import { buildDiscordAuth } from "../agent/channels/discord-identity.js";
+import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
+import { buildTelegramAuth } from "../agent/channels/telegram-identity.js";
+import { withheldFromGrain, WINDOW_GATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 
 let n = 0;
 const eq = (a: unknown, b: unknown, label: string) => {
@@ -57,6 +63,58 @@ eq(windowGrainOf(ctxFor(LEGACY, "native")), "standing", "stamp native on a STAND
 eq(windowGrainOf(ctxFor(PER_CONTAINER, "garbage")), "standing", "an unrecognised stamp value ⇒ falls through to the token backstop (standing here)");
 eq(windowGrainOf(ctxFor(NATIVE, "garbage")), "native", "an unrecognised stamp value ⇒ token backstop (native here) — never task");
 ok(windowGrainOf(ctxFor(PER_CONTAINER)) !== "task" && windowGrainOf(ctxFor(NATIVE)) !== "task", "a non-task token never yields task grain without a host task-stamp on a task token");
+
+console.log("3b. root-DM ingress stamp (the D-DM security fix — stamp ⇒ standing ⇒ narrowed):");
+
+const DM_NATIVE_TOKEN = "cse_dm_native_0001";
+const ctxWithAuth = (attributes: Record<string, string>, token: string | undefined): BindableContext => ({
+  channel: token === undefined ? { kind: "slack" } : { kind: "slack", continuationToken: token },
+  session: { auth: { current: { attributes } } },
+});
+
+eq(rootDmGrainAttrs(true), { [OE_GRAIN_ATTR]: "standing" }, "rootDmGrainAttrs(true) ⇒ { oe_grain: standing }");
+eq(rootDmGrainAttrs(false), {}, "rootDmGrainAttrs(false) ⇒ {} (a non-DM ingress stamps nothing — no over-narrowing)");
+
+const slackDm = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "D0001", channelType: "im", dmPartnerTrust: "internal" });
+const slackChan = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "C0001", channelType: "channel", isPrivate: false });
+const slackMpim = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "G0001", channelType: "mpim" });
+const discordDm = buildDiscordAuth({ userId: "U1", channelId: "D1", channelType: "1" });
+const discordChan = buildDiscordAuth({ userId: "U1", guildId: "G1", channelId: "C1", channelType: "0" });
+const discordGroupDm = buildDiscordAuth({ userId: "U1", channelId: "GD1", channelType: "3" });
+const teamsDm = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "personal" });
+const teamsChan = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "channel", channelId: "ch1", teamId: "team1" });
+const teamsGroup = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "groupChat" });
+const tgDm = buildTelegramAuth({ userId: "U1", chatId: "12345", chatType: "private" });
+const tgGroup = buildTelegramAuth({ userId: "U1", chatId: "-100999", chatType: "supergroup" });
+
+eq(slackDm.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(im) stamps oe_grain=standing");
+eq(slackDm.attributes.channel_id, "D0001", "buildSlackAuth(im) still captures the raw DM channel id (identity/memory unchanged)");
+ok(!(OE_GRAIN_ATTR in slackChan.attributes), "buildSlackAuth(channel) does NOT stamp a grain (native/full preserved)");
+ok(!(OE_GRAIN_ATTR in slackMpim.attributes), "buildSlackAuth(mpim/group-DM) does NOT stamp (D-DM is 1:1 only — no over-narrowing)");
+eq(discordDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(DM type 1) stamps oe_grain=standing");
+ok(!(OE_GRAIN_ATTR in discordChan.attributes), "buildDiscordAuth(guild channel) does NOT stamp");
+ok(!(OE_GRAIN_ATTR in discordGroupDm.attributes), "buildDiscordAuth(group DM type 3 ⇒ mpim) does NOT stamp");
+eq(teamsDm.attributes[OE_GRAIN_ATTR], "standing", "buildTeamsAuth(personal) stamps oe_grain=standing");
+ok(!(OE_GRAIN_ATTR in teamsChan.attributes), "buildTeamsAuth(channel) does NOT stamp");
+ok(!(OE_GRAIN_ATTR in teamsGroup.attributes), "buildTeamsAuth(groupChat ⇒ mpim) does NOT stamp");
+eq(tgDm.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(private) stamps oe_grain=standing");
+ok(!(OE_GRAIN_ATTR in tgGroup.attributes), "buildTelegramAuth(supergroup) does NOT stamp");
+
+for (const [label, auth] of [["slack", slackDm], ["discord", discordDm], ["teams", teamsDm], ["telegram", tgDm]] as const) {
+  eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "standing", `${label} DM (stamped) on a native token ⇒ windowGrainOf standing (the stamp narrows, not the token)`);
+}
+eq(windowGrainOf(ctxWithAuth(slackChan.attributes, DM_NATIVE_TOKEN)), "native", "an UNstamped native-token seat stays native/FULL (F8 over-narrowing guard intact)");
+eq(windowGrainOf(ctxWithAuth(slackMpim.attributes, DM_NATIVE_TOKEN)), "native", "an mpim seat (no stamp) stays native/FULL — not over-narrowed");
+
+const dmWithheld = new Set(withheldFromGrain("standing"));
+ok(!dmWithheld.has("spawn_task"), "a standing (DM) seat KEEPS spawn_task — WINDOW_GATED_TOOLS[spawn_task] includes standing");
+ok(WINDOW_GATED_TOOLS.spawn_task.includes("standing"), "spawn_task is mounted on the standing grain (manifest)");
+const WIDE_HANDS_12 = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"];
+for (const wide of WIDE_HANDS_12) {
+  ok(dmWithheld.has(wide), `a standing (DM) seat DROPS ${wide} (withheld from grain standing)`);
+}
+ok(dmWithheld.has("complete_task"), "complete_task (task-only) is also absent from a standing DM seat");
+eq(dmWithheld.size, WIDE_HANDS_12.length + 1, "a standing (DM) seat withholds exactly the 12 wide-hands tools + complete_task");
 
 console.log("4. auditWindowToolGate (turn.tool_gated row):");
 await auditWindowToolGate({ org: "default", domain: "payments", grain: "standing", withheld: [], wakeId: "w-empty", sessionId: "s-empty" });

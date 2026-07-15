@@ -8,6 +8,7 @@ import discord from "../channels/discord.js";
 import teams from "../channels/teams.js";
 import { confirmChannelInternal } from "../channels/slack-events.js";
 import { teamsMode } from "../channels/teams-identity.js";
+import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
@@ -221,6 +222,7 @@ export async function dispatchTick(
           ...appAuth.attributes,
           ...dest.attributes,
           ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+          ...rootDmGrainAttrs(mode === "dm"),
           [ROUTINE_MARKER.id]: r.id,
           [ROUTINE_MARKER.surface]: r.surfaceKey,
           [ROUTINE_MARKER.org]: r.org,
