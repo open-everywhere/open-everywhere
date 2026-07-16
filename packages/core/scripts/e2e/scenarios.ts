@@ -79,6 +79,7 @@ const SILENCE_WINDOW = 45_000;
 
 const STOP_ACK = "Standing down";
 const CAP_REFUSAL = "I'm holding off here";
+const CAP_REFUSAL_MARKER = /holding off/i;
 const NON_ADMIN_DENIAL = "only a domain/org admin can decide this request";
 const MEMORY_ADMIN_GATE = "requires an org admin";
 
@@ -462,8 +463,10 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(afterControl.length === 0, "control message (no name) produced NO reply — hard gate");
       const afterDrop = (await slack.replies(dropTs)).filter((m) => slack.isBotReply(m));
       if (afterDrop.length === 0) {
-        ctx.log("name-drop leg: clean silence — the judged policy chose not to wake (a pass)");
-        ctx.gate(true, "name-drop leg passed on clean silence");
+        ctx.skip(
+          "name-drop leg unobservable: clean silence — cannot distinguish a judged NO_REPLY from a dead nameDropWake " +
+            "(slack chat-silence audit removed 2026-07-11, no positive wake observable); only the negative control was asserted",
+        );
       } else {
         await ctx.judgePass3(
           closedQA("Is the reply a reasonable, non-barging response to being name-dropped?", {
@@ -489,14 +492,17 @@ export const SCENARIOS: readonly Scenario[] = [
       for (let i = 0; i < 5; i++) {
         const { ts } = await slack.post(slack.mention(`cap check ${i + 1}: summarise the last message`));
         const reply = await slack.awaitThreadReply(ts, { timeoutMs: REPLY_WAIT });
-        if (reply.text.includes(CAP_REFUSAL)) {
-          ctx.gate(true, `cap refusal posted (exact-string gate: "${CAP_REFUSAL}")`);
+        if (CAP_REFUSAL_MARKER.test(reply.text)) {
+          ctx.gate(true, `cap refusal posted (structural marker ${CAP_REFUSAL_MARKER} — pinned copy: "${CAP_REFUSAL}")`);
           const more = await slack.collectRepliesDuring(ts, reply.ts, 20_000);
           ctx.gate(more.length === 0, "NO model turn follows the refusal");
           return;
         }
       }
-      ctx.skip("cap never tripped within the 5-turn budget — fixture cap not low enough");
+      if (process.env.E2E_SPEND_CAP_FIXTURE === "1") {
+        ctx.gate(false, "cap fixture declared (E2E_SPEND_CAP_FIXTURE=1) but the refusal never posted in 5 turns — spend-cap enforcement regression");
+      }
+      ctx.skip("cap never tripped within the 5-turn budget — fixture cap not declared/low enough (set E2E_SPEND_CAP_FIXTURE=1 once the tiny-cap channel is provisioned to make this a hard failure)");
     },
   },
   {
@@ -814,6 +820,7 @@ export const SCENARIOS: readonly Scenario[] = [
       await ctx.judgePass(
         closedQA("Does the reply confirm a ONE-TIME check-in was scheduled (not a recurring/cron schedule, not a refusal)?", {
           mustMatch: [/schedul|check.?in|check back|remind|routine/i],
+          mustNotMatch: [/unable|couldn'?t|can'?t|wasn'?t able|not able|fail(?:ed|ure)?|error|sorry/i],
         }),
         ack.text,
         "one-shot routine creation ack",
@@ -915,17 +922,35 @@ export const SCENARIOS: readonly Scenario[] = [
         reply.body,
         "mention: reply quotes the run token",
       );
-      try {
-        const eyes = await pollUntil(
-          async () => {
-            const r = await gh.reactions(askId);
-            return r.includes("eyes") ? r : undefined;
-          },
-          { timeoutMs: 60_000, what: "the eyes reaction on the trigger comment" },
-        );
-        ctx.gate(eyes.includes("eyes"), "mention: the trigger comment got the eyes pickup reaction");
-      } catch (err) {
-        ctx.log(`eyes reaction not observed within budget (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
+      let eyesMode: "native" | "suppressed" | "unknown" = "unknown";
+      if (ctx.unifiedAuditCall) {
+        try {
+          const probe = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({ domain: ctx.unifiedDomain ?? "e2e-unified" }));
+          if (probe.status === 200) {
+            const wire = probe.body as UnifiedAuditWire;
+            eyesMode = wire.singleWindow === true && wire.containers.some((c) => c.surfaceKey === `github/${gh.repo}`) ? "suppressed" : "native";
+          }
+        } catch (err) {
+          ctx.log(`eyes mode probe failed (mode stays unknown): ${String(err instanceof Error ? err.message : err)}`);
+        }
+      }
+      if (eyesMode === "suppressed") {
+        ctx.log("eyes leg: the repo sits in a single-window (crossSurfaceWindow) domain — supervisor turns post NO pickup eyes by design; native-path gate not applicable");
+      } else {
+        try {
+          const eyes = await pollUntil(
+            async () => {
+              const r = await gh.reactions(askId);
+              return r.includes("eyes") ? r : undefined;
+            },
+            { timeoutMs: 60_000, what: "the eyes reaction on the trigger comment" },
+          );
+          ctx.gate(eyes.includes("eyes"), "mention: the trigger comment got the eyes pickup reaction");
+        } catch (err) {
+          if (err instanceof GateFailure) throw err;
+          if (eyesMode === "native") throw err;
+          ctx.log(`eyes reaction not observed within budget (mode unknown — possibly a suppressed single-window repo): ${String(err instanceof Error ? err.message : err)}`);
+        }
       }
 
       const noteId = await gh.comment(gh.fixtureIssue, "just a note for the humans — no bot needed here");
@@ -1091,15 +1116,27 @@ export const SCENARIOS: readonly Scenario[] = [
           if (r1) ctx.gate(r1.discussionId === d1.discussionId, "reply-targeting: block-1's reply lands in discussion 1");
           if (r2) ctx.gate(r2.discussionId === d2.discussionId, "reply-targeting: block-2's reply lands in discussion 2");
           ctx.gate(!(r1 && r2) || r1.discussionId !== r2.discussionId, "reply-targeting: the two replies land in DIFFERENT discussions (no cross-talk)");
+        } else if (ctx.auditRead) {
+          const dispatched = await pollUntil(
+            async () => {
+              const r = await ctx.auditRead!({ sinceIso: rStart, platform: "notion", actions: ["notion.dispatched"] });
+              return r.length >= 2 ? r : undefined;
+            },
+            { timeoutMs: REPLY_WAIT, what: "two notion.dispatched audit rows for the two genuine block comments (ingestion + dispatch proof)" },
+          );
+          ctx.gate(
+            dispatched.length >= 2,
+            "real-comment: both genuine webhooks were ingested + dispatched (notion.dispatched rows); reply-POST remains blocked on the silence-biased judge",
+          );
         } else {
           ctx.log(
-            "real-comment reply-POST assertion BLOCKED (documented, expected): both comments were ingested + dispatched " +
-              "to the channel-watch judge (verify prod: POST /eve/v1/notion → comment.created → dispatched channel-watch), " +
-              "but the judge is silence-biased and posted no reply. Exercising createCommentReply's reply-targeting live " +
-              "needs a judge-reply (aggressive tier, not forced here) or the restored forge path. Distinct-discussion + " +
-              "genuine-webhook-ingested mechanics are verified above.",
+            "real-comment reply-POST assertion BLOCKED (documented, expected): the judge is silence-biased and posted no " +
+              "reply, and NO audit read is wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to positively assert the " +
+              "notion.dispatched ingestion rows instead of trusting the 2026-07-11 one-off live verification). Exercising " +
+              "createCommentReply's reply-targeting live needs a judge-reply (aggressive tier, not forced here) or the " +
+              "restored forge path. Distinct-discussion mechanics are verified above.",
           );
-          ctx.gate(true, "real-comment reply-targeting WIRED; reply-POST assertion blocked on the silence-biased judge (documented)");
+          ctx.gate(true, "real-comment reply-targeting WIRED; reply-POST assertion blocked on the silence-biased judge (documented — ingestion unobserved, no audit read)");
         }
       }
 
@@ -1380,6 +1417,10 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(badDomain.status === 400, "unified-audit: an unknown domain name → 400");
         unifiedFlagConfirmed = body.unified === true;
         if (!unifiedFlagConfirmed) {
+          ctx.gate(
+            (process.env.E2E_EXPECT_UNIFIED ?? "").trim() !== "1",
+            `E2E_EXPECT_UNIFIED=1 but the deployment reports domain "${domainName}" unified:false — on an armed fixture this means the org gate / unifiedSupervisor flag composition (or its deployed-bundle load) regressed (hard gate)`,
+          );
           ctx.skip(
             `deployment reports domain "${domainName}" is NOT unified (unified:false — org gate and/or unifiedSupervisor flag off); ` +
               "flag-off is byte-identical per-container ambient, so the cross-container legs would test nothing new — " +
@@ -1444,19 +1485,24 @@ export const SCENARIOS: readonly Scenario[] = [
       const domainName = ctx.unifiedDomain!;
       const runStart = new Date(Date.now() - 60_000).toISOString();
 
+      const unixArmed = process.env.E2E_UNIX_ARMED === "1";
+      const pending = (msg: string): never => {
+        if (unixArmed) ctx.gate(false, `ARMED fixture regressed (E2E_UNIX_ARMED=1): ${msg}`);
+        return ctx.skip(msg);
+      };
       const unifiedAuditCall =
         ctx.unifiedAuditCall ??
-        ctx.skip(
+        pending(
           "live-fixture-pending: set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so the run can verify the unified domain " +
             "actually spans the Slack pair AND the GitHub fixture repo (GET /control/v1/unified-audit) before firing the cross-surface legs",
         );
       const probe = await unifiedAuditCall(buildUnifiedAuditQuery({ domain: domainName }));
       if (probe.status !== 200) {
-        ctx.skip(`live-fixture-pending: unified-audit for domain "${domainName}" returned ${probe.status} — provision the domain (see J-UNIFIED's fixture doc) before the cross-surface run`);
+        pending(`live-fixture-pending: unified-audit for domain "${domainName}" returned ${probe.status} — provision the domain (see J-UNIFIED's fixture doc) before the cross-surface run`);
       }
       const wire = probe.body as UnifiedAuditWire;
       if (wire.unified !== true) {
-        ctx.skip(
+        pending(
           `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (org gate and/or unifiedSupervisor flag off) — ` +
             "arm OE_UNIFIED_SUPERVISOR=1 (or the org-domain unifiedSupervisorGate) + the domain's unifiedSupervisor flag",
         );
@@ -1464,7 +1510,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const ghKey = `github/${gh.repo}`;
       const keys = wire.containers.map((c) => c.surfaceKey);
       if (!keys.includes(ghKey) || !wire.platforms.includes("github")) {
-        ctx.skip(
+        pending(
           `live-fixture-pending: domain "${domainName}" does not span the GitHub fixture repo (${ghKey} not in its containers) — ` +
             "add the repo to the domain's channels (ambientSupervisor+unifiedSupervisor on, App installed, repo PRIVATE) to arm the cross-surface money-shot",
         );

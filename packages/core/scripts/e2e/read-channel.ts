@@ -26,10 +26,8 @@ const record = (id: string, status: Status, detail: string) => {
 };
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
-const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> => {
-  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 600 }); }
-  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
-};
+const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =>
+  fetchAudit(TARGET, READ, { sinceIso, limit: 600 });
 
 interface InjectBody {
   domain: string; platform: "slack" | "discord"; surfaceKey: string; text: string;
@@ -47,15 +45,37 @@ async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }>
 
 async function pollForReplySession(sinceIso: string, wakeId: string, timeoutMs: number): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveErrs = 0;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
-    const reply = (await rowsSince(sinceIso)).find((r) => r.action === A_REPLY && dS(r, "wakeId") === wakeId);
+    let rows: readonly AuditWireEntry[];
+    try { rows = await rowsSince(sinceIso); consecutiveErrs = 0; }
+    catch (e) {
+      console.warn(`  [audit] ${(e as Error).message}`);
+      if (++consecutiveErrs >= 3) throw e;
+      continue;
+    }
+    const reply = rows.find((r) => r.action === A_REPLY && dS(r, "wakeId") === wakeId);
     if (reply) return dS(reply, "sessionId") ?? null;
   }
   return null;
 }
 
-async function toolNamesOf(sessionId: string): Promise<string[]> {
+const FAILED_ACTIONS = ["unified.supervisor_session_failed", "unified.supervisor_turn_failed", "surface.wake_failed"];
+async function classifyNoReply(id: string, sinceIso: string, wakeId: string, offlineNote: string): Promise<void> {
+  const rows = await rowsSince(sinceIso);
+  if (rows.some((r) => r.action === "unified.no_reply" && dS(r, "wakeId") === wakeId)) {
+    return record(id, "SKIP", `session ran and the model chose silence (unified.no_reply for wake ${wakeId}) — a genuine model choice, not a pipeline failure. ${offlineNote}`);
+  }
+  const died = rows.find((r) => FAILED_ACTIONS.includes(r.action));
+  if (died) return record(id, "FAIL", `wake ${wakeId} accepted but the session/turn died — audit carries ${died.action} since ${sinceIso}.`);
+  if (rows.some((r) => r.action === A_REPLY)) {
+    return record(id, "FAIL", `reply.post rows exist since ${sinceIso} but none carry wakeId ${wakeId} — reply attribution (wakeId stamping) regression.`);
+  }
+  record(id, "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms and no failure/no_reply audit rows (model-dependent; possibly a slow turn). ${offlineNote}`);
+}
+
+async function toolNamesOf(sessionId: string): Promise<string[] | null> {
   try {
     const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
     const names: string[] = [];
@@ -66,7 +86,7 @@ async function toolNamesOf(sessionId: string): Promise<string[]> {
       }
     }
     return names;
-  } catch { return []; }
+  } catch (e) { console.warn(`  [transcript] ${(e as Error).message}`); return null; }
 }
 
 async function g1(): Promise<void> {
@@ -76,8 +96,9 @@ async function g1(): Promise<void> {
   if (!isWindowToken(token)) return record("G1", "FAIL", `dispatched token ${token} is not a window token — the window did not resolve`);
   console.log(`  G1 injected Slack wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
-  if (!sid) return record("G1", "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms (model-dependent). Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
+  if (!sid) return classifyNoReply("G1", since, wakeId, "Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).");
   const calls = await toolNamesOf(sid);
+  if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
   if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with OE_GENERIC_READ_VERBS=1 (the Slack-specific reader should have retired).`);
   record("G1", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read (mount presence can't be proven passively). Binding proof: the offline unit test.`);
@@ -90,8 +111,9 @@ async function g2(): Promise<void> {
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "discord", surfaceKey: DISCORD_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "discord", channelId: DISCORD_CHANNEL_ID }, text: brief });
   console.log(`  G2 injected Discord wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
-  if (!sid) return record("G2", "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms (model-dependent). The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
+  if (!sid) return classifyNoReply("G2", since, wakeId, "The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).");
   const calls = await toolNamesOf(sid);
+  if (calls === null) return record("G2", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G2", "PASS", `session ${sid} invoked read_channel for DISCORD — the additive cross-surface read works through ONE generic tool.`);
   record("G2", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — model-dependent; the adapter is pinned offline.`);
 }

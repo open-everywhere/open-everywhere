@@ -127,12 +127,26 @@ async function main() {
   const found = active.filter((p) => (tagToSession.get(p.tag) ?? []).length > 0);
   console.log(`  surfaces landed: ${found.length}/${active.length}`);
   console.log(`  distinct sessions holding a tag: ${landedSessions.size}`);
+  const strict = active.filter((p) => !p.note?.includes("expected: memory-domain"));
+  const strictFound = strict.filter((p) => (tagToSession.get(p.tag) ?? []).length > 0);
+  const strictSessions = new Set(strictFound.flatMap((p) => tagToSession.get(p.tag)!));
+  if (strictFound.length === 0) {
+    console.error(`  ✗ FAIL: no tags landed in any session — the ambient ingest/divert path is dead across all ${strict.length} strict surface(s).`);
+    process.exit(3);
+  }
+  if (strictSessions.size > 1) {
+    console.error(`  ✗ FAIL: single-window regression — tags spread across ${strictSessions.size} sessions (see matrix; a genuine multi-session split).`);
+    process.exit(3);
+  }
+  const missing = strict.filter((p) => (tagToSession.get(p.tag) ?? []).length === 0);
+  if (missing.length > 0) {
+    console.error(`  ✗ FAIL: surfaces missing beyond the expected Linear asymmetry: ${missing.map((p) => p.surface).join(", ")} — their ingest/divert path did not reach the unified window.`);
+    process.exit(3);
+  }
   if (found.length === active.length && landedSessions.size === 1) {
     console.log(`  ✅ SINGLE WINDOW PROVEN: all ${active.length} surfaces fanned into ONE eve session (${[...landedSessions][0]}).`);
-  } else if (landedSessions.size === 1 && found.length > 0) {
-    console.log(`  ◑ the ${found.length} landed surfaces share ONE session; ${active.length - found.length} didn't land (see matrix — expected for Linear ambient).`);
   } else {
-    console.log(`  ⚠ tags spread across ${landedSessions.size} sessions — inspect the matrix (a genuine multi-session split, or paging/timing).`);
+    console.log(`  ◑ all ${strictFound.length} strict surfaces share ONE session (${[...strictSessions][0]}); linear ambient absent or elsewhere (expected architectural asymmetry — see matrix).`);
   }
 }
 

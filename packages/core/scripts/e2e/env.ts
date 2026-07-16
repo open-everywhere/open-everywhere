@@ -53,6 +53,10 @@ export const ENV = {
   slackUnifiedChannelA: "E2E_SLACK_UNIFIED_CHANNEL_A",
   slackUnifiedChannelB: "E2E_SLACK_UNIFIED_CHANNEL_B",
   unifiedDomain: "E2E_UNIFIED_DOMAIN",
+
+  expectUnified: "E2E_EXPECT_UNIFIED",
+  unixArmed: "E2E_UNIX_ARMED",
+  spendCapFixture: "E2E_SPEND_CAP_FIXTURE",
 } as const;
 
 export type Capability =

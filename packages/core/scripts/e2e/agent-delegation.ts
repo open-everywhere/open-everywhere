@@ -39,31 +39,44 @@ async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }>
 }
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail[k] as string) : undefined);
+let auditReadFailed = false;
 const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> => {
   try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 600 }); }
-  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
+  catch (e) { auditReadFailed = true; console.warn(`  [audit] ${(e as Error).message}`); return []; }
 };
 
-async function toolCallsOf(sessionId: string): Promise<{ name: string; errored: boolean }[]> {
+async function toolCallsOf(sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> {
   try {
-    const calls: { name: string; errored: boolean }[] = [];
+    const calls: { name: string; errored: boolean; at: string | null }[] = [];
+    const byCallId = new Map<string, number>();
     let start = 0;
     for (let page = 0; page < 40; page++) {
       const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
       for (const e of tr.events) {
         if (e.type === "actions.requested") {
-          const acts = (e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [];
-          for (const a of acts) if (typeof a.toolName === "string") calls.push({ name: a.toolName, errored: false });
+          const acts = (e.data as { actions?: { toolName?: string; callId?: string }[] } | undefined)?.actions ?? [];
+          for (const a of acts) {
+            if (typeof a.toolName !== "string") continue;
+            if (typeof a.callId === "string") byCallId.set(a.callId, calls.length);
+            calls.push({ name: a.toolName, errored: false, at: e.at });
+          }
         } else if (e.type === "action.result") {
-          const d = e.data as { error?: unknown; result?: { toolName?: string } } | undefined;
-          if (d?.error !== undefined && calls.length > 0) calls[calls.length - 1] = { ...calls[calls.length - 1], errored: true };
+          const d = e.data as { error?: unknown; result?: { callId?: string } } | undefined;
+          if (d?.error !== undefined) {
+            const idx = byCallId.get(typeof d.result?.callId === "string" ? d.result.callId : "");
+            if (idx !== undefined) calls[idx] = { ...calls[idx], errored: true };
+          }
         }
       }
       if (tr.events.length === 0) break;
       start = (tr as { nextIndex?: number }).nextIndex ?? start + tr.events.length;
     }
-    return calls;
-  } catch { return []; }
+    const scoped = sinceIso ? calls.filter((c) => c.at === null || c.at >= sinceIso) : calls;
+    return scoped.map(({ name, errored }) => ({ name, errored }));
+  } catch (e) {
+    console.warn(`  [transcript] ${(e as Error).message}`);
+    return null;
+  }
 }
 
 const ASYNC_BRIEF =
@@ -85,8 +98,20 @@ async function t1aAsync(): Promise<void> {
     if (spawn) {
       return record("T1a", "PASS", `agent(async) delegated — a task.spawned row appeared (taskId=${dS(spawn, "taskId")}, parentWakeId=${dS(spawn, "parentWakeId")}). The one-shot worker does the job and wakes the caller with return_result; this is spawnOneShotTask reached through \`agent\`.`);
     }
+    const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
+    if (reply) {
+      const sid = dS(reply, "sessionId");
+      const calls = sid ? await toolCallsOf(sid, since) : null;
+      if (calls === null) {
+        return record("T1a", "SKIP", `the seat replied (wake ${wakeId}, session ${sid ?? "<absent>"}) with no task.spawned row, but the transcript is UNREADABLE — delegation outcome UNVERIFIED (an observability failure, not model behaviour); fix the transcript read and re-run.`);
+      }
+      if (calls.some((c) => c.name === "agent")) {
+        return record("T1a", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored (window-token attr absent?) or the self-dispatch route failed (OE_SPAWN_DISPATCH_SECRET / OE_PUBLIC_BASE_URL); read the action.result error in the transcript.`);
+      }
+      return record("T1a", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without invoking agent — the model did not choose agent(async) this turn (delegation is model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`);
+    }
   }
-  record("T1a", "SKIP", `no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1 (agent is then absent). Re-run with the flag ON.`);
+  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1 (agent is then absent). Re-run with the flag ON.${auditReadFailed ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function t1bSync(): Promise<void> {
@@ -100,7 +125,10 @@ async function t1bSync(): Promise<void> {
     const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
     if (reply) {
       const sid = dS(reply, "sessionId");
-      const calls = sid ? await toolCallsOf(sid) : [];
+      const calls = sid ? await toolCallsOf(sid, since) : null;
+      if (calls === null) {
+        return record("T1b", "SKIP", `the seat replied (wake ${wakeId}, session ${sid ?? "<absent>"}) but the transcript is UNREADABLE — delegation outcome UNVERIFIED (an observability failure; never conclude "the model handled it another way" without the observation). Fix the transcript read and re-run.`);
+      }
       const agentOk = calls.some((c) => c.name === "agent" && !c.errored);
       const agentErr = calls.some((c) => c.name === "agent" && c.errored);
       const names = [...new Set(calls.map((c) => `${c.name}${c.errored ? "!" : ""}`))].join(",");
@@ -115,7 +143,12 @@ async function t1bSync(): Promise<void> {
       );
     }
   }
-  record("T1b", "SKIP", `no reply for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).`);
+  const rows = await rowsSince(since);
+  const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
+  if (spawn) {
+    return record("T1b", "FAIL", `agent(sync) SPAWNED a worker (taskId=${dS(spawn, "taskId")}) but the caller seat never completed a turn within ${TIMEOUT_MS}ms — the flag was on and the model delegated, so this is a hung sync block-poll/degrade path, not model choice.`);
+  }
+  record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function main(): Promise<void> {

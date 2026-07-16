@@ -25,10 +25,8 @@ const record = (id: string, status: Status, detail: string) => {
 };
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
-const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> => {
-  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 600 }); }
-  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
-};
+const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =>
+  fetchAudit(TARGET, READ, { sinceIso, limit: 600 });
 
 interface InjectBody {
   domain: string; platform: "slack" | "github"; surfaceKey: string; text: string;
@@ -46,41 +44,70 @@ async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }>
 
 async function pollForReplySession(sinceIso: string, wakeId: string, timeoutMs: number): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveErrs = 0;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
-    const reply = (await rowsSince(sinceIso)).find((r) => r.action === A_REPLY && dS(r, "wakeId") === wakeId);
+    let rows: readonly AuditWireEntry[];
+    try { rows = await rowsSince(sinceIso); consecutiveErrs = 0; }
+    catch (e) {
+      console.warn(`  [audit] ${(e as Error).message}`);
+      if (++consecutiveErrs >= 3) throw e;
+      continue;
+    }
+    const reply = rows.find((r) => r.action === A_REPLY && dS(r, "wakeId") === wakeId);
     if (reply) return dS(reply, "sessionId") ?? null;
   }
   return null;
 }
 
-async function toolNamesOf(sessionId: string): Promise<string[]> {
+const FAILED_ACTIONS = ["unified.supervisor_session_failed", "unified.supervisor_turn_failed", "surface.wake_failed"];
+async function classifyNoReply(id: string, sinceIso: string, wakeId: string, offlineNote: string): Promise<void> {
+  const rows = await rowsSince(sinceIso);
+  if (rows.some((r) => r.action === "unified.no_reply" && dS(r, "wakeId") === wakeId)) {
+    return record(id, "SKIP", `session ran and the model chose silence (unified.no_reply for wake ${wakeId}) — a genuine model choice, not a pipeline failure. ${offlineNote}`);
+  }
+  const died = rows.find((r) => FAILED_ACTIONS.includes(r.action));
+  if (died) return record(id, "FAIL", `wake ${wakeId} accepted but the session/turn died — audit carries ${died.action} since ${sinceIso}.`);
+  if (rows.some((r) => r.action === A_REPLY)) {
+    return record(id, "FAIL", `reply.post rows exist since ${sinceIso} but none carry wakeId ${wakeId} — reply attribution (wakeId stamping) regression.`);
+  }
+  record(id, "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms and no failure/no_reply audit rows (model-dependent; possibly a slow turn). ${offlineNote}`);
+}
+
+async function transcriptOf(sessionId: string): Promise<{ tools: string[]; text: string } | null> {
   try {
     const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
-    const names: string[] = [];
+    const tools: string[] = [];
+    let text = "";
     for (const e of tr.events) {
+      if (e.type === "message.completed") { text += "\n" + JSON.stringify(e.data ?? {}); continue; }
       if (e.type !== "actions.requested") continue;
       for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
-        if (typeof a.toolName === "string") names.push(a.toolName);
+        if (typeof a.toolName === "string") tools.push(a.toolName);
       }
     }
-    return names;
-  } catch { return []; }
+    return { tools, text };
+  } catch (e) { console.warn(`  [transcript] ${(e as Error).message}`); return null; }
 }
 
 async function s1(): Promise<void> {
   const since = new Date().toISOString();
-  const brief = `Please use read_slack_channel to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw.`;
+  const brief = `Please use read_slack_channel to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you have no read_slack_channel tool, reply SSM1-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "slack", channelId: SLACK_CHANNEL_ID }, text: brief });
   if (!isWindowToken(token)) return record("S1", "FAIL", `dispatched token ${token} is not a window token — the multi-source window did not resolve`);
   console.log(`  S1 injected multi-source Slack wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
-  if (!sid) return record("S1", "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms — the wake→session join is unconfirmed (model-dependent). The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).`);
-  const calls = await toolNamesOf(sid);
+  if (!sid) return classifyNoReply("S1", since, wakeId, "The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).");
+  const tr = await transcriptOf(sid);
+  if (tr === null) return record("S1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).`);
+  const calls = tr.tools;
   if (calls.includes("read_slack_channel")) {
     return record("S1", "PASS", `multi-source window MOUNTED the Slack reader — session ${sid} invoked read_slack_channel (slack ∈ sources), then replied. Confirms the reader is present on a window whose sources include slack.`);
   }
-  record("S1", "SKIP", `session ${sid} replied but did not invoke read_slack_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read the sibling channel this turn (mount presence can't be proven from a passive transcript). Binding proof: the offline unit test.`);
+  if (tr.text.includes("NOSLACK")) {
+    return record("S1", "FAIL", `multi-source window did NOT mount the Slack reader — session ${sid} reported the tool absent (NOSLACK marker) despite slack ∈ sources. The mount over-narrowed.`);
+  }
+  record("S1", "SKIP", `session ${sid} replied but did not invoke read_slack_channel and did not report it absent (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read the sibling channel this turn (mount presence can't be proven from a passive transcript). Binding proof: the offline unit test.`);
 }
 
 async function s2(): Promise<void> {
@@ -92,8 +119,10 @@ async function s2(): Promise<void> {
   console.log(`  S2 injected solo-GitHub window wake ${wakeId} → token ${token} (windowId≠domain: ${isSolo})`);
   if (!isSolo) return record("S2", "SKIP", `the solo-window selector did not re-mint a :win:${solo}: token (got ${token}) — a github-solo window couldn't be dispatched via the seam; the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
-  if (!sid) return record("S2", "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms — unconfirmed (model-dependent). The absence of the Slack reader on a github-solo window is deterministically pinned offline.`);
-  const calls = await toolNamesOf(sid);
+  if (!sid) return classifyNoReply("S2", since, wakeId, "The absence of the Slack reader on a github-solo window is deterministically pinned offline.");
+  const tr = await transcriptOf(sid);
+  if (tr === null) return record("S2", "SKIP", `transcript fetch failed for session ${sid} — the negative cannot be observed (a vacuous negative is not a passive negative); the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
+  const calls = tr.tools;
   if (calls.includes("read_slack_channel")) {
     return record("S2", "FAIL", `session ${sid} INVOKED read_slack_channel on a solo-GitHub window (sources=[github]) — the Slack reader was NOT narrowed out (tools=[${[...new Set(calls)].join(",")}])`);
   }

@@ -28,6 +28,7 @@ const want = (id: string) => ONLY.length === 0 || ONLY.includes(id);
 
 const A_GATED = "turn.tool_gated";
 const A_REPLY = "reply.post";
+const A_NO_REPLY = "unified.no_reply";
 const WIDE_HANDS = ["bash", "checkout_repo", "open_pull_request", "web_fetch", "write_file"];
 
 const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
@@ -67,8 +68,8 @@ const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =
 };
 const gatedRowFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | null =>
   rows.find((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId) ?? null;
-const replyRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry[] =>
-  rows.filter((r) => r.action === A_REPLY && dS(r, "wakeId") === wakeId);
+const sessionJoinRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry[] =>
+  rows.filter((r) => (r.action === A_REPLY || r.action === A_NO_REPLY) && dS(r, "wakeId") === wakeId);
 
 async function pollForGated(sinceIso: string, wakeId: string, timeoutMs: number): Promise<AuditWireEntry | null> {
   const deadline = Date.now() + timeoutMs;
@@ -79,17 +80,17 @@ async function pollForGated(sinceIso: string, wakeId: string, timeoutMs: number)
   }
   return null;
 }
-async function pollForReply(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ sessionId: string | null; sawGated: boolean }> {
+async function pollForReply(sinceIso: string, wakeId: string, timeoutMs: number): Promise<{ sessionId: string | null; via: string | null; sawGated: boolean }> {
   const deadline = Date.now() + timeoutMs;
   let sawGated = false;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(sinceIso);
     if (gatedRowFor(rows, wakeId)) sawGated = true;
-    const replies = replyRowsFor(rows, wakeId);
-    if (replies.length > 0) return { sessionId: dS(replies[0], "sessionId") ?? null, sawGated: sawGated || !!gatedRowFor(rows, wakeId) };
+    const joins = sessionJoinRowsFor(rows, wakeId);
+    if (joins.length > 0) return { sessionId: dS(joins[0], "sessionId") ?? null, via: joins[0].action, sawGated: sawGated || !!gatedRowFor(rows, wakeId) };
   }
-  return { sessionId: null, sawGated };
+  return { sessionId: null, via: null, sawGated };
 }
 
 async function toolNamesOf(sessionId: string): Promise<string[]> {
@@ -103,6 +104,34 @@ async function toolNamesOf(sessionId: string): Promise<string[]> {
     }
     return names;
   } catch { return []; }
+}
+
+async function toolCallsWithErrorsOf(sessionId: string): Promise<{ name: string; errored: boolean }[] | null> {
+  try {
+    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
+    const calls: { name: string; errored: boolean }[] = [];
+    const byCallId = new Map<string, number>();
+    for (const e of tr.events) {
+      if (e.type === "actions.requested") {
+        const acts = (e.data as { actions?: { toolName?: string; callId?: string }[] } | undefined)?.actions ?? [];
+        for (const a of acts) {
+          if (typeof a.toolName !== "string") continue;
+          if (typeof a.callId === "string") byCallId.set(a.callId, calls.length);
+          calls.push({ name: a.toolName, errored: false });
+        }
+      } else if (e.type === "action.result") {
+        const d = e.data as { error?: unknown; result?: { callId?: string } } | undefined;
+        if (d?.error !== undefined) {
+          const idx = byCallId.get(typeof d.result?.callId === "string" ? d.result.callId : "");
+          if (idx !== undefined) calls[idx] = { ...calls[idx], errored: true };
+        }
+      }
+    }
+    return calls;
+  } catch (e) {
+    console.warn(`  [transcript] ${(e as Error).message}`);
+    return null;
+  }
 }
 
 const HEAVY = "please clone the acme/web repo, run the full test suite in a sandbox, then open a pull request with the fix. reply here when the PR is up.";
@@ -186,12 +215,19 @@ async function f4(): Promise<void> {
   const isTask = isTaskWindowToken(token);
   console.log(`  F4 injected TASK worker wake ${wakeId} → token ${token} (task-grain: ${isTask})`);
   if (!isTask) return record("F4", "FAIL", `dispatched token ${token} is not a task-grain token — the taskThread selector did not re-mint`);
-  const { sessionId, sawGated } = await pollForReply(since, wakeId, REPLY_TIMEOUT_MS);
+  const { sessionId, via, sawGated } = await pollForReply(since, wakeId, REPLY_TIMEOUT_MS);
   if (sawGated) return record("F4", "FAIL", `a turn.tool_gated row fired on the TASK session (wake ${wakeId}) — a task worker was WRONGLY narrowed`);
-  if (!sessionId) return record("F4", "SKIP", `task session ran with NO narrowing row (correct so far), but the worker did not reply within ${REPLY_TIMEOUT_MS}ms so the wake→session join is unconfirmed (model-dependent). No turn.tool_gated seen = not narrowed.`);
+  if (!sessionId) {
+    const rows = await rowsSince(since);
+    const ranEvidence = rows.filter((r) => dS(r, "wakeId") === wakeId && r.action !== "control.service_call");
+    if (ranEvidence.length === 0) {
+      return record("F4", "FAIL", `NO audit activity of ANY kind for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms — no reply.post, no unified.no_reply, no turn.supervisor_prose_dropped. Consistent with the task session never running (dead dispatch or a full-kit mount crash at session.started), NOT with model choice. Bump WINDOW_GATE_REPLY_TIMEOUT_MS if the worker was genuinely still mid-turn.`);
+    }
+    return record("F4", "SKIP", `task session RAN (evidence: ${[...new Set(ranEvidence.map((r) => r.action))].join(",")}) with NO narrowing row (correct), but no reply.post/unified.no_reply landed within ${REPLY_TIMEOUT_MS}ms so the wake→session transcript join is unconfirmed (model-dependent terminal choice).`);
+  }
   const calls = await toolNamesOf(sessionId);
   const usedWide = calls.filter((c) => WIDE_HANDS.includes(c) || c === "list_repos" );
-  record("F4", "PASS", `task/thread worker kept the FULL kit — NO turn.tool_gated row (negative control vs F1's narrowing), session ${sessionId} ran + replied. transcript tools=[${[...new Set(calls)].join(",") || "none"}]${calls.some((c) => WIDE_HANDS.includes(c)) ? " (wide-hands INVOKED ✓)" : " (wide-hands mounted; model chose not to invoke)"}`);
+  record("F4", "PASS", `task/thread worker kept the FULL kit — NO turn.tool_gated row (negative control vs F1's narrowing), session ${sessionId} ran + ${via === A_REPLY ? "replied" : "completed with a deliberate no_reply"}. transcript tools=[${[...new Set(calls)].join(",") || "none"}]${calls.some((c) => WIDE_HANDS.includes(c)) ? " (wide-hands INVOKED ✓)" : " (wide-hands mounted; model chose not to invoke)"}`);
 }
 
 async function f5(): Promise<void> {
@@ -208,7 +244,10 @@ async function f5(): Promise<void> {
     if (r1.sessionId === r2.sessionId) return record("F5", "PASS", `persistent task identity CONFIRMED e2e — same taskThread ⇒ same token ${inj1.token} ⇒ SAME eve session ${r1.sessionId} across two separate wakes (durable-token resume, §S1).`);
     return record("F5", "FAIL", `same token but DIFFERENT sessions replied (${r1.sessionId} vs ${r2.sessionId}) — eve did not resume the task session`);
   }
-  record("F5", "PASS", `persistent task identity: the same taskThread deterministically re-derives the SAME task token ${inj1.token} (§S1 — identity IS the token; eve resumes a seen token). Same-session e2e confirmation was best-effort and one/both worker replies did not land within ${REPLY_TIMEOUT_MS}ms (model-dependent).`);
+  if (!r1.sessionId && !r2.sessionId) {
+    return record("F5", "SKIP", `same taskThread re-derived the SAME task token ${inj1.token} (mint identity holds, §S1), but NEITHER wake produced a joinable session (no reply.post/unified.no_reply) within ${REPLY_TIMEOUT_MS}ms — same-session resume UNCONFIRMED and the task-session route may be dead (cf. F4).`);
+  }
+  record("F5", "PASS", `persistent task identity: the same taskThread deterministically re-derives the SAME task token ${inj1.token} (§S1 — identity IS the token; eve resumes a seen token), and at least one wake joined a live session (${r1.sessionId ?? r2.sessionId}). Same-session e2e confirmation was best-effort and one worker's reply/no_reply did not land within ${REPLY_TIMEOUT_MS}ms (model-dependent).`);
 }
 
 async function f6(store: OperationalStore | null): Promise<void> {
@@ -283,7 +322,13 @@ async function f9(): Promise<void> {
     row = (await rowsSince(since)).find((r) => r.action === "thread_seat.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId)) ?? null;
   }
   if (!row) {
-    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_ONESHOT_AGENT=1. Re-run with the flag ON.`);
+    const join = sessionJoinRowsFor(await rowsSince(since), wakeId)[0];
+    const sid = join ? dS(join, "sessionId") : undefined;
+    const calls = sid ? await toolCallsWithErrorsOf(sid) : null;
+    if (calls?.some((c) => c.name === "spawn_thread_session")) {
+      return record("F9", "FAIL", `the model CALLED spawn_thread_session (session ${sid}) but NO thread_seat.spawned row landed for wake ${wakeId} — the tool is mounted but its execute refused/errored; read the action.result error in transcript ${sid}.`);
+    }
+    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms${sid && calls ? ` (session ${sid} ran without invoking spawn_thread_session)` : calls === null && sid ? ` (session ${sid} joined but its transcript is unreadable — outcome UNVERIFIED)` : ""} — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_ONESHOT_AGENT=1. Re-run with the flag ON.`);
   }
   const seatId = dS(row, "seatId") ?? "";
   if (!isThreadSeatWindowToken(seatId)) {
