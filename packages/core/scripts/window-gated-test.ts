@@ -15,7 +15,6 @@ import {
   withheldFromGrain,
   windowGated,
   windowGatedKit,
-  workerToolFrom,
   replayStepNames,
   resolveWindowGated,
   _resetWindowGateAuditForTest,
@@ -236,16 +235,6 @@ console.log("5. replay pre-registration (eve step registry):");
   ]);
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
-}
-
-console.log("6. workerToolFrom (the worker un-gate seam):");
-{
-  const gatedDefault = windowGated("checkout_repo", stubEntry("checkout_repo"));
-  const raw = workerToolFrom(gatedDefault) as GatedToolEntry;
-  ok(raw !== null && typeof raw.execute === "function", "workerToolFrom returns a mountable tool (has execute) from a windowGated default");
-  eq(await raw.execute({ v: "x" }, grainCtx.native()), { ran: "checkout_repo" }, "the raw entry runs on a NATIVE-classified ctx (no grain backstop — the sync worker keeps hands even after the root narrows native)");
-  assert.throws(() => workerToolFrom(defineTool({ description: "x", inputSchema: z.object({}), async execute() { return {}; } })), /not a windowGated/, "workerToolFrom THROWS on a plain (non-windowGated) tool — a worker fork/mistake is caught");
-  n++;
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { windowGated } from "../access/window-gated.js";
-import { workerSubagentEnabled } from "../access/worker-subagent.js";
+import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef } from "../channels/unified-window.js";
 import { dispatchTaskWindow } from "../channels/unified.js";
@@ -33,7 +33,7 @@ function isOwnTokenTaskOrThread(ctx: BindableContext): boolean {
 }
 
 export function canSpawnThreadFromWindow(ctx: BindableContext): boolean {
-  if (!workerSubagentEnabled()) return false;
+  if (!oneshotAgentEnabled()) return false;
   const raw = ctx.channel?.continuationToken;
   if (typeof raw !== "string" || raw.length === 0) return true;
   const stripped = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;

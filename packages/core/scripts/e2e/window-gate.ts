@@ -5,7 +5,7 @@ import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
 import { buildSlackAuth } from "../../agent/channels/slack-identity.js";
 import { windowGrainOf, type BindableContext } from "../../agent/identity/binding.js";
 import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken, isThreadSeatWindowToken } from "../../agent/channels/window-key.js";
-import { workerSubagentEnabled } from "../../agent/access/worker-subagent.js";
+import { oneshotAgentEnabled } from "../../agent/access/delegation-flag.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "../../agent/channels/thread-ownership.js";
 import { ROUTINE_MARKER } from "../../agent/routines/routine.js";
 import { OE_GRAIN_ATTR } from "../../agent/channels/unified-window.js";
@@ -269,8 +269,8 @@ async function f8(): Promise<void> {
 }
 
 async function f9(): Promise<void> {
-  if (!workerSubagentEnabled()) {
-    return record("F9", "SKIP", "OE_WORKER_SUBAGENT is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target started with OE_WORKER_SUBAGENT=1.");
+  if (!oneshotAgentEnabled()) {
+    return record("F9", "SKIP", "OE_ONESHOT_AGENT is not set in THIS process — spawn_thread_session is flag-gated absent. Re-run with the flag on AND a target started with OE_ONESHOT_AGENT=1.");
   }
   const since = new Date().toISOString();
   const brief = `We'll be going back and forth in this thread for a while about the ${RUN} rollout — please open a lasting presence here to keep track, then say READY-${RUN}.`;
@@ -283,7 +283,7 @@ async function f9(): Promise<void> {
     row = (await rowsSince(since)).find((r) => r.action === "thread_seat.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId)) ?? null;
   }
   if (!row) {
-    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_WORKER_SUBAGENT=1. Re-run with the flag ON.`);
+    return record("F9", "SKIP", `no thread_seat.spawned row for wake ${wakeId} within ${REPLY_TIMEOUT_MS}ms — the model did not choose spawn_thread_session this turn (delegation is model-dependent), or the target was not started with OE_ONESHOT_AGENT=1. Re-run with the flag ON.`);
   }
   const seatId = dS(row, "seatId") ?? "";
   if (!isThreadSeatWindowToken(seatId)) {

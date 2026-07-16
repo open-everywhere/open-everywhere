@@ -1,14 +1,9 @@
 import type { WindowGrain } from "../identity/binding.js";
-import { workerSubagentEnabled } from "./worker-subagent.js";
+import { oneshotAgentEnabled } from "./delegation-flag.js";
 
-export const FULL_KIT: readonly WindowGrain[] = workerSubagentEnabled() ? (["task"] as const) : (["task", "native"] as const);
+export const FULL_KIT: readonly WindowGrain[] = oneshotAgentEnabled() ? (["task"] as const) : (["task", "native"] as const);
 
 export const CONVERSATIONAL_ROOT_GRAINS = ["standing", "native", "thread"] as const;
-
-export const WORKER_FRAMEWORK_TOOLS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch"] as const;
-export const WORKER_AUTHORED_TOOLS = ["checkout_repo", "open_pull_request", "post_file", "browser_qa", "create_skill", "delete_skill"] as const;
-
-export const WORKER_KIT: ReadonlySet<string> = new Set<string>([...WORKER_FRAMEWORK_TOOLS, ...WORKER_AUTHORED_TOOLS]);
 
 export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>> = {
   bash: FULL_KIT,
@@ -90,7 +85,6 @@ export function checkWindowGateManifest(
   frameworkToolNames: readonly string[],
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
-  workerShims: ReadonlyMap<string, string> = new Map(),
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
 ): string[] {
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
@@ -186,33 +180,6 @@ export function checkWindowGateManifest(
     const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
     if (m && !coreByName.has(m[1])) {
       problems.push(`agent/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling shim)`);
-    }
-  }
-
-  if (workerShims.size > 0) {
-    for (const [slug, src] of workerShims) {
-      if (!WORKER_KIT.has(slug)) {
-        problems.push(
-          `agent/subagents/worker/tools/${slug}.ts is not a declared WORKER_KIT member — add "${slug}" to WORKER_AUTHORED_TOOLS in access/window-gate-manifest.ts (or remove the shim). A worker tool must state that it belongs to the worker surface.`,
-        );
-      }
-      const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
-      if (!m) {
-        problems.push(`agent/subagents/worker/tools/${slug}.ts must re-export a core tool (import from "@open-everywhere/core/agent/tools/${slug}.js") — the worker carries the SAME tool the root authors, not a fork`);
-      } else if (!coreByName.has(m[1])) {
-        problems.push(`agent/subagents/worker/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling worker shim)`);
-      } else if (!/workerToolFrom\s*\(/.test(src)) {
-        problems.push(
-          `agent/subagents/worker/tools/${slug}.ts must mount the UN-gated tool via workerToolFrom(...) (\`import gated from "@open-everywhere/core/agent/tools/${slug}.js"; export default workerToolFrom(gated)\`) — a bare re-export of the grain-gated default vanishes on the subagent once the root narrows native (§B4 Resolution A)`,
-        );
-      }
-    }
-    for (const name of WORKER_AUTHORED_TOOLS) {
-      if (!workerShims.has(name)) {
-        problems.push(
-          `WORKER_AUTHORED_TOOLS names "${name}" but agent/subagents/worker/tools/${name}.ts is missing — the worker would not carry it; add the shim \`export { default } from "@open-everywhere/core/agent/tools/${name}.js"\``,
-        );
-      }
     }
   }
 

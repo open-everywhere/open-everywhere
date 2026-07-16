@@ -19,18 +19,6 @@ function isNarrowedGrain(grain: WindowGrain): boolean {
   return !FULL_KIT.includes(grain);
 }
 
-const RAW_GATED_ENTRY = Symbol.for("@open-everywhere/window-gated:raw-entry");
-
-export function workerToolFrom(gatedDefault: unknown): unknown {
-  const raw = (gatedDefault as Record<symbol, unknown> | null | undefined)?.[RAW_GATED_ENTRY];
-  if (raw === undefined) {
-    throw new Error(
-      "workerToolFrom: not a windowGated() default — a worker subagent shim must import a grain-gated core tool's default and re-export its raw body (`export default workerToolFrom(gated)`).",
-    );
-  }
-  return raw;
-}
-
 function grainOf(ctx: BindableContext): WindowGrain {
   try {
     return windowGrainOf(ctx);
@@ -156,7 +144,6 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
       },
     },
   });
-  Object.defineProperty(dyn, RAW_GATED_ENTRY, { value: entry, enumerable: false });
   return dyn;
 }
 

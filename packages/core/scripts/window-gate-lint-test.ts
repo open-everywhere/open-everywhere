@@ -190,49 +190,16 @@ firesWith(
 
 for (const badGrain of [["task", "native"], ["standing", "task"], ["task", "thread"], ["native"]] as WindowGrain[][]) {
   firesWith(
-    checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: badGrain }), u(), new Map(), ["task"]),
+    checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: badGrain }), u(), ["task"]),
     'must be exactly ["task"]',
     `flag-ON: a wide-hands tool on grain [${badGrain.join(",")}] FAILS (no wide hands on any conversational-root grain — standing/native/thread)`,
   );
 }
 {
-  const clean = checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["task"] }), u(), new Map(), ["task"]);
-  ok(clean.length === 0, "flag-ON: a wide-hands tool on EXACTLY [task] (the async worker) is clean — task is the one root grain permitted wide hands");
+  const clean = checkWindowGateManifest([{ name: "open_pull_request", source: wrapped("open_pull_request") }], new Map([["open_pull_request", ""]]), [], g({ open_pull_request: ["task"] }), u(), ["task"]);
+  ok(clean.length === 0, "flag-ON: a wide-hands tool on EXACTLY [task] (the one-shot worker) is clean — task is the one root grain permitted wide hands");
 }
 
-firesWith(
-  checkWindowGateManifest(
-    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
-    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
-    [],
-    g({ open_pull_request: FULL_KIT }),
-    u(),
-    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
-  ),
-  "must mount the UN-gated tool via workerToolFrom",
-  "a worker shim that bare-re-exports the grain-gated default (no workerToolFrom) FAILS (the sync worker would silently disarm)",
-);
-
-{
-  const notInKit = checkWindowGateManifest(
-    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
-    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
-    [],
-    g({ open_pull_request: FULL_KIT }),
-    u(),
-    new Map([["mystery_tool", 'export { default } from "@open-everywhere/core/agent/tools/mystery_tool.js";']]),
-  );
-  firesWith(notInKit, "not a declared WORKER_KIT member", "a worker shim absent from WORKER_KIT FAILS");
-  const notReexport = checkWindowGateManifest(
-    [{ name: "open_pull_request", source: wrapped("open_pull_request") }],
-    new Map([["open_pull_request", 'export { default } from "@open-everywhere/core/agent/tools/open_pull_request.js";']]),
-    [],
-    g({ open_pull_request: FULL_KIT }),
-    u(),
-    new Map([["open_pull_request", "export default defineTool({});"]]),
-  );
-  firesWith(notReexport, "must re-export a core tool", "a worker shim that forks instead of re-exporting FAILS");
-}
 for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   ok(!WINDOW_UNGATED_TOOLS.has(name), `"${name}" is not double-declared`);
 }
@@ -248,17 +215,8 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   for (const f of readdirSync(appDir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
     appShims.set(f.replace(/\.ts$/u, ""), readFileSync(join(appDir, f), "utf8"));
   }
-  const workerDir = join(here, "../../../agent/subagents/worker/tools");
-  const workerShims = new Map<string, string>();
-  try {
-    for (const f of readdirSync(workerDir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
-      workerShims.set(f.replace(/\.ts$/u, ""), readFileSync(join(workerDir, f), "utf8"));
-    }
-  } catch {
-  }
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, workerShims);
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
-  ok(workerShims.size >= 6, `the real scan covered the worker subagent's authored shims (saw ${workerShims.size})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
