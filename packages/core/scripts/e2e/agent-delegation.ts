@@ -44,22 +44,32 @@ const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =
   catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
 };
 
-async function toolNamesOf(sessionId: string): Promise<string[]> {
+async function toolCallsOf(sessionId: string): Promise<{ name: string; errored: boolean }[]> {
   try {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
-    const names: string[] = [];
-    for (const e of tr.events) {
-      if (e.type !== "actions.requested") continue;
-      const acts = (e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [];
-      for (const a of acts) if (typeof a.toolName === "string") names.push(a.toolName);
+    const calls: { name: string; errored: boolean }[] = [];
+    let start = 0;
+    for (let page = 0; page < 40; page++) {
+      const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
+      for (const e of tr.events) {
+        if (e.type === "actions.requested") {
+          const acts = (e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [];
+          for (const a of acts) if (typeof a.toolName === "string") calls.push({ name: a.toolName, errored: false });
+        } else if (e.type === "action.result") {
+          const d = e.data as { error?: unknown; result?: { toolName?: string } } | undefined;
+          if (d?.error !== undefined && calls.length > 0) calls[calls.length - 1] = { ...calls[calls.length - 1], errored: true };
+        }
+      }
+      if (tr.events.length === 0) break;
+      start = (tr as { nextIndex?: number }).nextIndex ?? start + tr.events.length;
     }
-    return names;
+    return calls;
   } catch { return []; }
 }
 
 const ASYNC_BRIEF =
-  "This is a long job: clone the acme/web repo, run the whole test suite in a sandbox, and open a PR " +
-  "with the fix. Hand it to a worker so you can keep watching the channel; reply here when it's underway.";
+  "This is a long job: in a sandbox, write and run a script that computes the first 40 fibonacci " +
+  "numbers and their sum. Hand it to a worker so you can keep watching the channel — don't do it " +
+  "yourself here; reply to me when it's underway.";
 const SYNC_BRIEF =
   "Quick bounded task I need finished now: run `echo hello-from-worker` in a sandbox and tell me the exact output.";
 
@@ -90,14 +100,18 @@ async function t1bSync(): Promise<void> {
     const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
     if (reply) {
       const sid = dS(reply, "sessionId");
-      const calls = sid ? await toolNamesOf(sid) : [];
-      const usedAgent = calls.includes("agent");
+      const calls = sid ? await toolCallsOf(sid) : [];
+      const agentOk = calls.some((c) => c.name === "agent" && !c.errored);
+      const agentErr = calls.some((c) => c.name === "agent" && c.errored);
+      const names = [...new Set(calls.map((c) => `${c.name}${c.errored ? "!" : ""}`))].join(",");
       return record(
         "T1b",
-        usedAgent ? "PASS" : "SKIP",
-        usedAgent
-          ? `agent(sync) spawned a one-shot worker and returned its result inline (transcript ${sid} tools=[${[...new Set(calls)].join(",")}]) — the bounded work ran on a credential-correct new session and the seat replied with the result.`
-          : `the seat replied (session ${sid}, tools=[${[...new Set(calls)].join(",") || "none"}]) but did NOT invoke agent — the model handled the bounded task another way this turn (model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`,
+        agentOk ? "PASS" : agentErr ? "FAIL" : "SKIP",
+        agentOk
+          ? `agent(sync) spawned a one-shot worker and returned its result inline (transcript ${sid} tools=[${names}]) — the bounded work ran on a credential-correct new session and the seat replied with the result.`
+          : agentErr
+            ? `the model CALLED agent but the execute REFUSED/errored (session ${sid}, tools=[${names}]) — the delegation stack is mounted but broken on this seat; read the action.result error in the transcript.`
+            : `the seat replied (session ${sid}, tools=[${names || "none"}]) but did NOT invoke agent — the model handled the bounded task another way this turn (model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`,
       );
     }
   }
