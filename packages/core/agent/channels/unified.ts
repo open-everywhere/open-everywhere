@@ -1,5 +1,6 @@
-import { defineChannel, GET } from "eve/channels";
+import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
+import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -24,6 +25,15 @@ function ulog(msg: string): void {
 let rememberedReceive: RouteHandlerArgs["receive"] | undefined;
 function rememberUnifiedReceive(receive: RouteHandlerArgs["receive"]): void {
   rememberedReceive = receive;
+}
+
+async function deliverUnifiedDispatch(input: UnifiedDispatchPayload): Promise<void> {
+  if (rememberedReceive) return divertToUnifiedWindow(rememberedReceive, input);
+  await postSelfDispatch(input);
+}
+
+function crossProcessDispatchAvailable(): boolean {
+  return rememberedReceive !== undefined || selfDispatchConfigured();
 }
 
 function pickRedriveSurfaceKey(domain: string | undefined, platform: string): string | null {
@@ -72,7 +82,10 @@ function windowSourcesForDivert(token: string, originPlatform: string): readonly
 }
 
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
-  routes: [GET("/eve/v1/unified", async () => new Response("not found", { status: 404 }))],
+  routes: [
+    GET("/eve/v1/unified", async () => new Response("not found", { status: 404 })),
+    POST(SELF_DISPATCH_PATH, async (req, { receive }) => handleSelfDispatch(req, receive, (r, i) => divertToUnifiedWindow(r, i))),
+  ],
   kindHint: "unified",
   async receive(input, { send }): Promise<Session> {
     const t = input.target as Partial<UnifiedReceiveTarget> | undefined;
@@ -191,19 +204,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const domain = unifiedDomainFromToken(rawToken);
         const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
         delete baseAttrs[OE_ADDRESSING_ATTR];
-        const reinject: RedriveReinject = rememberedReceive
-          ? async (origin, message) => {
-              const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform);
-              if (!surfaceKey) throw new Error(`unified redrive: no crossSurfaceWindow surface key for domain ${domain ?? "?"}`);
-              await divertToUnifiedWindow(rememberedReceive!, {
-                message,
-                token: rawToken,
-                window: { wakeId: wakeId!, origin },
-                surfaceKey,
-                auth: { attributes: baseAttrs },
-              });
-            }
-          : null;
+        const reinject: RedriveReinject = buildRedriveReinject(domain, rawToken, baseAttrs);
         const outcome = await maybeRedrive(
           { org, workspace, surface, ...(sessionId ? { sessionId } : {}), wakeId, chars: action.text.length, replied },
           { store: getOperationalStore(), reinject },
@@ -347,6 +348,21 @@ export async function divertInboundToUnifiedWindow(
   await audit({ routed: "owner", ownerId: route.token, grain: route.grain });
 }
 
+export function buildRedriveReinject(domain: string | undefined, rawToken: string, baseAttrs: Record<string, unknown>): RedriveReinject {
+  if (!crossProcessDispatchAvailable()) return null;
+  return async (origin, message, originalWakeId) => {
+    const surfaceKey = pickRedriveSurfaceKey(domain, origin.platform);
+    if (!surfaceKey) throw new Error(`unified redrive: no crossSurfaceWindow surface key for domain ${domain ?? "?"}`);
+    await deliverUnifiedDispatch({
+      message,
+      token: rawToken,
+      window: { wakeId: originalWakeId, origin },
+      surfaceKey,
+      auth: { attributes: baseAttrs },
+    });
+  };
+}
+
 export const OE_SPAWN_TAINTED_ATTR = "oe_spawn_tainted";
 
 export async function dispatchTaskWindow(input: {
@@ -359,9 +375,9 @@ export async function dispatchTaskWindow(input: {
   readonly tainted: boolean;
   readonly grain?: "task" | "thread";
 }): Promise<void> {
-  if (!rememberedReceive) {
+  if (!crossProcessDispatchAvailable()) {
     throw new Error(
-      "spawn_task: no live cross-surface dispatch is available on this instance yet — retry from a message-driven turn (the async worker seam is armed by the first webhook a process handles).",
+      "spawn_task: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured receive) and the self-dispatch route is not configured (set OE_SPAWN_DISPATCH_SECRET; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
     );
   }
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
@@ -371,7 +387,7 @@ export async function dispatchTaskWindow(input: {
   const attributes: Record<string, unknown> = { ...(input.parentAuthAttributes ?? {}) };
   attributes[OE_GRAIN_ATTR] = input.grain ?? "task";
   if (input.tainted) attributes[OE_SPAWN_TAINTED_ATTR] = "true";
-  await divertToUnifiedWindow(rememberedReceive, {
+  await deliverUnifiedDispatch({
     message: input.message,
     token: input.token,
     window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
@@ -389,11 +405,11 @@ export async function dispatchWindowWake(input: {
   readonly authAttributes: Record<string, unknown>;
   readonly excludeTaskId?: string;
 }): Promise<boolean> {
-  if (!rememberedReceive) return false;
+  if (!crossProcessDispatchAvailable()) return false;
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
   if (!surfaceKey) return false;
   try {
-    await divertToUnifiedWindow(rememberedReceive, {
+    await deliverUnifiedDispatch({
       message: input.message,
       token: input.token,
       window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
