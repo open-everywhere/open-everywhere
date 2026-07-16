@@ -319,6 +319,10 @@ export function currentWakeId(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
 }
 
+export function currentWindowToken(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_window_token", "oeWindowToken"]);
+}
+
 export function currentTurnAddressing(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_addressing", "oeAddressing"]);
 }

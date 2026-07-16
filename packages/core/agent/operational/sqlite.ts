@@ -120,10 +120,12 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, channel_key, thread_key)
     );
     CREATE TABLE IF NOT EXISTS task_result (
-      org_id      TEXT NOT NULL,
-      task_id     TEXT NOT NULL,              -- the unique one-shot task window token (per-call nonce)
-      result_json TEXT NOT NULL,              -- {summary, artifacts?, error?} (opaque to the store)
-      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      org_id       TEXT NOT NULL,
+      task_id      TEXT NOT NULL,             -- the unique one-shot task window token (per-call nonce)
+      result_json  TEXT NOT NULL,             -- {summary, artifacts?, error?} (opaque to the store)
+      created_at   TEXT NOT NULL,             -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      caller_token TEXT,                      -- the delegating seat's standing window token (F1 reader key); NULL = unaddressable (degrade flag / pre-migration)
+      delivered_at TEXT,                      -- ISO-8601 when the result reached the caller; NULL = undelivered (reader recovers)
       PRIMARY KEY (org_id, task_id)
     );
     CREATE TABLE IF NOT EXISTS pending_actions (
@@ -203,6 +205,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE channel_session ADD COLUMN input_tokens_total INTEGER",
     "ALTER TABLE channel_session ADD COLUMN first_wake_at TEXT",
     "ALTER TABLE channel_session ADD COLUMN handoff_note TEXT",
+
+    "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
+    "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -859,16 +864,29 @@ export const sqliteOperationalStore: OperationalStore = {
     return getDb().prepare("DELETE FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(org, channelKey, threadKey).changes > 0;
   },
 
-  async putTaskResult(org, taskId, resultJson, at, ttlMs) {
+  async putTaskResult(org, taskId, resultJson, at, ttlMs, callerToken) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     handle
       .prepare(
-        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at, caller_token = excluded.caller_token`,
       )
-      .run(org, taskId, resultJson, at);
+      .run(org, taskId, resultJson, at, callerToken ?? null);
+  },
+
+  async putTaskResultIfAbsent(org, taskId, resultJson, at, ttlMs, callerToken) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+    const info = handle
+      .prepare(
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at, caller_token) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, task_id) DO NOTHING`,
+      )
+      .run(org, taskId, resultJson, at, callerToken ?? null);
+    return info.changes > 0;
   },
 
   async getTaskResult(org, taskId) {
@@ -876,6 +894,27 @@ export const sqliteOperationalStore: OperationalStore = {
       | { result_json: string }
       | undefined;
     return row?.result_json ?? null;
+  },
+
+  async deleteTaskResult(org, taskId) {
+    return getDb().prepare("DELETE FROM task_result WHERE org_id = ? AND task_id = ?").run(org, taskId).changes > 0;
+  },
+
+  async listUndeliveredTaskResults(org, callerToken, limit) {
+    const rows = getDb()
+      .prepare(
+        `SELECT task_id, result_json, created_at FROM task_result
+         WHERE org_id = ? AND caller_token = ? AND delivered_at IS NULL
+         ORDER BY created_at ASC LIMIT ?`,
+      )
+      .all(org, callerToken, limit) as { task_id: string; result_json: string; created_at: string }[];
+    return rows.map((r) => ({ taskId: r.task_id, resultJson: r.result_json, createdAt: r.created_at }));
+  },
+
+  async markTaskResultDelivered(org, taskId, at) {
+    getDb()
+      .prepare("UPDATE task_result SET delivered_at = ? WHERE org_id = ? AND task_id = ? AND delivered_at IS NULL")
+      .run(at, org, taskId);
   },
 
   async addPendingAction(row) {

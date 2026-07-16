@@ -16,20 +16,18 @@ import {
 } from "../channels/window-key.js";
 import { recordThreadOwner, resolveThreadOwner } from "../channels/thread-ownership.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { resolveOwnWindowToken, deterministicChildWakeId } from "../access/oneshot-spawn.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 import { appendAudit } from "../audit/audit.js";
 
 function ownWindowKey(ctx: BindableContext): WindowKey | undefined {
-  const raw = ctx.channel?.continuationToken;
-  if (typeof raw !== "string") return undefined;
-  const stripped = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
-  return parseWindowToken(stripped);
+  const token = resolveOwnWindowToken(ctx);
+  return token ? parseWindowToken(token) : undefined;
 }
 
 function isOwnTokenTaskOrThread(ctx: BindableContext): boolean {
-  const raw = ctx.channel?.continuationToken;
-  if (typeof raw !== "string") return false;
-  const stripped = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
-  return isTaskWindowToken(stripped) || isThreadSeatWindowToken(stripped);
+  const token = resolveOwnWindowToken(ctx);
+  return token !== undefined && (isTaskWindowToken(token) || isThreadSeatWindowToken(token));
 }
 
 export function canSpawnThreadFromWindow(ctx: BindableContext): boolean {
@@ -89,17 +87,28 @@ export default windowGated("spawn_thread_session", defineTool({
     }
 
     const tainted = untrustedIngestedThisTurn();
-    const childWakeId = mintWakeId();
-    await dispatchTaskWindow({
-      token: seatToken,
-      message: renderThreadSeatBrief(input.brief),
-      wakeId: childWakeId,
-      domain: own.domain,
-      origin,
-      parentAuthAttributes: c.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
-      tainted,
-      grain: "thread",
-    });
+    const callId = typeof (ctx as { callId?: unknown }).callId === "string" ? (ctx as { callId: string }).callId : undefined;
+    const childWakeId = callId ? deterministicChildWakeId(callId) : mintWakeId();
+    const doDispatch = () =>
+      dispatchTaskWindow({
+        token: seatToken,
+        message: renderThreadSeatBrief(input.brief),
+        wakeId: childWakeId,
+        domain: own.domain,
+        origin,
+        parentAuthAttributes: c.session?.auth?.current?.attributes as Record<string, unknown> | undefined,
+        tainted,
+        grain: "thread",
+      });
+    if (callId) {
+      await postOnce({
+        org,
+        key: outboundKey({ surface: "unified", action: "thread_seat.dispatch", stableId: callId, payload: seatToken }),
+        run: doDispatch,
+      });
+    } else {
+      await doDispatch();
+    }
 
     await recordThreadOwner(store, org, ownRef, seatToken, new Date().toISOString()).catch(() => undefined);
 
