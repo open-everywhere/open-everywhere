@@ -5,6 +5,8 @@ import {
   unifiedSupervisorOrgGateEnabled,
   unifiedSupervisorEnabled,
   unifiedDomainFor,
+  soloWindowOrgGateEnabled,
+  soloWindowEnabled,
   assertUnifiedDomainTrust,
   type Domain,
 } from "../agent/memory/domain.js";
@@ -99,6 +101,40 @@ withEnv("1", () => {
 });
 withEnv(undefined, () => ok(unifiedDomainFor(CH, [payments, orgNoGate]) === undefined, "unifiedDomainFor undefined when org gate off"));
 
+const paymentsSolo = defineDomain({
+  name: "payments",
+  channels: [CH, GH],
+  ambientSupervisor: true,
+  unifiedSupervisor: true,
+  soloWindow: true,
+});
+const orgSoloGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, soloWindowGate: true });
+const withSolo = <T>(unified: string | undefined, solo: string | undefined, fn: () => T): T => {
+  const pu = process.env.OE_UNIFIED_SUPERVISOR;
+  const ps = process.env.OE_SOLO_WINDOW;
+  const set = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
+  set("OE_UNIFIED_SUPERVISOR", unified);
+  set("OE_SOLO_WINDOW", solo);
+  try {
+    return fn();
+  } finally {
+    set("OE_UNIFIED_SUPERVISOR", pu);
+    set("OE_SOLO_WINDOW", ps);
+  }
+};
+withSolo(undefined, undefined, () => {
+  ok(soloWindowOrgGateEnabled([paymentsSolo, orgNoGate]) === false, "solo org gate OFF: no env, no org flag");
+  ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "solo flag-off ⇒ disabled (byte-identical path)");
+});
+withSolo(undefined, undefined, () => ok(soloWindowOrgGateEnabled([paymentsSolo, orgSoloGate]) === true, "solo org gate ON via org-domain soloWindowGate"));
+withSolo("1", "1", () => {
+  ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === true, "solo ON: unified org gate + solo org gate + domain soloWindow");
+  ok(soloWindowEnabled("slack/T1/C_ORPHAN", [paymentsSolo, orgNoGate]) === false, "unassigned channel never solo-windows");
+});
+withSolo("1", "0", () => ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "OE_SOLO_WINDOW=0 does not arm solo"));
+withSolo(undefined, "1", () => ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "solo requires the unified org gate too (unified off ⇒ no solo)"));
+withSolo("1", "1", () => ok(soloWindowEnabled(CH, [payments, orgNoGate]) === false, "a domain WITHOUT soloWindow stays non-solo even with both gates on"));
+
 noThrow(() => assertUnifiedDomainTrust([payments, orgGate]), "valid: explicit unified domain + ambient + org-domain gate");
 noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", channels: ["slack/T/C"] })]), "valid: a non-unified domain is unaffected");
 throws(
@@ -118,6 +154,23 @@ throws(
   "unifiedSupervisorGate on a non-org domain ⇒ fail loud (it's the org master switch)",
 );
 noThrow(() => assertUnifiedDomainTrust([orgGate]), "unifiedSupervisorGate on the org pseudo-domain is valid");
+noThrow(
+  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true })]),
+  "valid: soloWindow on a unified+ambient explicit domain",
+);
+throws(
+  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], ambientSupervisor: true, soloWindow: true })]),
+  "soloWindow WITHOUT unifiedSupervisor ⇒ fail loud (it is a delivery mode OF the unified supervisor)",
+);
+throws(
+  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true } as Domain)]),
+  "soloWindow on the org pseudo-domain ⇒ fail loud (the 'solo-window everything' footgun)",
+);
+throws(
+  () => assertUnifiedDomainTrust([defineDomain({ name: "t", channels: ["slack/T/C"], soloWindowGate: true })]),
+  "soloWindowGate on a non-org domain ⇒ fail loud (it's the org master switch)",
+);
+noThrow(() => assertUnifiedDomainTrust([orgSoloGate]), "soloWindowGate on the org pseudo-domain is valid");
 
 const TOK = unifiedSupervisorToken("payments", 3);
 ok(TOK === "oe-dom:payments:oe-sup:g3", "unified token shape oe-dom:<domain>:oe-sup:g<gen>");

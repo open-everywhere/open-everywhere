@@ -49,6 +49,8 @@ export interface Domain {
   readonly unifiedSupervisorGate?: boolean;
   readonly crossSurfaceWindow?: boolean;
   readonly crossSurfaceWindowGate?: boolean;
+  readonly soloWindow?: boolean;
+  readonly soloWindowGate?: boolean;
   readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
@@ -130,6 +132,18 @@ export function crossSurfaceWindowEnabled(channelKey: string, domains: readonly 
   return domainForChannel(channelKey, domains)?.crossSurfaceWindow === true;
 }
 
+export function soloWindowOrgGateEnabled(domains: readonly Domain[]): boolean {
+  const env = (process.env.OE_SOLO_WINDOW ?? "").trim().toLowerCase();
+  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
+  return criteriaDomain("org", domains)?.soloWindowGate === true;
+}
+
+export function soloWindowEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  if (!soloWindowOrgGateEnabled(domains)) return false;
+  if (!unifiedSupervisorEnabled(channelKey, domains)) return false;
+  return domainForChannel(channelKey, domains)?.soloWindow === true;
+}
+
 export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   const bad: string[] = [];
   for (const d of domains) {
@@ -164,6 +178,23 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
     if (d.crossSurfaceWindowGate === true && d.match !== "org") {
       bad.push(
         `  "${d.name}" sets crossSurfaceWindowGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_CROSS_SURFACE_WINDOW=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
+      );
+    }
+    if (d.soloWindow === true) {
+      if (isPseudo) {
+        bad.push(
+          `  "${d.name}" (match "${d.match}") must not set soloWindow — the solo single-context window is a TEAM-section feature, never a pseudo-domain (same footgun as unifiedSupervisor)`,
+        );
+      }
+      if (d.unifiedSupervisor !== true) {
+        bad.push(
+          `  "${d.name}" sets soloWindow but not unifiedSupervisor — the solo single-context window is a delivery mode OF the unified supervisor, so it REQUIRES unifiedSupervisor: true`,
+        );
+      }
+    }
+    if (d.soloWindowGate === true && d.match !== "org") {
+      bad.push(
+        `  "${d.name}" sets soloWindowGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_SOLO_WINDOW=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
       );
     }
   }
