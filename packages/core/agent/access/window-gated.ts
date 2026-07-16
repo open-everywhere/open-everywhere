@@ -10,7 +10,7 @@ export interface GatedToolEntry {
 }
 import { windowGrainOf, currentWakeId, deploymentOrg, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
-import { parseWindowToken } from "../channels/window-key.js";
+import { classifySessionId } from "../channels/window-key.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
@@ -30,10 +30,11 @@ function grainOf(ctx: BindableContext): WindowGrain {
 function domainLabelOf(ctx: BindableContext): string {
   try {
     const raw = ctx.channel?.continuationToken;
+    const sid = classifySessionId(raw);
+    if (sid.kind === "window" || sid.kind === "task" || sid.kind === "thread-seat") return sid.key.domain;
+    if (sid.kind === "container-supervisor") return sid.containerKey.length > 0 ? sid.containerKey : "unknown";
     if (typeof raw !== "string") return "unknown";
     const token = raw.startsWith("unified:") ? raw.slice("unified:".length) : raw;
-    const parsed = parseWindowToken(token);
-    if (parsed) return parsed.domain;
     const suffix = token.lastIndexOf(":oe-sup:g");
     return suffix > 0 ? token.slice(0, suffix) : "unknown";
   } catch {

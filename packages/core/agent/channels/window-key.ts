@@ -79,3 +79,40 @@ export function isThreadSeatWindowToken(token: unknown): boolean {
   const key = parseWindowToken(token);
   return key !== undefined && isThreadSeatWindowId(key.windowId);
 }
+
+const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)$/;
+
+const UNIFIED_SEND_PREFIX = "unified:";
+
+export type SessionId =
+  | { kind: "window"; grain: "standing"; key: WindowKey }
+  | { kind: "task"; grain: "task"; key: WindowKey; nonce?: string }
+  | { kind: "thread-seat"; grain: "thread"; key: WindowKey }
+  | { kind: "container-supervisor"; grain: "standing"; containerKey: string; generation: number }
+  | { kind: "native"; grain: "native" };
+
+export function classifySessionId(token: unknown): SessionId {
+  if (typeof token !== "string") return { kind: "native", grain: "native" };
+  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+  const key = parseWindowToken(raw);
+  if (key) {
+    if (isTaskWindowId(key.windowId)) return { kind: "task", grain: "task", key };
+    if (isThreadSeatWindowId(key.windowId)) return { kind: "thread-seat", grain: "thread", key };
+    return { kind: "window", grain: "standing", key };
+  }
+  const sup = SUPERVISOR_SUFFIX_RE.exec(raw);
+  if (sup) {
+    const idx = raw.lastIndexOf(":oe-sup:g");
+    return {
+      kind: "container-supervisor",
+      grain: "standing",
+      containerKey: idx > 0 ? raw.slice(0, idx) : "",
+      generation: Number(sup[1]),
+    };
+  }
+  return { kind: "native", grain: "native" };
+}
+
+export function isSupervisorShapedToken(token: unknown): boolean {
+  return classifySessionId(token).kind !== "native";
+}

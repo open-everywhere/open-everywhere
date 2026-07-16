@@ -7,7 +7,7 @@ import { discordMode, discordVisibility } from "../channels/discord-identity.js"
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { notionMode, notionVisibility } from "../channels/notion-identity.js";
 import { isVouchedInternal } from "./trust.js";
-import { isTaskWindowToken, isThreadSeatWindowToken, parseWindowToken } from "../channels/window-key.js";
+import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -340,15 +340,8 @@ export function assertTurnSurface(ctx: BindableContext, surface: string): void {
 
 export type WindowGrain = "standing" | "task" | "native" | "thread";
 
-const STANDING_TOKEN_SUFFIX_RE = /(?:^|:)oe-sup:g\d+$/;
-
 function classifyTokenGrain(token: unknown): WindowGrain {
-  if (typeof token !== "string") return "native";
-  const raw = token.startsWith("unified:") ? token.slice("unified:".length) : token;
-  if (isTaskWindowToken(raw)) return "task";
-  if (isThreadSeatWindowToken(raw)) return "thread";
-  if (STANDING_TOKEN_SUFFIX_RE.test(raw)) return "standing";
-  return "native";
+  return classifySessionId(token).grain;
 }
 
 export function windowGrainOf(ctx: BindableContext): WindowGrain {
