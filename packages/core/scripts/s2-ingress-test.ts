@@ -1,0 +1,226 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-s2-ingress-")), "ops.sqlite3");
+delete process.env.OE_ORG;
+delete process.env.OE_ONESHOT_AGENT;
+
+import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
+import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
+import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
+import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
+import { getOperationalStore } from "../agent/operational/provider.js";
+import { deploymentOrg } from "../agent/identity/binding.js";
+import { readAudit } from "../agent/audit/audit.js";
+import type { RouteHandlerArgs } from "eve/channels";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => { assert.ok(cond, label); n++; };
+const eq = (a: unknown, b: unknown, label: string) => { assert.deepStrictEqual(a, b, label); n++; };
+
+const ORG = deploymentOrg();
+const store = getOperationalStore();
+const DOMAIN = "payments";
+const GEN = 3;
+const STANDING = formatWindowToken({ domain: DOMAIN, windowId: DOMAIN, generation: GEN });
+const ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: "C1", threadTs: "170.5" };
+const REF = unifiedThreadRef(ORIGIN);
+const SEAT = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN });
+const TASK = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId(REF.channelKey, REF.threadKey), generation: GEN });
+const SURFACE_KEY = "slack/T1/C1";
+
+interface ReceivedWake { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }
+const received: ReceivedWake[] = [];
+let failOnToken: string | undefined;
+const captureReceive = (async (_ch: unknown, options: { message: string; target: unknown; auth: unknown }) => {
+  const target = options.target as UnifiedReceiveTarget;
+  if (failOnToken !== undefined && target.token === failOnToken) throw new Error("injected owner-delivery failure");
+  received.push({ message: options.message, target, auth: options.auth as ReceivedWake["auth"] });
+  return undefined;
+}) as unknown as RouteHandlerArgs["receive"];
+
+const inbound = (wakeId: string, token = STANDING, origin: UnifiedWakeOrigin = ORIGIN) => ({
+  message: "<wake>hello</wake>",
+  token,
+  window: { wakeId, origin, addressing: "direct-mention" as const },
+  surfaceKey: SURFACE_KEY,
+  auth: { attributes: { team_id: "T1", channel_id: "C1" } },
+});
+
+const ingressAudit = () => readAudit({ org: ORG, action: "thread.ingress_routed" });
+
+async function withFlag<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env[OE_ONESHOT_AGENT_ENV];
+  if (value === undefined) delete process.env[OE_ONESHOT_AGENT_ENV];
+  else process.env[OE_ONESHOT_AGENT_ENV] = value;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env[OE_ONESHOT_AGENT_ENV];
+    else process.env[OE_ONESHOT_AGENT_ENV] = prev;
+  }
+}
+
+console.log("1. flag-off byte-identical passthrough:");
+{
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  const wakeId = mintWakeId();
+  await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  await divertToUnifiedWindow(captureReceive, inbound(wakeId));
+  eq(received.length, 2, "flag off: exactly one delivery per divert (no owner re-dispatch)");
+  eq(received[0], received[1], "flag off: the inbound variant's delivery is BYTE-IDENTICAL to the raw divert's (same target, same stamped auth) despite a live owner row");
+  eq(received[0].target.token, STANDING, "flag off: delivered to the STANDING token");
+  eq((await ingressAudit()).length, 0, "flag off: NO thread.ingress_routed audit row (nothing consulted)");
+  received.length = 0;
+}
+
+console.log("2. no-owner passthrough (flag on):");
+await withFlag("1", async () => {
+  await clearThreadOwner(store, ORG, REF);
+  const wakeId = mintWakeId();
+  await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  await divertToUnifiedWindow(captureReceive, inbound(wakeId));
+  eq(received[0], received[1], "no owner: the delivery is byte-identical to the raw divert's (standing token, standing grain)");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "standing", "no owner: the stamped grain is the divert default (standing)");
+  eq((await ingressAudit()).length, 0, "no owner: NO audit row (a plain unowned message is not an event — actions-only)");
+  received.length = 0;
+});
+
+console.log("3. owned-thread divert (thread seat):");
+await withFlag("1", async () => {
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  const wakeId = mintWakeId();
+  await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  eq(received.length, 1, "owned: exactly ONE delivery (the standing seat is NOT also woken)");
+  eq(received[0].target.token, SEAT, "owned: delivered to the OWNER (thread seat) token, not the standing seat's");
+  eq(received[0].target.wakeId, wakeId, "owned: the wakeId rides through unchanged (the reply map still keys the origin)");
+  eq(received[0].target.origin, ORIGIN, "owned: the origin (surface identity) is the standing path's exact shape — credentials/memory resolve the same");
+  eq(received[0].target.surfaceKey, SURFACE_KEY, "owned: the surfaceKey re-check input is unchanged");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "thread", "owned: oe_grain is re-stamped to the seat's NARROW grain (never widened)");
+  eq(received[0].auth.attributes?.[OE_ADDRESSING_ATTR], "direct-mention", "owned: an addressed mention keeps its owed-reply bridge on the seat");
+  eq(received[0].auth.attributes?.team_id, "T1", "owned: the surface's own auth attributes are still forwarded verbatim");
+  const rows = await ingressAudit();
+  eq(rows.length, 1, "owned: exactly one thread.ingress_routed audit row");
+  const detail = rows[0].detail as Record<string, unknown>;
+  eq(detail.routed, "owner", "audit: routed=owner");
+  eq(detail.ownerId, SEAT, "audit: ownerId names the seat token");
+  eq(detail.grain, "thread", "audit: grain=thread");
+  eq(detail.wakeId, wakeId, "audit: the row is wakeId-stamped");
+  eq(detail.channelKey, REF.channelKey, "audit: channelKey is the shared thread-ref derivation");
+  eq(detail.threadKey, REF.threadKey, "audit: threadKey is the shared thread-ref derivation");
+  ok(!("message" in detail) && !("text" in detail) && !("brief" in detail), "audit: detail carries ids/counts ONLY — never message text (house discipline)");
+  eq(rows[0].workspace, DOMAIN, "audit: workspace = the standing window's domain");
+  received.length = 0;
+});
+
+console.log("4. owned-thread divert (task worker):");
+await withFlag("1", async () => {
+  await recordThreadOwner(store, ORG, REF, TASK, new Date().toISOString());
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
+  eq(received[0].target.token, TASK, "task owner: delivered to the task token");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "task", "task owner: oe_grain=task (the wide hands the worker booted with)");
+  received.length = 0;
+});
+
+console.log("5. stale-owner fallback (rotation):");
+await withFlag("1", async () => {
+  const staleSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN - 1 });
+  await recordThreadOwner(store, ORG, REF, staleSeat, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  const wakeId = mintWakeId();
+  await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  eq(received.length, 1, "stale: exactly one delivery (never dropped)");
+  eq(received[0].target.token, STANDING, "stale: a rotated-generation owner is IGNORED — the standing seat wakes");
+  eq(await resolveThreadOwner(store, ORG, REF), null, "stale: the dead row was lazily REAPED (generation-bump GC)");
+  const rows = await ingressAudit();
+  eq(rows.length, before + 1, "stale: the fallback decision is audited");
+  const detail = rows[0].detail as Record<string, unknown>;
+  eq(detail.routed, "standing", "audit: routed=standing");
+  eq(detail.reason, "stale-owner", "audit: reason=stale-owner");
+  eq(detail.ownerId, staleSeat, "audit: the reaped owner is named");
+  eq(detail.reaped, true, "audit: the reap is recorded");
+  received.length = 0;
+});
+
+console.log("6. re-homed-domain fallback:");
+await withFlag("1", async () => {
+  const foreign = formatWindowToken({ domain: "treasury", windowId: threadSeatWindowId(REF.channelKey, REF.threadKey), generation: GEN });
+  await recordThreadOwner(store, ORG, REF, foreign, new Date().toISOString());
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
+  eq(received[0].target.token, STANDING, "re-homed: a foreign-domain owner never captures this window's traffic — standing wakes");
+  eq(await resolveThreadOwner(store, ORG, REF), null, "re-homed: the dead row was reaped");
+  received.length = 0;
+});
+
+console.log("7. owner-divert failure fallback:");
+await withFlag("1", async () => {
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  failOnToken = SEAT;
+  const wakeId = mintWakeId();
+  await divertInboundToUnifiedWindow(captureReceive, inbound(wakeId));
+  failOnToken = undefined;
+  eq(received.length, 1, "failure: the message still lands (exactly once, on the fallback)");
+  eq(received[0].target.token, STANDING, "failure: the fallback delivery targets the STANDING seat");
+  const rows = await ingressAudit();
+  eq(rows.length, before + 1, "failure: the fallback is audited");
+  const detail = rows[0].detail as Record<string, unknown>;
+  eq(detail.routed, "standing", "audit: routed=standing");
+  eq(detail.reason, "owner-divert-failed", "audit: reason=owner-divert-failed");
+  eq(detail.ownerId, SEAT, "audit: the failed owner is named");
+  ok(typeof detail.error === "string" && (detail.error as string).includes("injected"), "audit: the (token-free) error rides for diagnosis");
+  ok(await resolveThreadOwner(store, ORG, REF) === SEAT, "failure: the owner row is NOT reaped (the owner may recover; TTL/complete_thread still clear it)");
+  await clearThreadOwner(store, ORG, REF);
+  received.length = 0;
+});
+
+console.log("8. non-standing target passthrough:");
+await withFlag("1", async () => {
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId(), TASK));
+  eq(received[0].target.token, TASK, "a task-token target passes through untouched (no ownership consult)");
+  eq((await ingressAudit()).length, before, "no audit row for the defensive passthrough");
+  await clearThreadOwner(store, ORG, REF);
+  received.length = 0;
+});
+
+console.log("9. channel-capture guard (top-level vs thread):");
+await withFlag("1", async () => {
+  const TOP_ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: "C1" };
+  const topRef = unifiedThreadRef(TOP_ORIGIN);
+  eq(topRef, { channelKey: "slack/C1", threadKey: "C1" }, "a top-level wake's threadKey IS the channelId fallback (why the capture was possible)");
+  const channelSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(topRef.channelKey, topRef.threadKey), generation: GEN });
+  await recordThreadOwner(store, ORG, topRef, channelSeat, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId(), STANDING, TOP_ORIGIN));
+  eq(received.length, 1, "top-level: exactly one delivery");
+  eq(received[0].target.token, STANDING, "top-level: routes STANDING unconditionally — a live channel-keyed owner row never captures top-level traffic");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "standing", "top-level: no owner grain stamped (the standing divert default)");
+  eq((await ingressAudit()).length, before, "top-level: no audit row (no lookup happened — not a routing decision)");
+  eq(await resolveThreadOwner(store, ORG, topRef), channelSeat, "top-level: the channel-keyed row is untouched (NOT reaped — no lookup by design; TTL/complete_thread clear it)");
+  received.length = 0;
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
+  eq(received[0].target.token, SEAT, "thread: a threaded message in the same channel still diverts to its thread's owner");
+  await clearThreadOwner(store, ORG, REF);
+  await clearThreadOwner(store, ORG, topRef);
+  received.length = 0;
+});
+
+console.log("10. isThreadScopedWakeOrigin predicate:");
+{
+  eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1", threadTs: "170.5" }), true, "slack: threadTs present ⇒ thread-scoped");
+  eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1" }), false, "slack: no threadTs ⇒ top-level (standing's domain)");
+  eq(isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x", replyToActivityId: "act1" }), true, "teams: replyToActivityId present ⇒ the reply chain is the thread");
+  eq(isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x" }), false, "teams: no reply-chain root ⇒ a plain conversation send (top-level)");
+  eq(isThreadScopedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 7 }), true, "github: an issue IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "linear", issueId: "iss1", agentSessionId: "as1" }), true, "linear: an issue IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "notion", discussionId: "d1" }), true, "notion: a discussion IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "discord", channelId: "CH1", guildId: "G1" }), false, "discord: no positive thread signal on the origin ⇒ never routes (an adopter must extend the origin first)");
+}
+
+console.log(`s2-ingress-test: ${n} assertions passed`);

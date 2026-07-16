@@ -1,4 +1,4 @@
-import { parseWindowToken, isTaskWindowId } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId } from "./window-key.js";
 import type { UnifiedThreadRef } from "./unified-window.js";
 
 export const THREAD_OWNER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,12 +29,17 @@ export async function clearThreadOwner(store: ThreadOwnershipStore, org: string,
   }
 }
 
-export type ThreadRoute = { readonly kind: "task"; readonly token: string } | { readonly kind: "standing" };
+export type ThreadRoute =
+  | { readonly kind: "task"; readonly token: string; readonly grain: "task" | "thread" }
+  | { readonly kind: "standing" };
 
-export function routeThreadMessage(ownerToken: string | null, liveGeneration?: number): ThreadRoute {
+export function routeThreadMessage(ownerToken: string | null, liveGeneration?: number, domain?: string): ThreadRoute {
   if (!ownerToken) return { kind: "standing" };
   const key = parseWindowToken(ownerToken);
-  if (!key || !isTaskWindowId(key.windowId)) return { kind: "standing" };
+  if (!key) return { kind: "standing" };
+  const grain = isTaskWindowId(key.windowId) ? ("task" as const) : isThreadSeatWindowId(key.windowId) ? ("thread" as const) : undefined;
+  if (!grain) return { kind: "standing" };
   if (liveGeneration !== undefined && key.generation !== liveGeneration) return { kind: "standing" };
-  return { kind: "task", token: ownerToken };
+  if (domain !== undefined && key.domain !== domain) return { kind: "standing" };
+  return { kind: "task", token: ownerToken, grain };
 }
