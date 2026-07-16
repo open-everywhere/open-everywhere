@@ -11,7 +11,7 @@ import {
 import { shouldRotate } from "./slack-events.js";
 import { EventDedupe, ThreadFifo } from "./slack-front.js";
 import { divertToUnifiedWindow } from "./unified.js";
-import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import type { UnifiedWindowWake } from "./unified-window.js";
 import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
 import { engagementTierFor } from "../memory/domain.js";
@@ -60,7 +60,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
     const partition = resolvePartition({ channel: { kind: "teams" }, session: { auth: { current: auth } } });
     const surfaceKey = domainKeyOf(partition);
     const grain = supervisorGrainFor(surfaceKey, getConfig().loadDomains());
-    if (grain.singleWindow !== true) return null;
+    if (!grainUsesUnifiedWindow(grain)) return null;
     const tenantId = a.tenantId ?? a.conversation.tenantId;
     const facts: TeamsSingleWindowFacts = {
       scope: a.scope,

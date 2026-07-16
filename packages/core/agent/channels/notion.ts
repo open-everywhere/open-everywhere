@@ -23,7 +23,7 @@ import {
   type NotionSupervisorDispatch,
   type NotionWakeMessage,
 } from "./notion-supervisor.js";
-import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { divertToUnifiedWindow } from "./unified.js";
 
 const ROUTE = "/eve/v1/notion";
@@ -149,10 +149,11 @@ export default defineChannel<NotionState, { state: NotionState }>({
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
         const grain = notionGrainFor(d.surfaceKey);
+        const usesWindow = grainUsesUnifiedWindow(grain);
         const privacyOk =
-          grain.singleWindow === true &&
+          usesWindow &&
           (isVouchedInternal(notionWorkspaceKey(d.workspaceId ?? "unknown"), d.surfaceKey) || process.env.OE_TRUST === "internal");
-        const window = grain.singleWindow === true
+        const window = usesWindow
           ? planNotionSingleWindow(true, d.addressing === "direct", privacyOk, {
               discussionId: d.discussionId,
               pageId: d.pageId || undefined,

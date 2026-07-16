@@ -11,7 +11,7 @@ import {
   type GitHubAmbientEvent,
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
-import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import { isVouchedInternal } from "../identity/trust.js";
 import { divertToUnifiedWindow } from "./unified.js";
@@ -204,7 +204,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
   if (!githubAmbientEnabled(surfaceKey)) return;
-  const singleWindow = githubGrainFor(surfaceKey).singleWindow === true;
+  const singleWindow = grainUsesUnifiedWindow(githubGrainFor(surfaceKey));
   const vouched = githubRepoVouched(ev.owner, ev.repo);
   const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME, { treatMentionAsDirect: singleWindow, vouched });
   if (cls.addressing === "drop") {
@@ -289,7 +289,7 @@ const native: GitHubChannel = githubChannel({
   onComment: (ctx, comment) => {
     if (!githubBotMentioned(comment.body, BOT_NAME, comment.author)) return null;
     const surfaceKey = `github/${ctx.repository.owner}/${ctx.repository.name}`;
-    if (shouldSuppressNativeMention(githubGrainFor(surfaceKey).singleWindow === true, githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
+    if (shouldSuppressNativeMention(grainUsesUnifiedWindow(githubGrainFor(surfaceKey)), githubRepoVouched(ctx.repository.owner, ctx.repository.name))) {
       return null;
     }
     const auth = buildGitHubAuth({

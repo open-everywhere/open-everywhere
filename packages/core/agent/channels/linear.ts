@@ -21,7 +21,7 @@ import {
   shouldRotate,
   type LinearSupervisorDeps,
 } from "./linear-supervisor.js";
-import { supervisorGrainFor, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
 import { divertToUnifiedWindow } from "./unified.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
@@ -315,7 +315,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     { id: c.authorId, isBot: false },
     { principalFallback: true },
   );
-  const singleWindow = linearGrainFor(surfaceKey).singleWindow === true;
+  const singleWindow = grainUsesUnifiedWindow(linearGrainFor(surfaceKey));
   const ambientVouched = singleWindow && !!receive && linearTeamVouched(signal.organizationId, c.teamId);
   const ambientWindow: UnifiedWindowWake | undefined = ambientVouched
     ? {
@@ -405,7 +405,7 @@ export async function computeMentionRouting(event: LinearAgentSessionEvent, team
   }
   const routingSig = resolvedTeamId === sig.teamId ? sig : { ...sig, teamId: resolvedTeamId };
   const sk = routingSig.organizationId && resolvedTeamId ? `linear/${routingSig.organizationId}/${resolvedTeamId}` : undefined;
-  const singleWindow = sk ? linearGrainFor(sk).singleWindow === true : false;
+  const singleWindow = sk ? grainUsesUnifiedWindow(linearGrainFor(sk)) : false;
   const vouched = singleWindow && !!routingSig.organizationId && !!resolvedTeamId && linearTeamVouched(routingSig.organizationId, resolvedTeamId);
   const isPrivate = singleWindow ? (enrichedPrivate ?? (await enrichTeamPrivacy(resolvedTeamId))) : undefined;
   if (singleWindow && sk) slog(`agent-session routing ${sk}: singleWindow, vouched=${vouched}, teamPrivate=${isPrivate === true} (signal) → ${vouched ? "may divert" : "native"}`);
@@ -449,7 +449,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
     const c = await enrichComment(triggerCommentId);
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
-    if (grain.singleWindow !== true) throw new Error("singleWindow does not hold for the enriched team (config raced or team mismatch)");
+    if (!grainUsesUnifiedWindow(grain)) throw new Error("no single-context window (crossSurface/solo) holds for the enriched team (config raced or team mismatch)");
     const vouched = linearTeamVouched(organizationId, c.teamId);
     slog(`mention divert linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}): vouched=${vouched}, teamPrivate=${c.teamPrivate === true} (signal)`);
     if (!vouched) throw new Error("enriched team is not operator-vouched internal (M1 window floor) — refusing the divert");
