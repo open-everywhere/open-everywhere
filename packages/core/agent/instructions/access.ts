@@ -14,6 +14,7 @@ import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { botDisplayName } from "../channels/slack-events.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { unifiedDomainFromToken } from "../channels/unified-supervisor.js";
+import { classifySessionId } from "../channels/window-key.js";
 import type { Domain } from "../memory/domain.js";
 import {
   channelPlatform,
@@ -350,6 +351,8 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
 
   const platforms = domain ? wiredPlatforms(domain) : [];
   const name = await unifiedAgentName();
+  const sid = classifySessionId(ctx.channel?.continuationToken);
+  const soloMode = sid.kind === "window" && sid.key.windowId !== sid.key.domain;
   return [
     renderIdentity(name),
     renderUnifiedSurfaces(platforms),
@@ -358,6 +361,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     roleMd,
     accessMd,
     memoryMd,
+    ...(soloMode ? [renderChannelScope(ctx), renderNoiseDoctrine(ctx)] : []),
   ]
     .filter((s) => s.length > 0)
     .join("\n\n");

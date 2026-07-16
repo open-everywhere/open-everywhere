@@ -137,4 +137,46 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
   ok(slackMd.includes("payments-notes"), "unified block carries the domain-anchored memory index (frozen snapshot)");
 }
 
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [
+      defineDomain({
+        name: "solo-dom",
+        channels: ["slack/T_S/C_SOLO"],
+        memory: "solo-notes",
+        ambientSupervisor: true,
+        unifiedSupervisor: true,
+        crossSurfaceWindow: true,
+      }),
+      defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true }),
+    ],
+    loadSilos: () => [defineMemorySilo({ name: "solo-notes", description: "solo-domain notes", provider: "sqlite" })],
+    domainsForSurface: ({ surface }) => (surface === "C_SOLO" ? ["solo-dom"] : []),
+  });
+  const NOISE = "## Busy threads: react over reply";
+
+  const crossMd = await renderScopeMarkdown({
+    channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+  } as BindableContext);
+  ok(!crossMd.includes(NOISE), "(a) existing single-channel CROSS-surface window (degenerate token) renders today's block — NO per-surface scope leak (the trap avoided)");
+
+  const soloMd = await renderScopeMarkdown({
+    channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:win:slack/T_S/C_SOLO:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "slack" } } } },
+  } as BindableContext);
+  ok(soloMd.includes(NOISE), "(b) solo-MODE window (windowId !== domain) renders the sole source's per-surface scope (noise doctrine)");
+  ok(soloMd.startsWith(crossMd), "solo output is the unified block PLUS the appended per-surface scope (purely additive — no rewrite of the shared block)");
+
+  const soloGh = await renderScopeMarkdown({
+    channel: { kind: "channel:unified", continuationToken: "oe-dom:solo-dom:win:github/acme/x:oe-sup:g1" },
+    session: { auth: { current: { attributes: { oe_platform: "github" } } } },
+  } as BindableContext);
+  ok(!soloGh.includes(NOISE), "a non-Slack solo window adds no Slack scope (per-surface renderers fail-soft off Slack)");
+}
+
 console.log(`✓ instructions: ${passed} assertions passed`);
