@@ -45,6 +45,10 @@ eq(parseWindowToken(formatWindowToken(explicit)), explicit, "explicit key round-
 const slashWin: WindowKey = { domain: "payments", windowId: "slack/T1/C_HR", generation: 9 };
 eq(parseWindowToken(formatWindowToken(slashWin)), slashWin, "slash-bearing windowId (surface-key shape) round-trips");
 
+assert.throws(() => formatWindowToken({ domain: "d", windowId: "a:b", generation: 1 }), /colon-free/, "formatWindowToken throws on a colon-bearing windowId in the explicit :win: form");
+n++;
+eq(formatWindowToken({ domain: "a:b", windowId: "a:b", generation: 1 }), "oe-dom:a:b:oe-sup:g1", "colon-bearing domain in the degenerate (windowId === domain) form is NOT guarded — still serialises");
+
 const p = parseWindowToken("oe-dom:a:win:b:oe-sup:g1");
 ok(p?.domain === "a" && p?.windowId === "b" && p?.generation === 1, "explicit form wins over the greedy legacy match (domain=a, windowId=b, NOT domain=a:win:b)");
 

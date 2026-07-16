@@ -9,9 +9,15 @@ const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)$/;
 const LEGACY_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)$/;
 
 export function formatWindowToken(key: WindowKey): string {
-  return key.windowId === key.domain
-    ? `oe-dom:${key.domain}:oe-sup:g${key.generation}`
-    : `oe-dom:${key.domain}:win:${key.windowId}:oe-sup:g${key.generation}`;
+  if (key.windowId === key.domain) {
+    return `oe-dom:${key.domain}:oe-sup:g${key.generation}`;
+  }
+  if (key.windowId.includes(":")) {
+    throw new Error(
+      `formatWindowToken: a windowId is colon-free ([^:]+) — got windowId="${key.windowId}" (domain="${key.domain}"); sanitise colons before minting the explicit :win: form`,
+    );
+  }
+  return `oe-dom:${key.domain}:win:${key.windowId}:oe-sup:g${key.generation}`;
 }
 
 export function parseWindowToken(token: unknown): WindowKey | undefined {
