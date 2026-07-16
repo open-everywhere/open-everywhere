@@ -186,6 +186,21 @@ export function unifiedThreadRef(origin: UnifiedWakeOrigin): UnifiedThreadRef {
   }
 }
 
+export function isThreadScopedWakeOrigin(origin: UnifiedWakeOrigin): boolean {
+  switch (origin.platform) {
+    case "slack":
+      return typeof origin.threadTs === "string" && origin.threadTs.length > 0;
+    case "teams":
+      return typeof origin.replyToActivityId === "string" && origin.replyToActivityId.length > 0;
+    case "github":
+    case "linear":
+    case "notion":
+      return true;
+    case "discord":
+      return false;
+  }
+}
+
 export const OE_PLATFORM_ATTR = "oe_platform";
 export const OE_WAKE_ID_ATTR = "oe_wake_id";
 export const OE_ADDRESSING_ATTR = "oe_addressing";

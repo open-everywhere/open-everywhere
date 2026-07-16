@@ -10,7 +10,7 @@ delete process.env.OE_ONESHOT_AGENT;
 import { divertToUnifiedWindow, divertInboundToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
 import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner } from "../agent/channels/thread-ownership.js";
-import { unifiedThreadRef, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+import { unifiedThreadRef, isThreadScopedWakeOrigin, mintWakeId, OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, type UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import { formatWindowToken, taskWindowId, threadSeatWindowId } from "../agent/channels/window-key.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
 import { deploymentOrg } from "../agent/identity/binding.js";
@@ -42,10 +42,10 @@ const captureReceive = (async (_ch: unknown, options: { message: string; target:
   return undefined;
 }) as unknown as RouteHandlerArgs["receive"];
 
-const inbound = (wakeId: string, token = STANDING) => ({
+const inbound = (wakeId: string, token = STANDING, origin: UnifiedWakeOrigin = ORIGIN) => ({
   message: "<wake>hello</wake>",
   token,
-  window: { wakeId, origin: ORIGIN, addressing: "direct-mention" as const },
+  window: { wakeId, origin, addressing: "direct-mention" as const },
   surfaceKey: SURFACE_KEY,
   auth: { attributes: { team_id: "T1", channel_id: "C1" } },
 });
@@ -187,5 +187,40 @@ await withFlag("1", async () => {
   await clearThreadOwner(store, ORG, REF);
   received.length = 0;
 });
+
+console.log("9. channel-capture guard (top-level vs thread):");
+await withFlag("1", async () => {
+  const TOP_ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: "C1" };
+  const topRef = unifiedThreadRef(TOP_ORIGIN);
+  eq(topRef, { channelKey: "slack/C1", threadKey: "C1" }, "a top-level wake's threadKey IS the channelId fallback (why the capture was possible)");
+  const channelSeat = formatWindowToken({ domain: DOMAIN, windowId: threadSeatWindowId(topRef.channelKey, topRef.threadKey), generation: GEN });
+  await recordThreadOwner(store, ORG, topRef, channelSeat, new Date().toISOString());
+  const before = (await ingressAudit()).length;
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId(), STANDING, TOP_ORIGIN));
+  eq(received.length, 1, "top-level: exactly one delivery");
+  eq(received[0].target.token, STANDING, "top-level: routes STANDING unconditionally — a live channel-keyed owner row never captures top-level traffic");
+  eq(received[0].auth.attributes?.[OE_GRAIN_ATTR], "standing", "top-level: no owner grain stamped (the standing divert default)");
+  eq((await ingressAudit()).length, before, "top-level: no audit row (no lookup happened — not a routing decision)");
+  eq(await resolveThreadOwner(store, ORG, topRef), channelSeat, "top-level: the channel-keyed row is untouched (NOT reaped — no lookup by design; TTL/complete_thread clear it)");
+  received.length = 0;
+  await recordThreadOwner(store, ORG, REF, SEAT, new Date().toISOString());
+  await divertInboundToUnifiedWindow(captureReceive, inbound(mintWakeId()));
+  eq(received[0].target.token, SEAT, "thread: a threaded message in the same channel still diverts to its thread's owner");
+  await clearThreadOwner(store, ORG, REF);
+  await clearThreadOwner(store, ORG, topRef);
+  received.length = 0;
+});
+
+console.log("10. isThreadScopedWakeOrigin predicate:");
+{
+  eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1", threadTs: "170.5" }), true, "slack: threadTs present ⇒ thread-scoped");
+  eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1" }), false, "slack: no threadTs ⇒ top-level (standing's domain)");
+  eq(isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x", replyToActivityId: "act1" }), true, "teams: replyToActivityId present ⇒ the reply chain is the thread");
+  eq(isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x" }), false, "teams: no reply-chain root ⇒ a plain conversation send (top-level)");
+  eq(isThreadScopedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 7 }), true, "github: an issue IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "linear", issueId: "iss1", agentSessionId: "as1" }), true, "linear: an issue IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "notion", discussionId: "d1" }), true, "notion: a discussion IS its own thread");
+  eq(isThreadScopedWakeOrigin({ platform: "discord", channelId: "CH1", guildId: "G1" }), false, "discord: no positive thread signal on the origin ⇒ never routes (an adopter must extend the origin first)");
+}
 
 console.log(`s2-ingress-test: ${n} assertions passed`);
