@@ -146,7 +146,16 @@ async function t1bSync(): Promise<void> {
   const rows = await rowsSince(since);
   const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
   if (spawn) {
-    return record("T1b", "FAIL", `agent(sync) SPAWNED a worker (taskId=${dS(spawn, "taskId")}) but the caller seat never completed a turn within ${TIMEOUT_MS}ms — the flag was on and the model delegated, so this is a hung sync block-poll/degrade path, not model choice.`);
+    const taskId = dS(spawn, "taskId");
+    const returned = taskId ? rows.find((r) => r.action === "task.returned" && dS(r, "taskId") === taskId) : undefined;
+    if (returned) {
+      if (returned.detail?.hasError === true) {
+        return record("T1b", "FAIL", `agent(sync) worker for task ${taskId} RETURNED WITH AN ERROR (task.returned hasError=true) — the delegated work itself failed; read the worker transcript.`);
+      }
+      const delivered = returned.detail?.delivered === true;
+      return record("T1b", "PASS", `agent(sync) delegated and the worker RETURNED (task.returned${delivered ? " delivered=true" : ", delivered=false — pushed via the F1 recovery reader on the caller's next wake"}, task ${taskId}). The mechanism ran end-to-end; the inline reply exceeded ${TIMEOUT_MS}ms (session+sandbox cold-starts), so sync degraded to async — the documented MAX_WAIT fallback, not a failure. Raise AGENT_DELEG_TIMEOUT_MS to observe the inline reply.`);
+    }
+    return record("T1b", "FAIL", `agent(sync) SPAWNED a worker (task ${taskId}) but it NEVER returned (no task.returned row) within ${TIMEOUT_MS}ms — the worker session hung or failed. This is a real regression, not reply latency or model choice; read the worker transcript.`);
   }
   record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
