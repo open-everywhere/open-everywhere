@@ -9,7 +9,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
@@ -273,7 +273,7 @@ export async function divertToUnifiedWindow(
   if (oneshotAgentEnabled()) {
     try {
       const key = parseWindowToken(bareToken);
-      if (key && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId)) {
+      if (key && !isTaskWindowId(key.windowId)) {
         const delta = await collectTaskResultDelta(getOperationalStore(), deploymentOrg(), bareToken, input.excludeTaskResultId);
         if (delta) {
           message = `${message}\n\n${delta.reminder}`;
@@ -408,13 +408,16 @@ export async function dispatchWindowWake(input: {
   if (!crossProcessDispatchAvailable()) return false;
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
   if (!surfaceKey) return false;
+  const attributes = isThreadSeatWindowToken(input.token)
+    ? { ...input.authAttributes, [OE_GRAIN_ATTR]: "thread" }
+    : input.authAttributes;
   try {
     await deliverUnifiedDispatch({
       message: input.message,
       token: input.token,
       window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
       surfaceKey,
-      auth: { attributes: input.authAttributes },
+      auth: { attributes },
       ...(input.excludeTaskId ? { excludeTaskResultId: input.excludeTaskId } : {}),
     });
     return true;

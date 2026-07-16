@@ -91,7 +91,7 @@ export const REACTION_FEEDBACK_ACTION = "reaction.feedback";
 
 export async function ingestReaction(r: IngestedReaction, deps: ReactionSinkDeps): Promise<ReactionIngestOutcome> {
   deps.telemetry(r);
-  if (r.emojiClass === "negative" && r.onBotReply && deps.floatUndo) {
+  if (r.verb === "added" && r.emojiClass === "negative" && r.onBotReply && deps.floatUndo) {
     await deps.floatUndo(r);
   }
   if (!r.onBotReply) {

@@ -15,6 +15,8 @@ export const SELF_DISPATCH_SIGNATURE_HEADER = "x-oe-dispatch-signature";
 
 export const SELF_DISPATCH_MAX_BODY_BYTES = 512 * 1024;
 
+export const SELF_DISPATCH_MAX_SKEW_MS = 5 * 60 * 1000;
+
 export interface UnifiedDispatchPayload {
   readonly message: string;
   readonly context?: readonly string[];
@@ -121,6 +123,12 @@ export async function handleSelfDispatch(
   } catch {
     return json(400, { error: "invalid JSON body" });
   }
+
+  const issuedAt = (decoded as { issuedAt?: unknown } | null)?.issuedAt;
+  if (typeof issuedAt !== "number" || !Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > SELF_DISPATCH_MAX_SKEW_MS) {
+    return json(401, { error: "unauthorized: missing or stale dispatch timestamp" });
+  }
+
   const parsed = parseSelfDispatchPayload(decoded);
   if ("error" in parsed) return json(400, { error: parsed.error });
   const payload = parsed.payload;
@@ -171,7 +179,7 @@ export async function postSelfDispatch(
       "self-dispatch is not configured on this deployment — set OE_SPAWN_DISPATCH_SECRET (and OE_PUBLIC_BASE_URL when the deployment URL isn't discoverable from VERCEL_URL/VERCEL_PROJECT_PRODUCTION_URL).",
     );
   }
-  const body = JSON.stringify(payload);
+  const body = JSON.stringify({ ...payload, issuedAt: Date.now() });
   const doFetch = deps.fetchImpl ?? fetch;
   let res: Response;
   try {

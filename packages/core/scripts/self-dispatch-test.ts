@@ -73,7 +73,7 @@ const generation = parseWindowToken(standingToken)!.generation;
 const taskToken = formatWindowToken({ domain: DOMAIN, windowId: taskWindowId("slack_T1_C1", "thr1", "nonce1"), generation });
 const slackOrigin = { platform: "slack", channelId: "C1" } as const;
 
-function goodPayload(over: Partial<Record<keyof UnifiedDispatchPayload, unknown>> = {}): Record<string, unknown> {
+function goodPayload(over: Partial<Record<keyof UnifiedDispatchPayload | "issuedAt", unknown>> = {}): Record<string, unknown> {
   return {
     message: "hello from the workflow process",
     context: ["ctx: issue title"],
@@ -82,6 +82,7 @@ function goodPayload(over: Partial<Record<keyof UnifiedDispatchPayload, unknown>
     surfaceKey: SURFACE,
     auth: { attributes: { team_id: "T1", oe_grain: "task" } },
     excludeTaskResultId: "task-9",
+    issuedAt: Date.now(),
     ...over,
   };
 }
@@ -185,6 +186,11 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
     401,
     "wrong-secret signature → 401",
   );
+
+  const stale = JSON.stringify(goodPayload({ issuedAt: Date.now() - 10 * 60 * 1000 }));
+  eq((await handleSelfDispatch(mkReq(stale, signSelfDispatchBody(SECRET, stale)), fakeReceive, captureDivert, armed)).status, 401, "stale issuedAt → 401 (replay window bounded)");
+  const noTs = JSON.stringify(goodPayload({ issuedAt: undefined }));
+  eq((await handleSelfDispatch(mkReq(noTs, signSelfDispatchBody(SECRET, noTs)), fakeReceive, captureDivert, armed)).status, 401, "missing issuedAt → 401");
 
   const huge = JSON.stringify(goodPayload({ message: "x".repeat(SELF_DISPATCH_MAX_BODY_BYTES + 1) }));
   eq((await handleSelfDispatch(mkReq(huge, signSelfDispatchBody(SECRET, huge)), fakeReceive, captureDivert, armed)).status, 413, "oversized body → 413");

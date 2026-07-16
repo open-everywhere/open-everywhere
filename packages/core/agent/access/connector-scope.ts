@@ -118,8 +118,8 @@ async function grantedForCtx(ctx: BindableContext): Promise<readonly string[] | 
       const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);
       return overrides.length ? applyConnectorOverrides(base, overrides) : base;
     } catch (err) {
-      console.warn(`[open-everywhere:connector-scope] override lookup failed; using config grants only: ${String(err)}`);
-      return base;
+      console.warn(`[open-everywhere:connector-scope] override lookup failed; refusing (fail closed): ${String(err)}`);
+      return null;
     }
   } catch {
     return null;

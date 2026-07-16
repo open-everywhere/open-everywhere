@@ -7,7 +7,7 @@ export function sourceScopedToolsEnabled(): boolean {
   const raw = process.env[OE_SOURCE_SCOPED_TOOLS_ENV];
   if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false";
+  return v !== "" && v !== "0" && v !== "false" && v !== "off" && v !== "no";
 }
 
 export const OE_GENERIC_READ_VERBS_ENV = "OE_GENERIC_READ_VERBS";
@@ -16,7 +16,7 @@ export function genericReadVerbsEnabled(): boolean {
   const raw = process.env[OE_GENERIC_READ_VERBS_ENV];
   if (raw === undefined) return false;
   const v = raw.trim().toLowerCase();
-  return v !== "" && v !== "0" && v !== "false";
+  return v !== "" && v !== "0" && v !== "false" && v !== "off" && v !== "no";
 }
 
 export function sourceScopedMount(ctx: BindableContext, platform: string, domains: () => readonly Domain[]): boolean {

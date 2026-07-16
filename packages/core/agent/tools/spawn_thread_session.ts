@@ -3,7 +3,7 @@ import { z } from "zod";
 import { windowGated } from "../access/window-gated.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { currentWakeId, deploymentOrg, type BindableContext } from "../identity/binding.js";
-import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef } from "../channels/unified-window.js";
+import { resolveUnifiedWakeTarget, mintWakeId, unifiedThreadRef, isThreadScopedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchTaskWindow } from "../channels/unified.js";
 import { getOperationalStore } from "../operational/provider.js";
 import {
@@ -62,6 +62,9 @@ export default windowGated("spawn_thread_session", defineTool({
   outputSchema: z.object({ seatId: z.string(), thread: z.string(), note: z.string() }),
   async execute(input, ctx) {
     const c = ctx as BindableContext;
+    if (!oneshotAgentEnabled()) {
+      throw new Error("spawn_thread_session: delegation (OE_ONESHOT_AGENT) is disarmed on this deployment — no new thread seats can be opened.");
+    }
     if (isOwnTokenTaskOrThread(c)) {
       throw new Error("spawn_thread_session: a worker or thread seat cannot open another thread seat — no recursive thread trees. Delegate work with `agent`, or ask the channel watcher to open one.");
     }
@@ -74,6 +77,12 @@ export default windowGated("spawn_thread_session", defineTool({
     const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId) : null;
     if (!origin) {
       throw new Error("spawn_thread_session: couldn't resolve the thread that woke you — a seat must own a live thread. Try again on a message-driven turn.");
+    }
+    if (origin.platform === "discord") {
+      throw new Error("spawn_thread_session: Discord thread seats aren't supported — inbound Discord messages aren't routed to thread owners, so the seat would never wake again. Delegate the work with `agent` instead.");
+    }
+    if (!input.thread && !isThreadScopedWakeOrigin(origin)) {
+      throw new Error("spawn_thread_session: this message isn't inside a thread — a seat opened here would never be woken again (only thread-scoped messages route to owners). Reply inside the thread and spawn from there, or pass `thread` with the thread's root id.");
     }
     const ref = unifiedThreadRef(origin);
     const threadKey = input.thread && input.thread.length > 0 ? input.thread.replace(/:/g, "_") : ref.threadKey;
