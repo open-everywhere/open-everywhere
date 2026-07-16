@@ -315,7 +315,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   ok(TOOL_CONSEQUENCE.complete_task?.tier === "open", "[P0-f] complete_task stays `open`");
   eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "[P0-f] complete_task is grain-gated TASK-only");
   eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "[P0-f] complete_thread is grain-gated THREAD-only");
-  eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "[P0-f] agent mounts on the conversational-root seats that delegate (standing + thread)");
+  eq(WINDOW_GATED_TOOLS.agent, undefined, "[P0-f] agent is NOT grain-gated — STATIC + always-mounted (displaces eve's built-in `agent` subagent, which mounts iff no static authored tool claims the name); its standing/thread confinement is execute-time in tools/agent.ts");
   ok(TOOL_CONSEQUENCE.spawn === undefined && TOOL_CONSEQUENCE.dispatch === undefined && TOOL_CONSEQUENCE.delegate === undefined, "[P0-f] the primitive is spawn_task specifically — no bare spawn/dispatch/delegate alias");
 
   const perContainerCtx = {

@@ -156,25 +156,30 @@ ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_task]) === JSON.stringify(["stand
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringify(["standing"]), "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
-ok(JSON.stringify([...WINDOW_GATED_TOOLS.agent]) === JSON.stringify(["standing", "thread"]), "agent mounts on the conversational-root delegators (standing + thread)");
+ok(WINDOW_GATED_TOOLS.agent === undefined && WINDOW_UNGATED_TOOLS.has("agent"), "agent is UNGATED (static + always-mounted — the only way to displace eve's built-in `agent` subagent; grain confinement is execute-time in tools/agent.ts)");
 ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native, flag-OFF (byte-identical Stage C; the T2 narrowing to task-only is flag-ON, pinned by the crafted case below)");
 ok(
   withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 6,
-  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/return_result/agent) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below)",
+  withheldFromGrain("native").length === 5,
+  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below; agent is static/execute-guarded, not withheld)",
 );
 
 firesWith(
-  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["task"] }), u()),
-  'agent"] must be exactly ["standing","thread"]',
-  "agent scoped to the wrong grain FAILS (it mounts on the conversational-root delegators, never a task worker leaf)",
+  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing", "thread"] }), u()),
+  'WINDOW_GATED_TOOLS names "agent"',
+  "agent in the GATED table FAILS regardless of grain (a dynamic registration lets eve's built-in subagent win the name)",
+);
+firesWith(
+  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({}), u("agent")),
+  "must stay a plain static defineTool",
+  "agent UNGATED but with a dynamic (windowGated) source FAILS (the 4b static invariant — the 2026-07-16 live regression shape)",
 );
 {
-  const problems = checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing", "thread"] }), u());
-  ok(problems.length === 0, "agent scoped [standing,thread] + windowGated-wrapped is clean");
+  const problems = checkWindowGateManifest([{ name: "agent", source: "export default defineTool({/* static agent */});" }], new Map([["agent", ""]]), [], g({}), u("agent"));
+  ok(problems.length === 0, "agent STATIC + ungated is clean (the post-fix shape)");
 }
 
 firesWith(
