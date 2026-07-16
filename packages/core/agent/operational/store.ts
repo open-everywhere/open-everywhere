@@ -170,6 +170,12 @@ export interface ChannelSessionRow {
   readonly handoffNote: string | null;
 }
 
+export interface TaskResultRow {
+  readonly taskId: string;
+  readonly resultJson: string;
+  readonly createdAt: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -231,8 +237,12 @@ export interface OperationalStore {
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
   clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
 
-  putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
+  putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<void>;
+  putTaskResultIfAbsent(org: string, taskId: string, resultJson: string, at: string, ttlMs: number, callerToken?: string): Promise<boolean>;
   getTaskResult(org: string, taskId: string): Promise<string | null>;
+  deleteTaskResult(org: string, taskId: string): Promise<boolean>;
+  listUndeliveredTaskResults(org: string, callerToken: string, limit: number): Promise<readonly TaskResultRow[]>;
+  markTaskResultDelivered(org: string, taskId: string, at: string): Promise<void>;
 
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;

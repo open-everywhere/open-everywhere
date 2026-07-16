@@ -15,6 +15,7 @@ import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
+import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
 
 function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
@@ -252,11 +253,13 @@ export async function divertToUnifiedWindow(
     readonly window: UnifiedWindowWake;
     readonly surfaceKey: string;
     readonly auth: { attributes?: Record<string, unknown> };
+    readonly excludeTaskResultId?: string;
   },
 ): Promise<void> {
   rememberUnifiedReceive(receive);
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources);
+  const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
+  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken);
   const target: UnifiedReceiveTarget = {
     token: input.token,
     wakeId: input.window.wakeId,
@@ -264,7 +267,34 @@ export async function divertToUnifiedWindow(
     surfaceKey: input.surfaceKey,
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
-  await receive(channel, { message: input.message, target, auth: auth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
+  let recovered: { taskIds: readonly string[]; overflow: number } | null = null;
+  let message = input.message;
+  if (oneshotAgentEnabled()) {
+    try {
+      const key = parseWindowToken(bareToken);
+      if (key && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId)) {
+        const delta = await collectTaskResultDelta(getOperationalStore(), deploymentOrg(), bareToken, input.excludeTaskResultId);
+        if (delta) {
+          message = `${message}\n\n${delta.reminder}`;
+          recovered = { taskIds: delta.taskIds, overflow: delta.overflow };
+        }
+      }
+    } catch {
+      recovered = null;
+    }
+  }
+  await receive(channel, { message, target, auth: auth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
+  if (recovered) {
+    const org = deploymentOrg();
+    await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());
+    await appendAudit({
+      org,
+      platform: "unified",
+      workspace: parseWindowToken(bareToken)?.domain ?? "unknown",
+      action: "task.result_recovered",
+      detail: { taskIds: [...recovered.taskIds], count: recovered.taskIds.length, overflow: recovered.overflow, wakeId: input.window.wakeId },
+    }).catch(() => undefined);
+  }
 }
 
 export async function divertInboundToUnifiedWindow(
@@ -357,6 +387,7 @@ export async function dispatchWindowWake(input: {
   readonly message: string;
   readonly domain: string;
   readonly authAttributes: Record<string, unknown>;
+  readonly excludeTaskId?: string;
 }): Promise<boolean> {
   if (!rememberedReceive) return false;
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
@@ -368,6 +399,7 @@ export async function dispatchWindowWake(input: {
       window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
       surfaceKey,
       auth: { attributes: input.authAttributes },
+      ...(input.excludeTaskId ? { excludeTaskResultId: input.excludeTaskId } : {}),
     });
     return true;
   } catch {
