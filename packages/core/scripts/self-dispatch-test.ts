@@ -28,6 +28,7 @@ import {
   selfDispatchConfigured,
   signSelfDispatchBody,
   parseSelfDispatchPayload,
+  readCappedBody,
   handleSelfDispatch,
   postSelfDispatch,
   type UnifiedDispatchPayload,
@@ -217,7 +218,9 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   const boom = async (): Promise<void> => {
     throw new Error("receive refused");
   };
-  eq((await handleSelfDispatch(mkReq(body, sig), fakeReceive, boom, armed)).status, 500, "divert failure → 500");
+  const boomBody = JSON.stringify(goodPayload({ message: "divert-failure probe", issuedAt: Date.now() }));
+  const boomSig = signSelfDispatchBody(SECRET, boomBody);
+  eq((await handleSelfDispatch(mkReq(boomBody, boomSig), fakeReceive, boom, armed)).status, 500, "divert failure → 500");
 
   const rows = (await readAudit({ org: "acme" })).filter((e) => e.action === "unified.self_dispatch");
   ok(rows.length >= 1, "authenticated dispatch is self-audited (unified.self_dispatch)");
@@ -392,5 +395,58 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
 }
 
 globalThis.fetch = realFetch;
+
+console.log("9. hop idempotency: identical re-delivery deduped, wakeId-reusing redrive NOT suppressed:");
+{
+  const hopDiverts: UnifiedDispatchPayload[] = [];
+  const countDivert = async (_r: RouteHandlerArgs["receive"], input: UnifiedDispatchPayload): Promise<void> => {
+    hopDiverts.push(input);
+  };
+  const mk = (b: string) => mkReq(b, signSelfDispatchBody(SECRET, b));
+
+  const hopBody = JSON.stringify(goodPayload({ message: "hop-dedupe probe", window: { wakeId: "hop-w", origin: slackOrigin }, issuedAt: Date.now() }));
+  const first = await handleSelfDispatch(mk(hopBody), fakeReceive, countDivert, armed);
+  const second = await handleSelfDispatch(mk(hopBody), fakeReceive, countDivert, armed);
+  eq(first.status, 200, "first delivery of a signed dispatch → 200");
+  eq(second.status, 200, "identical re-delivery still → 200 (idempotent success, not an error)");
+  ok(((await second.json()) as { deduped?: boolean }).deduped === true, "the re-delivery is flagged deduped");
+  eq(hopDiverts.length, 1, "the identical HTTP re-delivery diverts EXACTLY ONCE (double-spawn prevented)");
+
+  await new Promise((r) => setTimeout(r, 2));
+  const redriveBody = JSON.stringify(goodPayload({ message: "corrective redrive", window: { wakeId: "hop-w", origin: slackOrigin }, issuedAt: Date.now() }));
+  const redrive = await handleSelfDispatch(mk(redriveBody), fakeReceive, countDivert, armed);
+  eq(redrive.status, 200, "the wakeId-reusing redrive → 200");
+  ok(((await redrive.json()) as { deduped?: boolean }).deduped !== true, "the redrive is NOT flagged deduped");
+  eq(hopDiverts.length, 2, "the redrive (same wakeId, fresh issuedAt) is NOT suppressed — it diverts");
+  eq(hopDiverts[1].window.wakeId, "hop-w", "the redrive kept the original wakeId (proves wakeId alone can't be the dedup key)");
+}
+
+console.log("10. bounded body read: oversized rejected before parse, normal body round-trips:");
+{
+  const big = "y".repeat(SELF_DISPATCH_MAX_BODY_BYTES + 100);
+  ok("tooLarge" in (await readCappedBody(new Request("https://x/", { method: "POST", body: big }), SELF_DISPATCH_MAX_BODY_BYTES)), "readCappedBody refuses an oversized body");
+  const small = JSON.stringify({ a: "b" });
+  const readSmall = await readCappedBody(new Request("https://x/", { method: "POST", body: small }), SELF_DISPATCH_MAX_BODY_BYTES);
+  ok("body" in readSmall && readSmall.body === small, "readCappedBody returns a normal body byte-for-byte");
+
+  const hugeInvalid = "{".repeat(SELF_DISPATCH_MAX_BODY_BYTES + 1);
+  eq(
+    (await handleSelfDispatch(mkReq(hugeInvalid, signSelfDispatchBody(SECRET, hugeInvalid)), fakeReceive, captureDivert, armed)).status,
+    413,
+    "oversized body → 413 BEFORE parse (size short-circuits, not a 400)",
+  );
+  const okDivert: UnifiedDispatchPayload[] = [];
+  const capDivert = async (_r: RouteHandlerArgs["receive"], i: UnifiedDispatchPayload): Promise<void> => {
+    okDivert.push(i);
+  };
+  const normalBody = JSON.stringify(goodPayload({ message: "normal-size body", window: { wakeId: "sz-w", origin: slackOrigin }, issuedAt: Date.now() }));
+  eq(
+    (await handleSelfDispatch(mkReq(normalBody, signSelfDispatchBody(SECRET, normalBody)), fakeReceive, capDivert, armed)).status,
+    200,
+    "a normal-size signed body passes the bounded read → 200",
+  );
+  eq(okDivert.length, 1, "the normal body reached the divert (bounded read is transparent for in-range bodies)");
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`\n✓ self-dispatch: ${n} assertions passed (route fail-closed + client + cold/warm caller fallback + loop-back)\n`);
+console.log(`\n✓ self-dispatch: ${n} assertions passed (route fail-closed + client + cold/warm caller fallback + loop-back + hop-dedupe + bounded read)\n`);

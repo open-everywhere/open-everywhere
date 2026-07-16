@@ -8,6 +8,7 @@ import { isUnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js
 import { parseWindowToken } from "./window-key.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { postOnce, outboundKey } from "../operational/post-once.js";
 
 export const SELF_DISPATCH_PATH = "/eve/v1/unified/dispatch";
 
@@ -99,6 +100,41 @@ export function parseSelfDispatchPayload(v: unknown): { payload: UnifiedDispatch
 
 export type SelfDispatchDivert = (receive: RouteHandlerArgs["receive"], input: UnifiedDispatchPayload) => Promise<void>;
 
+export async function readCappedBody(req: Request, maxBytes: number): Promise<{ body: string } | { tooLarge: true }> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null) {
+    const n = Number(declared);
+    if (Number.isFinite(n) && n > maxBytes) return { tooLarge: true };
+  }
+  const stream = req.body;
+  if (!stream) {
+    const body = await req.text();
+    return Buffer.byteLength(body, "utf8") > maxBytes ? { tooLarge: true } : { body };
+  }
+  const reader = stream.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return { tooLarge: true };
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+    }
+  }
+  return { body: Buffer.concat(chunks).toString("utf8") };
+}
+
 export async function handleSelfDispatch(
   req: Request,
   receive: RouteHandlerArgs["receive"],
@@ -108,10 +144,11 @@ export async function handleSelfDispatch(
   const secret = selfDispatchSecret(env);
   if (!secret) return new Response("not found", { status: 404 });
 
-  const rawBody = await req.text();
-  if (Buffer.byteLength(rawBody, "utf8") > SELF_DISPATCH_MAX_BODY_BYTES) {
+  const read = await readCappedBody(req, SELF_DISPATCH_MAX_BODY_BYTES);
+  if ("tooLarge" in read) {
     return json(413, { error: `payload exceeds ${SELF_DISPATCH_MAX_BODY_BYTES} bytes` });
   }
+  const rawBody = read.body;
 
   if (!verifyWebhookSignature(secret, rawBody, req.headers.get(SELF_DISPATCH_SIGNATURE_HEADER))) {
     return json(401, { error: "unauthorized: missing or invalid dispatch signature" });
@@ -159,12 +196,22 @@ export async function handleSelfDispatch(
     },
   }).catch(() => undefined);
 
+  const hopKey = outboundKey({ surface: "unified", channel: payload.surfaceKey, action: "self-dispatch", payload: rawBody });
   try {
-    await divert(receive, payload);
+    const outcome = await postOnce<"dispatched" | "deduped">({
+      org,
+      key: hopKey,
+      ttlMs: SELF_DISPATCH_MAX_SKEW_MS,
+      run: async () => {
+        await divert(receive, payload);
+        return "dispatched";
+      },
+      skipped: () => "deduped",
+    });
+    return json(200, { ok: true, wakeId: payload.window.wakeId, ...(outcome === "deduped" ? { deduped: true } : {}) });
   } catch (err) {
     return json(500, { error: `dispatch failed: ${err instanceof Error ? err.message : String(err)}` });
   }
-  return json(200, { ok: true, wakeId: payload.window.wakeId });
 }
 
 export async function postSelfDispatch(
@@ -180,20 +227,25 @@ export async function postSelfDispatch(
     );
   }
   const body = JSON.stringify({ ...payload, issuedAt: Date.now() });
+  const url = `${base}${SELF_DISPATCH_PATH}`;
+  const headers = { "content-type": "application/json", [SELF_DISPATCH_SIGNATURE_HEADER]: signSelfDispatchBody(secret, body) };
   const doFetch = deps.fetchImpl ?? fetch;
-  let res: Response;
-  try {
-    res = await doFetch(`${base}${SELF_DISPATCH_PATH}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", [SELF_DISPATCH_SIGNATURE_HEADER]: signSelfDispatchBody(secret, body) },
-      body,
-      signal: AbortSignal.timeout(deps.timeoutMs ?? 15_000),
-    });
-  } catch (err) {
-    throw new Error(`self-dispatch POST to ${base}${SELF_DISPATCH_PATH} failed: ${err instanceof Error ? err.message : String(err)}`);
+  const timeoutMs = deps.timeoutMs ?? 15_000;
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let res: Response;
+    try {
+      res = await doFetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      lastErr = err;
+      continue;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`self-dispatch POST to ${url} returned ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return;
   }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`self-dispatch POST to ${base}${SELF_DISPATCH_PATH} returned ${res.status}: ${text.slice(0, 200)}`);
-  }
+  throw new Error(`self-dispatch POST to ${url} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 }
