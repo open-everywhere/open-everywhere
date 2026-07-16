@@ -71,21 +71,28 @@ function refusalFor(name: string, grain: WindowGrain): string {
   return `${name} is not available on a ${grain} session.`;
 }
 
+export async function grainBackstopAtExecute(
+  name: string,
+  allowed: readonly WindowGrain[],
+  ctx: BindableContext,
+  refusal: (grain: WindowGrain) => string = (grain) => refusalFor(name, grain),
+): Promise<void> {
+  const grain = grainOf(ctx);
+  if (allowed.includes(grain)) return;
+  await auditWindowToolGate({
+    org: deploymentOrg(),
+    domain: domainLabelOf(ctx),
+    grain,
+    withheld: [name],
+    wakeId: currentWakeId(ctx) ?? null,
+    sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
+  }).catch(() => undefined);
+  throw new Error(refusal(grain));
+}
+
 function gatedExecute(name: string, entry: GatedToolEntry): (input: unknown, ctx: unknown) => Promise<unknown> {
   return async (input: unknown, ctx: unknown) => {
-    const c = ctx as BindableContext;
-    const grain = grainOf(c);
-    if (!WINDOW_GATED_TOOLS[name]?.includes(grain)) {
-      await auditWindowToolGate({
-        org: deploymentOrg(),
-        domain: domainLabelOf(c),
-        grain,
-        withheld: [name],
-        wakeId: currentWakeId(c) ?? null,
-        sessionId: (c as { session?: { id?: string } }).session?.id ?? null,
-      }).catch(() => undefined);
-      throw new Error(refusalFor(name, grain));
-    }
+    await grainBackstopAtExecute(name, WINDOW_GATED_TOOLS[name] ?? [], ctx as BindableContext);
     return entry.execute(input, ctx);
   };
 }
