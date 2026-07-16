@@ -5,6 +5,7 @@ import { ingestUntrusted } from "../access/untrusted.js";
 import { assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
 import { sourceScopedMount } from "../access/source-scoped-mount.js";
 import { getConfig } from "../access/config.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const MAX_CHARS = 20_000;
 const MAX_BLOCKS = 200;
@@ -14,11 +15,7 @@ function notionApiKey(): string | undefined {
   return k && k.length > 0 ? k : undefined;
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
-      return defineTool({
+const readNotionPageEntry = defineTool({
         description:
           "Read the text of a Notion page (this doc, or another page shared with the integration). " +
           "Use it when a reply needs the doc's own content — to answer a question about the page or " +
@@ -52,7 +49,14 @@ export default defineDynamic({
           const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}`;
           return { type: "text", value: ingestUntrusted(body, { source: `notion page ${output.page}` }) };
         },
-      });
+});
+preRegisterDynamicEntry("read_notion_page", "_single", readNotionPageEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (!sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
+      return readNotionPageEntry;
     },
   },
 });

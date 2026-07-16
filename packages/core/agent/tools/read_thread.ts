@@ -6,6 +6,7 @@ import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { resolveReadAdapter, renderThreadBody, threadReadSource, SUPPORTED_READ_PLATFORMS } from "../channels/channel-read.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
 const MAX_LIMIT = 200;
@@ -18,12 +19,7 @@ function safeDomains(): readonly Domain[] {
   }
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!genericReadVerbsEnabled()) return null;
-      if (resolveWindowSources(ctx as BindableContext, safeDomains()).length === 0) return null;
-      return defineTool({
+const readThreadEntry = defineTool({
   description:
     "Read all replies in a thread this window's memory domain grants — on any of the window's source " +
     `surfaces (${SUPPORTED_READ_PLATFORMS.join(", ")}). Set target.platform (defaults to the surface this ` +
@@ -65,7 +61,15 @@ export default defineDynamic({
   toModelOutput(output) {
     return ingestUntrustedModelOutput(renderThreadBody(output), { source: threadReadSource(output) });
   },
-      });
+});
+preRegisterDynamicEntry("read_thread", "_single", readThreadEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (!genericReadVerbsEnabled()) return null;
+      if (resolveWindowSources(ctx as BindableContext, safeDomains()).length === 0) return null;
+      return readThreadEntry;
     },
   },
 });

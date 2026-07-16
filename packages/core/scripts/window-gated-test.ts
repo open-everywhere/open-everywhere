@@ -16,6 +16,7 @@ import {
   windowGated,
   windowGatedKit,
   replayStepNames,
+  preRegisterDynamicEntry,
   resolveWindowGated,
   _resetWindowGateAuditForTest,
   type GatedToolEntry,
@@ -235,6 +236,34 @@ console.log("5. replay pre-registration (eve step registry):");
   ]);
   eq(replayed.length, 1, "eve's replay path finds the pre-registered step fn (no skip) — the seam name is pinned against the installed eve");
   eq(replayed[0]?.name, "bash", "the replayed tool carries its mounted name");
+
+  const rawEntry = defineTool({
+    description: "raw pre-registered tool",
+    inputSchema: z.object({ q: z.string().optional() }),
+    async execute(input: { q?: string }) {
+      return { echoed: input.q ?? "none" };
+    },
+  }) as unknown as GatedToolEntry;
+  preRegisterDynamicEntry("pretend_reply", "_unified", rawEntry);
+  const customNames = replayStepNames("pretend_reply", "_unified");
+  ok(typeof reg.get(customNames.execute) === "function", "preRegisterDynamicEntry registers a custom entryKey under eve's deterministic name at module load");
+  eq((rawEntry as unknown as Record<string, { stepId?: string }>).__executeStepFn?.stepId, customNames.execute, "the entry is STAMPED with the deterministic stepId (eve's resolve records it durably — never the transform's counter key)");
+  eq((rawEntry as unknown as Record<string, unknown>).__closureVars, {}, "the entry is stamped with empty __closureVars (a metadata row without closureVars is SKIPPED on replay)");
+  ok(reg.get(customNames.approval) === undefined, "an approval-less entry registers NO approval step (absent approval === never() on both paths)");
+  const replayedCustom = lifecycle.replayDynamicSessionTools([
+    {
+      name: "reply",
+      description: "raw pre-registered tool",
+      inputSchema: { type: "object", properties: {} },
+      resolverSlug: "pretend_reply",
+      entryKey: "_unified",
+      executeStepFnName: customNames.execute,
+      closureVars: {},
+    },
+  ]);
+  eq(replayedCustom.length, 1, "eve replays a custom-entryKey pre-registered entry (no skip)");
+  const armedBash = (await resolveWindowGated(windowGated("bash", stubEntry("bash")), grainCtx.task())) as unknown as Record<string, { stepId?: string }>;
+  eq(armedBash.__executeStepFn?.stepId, replayStepNames("bash", "_single").execute, "windowGated entries are stamped with the same deterministic stepId");
 }
 
 console.log(`\nwindow-gated: ${n} assertions passed.`);

@@ -109,7 +109,7 @@ await inSession(async () => {
     try {
       await noReply.execute({ reason: "other", explanation: bad }, ctx());
     } catch (e) {
-      threw = String(e).includes("IS in your toolset");
+      threw = String(e).includes("call it and read the error");
     }
     ok(threw, `no_reply: confabulated-unavailability explanation is refused with the corrective ("${bad.slice(0, 32)}…")`);
   }

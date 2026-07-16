@@ -8,6 +8,7 @@ import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
 import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
 import { requestApproval } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const LEVELS = ["surface", "workspace", "domain"] as const;
 type Level = (typeof LEVELS)[number];
@@ -48,11 +49,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
   };
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
-      return defineTool({
+const clearSpendLimitEntry = defineTool({
   description:
     'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, a Discord DM belongs to no server, and a DM\'s default domain would span every DM like it — the defaults would target the wrong scope). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
@@ -115,7 +112,14 @@ export default defineDynamic({
       note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
   },
-      });
+});
+preRegisterDynamicEntry("clear_spend_limit", "_single", clearSpendLimitEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
+      return clearSpendLimitEntry;
     },
   },
 });

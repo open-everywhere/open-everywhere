@@ -9,6 +9,7 @@ import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type Pl
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { slackForm } from "../channels/slack-events.js";
 import { requestApproval } from "../approvals/flow.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface RequestAccessArgs {
   readonly org: string;
@@ -78,11 +79,7 @@ export function planRequestAccess(
   };
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
-      return defineTool({
+const requestAccessEntry = defineTool({
         description:
           "PROPOSE widening THIS channel's access — this grants nothing itself. Use when someone asks for access the channel doesn't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in this channel) and kind=grant-connector (enable a connector this deployment already defines but this channel doesn't have). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call.",
         inputSchema: z.object({
@@ -159,7 +156,14 @@ export default defineDynamic({
             note: `card posted — ${grantSentence(args.delta)} (pending ${posted.id}).`,
           };
         },
-      });
+});
+preRegisterDynamicEntry("request_access", "_single", requestAccessEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      return requestAccessEntry;
     },
   },
 });

@@ -5,6 +5,7 @@ import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { requestApproval } from "../approvals/flow.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface ClearConnectorOverrideInput {
   readonly connector: string;
@@ -42,11 +43,7 @@ export function planClearConnectorOverride(binding: SurfaceBinding, input: Clear
   };
 }
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
-      return defineTool({
+const clearConnectorOverrideEntry = defineTool({
   description:
     "PROPOSE reverting an earlier break-glass connector revoke, restoring this surface's config-as-code bundle grants for that connector — this does NOT clear anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve (this widens access back to config, so the admin click is the gate). Use to undo revoke_connector once the incident is resolved. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.",
   inputSchema: z.object({
@@ -91,7 +88,14 @@ export default defineDynamic({
       note: `card posted — clear override for "${plan.args.connector}" on "${plan.args.scopeKey}" (pending ${posted.id}).`,
     };
   },
-      });
+});
+preRegisterDynamicEntry("clear_connector_override", "_single", clearConnectorOverrideEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      return clearConnectorOverrideEntry;
     },
   },
 });

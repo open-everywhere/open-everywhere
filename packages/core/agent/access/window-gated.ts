@@ -116,7 +116,12 @@ export function replayStepNames(slug: string, entryKey: string): { execute: stri
   };
 }
 
-function preRegisterReplay(slug: string, entryKey: string, entry: GatedToolEntry): void {
+export interface ReplayableToolEntry {
+  execute(input: any, ctx: any): any;
+  approval?(ctx: any): any;
+}
+
+export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: ReplayableToolEntry): void {
   const names = replayStepNames(slug, entryKey);
   const reg = stepRegistry();
   reg.set(names.execute, (_cv: unknown, input: unknown, ctx: unknown) => entry.execute(input, ctx));
@@ -124,6 +129,8 @@ function preRegisterReplay(slug: string, entryKey: string, entry: GatedToolEntry
   if (approval !== undefined) {
     reg.set(names.approval, (_cv: unknown, actx: unknown) => approval(actx));
   }
+  (entry as unknown as Record<string, unknown>).__executeStepFn = { stepId: names.execute };
+  (entry as unknown as Record<string, unknown>).__closureVars = {};
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
@@ -136,7 +143,7 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
     throw new Error(`windowGated("${name}"): not in WINDOW_GATED_TOOLS — add the kit row (the table is the single source of truth)`);
   }
   const armed = armEntry(name, entry);
-  preRegisterReplay(name, "_single", armed);
+  preRegisterDynamicEntry(name, "_single", armed);
   const dyn = defineDynamic({
     events: {
       "session.started": async (_event, ctx) => {
@@ -161,7 +168,7 @@ export function windowGatedKit(slug: string, entries: Readonly<Record<string, Ga
       throw new Error(`windowGatedKit("${slug}"): "${name}" is not in WINDOW_GATED_TOOLS — add the kit row`);
     }
     armed[name] = armEntry(name, entry);
-    preRegisterReplay(slug, name, armed[name]);
+    preRegisterDynamicEntry(slug, name, armed[name]);
   }
   return defineDynamic({
     events: {

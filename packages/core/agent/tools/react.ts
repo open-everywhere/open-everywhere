@@ -5,15 +5,11 @@ import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabiliti
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      const c = ctx as BindableContext;
-      if (!isUnifiedWindowContext(c) && !capabilitiesFor(c).reactions) return null;
-      return defineTool({
+const reactEntry = defineTool({
         description:
           'React to a message with a Slack emoji, instead of (or as) your reply. In a busy or ' +
           'noisy thread, a react (e.g. "eyes", "thumbsup", "white_check_mark") CAN BE your whole ' +
@@ -74,7 +70,15 @@ export default defineDynamic({
             note: "Turn reply requirement satisfied — the reaction stands as this turn's acknowledgement.",
           };
         },
-      });
+});
+preRegisterDynamicEntry("react", "_single", reactEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      const c = ctx as BindableContext;
+      if (!isUnifiedWindowContext(c) && !capabilitiesFor(c).reactions) return null;
+      return reactEntry;
     },
   },
 });

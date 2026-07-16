@@ -55,8 +55,8 @@ export default defineTool({
     const confabulatedInverted = /\b(can'?t|cannot|unable to|no way to)\b[^.]{0,30}?\breply\b/i;
     if (input.explanation && (confabulated.test(input.explanation) || confabulatedInverted.test(input.explanation))) {
       throw new Error(
-        "`reply` IS in your toolset on every surface in this session — never conclude it's unavailable. " +
-          "If you believe it can't deliver, call it and read the error; otherwise pick a named reason for silence.",
+        "Don't conclude from silence that `reply` is gone — if you believe it can't deliver, " +
+          "call it and read the error; otherwise pick a named reason for silence.",
       );
     }
     const already = peekNoReplyThisTurn();

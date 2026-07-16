@@ -8,6 +8,7 @@ import { resolveUnifiedWakeTarget } from "../channels/unified-window.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolvePartition } from "../memory/partition.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
   const p = resolvePartition(ctx);
@@ -24,8 +25,7 @@ function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?
   };
 }
 
-function unifiedReplyTool() {
-  return defineTool({
+const unifiedReplyEntry = defineTool({
     description:
       "Post a reply into the conversation a specific wake came from, without ending your turn. " +
       "You are a cross-surface session: each wake envelope carries a `wake-id` naming where it " +
@@ -59,15 +59,10 @@ function unifiedReplyTool() {
         note: `Turn reply requirement satisfied — posted to ${origin.platform}. Keep working if needed; your terminal prose is still discarded.`,
       };
     },
-  });
-}
+});
+preRegisterDynamicEntry("reply", "_single", unifiedReplyEntry);
 
-export default defineDynamic({
-  events: {
-    "session.started": (_event, ctx) => {
-      if (isUnifiedWindowContext(ctx as BindableContext)) return unifiedReplyTool();
-      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
-      return defineTool({
+const baseReplyEntry = defineTool({
         description:
           "Post a message into this conversation NOW, without ending your turn. Posting is an " +
           "action, not turn-completion: reply, keep working, and finish with `no_reply` when " +
@@ -90,7 +85,15 @@ export default defineDynamic({
           markRepliedThisTurn();
           return { posted: true, id };
         },
-      });
+});
+preRegisterDynamicEntry("reply", "_base", baseReplyEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (isUnifiedWindowContext(ctx as BindableContext)) return unifiedReplyEntry;
+      if (!capabilitiesFor(ctx as BindableContext).midTurnPost) return null;
+      return baseReplyEntry;
     },
   },
 });
