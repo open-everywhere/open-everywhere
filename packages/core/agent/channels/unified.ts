@@ -4,7 +4,7 @@ import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchC
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { crossSurfaceWindowEnabled } from "../memory/domain.js";
+import { crossSurfaceWindowEnabled, soloWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
@@ -57,7 +57,8 @@ export interface UnifiedReceiveTarget {
 
 function windowEnabledFor(surfaceKey: string): boolean {
   try {
-    return crossSurfaceWindowEnabled(surfaceKey, getConfig().loadDomains());
+    const domains = getConfig().loadDomains();
+    return crossSurfaceWindowEnabled(surfaceKey, domains) || soloWindowEnabled(surfaceKey, domains);
   } catch {
     return false;
   }

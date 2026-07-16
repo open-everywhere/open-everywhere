@@ -5,7 +5,7 @@ import { bindFrom, slackMode, type BindableContext } from "../identity/binding.j
 import { getConfig } from "../access/config.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { nameDropWakeEnabled, engagementTierFor, ambientSupervisorEnabled } from "../memory/domain.js";
-import { supervisorGrainFor, unifiedSupervisorToken, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
@@ -706,7 +706,7 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   let singleWindow = false;
   try {
     const domains = getConfig().loadDomains();
-    singleWindow = supervisorGrainFor(surfaceKey, domains).singleWindow === true && ambientSupervisorEnabled(surfaceKey, domains);
+    singleWindow = grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains)) && ambientSupervisorEnabled(surfaceKey, domains);
   } catch {
     singleWindow = false;
   }
@@ -1010,7 +1010,7 @@ async function distillRotationHandoff(scope: string, channelId: string, outgoing
 export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
   const grainFor = (surfaceKey: string): SupervisorGrain => supervisorGrainFor(surfaceKey, getConfig().loadDomains());
   const tokenFor = (grain: SupervisorGrain, channelId: string, gen: number): string =>
-    grain.unified && grain.domainName !== undefined ? unifiedSupervisorToken(grain.domainName, gen) : supervisorToken(channelId, gen);
+    supervisorTokenForGrain(grain, gen, () => supervisorToken(channelId, gen));
   const rotateWithHandoff = async (org: string, realSurfaceKey: string, channelId: string, atIso: string, outgoing: ChannelSessionRow | null, grain: SupervisorGrain) => {
     const note = await distillRotationHandoff(realSurfaceKey, channelId, outgoing);
     const token = tokenFor(grain, channelId, (outgoing?.generation ?? 0) + 1);
@@ -1022,7 +1022,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
     unifiedMeta: (surfaceKey) => {
       const g = grainFor(surfaceKey);
-      return { unified: g.unified, ...(g.singleWindow === true ? { singleWindow: true } : {}) };
+      return { unified: g.unified, ...(grainUsesUnifiedWindow(g) ? { singleWindow: true } : {}) };
     },
     async getOrCreateSession(org, surfaceKey, channelId, atIso) {
       const store = getOperationalStore();
