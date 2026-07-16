@@ -105,6 +105,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at  text NOT NULL,
      PRIMARY KEY (org_id, channel_key, thread_key)
    )`,
+  `CREATE TABLE IF NOT EXISTS task_result (
+     org_id      text NOT NULL,
+     task_id     text NOT NULL,
+     result_json text NOT NULL,
+     created_at  text NOT NULL,
+     PRIMARY KEY (org_id, task_id)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -186,6 +193,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -203,6 +211,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
+  `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -235,6 +244,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY thread_ownership_org_isolation ON thread_ownership
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY task_result_org_isolation ON task_result
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -1137,6 +1149,22 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org, channelKey, threadKey],
       );
       return rows.length > 0;
+    },
+
+    async putTaskResult(org, taskId, resultJson, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM task_result WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
+      await client.query(
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = EXCLUDED.result_json, created_at = EXCLUDED.created_at`,
+        [org, taskId, resultJson, at],
+      );
+    },
+
+    async getTaskResult(org, taskId) {
+      const { rows } = await client.query("SELECT result_json FROM task_result WHERE org_id = $1 AND task_id = $2", [org, taskId]);
+      const r = (rows as { result_json: string }[])[0];
+      return r ? r.result_json : null;
     },
 
     async addPendingAction(row: PendingActionRow) {

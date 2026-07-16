@@ -163,8 +163,8 @@ ok(
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 5,
-  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/agent) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below)",
+  withheldFromGrain("native").length === 6,
+  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/return_result/agent) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below)",
 );
 
 firesWith(

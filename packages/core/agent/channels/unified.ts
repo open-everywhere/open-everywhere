@@ -297,3 +297,28 @@ export async function dispatchTaskWindow(input: {
     auth: { attributes },
   });
 }
+
+export async function dispatchWindowWake(input: {
+  readonly token: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly wakeId: string;
+  readonly message: string;
+  readonly domain: string;
+  readonly authAttributes: Record<string, unknown>;
+}): Promise<boolean> {
+  if (!rememberedReceive) return false;
+  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
+  if (!surfaceKey) return false;
+  try {
+    await divertToUnifiedWindow(rememberedReceive, {
+      message: input.message,
+      token: input.token,
+      window: { wakeId: input.wakeId, origin: input.origin, addressing: "direct-mention" },
+      surfaceKey,
+      auth: { attributes: input.authAttributes },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -33,16 +33,20 @@ export function windowKeyForDomain(domain: string, generation: number): WindowKe
 
 export const TASK_WINDOW_ID_RE = /^t\//;
 
-export function taskWindowId(channelKey: string, threadTs: string): string {
+export function taskWindowId(channelKey: string, threadTs: string, nonce?: string): string {
   if (channelKey.length === 0 || threadTs.length === 0) {
     throw new Error("taskWindowId: channelKey and threadTs must both be non-empty");
   }
-  if (channelKey.includes(":") || threadTs.includes(":")) {
-    throw new Error(
-      `taskWindowId: a windowId is colon-free ([^:]+) — got channelKey="${channelKey}", threadTs="${threadTs}" (sanitise colons before minting)`,
-    );
+  const parts = [channelKey, threadTs, ...(nonce !== undefined ? [nonce] : [])];
+  for (const p of parts) {
+    if (p.length === 0) throw new Error("taskWindowId: nonce must be non-empty when supplied");
+    if (p.includes(":")) {
+      throw new Error(
+        `taskWindowId: a windowId is colon-free ([^:]+) — got a colon-bearing component in ["${channelKey}","${threadTs}"${nonce !== undefined ? `,"${nonce}"` : ""}] (sanitise colons before minting)`,
+      );
+    }
   }
-  return `t/${channelKey}/${threadTs}`;
+  return `t/${parts.join("/")}`;
 }
 export function isTaskWindowId(windowId: string): boolean {
   return TASK_WINDOW_ID_RE.test(windowId);

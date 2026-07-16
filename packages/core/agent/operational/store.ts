@@ -231,6 +231,9 @@ export interface OperationalStore {
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;
   clearThreadOwner(org: string, channelKey: string, threadKey: string): Promise<boolean>;
 
+  putTaskResult(org: string, taskId: string, resultJson: string, at: string, ttlMs: number): Promise<void>;
+  getTaskResult(org: string, taskId: string): Promise<string | null>;
+
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;
   listPendingActions(org: string): Promise<readonly PendingActionRow[]>;

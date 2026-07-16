@@ -307,7 +307,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   for (const name of STANDING_WITHHELD) {
     eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `[P0-f] withheld tool "${name}" is grain-gated to task+native (absent on standing)`);
   }
-  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task", "complete_thread"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task + complete_thread (thread-lifecycle, task/thread-only)");
+  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task", "complete_thread", "return_result"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task + complete_thread + return_result (thread-lifecycle + one-shot, task/thread-only)");
 
   ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task stays `open` — delegation is the standing seat's job");
   eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "[P0-f] spawn_task is grain-gated STANDING-only (no recursive spawn)");

@@ -119,6 +119,13 @@ function getDb(): DatabaseSync {
       created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
       PRIMARY KEY (org_id, channel_key, thread_key)
     );
+    CREATE TABLE IF NOT EXISTS task_result (
+      org_id      TEXT NOT NULL,
+      task_id     TEXT NOT NULL,              -- the unique one-shot task window token (per-call nonce)
+      result_json TEXT NOT NULL,              -- {summary, artifacts?, error?} (opaque to the store)
+      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, task_id)
+    );
     CREATE TABLE IF NOT EXISTS pending_actions (
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,
@@ -850,6 +857,25 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async clearThreadOwner(org, channelKey, threadKey) {
     return getDb().prepare("DELETE FROM thread_ownership WHERE org_id = ? AND channel_key = ? AND thread_key = ?").run(org, channelKey, threadKey).changes > 0;
+  },
+
+  async putTaskResult(org, taskId, resultJson, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM task_result WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+    handle
+      .prepare(
+        `INSERT INTO task_result (org_id, task_id, result_json, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (org_id, task_id) DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
+      )
+      .run(org, taskId, resultJson, at);
+  },
+
+  async getTaskResult(org, taskId) {
+    const row = getDb().prepare("SELECT result_json FROM task_result WHERE org_id = ? AND task_id = ?").get(org, taskId) as
+      | { result_json: string }
+      | undefined;
+    return row?.result_json ?? null;
   },
 
   async addPendingAction(row) {

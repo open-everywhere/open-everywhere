@@ -27,6 +27,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   spawn_thread_session: ["standing"],
   complete_task: ["task"],
   complete_thread: ["thread"],
+  return_result: ["task"],
   agent: ["standing", "thread"],
 };
 
@@ -141,6 +142,10 @@ export function checkWindowGateManifest(
     } else if (name === "complete_thread") {
       if (grainKey(grains) !== "thread") {
         problems.push(`WINDOW_GATED_TOOLS["complete_thread"] must be exactly ["thread"] (only a thread seat owns a thread) — got [${grains.join(", ")}]`);
+      }
+    } else if (name === "return_result") {
+      if (grainKey(grains) !== "task") {
+        problems.push(`WINDOW_GATED_TOOLS["return_result"] must be exactly ["task"] (only a one-shot task returns a result) — got [${grains.join(", ")}]`);
       }
     } else if (grainKey(grains) !== WIDE_HANDS_KEY) {
       problems.push(
