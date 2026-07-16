@@ -1,4 +1,4 @@
-import { unifiedDomainFor, crossSurfaceWindowEnabled, type Domain } from "../memory/domain.js";
+import { unifiedDomainFor, crossSurfaceWindowEnabled, soloWindowEnabled, type Domain } from "../memory/domain.js";
 import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain } from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
@@ -46,20 +46,31 @@ export interface SupervisorGrain {
   readonly registryKey: string;
   readonly domainName?: string;
   readonly singleWindow?: true;
+  readonly windowId?: string;
+}
+
+export function grainUsesUnifiedWindow(grain: SupervisorGrain): boolean {
+  return grain.singleWindow === true || grain.windowId !== undefined;
 }
 
 export function supervisorGrainFor(surfaceKey: string, domains: readonly Domain[]): SupervisorGrain {
   const domain = unifiedDomainFor(surfaceKey, domains);
   if (!domain) return { unified: false, registryKey: surfaceKey };
   const singleWindow = crossSurfaceWindowEnabled(surfaceKey, domains);
+  const solo = !singleWindow && soloWindowEnabled(surfaceKey, domains);
+  const windowId = solo ? surfaceKey : domain.name;
   return {
     unified: true,
-    registryKey: unifiedDomainSessionKey(domain.name),
+    registryKey: unifiedDomainSessionKey(windowId),
     domainName: domain.name,
     ...(singleWindow ? { singleWindow: true as const } : {}),
+    ...(solo ? { windowId } : {}),
   };
 }
 
 export function supervisorTokenForGrain(grain: SupervisorGrain, generation: number, perContainer: () => string): string {
-  return grain.unified && grain.domainName !== undefined ? unifiedSupervisorToken(grain.domainName, generation) : perContainer();
+  if (grain.unified && grain.domainName !== undefined) {
+    return formatWindowToken({ domain: grain.domainName, windowId: grain.windowId ?? grain.domainName, generation });
+  }
+  return perContainer();
 }

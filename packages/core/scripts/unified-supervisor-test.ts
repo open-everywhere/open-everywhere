@@ -21,6 +21,7 @@ import {
   domainFromSessionKey,
   supervisorGrainFor,
   supervisorTokenForGrain,
+  grainUsesUnifiedWindow,
 } from "../agent/channels/unified-supervisor.js";
 import { githubSupervisorToken } from "../agent/channels/github-supervisor.js";
 import { linearSupervisorToken } from "../agent/channels/linear-supervisor.js";
@@ -232,6 +233,31 @@ withEnv(undefined, () => {
   ok(supervisorTokenForGrain(off, 2, () => linearSupervisorToken("team-1", 2)) === "linear:team-1:oe-sup:g2", "flag-off linear fallback is the per-team token");
   ok(supervisorTokenForGrain(off, 2, () => notionSupervisorToken("page-1", 2)) === "notion:page-1:oe-sup:g2", "flag-off notion fallback is the per-doc token");
 });
+
+withEnv("1", () => {
+  const g = supervisorGrainFor(CH, [payments, orgNoGate]);
+  ok(JSON.stringify(g) === JSON.stringify({ unified: true, registryKey: "oe-domain::payments", domainName: "payments" }), "flag-off (solo) unified grain is byte-identical — no windowId field, degenerate registry key");
+  ok(grainUsesUnifiedWindow(g) === false, "a plain-unified (non-crossSurface, non-solo) grain does NOT use the unified window");
+  ok(supervisorTokenForGrain(g, 4, () => "C_PAY:oe-sup:g4") === "oe-dom:payments:oe-sup:g4", "flag-off supervisorTokenForGrain still emits the DEGENERATE token verbatim");
+});
+withSolo("1", "1", () => {
+  const g = supervisorGrainFor(CH, [paymentsSolo, orgNoGate]);
+  ok(g.unified === true && g.domainName === "payments", "solo grain stays domain-anchored (memory/access unchanged)");
+  ok(g.windowId === CH, "solo grain carries windowId === surfaceKey (one window per channel)");
+  ok(g.registryKey === `oe-domain::${CH}`, "solo grain keys its OWN registry row on the surfaceKey windowId");
+  ok(g.singleWindow === undefined, "solo grain is NOT cross-surface (singleWindow absent)");
+  ok(grainUsesUnifiedWindow(g) === true, "a solo grain DOES use the unified window (divert fires)");
+  const tok = supervisorTokenForGrain(g, 7, () => supervisorTokenPerContainer());
+  ok(tok === `oe-dom:payments:win:${CH}:oe-sup:g7`, "solo supervisorTokenForGrain emits the :win:<surfaceKey>: form");
+  ok(unifiedDomainFromToken(tok) === "payments", "the solo token still yields the DOMAIN (memory/access anchor survives)");
+  ok(unifiedWindowFromToken(tok) === CH, "the solo token yields the surfaceKey windowId");
+  ok(isUnifiedSupervisorToken(tok), "the solo token is recognised as a window supervisor token");
+  const g2 = supervisorGrainFor(GH, [paymentsSolo, orgNoGate]);
+  ok(g2.windowId === GH && g2.registryKey === `oe-domain::${GH}` && g2.registryKey !== g.registryKey, "each channel gets its OWN solo window + row (unlike cross-surface's shared row)");
+});
+function supervisorTokenPerContainer(): string {
+  throw new Error("perContainer must not be called on a unified grain");
+}
 
 const baseInput: WakeEnvelopeInput = {
   reason: "channel-activity",
