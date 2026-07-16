@@ -27,7 +27,7 @@ import {
 import type { SingleWindowMentionPolicy } from "./unified-window.js";
 import { resolvePartition } from "../memory/partition.js";
 import { isThreadEngaged } from "./engagement.js";
-import { divertToUnifiedWindow } from "./unified.js";
+import { divertInboundToUnifiedWindow } from "./unified.js";
 import { ambientSupervisorEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -292,7 +292,7 @@ export function withSingleWindowDiversion(
     ...deps,
     async wake(input) {
       if (!input.window) return deps.wake(input);
-      await divertToUnifiedWindow(receive, {
+      await divertInboundToUnifiedWindow(receive, {
         message: input.message,
         token: input.token,
         window: input.window,

@@ -5,10 +5,12 @@ import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableConte
 import { getConfig } from "../access/config.js";
 import { crossSurfaceWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
+import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId } from "./window-key.js";
+import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
+import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn } from "./slack-events.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
@@ -263,6 +265,53 @@ export async function divertToUnifiedWindow(
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
   await receive(channel, { message: input.message, target, auth: auth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
+}
+
+export async function divertInboundToUnifiedWindow(
+  receive: RouteHandlerArgs["receive"],
+  input: {
+    readonly message: string;
+    readonly context?: readonly string[];
+    readonly token: string;
+    readonly window: UnifiedWindowWake;
+    readonly surfaceKey: string;
+    readonly auth: { attributes?: Record<string, unknown> };
+  },
+): Promise<void> {
+  if (!oneshotAgentEnabled()) return divertToUnifiedWindow(receive, input);
+  const standing = parseWindowToken(input.token);
+  if (!standing || isTaskWindowId(standing.windowId) || isThreadSeatWindowId(standing.windowId)) {
+    return divertToUnifiedWindow(receive, input);
+  }
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const ref = unifiedThreadRef(input.window.origin);
+  const owner = await resolveThreadOwner(store, org, ref);
+  const route = routeThreadMessage(owner, standing.generation, standing.domain);
+  const audit = (detail: Record<string, unknown>) =>
+    appendAudit({
+      org,
+      platform: "unified",
+      workspace: standing.domain,
+      action: "thread.ingress_routed",
+      detail: { wakeId: input.window.wakeId, channelKey: ref.channelKey, threadKey: ref.threadKey, surfaceKey: input.surfaceKey, ...detail },
+    }).catch(() => undefined);
+  if (route.kind !== "task") {
+    if (owner !== null) {
+      const reaped = await clearThreadOwner(store, org, ref);
+      await audit({ routed: "standing", reason: "stale-owner", ownerId: owner, reaped });
+    }
+    return divertToUnifiedWindow(receive, input);
+  }
+  const attributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}), [OE_GRAIN_ATTR]: route.grain };
+  try {
+    await divertToUnifiedWindow(receive, { ...input, token: route.token, auth: { ...input.auth, attributes } });
+  } catch (err) {
+    const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);
+    await audit({ routed: "standing", reason: "owner-divert-failed", ownerId: route.token, grain: route.grain, error: errMsg });
+    return divertToUnifiedWindow(receive, input);
+  }
+  await audit({ routed: "owner", ownerId: route.token, grain: route.grain });
 }
 
 export const OE_SPAWN_TAINTED_ATTR = "oe_spawn_tainted";

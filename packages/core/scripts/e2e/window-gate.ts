@@ -237,7 +237,7 @@ async function f6(store: OperationalStore | null): Promise<void> {
     if (!ok) {
       return record("F6", "FAIL", `store/decision mismatch: owner=${owner === taskToken}, owned→${routeOwned.kind}, other→${routeOther.kind}, stale→${routeStale.kind}, cleared=${cleared}, afterClear→${routeAfterClear.kind}`);
     }
-    record("F6", "PASS", `ownership routing store+decision hold e2e against the live store: owned thread→task (${taskToken.slice(0, 40)}…), unowned/other thread→standing, stale-generation→standing, clear→standing. ⚠ GAP (reported, not fixed): routeThreadMessage/resolveThreadOwner are wired ONLY into spawn_task's collision guard, NOT into any surface INGRESS path — so a real later thread message does not yet auto-wake the task session. The store + decision (this test) and re-wake-on-same-token (F5) are live; the ingress consultation that joins them is not.`);
+    record("F6", "PASS", `ownership routing store+decision hold e2e against the live store: owned thread→task (${taskToken.slice(0, 40)}…), unowned/other thread→standing, stale-generation→standing, clear→standing. Ingress wiring (§S2) is LIVE for Slack under OE_ONESHOT_AGENT: divertInboundToUnifiedWindow (channels/unified.ts) consults this same store per inbound single-window wake and dispatches an owned thread's message to the owner session's token (unit pack: test:s2-ingress). Other surfaces adopt by swapping their inbound divert call.`);
   } catch (e) {
     record("F6", "FAIL", `ownership store round-trip threw: ${(e as Error).message}`);
   }
