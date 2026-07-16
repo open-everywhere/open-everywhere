@@ -12,6 +12,7 @@ import {
   allowedSurfaceIdsFrom,
   slackReadAdapter,
   discordReadAdapter,
+  teamsReadAdapter,
   READ_ADAPTERS,
   SUPPORTED_READ_PLATFORMS,
   type ChannelReadResult,
@@ -77,11 +78,15 @@ const MSGS = [
   n++;
 
   const uniTeams = mk("unified", { oe_platform: "teams", oe_sources: "teams" });
-  assert.throws(() => resolveReadAdapter(uniTeams, undefined, []), /not supported yet \(supported: slack, discord\)/u, "gate: an unsupported surface (Teams) fails loud with the supported list");
+  const r3 = resolveReadAdapter(uniTeams, undefined, []);
+  ok(r3.platform === "teams" && r3.adapter === teamsReadAdapter, "gate: a teams read routes to the Teams adapter (no longer unsupported)");
+
+  const uniLinear = mk("unified", { oe_platform: "linear", oe_sources: "linear" });
+  assert.throws(() => resolveReadAdapter(uniLinear, undefined, []), /not supported yet \(supported: slack, discord, teams\)/u, "gate: an unsupported surface (linear) fails loud with the supported list");
   n++;
 
-  ok(!SUPPORTED_READ_PLATFORMS.includes("teams") && READ_ADAPTERS["teams"] === undefined, "Teams is declared unsupported (absent from READ_ADAPTERS), not faked");
-  ok(SUPPORTED_READ_PLATFORMS.includes("slack") && SUPPORTED_READ_PLATFORMS.includes("discord"), "slack + discord are the wired read adapters");
+  ok(!SUPPORTED_READ_PLATFORMS.includes("linear") && READ_ADAPTERS["linear"] === undefined, "linear is declared unsupported (absent from READ_ADAPTERS), not faked");
+  ok(SUPPORTED_READ_PLATFORMS.includes("slack") && SUPPORTED_READ_PLATFORMS.includes("discord") && SUPPORTED_READ_PLATFORMS.includes("teams"), "slack + discord + teams are the wired read adapters");
 }
 
 {
