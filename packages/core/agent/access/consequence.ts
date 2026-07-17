@@ -1,5 +1,25 @@
 export type ConsequenceTier = "open" | "gate:member" | "gate:admin";
 
+const CONNECTOR_READ_VERBS: readonly string[] = [
+  "search", "list", "get", "read", "fetch", "query", "find", "describe",
+  "view", "retrieve", "show", "lookup", "count", "check", "browse", "download",
+];
+
+export function connectorOpName(toolName: string): string {
+  const i = toolName.indexOf("__");
+  return i >= 0 ? toolName.slice(i + 2) : toolName;
+}
+
+export function isConnectorOpTool(toolName: string): boolean {
+  return toolName.includes("__");
+}
+
+export function classifyConnectorOp(toolName: string): "open" | "gate:member" {
+  const op = connectorOpName(toolName).toLowerCase();
+  const verb = op.split(/[_-]/, 1)[0] ?? op;
+  return CONNECTOR_READ_VERBS.includes(verb) ? "open" : "gate:member";
+}
+
 export type GatingMechanism =
   | { readonly kind: "none" }
   | { readonly kind: "action-kind"; readonly action: string }
