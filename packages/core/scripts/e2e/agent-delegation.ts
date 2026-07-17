@@ -1,7 +1,7 @@
-import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
-import { fetchTranscript } from "./transcript-read.js";
+import {
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
+} from "./window-harness.js";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
@@ -10,74 +10,17 @@ const SURFACE = process.env.E2E_AGENT_DELEG_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN
 const CHANNEL_ID = SURFACE.split("/").slice(2).join("/");
 const TIMEOUT_MS = Number.parseInt(process.env.AGENT_DELEG_TIMEOUT_MS ?? "120000", 10);
 const POLL_MS = 4000;
-const ONLY = (process.env.AGENT_DELEG_ONLY ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-const want = (id: string) => ONLY.length === 0 || ONLY.includes(id.toUpperCase());
+const want = makeWant(process.env.AGENT_DELEG_ONLY);
 
-type Status = "PASS" | "SKIP" | "FAIL";
-const results: { id: string; status: Status; detail: string }[] = [];
-const record = (id: string, status: Status, detail: string) => {
-  results.push({ id, status, detail });
-  const icon = status === "PASS" ? "✅" : status === "SKIP" ? "⏭ " : "❌";
-  console.log(`\n${icon} ${id}: ${status} — ${detail}`);
-};
+const { results, record } = createRecorder();
 
 const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
 
-interface InjectBody {
-  domain: string; platform: "slack"; surfaceKey: string; text: string;
-  addressing?: string; mention?: boolean; author?: string; origin: Record<string, unknown>;
-}
-async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }> {
-  const res = await fetch(`${TARGET}/control/v1/test/wake`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
-    body: JSON.stringify(b),
-  });
-  if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 240)}`);
-  const jb = (await res.json()) as { wakeId: string; token: string };
-  return { wakeId: jb.wakeId, token: jb.token };
-}
+const inject = createInjector(TARGET, READ);
+const { rowsSince, readFailed: auditReadFailed } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
-const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail[k] as string) : undefined);
-let auditReadFailed = false;
-const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> => {
-  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 600 }); }
-  catch (e) { auditReadFailed = true; console.warn(`  [audit] ${(e as Error).message}`); return []; }
-};
-
-async function toolCallsOf(sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> {
-  try {
-    const calls: { name: string; errored: boolean; at: string | null }[] = [];
-    const byCallId = new Map<string, number>();
-    let start = 0;
-    for (let page = 0; page < 40; page++) {
-      const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
-      for (const e of tr.events) {
-        if (e.type === "actions.requested") {
-          const acts = (e.data as { actions?: { toolName?: string; callId?: string }[] } | undefined)?.actions ?? [];
-          for (const a of acts) {
-            if (typeof a.toolName !== "string") continue;
-            if (typeof a.callId === "string") byCallId.set(a.callId, calls.length);
-            calls.push({ name: a.toolName, errored: false, at: e.at });
-          }
-        } else if (e.type === "action.result") {
-          const d = e.data as { error?: unknown; result?: { callId?: string } } | undefined;
-          if (d?.error !== undefined) {
-            const idx = byCallId.get(typeof d.result?.callId === "string" ? d.result.callId : "");
-            if (idx !== undefined) calls[idx] = { ...calls[idx], errored: true };
-          }
-        }
-      }
-      if (tr.events.length === 0) break;
-      start = (tr as { nextIndex?: number }).nextIndex ?? start + tr.events.length;
-    }
-    const scoped = sinceIso ? calls.filter((c) => c.at === null || c.at >= sinceIso) : calls;
-    return scoped.map(({ name, errored }) => ({ name, errored }));
-  } catch (e) {
-    console.warn(`  [transcript] ${(e as Error).message}`);
-    return null;
-  }
-}
+const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> =>
+  readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
 
 const ASYNC_BRIEF =
   "This is a long job: in a sandbox, write and run a script that computes the first 40 fibonacci " +
@@ -111,7 +54,7 @@ async function t1aAsync(): Promise<void> {
       return record("T1a", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without invoking agent — the model did not choose agent(async) this turn (delegation is model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`);
     }
   }
-  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1 (agent is then absent). Re-run with the flag ON.${auditReadFailed ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
+  record("T1a", "SKIP", `no task.spawned row (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not choose agent(async) this turn (delegation is model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1 (agent is then absent). Re-run with the flag ON.${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function t1bSync(): Promise<void> {
@@ -157,7 +100,7 @@ async function t1bSync(): Promise<void> {
     }
     return record("T1b", "FAIL", `agent(sync) SPAWNED a worker (task ${taskId}) but it NEVER returned (no task.returned row) within ${TIMEOUT_MS}ms — the worker session hung or failed. This is a real regression, not reply latency or model choice; read the worker transcript.`);
   }
-  record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
+  record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
 async function main(): Promise<void> {

@@ -1,5 +1,7 @@
-import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
-import { fetchTranscript } from "./transcript-read.js";
+import { type AuditWireEntry } from "./audit-read.js";
+import {
+  sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls, readToolNames,
+} from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
 import { buildSlackAuth } from "../../agent/channels/slack-identity.js";
@@ -11,7 +13,6 @@ import { ROUTINE_MARKER } from "../../agent/routines/routine.js";
 import { OE_GRAIN_ATTR } from "../../agent/channels/unified-window.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const DB = process.env.DATABASE_URL ?? "";
@@ -23,8 +24,7 @@ const REPLY_TIMEOUT_MS = Number.parseInt(process.env.WINDOW_GATE_REPLY_TIMEOUT_M
 const GATE_TIMEOUT_MS = Number.parseInt(process.env.WINDOW_GATE_GATED_TIMEOUT_MS ?? "60000", 10);
 const POLL_MS = 4000;
 const RUN = Date.now().toString().slice(-7);
-const ONLY = (process.env.WINDOW_GATE_ONLY ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-const want = (id: string) => ONLY.length === 0 || ONLY.includes(id);
+const want = makeWant(process.env.WINDOW_GATE_ONLY);
 
 const A_GATED = "turn.tool_gated";
 const A_REPLY = "reply.post";
@@ -34,38 +34,11 @@ const WIDE_HANDS = ["bash", "checkout_repo", "open_pull_request", "web_fetch", "
 const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
 const dmOrigin = { platform: "slack" as const, channelId: process.env.E2E_SLACK_DM_CHANNEL ?? "D0EXDMCH001" };
 
-type Status = "PASS" | "SKIP" | "FAIL";
-interface Result { id: string; status: Status; detail: string; }
-const results: Result[] = [];
-const record = (id: string, status: Status, detail: string) => {
-  results.push({ id, status, detail });
-  const icon = status === "PASS" ? "✅" : status === "SKIP" ? "⏭ " : "❌";
-  console.log(`\n${icon} ${id}: ${status} — ${detail}`);
-};
+const { results, record } = createRecorder();
 
-interface InjectBody {
-  domain: string; platform: "slack"; surfaceKey: string; text: string;
-  addressing?: string; mention?: boolean; author?: string; origin: Record<string, unknown>;
-  threadTs?: string; authAttributes?: Record<string, string>;
-  soloWindowId?: string; taskThread?: string;
-}
-interface Injected { wakeId: string; token: string; }
-async function inject(b: InjectBody): Promise<Injected> {
-  const res = await fetch(`${TARGET}/control/v1/test/wake`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
-    body: JSON.stringify(b),
-  });
-  if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 240)}`);
-  const jb = (await res.json()) as { wakeId: string; token: string };
-  return { wakeId: jb.wakeId, token: jb.token };
-}
+const inject = createInjector(TARGET, READ);
+const { rowsSince } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
-const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
-const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> => {
-  try { return await fetchAudit(TARGET, READ, { sinceIso, limit: 600 }); }
-  catch (e) { console.warn(`  [audit] ${(e as Error).message}`); return []; }
-};
 const gatedRowFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | null =>
   rows.find((r) => r.action === A_GATED && dS(r, "wakeId") === wakeId) ?? null;
 const sessionJoinRowsFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry[] =>
@@ -93,46 +66,10 @@ async function pollForReply(sinceIso: string, wakeId: string, timeoutMs: number)
   return { sessionId: null, via: null, sawGated };
 }
 
-async function toolNamesOf(sessionId: string): Promise<string[]> {
-  try {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
-    const names: string[] = [];
-    for (const e of tr.events) {
-      if (e.type !== "actions.requested") continue;
-      const acts = (e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [];
-      for (const a of acts) if (typeof a.toolName === "string") names.push(a.toolName);
-    }
-    return names;
-  } catch { return []; }
-}
+const toolNamesOf = (sessionId: string): Promise<string[]> => readToolNames(TARGET, READ, sessionId);
 
-async function toolCallsWithErrorsOf(sessionId: string): Promise<{ name: string; errored: boolean }[] | null> {
-  try {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
-    const calls: { name: string; errored: boolean }[] = [];
-    const byCallId = new Map<string, number>();
-    for (const e of tr.events) {
-      if (e.type === "actions.requested") {
-        const acts = (e.data as { actions?: { toolName?: string; callId?: string }[] } | undefined)?.actions ?? [];
-        for (const a of acts) {
-          if (typeof a.toolName !== "string") continue;
-          if (typeof a.callId === "string") byCallId.set(a.callId, calls.length);
-          calls.push({ name: a.toolName, errored: false });
-        }
-      } else if (e.type === "action.result") {
-        const d = e.data as { error?: unknown; result?: { callId?: string } } | undefined;
-        if (d?.error !== undefined) {
-          const idx = byCallId.get(typeof d.result?.callId === "string" ? d.result.callId : "");
-          if (idx !== undefined) calls[idx] = { ...calls[idx], errored: true };
-        }
-      }
-    }
-    return calls;
-  } catch (e) {
-    console.warn(`  [transcript] ${(e as Error).message}`);
-    return null;
-  }
-}
+const toolCallsWithErrorsOf = (sessionId: string): Promise<{ name: string; errored: boolean }[] | null> =>
+  readToolCalls(TARGET, READ, sessionId);
 
 const HEAVY = "please clone the acme/web repo, run the full test suite in a sandbox, then open a pull request with the fix. reply here when the PR is up.";
 const withheldStanding = new Set(withheldFromGrain("standing"));
@@ -161,15 +98,15 @@ async function f2(): Promise<void> {
   const solo = `solochan-${RUN}`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: HEAVY, soloWindowId: solo });
   const isSolo = token.includes(`:win:${solo}:`);
-  console.log(`  F2 injected solo-window standing wake ${wakeId} → token ${token} (windowId≠domain: ${isSolo})`);
+  console.log(`  F2 injected non-degenerate standing wake ${wakeId} → token ${token} (windowId≠domain: ${isSolo})`);
   const g = await pollForGated(since, wakeId, GATE_TIMEOUT_MS);
-  if (!g) return record("F2", "FAIL", `no turn.tool_gated row for the solo/per-channel standing seat (wake ${wakeId}) — a non-degenerate standing token was NOT narrowed`);
+  if (!g) return record("F2", "FAIL", `no turn.tool_gated row for the non-degenerate standing seat (wake ${wakeId}) — a standing token whose windowId≠domain was NOT narrowed`);
   const withheld = (g.detail?.withheld as string[]) ?? [];
-  if (!isSolo) return record("F2", "FAIL", `dispatched token ${token} is not a :win: solo token — the soloWindowId selector did not re-mint`);
+  if (!isSolo) return record("F2", "FAIL", `dispatched token ${token} is not a :win: windowId≠domain token — the soloWindowId selector did not re-mint`);
   if (dS(g, "grain") !== "standing" || WIDE_HANDS.some((w) => !withheld.includes(w))) {
     return record("F2", "FAIL", `grain=${dS(g, "grain")}, withheld=[${withheld.join(",")}]`);
   }
-  record("F2", "PASS", `solo/per-channel standing seat (windowId=${solo}≠domain) NARROWED — grain=standing, withheld ${withheld.length}. Proves the grain predicate bites a standing seat that is NOT the degenerate domain window.`);
+  record("F2", "PASS", `non-degenerate standing seat (windowId=${solo}≠domain) NARROWED — grain=standing, withheld ${withheld.length}. Proves the grain predicate bites a standing seat that is NOT the degenerate domain window. (NOT solo-topology coverage — the token is a synthetic test-route mint; see solo-window.ts.)`);
 }
 
 async function f3(): Promise<void> {

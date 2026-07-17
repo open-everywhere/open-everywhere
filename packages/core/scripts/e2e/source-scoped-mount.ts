@@ -1,9 +1,9 @@
-import { fetchAudit, type AuditWireEntry } from "./audit-read.js";
+import { type AuditWireEntry } from "./audit-read.js";
 import { fetchTranscript } from "./transcript-read.js";
+import { sleep, dS, makeWant, createRecorder, createInjector, createAuditReader } from "./window-harness.js";
 import { sourceScopedToolsEnabled } from "../../agent/access/source-scoped-mount.js";
 import { isWindowToken } from "../../agent/channels/window-key.js";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const DOMAIN = process.env.E2E_SSM_DOMAIN ?? "e2e-unified";
@@ -13,34 +13,13 @@ const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.SSM_REPLY_TIMEOUT_MS ?? "120000", 10);
 const POLL_MS = 4000;
 const RUN = Date.now().toString().slice(-7);
-const ONLY = (process.env.SSM_ONLY ?? "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-const want = (id: string) => ONLY.length === 0 || ONLY.includes(id);
+const want = makeWant(process.env.SSM_ONLY);
 
 const A_REPLY = "reply.post";
-type Status = "PASS" | "SKIP" | "FAIL";
-const results: { id: string; status: Status; detail: string }[] = [];
-const record = (id: string, status: Status, detail: string) => {
-  results.push({ id, status, detail });
-  console.log(`\n${status === "PASS" ? "✅" : status === "SKIP" ? "⏭ " : "❌"} ${id}: ${status} — ${detail}`);
-};
+const { results, record } = createRecorder();
 
-const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
-const rowsSince = async (sinceIso: string): Promise<readonly AuditWireEntry[]> =>
-  fetchAudit(TARGET, READ, { sinceIso, limit: 600 });
-
-interface InjectBody {
-  domain: string; platform: "slack" | "github"; surfaceKey: string; text: string;
-  addressing?: string; mention?: boolean; author?: string; origin: Record<string, unknown>; soloWindowId?: string;
-}
-async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }> {
-  const res = await fetch(`${TARGET}/control/v1/test/wake`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
-    body: JSON.stringify(b),
-  });
-  if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 240)}`);
-  return (await res.json()) as { wakeId: string; token: string };
-}
+const inject = createInjector(TARGET, READ);
+const { rowsSince } = createAuditReader(TARGET, READ, { onError: "throw" });
 
 async function pollForReplySession(sinceIso: string, wakeId: string, timeoutMs: number): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;

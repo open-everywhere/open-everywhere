@@ -6,9 +6,8 @@ import { DiscordDriver } from "./discord-driver.js";
 import { TeamsDriver } from "./teams-driver.js";
 import { NotionDriver } from "./notion-driver.js";
 import { fetchAudit } from "./audit-read.js";
-import { fetchTranscript } from "./transcript-read.js";
+import { sleep, sessionMatrix } from "./window-harness.js";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const RUN = Date.now().toString().slice(-6);
@@ -65,17 +64,6 @@ async function post(): Promise<Ping[]> {
   return pings;
 }
 
-async function wholeTranscriptText(sessionId: string): Promise<{ text: string; events: number; complete: boolean }> {
-  let startIndex = 0, text = "", events = 0, complete = false, pages = 0;
-  while (pages < 30) {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex, limit: 10000, idleMs: 3000 });
-    for (const e of tr.events) text += "\n" + JSON.stringify(e.data ?? {});
-    events += tr.count; complete = tr.complete; startIndex = tr.nextIndex; pages++;
-    if (tr.complete || tr.count === 0) break;
-  }
-  return { text, events, complete };
-}
-
 async function main() {
   if (!TARGET || !READ) { console.error("need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
   const startIso = new Date().toISOString();
@@ -102,18 +90,10 @@ async function main() {
   for (const [sid, acts] of sidPlatforms) console.log(`  ${sid}  ← ${[...acts].slice(0, 6).join(", ")}${acts.size > 6 ? " …" : ""}`);
   if (sidPlatforms.size === 0) { console.error("\n  NO sessionId-stamped audit rows in the window — divert may not have fired. Dumping audit:"); for (const r of rows.slice(0, 40)) console.error(`   ${r.ts.slice(11, 19)} ${r.platform}.${r.action}`); process.exit(2); }
 
-  const tagToSession = new Map<string, string[]>();
-  for (const sid of sidPlatforms.keys()) {
-    const { text, events, complete } = await wholeTranscriptText(sid);
-    console.log(`\n  transcript ${sid}: ${events} events, complete=${complete}`);
-    for (const p of active) {
-      if (text.includes(p.tag)) {
-        if (!tagToSession.has(p.tag)) tagToSession.set(p.tag, []);
-        tagToSession.get(p.tag)!.push(sid);
-        console.log(`    ✓ contains ${p.surface} tag ${p.tag}`);
-      }
-    }
-  }
+  const tagToSession = await sessionMatrix(TARGET, READ, sidPlatforms.keys(), active, {
+    onSession: (sid, events, complete) => console.log(`\n  transcript ${sid}: ${events} events, complete=${complete}`),
+    onHit: (_sid, p) => console.log(`    ✓ contains ${p.surface} tag ${p.tag}`),
+  });
 
   console.log(`\n=== MATRIX (tag → session) ===`);
   const landedSessions = new Set<string>();

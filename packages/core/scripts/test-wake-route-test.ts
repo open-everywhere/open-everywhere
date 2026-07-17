@@ -25,7 +25,8 @@ const { handleTestWakeInjection, CONTROL_TEST_WAKE_PATH, testWakeEnabled } = awa
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { unifiedDomainSessionKey, unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
+const { unifiedDomainSessionKey, unifiedSupervisorToken, supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
+const { formatWindowToken } = await import("../agent/channels/window-key.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 
 const DOMAIN = "e2e-unified";
@@ -238,6 +239,67 @@ const norm = (s: string): string =>
   const oneEntry = norm(captured[0].message);
   ok(single === oneEntry, "single-text render == single-entry coalesced render (byte-identical, single path untouched)");
   ok(single.includes("[channel-watch]"), "the frozen single-text render is still the judged channel-watch envelope");
+}
+
+const SOLO_DOMAIN = "e2e-solo";
+const SOLO_SURFACE = "slack/T2/C2";
+const soloOrigin = { platform: "slack", channelId: "C2" } as const;
+const soloDomains = [
+  defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true }),
+];
+function useDomains(ds: ReturnType<typeof defineDomain>[]): void {
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => ds, loadSilos: () => [], loadRoles: () => [], domainsForSurface: () => [],
+  });
+}
+function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { domain: SOLO_DOMAIN, platform: "slack", surfaceKey: SOLO_SURFACE, text: "solo window, anything blocked?", origin: soloOrigin, ...over };
+}
+
+{
+  process.env.OE_SOLO_WINDOW = "1";
+  useDomains(soloDomains);
+  const soloGrain = supervisorGrainFor(SOLO_SURFACE, soloDomains);
+  ok(soloGrain.registryKey === unifiedDomainSessionKey(SOLO_SURFACE), "solo grain keys the registry row by the surfaceKey windowId, not the domain");
+  ok(soloGrain.registryKey !== unifiedDomainSessionKey(SOLO_DOMAIN), "solo registryKey is DISTINCT from the domain-keyed row (the row a hardcoded domain key would read)");
+  useDomains(domains);
+  ok(supervisorGrainFor(SURFACE, domains).registryKey === unifiedDomainSessionKey(DOMAIN), "cross-surface grain registryKey === unifiedDomainSessionKey(domain) — byte-identical to the pre-fix hardcoded key");
+}
+
+{
+  captured.length = 0;
+  process.env.OE_SOLO_WINDOW = "1";
+  useDomains(soloDomains);
+  await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_DOMAIN), unifiedSupervisorToken(SOLO_DOMAIN, Date.now()), new Date().toISOString());
+  ok((await post(soloBody(), SECRET)).status === 400, "solo domain with ONLY a domain-keyed row → 400 (the route reads the WINDOW's row, not the domain's)");
+  ok(captured.length === 0, "no divert while the solo window's own row is absent");
+
+  const soloToken = formatWindowToken({ domain: SOLO_DOMAIN, windowId: SOLO_SURFACE, generation: Date.now() });
+  await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_SURFACE), soloToken, new Date().toISOString());
+  const res = await post(soloBody(), SECRET);
+  ok(res.status === 200, "solo window (soloWindow:true + org gate) is INJECTABLE → 200");
+  const jb = (await res.json()) as { token: string };
+  ok(jb.token === soloToken, "solo injection dispatches the SOLO window's live token (windowId === surfaceKey)");
+  ok(captured.length === 1 && (captured[0].target as { token?: string }).token === soloToken, "solo divert carries the solo window token");
+}
+
+{
+  captured.length = 0;
+  useDomains([defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, unifiedSupervisor: true })]);
+  ok((await post(soloBody(), SECRET)).status === 400, "neither crossSurfaceWindow nor soloWindow on the domain → 400 (fail-closed preserved)");
+
+  delete process.env.OE_SOLO_WINDOW;
+  useDomains(soloDomains);
+  ok((await post(soloBody(), SECRET)).status === 400, "soloWindow:true but OE_SOLO_WINDOW org gate off → 400 (org-off makes the domain flag inert)");
+  ok(captured.length === 0, "no divert on any window-gate rejection");
+}
+
+{
+  captured.length = 0;
+  useDomains(domains);
+  ok((await post(goodBody({ domain: "some-other-domain" }), SECRET)).status === 400, "claimed domain != the surfaceKey's resolved domain → 400 (fail-closed)");
+  ok(captured.length === 0, "no divert on a domain mismatch");
 }
 
 {

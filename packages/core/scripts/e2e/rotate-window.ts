@@ -1,10 +1,21 @@
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 
 async function main() {
-  const domain = process.argv[2];
-  const org = process.argv[3] ?? process.env.E2E_ORG ?? "default";
+  const argv = process.argv.slice(2);
+  let windowId: string | undefined;
+  const flag = argv.indexOf("--window");
+  if (flag !== -1) {
+    windowId = argv[flag + 1];
+    if (!windowId || windowId.startsWith("--")) {
+      console.error("--window requires a windowId (the grain's windowId — a surfaceKey for a solo window)");
+      process.exit(1);
+    }
+    argv.splice(flag, 2);
+  }
+  const domain = argv[0];
+  const org = argv[1] ?? process.env.E2E_ORG ?? "default";
   if (!domain) {
-    console.error("usage: rotate-window.ts <domain> [org]");
+    console.error("usage: rotate-window.ts <domain> [org] [--window <windowId>]");
     process.exit(1);
   }
   const dbUrl = process.env.DATABASE_URL;
@@ -14,11 +25,12 @@ async function main() {
   }
 
   const store = await wireNeonOperationalStore(dbUrl);
-  const r = await rotateUnifiedWindow(store, org, domain);
+  const r = await rotateUnifiedWindow(store, org, domain, windowId);
 
   console.log("=== rotate-window ===");
   console.log(`org:            ${org}`);
   console.log(`domain:         ${domain}`);
+  console.log(`window:         ${windowId ?? `${domain} (degenerate — the domain's cross-surface window)`}`);
   console.log(`registry key:   ${r.registryKey}`);
   console.log(`old generation: ${r.oldGeneration ?? "none (no prior row)"}`);
   console.log(`old token:      ${r.oldToken ?? "none"}`);

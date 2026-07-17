@@ -1,7 +1,5 @@
-import {
-  unifiedDomainSessionKey,
-  unifiedSupervisorToken,
-} from "../../agent/channels/unified-supervisor.js";
+import { unifiedDomainSessionKey } from "../../agent/channels/unified-supervisor.js";
+import { formatWindowToken } from "../../agent/channels/window-key.js";
 import { registerOperationalPostgres, getOperationalStore } from "../../agent/operational/provider.js";
 import type { PgClient } from "../../agent/operational/postgres.js";
 import type { OperationalStore, ChannelSessionRow } from "../../agent/operational/store.js";
@@ -32,11 +30,13 @@ export async function rotateUnifiedWindow(
   store: OperationalStore,
   org: string,
   domain: string,
+  windowId?: string,
 ): Promise<RotateResult> {
-  const registryKey = unifiedDomainSessionKey(domain);
+  const window = windowId ?? domain;
+  const registryKey = unifiedDomainSessionKey(window);
   const cur = await store.getChannelSession(org, registryKey);
   const generation = Date.now();
-  const newToken = unifiedSupervisorToken(domain, generation);
+  const newToken = formatWindowToken({ domain, windowId: window, generation });
   const newRow = await store.rotateChannelSession(org, registryKey, newToken, new Date().toISOString());
   return {
     registryKey,

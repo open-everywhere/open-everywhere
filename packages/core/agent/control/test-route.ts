@@ -3,9 +3,9 @@ import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { crossSurfaceWindowEnabled } from "../memory/domain.js";
+import { crossSurfaceWindowEnabled, soloWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
+import { supervisorGrainFor, type SupervisorGrain } from "../channels/unified-supervisor.js";
 import { mintWakeId, isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeAddressing } from "../channels/normalized-wake.js";
 import type { WakeReason, WakeTrust, WakeParticipant, WakeMessageInput } from "../channels/wake-envelope.js";
@@ -142,22 +142,28 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
     return json(400, { error: `origin.platform "${origin.platform}" != platform "${platform}"` });
   }
 
-  let windowOk = false;
+  let grain: SupervisorGrain | undefined;
   try {
-    windowOk = crossSurfaceWindowEnabled(surfaceKey, getConfig().loadDomains());
+    const domains = getConfig().loadDomains();
+    if (crossSurfaceWindowEnabled(surfaceKey, domains) || soloWindowEnabled(surfaceKey, domains)) {
+      grain = supervisorGrainFor(surfaceKey, domains);
+    }
   } catch {
-    windowOk = false;
+    grain = undefined;
   }
-  if (!windowOk) {
-    return json(400, { error: `crossSurfaceWindow is not enabled for surfaceKey "${surfaceKey}" — refusing (fail-closed)` });
+  if (!grain) {
+    return json(400, { error: `no unified window (crossSurfaceWindow / soloWindow) is enabled for surfaceKey "${surfaceKey}" — refusing (fail-closed)` });
+  }
+  if (grain.domainName !== domain) {
+    return json(400, { error: `surfaceKey "${surfaceKey}" resolves to domain "${grain.domainName}", not the requested "${domain}" — refusing (fail-closed)` });
   }
 
   const org = deploymentOrg();
   const store = getOperationalStore();
-  const sessionRow = await store.getChannelSession(org, unifiedDomainSessionKey(domain)).catch(() => null);
+  const sessionRow = await store.getChannelSession(org, grain.registryKey).catch(() => null);
   const standingToken = sessionRow?.token;
   if (!standingToken) {
-    return json(400, { error: `no unified session for domain "${domain}" — rotate/seed the window first (channel_session row absent)` });
+    return json(400, { error: `no unified session for window "${grain.registryKey}" (domain "${domain}") — rotate/seed the window first (channel_session row absent)` });
   }
   const wakeId = mintWakeId();
 
