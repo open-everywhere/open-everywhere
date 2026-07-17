@@ -18,6 +18,7 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   browser_qa: FULL_KIT,
   create_skill: FULL_KIT,
   delete_skill: FULL_KIT,
+  agent: ["standing", "thread"],
   spawn_task: ["standing"],
   spawn_thread_session: ["standing"],
   complete_task: ["task"],
@@ -46,7 +47,6 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "remember",
   "forget",
   "request_access",
-  "agent",
   "cancel_routine",
   "create_routine",
   "record_watch_state",
@@ -59,6 +59,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "memory_admin_list",
   "memory_admin_read",
   "sandbox_tools",
+  "delegation_tools",
   "web_search",
   "ask_question",
   "todo",
@@ -89,8 +90,13 @@ export function checkWindowGateManifest(
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
   const coreByName = new Map(coreTools.map((t) => [t.name, t.source] as const));
-  const sandboxKit = coreByName.get("sandbox_tools") ?? "";
   const surface = new Set<string>([...coreByName.keys(), ...appShims.keys(), ...frameworkToolNames]);
+
+  const kitKeyProviders = new Map<string, string>();
+  for (const [slug, src] of coreByName) {
+    if (!/windowGatedKit\s*\(/.test(src)) continue;
+    for (const m of src.matchAll(/\n\s+([a-z_][\w]*)\s*:/gu)) kitKeyProviders.set(m[1], slug);
+  }
 
   for (const name of surface) {
     const inGated = Object.prototype.hasOwnProperty.call(gated, name);
@@ -125,9 +131,9 @@ export function checkWindowGateManifest(
         problems.push(`WINDOW_GATED_TOOLS["${name}"] must be exactly ["standing"] (a window-only spawner: no recursive spawn from a task/native/thread seat) — got [${grains.join(", ")}]`);
       }
     } else if (name === "agent") {
-      problems.push(
-        `WINDOW_GATED_TOOLS names "agent" — the agent tool must be STATIC + WINDOW_UNGATED_TOOLS (a dynamic registration is invisible to eve's harness \`!t.has('agent')\` check, so eve's built-in recursive subagent mounts and wins the name — the credential-broken path). Its grain confinement is execute-time in tools/agent.ts.`,
-      );
+      if (grainKey(grains) !== grainKey(["standing", "thread"])) {
+        problems.push(`WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"] (the conversational-root seats delegate; NEVER task — a worker leaf holds the wide hands already and must not spawn recursively) — got [${grains.join(", ")}]`);
+      }
     } else if (name === "complete_task") {
       if (grainKey(grains) !== "task") {
         problems.push(`WINDOW_GATED_TOOLS["complete_task"] must be exactly ["task"] (only a task worker owns a thread) — got [${grains.join(", ")}]`);
@@ -150,29 +156,20 @@ export function checkWindowGateManifest(
   for (const name of Object.keys(gated)) {
     const coreSrc = coreByName.get(name);
     if (coreSrc === undefined) {
-      if (!/windowGatedKit\s*\(/.test(sandboxKit) || !new RegExp(`\\n\\s*${name}\\s*:`).test(sandboxKit)) {
+      if (!kitKeyProviders.has(name)) {
         problems.push(
-          `framework tool "${name}" is grain-gated but is not re-provided per-grain by the sandbox_tools kit — it must be a key in windowGatedKit(...) in packages/core/agent/tools/sandbox_tools.ts`,
+          `framework tool "${name}" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain — add it as a key to a kit resolver (e.g. sandbox_tools.ts for the sandbox/egress names, delegation_tools.ts for the delegation ones), or the tool is simply absent on every grain`,
         );
       }
       const shim = appShims.get(name);
       if (shim === undefined || !/\bdisableTool\s*\(\s*\)/.test(shim)) {
         problems.push(
-          `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's static built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate`,
+          `framework tool "${name}" is grain-gated but its app shim agent/tools/${name}.ts is not a \`disableTool()\` sentinel — without it eve's built-in of that name stays mounted on EVERY session incl. standing seats, silently bypassing the grain gate (for \`agent\` specifically: eve's harness injects its built-in recursive subagent unless disabledFrameworkTools carries the name, and that built-in is the credential-broken path live-hit on 2026-07-16)`,
         );
       }
     } else if (!new RegExp(`windowGated\\(\\s*"${name}"`).test(coreSrc)) {
       problems.push(
         `gated tool "${name}" does not wrap its export in windowGated("${name}", …) — packages/core/agent/tools/${name}.ts must \`export default windowGated("${name}", defineTool({…}))\` or the wide-hands tool mounts statically on standing seats (silent static re-introduction). If it should no longer be gated, move it to WINDOW_UNGATED_TOOLS.`,
-      );
-    }
-  }
-
-  {
-    const agentSrc = coreByName.get("agent");
-    if (agentSrc !== undefined && ungated.has("agent") && /\b(?:windowGated|windowGatedKit|defineDynamic)\s*\(/.test(agentSrc)) {
-      problems.push(
-        `core tool packages/core/agent/tools/agent.ts wraps its export in a DYNAMIC registration (windowGated/defineDynamic) — \`agent\` must stay a plain static defineTool: a dynamic tool is invisible to eve's harness \`!t.has('agent')\` check, so eve's built-in recursive subagent re-mounts under the name (the credential-broken path, live-hit 2026-07-16). Gate at execute time inside the tool instead.`,
       );
     }
   }

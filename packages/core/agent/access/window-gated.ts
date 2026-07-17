@@ -162,7 +162,11 @@ export function windowGated(name: string, entry: GatedToolEntry, mountGate?: (ct
   return dyn;
 }
 
-export function windowGatedKit(slug: string, entries: Readonly<Record<string, GatedToolEntry>>): unknown {
+export function windowGatedKit(
+  slug: string,
+  entries: Readonly<Record<string, GatedToolEntry>>,
+  mountGates: Readonly<Record<string, (ctx: BindableContext) => boolean>> = {},
+): unknown {
   const armed: Record<string, GatedToolEntry> = {};
   for (const [name, entry] of Object.entries(entries)) {
     if (WINDOW_GATED_TOOLS[name] === undefined) {
@@ -170,6 +174,11 @@ export function windowGatedKit(slug: string, entries: Readonly<Record<string, Ga
     }
     armed[name] = armEntry(name, entry);
     preRegisterDynamicEntry(slug, name, armed[name]);
+  }
+  for (const name of Object.keys(mountGates)) {
+    if (armed[name] === undefined) {
+      throw new Error(`windowGatedKit("${slug}"): mountGates names "${name}", which is not a key of this kit — a predicate on a name the kit doesn't provide gates nothing (fix the name)`);
+    }
   }
   return defineDynamic({
     events: {
@@ -179,8 +188,10 @@ export function windowGatedKit(slug: string, entries: Readonly<Record<string, Ga
         const mounted: Record<string, GatedToolEntry> = {};
         let withheldAny = false;
         for (const name of Object.keys(armed)) {
-          if (WINDOW_GATED_TOOLS[name].includes(grain)) mounted[name] = armed[name];
-          else withheldAny = true;
+          if (!WINDOW_GATED_TOOLS[name].includes(grain)) { withheldAny = true; continue; }
+          const gate = mountGates[name];
+          if (gate && !gate(c)) continue;
+          mounted[name] = armed[name];
         }
         if (withheldAny && isNarrowedGrain(grain)) await auditGateOnce(c, grain);
         return Object.keys(mounted).length > 0 ? mounted : null;

@@ -131,9 +131,22 @@ firesWith(
     g({ web_fetch: FULL_KIT }),
     u("sandbox_tools"),
   ),
-  'framework tool "web_fetch" is grain-gated but is not re-provided per-grain by the sandbox_tools kit',
-  "a framework-gated name absent from the sandbox_tools kit FAILS",
+  'framework tool "web_fetch" is grain-gated but no windowGatedKit(...) in packages/core/agent/tools/ re-provides it per grain',
+  "a framework-gated name absent from EVERY windowGatedKit FAILS (the kit is no longer pinned to sandbox_tools — #96 added delegation_tools; the invariant is that SOME kit provides the name)",
 );
+{
+  const problems = checkWindowGateManifest(
+    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
+    new Map([
+      ["agent", SENTINEL],
+      ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";'],
+    ]),
+    ["agent"],
+    g({ agent: ["standing", "thread"] }),
+    u("delegation_tools"),
+  );
+  ok(problems.length === 0, `a framework-named tool re-provided by a NON-sandbox kit (delegation_tools → agent) is clean (got: ${JSON.stringify(problems)})`);
+}
 
 firesWith(
   checkWindowGateManifest([{ name: "reply", source: "x" }], new Map(), [], g({}), u("reply")),
@@ -156,30 +169,48 @@ ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_task]) === JSON.stringify(["stand
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.spawn_thread_session]) === JSON.stringify(["standing"]), "spawn_thread_session is standing-only (window-only mint; no recursive thread trees)");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_task]) === JSON.stringify(["task"]), "complete_task is task-only");
 ok(JSON.stringify([...WINDOW_GATED_TOOLS.complete_thread]) === JSON.stringify(["thread"]), "complete_thread is thread-only");
-ok(WINDOW_GATED_TOOLS.agent === undefined && WINDOW_UNGATED_TOOLS.has("agent"), "agent is UNGATED (static + always-mounted — the only way to displace eve's built-in `agent` subagent; grain confinement is execute-time in tools/agent.ts)");
+ok(JSON.stringify([...(WINDOW_GATED_TOOLS.agent ?? [])]) === JSON.stringify(["standing", "thread"]) && !WINDOW_UNGATED_TOOLS.has("agent"), "agent is grain-gated to standing+thread (a gated row again since #96; the disableTool() sentinel removes eve's built-in and delegation_tools.ts re-provides it per grain)");
 ok([...FULL_KIT].sort().join(",") === "native,task", "FULL_KIT = task+native, flag-OFF (byte-identical Stage C; the T2 narrowing to task-only is flag-ON, pinned by the crafted case below)");
 ok(
   withheldFromGrain("standing").includes("bash") && withheldFromGrain("standing").includes("complete_task") && withheldFromGrain("standing").includes("complete_thread"),
   "a standing seat withholds the wide-hands set + complete_task + complete_thread",
 );
 ok(
-  withheldFromGrain("native").length === 5,
-  "flag-off a native seat withholds ONLY the delegation/lifecycle set (spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON narrowing is the crafted case below; agent is static/execute-guarded, not withheld)",
+  withheldFromGrain("native").length === 6,
+  "flag-off a native seat withholds the delegation/lifecycle set (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — it KEEPS the wide hands (Stage-C byte-identical; the flag-ON wide-hands narrowing is the crafted case below). `agent` joined this set at #96: it is standing/thread-only, so native withholds it too.",
 );
 
 firesWith(
-  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({ agent: ["standing", "thread"] }), u()),
-  'WINDOW_GATED_TOOLS names "agent"',
-  "agent in the GATED table FAILS regardless of grain (a dynamic registration lets eve's built-in subagent win the name)",
+  checkWindowGateManifest(
+    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
+    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
+    ["agent"],
+    g({ agent: ["standing"] }),
+    u("delegation_tools"),
+  ),
+  'WINDOW_GATED_TOOLS["agent"] must be exactly ["standing", "thread"]',
+  "agent gated to the wrong grain FAILS (a task-leaf delegation is a recursion hole)",
 );
 firesWith(
-  checkWindowGateManifest([{ name: "agent", source: wrapped("agent") }], new Map([["agent", ""]]), [], g({}), u("agent")),
-  "must stay a plain static defineTool",
-  "agent UNGATED but with a dynamic (windowGated) source FAILS (the 4b static invariant — the 2026-07-16 live regression shape)",
+  checkWindowGateManifest(
+    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
+    new Map([["agent", "export default someOtherThing();"], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
+    ["agent"],
+    g({ agent: ["standing", "thread"] }),
+    u("delegation_tools"),
+  ),
+  "is not a `disableTool()` sentinel",
+  "agent whose app shim is NOT a disableTool() sentinel FAILS (eve's built-in recursive subagent stays mounted and wins the name — the 2026-07-16 credential-broken path)",
 );
 {
-  const problems = checkWindowGateManifest([{ name: "agent", source: "export default defineTool({/* static agent */});" }], new Map([["agent", ""]]), [], g({}), u("agent"));
-  ok(problems.length === 0, "agent STATIC + ungated is clean (the post-fix shape)");
+  const problems = checkWindowGateManifest(
+    [{ name: "delegation_tools", source: 'export default windowGatedKit("delegation_tools", {\n  agent: defineTool(x),\n});' }],
+    new Map([["agent", SENTINEL], ["delegation_tools", 'export { default } from "@open-everywhere/core/agent/tools/delegation_tools.js";']]),
+    ["agent"],
+    g({ agent: ["standing", "thread"] }),
+    u("delegation_tools"),
+  );
+  ok(problems.length === 0, `agent gated [standing,thread] + kit + sentinel is clean (the #96 post-fix shape) (got: ${JSON.stringify(problems)})`);
 }
 
 firesWith(

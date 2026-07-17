@@ -88,6 +88,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   agent: open(
     "delegation (reshape): both modes spawn a full-hands ONE-SHOT worker on a credential-correct new session (same rationale as spawn_task — re-gates every L2 consequence INSIDE the child, forwards taint, widens hands not consequence). async returns at once and the worker wakes the caller with its result; sync HOLDS FOCUS and block-polls the durable result row, returning it inline (degrading to async on MAX_WAIT). Escapes nothing this table doesn't re-gate in the worker; audited via task.spawned",
   ),
+  delegation_tools: open(
+    "the resolver FILE that re-provides the disabled framework-named `agent` per session grain (access/window-gated.ts windowGatedKit — the sandbox_tools shape); mounts nothing beyond the `agent` name above, at its own open tier",
+  ),
 
   create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
   create_routine: member("routine.create", "self-modification: a standing scheduled behaviour that outlives the turn"),
