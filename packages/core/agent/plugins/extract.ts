@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import type { SkillPackageDefinition } from "eve/skills";
 
-const DEFAULT_SUBAGENT_MODEL = process.env.OE_PRIMARY_MODEL?.trim() || "zai/glm-5.2";
+const DEFAULT_SUBAGENT_MODEL = process.env.OE_FORCE_MODEL?.trim() || process.env.OE_PRIMARY_MODEL?.trim() || "zai/glm-5.2";
 
 const MODEL_ALIASES: Record<string, string> = {
   opus: "anthropic/claude-opus-4.8",

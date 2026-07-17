@@ -216,6 +216,23 @@ function slackDmCtx(team: string, dmId: string): BindableContext {
   ok(rNoMatch.id === DEFAULT_ID, "resolveRoute: no surfaceMatch → org only (dm criteria layer not consulted)");
 }
 {
+  const deps = fakeDeps(() => domains2, []);
+  const FORCED = "deepseek/deepseek-v4-flash";
+  const prev = process.env.OE_FORCE_MODEL;
+  process.env.OE_FORCE_MODEL = FORCED;
+  try {
+    const rPinned = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
+    ok(rPinned.id === FORCED && rPinned.tier === undefined, "resolveRoute: OE_FORCE_MODEL overrides a domain's concrete id pin");
+    const rDefault = await resolveRoute("primary", C_OTHER, undefined, DEFAULT_ID, deps);
+    ok(rDefault.id === FORCED, "resolveRoute: OE_FORCE_MODEL overrides the org default id too");
+  } finally {
+    if (prev === undefined) delete process.env.OE_FORCE_MODEL;
+    else process.env.OE_FORCE_MODEL = prev;
+  }
+  const rRestored = await resolveRoute("primary", C_TXN, undefined, DEFAULT_ID, deps);
+  ok(rRestored.id === "anthropic/claude-sonnet-5", "resolveRoute: unset OE_FORCE_MODEL restores per-domain routing");
+}
+{
   const threw = fakeDeps(() => {
     throw new Error("config not registered");
   }, []);

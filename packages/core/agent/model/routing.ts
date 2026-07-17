@@ -162,7 +162,10 @@ export async function resolveRoute(
     }
     const enveloped = applyModelPolicyToRoute(pickedRoute, policy, defaultId, effectiveCeiling);
     for (const w of enveloped.warnings) logOnce("warn", `${role}: model policy: ${w}`);
-    const route: ModelRoute = { ...pickedRoute, id: enveloped.id, reasoning: enveloped.reasoning };
+    const forcedId = process.env.OE_FORCE_MODEL?.trim();
+    const route: ModelRoute = forcedId
+      ? { ...pickedRoute, id: forcedId, tier: undefined, reasoning: enveloped.reasoning }
+      : { ...pickedRoute, id: enveloped.id, reasoning: enveloped.reasoning };
     if (route.id !== undefined || route.reasoning !== undefined || route.providers !== undefined) {
       logOnce("log", `${role}: ${surfaceKey} → ${JSON.stringify(route)}`);
     }
