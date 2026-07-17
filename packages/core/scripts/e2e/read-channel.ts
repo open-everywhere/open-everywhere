@@ -75,15 +75,21 @@ async function classifyNoReply(id: string, sinceIso: string, wakeId: string, off
   record(id, "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms and no failure/no_reply audit rows (model-dependent; possibly a slow turn). ${offlineNote}`);
 }
 
-async function toolNamesOf(sessionId: string): Promise<string[] | null> {
+async function toolNamesOf(sessionId: string, sinceIso: string): Promise<string[] | null> {
   try {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
     const names: string[] = [];
-    for (const e of tr.events) {
-      if (e.type !== "actions.requested") continue;
-      for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
-        if (typeof a.toolName === "string") names.push(a.toolName);
+    let start = 0;
+    for (let page = 0; page < 40; page++) {
+      const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
+      for (const e of tr.events) {
+        if (e.type !== "actions.requested") continue;
+        if (e.at !== null && e.at < sinceIso) continue;
+        for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
+          if (typeof a.toolName === "string") names.push(a.toolName);
+        }
       }
+      if (tr.events.length === 0) break;
+      start = tr.nextIndex ?? start + tr.events.length;
     }
     return names;
   } catch (e) { console.warn(`  [transcript] ${(e as Error).message}`); return null; }
@@ -97,7 +103,7 @@ async function g1(): Promise<void> {
   console.log(`  G1 injected Slack wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("G1", since, wakeId, "Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).");
-  const calls = await toolNamesOf(sid);
+  const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. Render byte-identity + gate pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G1", "PASS", `session ${sid} invoked the GENERIC read_channel for slack (the behaviour-preserving successor to read_slack_channel) and replied.`);
   if (calls.includes("read_slack_channel")) return record("G1", "FAIL", `session ${sid} invoked read_slack_channel — the target was NOT started with OE_GENERIC_READ_VERBS=1 (the Slack-specific reader should have retired).`);
@@ -112,7 +118,7 @@ async function g2(): Promise<void> {
   console.log(`  G2 injected Discord wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("G2", since, wakeId, "The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).");
-  const calls = await toolNamesOf(sid);
+  const calls = await toolNamesOf(sid, since);
   if (calls === null) return record("G2", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).`);
   if (calls.includes("read_channel")) return record("G2", "PASS", `session ${sid} invoked read_channel for DISCORD — the additive cross-surface read works through ONE generic tool.`);
   record("G2", "SKIP", `session ${sid} replied but did not invoke read_channel (tools=[${[...new Set(calls)].join(",") || "none"}]) — model-dependent; the adapter is pinned offline.`);

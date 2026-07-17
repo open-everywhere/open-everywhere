@@ -66,10 +66,11 @@ async function pollForReply(sinceIso: string, wakeId: string, timeoutMs: number)
   return { sessionId: null, via: null, sawGated };
 }
 
-const toolNamesOf = (sessionId: string): Promise<string[]> => readToolNames(TARGET, READ, sessionId);
+const toolNamesOf = (sessionId: string, sinceIso?: string): Promise<string[]> =>
+  readToolNames(TARGET, READ, sessionId, { paged: true, sinceIso });
 
-const toolCallsWithErrorsOf = (sessionId: string): Promise<{ name: string; errored: boolean }[] | null> =>
-  readToolCalls(TARGET, READ, sessionId);
+const toolCallsWithErrorsOf = (sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> =>
+  readToolCalls(TARGET, READ, sessionId, { paged: true, sinceIso });
 
 const HEAVY = "please clone the acme/web repo, run the full test suite in a sandbox, then open a pull request with the fix. reply here when the PR is up.";
 const withheldStanding = new Set(withheldFromGrain("standing"));
@@ -88,7 +89,7 @@ async function f1(): Promise<void> {
     return record("F1", "FAIL", `gated row present but grain=${grain}, withheld=[${withheld.join(",")}] (missing wide-hands: ${missingWide.join(",") || "none"}; manifest-match=${setMatch})`);
   }
   const sid = dS(g, "sessionId");
-  const calls = sid ? await toolNamesOf(sid) : [];
+  const calls = sid ? await toolNamesOf(sid, since) : [];
   const leaked = calls.filter((c) => WIDE_HANDS.includes(c));
   record("F1", "PASS", `standing unified window NARROWED — grain=standing, withheld ${withheld.length} incl. bash/checkout_repo/open_pull_request; transcript(${sid}) tools=[${[...new Set(calls)].join(",") || "none"}]${leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}`);
 }
@@ -162,7 +163,7 @@ async function f4(): Promise<void> {
     }
     return record("F4", "SKIP", `task session RAN (evidence: ${[...new Set(ranEvidence.map((r) => r.action))].join(",")}) with NO narrowing row (correct), but no reply.post/unified.no_reply landed within ${REPLY_TIMEOUT_MS}ms so the wake→session transcript join is unconfirmed (model-dependent terminal choice).`);
   }
-  const calls = await toolNamesOf(sessionId);
+  const calls = await toolNamesOf(sessionId, since);
   const usedWide = calls.filter((c) => WIDE_HANDS.includes(c) || c === "list_repos" );
   record("F4", "PASS", `task/thread worker kept the FULL kit — NO turn.tool_gated row (negative control vs F1's narrowing), session ${sessionId} ran + ${via === A_REPLY ? "replied" : "completed with a deliberate no_reply"}. transcript tools=[${[...new Set(calls)].join(",") || "none"}]${calls.some((c) => WIDE_HANDS.includes(c)) ? " (wide-hands INVOKED ✓)" : " (wide-hands mounted; model chose not to invoke)"}`);
 }
@@ -261,7 +262,7 @@ async function f9(): Promise<void> {
   if (!row) {
     const join = sessionJoinRowsFor(await rowsSince(since), wakeId)[0];
     const sid = join ? dS(join, "sessionId") : undefined;
-    const calls = sid ? await toolCallsWithErrorsOf(sid) : null;
+    const calls = sid ? await toolCallsWithErrorsOf(sid, since) : null;
     if (calls?.some((c) => c.name === "spawn_thread_session")) {
       return record("F9", "FAIL", `the model CALLED spawn_thread_session (session ${sid}) but NO thread_seat.spawned row landed for wake ${wakeId} — the tool is mounted but its execute refused/errored; read the action.result error in transcript ${sid}.`);
     }

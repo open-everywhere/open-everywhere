@@ -128,17 +128,13 @@ export async function readToolCalls(
   }
 }
 
-export async function readToolNames(target: string, readToken: string, sessionId: string): Promise<string[]> {
-  try {
-    const tr = await fetchTranscript(target, readToken, sessionId, { limit: 2000, idleMs: 2500 });
-    const names: string[] = [];
-    for (const e of tr.events) {
-      if (e.type !== "actions.requested") continue;
-      const acts = (e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [];
-      for (const a of acts) if (typeof a.toolName === "string") names.push(a.toolName);
-    }
-    return names;
-  } catch { return []; }
+export async function readToolNames(
+  target: string,
+  readToken: string,
+  sessionId: string,
+  opts: ToolCallsOpts = {},
+): Promise<string[]> {
+  return ((await readToolCalls(target, readToken, sessionId, opts)) ?? []).map((c) => c.name);
 }
 
 export async function wholeTranscriptText(

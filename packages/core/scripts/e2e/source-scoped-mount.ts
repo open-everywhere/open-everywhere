@@ -53,17 +53,23 @@ async function classifyNoReply(id: string, sinceIso: string, wakeId: string, off
   record(id, "SKIP", `no reply within ${REPLY_TIMEOUT_MS}ms and no failure/no_reply audit rows (model-dependent; possibly a slow turn). ${offlineNote}`);
 }
 
-async function transcriptOf(sessionId: string): Promise<{ tools: string[]; text: string } | null> {
+async function transcriptOf(sessionId: string, sinceIso: string): Promise<{ tools: string[]; text: string } | null> {
   try {
-    const tr = await fetchTranscript(TARGET, READ, sessionId, { limit: 2000, idleMs: 2500 });
     const tools: string[] = [];
     let text = "";
-    for (const e of tr.events) {
-      if (e.type === "message.completed") { text += "\n" + JSON.stringify(e.data ?? {}); continue; }
-      if (e.type !== "actions.requested") continue;
-      for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
-        if (typeof a.toolName === "string") tools.push(a.toolName);
+    let start = 0;
+    for (let page = 0; page < 40; page++) {
+      const tr = await fetchTranscript(TARGET, READ, sessionId, { startIndex: start, limit: 2000, idleMs: 2500 });
+      for (const e of tr.events) {
+        if (e.at !== null && e.at < sinceIso) continue;
+        if (e.type === "message.completed") { text += "\n" + JSON.stringify(e.data ?? {}); continue; }
+        if (e.type !== "actions.requested") continue;
+        for (const a of ((e.data as { actions?: { toolName?: string }[] } | undefined)?.actions ?? [])) {
+          if (typeof a.toolName === "string") tools.push(a.toolName);
+        }
       }
+      if (tr.events.length === 0) break;
+      start = tr.nextIndex ?? start + tr.events.length;
     }
     return { tools, text };
   } catch (e) { console.warn(`  [transcript] ${(e as Error).message}`); return null; }
@@ -77,7 +83,7 @@ async function s1(): Promise<void> {
   console.log(`  S1 injected multi-source Slack wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("S1", since, wakeId, "The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).");
-  const tr = await transcriptOf(sid);
+  const tr = await transcriptOf(sid, since);
   if (tr === null) return record("S1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).`);
   const calls = tr.tools;
   if (calls.includes("read_slack_channel")) {
@@ -99,7 +105,7 @@ async function s2(): Promise<void> {
   if (!isSolo) return record("S2", "SKIP", `the solo-window selector did not re-mint a :win:${solo}: token (got ${token}) — a github-solo window couldn't be dispatched via the seam; the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("S2", since, wakeId, "The absence of the Slack reader on a github-solo window is deterministically pinned offline.");
-  const tr = await transcriptOf(sid);
+  const tr = await transcriptOf(sid, since);
   if (tr === null) return record("S2", "SKIP", `transcript fetch failed for session ${sid} — the negative cannot be observed (a vacuous negative is not a passive negative); the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
   const calls = tr.tools;
   if (calls.includes("read_slack_channel")) {
