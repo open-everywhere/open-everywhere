@@ -69,6 +69,19 @@ function auditLabels(rawToken: string): { workspace: string; surface: string | u
   return { workspace: key?.domain ?? "unknown", surface: key ? unifiedDomainSessionKey(key.windowId) : undefined };
 }
 
+function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof code === "string" && code.length > 0) out.code = code;
+  if (details && typeof details === "object") {
+    for (const k of ["errorId", "name", "statusCode", "generationId", "gatewayName", "gatewayType", "upstreamType", "upstreamStatusCode", "upstreamMessage"]) {
+      const v = details[k];
+      if (typeof v === "string" && v.length > 0) out[k] = v.slice(0, 200);
+      else if (typeof v === "number" && Number.isFinite(v)) out[k] = String(v);
+    }
+  }
+  return out;
+}
+
 function windowSourcesForDivert(token: string, originPlatform: string): readonly string[] {
   try {
     const key = parseWindowToken(token);
@@ -226,7 +239,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         workspace,
         surface,
         action: "unified.supervisor_turn_failed",
-        detail: { message: String(data.message).slice(0, 500) },
+        detail: { message: String(data.message).slice(0, 500), ...failureDiag(data.code, data.details) },
       }).catch(() => undefined);
     },
     async "session.failed"(data, channel) {
@@ -238,7 +251,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         workspace,
         surface,
         action: "unified.supervisor_session_failed",
-        detail: { message: String(data.message).slice(0, 500) },
+        detail: { message: String(data.message).slice(0, 500), ...failureDiag(data.code, data.details) },
       }).catch(() => undefined);
     },
   },
