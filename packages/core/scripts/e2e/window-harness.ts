@@ -26,7 +26,7 @@ export function makeWant(only: string | undefined): (id: string) => boolean {
 
 export interface InjectBody {
   domain: string;
-  platform: "slack" | "github";
+  platform: "slack" | "github" | "discord";
   surfaceKey: string;
   text: string;
   addressing?: string;
