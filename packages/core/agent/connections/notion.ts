@@ -1,6 +1,6 @@
 import { defineMcpClientConnection } from "eve/connections";
-import { once } from "eve/tools/approval";
-import { appProviderToken } from "./connector-auth.js";
+import { appProviderToken, userAwareProviderToken, connectorApprovalPolicy } from "./connector-auth.js";
+import { connectorUserPrincipalEnabled } from "./connector-flags.js";
 
 const NOTION_MCP_URL = "https://mcp.notion.com/sse";
 
@@ -13,7 +13,9 @@ export default defineMcpClientConnection({
     "into the page/database a channel points you at. Append under the right heading; don't " +
     "rewrite whole pages. Notion's API owns the block model, so there's no markdown round-trip.",
 
-  auth: appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" }),
+  auth: connectorUserPrincipalEnabled()
+    ? userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" })
+    : appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" }),
 
-  approval: once(),
+  approval: connectorApprovalPolicy(),
 });
