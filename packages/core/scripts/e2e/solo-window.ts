@@ -16,10 +16,10 @@ const DB = process.env.DATABASE_URL ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
 
 const DOMAIN = process.env.E2E_SOLO_DOMAIN ?? "e2e-solo";
-const SLACK_A = process.env.E2E_SOLO_SLACK_A ?? "slack/T0EXAMPLE/C0EXCHAN005";
-const SLACK_B = process.env.E2E_SOLO_SLACK_B ?? "slack/T0EXAMPLE/C0EXCHAN004";
-const DISCORD_C = process.env.E2E_SOLO_DISCORD ?? "discord/1300000000000000100/1300000000000000101";
-const SOLO_SURFACES = [SLACK_A, SLACK_B, DISCORD_C] as const;
+const SLACK_A = process.env.E2E_SOLO_SLACK_A ?? "slack/T0EXAMPLE/C0EXCHAN001";
+const SLACK_B = process.env.E2E_SOLO_SLACK_B ?? "slack/T0EXAMPLE/C0EXCHAN002";
+const DISCORD_C = process.env.E2E_SOLO_DISCORD ?? "";
+const SOLO_SURFACES = [SLACK_A, SLACK_B, DISCORD_C].filter(Boolean);
 
 const CTRL_DOMAIN = process.env.E2E_SOLO_CONTROL_DOMAIN ?? "e2e-unified";
 const CTRL_SLACK = process.env.E2E_SOLO_CONTROL_SLACK ?? "slack/T0EXAMPLE/C0EXCHAN003";
@@ -236,6 +236,9 @@ const w2 = (): Promise<void> => sessionSplitCheck("W2", DOMAIN, SLACK_A, SLACK_B
 const w2n = (): Promise<void> => sessionSplitCheck("W2N", CTRL_DOMAIN, CTRL_SLACK, CTRL_GITHUB, "equal");
 
 async function w3(): Promise<void> {
+  if (!DISCORD_C) {
+    return record("W3", "SKIP", "no dedicated Discord channel configured (E2E_SOLO_DISCORD unset) — the prod-resident e2e-solo domain is Slack-only until a Discord channel it OWNS exists (the bot lacks Manage Channels / the Slack token lacks channels:write, so one can't be auto-provisioned). The core solo proof is W1/W2/W4/W5; set E2E_SOLO_DISCORD to light up the sources-narrowing leg.");
+  }
   if (!sourceScopedToolsEnabled()) {
     return record("W3", "SKIP", "OE_SOURCE_SCOPED_TOOLS is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified) and there is nothing to narrow, so a run would prove nothing. Re-run with the flag on AND a target started with OE_SOURCE_SCOPED_TOOLS=1.");
   }
