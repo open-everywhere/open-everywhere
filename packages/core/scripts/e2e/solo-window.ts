@@ -68,14 +68,14 @@ function wakeAt(domain: string, surfaceKey: string, text: string): Promise<Injec
 
 function unarmedReason(e: unknown, surfaceKey: string): string | null {
   const m = (e as Error).message ?? "";
-  if (m.includes("no unified window")) {
-    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no window (crossSurfaceWindow / soloWindow) is enabled for it. The target must be started with BOTH OE_SOLO_EVAL=1 (registers the ${DOMAIN} fixture in agent/memory/domains.ts) and OE_SOLO_WINDOW=1 (the org master gate soloWindowEnabled demands on top of the per-domain flag). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
+  if (m.includes("no standing window")) {
+    return `the target REFUSED to inject at ${surfaceKey} — fail-closed at test-route gate 3a: no standing window (mode solo / unified) is enabled for it. The target must be started with OE_WINDOW_TOPOLOGY=1 (arms the WINDOW_TOPOLOGY_ENABLED code capability the ${DOMAIN} fixture's mode "solo" needs; the fixture itself is always registered in agent/memory/domains.ts). This is the state W5 asserts as CORRECT — it is only a SKIP here.`;
   }
   if (m.includes("no unified session for window")) {
     return `the ${surfaceKey} window has NO channel_session row yet and this run could not seed one (DATABASE_URL ${DB ? "wired but the rotate failed — see the [store] warning above" : "unset"}). The solo windows are per-CHANNEL and brand new, so nothing has ever minted their rows: re-run with DATABASE_URL pointed at the target's database (rotation is what mints them).`;
   }
   if (m.includes("resolves to domain")) {
-    return `${surfaceKey} does not resolve to domain "${DOMAIN}" on the target (${m}) — the fixture is absent or another domain claims the channel. Start the target with OE_SOLO_EVAL=1 so the ${DOMAIN} block registers and the competing domains are gated out.`;
+    return `${surfaceKey} does not resolve to domain "${DOMAIN}" on the target (${m}) — another domain claims the channel (the ${DOMAIN} fixture itself is always registered). Check the competing domains' channel ownership on the target.`;
   }
   return null;
 }
@@ -141,7 +141,7 @@ async function w1(): Promise<void> {
   const shape = soloTokenVerdict(inj.token, SLACK_A);
   console.log(`  W1 injected solo Slack wake ${inj.wakeId} → token ${inj.token} (solo shape: ${shape.ok})`);
   if (!shape.ok) {
-    return record("W1", "FAIL", `the REAL solo path did not re-key the window: ${shape.detail}. Dispatched token: ${inj.token}. (This is the whole topology — supervisorGrainFor → soloWindowEnabled → windowId = surfaceKey → supervisorTokenForGrain's explicit :win: form.)`);
+    return record("W1", "FAIL", `the REAL solo path did not re-key the window: ${shape.detail}. Dispatched token: ${inj.token}. (This is the whole topology — supervisorGrainFor → windowModeFor → windowId = surfaceKey → supervisorTokenForGrain's explicit :win: form.)`);
   }
   const g = await pollForGated(since, inj.wakeId, GATE_TIMEOUT_MS);
   if (!g) {
@@ -161,7 +161,7 @@ async function w1(): Promise<void> {
   const sid = dS(g, "sessionId");
   const calls = sid ? await readToolCalls(TARGET, READ, sid, { paged: true, sinceIso: since }) : null;
   const leaked = (calls ?? []).filter((c) => WIDE_HANDS.includes(c.name)).map((c) => c.name);
-  record("W1", "PASS", `the REAL solo topology re-keyed AND narrowed — the dispatch resolved a per-channel window (${shape.detail}) through supervisorGrainFor's solo arm (nothing here passed a soloWindowId selector: the token came from the \`oe-domain::${SLACK_A}\` registry row, which only exists because soloWindowEnabled admitted the channel), and its seat is grain=standing with all ${withheld.length} manifest-withheld tools absent incl. bash/checkout_repo/open_pull_request. Session ${sid ?? "?"} tools=[${[...new Set((calls ?? []).map((c) => c.name))].join(",") || "none"}]${calls === null ? " (transcript UNREADABLE — the leak check could not run)" : leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}.`);
+  record("W1", "PASS", `the REAL solo topology re-keyed AND narrowed — the dispatch resolved a per-channel window (${shape.detail}) through supervisorGrainFor's solo arm (nothing here passed a soloWindowId selector: the token came from the \`oe-domain::${SLACK_A}\` registry row, which only exists because windowedSupervisorEnabled admitted the channel), and its seat is grain=standing with all ${withheld.length} manifest-withheld tools absent incl. bash/checkout_repo/open_pull_request. Session ${sid ?? "?"} tools=[${[...new Set((calls ?? []).map((c) => c.name))].join(",") || "none"}]${calls === null ? " (transcript UNREADABLE — the leak check could not run)" : leaked.length ? ` ⚠ LEAKED ${leaked.join(",")}` : " (no wide-hands invoked)"}.`);
 }
 
 interface Leg { tag: string; surfaceKey: string; sessionId: string | null; via: string | null; wakeId: string }
@@ -227,7 +227,7 @@ async function sessionSplitCheck(
     if (bleed.length > 0) {
       return record(id, "FAIL", `the two solo windows have DIFFERENT sessionIds (${sidA} vs ${sidB}) but their transcripts BLEED — ${tagA}→[${homeA.join(",")}], ${tagB}→[${homeB.join(",")}]. One channel's traffic is visible in the other's window; distinct session ids are not, on their own, distinct context.`);
     }
-    return record(id, "PASS", `THE FALSIFIER HOLDS — two channels on the SAME platform and SAME workspace in the SOLO domain "${domain}" landed in SEPARATE windows: ${surfaceA} → session ${sidA}, ${surfaceB} → session ${sidB} (joined via ${legA.via}/${legB.via}), and each channel's marker appears ONLY in its own transcript (${tagA}→${homeA.join(",")}, ${tagB}→${homeB.join(",")}). Same platform ⇒ identical sources (["slack"]) ⇒ the ONLY difference between the two windows is the per-channel windowId, which is exactly the claim. Under crossSurfaceWindow these two would be ONE window (W2N drives that control).`);
+    return record(id, "PASS", `THE FALSIFIER HOLDS — two channels on the SAME platform and SAME workspace in the SOLO domain "${domain}" landed in SEPARATE windows: ${surfaceA} → session ${sidA}, ${surfaceB} → session ${sidB} (joined via ${legA.via}/${legB.via}), and each channel's marker appears ONLY in its own transcript (${tagA}→${homeA.join(",")}, ${tagB}→${homeB.join(",")}). Same platform ⇒ identical sources (["slack"]) ⇒ the ONLY difference between the two windows is the per-channel windowId, which is exactly the claim. Under mode "unified" these two would be ONE window (W2N drives that control).`);
   }
   return record(id, "PASS", `negative control HOLDS — ${surfaceA} and ${surfaceB} on the CROSS-SURFACE domain "${domain}" folded into ONE window: both wakes joined session ${sidA} (via ${legA.via}/${legB.via}) and that single transcript carries BOTH markers (${tagA}, ${tagB}). This is what makes W2 falsifiable: the same drive + the same matrix DOES report equality when the topology shares a window, so W2's "distinct" is a property of the solo topology, not of the method.`);
 }
@@ -291,7 +291,7 @@ async function w4(store: OperationalStore | null): Promise<void> {
   const domainKey = unifiedDomainSessionKey(DOMAIN);
   const domainRow = await store.getChannelSession(ORG, domainKey).catch(() => null);
   if (domainRow) {
-    return record("W4", "FAIL", `a DOMAIN-WIDE registry row "${domainKey}" exists (token ${domainRow.token}) alongside the per-channel rows — a solo domain must never key a window by its domain name. Either the fixture also carries crossSurfaceWindow (which WINS over solo and would explain it), or a flag-off run seeded a degenerate window under the same domain. Whichever it is, this pack's other routes cannot claim the solo registryKey was used while this row exists.`);
+    return record("W4", "FAIL", `a DOMAIN-WIDE registry row "${domainKey}" exists (token ${domainRow.token}) alongside the per-channel rows — a solo domain must never key a window by its domain name. Either the fixture carries mode "unified" instead of mode "solo" (which would explain it), or a flag-off run seeded a degenerate window under the same domain. Whichever it is, this pack's other routes cannot claim the solo registryKey was used while this row exists.`);
   }
   const tokens = new Set(rows.map((r) => r.token!));
   if (tokens.size !== rows.length) {
@@ -310,19 +310,19 @@ async function w5(): Promise<void> {
     ({ token } = await wakeAt(DOMAIN, SLACK_A, `flag-off control probe ${RUN} — no action needed.`));
   } catch (e) {
     const m = (e as Error).message ?? "";
-    if (m.includes("no unified window")) {
-      return record("W5", "PASS", `flag-OFF control HOLDS — the target REFUSED the injection at ${SLACK_A} fail-closed ("no unified window (crossSurfaceWindow / soloWindow) is enabled"), so the ${DOMAIN} fixture registers NO window and mints NO token while unarmed. NB this refusal cannot distinguish "the fixture is absent (OE_SOLO_EVAL off)" from "the fixture is present but the org gate is off (OE_SOLO_WINDOW off)" — both fail closed identically, which IS the inertness being asserted rather than a limit on it. DIVERGENCE from the matrix spec's W5 (which predicted a degenerate \`oe-dom:${DOMAIN}:oe-sup:g<N>\` mint): that mint is unreachable through this seam, because gate 3a refuses before any token is minted. The degenerate-mint shape is pinned where it is deterministic — supervisorTokenForGrain with a flag-off grain, scripts/unified-supervisor-test.ts.`);
+    if (m.includes("no standing window")) {
+      return record("W5", "PASS", `flag-OFF control HOLDS — the target REFUSED the injection at ${SLACK_A} fail-closed ("no standing window (mode solo / unified) is enabled"), so the ${DOMAIN} fixture mints NO token while unarmed even though it is always registered. This is a single-gate refusal: WINDOW_TOPOLOGY_ENABLED (OE_WINDOW_TOPOLOGY) is off, which IS the inertness being asserted. DIVERGENCE from the matrix spec's W5 (which predicted a degenerate \`oe-dom:${DOMAIN}:oe-sup:g<N>\` mint): that mint is unreachable through this seam, because gate 3a refuses before any token is minted. The degenerate-mint shape is pinned where it is deterministic — supervisorTokenForGrain with a flag-off grain, scripts/unified-supervisor-test.ts.`);
     }
     if (m.includes("no unified session for window")) {
-      return record("W5", "SKIP", `the target ACCEPTED ${SLACK_A} as a windowed surface (so a window IS enabled — the armed state) but has no session row for it: ${m}. W5 is the flag-OFF control; re-run against a target started WITHOUT OE_SOLO_WINDOW to exercise it.`);
+      return record("W5", "SKIP", `the target ACCEPTED ${SLACK_A} as a windowed surface (so the window topology IS enabled — the armed state) but has no session row for it: ${m}. W5 is the flag-OFF control; re-run against a target started WITHOUT OE_WINDOW_TOPOLOGY to exercise it.`);
     }
     return record("W5", "FAIL", `the flag-off probe failed in an unexpected way (neither the fail-closed refusal nor a clean accept): ${m}`);
   }
   const key = parseWindowToken(token);
   if (key && key.windowId === key.domain) {
-    return record("W5", "FAIL", `the target ACCEPTED the injection and minted the DEGENERATE token ${token} for a soloWindow domain — a solo domain must key its window by surfaceKey, never by domain. The likeliest cause is crossSurfaceWindow ALSO being set on "${DOMAIN}" (it WINS over solo: unified-supervisor.ts's \`const solo = !singleWindow && soloWindowEnabled(...)\`), which would silently destroy the whole topology this pack tests.`);
+    return record("W5", "FAIL", `the target ACCEPTED the injection and minted the DEGENERATE token ${token} for a mode-"solo" domain — a solo domain must key its window by surfaceKey, never by domain. The likeliest cause is the fixture carrying mode "unified" instead of "solo" on "${DOMAIN}" (supervisorGrainFor's \`const solo = !unifiedMode\`, unified-supervisor.ts), which would silently destroy the whole topology this pack tests.`);
   }
-  record("W5", "SKIP", `the target is ARMED (the injection was accepted and minted ${token}), so the flag-OFF control cannot run — W5 asserts that an UNARMED target refuses. Re-run the pack against a target started WITHOUT OE_SOLO_WINDOW (leave OE_SOLO_EVAL=1 so the fixture is still registered) to exercise it; W1–W4 will then SKIP with the mirror-image reason. Not faked here.`);
+  record("W5", "SKIP", `the target is ARMED (the injection was accepted and minted ${token}), so the flag-OFF control cannot run — W5 asserts that an UNARMED target refuses. Re-run the pack against a target started WITHOUT OE_WINDOW_TOPOLOGY (the fixture stays registered regardless) to exercise it; W1–W4 will then SKIP with the mirror-image reason. Not faked here.`);
 }
 
 async function main(): Promise<void> {

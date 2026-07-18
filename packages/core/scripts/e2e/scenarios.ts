@@ -935,7 +935,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       if (eyesMode === "suppressed") {
-        ctx.log("eyes leg: the repo sits in a single-window (crossSurfaceWindow) domain — supervisor turns post NO pickup eyes by design; native-path gate not applicable");
+        ctx.log("eyes leg: the repo sits in a single-window (mode: \"unified\") domain — supervisor turns post NO pickup eyes by design; native-path gate not applicable");
       } else {
         try {
           const eyes = await pollUntil(
@@ -1419,12 +1419,12 @@ export const SCENARIOS: readonly Scenario[] = [
         if (!unifiedFlagConfirmed) {
           ctx.gate(
             (process.env.E2E_EXPECT_UNIFIED ?? "").trim() !== "1",
-            `E2E_EXPECT_UNIFIED=1 but the deployment reports domain "${domainName}" unified:false — on an armed fixture this means the org gate / unifiedSupervisor flag composition (or its deployed-bundle load) regressed (hard gate)`,
+            `E2E_EXPECT_UNIFIED=1 but the deployment reports domain "${domainName}" unified:false — on an armed fixture this means the WINDOW_TOPOLOGY_ENABLED capability / the domain's mode composition (or its deployed-bundle load) regressed (hard gate)`,
           );
           ctx.skip(
-            `deployment reports domain "${domainName}" is NOT unified (unified:false — org gate and/or unifiedSupervisor flag off); ` +
+            `deployment reports domain "${domainName}" is NOT unified (unified:false — WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified"); ` +
               "flag-off is byte-identical per-container ambient, so the cross-container legs would test nothing new — " +
-              "arm OE_UNIFIED_SUPERVISOR=1 (or the org-domain unifiedSupervisorGate) + the domain's unifiedSupervisor flag to run them",
+              "arm OE_WINDOW_TOPOLOGY=1 (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\" to run them",
           );
         }
       } else {
@@ -1503,8 +1503,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const wire = probe.body as UnifiedAuditWire;
       if (wire.unified !== true) {
         pending(
-          `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (org gate and/or unifiedSupervisor flag off) — ` +
-            "arm OE_UNIFIED_SUPERVISOR=1 (or the org-domain unifiedSupervisorGate) + the domain's unifiedSupervisor flag",
+          `live-fixture-pending: deployment reports domain "${domainName}" is NOT unified (WINDOW_TOPOLOGY_ENABLED off and/or the domain's mode is not "unified") — ` +
+            "arm OE_WINDOW_TOPOLOGY=1 (the WINDOW_TOPOLOGY_ENABLED code capability) + set the domain's mode to \"unified\"",
         );
       }
       const ghKey = `github/${gh.repo}`;
@@ -1512,15 +1512,15 @@ export const SCENARIOS: readonly Scenario[] = [
       if (!keys.includes(ghKey) || !wire.platforms.includes("github")) {
         pending(
           `live-fixture-pending: domain "${domainName}" does not span the GitHub fixture repo (${ghKey} not in its containers) — ` +
-            "add the repo to the domain's channels (ambientSupervisor+unifiedSupervisor on, App installed, repo PRIVATE) to arm the cross-surface money-shot",
+            "add the repo to the domain's channels (ambientSupervisor on, mode: \"unified\", App installed, repo PRIVATE) to arm the cross-surface money-shot",
         );
       }
       ctx.gate(wire.platforms.includes("slack") && wire.platforms.includes("github"), "unified-audit: the domain's containers span BOTH platforms (the 'one mind' membership answer)");
       const singleWindow = wire.singleWindow === true;
       ctx.log(
         singleWindow
-          ? "mode: SINGLE-CONTEXT WINDOW (crossSurfaceWindow armed) — recall is from ONE literal context window; leg 2.5 hard-gates no-memory-hop"
-          : "mode: memory-mediated (crossSurfaceWindow off) — recall rides the shared domain memory across sibling per-platform sessions",
+          ? "mode: SINGLE-CONTEXT WINDOW (domain mode: \"unified\" armed) — recall is from ONE literal context window; leg 2.5 hard-gates no-memory-hop"
+          : "mode: memory-mediated (domain mode: \"unified\" off / WINDOW_TOPOLOGY_ENABLED off) — recall rides the shared domain memory across sibling per-platform sessions",
       );
 
       const decideAt = new Date(Date.now() - 5_000).toISOString();
