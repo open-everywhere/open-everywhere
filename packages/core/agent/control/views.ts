@@ -8,7 +8,7 @@ import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { unifiedSupervisorEnabled, crossSurfaceWindowEnabled } from "../memory/domain.js";
+import { windowedSupervisorEnabled, windowModeFor } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
@@ -573,8 +573,8 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     throw new Error(`no domain named "${q.domain}" (configured domains: ${have}).`);
   }
   const channels = [...(domain.channels ?? [])];
-  const unified = channels.length > 0 && unifiedSupervisorEnabled(channels[0], domains);
-  const singleWindow = channels.length > 0 && crossSurfaceWindowEnabled(channels[0], domains);
+  const unified = channels.length > 0 && windowedSupervisorEnabled(channels[0], domains);
+  const singleWindow = unified && windowModeFor(channels[0], domains) === "unified";
 
   const perContainer = await Promise.all(
     channels.map(async (surfaceKey) => {
@@ -642,7 +642,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     "Unmapped accounts (present in a surface but not in the principals map) stay DISTINCT per-surface identities — never merged on name similarity; enumerate them from the live surface, not here.",
     "Surface-privacy ORDINAL (P5 enforced form) is not yet built — TODO(unified-audit-privacy-ordinal); quote-across-surfaces is advisory (the disclosure preamble) until it lands.",
   ];
-  if (!unified) notes.unshift(`NOTE: domain "${q.domain}" is not currently unified (org gate and/or per-domain unifiedSupervisor flag off) — this shows what unification WOULD expose.`);
+  if (!unified) notes.unshift(`NOTE: domain "${q.domain}" is not currently windowed (WINDOW_TOPOLOGY_ENABLED off and/or the domain is not an ambient supervisor) — this shows what unification WOULD expose.`);
 
   return {
     org,

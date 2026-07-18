@@ -29,17 +29,13 @@ const noThrow = (fn: () => unknown, label: string) => {
 };
 
 const withWindowEnv = <T>(fn: () => T): T => {
-  const prevU = process.env.OE_UNIFIED_SUPERVISOR;
-  const prevW = process.env.OE_CROSS_SURFACE_WINDOW;
-  process.env.OE_UNIFIED_SUPERVISOR = "1";
-  process.env.OE_CROSS_SURFACE_WINDOW = "1";
+  const prev = process.env.OE_WINDOW_TOPOLOGY;
+  process.env.OE_WINDOW_TOPOLOGY = "1";
   try {
     return fn();
   } finally {
-    if (prevU === undefined) delete process.env.OE_UNIFIED_SUPERVISOR;
-    else process.env.OE_UNIFIED_SUPERVISOR = prevU;
-    if (prevW === undefined) delete process.env.OE_CROSS_SURFACE_WINDOW;
-    else process.env.OE_CROSS_SURFACE_WINDOW = prevW;
+    if (prev === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prev;
   }
 };
 
@@ -144,16 +140,15 @@ console.log("P0-a(1b) — spawn_task token-aware mount (DM dead-affordance fix):
 withWindowEnv(() => {
   const SLACK = "slack/T1/C_PAY";
   const GH = "github/acme/payments-api";
-  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
+  const orgGate = defineDomain({ name: "org", match: "org" });
   const multiSourceWindow = defineDomain({
     name: "payments",
     channels: [SLACK, GH],
     ambientSupervisor: true,
-    unifiedSupervisor: true,
-    crossSurfaceWindow: true,
+    mode: "unified",
   });
   const grain = supervisorGrainFor(SLACK, [multiSourceWindow, orgGate]);
-  ok(grain.unified === true && grain.singleWindow === true, "[P0-a] a 2-source crossSurfaceWindow domain resolves a single-window supervisor grain");
+  ok(grain.unified === true && grain.singleWindow === true, "[P0-a] a 2-source mode:unified domain resolves a single-window supervisor grain");
   const keys = Object.keys(grain).sort();
   eq(keys, ["domainName", "registryKey", "singleWindow", "unified"], "[P0-a] the supervisor grain carries no tool field — narrowing lives at the windowGrainOf/session.started seam, not in dispatch data");
 });
@@ -176,13 +171,12 @@ registerTrustedSurfaces(["slack/T1/C_VOUCHED"]);
 _resetTrustedSurfacesForTest();
 
 {
-  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
+  const orgGate = defineDomain({ name: "org", match: "org" });
   const multiSourceUnvouched = defineDomain({
     name: "payments",
     channels: ["slack/T1/C_VOUCHED", "github/acme/secret"],
     ambientSupervisor: true,
-    unifiedSupervisor: true,
-    crossSurfaceWindow: true,
+    mode: "unified",
   });
   const domainMod: Record<string, unknown> = await import("../agent/memory/domain.js");
   const assertUnifiedDomainTrust = domainMod.assertUnifiedDomainTrust as (d: readonly unknown[]) => void;
@@ -203,8 +197,7 @@ _resetTrustedSurfacesForTest();
     name: "solo",
     channels: ["github/acme/secret"],
     ambientSupervisor: true,
-    unifiedSupervisor: true,
-    crossSurfaceWindow: true,
+    mode: "unified",
   });
   assert.doesNotThrow(() => assertWindowSourcesVouched([soloUnvouched, orgGate] as never, []), "[P0-d] a SOLO window over the same unvouched source does NOT throw (vouch gates multi-source only)");
   n++;
@@ -236,9 +229,9 @@ eq(nativeActual, NATIVE_DM_CAPABILITY_GOLDEN, "[P1-c] native-DM full-capability 
 
 console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
 {
-  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
+  const orgGate = defineDomain({ name: "org", match: "org" });
   const win = (channels: string[], name = "win") =>
-    defineDomain({ name, channels, ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true });
+    defineDomain({ name, channels, ambientSupervisor: true, mode: "unified" });
 
   noThrow(
     () => assertWindowSourcesVouched([win(["github/acme/one", "notion/ws/pg"]), orgGate], ["github/acme", "notion/ws"]),

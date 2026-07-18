@@ -1428,10 +1428,8 @@ registerConfig({
     const pol = await slackSingleWindowMentionPolicy("C_TXN", "slack/T_ENG/C_TXN");
     ok(!pol.suppressNative && pol.addressing === undefined, "live policy: non-single-window domain → native keeps the mention (no suppression, no addressing)");
     const baseConfig = getConfig();
-    const prevUni = process.env.OE_UNIFIED_SUPERVISOR;
-    const prevWin = process.env.OE_CROSS_SURFACE_WINDOW;
-    process.env.OE_UNIFIED_SUPERVISOR = "1";
-    process.env.OE_CROSS_SURFACE_WINDOW = "1";
+    const prevWin = process.env.OE_WINDOW_TOPOLOGY;
+    process.env.OE_WINDOW_TOPOLOGY = "1";
     registerConfig({
       ...baseConfig,
       loadDomains: () => [
@@ -1440,8 +1438,7 @@ registerConfig({
           channels: ["slack/T_ENG/C_UNI"],
           memory: "txn",
           ambientSupervisor: true,
-          unifiedSupervisor: true,
-          crossSurfaceWindow: true,
+          mode: "unified",
         }),
       ],
     });
@@ -1451,10 +1448,8 @@ registerConfig({
       "live policy: single-window domain but channel NOT positively confirmed internal → FAIL-CLOSED (native keeps the mention, nothing joins the window)",
     );
     registerConfig(baseConfig);
-    if (prevUni === undefined) delete process.env.OE_UNIFIED_SUPERVISOR;
-    else process.env.OE_UNIFIED_SUPERVISOR = prevUni;
-    if (prevWin === undefined) delete process.env.OE_CROSS_SURFACE_WINDOW;
-    else process.env.OE_CROSS_SURFACE_WINDOW = prevWin;
+    if (prevWin === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevWin;
   }
 
   {

@@ -6,8 +6,7 @@ import { join } from "node:path";
 const tmp = mkdtempSync(join(tmpdir(), "oe-self-dispatch-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_UNIFIED_SUPERVISOR = "1";
-process.env.OE_CROSS_SURFACE_WINDOW = "1";
+process.env.OE_WINDOW_TOPOLOGY = "1";
 delete process.env.OE_SPAWN_DISPATCH_SECRET;
 delete process.env.OE_PUBLIC_BASE_URL;
 delete process.env.VERCEL_URL;
@@ -61,7 +60,7 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true }),
+    defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" }),
   ],
   loadSilos: () => [],
   loadRoles: () => [],

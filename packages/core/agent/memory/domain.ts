@@ -1,7 +1,10 @@
+import { windowTopologyEnabled } from "../access/capabilities.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
 export type DomainMatch = "org" | "public" | "dm";
+
+export type WindowMode = "solo" | "unified";
 
 export type EngagementTier = "aggressive" | "neutral" | "reserved";
 
@@ -45,12 +48,7 @@ export interface Domain {
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly awarenessWake?: boolean;
-  readonly unifiedSupervisor?: boolean;
-  readonly unifiedSupervisorGate?: boolean;
-  readonly crossSurfaceWindow?: boolean;
-  readonly crossSurfaceWindowGate?: boolean;
-  readonly soloWindow?: boolean;
-  readonly soloWindowGate?: boolean;
+  readonly mode?: WindowMode;
   readonly engagementTier?: EngagementTier;
   readonly models?: ModelRoutes;
   readonly reasoningCeiling?: ModelReasoning;
@@ -103,104 +101,37 @@ export function awarenessWakeEnabled(channelKey: string, domains: readonly Domai
   return criteriaDomain("org", domains)?.awarenessWake === true;
 }
 
-export function unifiedSupervisorOrgGateEnabled(domains: readonly Domain[]): boolean {
-  const env = (process.env.OE_UNIFIED_SUPERVISOR ?? "").trim().toLowerCase();
-  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-  return criteriaDomain("org", domains)?.unifiedSupervisorGate === true;
+export function windowedSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
+  if (!windowTopologyEnabled()) return false;
+  return domainForChannel(channelKey, domains)?.ambientSupervisor === true;
 }
 
-export function unifiedSupervisorEnabled(channelKey: string, domains: readonly Domain[]): boolean {
-  if (!unifiedSupervisorOrgGateEnabled(domains)) return false;
-  const explicit = domainForChannel(channelKey, domains);
-  return explicit?.unifiedSupervisor === true && explicit?.ambientSupervisor === true;
-}
-
-export function unifiedDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
-  if (!unifiedSupervisorEnabled(channelKey, domains)) return undefined;
+export function windowedDomainFor(channelKey: string, domains: readonly Domain[]): Domain | undefined {
+  if (!windowedSupervisorEnabled(channelKey, domains)) return undefined;
   return domainForChannel(channelKey, domains);
 }
 
-export function crossSurfaceWindowOrgGateEnabled(domains: readonly Domain[]): boolean {
-  const env = (process.env.OE_CROSS_SURFACE_WINDOW ?? "").trim().toLowerCase();
-  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-  return criteriaDomain("org", domains)?.crossSurfaceWindowGate === true;
-}
-
-export function crossSurfaceWindowEnabled(channelKey: string, domains: readonly Domain[]): boolean {
-  if (!crossSurfaceWindowOrgGateEnabled(domains)) return false;
-  if (!unifiedSupervisorEnabled(channelKey, domains)) return false;
-  return domainForChannel(channelKey, domains)?.crossSurfaceWindow === true;
-}
-
-export function soloWindowOrgGateEnabled(domains: readonly Domain[]): boolean {
-  const env = (process.env.OE_SOLO_WINDOW ?? "").trim().toLowerCase();
-  if (env === "1" || env === "true" || env === "yes" || env === "on") return true;
-  return criteriaDomain("org", domains)?.soloWindowGate === true;
-}
-
-export function soloWindowEnabled(channelKey: string, domains: readonly Domain[]): boolean {
-  if (!soloWindowOrgGateEnabled(domains)) return false;
-  if (!unifiedSupervisorEnabled(channelKey, domains)) return false;
-  return domainForChannel(channelKey, domains)?.soloWindow === true;
+export function windowModeFor(channelKey: string, domains: readonly Domain[]): WindowMode {
+  return domainForChannel(channelKey, domains)?.mode ?? "solo";
 }
 
 export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   const bad: string[] = [];
   for (const d of domains) {
+    if (d.mode === undefined) continue;
     const isPseudo = d.match !== undefined;
-    if (d.unifiedSupervisor === true) {
-      if (isPseudo) {
-        bad.push(
-          `  "${d.name}" (match "${d.match}") must not set unifiedSupervisor — the unified supervisor is a TEAM-section feature, never a pseudo-domain (org=the "unify everything" footgun; public/dm=external/personal surface)`,
-        );
-      }
-      if (d.ambientSupervisor !== true) {
-        bad.push(`  "${d.name}" sets unifiedSupervisor but not ambientSupervisor — a unified session is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
-      }
-    }
-    if (d.unifiedSupervisorGate === true && d.match !== "org") {
+    if (isPseudo) {
       bad.push(
-        `  "${d.name}" sets unifiedSupervisorGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_UNIFIED_SUPERVISOR=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
+        `  "${d.name}" (match "${d.match}") must not set mode — a standing window is a TEAM-section feature, never a pseudo-domain (org=the "window everything" footgun; public/dm=external/personal surface)`,
       );
     }
-    if (d.crossSurfaceWindow === true) {
-      if (isPseudo) {
-        bad.push(
-          `  "${d.name}" (match "${d.match}") must not set crossSurfaceWindow — the single-context window is a TEAM-section feature, never a pseudo-domain (same footgun as unifiedSupervisor)`,
-        );
-      }
-      if (d.unifiedSupervisor !== true) {
-        bad.push(
-          `  "${d.name}" sets crossSurfaceWindow but not unifiedSupervisor — the single-context window is a delivery mode OF the unified supervisor, so it REQUIRES unifiedSupervisor: true`,
-        );
-      }
-    }
-    if (d.crossSurfaceWindowGate === true && d.match !== "org") {
-      bad.push(
-        `  "${d.name}" sets crossSurfaceWindowGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_CROSS_SURFACE_WINDOW=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
-      );
-    }
-    if (d.soloWindow === true) {
-      if (isPseudo) {
-        bad.push(
-          `  "${d.name}" (match "${d.match}") must not set soloWindow — the solo single-context window is a TEAM-section feature, never a pseudo-domain (same footgun as unifiedSupervisor)`,
-        );
-      }
-      if (d.unifiedSupervisor !== true) {
-        bad.push(
-          `  "${d.name}" sets soloWindow but not unifiedSupervisor — the solo single-context window is a delivery mode OF the unified supervisor, so it REQUIRES unifiedSupervisor: true`,
-        );
-      }
-    }
-    if (d.soloWindowGate === true && d.match !== "org") {
-      bad.push(
-        `  "${d.name}" sets soloWindowGate but is not the { match: "org" } pseudo-domain — the gate is the ORG master switch; set it on the org domain (or use env OE_SOLO_WINDOW=1), never on ${isPseudo ? `the "${d.match}" pseudo-domain` : "an explicit domain"}`,
-      );
+    if (d.ambientSupervisor !== true) {
+      bad.push(`  "${d.name}" sets mode "${d.mode}" but not ambientSupervisor — a window is a re-keyed ambient supervisor, so it REQUIRES ambientSupervisor: true`);
     }
   }
   if (bad.length > 0) {
     throw new Error(
-      "open-everywhere: invalid unified cross-surface supervisor configuration:\n" +
+      "open-everywhere: invalid standing-window topology configuration:\n" +
         bad.join("\n") +
         "\n(memory/domain.ts assertUnifiedDomainTrust).",
     );
@@ -214,7 +145,7 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
   const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
   const bad: string[] = [];
   for (const d of domains) {
-    if (d.crossSurfaceWindow !== true) continue;
+    if (d.mode !== "unified") continue;
     const channels = d.channels ?? [];
     if (channels.length <= 1) continue;
     for (const ch of channels) {

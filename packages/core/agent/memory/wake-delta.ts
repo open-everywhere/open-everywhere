@@ -3,7 +3,8 @@ import type { AuditEntry } from "../audit/audit.js";
 import { siloTier, type Tier } from "./store.js";
 import { tierSandboxDir } from "./sandbox-sync.js";
 import { getConfig } from "../access/config.js";
-import { domainForChannel, criteriaDomain, memoryRefs, unifiedSupervisorOrgGateEnabled, type Domain } from "./domain.js";
+import { domainForChannel, criteriaDomain, memoryRefs, type Domain } from "./domain.js";
+import { windowTopologyEnabled } from "../access/capabilities.js";
 
 export interface MemoryDeltaSilo {
   readonly tier: Tier;
@@ -159,7 +160,7 @@ export function liveMemoryDeltaDep(
   } catch {
     return undefined;
   }
-  if (!unifiedSupervisorOrgGateEnabled(domains)) return undefined;
+  if (!windowTopologyEnabled()) return undefined;
   const silos = sessionReadSilos(surfaceKey, domains);
   if (silos.length === 0) return undefined;
   return async (sinceIso, atIso, selfKey) => {

@@ -1,4 +1,4 @@
-import { unifiedDomainFor, crossSurfaceWindowEnabled, soloWindowEnabled, type Domain } from "../memory/domain.js";
+import { windowedDomainFor, windowModeFor, type Domain } from "../memory/domain.js";
 import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain } from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
@@ -54,16 +54,16 @@ export function grainUsesUnifiedWindow(grain: SupervisorGrain): boolean {
 }
 
 export function supervisorGrainFor(surfaceKey: string, domains: readonly Domain[]): SupervisorGrain {
-  const domain = unifiedDomainFor(surfaceKey, domains);
+  const domain = windowedDomainFor(surfaceKey, domains);
   if (!domain) return { unified: false, registryKey: surfaceKey };
-  const singleWindow = crossSurfaceWindowEnabled(surfaceKey, domains);
-  const solo = !singleWindow && soloWindowEnabled(surfaceKey, domains);
+  const unifiedMode = windowModeFor(surfaceKey, domains) === "unified";
+  const solo = !unifiedMode;
   const windowId = solo ? surfaceKey : domain.name;
   return {
     unified: true,
     registryKey: unifiedDomainSessionKey(windowId),
     domainName: domain.name,
-    ...(singleWindow ? { singleWindow: true as const } : {}),
+    ...(unifiedMode ? { singleWindow: true as const } : {}),
     ...(solo ? { windowId } : {}),
   };
 }

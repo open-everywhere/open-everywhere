@@ -10,9 +10,8 @@ delete process.env.OE_ORG;
 import { registerConfig } from "../agent/access/config.js";
 import {
   defineDomain,
-  crossSurfaceWindowOrgGateEnabled,
-  crossSurfaceWindowEnabled,
-  unifiedSupervisorEnabled,
+  windowedSupervisorEnabled,
+  windowModeFor,
   assertUnifiedDomainTrust,
   type Domain,
 } from "../agent/memory/domain.js";
@@ -94,20 +93,14 @@ const noThrow = (fn: () => unknown, label: string) => {
   n++;
 };
 
-const GATES = ["OE_UNIFIED_SUPERVISOR", "OE_CROSS_SURFACE_WINDOW"] as const;
-const withGates = async <T>(vals: Partial<Record<(typeof GATES)[number], string>>, fn: () => T | Promise<T>): Promise<T> => {
-  const prev = GATES.map((g) => process.env[g]);
-  for (const g of GATES) {
-    if (vals[g] === undefined) delete process.env[g];
-    else process.env[g] = vals[g];
-  }
+const withGate = async <T>(on: boolean, fn: () => T | Promise<T>): Promise<T> => {
+  const prev = process.env.OE_WINDOW_TOPOLOGY;
+  process.env.OE_WINDOW_TOPOLOGY = on ? "1" : "0";
   try {
     return await fn();
   } finally {
-    GATES.forEach((g, i) => {
-      if (prev[i] === undefined) delete process.env[g];
-      else process.env[g] = prev[i]!;
-    });
+    if (prev === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prev;
   }
 };
 
@@ -122,69 +115,60 @@ const winDomain = defineDomain({
   name: "payments",
   channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
-  crossSurfaceWindow: true,
+  mode: "unified",
 });
-const unifiedTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true, unifiedSupervisor: true });
+const soloTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true, mode: "solo" });
 const ambientTwin = defineDomain({ name: "payments", channels: [SLACK_KEY, GH_KEY, LINEAR_KEY, NOTION_KEY, DISCORD_KEY, TEAMS_KEY], ambientSupervisor: true });
-const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
-const orgUnifiedOnly = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
-const orgPlain = defineDomain({ name: "org", match: "org" });
+const org = defineDomain({ name: "org", match: "org" });
 
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [winDomain, orgBoth],
+  loadDomains: () => [winDomain, org],
   loadSilos: () => [],
   domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
 });
 
-await withGates({}, () => {
-  ok(!crossSurfaceWindowOrgGateEnabled([orgPlain]), "no env, no org switch → org gate OFF");
-  ok(crossSurfaceWindowOrgGateEnabled([orgBoth]), "org-domain crossSurfaceWindowGate → org gate ON (config-as-code arm)");
-  ok(!crossSurfaceWindowEnabled(SLACK_KEY, [winDomain, orgPlain]), "org gate OFF: the domain's crossSurfaceWindow is INERT (cannot be on at the domain)");
-  ok(!crossSurfaceWindowEnabled(SLACK_KEY, [winDomain, orgUnifiedOnly]), "unified org gate alone does NOT arm the window (each pair has its own master)");
-  ok(crossSurfaceWindowEnabled(SLACK_KEY, [winDomain, orgBoth]) && crossSurfaceWindowEnabled(GH_KEY, [winDomain, orgBoth]), "both org gates + both domain flags → window ON for the Slack AND GitHub containers");
-  ok(!crossSurfaceWindowEnabled(SLACK_KEY, [unifiedTwin, orgBoth]) || crossSurfaceWindowEnabled(SLACK_KEY, [unifiedTwin, orgBoth]) === false, "domain without crossSurfaceWindow → window OFF (per-domain flag required)");
-  const windowNoUnified = defineDomain({ name: "payments", channels: [SLACK_KEY], ambientSupervisor: true, crossSurfaceWindow: true });
-  ok(!crossSurfaceWindowEnabled(SLACK_KEY, [windowNoUnified, orgBoth]), "window without the unified per-domain flag → OFF (single-window is a mode OF the unified supervisor)");
-  ok(!unifiedSupervisorEnabled(SLACK_KEY, [windowNoUnified, orgBoth]) === true, "…because the unified pair itself doesn't hold");
+const crossSurfaceOn = (key: string, ds: readonly Domain[]): boolean =>
+  windowedSupervisorEnabled(key, ds) && windowModeFor(key, ds) === "unified";
+
+await withGate(false, () => {
+  ok(!windowedSupervisorEnabled(SLACK_KEY, [winDomain, org]), "code gate OFF: a mode:unified domain does NOT window (the capability is the hard master)");
+  ok(!crossSurfaceOn(SLACK_KEY, [winDomain, org]), "code gate OFF: no cross-surface window (INERT until the capability is flipped ON)");
 });
-await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, () => {
-  ok(crossSurfaceWindowEnabled(SLACK_KEY, [winDomain, orgPlain]), "env master switches arm both pairs without org-domain config");
-});
-await withGates({ OE_UNIFIED_SUPERVISOR: "1" }, () => {
-  ok(!crossSurfaceWindowEnabled(SLACK_KEY, [winDomain, orgPlain]), "OE_UNIFIED_SUPERVISOR alone leaves the window OFF (its own env master required)");
+await withGate(true, () => {
+  ok(windowedSupervisorEnabled(SLACK_KEY, [winDomain, org]) && windowedSupervisorEnabled(GH_KEY, [winDomain, org]), "code gate ON: the domain windows for the Slack AND GitHub containers");
+  ok(crossSurfaceOn(SLACK_KEY, [winDomain, org]) && crossSurfaceOn(GH_KEY, [winDomain, org]), "code gate ON + mode:unified → cross-surface window ON for both containers");
+  ok(windowedSupervisorEnabled(SLACK_KEY, [soloTwin, org]) && !crossSurfaceOn(SLACK_KEY, [soloTwin, org]), "mode:solo → windows per-channel, not cross-surface");
+  ok(windowedSupervisorEnabled(SLACK_KEY, [ambientTwin, org]) && !crossSurfaceOn(SLACK_KEY, [ambientTwin, org]), "no mode ⇒ windows solo by default (gate ON)");
+  const noAmbient = defineDomain({ name: "payments", channels: [SLACK_KEY], mode: "unified" });
+  ok(!windowedSupervisorEnabled(SLACK_KEY, [noAmbient, org]), "a domain without ambientSupervisor never windows (a window is a re-keyed ambient supervisor)");
 });
 
-ok((() => { assertUnifiedDomainTrust([winDomain, orgBoth]); return true; })(), "the documented single-window fixture passes assertUnifiedDomainTrust");
+ok((() => { assertUnifiedDomainTrust([winDomain, org]); return true; })(), "the documented single-window fixture passes assertUnifiedDomainTrust");
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", channels: [SLACK_KEY], ambientSupervisor: true, crossSurfaceWindow: true })]),
-  "crossSurfaceWindow WITHOUT unifiedSupervisor → load fails loud",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", channels: [SLACK_KEY], mode: "unified" })]),
+  "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true })]),
-  "crossSurfaceWindow on a pseudo-domain → load fails loud (the 'window everything' footgun)",
-);
-throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "payments", channels: [SLACK_KEY], ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true, crossSurfaceWindowGate: true })]),
-  "crossSurfaceWindowGate anywhere but the org pseudo-domain → load fails loud",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, mode: "unified" })]),
+  "mode on a pseudo-domain → load fails loud (the 'window everything' footgun)",
 );
 
-await withGates({}, () => {
-  const gSlack = supervisorGrainFor(SLACK_KEY, [winDomain, orgBoth]);
-  const gGh = supervisorGrainFor(GH_KEY, [winDomain, orgBoth]);
-  ok(gSlack.unified && gSlack.singleWindow === true && gGh.unified && gGh.singleWindow === true, "gates ON: both surfaces' grains are unified + singleWindow");
+await withGate(true, () => {
+  const gSlack = supervisorGrainFor(SLACK_KEY, [winDomain, org]);
+  const gGh = supervisorGrainFor(GH_KEY, [winDomain, org]);
+  ok(gSlack.unified && gSlack.singleWindow === true && gGh.unified && gGh.singleWindow === true, "gate ON + mode unified: both surfaces' grains are unified + singleWindow");
   ok(gSlack.registryKey === gGh.registryKey && gSlack.registryKey === unifiedDomainSessionKey("payments"), "one domain registry row for both surfaces");
-  const gLin = supervisorGrainFor(LINEAR_KEY, [winDomain, orgBoth]);
-  ok(gLin.unified && gLin.singleWindow === true, "gates ON: the Linear surface's grain is unified + singleWindow too");
+  const gLin = supervisorGrainFor(LINEAR_KEY, [winDomain, org]);
+  ok(gLin.unified && gLin.singleWindow === true, "gate ON: the Linear surface's grain is unified + singleWindow too");
   ok(gLin.registryKey === gSlack.registryKey, "the Linear surface shares the one domain registry row");
-  const gNot = supervisorGrainFor(NOTION_KEY, [winDomain, orgBoth]);
-  ok(gNot.unified && gNot.singleWindow === true && gNot.registryKey === gSlack.registryKey, "gates ON: the Notion page's grain is unified + singleWindow and shares the one domain registry row");
-  const gDis = supervisorGrainFor(DISCORD_KEY, [winDomain, orgBoth]);
-  ok(gDis.unified && gDis.singleWindow === true && gDis.registryKey === gSlack.registryKey, "gates ON: the Discord channel's grain is unified + singleWindow and shares the one domain registry row");
+  const gNot = supervisorGrainFor(NOTION_KEY, [winDomain, org]);
+  ok(gNot.unified && gNot.singleWindow === true && gNot.registryKey === gSlack.registryKey, "gate ON: the Notion page's grain is unified + singleWindow and shares the one domain registry row");
+  const gDis = supervisorGrainFor(DISCORD_KEY, [winDomain, org]);
+  ok(gDis.unified && gDis.singleWindow === true && gDis.registryKey === gSlack.registryKey, "gate ON: the Discord channel's grain is unified + singleWindow and shares the one domain registry row");
   const rawSlack = supervisorTokenForGrain(gSlack, 3, () => supervisorToken("C_WINA", 3));
   const rawGh = supervisorTokenForGrain(gGh, 3, () => githubSupervisorToken("acme", "payments-api", 3));
   const rawLin = supervisorTokenForGrain(gLin, 3, () => linearSupervisorToken("T_WINX", 3));
@@ -199,18 +183,22 @@ await withGates({}, () => {
     effectiveEveToken("slack", rawSlack) !== effectiveEveToken("github", rawGh),
     "per-platform delivery of the same raw token yields DIFFERENT effective tokens (the sibling-session split single-window removes)",
   );
+});
 
-  const offWindow = supervisorGrainFor(SLACK_KEY, [unifiedTwin, orgUnifiedOnly]);
-  ok(!("singleWindow" in offWindow), "window OFF: the unified grain carries NO singleWindow field (byte-identical to the pre-window shape)");
+await withGate(false, () => {
+  const perContainer = supervisorGrainFor(SLACK_KEY, [ambientTwin, org]);
+  ok(!("singleWindow" in perContainer) && !("windowId" in perContainer) && perContainer.unified === false, "gate OFF: the grain is the per-container shape (no singleWindow / windowId field, unified false)");
   ok(
-    JSON.stringify(supervisorGrainFor(SLACK_KEY, [winDomain, orgUnifiedOnly])) === JSON.stringify(offWindow),
-    "window org-gate OFF: the single-window fixture's grain is IDENTICAL to the plain-unified twin's",
+    JSON.stringify(supervisorGrainFor(SLACK_KEY, [winDomain, org])) === JSON.stringify(perContainer),
+    "gate OFF: a mode:unified domain's grain is IDENTICAL to the plain-ambient per-container grain",
   );
   ok(
-    JSON.stringify(supervisorGrainFor(SLACK_KEY, [winDomain, orgPlain])) === JSON.stringify(supervisorGrainFor(SLACK_KEY, [ambientTwin, orgPlain])),
-    "all gates OFF: the fixture's grain is IDENTICAL to the plain-ambient twin's (per-container, byte-identical-off)",
+    JSON.stringify(supervisorGrainFor(SLACK_KEY, [soloTwin, org])) === JSON.stringify(perContainer),
+    "gate OFF: a mode:solo domain's grain is IDENTICAL to the plain-ambient per-container grain",
   );
 });
+
+process.env.OE_WINDOW_TOPOLOGY = "1";
 
 interface ReceivedWake {
   channel: unknown;
@@ -656,7 +644,7 @@ const store = getOperationalStore();
     sent.push({ payload: payload as { message?: string }, opts: opts as { continuationToken: string; auth: unknown } });
     return {} as never;
   }) as never;
-  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+  await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[0].message, target: received[0].target, auth: received[0].auth as never }, { send: fakeSend });
   });
   ok(sent.length === 1 && sent[0].opts.continuationToken === RAW_TOKEN, "receive: delivers under the RAW domain token (eve prefixes `unified:` — the shared window)");
@@ -664,27 +652,27 @@ const store = getOperationalStore();
   const origin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
   ok(origin !== null && origin.platform === "slack", "receive: the registered origin round-trips from the real store");
 
-  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+  await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[1].message, target: received[1].target, auth: received[1].auth as never }, { send: fakeSend });
   });
   ok(sent.length === 2 && sent[1].opts.continuationToken === RAW_TOKEN, "receive: the GitHub wake delivers under the SAME raw token (same session)");
   ok(sent[1].payload.context !== undefined, "receive: side-channel context passes through to the delivery");
 
-  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+  await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[2].message, target: received[2].target, auth: received[2].auth as never }, { send: fakeSend });
   });
   ok(sent.length === 3 && sent[2].opts.continuationToken === RAW_TOKEN, "receive: the Linear wake delivers under the SAME raw token (same session)");
   const linRegistered = await resolveUnifiedWakeTarget(store, "default", received[2].target.wakeId);
   ok(linRegistered !== null && linRegistered.platform === "linear", "receive: the Linear origin round-trips from the real store");
 
-  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+  await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[3].message, target: received[3].target, auth: received[3].auth as never }, { send: fakeSend });
   });
   ok(sent.length === 4 && sent[3].opts.continuationToken === RAW_TOKEN, "receive: the Notion wake delivers under the SAME raw token (same session)");
   const notRegistered = await resolveUnifiedWakeTarget(store, "default", received[3].target.wakeId);
   ok(notRegistered !== null && notRegistered.platform === "notion", "receive: the Notion origin round-trips from the real store");
 
-  await withGates({ OE_UNIFIED_SUPERVISOR: "1", OE_CROSS_SURFACE_WINDOW: "1" }, async () => {
+  await withGate(true, async () => {
     await unifiedChannel.receive!({ message: received[4].message, target: received[4].target, auth: received[4].auth as never }, { send: fakeSend });
   });
   ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Discord wake delivers under the SAME raw token (same session)");
@@ -696,7 +684,7 @@ const store = getOperationalStore();
       { message: "m", target: { ...received[0].target, surfaceKey: "slack/T_OTHER/C_NOPE" }, auth: received[0].auth as never },
       { send: fakeSend },
     ),
-    /crossSurfaceWindow is not enabled/,
+    /no standing window is enabled/,
     "receive: an un-flagged surface is REFUSED (fail-closed re-check, defense-in-depth)",
   );
   n++;
@@ -861,6 +849,7 @@ const store = getOperationalStore();
   );
 }
 
+process.env.OE_WINDOW_TOPOLOGY = "0";
 {
   received.length = 0;
   baseWakes.length = 0;
@@ -868,11 +857,11 @@ const store = getOperationalStore();
   const out = await routeSupervisorEvent(slackEv, withSingleWindowDiversion(offDeps as ReturnType<typeof liveSupervisorDeps>, captureReceive, SLACK_KEY));
   ok(out.woke === true && baseWakes.length === 1 && received.length === 0, "window OFF: the wake takes the base send path (no diversion), byte-identical");
   ok(baseWakes[0].window === undefined, "window OFF: no window is minted");
-  const offGrain = supervisorGrainFor(SLACK_KEY, [ambientTwin, orgPlain]);
+  const offGrain = supervisorGrainFor(SLACK_KEY, [ambientTwin, org]);
   const offToken: string = supervisorTokenForGrain(offGrain, 1, () => supervisorToken("C_WINA", 1));
-  const offGhToken: string = supervisorTokenForGrain(supervisorGrainFor(GH_KEY, [ambientTwin, orgPlain]), 1, () => githubSupervisorToken("acme", "payments-api", 1));
-  const offLinToken: string = supervisorTokenForGrain(supervisorGrainFor(LINEAR_KEY, [ambientTwin, orgPlain]), 1, () => linearSupervisorToken("T_WINX", 1));
-  const offNotToken: string = supervisorTokenForGrain(supervisorGrainFor(NOTION_KEY, [ambientTwin, orgPlain]), 1, () => notionSupervisorToken("P_WINPAGE", 1));
+  const offGhToken: string = supervisorTokenForGrain(supervisorGrainFor(GH_KEY, [ambientTwin, org]), 1, () => githubSupervisorToken("acme", "payments-api", 1));
+  const offLinToken: string = supervisorTokenForGrain(supervisorGrainFor(LINEAR_KEY, [ambientTwin, org]), 1, () => linearSupervisorToken("T_WINX", 1));
+  const offNotToken: string = supervisorTokenForGrain(supervisorGrainFor(NOTION_KEY, [ambientTwin, org]), 1, () => notionSupervisorToken("P_WINPAGE", 1));
   ok(
     offToken === "C_WINA:oe-sup:g1" && offGhToken === "github:acme/payments-api:oe-sup:g1" && offLinToken === "linear:T_WINX:oe-sup:g1" && offNotToken === "notion:P_WINPAGE:oe-sup:g1",
     "gates OFF: the four surfaces resolve DIFFERENT per-container tokens exactly as today",
@@ -1015,7 +1004,7 @@ const store = getOperationalStore();
     session: { auth: { current: { attributes: { oe_platform: "slack", oe_sources: "slack,github" }, principalId: "U", principalType: "slack-user" } } },
   };
   ok(JSON.stringify(windowSourcesOf(withStamp)) === JSON.stringify(["slack", "github"]), "windowSourcesOf reads the oe_sources stamp back to a vector");
-  ok(JSON.stringify(resolveWindowSources(withStamp, [winDomain, orgBoth])) === JSON.stringify(["slack", "github"]), "resolveWindowSources returns the stamp verbatim when present (PRIMARY)");
+  ok(JSON.stringify(resolveWindowSources(withStamp, [winDomain, org])) === JSON.stringify(["slack", "github"]), "resolveWindowSources returns the stamp verbatim when present (PRIMARY)");
 
   const noStamp: BindableContext = { channel: { kind: "slack" }, session: { auth: { current: { attributes: { oe_platform: "slack" }, principalId: "U", principalType: "slack-user" } } } };
   ok(windowSourcesOf(noStamp) === undefined, "windowSourcesOf is undefined with no oe_sources stamp (a normal/pre-stamp session)");
@@ -1025,7 +1014,7 @@ const store = getOperationalStore();
     session: { auth: { current: { attributes: { oe_platform: "slack" }, principalId: "U", principalType: "slack-user" } } },
   };
   ok(
-    JSON.stringify([...resolveWindowSources(stampless, [winDomain, orgBoth])].sort()) === JSON.stringify(["discord", "github", "linear", "notion", "slack", "teams"]),
+    JSON.stringify([...resolveWindowSources(stampless, [winDomain, org])].sort()) === JSON.stringify(["discord", "github", "linear", "notion", "slack", "teams"]),
     "resolveWindowSources recomputes the domain's platforms from the token when the stamp is absent",
   );
 
@@ -1033,7 +1022,7 @@ const store = getOperationalStore();
     channel: { kind: "channel:unified", continuationToken: "C_PAY:oe-sup:g1" },
     session: { auth: { current: { attributes: { oe_platform: "github" }, principalId: "U", principalType: "github-user" } } },
   };
-  ok(JSON.stringify(resolveWindowSources(unresolvable, [winDomain, orgBoth])) === JSON.stringify(["github"]), "resolveWindowSources fails closed to the SINGLE origin platform when neither stamp nor token resolves");
+  ok(JSON.stringify(resolveWindowSources(unresolvable, [winDomain, org])) === JSON.stringify(["github"]), "resolveWindowSources fails closed to the SINGLE origin platform when neither stamp nor token resolves");
 }
 
 console.log(`unified-window: ${n} assertions passed`);

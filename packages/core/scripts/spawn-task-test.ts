@@ -37,12 +37,10 @@ const spawnDomain = defineDomain({
   name: "payments",
   channels: [SLACK_KEY, GH_KEY],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
-  crossSurfaceWindow: true,
+  mode: "unified",
 });
-const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
-process.env.OE_UNIFIED_SUPERVISOR = "1";
-process.env.OE_CROSS_SURFACE_WINDOW = "1";
+const orgBoth = defineDomain({ name: "org", match: "org" });
+process.env.OE_WINDOW_TOPOLOGY = "1";
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],

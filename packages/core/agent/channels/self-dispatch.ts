@@ -2,7 +2,7 @@ import type { RouteHandlerArgs } from "eve/channels";
 import { createHmac } from "node:crypto";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { getConfig } from "../access/config.js";
-import { crossSurfaceWindowEnabled, soloWindowEnabled } from "../memory/domain.js";
+import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { isUnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { parseWindowToken } from "./window-key.js";
@@ -173,12 +173,12 @@ export async function handleSelfDispatch(
   let windowOk = false;
   try {
     const domains = getConfig().loadDomains();
-    windowOk = crossSurfaceWindowEnabled(payload.surfaceKey, domains) || soloWindowEnabled(payload.surfaceKey, domains);
+    windowOk = windowedSupervisorEnabled(payload.surfaceKey, domains);
   } catch {
     windowOk = false;
   }
   if (!windowOk) {
-    return json(400, { error: `no single-context window (crossSurfaceWindow / soloWindow) is enabled for surfaceKey "${payload.surfaceKey}" — refusing (fail-closed)` });
+    return json(400, { error: `no standing window (mode solo / unified) is enabled for surfaceKey "${payload.surfaceKey}" — refusing (fail-closed)` });
   }
 
   const org = deploymentOrg();

@@ -374,11 +374,9 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     name: "payments",
     channels: [skFor(T_PRIV), skFor(T_FREE), skFor(T_PUB)],
     ambientSupervisor: true,
-    unifiedSupervisor: true,
-    crossSurfaceWindow: true,
+    mode: "unified",
   });
-  const orgBoth = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, crossSurfaceWindowGate: true });
-  const orgOff = defineDomain({ name: "org", match: "org" });
+  const org = defineDomain({ name: "org", match: "org" });
 
   const baseAppConfig = {
     loadBundles: () => [],
@@ -419,8 +417,10 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     raw: {},
   });
 
+  const prevWindowTopology = process.env.OE_WINDOW_TOPOLOGY;
   try {
-    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, orgBoth] });
+    process.env.OE_WINDOW_TOPOLOGY = "1";
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, org] });
 
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
@@ -458,14 +458,17 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
       ok(issueTeamCalls === 0 && teamPrivacyCalls === 1, "fast path makes NO issue→team call and enriches the private signal by team id (byte-identical to pre-fix)");
     }
 
-    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, orgOff] });
+    process.env.OE_WINDOW_TOPOLOGY = "0";
+    registerConfig({ ...baseAppConfig, loadDomains: () => [windowDomain, org] });
     issueTeamCalls = 0; teamPrivacyCalls = 0;
     {
       const v = await computeMentionRouting(mkEvent("issue-priv"), undefined);
-      ok(v.routing === "native", "org master gate OFF → mention routes native (single-window inert)");
+      ok(v.routing === "native", "window-topology code gate OFF → mention routes native (single-window inert)");
       ok(issueTeamCalls === 0 && teamPrivacyCalls === 0, "feature OFF ⇒ ZERO Linear API calls (byte-identical: no network added on non-single-window deployments)");
     }
   } finally {
+    if (prevWindowTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevWindowTopology;
     globalThis.fetch = realFetch;
     _resetTrustedSurfacesForTest();
   }

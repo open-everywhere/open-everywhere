@@ -2,13 +2,10 @@
 import assert from "node:assert/strict";
 import {
   defineDomain,
-  unifiedSupervisorOrgGateEnabled,
-  unifiedSupervisorEnabled,
-  unifiedDomainFor,
-  soloWindowOrgGateEnabled,
-  soloWindowEnabled,
+  windowedSupervisorEnabled,
+  windowedDomainFor,
+  windowModeFor,
   assertUnifiedDomainTrust,
-  type Domain,
 } from "../agent/memory/domain.js";
 import {
   unifiedSupervisorToken,
@@ -51,7 +48,7 @@ const noThrow = (fn: () => unknown, label: string) => {
   n++;
 };
 
-const ENV = "OE_UNIFIED_SUPERVISOR";
+const ENV = "OE_WINDOW_TOPOLOGY";
 const withEnv = <T>(val: string | undefined, fn: () => T): T => {
   const prev = process.env[ENV];
   if (val === undefined) delete process.env[ENV];
@@ -70,108 +67,64 @@ const payments = defineDomain({
   name: "payments",
   channels: [CH, GH],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
+  mode: "unified",
 });
-const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
 const orgNoGate = defineDomain({ name: "org", match: "org" });
 
 withEnv(undefined, () => {
-  ok(unifiedSupervisorOrgGateEnabled([payments, orgNoGate]) === false, "org gate OFF: no env, no org flag");
-  ok(unifiedSupervisorOrgGateEnabled([payments, orgGate]) === true, "org gate ON via org-domain flag");
+  ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "gate OFF ⇒ not windowed (byte-identical per-container path)");
 });
-withEnv("1", () => ok(unifiedSupervisorOrgGateEnabled([payments, orgNoGate]) === true, "org gate ON via env=1"));
-withEnv("true", () => ok(unifiedSupervisorOrgGateEnabled([payments, orgNoGate]) === true, "org gate ON via env=true"));
-withEnv("0", () => ok(unifiedSupervisorOrgGateEnabled([payments, orgNoGate]) === false, "env=0 does not arm the gate"));
-
-withEnv(undefined, () => {
-  ok(unifiedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "flag-off: org gate off ⇒ not unified (byte-identical path)");
-});
+withEnv("0", () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === false, "OE_WINDOW_TOPOLOGY=0 does not arm the gate"));
 withEnv("1", () => {
-  ok(unifiedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "both gates on ⇒ unified");
-  ok(unifiedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "unified applies to every channel in the domain");
-  const noAmbient = defineDomain({ name: "x", channels: ["slack/T1/C_X"], unifiedSupervisor: true });
-  ok(unifiedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === false, "unifiedSupervisor without ambientSupervisor ⇒ not enabled");
-  const ambientOnly = defineDomain({ name: "y", channels: ["slack/T1/C_Y"], ambientSupervisor: true });
-  ok(unifiedSupervisorEnabled("slack/T1/C_Y", [ambientOnly, orgNoGate]) === false, "ambient-only domain is not unified");
-  ok(unifiedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === false, "unassigned channel never unifies");
+  ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON + ambient explicit domain ⇒ windowed");
+  ok(windowedSupervisorEnabled(GH, [payments, orgNoGate]) === true, "windowing applies to every channel in the domain");
+  const noAmbient = defineDomain({ name: "x", channels: ["slack/T1/C_X"], mode: "unified" });
+  ok(windowedSupervisorEnabled("slack/T1/C_X", [noAmbient, orgNoGate]) === false, "mode without ambientSupervisor ⇒ not windowed");
+  ok(windowedSupervisorEnabled("slack/T1/C_ORPHAN", [payments, orgNoGate]) === false, "unassigned channel never windows");
 });
+withEnv("true", () => ok(windowedSupervisorEnabled(CH, [payments, orgNoGate]) === true, "gate ON via env=true"));
 
 withEnv("1", () => {
-  ok(unifiedDomainFor(CH, [payments, orgNoGate])?.name === "payments", "unifiedDomainFor returns the domain when unified");
-  ok(unifiedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === undefined, "unifiedDomainFor undefined when not unified");
+  ok(windowedDomainFor(CH, [payments, orgNoGate])?.name === "payments", "windowedDomainFor returns the domain when windowed");
+  ok(windowedDomainFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when not windowed");
 });
-withEnv(undefined, () => ok(unifiedDomainFor(CH, [payments, orgNoGate]) === undefined, "unifiedDomainFor undefined when org gate off"));
+withEnv(undefined, () => ok(windowedDomainFor(CH, [payments, orgNoGate]) === undefined, "windowedDomainFor undefined when the code gate is off"));
 
 const paymentsSolo = defineDomain({
   name: "payments",
   channels: [CH, GH],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
-  soloWindow: true,
+  mode: "solo",
 });
-const orgSoloGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true, soloWindowGate: true });
-const withSolo = <T>(unified: string | undefined, solo: string | undefined, fn: () => T): T => {
-  const pu = process.env.OE_UNIFIED_SUPERVISOR;
-  const ps = process.env.OE_SOLO_WINDOW;
-  const set = (k: string, v: string | undefined) => (v === undefined ? delete process.env[k] : (process.env[k] = v));
-  set("OE_UNIFIED_SUPERVISOR", unified);
-  set("OE_SOLO_WINDOW", solo);
-  try {
-    return fn();
-  } finally {
-    set("OE_UNIFIED_SUPERVISOR", pu);
-    set("OE_SOLO_WINDOW", ps);
-  }
-};
-withSolo(undefined, undefined, () => {
-  ok(soloWindowOrgGateEnabled([paymentsSolo, orgNoGate]) === false, "solo org gate OFF: no env, no org flag");
-  ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "solo flag-off ⇒ disabled (byte-identical path)");
-});
-withSolo(undefined, undefined, () => ok(soloWindowOrgGateEnabled([paymentsSolo, orgSoloGate]) === true, "solo org gate ON via org-domain soloWindowGate"));
-withSolo("1", "1", () => {
-  ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === true, "solo ON: unified org gate + solo org gate + domain soloWindow");
-  ok(soloWindowEnabled("slack/T1/C_ORPHAN", [paymentsSolo, orgNoGate]) === false, "unassigned channel never solo-windows");
-});
-withSolo("1", "0", () => ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "OE_SOLO_WINDOW=0 does not arm solo"));
-withSolo(undefined, "1", () => ok(soloWindowEnabled(CH, [paymentsSolo, orgNoGate]) === false, "solo requires the unified org gate too (unified off ⇒ no solo)"));
-withSolo("1", "1", () => ok(soloWindowEnabled(CH, [payments, orgNoGate]) === false, "a domain WITHOUT soloWindow stays non-solo even with both gates on"));
+ok(windowModeFor(CH, [payments, orgNoGate]) === "unified", "windowModeFor reads a domain's explicit mode (unified)");
+ok(windowModeFor(CH, [paymentsSolo, orgNoGate]) === "solo", "windowModeFor reads a domain's explicit mode (solo)");
+const noMode = defineDomain({ name: "y", channels: ["slack/T1/C_Y"], ambientSupervisor: true });
+ok(windowModeFor("slack/T1/C_Y", [noMode, orgNoGate]) === "solo", "a domain with NO mode defaults to solo (no third topology / no per-platform merge)");
+ok(windowModeFor("slack/T1/C_ORPHAN", [payments, orgNoGate]) === "solo", "an unassigned channel resolves the harmless default solo (it cannot window anyway)");
 
-noThrow(() => assertUnifiedDomainTrust([payments, orgGate]), "valid: explicit unified domain + ambient + org-domain gate");
-noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", channels: ["slack/T/C"] })]), "valid: a non-unified domain is unaffected");
+noThrow(() => assertUnifiedDomainTrust([payments, orgNoGate]), "valid: explicit mode:unified domain + ambientSupervisor");
+noThrow(() => assertUnifiedDomainTrust([paymentsSolo, orgNoGate]), "valid: explicit mode:solo domain + ambientSupervisor");
+noThrow(() => assertUnifiedDomainTrust([defineDomain({ name: "plain", channels: ["slack/T/C"] })]), "valid: a domain with no mode is unaffected");
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "u", channels: ["slack/T/C"], unifiedSupervisor: true })]),
-  "unifiedSupervisor WITHOUT ambientSupervisor ⇒ fail loud",
-);
-throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true } as Domain)]),
-  "unifiedSupervisor on the org pseudo-domain ⇒ fail loud (the 'unify everything' footgun)",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "u", channels: ["slack/T/C"], mode: "unified" })]),
+  "mode WITHOUT ambientSupervisor ⇒ fail loud (a window is a re-keyed ambient supervisor)",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "public", match: "public", ambientSupervisor: true, unifiedSupervisor: true } as Domain)]),
-  "unifiedSupervisor on the public pseudo-domain ⇒ fail loud (external surface)",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], mode: "solo" })]),
+  "mode:solo WITHOUT ambientSupervisor ⇒ fail loud too",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "t", channels: ["slack/T/C"], unifiedSupervisorGate: true })]),
-  "unifiedSupervisorGate on a non-org domain ⇒ fail loud (it's the org master switch)",
-);
-noThrow(() => assertUnifiedDomainTrust([orgGate]), "unifiedSupervisorGate on the org pseudo-domain is valid");
-noThrow(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true })]),
-  "valid: soloWindow on a unified+ambient explicit domain",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, mode: "unified" })]),
+  "mode on the org pseudo-domain ⇒ fail loud (the 'window everything' footgun)",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "s", channels: ["slack/T/C"], ambientSupervisor: true, soloWindow: true })]),
-  "soloWindow WITHOUT unifiedSupervisor ⇒ fail loud (it is a delivery mode OF the unified supervisor)",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "public", match: "public", ambientSupervisor: true, mode: "unified" })]),
+  "mode on the public pseudo-domain ⇒ fail loud (external surface)",
 );
 throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true } as Domain)]),
-  "soloWindow on the org pseudo-domain ⇒ fail loud (the 'solo-window everything' footgun)",
+  () => assertUnifiedDomainTrust([defineDomain({ name: "dm", match: "dm", ambientSupervisor: true, mode: "solo" })]),
+  "mode on the dm pseudo-domain ⇒ fail loud (personal surface)",
 );
-throws(
-  () => assertUnifiedDomainTrust([defineDomain({ name: "t", channels: ["slack/T/C"], soloWindowGate: true })]),
-  "soloWindowGate on a non-org domain ⇒ fail loud (it's the org master switch)",
-);
-noThrow(() => assertUnifiedDomainTrust([orgSoloGate]), "soloWindowGate on the org pseudo-domain is valid");
 
 const TOK = unifiedSupervisorToken("payments", 3);
 ok(TOK === "oe-dom:payments:oe-sup:g3", "unified token shape oe-dom:<domain>:oe-sup:g<gen>");
@@ -236,11 +189,11 @@ withEnv(undefined, () => {
 
 withEnv("1", () => {
   const g = supervisorGrainFor(CH, [payments, orgNoGate]);
-  ok(JSON.stringify(g) === JSON.stringify({ unified: true, registryKey: "oe-domain::payments", domainName: "payments" }), "flag-off (solo) unified grain is byte-identical — no windowId field, degenerate registry key");
-  ok(grainUsesUnifiedWindow(g) === false, "a plain-unified (non-crossSurface, non-solo) grain does NOT use the unified window");
-  ok(supervisorTokenForGrain(g, 4, () => "C_PAY:oe-sup:g4") === "oe-dom:payments:oe-sup:g4", "flag-off supervisorTokenForGrain still emits the DEGENERATE token verbatim");
+  ok(JSON.stringify(g) === JSON.stringify({ unified: true, registryKey: "oe-domain::payments", domainName: "payments", singleWindow: true }), "mode:unified grain: cross-surface (singleWindow), domain-keyed registry, NO windowId field — byte-identical to the pre-collapse cross-surface grain");
+  ok(grainUsesUnifiedWindow(g) === true, "a mode:unified grain USES the unified window (cross-surface divert fires)");
+  ok(supervisorTokenForGrain(g, 4, () => "C_PAY:oe-sup:g4") === "oe-dom:payments:oe-sup:g4", "mode:unified supervisorTokenForGrain emits the DEGENERATE (domain-keyed) token verbatim");
 });
-withSolo("1", "1", () => {
+withEnv("1", () => {
   const g = supervisorGrainFor(CH, [paymentsSolo, orgNoGate]);
   ok(g.unified === true && g.domainName === "payments", "solo grain stays domain-anchored (memory/access unchanged)");
   ok(g.windowId === CH, "solo grain carries windowId === surfaceKey (one window per channel)");
@@ -256,7 +209,7 @@ withSolo("1", "1", () => {
   ok(g2.windowId === GH && g2.registryKey === `oe-domain::${GH}` && g2.registryKey !== g.registryKey, "each channel gets its OWN solo window + row (unlike cross-surface's shared row)");
 });
 function supervisorTokenPerContainer(): string {
-  throw new Error("perContainer must not be called on a unified grain");
+  throw new Error("perContainer must not be called on a windowed grain");
 }
 
 const baseInput: WakeEnvelopeInput = {

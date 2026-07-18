@@ -16,8 +16,7 @@ const dir = join(tmpdir(), `open-everywhere-test-wake-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_UNIFIED_SUPERVISOR = "1";
-process.env.OE_CROSS_SURFACE_WINDOW = "1";
+process.env.OE_WINDOW_TOPOLOGY = "1";
 delete process.env.OE_TEST_WAKE;
 delete process.env.OE_CONTROL_READ_TOKENS;
 
@@ -38,8 +37,7 @@ const domains = [
     name: DOMAIN,
     channels: [SURFACE],
     ambientSupervisor: true,
-    unifiedSupervisor: true,
-    crossSurfaceWindow: true,
+    mode: "unified",
   }),
 ];
 registerConfig({
@@ -109,13 +107,13 @@ process.env.OE_CONTROL_READ_TOKENS = `eval-harness:${SHA}`;
   ok((await post({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, origin: slackOrigin }, SECRET)).status === 400, "missing text → 400");
   ok((await post(goodBody({ origin: { platform: "slack" } }), SECRET)).status === 400, "invalid origin (no channelId) → 400");
   ok((await post(goodBody({ platform: "notion" }), SECRET)).status === 400, "origin.platform != platform → 400");
-  ok((await post(goodBody({ surfaceKey: "slack/T1/UNLISTED" }), SECRET)).status === 400, "surface not in a crossSurfaceWindow domain → 400");
+  ok((await post(goodBody({ surfaceKey: "slack/T1/UNLISTED" }), SECRET)).status === 400, "surface not in a windowed domain → 400");
   ok(captured.length === 0, "no divert on any rejected request");
 }
 
 {
   const res = await post(goodBody(), SECRET);
-  ok(res.status === 400, "crossSurfaceWindow OK but no channel_session row → 400 (seed the window first)");
+  ok(res.status === 400, "window enabled but no channel_session row → 400 (seed the window first)");
 }
 
 const token = unifiedSupervisorToken(DOMAIN, Date.now());
@@ -154,7 +152,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
   const notionSurface = "notion/W1/P1";
   registerConfig({
     loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
-    loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE, notionSurface], ambientSupervisor: true, unifiedSupervisor: true, crossSurfaceWindow: true })],
+    loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE, notionSurface], ambientSupervisor: true, mode: "unified" })],
     loadSilos: () => [], loadRoles: () => [], domainsForSurface: () => [],
   });
   const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, SECRET);
@@ -245,7 +243,7 @@ const SOLO_DOMAIN = "e2e-solo";
 const SOLO_SURFACE = "slack/T2/C2";
 const soloOrigin = { platform: "slack", channelId: "C2" } as const;
 const soloDomains = [
-  defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, unifiedSupervisor: true, soloWindow: true }),
+  defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, mode: "solo" }),
 ];
 function useDomains(ds: ReturnType<typeof defineDomain>[]): void {
   registerConfig({
@@ -258,7 +256,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 {
-  process.env.OE_SOLO_WINDOW = "1";
+  process.env.OE_WINDOW_TOPOLOGY = "1";
   useDomains(soloDomains);
   const soloGrain = supervisorGrainFor(SOLO_SURFACE, soloDomains);
   ok(soloGrain.registryKey === unifiedDomainSessionKey(SOLO_SURFACE), "solo grain keys the registry row by the surfaceKey windowId, not the domain");
@@ -269,7 +267,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 {
   captured.length = 0;
-  process.env.OE_SOLO_WINDOW = "1";
+  process.env.OE_WINDOW_TOPOLOGY = "1";
   useDomains(soloDomains);
   await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_DOMAIN), unifiedSupervisorToken(SOLO_DOMAIN, Date.now()), new Date().toISOString());
   ok((await post(soloBody(), SECRET)).status === 400, "solo domain with ONLY a domain-keyed row → 400 (the route reads the WINDOW's row, not the domain's)");
@@ -278,7 +276,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   const soloToken = formatWindowToken({ domain: SOLO_DOMAIN, windowId: SOLO_SURFACE, generation: Date.now() });
   await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_SURFACE), soloToken, new Date().toISOString());
   const res = await post(soloBody(), SECRET);
-  ok(res.status === 200, "solo window (soloWindow:true + org gate) is INJECTABLE → 200");
+  ok(res.status === 200, "solo window (mode:solo + code gate) is INJECTABLE → 200");
   const jb = (await res.json()) as { token: string };
   ok(jb.token === soloToken, "solo injection dispatches the SOLO window's live token (windowId === surfaceKey)");
   ok(captured.length === 1 && (captured[0].target as { token?: string }).token === soloToken, "solo divert carries the solo window token");
@@ -286,13 +284,11 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 {
   captured.length = 0;
-  useDomains([defineDomain({ name: SOLO_DOMAIN, channels: [SOLO_SURFACE], ambientSupervisor: true, unifiedSupervisor: true })]);
-  ok((await post(soloBody(), SECRET)).status === 400, "neither crossSurfaceWindow nor soloWindow on the domain → 400 (fail-closed preserved)");
-
-  delete process.env.OE_SOLO_WINDOW;
+  process.env.OE_WINDOW_TOPOLOGY = "0";
   useDomains(soloDomains);
-  ok((await post(soloBody(), SECRET)).status === 400, "soloWindow:true but OE_SOLO_WINDOW org gate off → 400 (org-off makes the domain flag inert)");
+  ok((await post(soloBody(), SECRET)).status === 400, "mode:solo but WINDOW_TOPOLOGY_ENABLED off → 400 (gate-off makes the mode inert)");
   ok(captured.length === 0, "no divert on any window-gate rejection");
+  process.env.OE_WINDOW_TOPOLOGY = "1";
 }
 
 {

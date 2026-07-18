@@ -4,7 +4,7 @@ import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchC
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
 import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { crossSurfaceWindowEnabled, soloWindowEnabled } from "../memory/domain.js";
+import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
@@ -58,7 +58,7 @@ export interface UnifiedReceiveTarget {
 function windowEnabledFor(surfaceKey: string): boolean {
   try {
     const domains = getConfig().loadDomains();
-    return crossSurfaceWindowEnabled(surfaceKey, domains) || soloWindowEnabled(surfaceKey, domains);
+    return windowedSupervisorEnabled(surfaceKey, domains);
   } catch {
     return false;
   }
@@ -115,7 +115,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error("unified receive: malformed target (host dispatch bug) — refusing the wake");
     }
     if (!windowEnabledFor(t.surfaceKey)) {
-      throw new Error(`unified receive: crossSurfaceWindow is not enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
+      throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
     await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString());

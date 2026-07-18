@@ -20,8 +20,7 @@ const payments = defineDomain({
   name: "payments",
   channels: [SLACK_A, SLACK_B, GH, LINEAR, NOTION, DISCORD, TEAMS],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
-  crossSurfaceWindow: true,
+  mode: "unified",
 });
 const soloDomain = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, soloDomain];

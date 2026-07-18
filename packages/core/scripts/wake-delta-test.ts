@@ -119,7 +119,7 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
 }
 
 {
-  const eng = defineDomain({ name: "eng", channels: ["linear/org/team-1"], memory: ["acme-eng", "handbook"], ambientSupervisor: true, unifiedSupervisor: true });
+  const eng = defineDomain({ name: "eng", channels: ["linear/org/team-1"], memory: ["acme-eng", "handbook"], ambientSupervisor: true, mode: "unified" });
   const orgD = defineDomain({ name: "org", match: "org", memory: "org-baseline" });
   const silos = sessionReadSilos("linear/org/team-1", [eng, orgD]);
   ok(silos.length === 2 && silos.some((s) => s.siloName === "acme-eng") && silos.some((s) => s.siloName === "handbook"), "sessionReadSilos: an explicit domain resolves its own memory silos");

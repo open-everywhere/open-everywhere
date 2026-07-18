@@ -24,8 +24,7 @@ const payments = defineDomain({
   name: "payments",
   channels: ["slack/T_ENG/C_TXN", "github/acme/api", "notion/W_ACME/P_PAY"],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
-  crossSurfaceWindow: true,
+  mode: "unified",
 });
 const hr = defineDomain({ name: "hr", channels: ["slack/T_ENG/C_HR"], ambientSupervisor: true });
 const domains = [payments, hr];

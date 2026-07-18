@@ -3,9 +3,8 @@ import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
-import { crossSurfaceWindowEnabled, soloWindowEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { supervisorGrainFor, type SupervisorGrain } from "../channels/unified-supervisor.js";
+import { supervisorGrainFor, grainUsesUnifiedWindow, type SupervisorGrain } from "../channels/unified-supervisor.js";
 import { mintWakeId, isUnifiedWakeOrigin, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeAddressing } from "../channels/normalized-wake.js";
 import type { WakeReason, WakeTrust, WakeParticipant, WakeMessageInput } from "../channels/wake-envelope.js";
@@ -145,14 +144,13 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   let grain: SupervisorGrain | undefined;
   try {
     const domains = getConfig().loadDomains();
-    if (crossSurfaceWindowEnabled(surfaceKey, domains) || soloWindowEnabled(surfaceKey, domains)) {
-      grain = supervisorGrainFor(surfaceKey, domains);
-    }
+    const g = supervisorGrainFor(surfaceKey, domains);
+    if (grainUsesUnifiedWindow(g)) grain = g;
   } catch {
     grain = undefined;
   }
   if (!grain) {
-    return json(400, { error: `no unified window (crossSurfaceWindow / soloWindow) is enabled for surfaceKey "${surfaceKey}" — refusing (fail-closed)` });
+    return json(400, { error: `no standing window (mode solo / unified) is enabled for surfaceKey "${surfaceKey}" — refusing (fail-closed)` });
   }
   if (grain.domainName !== domain) {
     return json(400, { error: `surfaceKey "${surfaceKey}" resolves to domain "${grain.domainName}", not the requested "${domain}" — refusing (fail-closed)` });

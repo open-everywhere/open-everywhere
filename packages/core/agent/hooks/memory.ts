@@ -15,7 +15,7 @@ import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from ".
 import type { MemorySilo } from "../memory/silo.js";
 import { appendAudit } from "../audit/audit.js";
 import { isSupervisorSession } from "../model/routing.js";
-import { unifiedSupervisorOrgGateEnabled } from "../memory/domain.js";
+import { windowTopologyEnabled } from "../access/capabilities.js";
 import { getConfig } from "../access/config.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
@@ -171,7 +171,7 @@ async function lock(sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>, pat
 function resyncArmed(ctx: HookContext): boolean {
   try {
     if (!isSupervisorSession(ctx)) return false;
-    return unifiedSupervisorOrgGateEnabled(getConfig().loadDomains());
+    return windowTopologyEnabled();
   } catch {
     return false;
   }

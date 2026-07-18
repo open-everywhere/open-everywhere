@@ -17,7 +17,7 @@ const dir = join(tmpdir(), `open-everywhere-unified-audit-test-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
-process.env.OE_UNIFIED_SUPERVISOR = "1";
+process.env.OE_WINDOW_TOPOLOGY = "1";
 delete process.env.OE_CONTROL_READ_TOKENS;
 
 const { registerConfig } = await import("../agent/access/config.js");
@@ -31,10 +31,10 @@ const payments = defineDomain({
   name: "payments",
   channels: [SLACK, GH],
   ambientSupervisor: true,
-  unifiedSupervisor: true,
+  mode: "unified",
   admins: ["U_ADMIN"],
 });
-const org = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
+const org = defineDomain({ name: "org", match: "org" });
 const domains = [payments, org];
 
 registerConfig({
@@ -70,7 +70,7 @@ const {
 
 {
   const v = await unifiedDomainAudit({ domain: "payments" });
-  ok(v.unified === true, "unified true (env gate + per-domain flag + ambient all on)");
+  ok(v.unified === true, "unified true (code gate + ambient supervisor on)");
   ok(v.domain === "payments" && v.org === "acme", "domain + org echoed");
   ok(v.containers.length === 2, "both containers audited");
   ok(JSON.stringify(v.platforms) === JSON.stringify(["github", "slack"]), "platforms span the domain, sorted");

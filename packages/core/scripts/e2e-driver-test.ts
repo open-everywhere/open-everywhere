@@ -811,55 +811,50 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 
   const A = "slack/T1/C0UNIA";
   const B = "slack/T1/C0UNIB";
-  const fixture = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, unifiedSupervisor: true });
+  const fixture = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, mode: "unified" });
   const ambientTwin = defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true });
-  const orgGate = defineDomain({ name: "org", match: "org", unifiedSupervisorGate: true });
-  const orgPlain = defineDomain({ name: "org", match: "org" });
+  const org = defineDomain({ name: "org", match: "org" });
 
-  const prevGate = process.env.OE_UNIFIED_SUPERVISOR;
-  delete process.env.OE_UNIFIED_SUPERVISOR;
+  const prevGate = process.env.OE_WINDOW_TOPOLOGY;
+  delete process.env.OE_WINDOW_TOPOLOGY;
   try {
     for (const key of [A, B]) {
-      const off = supervisorGrainFor(key, [fixture, orgPlain]);
-      const ambient = supervisorGrainFor(key, [ambientTwin, orgPlain]);
-      ok(off.unified === false && off.registryKey === key && off.domainName === undefined, `flags OFF: ${key} plans per-container (registryKey === surfaceKey)`);
-      ok(JSON.stringify(off) === JSON.stringify(ambient), `flags OFF: the unified fixture's plan is IDENTICAL to the plain-ambient twin's for ${key} (byte-identical-off)`);
+      const off = supervisorGrainFor(key, [fixture, org]);
+      const ambient = supervisorGrainFor(key, [ambientTwin, org]);
+      ok(off.unified === false && off.registryKey === key && off.domainName === undefined, `gate OFF: ${key} plans per-container (registryKey === surfaceKey)`);
+      ok(JSON.stringify(off) === JSON.stringify(ambient), `gate OFF: the unified fixture's plan is IDENTICAL to the plain-ambient twin's for ${key} (byte-identical-off)`);
     }
-    ok(supervisorGrainFor(A, [ambientTwin, orgGate]).unified === false, "org gate ON alone (domain flag off) still plans per-container — BOTH levels required");
-    ok(supervisorGrainFor(A, [fixture, orgPlain]).unified === false, "domain flag ON alone (org gate off) still plans per-container — BOTH levels required");
+    ok(supervisorGrainFor(A, [fixture, org]).unified === false, "gate OFF: a domain with mode set still plans per-container until the WINDOW_TOPOLOGY_ENABLED code capability is flipped ON");
 
-    const onA = supervisorGrainFor(A, [fixture, orgGate]);
-    const onB = supervisorGrainFor(B, [fixture, orgGate]);
+    process.env.OE_WINDOW_TOPOLOGY = "1";
+    const onA = supervisorGrainFor(A, [fixture, org]);
+    const onB = supervisorGrainFor(B, [fixture, org]);
     ok(
       onA.unified === true && onB.unified === true && onA.registryKey === onB.registryKey && onA.registryKey === unifiedDomainSessionKey("e2e-unified"),
-      "flags ON: both fixture channels resolve ONE domain-keyed registry row (oe-domain::e2e-unified) — one team, one supervisor session",
+      "gate ON + mode unified: both fixture channels resolve ONE domain-keyed registry row (oe-domain::e2e-unified) — one team, one supervisor session",
     );
     ok(
       unifiedSupervisorToken("e2e-unified", 1) === "oe-dom:e2e-unified:oe-sup:g1",
-      "flags ON: the fixture domain's session token is oe-dom:<domain>:oe-sup:g<n> (carries the :oe-sup:g infix so spend/rotation/model-routing detectors are unchanged)",
+      "gate ON: the fixture domain's session token is oe-dom:<domain>:oe-sup:g<n> (carries the :oe-sup:g infix so spend/rotation/model-routing detectors are unchanged)",
     );
   } finally {
-    if (prevGate === undefined) delete process.env.OE_UNIFIED_SUPERVISOR;
-    else process.env.OE_UNIFIED_SUPERVISOR = prevGate;
+    if (prevGate === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevGate;
   }
 
-  ok(!throws(() => assertUnifiedDomainTrust([fixture, orgGate])), "the documented J-UNIFIED fixture passes assertUnifiedDomainTrust");
+  ok(!throws(() => assertUnifiedDomainTrust([fixture, org])), "the documented J-UNIFIED fixture passes assertUnifiedDomainTrust");
   ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, unifiedSupervisor: true })])),
-    "unifiedSupervisor on the org pseudo-domain → load fails loud (the 'unify everything' footgun)",
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "org", match: "org", ambientSupervisor: true, mode: "unified" })])),
+    "mode on the org pseudo-domain → load fails loud (the 'window everything' footgun)",
   );
   ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "public", match: "public", ambientSupervisor: true, unifiedSupervisor: true })])) &&
-      throws(() => assertUnifiedDomainTrust([defineDomain({ name: "dm", match: "dm", ambientSupervisor: true, unifiedSupervisor: true })])),
-    "unifiedSupervisor on the public/dm pseudo-domains → load fails loud",
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "public", match: "public", ambientSupervisor: true, mode: "unified" })])) &&
+      throws(() => assertUnifiedDomainTrust([defineDomain({ name: "dm", match: "dm", ambientSupervisor: true, mode: "unified" })])),
+    "mode on the public/dm pseudo-domains → load fails loud",
   );
   ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], unifiedSupervisor: true })])),
-    "unifiedSupervisor WITHOUT ambientSupervisor → load fails loud (a unified session is a re-keyed ambient supervisor)",
-  );
-  ok(
-    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], ambientSupervisor: true, unifiedSupervisor: true, unifiedSupervisorGate: true })])),
-    "unifiedSupervisorGate anywhere but the org pseudo-domain → load fails loud (it's the ORG master switch)",
+    throws(() => assertUnifiedDomainTrust([defineDomain({ name: "e2e-unified", channels: [A, B], mode: "unified" })])),
+    "mode WITHOUT ambientSupervisor → load fails loud (a window is a re-keyed ambient supervisor)",
   );
 
   const human = definePrincipal({ name: "E2E Human", handle: "e2e", ids: { slack: "U_E2E", github: "e2e-human" } });

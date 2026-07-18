@@ -31,7 +31,8 @@ import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { isVouchedInternal } from "../identity/trust.js";
 import { getConfig } from "../access/config.js";
-import { ambientSupervisorEnabled, crossSurfaceWindowOrgGateEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
+import { ambientSupervisorEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
+import { windowTopologyEnabled } from "../access/capabilities.js";
 import { liveMemoryDeltaDep } from "../memory/wake-delta.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -388,7 +389,7 @@ function agentSessionIssueId(event: LinearAgentSessionEvent): string | undefined
 
 function crossSurfaceWindowPossible(): boolean {
   try {
-    return crossSurfaceWindowOrgGateEnabled(getConfig().loadDomains());
+    return windowTopologyEnabled();
   } catch {
     return false;
   }
