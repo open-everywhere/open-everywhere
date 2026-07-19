@@ -5,6 +5,10 @@ import { getConfig } from "../access/config.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { slackForm } from "../channels/slack-events.js";
 import { emitTelemetry } from "../observability/telemetry.js";
+import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
+import { dispatchApprovalDecisionWake } from "../channels/unified.js";
+import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
@@ -171,10 +175,12 @@ interface BlockActionsPayload {
   readonly user?: { readonly id?: unknown };
   readonly channel?: { readonly id?: unknown };
   readonly message?: { readonly ts?: unknown };
+  readonly team?: { readonly id?: unknown };
 }
 
 export interface HandleApprovalDeps {
   readonly post?: PostFn;
+  readonly decisionWake?: DecisionWakeDeps;
 }
 
 async function updateCard(post: PostFn, channelId: string, ts: string | undefined, card: RenderedCard): Promise<void> {
@@ -322,6 +328,73 @@ export async function sweepExpiredPendings(org: string, now: Date = new Date()):
   return count;
 }
 
+export interface DecisionWakeDeps {
+  readonly dispatch?: typeof dispatchApprovalDecisionWake;
+  readonly now?: () => string;
+  readonly mintWakeId?: () => string;
+}
+
+export async function wakeWindowOnDecision(
+  input: {
+    readonly row: PendingActionRow;
+    readonly outcome: ApprovalOutcome;
+    readonly summaryLine: string;
+    readonly clickerId?: string;
+    readonly surfaceKey: string;
+    readonly origin: UnifiedWakeOrigin;
+  },
+  deps: DecisionWakeDeps = {},
+): Promise<boolean> {
+  const dispatch = deps.dispatch ?? dispatchApprovalDecisionWake;
+  const mint = deps.mintWakeId ?? mintWakeId;
+  const nowIso = (deps.now ?? (() => new Date().toISOString()))();
+
+  let domainName: string;
+  let registryKey: string;
+  try {
+    const grain = supervisorGrainFor(input.surfaceKey, getConfig().loadDomains());
+    if (!grainUsesUnifiedWindow(grain) || grain.domainName === undefined) return false;
+    domainName = grain.domainName;
+    registryKey = grain.registryKey;
+  } catch {
+    return false;
+  }
+
+  const store = getOperationalStore();
+  const session = await store.getChannelSession(input.row.org, registryKey).catch(() => null);
+  if (!session) return false;
+
+  const wakeId = mint();
+  const message = renderApprovalDecisionMessage(
+    {
+      origin: input.origin,
+      wakeId,
+      summaryLine: input.summaryLine,
+      outcome: input.outcome,
+      ...(input.clickerId ? { clickerId: input.clickerId } : {}),
+      pendingId: input.row.id,
+    },
+    nowIso,
+  );
+  const delivered = await dispatch({ token: session.token, origin: input.origin, wakeId, message, domain: domainName }).catch(() => false);
+
+  await appendAudit({
+    ...whereFromScope(input.row.org, input.row.scopeKey),
+    principalId: input.clickerId ?? "system",
+    action: "approval.decision_wake",
+    detail: { id: input.row.id, kind: input.row.kind, outcome: input.outcome, domain: domainName, delivered, wakeId },
+  }).catch(() => undefined);
+  return delivered;
+}
+
+function slackDecisionWakeTarget(row: PendingActionRow, teamId: string | undefined): { surfaceKey: string; origin: UnifiedWakeOrigin } | null {
+  if (!teamId) return null;
+  return {
+    surfaceKey: `slack/${teamId}/${row.channelId}`,
+    origin: { platform: "slack", channelId: row.channelId, ...(row.threadTs ? { threadTs: row.threadTs } : {}) },
+  };
+}
+
 export async function handleApprovalPayload(payload: unknown, deps: HandleApprovalDeps = {}): Promise<boolean> {
   const p = payload as BlockActionsPayload | null | undefined;
   const action = p?.actions?.[0];
@@ -338,6 +411,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
     const clickerId = typeof p?.user?.id === "string" ? p.user.id : undefined;
     const channelId = typeof p?.channel?.id === "string" ? p.channel.id : undefined;
     const messageTs = typeof p?.message?.ts === "string" ? p.message.ts : undefined;
+    const teamId = typeof p?.team?.id === "string" ? p.team.id : undefined;
 
     if (!org || !clickerId || !channelId) {
       console.error(`[open-everywhere:approvals] malformed block_actions payload for "${actionId}" — missing org/user/channel; ignoring the click`);
@@ -354,17 +428,33 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       case "unregistered-kind":
       case "lost-race":
         return true;
-      case "expired":
+      case "expired": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, "expired"));
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, "expired", clickerId, "expired"));
+        const t = slackDecisionWakeTarget(res.row, teamId);
+        if (t) {
+          await wakeWindowOnDecision(
+            { row: res.row, outcome: "expired", summaryLine: res.summaryLines[0] ?? "the requested change", surfaceKey: t.surfaceKey, origin: t.origin },
+            deps.decisionWake,
+          ).catch(() => undefined);
+        }
         return true;
+      }
       case "denied":
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
         return true;
-      case "decided":
+      case "decided": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, res.outcomeLine, clickerId, res.row.status));
+        const t = slackDecisionWakeTarget(res.row, teamId);
+        if (t) {
+          await wakeWindowOnDecision(
+            { row: res.row, outcome: res.row.status as ApprovalOutcome, summaryLine: res.summaryLines[0] ?? "the requested change", clickerId, surfaceKey: t.surfaceKey, origin: t.origin },
+            deps.decisionWake,
+          ).catch(() => undefined);
+        }
         return true;
+      }
     }
   } catch (err) {
     console.error(`[open-everywhere:approvals] handleApprovalPayload failed softly for "${actionId}": ${String(err)}`);

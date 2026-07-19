@@ -5,12 +5,13 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
+import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 
 const dir = join(tmpdir(), `open-everywhere-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 
-const { registerConfig } = await import("../agent/access/config.js");
+const { registerConfig, getConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -41,6 +42,7 @@ registerConfig({
   loadDomains: () => [
     defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
     defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
+    defineDomain({ name: "win", channels: ["slack/TW/C_WIN"], admins: ["U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -536,4 +538,93 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok((await sweepExpiredPendings("sweeporg", new Date(Date.now() + 7_200_000))) === 0, "sweepExpiredPendings: a second sweep expires nothing (row already terminal)");
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep)\n`);
+{
+  const store = getOperationalStore();
+  const { dispatchApprovalDecisionWake } = await import("../agent/channels/unified.js");
+  const { supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
+  type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
+  const slackOrigin = (o: UnifiedWakeOrigin): Extract<UnifiedWakeOrigin, { platform: "slack" }> | null => (o.platform === "slack" ? o : null);
+
+  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
+  process.env.OE_WINDOW_TOPOLOGY = "1";
+  try {
+    const grain = supervisorGrainFor("slack/TW/C_WIN", getConfig().loadDomains());
+    ok(grain.unified === true && grain.domainName === "win", "window setup: the win domain's channel resolves a unified grain keyed by the domain");
+
+    const WIN_TOKEN = "oe-dom:win:win:slack/TW/C_WIN:oe-sup:g1";
+    await store.rotateChannelSession("default", grain.registryKey, WIN_TOKEN, new Date().toISOString());
+
+    const wakes: WakeInput[] = [];
+    const decisionWake = {
+      dispatch: async (i: WakeInput): Promise<boolean> => {
+        wakes.push(i);
+        return true;
+      },
+      mintWakeId: () => "wake-fixed",
+      now: () => "2026-07-19T00:00:00Z",
+    };
+    const post = async () => ({ ok: true });
+    const winPayload = (actionId: string, opts: { user?: string; org?: string; channel?: string; team?: string } = {}) => ({
+      actions: [{ action_id: actionId, value: opts.org ?? "default" }],
+      user: { id: opts.user ?? "U_ORG_ADMIN" },
+      channel: { id: opts.channel ?? "C_WIN" },
+      message: { ts: "111.222" },
+      team: { id: opts.team ?? "TW" },
+    });
+    const winRow = (over: Partial<PendingActionRow>) =>
+      row({
+        scopeKey: "slack/TW/C_WIN",
+        channelId: "C_WIN",
+        threadTs: "ANCHOR.W",
+        domain: null,
+        argsJson: JSON.stringify({ org: over.org ?? "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 700, currentCap: null }),
+        ...over,
+      });
+
+    await store.addPendingAction(winRow({ id: "p-win-reject" }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:reject:p-win-reject"), { post, decisionWake });
+    ok(wakes.length === 1, "decision wake: a REJECT in a window domain emits EXACTLY ONE decision wake");
+    ok(wakes[0]!.token === WIN_TOKEN, "decision wake: the wake targets the proposing window's CURRENT registry token");
+    ok(wakes[0]!.domain === "win", "decision wake: the wake carries the proposing window's domain");
+    const oRej = slackOrigin(wakes[0]!.origin);
+    ok(!!oRej && oRej.channelId === "C_WIN" && oRej.threadTs === "ANCHOR.W", "decision wake: origin = the card's own anchor thread (a warranted reply lands beside the notice)");
+    ok(wakes[0]!.message.includes("REJECTED") && wakes[0]!.message.includes("NOT applied"), "decision wake: the rejected notice states the outcome + that nothing was applied");
+    ok(wakes[0]!.message.includes("p-win-reject"), "decision wake: the notice names the pending id so the model can correlate it");
+    ok(wakes[0]!.wakeId === "wake-fixed", "decision wake: the host-minted wakeId rides the dispatch (reply-target map key)");
+
+    await store.addPendingAction(winRow({ id: "p-win-approve", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 800, currentCap: null }) }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:approve:p-win-approve"), { post, decisionWake });
+    ok(wakes.length === 1 && wakes[0]!.message.includes("APPROVED"), "decision wake: an APPROVE in a window domain emits one wake carrying the approved outcome");
+    await store.clearSpendLimit("default", "slack/TW/C_WIN", "surface");
+
+    await store.addPendingAction(winRow({ id: "p-win-expire", expiresAt: "2000-01-01T00:00:00Z", argsJson: JSON.stringify({ org: "default", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 900, currentCap: null }) }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:approve:p-win-expire"), { post, decisionWake });
+    ok(wakes.length === 1 && wakes[0]!.message.includes("EXPIRED"), "decision wake: a late click that EXPIRES a window-domain pending emits one wake carrying the expired outcome");
+
+    await store.addPendingAction(row({ id: "p-eng-reject", scopeKey: "slack/T1/C_ENG", channelId: "C_ENG", threadTs: "ANCHOR.E", domain: null, argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C_ENG", level: "surface", monthlyTokens: 100, currentCap: null }) }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:reject:p-eng-reject", { channel: "C_ENG", team: "T1" }), { post, decisionWake });
+    ok(wakes.length === 0, "decision wake: a decide on a NON-window (classic per-thread) domain emits NO decision wake");
+
+    await store.addPendingAction(winRow({ id: "p-win-nosess", org: "nosess" }));
+    wakes.length = 0;
+    await handleApprovalPayload(winPayload("oe_approval:reject:p-win-nosess", { org: "nosess" }), { post, decisionWake });
+    ok(wakes.length === 0, "decision wake: a window domain with no live session row emits no wake (nothing to push to)");
+
+    await store.addPendingAction(winRow({ id: "p-win-noteam" }));
+    wakes.length = 0;
+    await handleApprovalPayload(
+      { actions: [{ action_id: "oe_approval:reject:p-win-noteam", value: "default" }], user: { id: "U_ORG_ADMIN" }, channel: { id: "C_WIN" }, message: { ts: "111.222" } },
+      { post, decisionWake },
+    );
+    ok(wakes.length === 0, "decision wake: a payload missing team.id emits no wake (the surfaceKey can't be formed — fail-soft)");
+  } finally {
+    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+  }
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake)\n`);

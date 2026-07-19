@@ -440,3 +440,28 @@ export async function dispatchWindowWake(input: {
     return false;
   }
 }
+
+export async function dispatchApprovalDecisionWake(input: {
+  readonly token: string;
+  readonly origin: UnifiedWakeOrigin;
+  readonly wakeId: string;
+  readonly message: string;
+  readonly domain: string;
+  readonly authAttributes?: Record<string, unknown>;
+}): Promise<boolean> {
+  if (!crossProcessDispatchAvailable()) return false;
+  const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);
+  if (!surfaceKey) return false;
+  try {
+    await deliverUnifiedDispatch({
+      message: input.message,
+      token: input.token,
+      window: { wakeId: input.wakeId, origin: input.origin },
+      surfaceKey,
+      auth: { attributes: input.authAttributes ?? {} },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
