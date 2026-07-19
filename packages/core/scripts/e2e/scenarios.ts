@@ -1153,35 +1153,25 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
 
-      if (!(not.webhookSecret && not.anchorOnTopic && not.anchorOnTopic2 && not.anchorOffTopic && ctx.targetUrl)) {
-        ctx.log("forge legs skipped — set E2E_NOTION_WEBHOOK_SECRET + the three E2E_NOTION_ANCHOR_* ids + E2E_TARGET_URL to run them");
+      const anchorBlocks = await not.pageBlocks();
+      if (anchorBlocks.length < 3) {
+        ctx.log(`addressed legs skipped — the scratch page has only ${anchorBlocks.length} top-level blocks (need 3 distinct discussion anchors)`);
         return;
       }
-      const target = ctx.targetUrl;
-      const anchorOnTopic = not.anchorOnTopic;
-      const anchorOnTopic2 = not.anchorOnTopic2;
-      const anchorOffTopic = not.anchorOffTopic;
+      const runTag = factToken("not");
 
-      const disc1 = await not.discussionOf(anchorOnTopic);
-      const disc2 = await not.discussionOf(anchorOnTopic2);
-      ctx.gate(disc1 !== undefined && disc2 !== undefined, "anchors resolve to real discussions on the page (human fixtures present)");
-      ctx.gate(disc1 !== disc2, "the two on-topic anchors are in DIFFERENT discussions (the reply-targeting probe needs two)");
+      const c1 = await not.createBlockDiscussion(anchorBlocks[0], `OE — quick check (${runTag}-a): what is this page for? A one-line answer right here is perfect.`);
+      ctx.gate(c1.commentId.length > 0 && c1.discussionId.length > 0, "on-topic: the fresh addressed comment minted its own discussion");
+      const reply1 = await not.awaitBotReplyIn(c1.discussionId, "", { timeoutMs: REPLY_WAIT });
+      ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the fresh comment's OWN discussion (discussion 1)");
 
-      const sig1Time = new Date().toISOString();
-      const f1 = await not.forgeCommentCreated(target, anchorOnTopic);
-      ctx.gate(f1.status === 200, "on-topic: the signed comment.created replay is accepted (200)");
-      const reply1 = await not.awaitBotReplyIn(disc1!, sig1Time, { timeoutMs: REPLY_WAIT });
-      ctx.gate(not.isBotComment(reply1), "on-topic: a bot reply lands in the anchor's OWN discussion (discussion 1)");
+      const c2 = await not.createBlockDiscussion(anchorBlocks[1], `Open Everywhere — different question (${runTag}-b): name one thing that could improve this page. Answer in this thread please.`);
+      ctx.gate(c2.discussionId !== c1.discussionId, "reply-targeting: the second comment minted a DIFFERENT discussion (the probe needs two)");
+      const reply2 = await not.awaitBotReplyIn(c2.discussionId, "", { timeoutMs: REPLY_WAIT });
+      ctx.gate(reply2.discussionId === c2.discussionId, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
 
-      const sig2Time = new Date().toISOString();
-      const f2 = await not.forgeCommentCreated(target, anchorOnTopic2);
-      ctx.gate(f2.status === 200, "reply-targeting: the second anchor's replay is accepted (200)");
-      const reply2 = await not.awaitBotReplyIn(disc2!, sig2Time, { timeoutMs: REPLY_WAIT });
-      ctx.gate(reply2.discussionId === disc2, "reply-targeting: the second reply lands in discussion 2, NOT discussion 1 (the reply-targeting fix, live)");
-
-      const sigOffTime = new Date().toISOString();
-      const fOff = await not.forgeCommentCreated(target, anchorOffTopic);
-      ctx.gate(fOff.status === 200, "off-topic: the replay is accepted (200)");
+      const cOff = await not.createBlockDiscussion(anchorBlocks[2], `Reminder (${runTag}-c): the plant-watering rota moved to the kitchen noticeboard.`);
+      ctx.gate(cOff.discussionId.length > 0, "off-topic: the neutral comment minted its own discussion");
       if (ctx.auditRead && auditSilencesExpected()) {
         const rows = await pollUntil(
           async () => {
@@ -1198,18 +1188,21 @@ export const SCENARIOS: readonly Scenario[] = [
           );
         }
         await sleep(SILENCE_WINDOW);
-        const discOff = await not.discussionOf(anchorOffTopic);
-        const strays = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === discOff && c.createdTime > sigOffTime);
-        ctx.gate(strays.length === 0, "audited silence (window fallback): the off-topic anchor drew NO bot reply within the silence window");
+        const strays = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === cOff.discussionId);
+        ctx.gate(strays.length === 0, "audited silence (window fallback): the neutral comment drew NO bot reply within the silence window");
       }
 
       await sleep(SILENCE_WINDOW);
-      const disc1BotReplies = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === disc1 && c.createdTime > sig1Time);
+      const disc1BotReplies = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === c1.discussionId);
       ctx.gate(disc1BotReplies.length === 1, "self-loop: discussion 1 has exactly ONE bot reply — the bot's own comment did not re-dispatch (loop guard held)");
 
-      const unsigned = await not.forgeCommentCreated(target, anchorOnTopic, { signed: false });
+      if (!(not.webhookSecret && ctx.targetUrl)) {
+        ctx.log("webhook-gate leg skipped — set E2E_NOTION_WEBHOOK_SECRET + E2E_TARGET_URL to exercise the route contract");
+        return;
+      }
+      const unsigned = await not.forgeCommentCreated(ctx.targetUrl, c1.commentId, { signed: false });
       ctx.gate(unsigned.status === 401 || unsigned.status === 403, "webhook gate: an unsigned comment.created replay is rejected (401/403)");
-      const bogus = await not.forgeCommentCreated(target, "00000000-0000-0000-0000-000000000000");
+      const bogus = await not.forgeCommentCreated(ctx.targetUrl, "00000000-0000-0000-0000-000000000000");
       ctx.gate(bogus.status === 200, "webhook gate: a signed replay for an unfetchable comment id is acked fail-soft (200, no post)");
     },
   },
