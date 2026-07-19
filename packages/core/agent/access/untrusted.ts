@@ -1,5 +1,6 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { capResult } from "./result-cap.js";
+import { noteToolResultLoop } from "./loop-breaker.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
 export const UNTRUSTED_CLOSE = "</untrusted_external_data>";
@@ -45,5 +46,7 @@ export function ingestUntrustedModelOutput(
   content: string,
   opts: UntrustedOpts = {},
 ): { type: "text"; value: string } {
-  return { type: "text", value: ingestUntrusted(content, opts) };
+  const wrapped = ingestUntrusted(content, opts);
+  const nudge = noteToolResultLoop(opts.source, content);
+  return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
 }

@@ -1,7 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage } from "../channels/notion-api.js";
-import { ingestUntrusted } from "../access/untrusted.js";
+import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
 import { sourceScopedMount } from "../access/source-scoped-mount.js";
 import { getConfig } from "../access/config.js";
@@ -47,7 +47,7 @@ const readNotionPageEntry = defineTool({
           const header = output.text.length === 0 ? `Notion page ${output.page} has no readable text.` : `Notion page ${output.page}:`;
           const suffix = output.truncated ? "\n\n[truncated — the page has more content than shown]" : "";
           const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}`;
-          return { type: "text", value: ingestUntrusted(body, { source: `notion page ${output.page}` }) };
+          return ingestUntrustedModelOutput(body, { source: `notion page ${output.page}` });
         },
 });
 preRegisterDynamicEntry("read_notion_page", "_single", readNotionPageEntry);

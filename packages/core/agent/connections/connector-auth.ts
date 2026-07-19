@@ -17,6 +17,11 @@ import { classifyConnectorOp, isConnectorOpTool } from "../access/consequence.js
 import { connectorOpTieringEnabled } from "./connector-flags.js";
 import { getSecret } from "../access/credentials.js";
 import { bindFrom } from "../identity/binding.js";
+import {
+  connectorAuthRequiredThisTurn,
+  markConnectorAuthRequired,
+  connectorAuthRequiredError,
+} from "./auth-retry-memo.js";
 
 const connectAuthById = new Map<string, Promise<ConnectionAuthProvider>>();
 function connectAuthFor(connector: string, vercelConnector: string): Promise<ConnectionAuthProvider> {
@@ -73,6 +78,7 @@ export function appProviderToken(opts: {
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
+      if (connectorAuthRequiredThisTurn(opts.connector)) throw connectorAuthRequiredError(opts.connector);
       await assertConnectorGranted(opts.connector, ctx.session.auth);
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
       return resolveAppTokenFromCred(opts, cred, o);
@@ -166,6 +172,7 @@ export function userAwareProviderToken(
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
+      if (connectorAuthRequiredThisTurn(opts.connector)) throw connectorAuthRequiredError(opts.connector);
       await assertConnectorGranted(opts.connector, ctx.session.auth);
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
@@ -199,6 +206,7 @@ export function userAwareProviderToken(
           return await mintUser(cred.vercelConnector, { subject: { type: "user", id: principalId } });
         } catch (e) {
           if (isUserAuthRequired(e)) {
+            markConnectorAuthRequired(opts.connector);
             throw new Error(
               `connection "${opts.connector}": your personal account isn't connected yet. Authorize it ` +
                 `in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. ` +
