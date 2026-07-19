@@ -28,6 +28,8 @@ const ASYNC_BRIEF =
   "yourself here; reply to me when it's underway.";
 const SYNC_BRIEF =
   "Quick bounded task I need finished now: run `echo hello-from-worker` in a sandbox and tell me the exact output.";
+const FILE_BRIEF =
+  "Make a tiny CSV file with two rows (header name,score then alice,1 and bob,2) and post it into this thread as a file attachment.";
 
 async function t1aAsync(): Promise<void> {
   const since = new Date().toISOString();
@@ -103,13 +105,51 @@ async function t1bSync(): Promise<void> {
   record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
 
+async function t1cFile(): Promise<void> {
+  const since = new Date().toISOString();
+  const { wakeId } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: FILE_BRIEF });
+  console.log(`  T1c injected standing window wake ${wakeId}`);
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await sleep(POLL_MS);
+    const rows = await rowsSince(since);
+    const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
+    if (spawn) {
+      const taskId = dS(spawn, "taskId");
+      const posted = rows.find((r) => r.action.endsWith(".post_file"));
+      if (posted) {
+        return record("T1c", "PASS", `agent delegated a FILE ask and the worker POSTED the artifact — task.spawned (taskId=${taskId}) then ${posted.action} (files=${dS(posted, "filenames") || "?"}). The standing seat carries no post_file; the worker delivered the file into the thread per renderOneShotBrief's carve-out.`);
+      }
+      const returned = taskId ? rows.find((r) => r.action === "task.returned" && dS(r, "taskId") === taskId) : undefined;
+      if (returned) {
+        return record("T1c", "FAIL", `the worker for task ${taskId} RETURNED with no .post_file row — it did the work but never delivered the FILE into the thread (a text-only return_result leaves the requester empty-handed). Check renderOneShotBrief still permits post_file for a file task.`);
+      }
+    } else {
+      const reply = rows.find((r) => r.action === "reply.post" && dS(r, "wakeId") === wakeId);
+      if (reply) {
+        const sid = dS(reply, "sessionId");
+        const calls = sid ? await toolCallsOf(sid, since) : null;
+        if (calls === null) {
+          return record("T1c", "SKIP", `the seat replied (wake ${wakeId}, session ${sid ?? "<absent>"}) with no task.spawned row, but the transcript is UNREADABLE — outcome UNVERIFIED (observability failure, not model behaviour); fix the transcript read and re-run.`);
+        }
+        if (calls.some((c) => c.name === "agent")) {
+          return record("T1c", "FAIL", `the model CALLED agent (session ${sid}) but NO task.spawned row landed for wake ${wakeId} — the execute refused/errored or the self-dispatch route failed; read the action.result error in the transcript.`);
+        }
+        return record("T1c", "SKIP", `the seat replied (session ${sid}, tools=[${[...new Set(calls.map((c) => c.name))].join(",") || "none"}]) without delegating the file ask — the model did not choose agent this turn (model-dependent), or the flag was off. Re-run with OE_ONESHOT_AGENT=1.`);
+      }
+    }
+  }
+  record("T1c", "SKIP", `no task.spawned/post_file (and no reply) for wake ${wakeId} within ${TIMEOUT_MS}ms — the model did not delegate the file ask this turn (model-dependent), OR the target was not started with OE_ONESHOT_AGENT=1.${auditReadFailed() ? " NOTE: an audit READ failed during the poll — this SKIP may be an observability failure, not model behaviour." : ""}`);
+}
+
 async function main(): Promise<void> {
   console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE}`);
   if (!TARGET || !READ) {
-    for (const id of ["T1a", "T1b"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN — the delegation e2e needs the live spoofed-ingest target started with OE_ONESHOT_AGENT=1");
+    for (const id of ["T1a", "T1b", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN — the delegation e2e needs the live spoofed-ingest target started with OE_ONESHOT_AGENT=1");
   } else {
     if (want("T1a")) await t1aAsync();
     if (want("T1b")) await t1bSync();
+    if (want("T1c")) await t1cFile();
   }
   const pass = results.filter((r) => r.status === "PASS").length;
   const skip = results.filter((r) => r.status === "SKIP").length;
