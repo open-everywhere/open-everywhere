@@ -1199,12 +1199,12 @@ export const SCENARIOS: readonly Scenario[] = [
         }
         await sleep(SILENCE_WINDOW);
         const discOff = await not.discussionOf(anchorOffTopic);
-        const strays = (await not.pageComments()).filter((c) => not.isBotComment(c) && c.discussionId === discOff && c.createdTime > sigOffTime);
+        const strays = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === discOff && c.createdTime > sigOffTime);
         ctx.gate(strays.length === 0, "audited silence (window fallback): the off-topic anchor drew NO bot reply within the silence window");
       }
 
       await sleep(SILENCE_WINDOW);
-      const disc1BotReplies = (await not.pageComments()).filter((c) => not.isBotComment(c) && c.discussionId === disc1 && c.createdTime > sig1Time);
+      const disc1BotReplies = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === disc1 && c.createdTime > sig1Time);
       ctx.gate(disc1BotReplies.length === 1, "self-loop: discussion 1 has exactly ONE bot reply — the bot's own comment did not re-dispatch (loop guard held)");
 
       const unsigned = await not.forgeCommentCreated(target, anchorOnTopic, { signed: false });

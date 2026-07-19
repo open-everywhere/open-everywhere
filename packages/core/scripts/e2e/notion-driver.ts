@@ -90,8 +90,23 @@ export class NotionDriver {
     return NotionDriver.mapComments(await this.api(`/comments?block_id=${encodeURIComponent(blockId)}`));
   }
 
+  private blockIdsCache: readonly string[] | undefined;
+
+  private async blockIds(): Promise<readonly string[]> {
+    this.blockIdsCache ??= await this.pageBlocks();
+    return this.blockIdsCache;
+  }
+
+  async allComments(): Promise<readonly NotionComment[]> {
+    const [page, perBlock] = await Promise.all([
+      this.pageComments(),
+      this.blockIds().then((ids) => Promise.all(ids.map((b) => this.blockComments(b).catch(() => [] as readonly NotionComment[])))),
+    ]);
+    return [...page, ...perBlock.flat()];
+  }
+
   async discussionOf(commentId: string): Promise<string | undefined> {
-    return (await this.pageComments()).find((c) => c.id === commentId)?.discussionId;
+    return (await this.allComments()).find((c) => c.id === commentId)?.discussionId;
   }
 
   isBotComment(c: NotionComment): boolean {
@@ -127,7 +142,7 @@ export class NotionDriver {
 
   async awaitBotReplyIn(discussionId: string, sinceTime: string, opts: { timeoutMs: number }): Promise<NotionComment> {
     return pollUntil(
-      async () => (await this.pageComments()).find((c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime),
+      async () => (await this.allComments()).find((c) => this.isBotComment(c) && c.discussionId === discussionId && c.createdTime > sinceTime),
       { timeoutMs: opts.timeoutMs, what: `a bot reply in discussion ${discussionId} after ${sinceTime}` },
     );
   }
