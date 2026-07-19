@@ -55,3 +55,10 @@ export function mergeGitReadBroker(
   for (const host of GIT_BROKER_HOSTS) allow[host] = rules;
   return { allow };
 }
+
+export function withBareAllowHost(policy: SandboxNetworkPolicy, host: string): SandboxNetworkPolicy {
+  if (typeof policy === "string") return policy;
+  const allow: Record<string, EgressRule[]> = { ...(policy.allow as Record<string, EgressRule[]>) };
+  allow[host] = [];
+  return { ...policy, allow };
+}

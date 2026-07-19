@@ -7,6 +7,12 @@ import { principalIdOf, resolveAccessFor } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
+import type { SandboxNetworkPolicy } from "eve/sandbox";
+import { compileNetworkPolicy } from "../access/egress.js";
+import { resolveHeaders } from "../access/credentials.js";
+import { isEnforced } from "../access/enforcement.js";
+import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
+import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { requestApproval } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import type { PrOpenArgs } from "../approvals/pr-open.js";
@@ -85,7 +91,35 @@ export default windowGated("open_pull_request", defineTool({
           `checkout_repo the repo, commit on "${input.head}", then retry.`,
       );
     }
-    const push = await sandbox.run({ command: stagePushCommand(dir, token, input.head) });
+    const brokerApp = getGitHubApp();
+    let brokered: SandboxNetworkPolicy | null = null;
+    if (isEnforced() && brokerApp) {
+      const basePolicy = await compileNetworkPolicy(access, resolveHeaders);
+      const { rulesByOwner } = await mintGitReadBroker(brokerApp, access.repos);
+      brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
+    }
+    const applyPolicy = async (policy: SandboxNetworkPolicy): Promise<void> => {
+      if (useSelfHostEgress()) await pushEgressPolicy(policy);
+      else await sandbox.setNetworkPolicy(policy);
+    };
+
+    let push: Awaited<ReturnType<typeof sandbox.run>>;
+    try {
+      if (brokered) await applyPolicy(withBareAllowHost(brokered, "github.com"));
+      push = await sandbox.run({ command: stagePushCommand(dir, token, input.head) });
+    } finally {
+      if (brokered) {
+        try {
+          await applyPolicy(brokered);
+        } catch (restoreErr) {
+          throw new Error(
+            `open_pull_request: could not restore the git read-broker egress policy after the staging push — ` +
+              `github.com is left on a bare allow (no firewall-injected credential) until the next SCM call re-arms it. ` +
+              `This is a degraded firewall state that must be investigated: ${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}`,
+          );
+        }
+      }
+    }
     const headSha = push.exitCode === 0 ? parseStagedSha(push.stdout ?? "") : null;
     if (push.exitCode !== 0 || !headSha) {
       throw new Error(

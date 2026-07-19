@@ -10,7 +10,7 @@ import { GitHubApp } from "../agent/scm/app.js";
 import type { FetchFn } from "../agent/scm/mint.js";
 import { resetGitHubApp } from "../agent/scm/provider.js";
 import { checkoutCommandBrokered, CHECKOUT_OK } from "../agent/scm/git.js";
-import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, GIT_BROKER_HOSTS } from "../agent/scm/broker.js";
+import { brokerAuthHeader, mintGitReadBroker, mergeGitReadBroker, withBareAllowHost, GIT_BROKER_HOSTS } from "../agent/scm/broker.js";
 import { stampEnforcement, isEnforced } from "../agent/access/enforcement.js";
 import checkoutRepoGated from "../agent/tools/checkout_repo.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
@@ -96,6 +96,21 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
 
   const fromDenyAll = mergeGitReadBroker("deny-all", rulesByOwner) as { allow: Record<string, unknown[]> };
   ok(Object.keys(fromDenyAll.allow).sort().join(",") === "codeload.github.com,github.com", "mergeGitReadBroker: from deny-all, ONLY the two git hosts become reachable — nothing else opens up");
+}
+
+{
+  const readRule = { match: { path: { startsWith: "/acme/" } }, transform: [{ headers: { Authorization: "Basic READ" } }] };
+  const brokered = { allow: { "github.com": [readRule], "codeload.github.com": [readRule], "api.acme.test": [{ transform: [{ headers: { Authorization: "Bearer X" } }] }] } };
+
+  const swapped = withBareAllowHost(brokered as never, "github.com") as { allow: Record<string, unknown[]> };
+  ok(Array.isArray(swapped.allow["github.com"]) && swapped.allow["github.com"].length === 0, "withBareAllowHost: github.com becomes a BARE allow (no transform) — the inline write token now rides un-overridden");
+  ok(swapped.allow["codeload.github.com"].length === 1 && swapped.allow["codeload.github.com"][0] === readRule, "withBareAllowHost: codeload's broker rule is preserved byte-for-byte (only the named host is lifted)");
+  ok(swapped.allow["api.acme.test"].length === 1, "withBareAllowHost: an unrelated credentialed host is untouched — the swapped policy stays complete for setNetworkPolicy");
+
+  ok((brokered.allow["github.com"] as unknown[]).length === 1 && brokered.allow["github.com"][0] === readRule, "withBareAllowHost: does NOT mutate the input — the brokered policy is still intact to restore from");
+
+  ok(withBareAllowHost("deny-all", "github.com") === "deny-all", "withBareAllowHost: 'deny-all' is returned unchanged (fail-closed — never fabricate an allow map)");
+  ok(withBareAllowHost("allow-all", "github.com") === "allow-all", "withBareAllowHost: 'allow-all' is returned unchanged (no per-host rule to lift)");
 }
 
 {
@@ -212,4 +227,4 @@ const { ContextContainer, contextStorage } = await import(abs("dist/src/context/
   resetGitHubApp();
 }
 
-console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback)\n`);
+console.log(`\n✓ scm-broker: ${n} assertions passed (union-mint per owner, 500-cap, merge-no-duplicate-github-rule, withBareAllowHost push-window swap, checkoutCommandBrokered, enforcement-state seam, checkout_repo enforced-vs-fallback)\n`);
