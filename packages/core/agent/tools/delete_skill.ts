@@ -5,7 +5,7 @@ import { bindFrom } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
 export default windowGated("delete_skill", defineTool({
@@ -58,6 +58,7 @@ export default windowGated("delete_skill", defineTool({
         requestedBy,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

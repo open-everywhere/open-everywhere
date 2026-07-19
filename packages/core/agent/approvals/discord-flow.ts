@@ -1,4 +1,12 @@
-import { resolveApprovalClick, type ApprovalClickResolution } from "./flow.js";
+import {
+  resolveApprovalClick,
+  deliverDecisionFeedback,
+  discordDecisionWakeTarget,
+  postDiscordDecisionNotice,
+  type ApprovalClickResolution,
+  type DecisionWakeDeps,
+} from "./flow.js";
+import type { ApprovalOutcome } from "./decision-wake.js";
 import {
   OE_DISCORD_APPROVAL_PREFIX,
   parseDiscordApprovalCustomId,
@@ -95,6 +103,11 @@ function ephemeral(content: string): DiscordInteractionResponse {
   return { type: RESPONSE_CHANNEL_MESSAGE, data: { content, flags: EPHEMERAL_FLAG } };
 }
 
+export interface DiscordApprovalDeps {
+  readonly postNotice?: (row: PendingActionRow, text: string) => Promise<unknown>;
+  readonly decisionWake?: DecisionWakeDeps;
+}
+
 export function discordResponseFor(res: ApprovalClickResolution): DiscordInteractionResponse {
   switch (res.outcome) {
     case "unknown":
@@ -117,7 +130,7 @@ export function discordResponseFor(res: ApprovalClickResolution): DiscordInterac
   }
 }
 
-export async function handleDiscordApprovalInteraction(raw: unknown): Promise<DiscordInteractionResponse | null> {
+export async function handleDiscordApprovalInteraction(raw: unknown, deps: DiscordApprovalDeps = {}): Promise<DiscordInteractionResponse | null> {
   const click = parseDiscordComponentClick(raw);
   if (!click) return null;
 
@@ -142,6 +155,32 @@ export async function handleDiscordApprovalInteraction(raw: unknown): Promise<Di
         return rowGuild ? isGuildAdminViaRest(rowGuild, clickerId) : false;
       },
     });
+    if (res.outcome === "expired") {
+      await deliverDecisionFeedback(
+        {
+          row: res.row,
+          summaryLines: res.summaryLines,
+          outcome: "expired",
+          outcomeLine: "expired",
+          target: discordDecisionWakeTarget(res.row, click.guildId),
+          postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
+        },
+        deps.decisionWake,
+      );
+    } else if (res.outcome === "decided") {
+      await deliverDecisionFeedback(
+        {
+          row: res.row,
+          summaryLines: res.summaryLines,
+          outcome: res.row.status as ApprovalOutcome,
+          outcomeLine: res.outcomeLine,
+          clickerId,
+          target: discordDecisionWakeTarget(res.row, click.guildId),
+          postNotice: (text) => (deps.postNotice ?? postDiscordDecisionNotice)(res.row, text),
+        },
+        deps.decisionWake,
+      );
+    }
     return discordResponseFor(res);
   } catch (err) {
     console.error(`[open-everywhere:discord-approvals] click handling failed softly for "${click.customId}": ${String(err)}`);

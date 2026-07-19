@@ -43,6 +43,7 @@ registerConfig({
     defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
     defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
     defineDomain({ name: "win", channels: ["slack/TW/C_WIN"], admins: ["U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "dwin", channels: ["discord/GW/C_DWIN"], admins: ["U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -71,6 +72,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
     channelId: "C1",
     threadTs: null,
     messageTs: "111.222",
+    postedTo: null,
     status: "pending",
     createdAt: "2026-07-04T00:00:00Z",
     expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
@@ -122,6 +124,10 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   const fetched = await store.getPendingAction("default", "p-store");
   ok(fetched !== null && fetched.status === "pending" && fetched.domain === null, "store: round-trips a freshly-inserted row");
   ok(fetched?.argsJson === r.argsJson, "store: argsJson round-trips byte-for-byte (frozen args)");
+  ok(fetched?.postedTo === null, "store: a NULL postedTo (pre-migration/map row) reads back null");
+
+  await store.addPendingAction(row({ id: "p-store-posted", postedTo: "slack/T1/C1" }));
+  ok((await store.getPendingAction("default", "p-store-posted"))?.postedTo === "slack/T1/C1", "store: postedTo round-trips byte-for-byte (frozen mint identity)");
 
   await store.setPendingActionMessage("default", "p-store", "999.111");
   ok((await store.getPendingAction("default", "p-store"))?.messageTs === "999.111", "store: setPendingActionMessage updates messageTs");
@@ -348,6 +354,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       scopeKey: "slack/T4/C4",
       requestedBy: "U_REQUESTER",
       channelId: "C4",
+      postedTo: "slack/T4/C4",
     },
     { post },
   );
@@ -355,6 +362,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(new Date(expiresAt).getTime() > Date.now(), "requestApproval: expiresAt is in the future (default TTL)");
   const posted = await getOperationalStore().getPendingAction("default", id);
   ok(posted?.messageTs === "555.666", "requestApproval: stores the card's message ts after posting");
+  ok(posted?.postedTo === "slack/T4/C4", "requestApproval: freezes the proposing surfaceKey onto the row at mint");
   ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "blocks") ?? "").includes("oe_approval:approve:")), "requestApproval: posts a card whose blocks carry an oe_approval: approve action_id");
   const audit = await readAudit({ org: "default", action: "approval.requested" });
   ok(audit.some((e) => e.detail?.id === id && e.principalId === "U_REQUESTER"), "requestApproval: audits approval.requested with the requester as principal");
@@ -627,4 +635,100 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   }
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake)\n`);
+{
+  const store = getOperationalStore();
+  const { dispatchApprovalDecisionWake } = await import("../agent/channels/unified.js");
+  const { supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
+  type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
+
+  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
+  process.env.OE_WINDOW_TOPOLOGY = "1";
+  try {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const spendArgs = (scopeKey: string, tokens: number) => JSON.stringify({ org: "sweepfb", scopeKey, level: "surface", monthlyTokens: tokens, currentCap: null });
+
+    const winGrain = supervisorGrainFor("slack/TW/C_WIN", getConfig().loadDomains());
+    const dwinGrain = supervisorGrainFor("discord/GW/C_DWIN", getConfig().loadDomains());
+    ok(dwinGrain.unified === true && dwinGrain.domainName === "dwin", "sweep-feedback setup: the discord window domain resolves a unified grain");
+    const WIN_TOKEN = "oe-dom:win:win:slack/TW/C_WIN:oe-sup:g1";
+    const DWIN_TOKEN = "oe-dom:dwin:win:discord/GW/C_DWIN:oe-sup:g1";
+    await store.rotateChannelSession("sweepfb", winGrain.registryKey, WIN_TOKEN, new Date().toISOString());
+    await store.rotateChannelSession("sweepfb", dwinGrain.registryKey, DWIN_TOKEN, new Date().toISOString());
+
+    await store.addPendingAction(
+      row({ id: "fb-slack", org: "sweepfb", scopeKey: "slack/TW/C_WIN", channelId: "C_WIN", threadTs: "ANCHOR.S", messageTs: "111.9", postedTo: "slack/TW/C_WIN", argsJson: spendArgs("slack/TW/C_WIN", 111), expiresAt: past }),
+    );
+    await store.addPendingAction(
+      row({ id: "fb-discord", org: "sweepfb", scopeKey: "discord/GW/C_DWIN", channelId: "C_DWIN", threadTs: null, messageTs: "dmsg-9", postedTo: "discord/GW/C_DWIN", argsJson: spendArgs("discord/GW/C_DWIN", 222), expiresAt: past }),
+    );
+    await store.addPendingAction(row({ id: "fb-null", org: "sweepfb", scopeKey: "slack/TW/C_WIN", channelId: "C_WIN", postedTo: null, argsJson: spendArgs("slack/TW/C_WIN", 333), expiresAt: past }));
+
+    const slackCalls: { method: string; body: string }[] = [];
+    const post = async (method: string, body: string) => {
+      slackCalls.push({ method, body });
+      return { ok: true };
+    };
+    const discordNotices: { rowId: string; text: string }[] = [];
+    const discordNotice = async (r: PendingActionRow, text: string) => {
+      discordNotices.push({ rowId: r.id, text });
+      return "dmsg-notice";
+    };
+    const wakes: WakeInput[] = [];
+    const decisionWake = {
+      dispatch: async (i: WakeInput): Promise<boolean> => {
+        wakes.push(i);
+        return true;
+      },
+      mintWakeId: () => "wake-sweep",
+      now: () => "2026-07-20T00:00:00Z",
+    };
+
+    const swept = await sweepExpiredPendings("sweepfb", new Date(), { post, discordNotice, decisionWake });
+    ok(swept === 3, "sweep feedback: all three aged-out rows are expired (feedback never gates the expiry itself)");
+    ok((await store.getPendingAction("sweepfb", "fb-null"))?.status === "expired", "sweep feedback: the NULL-postedTo row still expires normally");
+
+    const slackNotice = slackCalls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.S");
+    ok(!!slackNotice, "sweep feedback: the Slack row's expiry notice posts into the mint-frozen anchor thread");
+    ok((bodyField(slackNotice!.body, "text") ?? "").includes("EXPIRED") && (bodyField(slackNotice!.body, "text") ?? "").includes("NOT applied"), "sweep feedback: the Slack notice states EXPIRED + nothing applied");
+    ok(bodyField(slackNotice!.body, "channel") === "C_WIN", "sweep feedback: the Slack notice targets the row's own channel");
+
+    ok(discordNotices.length === 1 && discordNotices[0]!.rowId === "fb-discord", "sweep feedback: the Discord row's expiry notice goes through the Discord poster exactly once");
+    ok(discordNotices[0]!.text.includes("EXPIRED") && discordNotices[0]!.text.includes("NOT applied"), "sweep feedback: the Discord notice is the same code-rendered decision text");
+
+    ok(wakes.length === 2, "sweep feedback: exactly the two FROZEN rows emit a decision wake (NULL postedTo emits none)");
+    const slackWake = wakes.find((w) => w.token === WIN_TOKEN);
+    ok(!!slackWake && slackWake.domain === "win", "sweep feedback: the Slack wake targets the win seat's current registry token");
+    ok(slackWake!.origin.platform === "slack" && (slackWake!.origin as { channelId: string }).channelId === "C_WIN" && (slackWake!.origin as { threadTs?: string }).threadTs === "ANCHOR.S", "sweep feedback: the Slack wake origin is the card's own anchor thread");
+    ok(slackWake!.message.includes("EXPIRED without a decision") && slackWake!.message.includes("fb-slack"), "sweep feedback: the Slack wake carries the expired outcome (no deciding admin) + the pending id");
+    const discordWake = wakes.find((w) => w.token === DWIN_TOKEN);
+    ok(!!discordWake && discordWake.domain === "dwin", "sweep feedback: the Discord wake targets the dwin seat's current registry token");
+    const dOrigin = discordWake!.origin as { platform: string; channelId: string; guildId: string; messageId?: string };
+    ok(dOrigin.platform === "discord" && dOrigin.guildId === "GW" && dOrigin.channelId === "C_DWIN" && dOrigin.messageId === "dmsg-9", "sweep feedback: the Discord wake origin carries the frozen guild + channel, anchored to the card message");
+
+    await store.rotateChannelSession("sweepthrow", winGrain.registryKey, WIN_TOKEN, new Date().toISOString());
+    await store.addPendingAction(
+      row({ id: "fb-throws", org: "sweepthrow", scopeKey: "slack/TW/C_WIN", channelId: "C_WIN", threadTs: "ANCHOR.T", postedTo: "slack/TW/C_WIN", argsJson: JSON.stringify({ org: "sweepthrow", scopeKey: "slack/TW/C_WIN", level: "surface", monthlyTokens: 1, currentCap: null }), expiresAt: past }),
+    );
+    let dispatchAttempts = 0;
+    const throwingDeps = {
+      post: async () => {
+        throw new Error("slack down");
+      },
+      decisionWake: {
+        dispatch: async (): Promise<boolean> => {
+          dispatchAttempts++;
+          throw new Error("dispatch down");
+        },
+      },
+    };
+    const sweptThrow = await sweepExpiredPendings("sweepthrow", new Date(), throwingDeps);
+    ok(sweptThrow === 1, "sweep feedback: a throwing notice AND a throwing wake never abort the sweep (the row still expires + counts)");
+    ok(dispatchAttempts === 1, "sweep feedback: the wake is still attempted after the notice threw (the two legs are independent)");
+    ok((await store.getPendingAction("sweepthrow", "fb-throws"))?.status === "expired", "sweep feedback: the row is terminal despite both feedback legs failing");
+  } finally {
+    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+  }
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback)\n`);

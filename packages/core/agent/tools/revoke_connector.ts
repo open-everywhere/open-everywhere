@@ -5,7 +5,7 @@ import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 
 export interface RevokeConnectorInput {
   readonly connector: string;
@@ -87,6 +87,7 @@ export default defineTool({
       requestedBy: principalIdOf(ctx)!,
       channelId,
       threadTs: binding.threadTs ?? null,
+      postedTo: postedToSurfaceKey(binding, channelId),
     });
 
     return {

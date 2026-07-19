@@ -6,7 +6,7 @@ import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
 import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -101,6 +101,7 @@ const clearSpendLimitEntry = defineTool({
         requestedBy: principalIdOf(ctx)!,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

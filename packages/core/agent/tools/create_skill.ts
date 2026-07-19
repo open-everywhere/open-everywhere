@@ -6,7 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { principalIdOf, resolveAccessFor } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import {
   MAX_DOMAIN_SKILL_BYTES,
@@ -93,6 +93,7 @@ export default windowGated("create_skill", defineTool({
         requestedBy: authoredBy,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

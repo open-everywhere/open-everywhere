@@ -11,6 +11,7 @@ export interface PendingActionRow {
   readonly channelId: string;
   readonly threadTs: string | null;
   readonly messageTs: string | null;
+  readonly postedTo: string | null;
   readonly status: PendingStatus;
   readonly createdAt: string;
   readonly expiresAt: string;

@@ -54,6 +54,7 @@ const seed = async (id: string, over: Partial<PendingActionRow> & { tokens?: num
     channelId: "C7",
     threadTs: null,
     messageTs: "1.1",
+    postedTo: null,
     status: "pending",
     createdAt: now,
     expiresAt: future,

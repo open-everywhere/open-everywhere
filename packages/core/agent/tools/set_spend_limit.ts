@@ -6,7 +6,7 @@ import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
-import { requestApproval, type RequestApprovalDeps } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, type RequestApprovalDeps } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { postDiscordApprovalCard } from "../approvals/discord-flow.js";
 
@@ -173,6 +173,7 @@ export default defineTool({
         requestedBy: principalIdOf(ctx)!,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

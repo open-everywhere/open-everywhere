@@ -121,6 +121,7 @@ function pendingRow(over: Partial<PendingActionRow> & { id: string; scopeKey: st
     requestedBy: "U_REQUESTER",
     threadTs: null,
     messageTs: "900901",
+    postedTo: null,
     status: "pending",
     createdAt: "2026-07-06T00:00:00Z",
     expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),

@@ -8,7 +8,7 @@ import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext } from "../access/delta.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { slackForm } from "../channels/slack-events.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface RequestAccessArgs {
@@ -147,6 +147,7 @@ const requestAccessEntry = defineTool({
             requestedBy: args.requestedBy,
             channelId,
             threadTs: binding.threadTs ?? null,
+            postedTo: postedToSurfaceKey(binding, channelId),
           });
 
           return {

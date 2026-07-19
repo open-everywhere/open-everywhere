@@ -13,7 +13,7 @@ import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import type { PrOpenArgs } from "../approvals/pr-open.js";
 
@@ -152,6 +152,7 @@ export default windowGated("open_pull_request", defineTool({
         requestedBy,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

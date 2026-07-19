@@ -8,6 +8,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
+import { discordPostMessage } from "../channels/discord-post.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
@@ -43,6 +44,10 @@ function approvalTtlHours(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : 24;
 }
 
+export function postedToSurfaceKey(binding: { readonly platform: string; readonly workspace: string }, channelId: string): string {
+  return `${binding.platform}/${binding.workspace}/${channelId}`;
+}
+
 export interface RequestApprovalInput {
   readonly org: string;
   readonly kind: string;
@@ -52,6 +57,7 @@ export interface RequestApprovalInput {
   readonly requestedBy: string;
   readonly channelId: string;
   readonly threadTs?: string | null;
+  readonly postedTo?: string | null;
   readonly summaryLines?: readonly string[];
 }
 
@@ -95,6 +101,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
     channelId: input.channelId,
     threadTs: input.threadTs ?? null,
     messageTs: null,
+    postedTo: input.postedTo ?? null,
     status: "pending",
     createdAt: now.toISOString(),
     expiresAt,
@@ -305,7 +312,38 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
   }
 }
 
-export async function sweepExpiredPendings(org: string, now: Date = new Date()): Promise<number> {
+export interface SweepFeedbackDeps {
+  readonly post?: PostFn;
+  readonly discordNotice?: (row: PendingActionRow, text: string) => Promise<unknown>;
+  readonly decisionWake?: DecisionWakeDeps;
+}
+
+async function sweepExpiryFeedback(row: PendingActionRow, deps: SweepFeedbackDeps): Promise<void> {
+  if (!row.postedTo) return;
+  const [platform, workspace] = row.postedTo.split("/");
+  if (!workspace) return;
+  const post = deps.post ?? slackForm;
+  const postNotice =
+    platform === "slack"
+      ? (text: string) => postThreadNote(post, row.channelId, row.threadTs ?? row.messageTs ?? undefined, text)
+      : platform === "discord"
+        ? (text: string) => (deps.discordNotice ?? postDiscordDecisionNotice)(row, text)
+        : null;
+  if (!postNotice) return;
+  await deliverDecisionFeedback(
+    {
+      row,
+      summaryLines: summaryLinesFor(row),
+      outcome: "expired",
+      outcomeLine: "expired",
+      target: platform === "slack" ? slackDecisionWakeTarget(row, workspace) : discordDecisionWakeTarget(row, workspace),
+      postNotice,
+    },
+    deps.decisionWake,
+  );
+}
+
+export async function sweepExpiredPendings(org: string, now: Date = new Date(), deps: SweepFeedbackDeps = {}): Promise<number> {
   const store = getOperationalStore();
   const nowIso = now.toISOString();
   const expired = await store.listExpiredPendingActions(org, nowIso);
@@ -321,6 +359,7 @@ export async function sweepExpiredPendings(org: string, now: Date = new Date()):
         detail: { id: row.id, kind: row.kind, cause: "ttl" },
       });
       count++;
+      await sweepExpiryFeedback({ ...row, status: "expired", decidedBy: "system", decidedAt: nowIso }, deps);
     } catch (err) {
       console.warn(`[open-everywhere:approvals] sweepExpiredPendings: failed to expire ${row.id}: ${String(err)}`);
     }
@@ -395,6 +434,45 @@ function slackDecisionWakeTarget(row: PendingActionRow, teamId: string | undefin
   };
 }
 
+export function discordDecisionWakeTarget(row: PendingActionRow, guildId: string | undefined): { surfaceKey: string; origin: UnifiedWakeOrigin } | null {
+  if (!guildId) return null;
+  return {
+    surfaceKey: `discord/${guildId}/${row.channelId}`,
+    origin: { platform: "discord", channelId: row.channelId, guildId, ...(row.messageTs ? { messageId: row.messageTs } : {}) },
+  };
+}
+
+export function postDiscordDecisionNotice(row: PendingActionRow, text: string): Promise<unknown> {
+  return discordPostMessage(row.channelId, text, row.messageTs ? { replyToMessageId: row.messageTs } : undefined);
+}
+
+export interface DecisionFeedbackInput {
+  readonly row: PendingActionRow;
+  readonly summaryLines: string[];
+  readonly outcome: ApprovalOutcome;
+  readonly outcomeLine: string;
+  readonly clickerId?: string;
+  readonly target: { surfaceKey: string; origin: UnifiedWakeOrigin } | null;
+  readonly postNotice: (text: string) => Promise<unknown>;
+}
+
+export async function deliverDecisionFeedback(input: DecisionFeedbackInput, decisionWake?: DecisionWakeDeps): Promise<void> {
+  await input.postNotice(decisionNoticeText(input.summaryLines, input.outcomeLine, input.clickerId ?? "system", input.outcome)).catch(() => undefined);
+  if (input.target) {
+    await wakeWindowOnDecision(
+      {
+        row: input.row,
+        outcome: input.outcome,
+        summaryLine: input.summaryLines[0] ?? "the requested change",
+        ...(input.clickerId ? { clickerId: input.clickerId } : {}),
+        surfaceKey: input.target.surfaceKey,
+        origin: input.target.origin,
+      },
+      decisionWake,
+    ).catch(() => undefined);
+  }
+}
+
 export async function handleApprovalPayload(payload: unknown, deps: HandleApprovalDeps = {}): Promise<boolean> {
   const p = payload as BlockActionsPayload | null | undefined;
   const action = p?.actions?.[0];
@@ -430,14 +508,17 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       case "expired": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, "expired"));
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, "expired", clickerId, "expired"));
-        const t = slackDecisionWakeTarget(res.row, teamId);
-        if (t) {
-          await wakeWindowOnDecision(
-            { row: res.row, outcome: "expired", summaryLine: res.summaryLines[0] ?? "the requested change", surfaceKey: t.surfaceKey, origin: t.origin },
-            deps.decisionWake,
-          ).catch(() => undefined);
-        }
+        await deliverDecisionFeedback(
+          {
+            row: res.row,
+            summaryLines: res.summaryLines,
+            outcome: "expired",
+            outcomeLine: "expired",
+            target: slackDecisionWakeTarget(res.row, teamId),
+            postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
+          },
+          deps.decisionWake,
+        );
         return true;
       }
       case "denied":
@@ -445,14 +526,18 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       case "decided": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
-        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, res.outcomeLine, clickerId, res.row.status));
-        const t = slackDecisionWakeTarget(res.row, teamId);
-        if (t) {
-          await wakeWindowOnDecision(
-            { row: res.row, outcome: res.row.status as ApprovalOutcome, summaryLine: res.summaryLines[0] ?? "the requested change", clickerId, surfaceKey: t.surfaceKey, origin: t.origin },
-            deps.decisionWake,
-          ).catch(() => undefined);
-        }
+        await deliverDecisionFeedback(
+          {
+            row: res.row,
+            summaryLines: res.summaryLines,
+            outcome: res.row.status as ApprovalOutcome,
+            outcomeLine: res.outcomeLine,
+            clickerId,
+            target: slackDecisionWakeTarget(res.row, teamId),
+            postNotice: (text) => postThreadNote(post, channelId, res.row.threadTs ?? messageTs, text),
+          },
+          deps.decisionWake,
+        );
         return true;
       }
     }

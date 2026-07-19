@@ -7,7 +7,7 @@ import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { describeTrigger, type RoutineTrigger } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
 const trigger = z.discriminatedUnion("kind", [
@@ -139,6 +139,7 @@ export default defineTool({
         requestedBy: createdBy,
         channelId,
         threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
       },
       approvalPostDeps(binding.platform),
     );

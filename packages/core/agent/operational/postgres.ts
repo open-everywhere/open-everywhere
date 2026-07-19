@@ -126,6 +126,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      channel_id   text NOT NULL,
      thread_ts    text,
      message_ts   text,
+     posted_to    text,
      status       text NOT NULL,
      created_at   text NOT NULL,
      expires_at   text NOT NULL,
@@ -189,6 +190,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS handoff_note text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
+  `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -539,6 +541,7 @@ type PendingActionPgRow = {
   channel_id: string;
   thread_ts: string | null;
   message_ts: string | null;
+  posted_to: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -558,6 +561,7 @@ function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActi
     channelId: r.channel_id,
     threadTs: r.thread_ts,
     messageTs: r.message_ts,
+    postedTo: r.posted_to,
     status: r.status as PendingStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -1223,8 +1227,8 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async addPendingAction(row: PendingActionRow) {
       await client.query(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           row.org,
           row.id,
@@ -1236,6 +1240,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           row.channelId,
           row.threadTs,
           row.messageTs,
+          row.postedTo,
           row.status,
           row.createdAt,
           row.expiresAt,
@@ -1247,7 +1252,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getPendingAction(org, id) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND id = $2`,
         [org, id],
       );
@@ -1257,7 +1262,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listPendingActions(org) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND status = 'pending' ORDER BY created_at ASC`,
         [org],
       );
@@ -1266,7 +1271,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listExpiredPendingActions(org, nowIso) {
       const { rows } = await client.query(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = $1 AND status = 'pending' AND expires_at <= $2 ORDER BY created_at ASC`,
         [org, nowIso],
       );

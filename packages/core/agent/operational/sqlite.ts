@@ -140,6 +140,7 @@ function getDb(): DatabaseSync {
       channel_id   TEXT NOT NULL,             -- where the card is posted
       thread_ts    TEXT,
       message_ts   TEXT,                      -- the card's ts, set after post
+      posted_to    TEXT,                      -- proposing surfaceKey frozen at mint; NULL = no sweep feedback
       status       TEXT NOT NULL,             -- pending|approved|rejected|expired
       created_at   TEXT NOT NULL,
       expires_at   TEXT NOT NULL,
@@ -211,6 +212,8 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
     "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
+
+    "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -277,6 +280,7 @@ type PendingActionSqlRow = {
   channel_id: string;
   thread_ts: string | null;
   message_ts: string | null;
+  posted_to: string | null;
   status: string;
   created_at: string;
   expires_at: string;
@@ -296,6 +300,7 @@ function pendingActionFromRow(org: string, r: PendingActionSqlRow): PendingActio
     channelId: r.channel_id,
     threadTs: r.thread_ts,
     messageTs: r.message_ts,
+    postedTo: r.posted_to,
     status: r.status as PendingStatus,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -932,8 +937,8 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb()
       .prepare(
         `INSERT INTO pending_actions
-           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (org_id, id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.org,
@@ -946,6 +951,7 @@ export const sqliteOperationalStore: OperationalStore = {
         row.channelId,
         row.threadTs,
         row.messageTs,
+        row.postedTo,
         row.status,
         row.createdAt,
         row.expiresAt,
@@ -957,7 +963,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async getPendingAction(org, id) {
     const row = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND id = ?`,
       )
       .get(org, id) as PendingActionSqlRow | undefined;
@@ -967,7 +973,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listPendingActions(org) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND status = 'pending' ORDER BY created_at ASC`,
       )
       .all(org) as PendingActionSqlRow[];
@@ -977,7 +983,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async listExpiredPendingActions(org, nowIso) {
     const rows = getDb()
       .prepare(
-        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, status, created_at, expires_at, decided_by, decided_at
+        `SELECT id, kind, args_json, scope_key, domain, requested_by, channel_id, thread_ts, message_ts, posted_to, status, created_at, expires_at, decided_by, decided_at
          FROM pending_actions WHERE org_id = ? AND status = 'pending' AND expires_at <= ? ORDER BY created_at ASC`,
       )
       .all(org, nowIso) as PendingActionSqlRow[];

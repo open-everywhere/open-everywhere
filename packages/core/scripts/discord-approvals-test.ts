@@ -57,6 +57,7 @@ registerConfig({
   loadDomains: () => [
     defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
     defineDomain({ name: "eng", channels: ["discord/G1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
+    defineDomain({ name: "dwin", channels: ["discord/G1/C_WIN"], admins: ["U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -85,6 +86,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
     channelId: "C_ENG",
     threadTs: null,
     messageTs: "900001",
+    postedTo: null,
     status: "pending",
     createdAt: "2026-07-06T00:00:00Z",
     expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
@@ -427,6 +429,93 @@ const store = getOperationalStore();
 }
 
 {
+  const { getConfig } = await import("../agent/access/config.js");
+  const { supervisorGrainFor } = await import("../agent/channels/unified-supervisor.js");
+  const { dispatchApprovalDecisionWake } = await import("../agent/channels/unified.js");
+  type WakeInput = Parameters<typeof dispatchApprovalDecisionWake>[0];
+
+  const prevTopology = process.env.OE_WINDOW_TOPOLOGY;
+  process.env.OE_WINDOW_TOPOLOGY = "1";
+  try {
+    const grain = supervisorGrainFor("discord/G1/C_WIN", getConfig().loadDomains());
+    ok(grain.unified === true && grain.domainName === "dwin", "wake setup: the dwin domain's channel resolves a unified grain");
+    const DWIN_TOKEN = "oe-dom:dwin:win:discord/G1/C_WIN:oe-sup:g1";
+    await store.rotateChannelSession("default", grain.registryKey, DWIN_TOKEN, new Date().toISOString());
+
+    const wakes: WakeInput[] = [];
+    const notices: { rowId: string; text: string }[] = [];
+    const deps = {
+      postNotice: async (r: PendingActionRow, text: string) => {
+        notices.push({ rowId: r.id, text });
+        return "dmsg-notice";
+      },
+      decisionWake: {
+        dispatch: async (i: WakeInput): Promise<boolean> => {
+          wakes.push(i);
+          return true;
+        },
+        mintWakeId: () => "wake-fixed",
+        now: () => "2026-07-20T00:00:00Z",
+      },
+    };
+    const winRow = (over: Partial<PendingActionRow>) =>
+      row({
+        scopeKey: "discord/G1/C_WIN",
+        channelId: "C_WIN",
+        argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 640, currentCap: null }),
+        ...over,
+      });
+
+    await store.addPendingAction(winRow({ id: "dw-approve" }));
+    const res = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-approve:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps)) as Resp;
+    ok(res.type === 7, "decision feedback: the interaction response is STILL the type-7 decided card (feedback is additive)");
+    ok(notices.length === 1 && notices[0]!.rowId === "dw-approve", "decision feedback: an approve posts exactly one fresh notice for the decided row");
+    ok(notices[0]!.text.includes("APPROVED") && notices[0]!.text.includes("<@U_GUILD_ADMIN>"), "decision feedback: the notice names the outcome + the deciding admin (Discord shares Slack's <@id> mention syntax)");
+    ok(wakes.length === 1 && wakes[0]!.token === DWIN_TOKEN && wakes[0]!.domain === "dwin", "decision feedback: the wake targets the owning window seat's current registry token");
+    const origin = wakes[0]!.origin as { platform: string; channelId: string; guildId: string; messageId?: string };
+    ok(origin.platform === "discord" && origin.guildId === "G1" && origin.channelId === "C_WIN" && origin.messageId === "900001", "decision feedback: the wake origin carries the INTERACTION's guild id + the row's channel, anchored to the card message");
+    ok(wakes[0]!.message.includes("APPROVED") && wakes[0]!.message.includes("dw-approve"), "decision feedback: the wake notice carries the approved outcome + the pending id");
+    await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+
+    await store.addPendingAction(winRow({ id: "dw-reject", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 641, currentCap: null }) }));
+    wakes.length = 0;
+    notices.length = 0;
+    await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-reject:reject:default", { user: "U_GUILD_ADMIN", permissions: "8" }), deps);
+    ok(notices.length === 1 && notices[0]!.text.includes("REJECTED") && notices[0]!.text.includes("NOT applied"), "decision feedback: a reject notice states plainly nothing was applied");
+    ok(wakes.length === 1 && wakes[0]!.message.includes("REJECTED"), "decision feedback: a reject emits one wake carrying the rejected outcome");
+
+    await store.addPendingAction(winRow({ id: "dw-dm", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 642, currentCap: null }) }));
+    wakes.length = 0;
+    notices.length = 0;
+    const dmClick = { type: 3, data: { custom_id: "oe-approval:dw-dm:approve:default" }, user: { id: "U_ORG_ADMIN" } };
+    const dmRes = (await handleDiscordApprovalInteraction(dmClick, deps)) as Resp;
+    ok(dmRes.type === 7, "decision feedback: the DM-context decide still answers the decided card");
+    ok(wakes.length === 0, "decision feedback: a DM-context interaction (no guild_id) emits NO wake — fail-soft, never a guessed workspace");
+    ok(notices.length === 1 && notices[0]!.rowId === "dw-dm", "decision feedback: the notice still posts beside the card on a DM-context decide");
+    await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+
+    await store.addPendingAction(winRow({ id: "dw-throws", argsJson: JSON.stringify({ org: "default", scopeKey: "discord/G1/C_WIN", level: "surface", monthlyTokens: 643, currentCap: null }) }));
+    const throwingDeps = {
+      postNotice: async () => {
+        throw new Error("discord down");
+      },
+      decisionWake: {
+        dispatch: async (): Promise<boolean> => {
+          throw new Error("dispatch down");
+        },
+      },
+    };
+    const throwRes = (await handleDiscordApprovalInteraction(clickPayload("oe-approval:dw-throws:approve:default", { user: "U_GUILD_ADMIN", permissions: "8" }), throwingDeps)) as Resp;
+    ok(throwRes.type === 7, "decision feedback: throwing notice + wake still answer the ordinary decided card (the decide itself already happened)");
+    ok((await store.getPendingAction("default", "dw-throws"))?.status === "approved", "decision feedback: the decide is durable regardless of feedback failures");
+    await store.clearSpendLimit("default", "discord/G1/C_WIN", "surface");
+  } finally {
+    if (prevTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
+    else process.env.OE_WINDOW_TOPOLOGY = prevTopology;
+  }
+}
+
+{
   let innerCalls = 0;
   let innerSawBody = "";
   const innerHandler = async (req: Request) => {
@@ -536,4 +625,4 @@ const store = getOperationalStore();
   );
 }
 
-console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, front route)\n`);
+console.log(`\n✓ discord-approvals: ${n} assertions passed (card render, custom_id codec, admin bitfield, scope fence, REST admin standing, ed25519 gate, poster, click matrix, decision feedback, front route)\n`);

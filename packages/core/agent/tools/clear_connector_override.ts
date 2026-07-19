@@ -4,7 +4,7 @@ import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } 
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface ClearConnectorOverrideInput {
@@ -79,6 +79,7 @@ const clearConnectorOverrideEntry = defineTool({
       requestedBy: principalIdOf(ctx)!,
       channelId,
       threadTs: binding.threadTs ?? null,
+      postedTo: postedToSurfaceKey(binding, channelId),
     });
 
     return {

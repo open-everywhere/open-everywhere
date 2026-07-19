@@ -614,5 +614,38 @@ const store = makeOperationalPostgresStore(client);
   }
 }
 
+{
+  const base = {
+    org: "default",
+    kind: "spend.set",
+    argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C9", level: "surface", monthlyTokens: 9, currentCap: null }),
+    scopeKey: "slack/T1/C9",
+    domain: null,
+    requestedBy: "U_REQ",
+    channelId: "C9",
+    threadTs: "9.1",
+    messageTs: "9.2",
+    status: "pending" as const,
+    createdAt: "2026-07-20T00:00:00Z",
+    expiresAt: "2026-07-20T01:00:00Z",
+    decidedBy: null,
+    decidedAt: null,
+  };
+  await store.addPendingAction({ ...base, id: "pa-frozen", postedTo: "slack/T1/C9" });
+  await store.addPendingAction({ ...base, id: "pa-null", postedTo: null });
+
+  const frozen = await store.getPendingAction("default", "pa-frozen");
+  ok(frozen?.postedTo === "slack/T1/C9" && frozen?.argsJson === base.argsJson, "pending: the mint-frozen postedTo (and argsJson) round-trip byte-for-byte");
+  ok((await store.getPendingAction("default", "pa-null"))?.postedTo === null, "pending: a NULL postedTo (pre-migration/map row) reads back null");
+  ok((await store.getPendingAction("acme", "pa-frozen")) === null, "pending: another org can't read the row (column isolation)");
+
+  const dueRows = await store.listExpiredPendingActions("default", "2026-07-20T02:00:00Z");
+  ok(dueRows.some((r) => r.id === "pa-frozen" && r.postedTo === "slack/T1/C9"), "pending: listExpiredPendingActions carries the frozen postedTo through to the sweep");
+
+  ok((await store.decidePendingAction("default", "pa-frozen", "expired", "system", "2026-07-20T02:00:00Z")) === true, "pending: the first decide CAS wins");
+  ok((await store.decidePendingAction("default", "pa-frozen", "approved", "U_REQ", "2026-07-20T02:00:01Z")) === false, "pending: a second decide on the terminal row loses the CAS");
+  ok((await store.getPendingAction("default", "pa-frozen"))?.status === "expired", "pending: the losing CAS left the row untouched");
+}
+
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, migration)`);
