@@ -27,6 +27,8 @@ import {
   mintWakeId,
   registerUnifiedWakeTarget,
   resolveUnifiedWakeTarget,
+  sameUnifiedConversation,
+  resolveDelegatedReplyTarget,
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
   shouldBridgeAddressedProse,
@@ -988,6 +990,45 @@ process.env.OE_WINDOW_TOPOLOGY = "0";
     /no longer on record|expired/,
     "reply lets THIS turn's own wakeId PAST the fence (then fails at resolve, unregistered) — the demo's own-wake reply path is intact",
   );
+  n++;
+
+  {
+    const slackThreadA: UnifiedWakeOrigin = { platform: "slack", channelId: "C_DA", threadTs: "1700.1" };
+    const slackThreadAWithAnchor: UnifiedWakeOrigin = { platform: "slack", channelId: "C_DA", threadTs: "1700.1", replyAnchorTs: "1700.9" };
+    const slackThreadB: UnifiedWakeOrigin = { platform: "slack", channelId: "C_DB", threadTs: "1700.1" };
+    const githubIssue: UnifiedWakeOrigin = { platform: "github", owner: "o", repo: "r", issueNumber: 7 };
+    ok(sameUnifiedConversation(slackThreadA, slackThreadAWithAnchor), "sameUnifiedConversation: same thread, differing only in a UX anchor ⇒ same");
+    ok(!sameUnifiedConversation(slackThreadA, slackThreadB), "sameUnifiedConversation: different channel ⇒ different");
+    ok(!sameUnifiedConversation(slackThreadA, githubIssue), "sameUnifiedConversation: different platform ⇒ different");
+
+    const org = "default";
+    const iso = () => new Date().toISOString();
+    const wFast = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wFast, slackThreadA, iso());
+    const fast = await resolveDelegatedReplyTarget(store, org, wFast, wFast);
+    ok(fast.ok && sameUnifiedConversation(fast.origin, slackThreadA), "resolveDelegatedReplyTarget: fast path (echo THIS turn's wake) resolves the origin");
+
+    const wTurn = mintWakeId();
+    const wOrig = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wTurn, slackThreadA, iso());
+    await registerUnifiedWakeTarget(store, org, wOrig, slackThreadAWithAnchor, iso());
+    const delegated = await resolveDelegatedReplyTarget(store, org, wTurn, wOrig);
+    ok(delegated.ok && sameUnifiedConversation(delegated.origin, slackThreadA), "resolveDelegatedReplyTarget: a delegated completion turn MAY answer the original ask's wake (same conversation) — the #101 fix");
+
+    const wTurnB = mintWakeId();
+    const wCross = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wTurnB, slackThreadA, iso());
+    await registerUnifiedWakeTarget(store, org, wCross, slackThreadB, iso());
+    const cross = await resolveDelegatedReplyTarget(store, org, wTurnB, wCross);
+    ok(!cross.ok && cross.reason === "mismatch", "resolveDelegatedReplyTarget: a wake naming a DIFFERENT conversation is REFUSED (authority-bleed fence intact)");
+
+    const noTurn = await resolveDelegatedReplyTarget(store, org, undefined, wOrig);
+    ok(!noTurn.ok && noTurn.reason === "mismatch", "resolveDelegatedReplyTarget: no current-turn wake ⇒ refused");
+
+    const wGone = mintWakeId();
+    const expired = await resolveDelegatedReplyTarget(store, org, wGone, wGone);
+    ok(!expired.ok && expired.reason === "expired", "resolveDelegatedReplyTarget: this-turn wake with no live map row ⇒ expired");
+  }
   n++;
 
   noThrow(() => assertTurnSurface(unifiedCtx("slack"), "slack"), "assertTurnSurface: a slack-origin unified turn MAY read slack");

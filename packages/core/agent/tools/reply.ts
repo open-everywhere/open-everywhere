@@ -4,7 +4,7 @@ import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, type Bi
 import { capabilitiesFor } from "../identity/capabilities.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
 import { markRepliedThisTurn } from "../channels/reply-signal.js";
-import { resolveUnifiedWakeTarget } from "../channels/unified-window.js";
+import { resolveDelegatedReplyTarget } from "../channels/unified-window.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -40,17 +40,18 @@ const unifiedReplyEntry = defineTool({
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
     async execute(input, ctx) {
       const turnWake = currentWakeId(ctx as BindableContext);
-      if (!turnWake || input.wake !== turnWake) {
+      const resolution = await resolveDelegatedReplyTarget(getOperationalStore(), deploymentOrg(), turnWake, input.wake);
+      if (!resolution.ok) {
+        if (resolution.reason === "expired") {
+          throw new Error(
+            `reply couldn't resolve wake-id "${input.wake.slice(0, 64)}" — the wake's reply target is no longer on record (expired). It can't be answered now.`,
+          );
+        }
         throw new Error(
-          `reply: wake-id "${input.wake.slice(0, 64)}" is not the wake you are answering this turn — pass the wake-id from the envelope of the message that woke THIS turn (a wake-id from an earlier turn or another conversation is refused).`,
+          `reply: wake-id "${input.wake.slice(0, 64)}" is not the wake you are answering this turn — pass the wake-id from the envelope of the message that woke THIS turn, or one naming the same conversation (a wake-id from an earlier turn or another conversation is refused).`,
         );
       }
-      const origin = await resolveUnifiedWakeTarget(getOperationalStore(), deploymentOrg(), input.wake);
-      if (!origin) {
-        throw new Error(
-          `reply couldn't resolve wake-id "${input.wake.slice(0, 64)}" — the wake's reply target is no longer on record (expired). It can't be answered now.`,
-        );
-      }
+      const origin = resolution.origin;
       const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake));
       markRepliedThisTurn();
       return {

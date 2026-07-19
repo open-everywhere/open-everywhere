@@ -82,6 +82,37 @@ export async function resolveUnifiedWakeTarget(store: UnifiedWakeTargetStore, or
   return isUnifiedWakeOrigin(parsed) ? parsed : null;
 }
 
+export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrigin): boolean {
+  const ra = unifiedThreadRef(a);
+  const rb = unifiedThreadRef(b);
+  return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
+}
+
+export type DelegatedReplyResolution =
+  | { readonly ok: true; readonly origin: UnifiedWakeOrigin }
+  | { readonly ok: false; readonly reason: "mismatch" | "expired" };
+
+export async function resolveDelegatedReplyTarget(
+  store: UnifiedWakeTargetStore,
+  org: string,
+  turnWake: string | undefined,
+  inputWake: string,
+): Promise<DelegatedReplyResolution> {
+  if (!turnWake) return { ok: false, reason: "mismatch" };
+  if (inputWake === turnWake) {
+    const origin = await resolveUnifiedWakeTarget(store, org, inputWake);
+    return origin ? { ok: true, origin } : { ok: false, reason: "expired" };
+  }
+  const [turnOrigin, echoedOrigin] = await Promise.all([
+    resolveUnifiedWakeTarget(store, org, turnWake),
+    resolveUnifiedWakeTarget(store, org, inputWake),
+  ]);
+  if (!turnOrigin || !echoedOrigin || !sameUnifiedConversation(turnOrigin, echoedOrigin)) {
+    return { ok: false, reason: "mismatch" };
+  }
+  return { ok: true, origin: echoedOrigin };
+}
+
 export function isTrustedTeamsServiceUrl(serviceUrl: unknown): boolean {
   if (typeof serviceUrl !== "string") return false;
   let host: string;
