@@ -155,6 +155,7 @@ export interface EngagementRow {
   readonly silentStreak: number;
   readonly ownerToken?: string;
   readonly kind: "thread" | "spawned";
+  readonly stopped: boolean;
 }
 
 export interface ChannelSessionRow {
@@ -209,6 +210,7 @@ export interface OperationalStore {
   domainModels(org: string): Promise<DomainModelRow[]>;
 
   markEngaged(org: string, surfaceKey: string, threadTs: string, at: string, opts?: { participating?: boolean; ownerToken?: string; kind?: "thread" | "spawned" }): Promise<void>;
+  markStopped(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;
   bumpSilentStreak(org: string, surfaceKey: string, threadTs: string): Promise<number>;
   getEngagement(org: string, surfaceKey: string, threadTs: string): Promise<EngagementRow | null>;
   disengage(org: string, surfaceKey: string, threadTs: string): Promise<boolean>;

@@ -158,6 +158,35 @@ registerConfig({
 
 {
   const store = getOperationalStore();
+  const sk = "slack/T_ENG/C_STOP";
+
+  await store.markEngaged("orgS", sk, "s.1", "2026-07-19T10:00:00Z", { participating: true });
+  ok((await store.getEngagement("orgS", sk, "s.1"))!.stopped === false, "sqlite: a fresh engaged row is not stopped");
+
+  ok((await store.markStopped("orgS", sk, "s.1")) === true, "sqlite: markStopped returns true for an existing row");
+  const stopped = await store.getEngagement("orgS", sk, "s.1");
+  ok(stopped !== null && stopped.stopped === true && stopped.participating === true, "sqlite: markStopped sets stopped=true and KEEPS the row");
+
+  ok((await store.markStopped("orgS", sk, "s.1")) === true && (await store.getEngagement("orgS", sk, "s.1"))!.stopped === true, "sqlite: markStopped is idempotent");
+
+  await store.markEngaged("orgS", sk, "s.1", "2026-07-19T11:00:00Z", { participating: true });
+  ok((await store.getEngagement("orgS", sk, "s.1"))!.stopped === false, "sqlite: markEngaged(participating:true) clears the stopped marker (re-invitation)");
+
+  await store.markStopped("orgS", sk, "s.1");
+  await store.markEngaged("orgS", sk, "s.1", "2026-07-19T12:00:00Z");
+  ok((await store.getEngagement("orgS", sk, "s.1"))!.stopped === true, "sqlite: a warm refresh (no participating) leaves the stopped marker set");
+
+  ok((await store.markStopped("orgS", sk, "nope.0")) === false, "sqlite: markStopped on a missing row → false");
+
+  ok((await store.disengage("orgS", sk, "s.1")) === true && (await store.getEngagement("orgS", sk, "s.1")) === null, "sqlite: disengage still deletes a stopped row (Discord delete path unbroken)");
+
+  await store.markEngaged("orgS", sk, "s.2", "2026-07-19T13:00:00Z", { participating: true });
+  await store.markStopped("orgS", sk, "s.2");
+  ok((await store.listEngagements("orgS")).find((r) => r.threadTs === "s.2")?.stopped === true, "sqlite: listEngagements maps stopped");
+}
+
+{
+  const store = getOperationalStore();
   const sk = "slack/T_ENG/C_SUP";
 
   ok((await store.getChannelSession("orgS", sk)) === null, "sqlite: no session minted yet → null");
@@ -1069,9 +1098,11 @@ registerConfig({
   ok(!out.woke && confirmCalls === 0, "system subtype → dropped before the internal confirmation");
 
   {
-    const disengaged: string[] = [];
+    const marked: string[] = [];
     const acked: string[] = [];
     const stopAudits: Array<{ action: string; detail: Record<string, unknown> }> = [];
+    const row = (opts: { stopped?: boolean } = {}) =>
+      ({ participating: true, stopped: opts.stopped ?? false } as unknown as Awaited<ReturnType<NonNullable<SupervisorRouteDeps["getEngagement"]>>>);
     const stopEv = (over: Record<string, unknown> = {}) =>
       parseMessageEvent({
         type: "event_callback",
@@ -1080,9 +1111,9 @@ registerConfig({
       })!;
     const stopDeps = (engaged: boolean): SupervisorRouteDeps =>
       supDeps(true, 12, {
-        getEngagement: async () => (engaged ? ({ participating: true } as unknown as Awaited<ReturnType<NonNullable<SupervisorRouteDeps["getEngagement"]>>>) : null),
-        disengage: async (_p, threadTs) => {
-          disengaged.push(threadTs);
+        getEngagement: async () => (engaged ? row() : null),
+        markStopped: async (_p, threadTs) => {
+          marked.push(threadTs);
           return true;
         },
         stopAck: async (channelId, threadTs) => {
@@ -1095,29 +1126,66 @@ registerConfig({
     wakes.length = 0;
     out = await routeSupervisorEvent(stopEv(), stopDeps(true));
     ok(!out.woke && wakes.length === 0, "engaged thread + 'stop' → NO supervisor wake (no session mint, no divert)");
-    ok(disengaged.length === 1 && disengaged[0] === "77.7", "engaged 'stop' drops the thread's engagement row (same disengage the plain path uses)");
+    ok(marked.length === 1 && marked[0] === "77.7", "engaged 'stop' MARKS the thread stopped (durable marker, NOT a delete)");
     ok(acked.length === 1 && acked[0] === "C_SUP:77.7", "engaged 'stop' posts the shared stop ack into the thread");
     ok(stopAudits.length === 1 && stopAudits[0].action === "engagement.stop" && stopAudits[0].detail.threadTs === "77.7", "engaged 'stop' writes an engagement.stop audit row");
     ok(/stop request/.test(out.reason), "the stop outcome reason says why");
 
-    disengaged.length = 0;
+    marked.length = 0;
     acked.length = 0;
     stopAudits.length = 0;
     wakes.length = 0;
     out = await routeSupervisorEvent(stopEv(), stopDeps(false));
-    ok(out.woke && disengaged.length === 0 && acked.length === 0 && stopAudits.length === 0, "'stop' in a NON-engaged thread → no disengage/ack/audit; wakes the supervisor as normal traffic");
+    ok(out.woke && marked.length === 0 && acked.length === 0 && stopAudits.length === 0, "'stop' in a NON-engaged thread → no mark/ack/audit; wakes the supervisor as normal traffic");
 
-    disengaged.length = 0;
+    marked.length = 0;
     acked.length = 0;
     wakes.length = 0;
     out = await routeSupervisorEvent(stopEv({ text: "don't stop the deploy" }), stopDeps(true));
-    ok(out.woke && disengaged.length === 0 && acked.length === 0, "a sentence containing 'stop' still wakes the supervisor (no false disengage)");
+    ok(out.woke && marked.length === 0 && acked.length === 0, "a sentence containing 'stop' still wakes the supervisor (no false mark)");
 
-    disengaged.length = 0;
+    marked.length = 0;
     acked.length = 0;
     wakes.length = 0;
     out = await routeSupervisorEvent(stopEv({ thread_ts: undefined, ts: "81.0" }), stopDeps(true));
-    ok(out.woke && disengaged.length === 0, "a top-level 'stop' (no thread) is not a thread stop — wakes as normal ambient traffic");
+    ok(out.woke && marked.length === 0, "a top-level 'stop' (no thread) is not a thread stop — wakes as normal ambient traffic");
+
+    const followUpEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "message", channel: "C_SUP", ts: "82.0", thread_ts: "77.7", user: "U1", channel_type: "channel", text: "what's 5 plus 5?" },
+    })!;
+    const stoppedRowDeps = supDeps(true, 12, { getEngagement: async () => row({ stopped: true }) });
+    wakes.length = 0;
+    out = await routeSupervisorEvent(followUpEv, stoppedRowDeps);
+    ok(!out.woke && wakes.length === 0, "STOPPED thread + non-mention follow-up → DROPPED before any wake (the live-found gap, now fixed)");
+    ok(/stopped/.test(out.reason), "the suppressed outcome reason says the thread is stopped");
+
+    const engagedRowDeps = supDeps(true, 12, { getEngagement: async () => row({ stopped: false }) });
+    wakes.length = 0;
+    out = await routeSupervisorEvent(followUpEv, engagedRowDeps);
+    ok(out.woke, "engaged-but-not-stopped thread + non-mention follow-up → still wakes (suppression is stopped-only)");
+
+    const neverEngagedDeps = supDeps(true, 12, { getEngagement: async () => null });
+    wakes.length = 0;
+    out = await routeSupervisorEvent(followUpEv, neverEngagedDeps);
+    ok(out.woke, "NEVER-engaged thread + follow-up → keeps today's ambient path (wakes/judges — NOT suppressed)");
+
+    const reinviteEngaged: string[] = [];
+    const mentionEv = parseMessageEvent({
+      type: "event_callback",
+      team_id: "T_ENG",
+      event: { type: "app_mention", channel: "C_SUP", ts: "83.0", thread_ts: "77.7", user: "U1", text: "<@UBOT> actually come back" },
+    })!;
+    const reinviteDeps = supDeps(true, 12, {
+      unifiedMeta: () => ({ unified: true, singleWindow: true }),
+      getEngagement: async () => row({ stopped: true }),
+      markEngaged: async (_p, threadTs) => { reinviteEngaged.push(threadTs); },
+    });
+    wakes.length = 0;
+    out = await routeSupervisorEvent(mentionEv, reinviteDeps, { directMention: true });
+    ok(out.woke, "directMention into a STOPPED thread WAKES (a re-mention bypasses suppression — the explicit re-invitation)");
+    ok(reinviteEngaged.length === 1 && reinviteEngaged[0] === "77.7", "the re-inviting directMention re-engages the thread (markEngaged clears the stopped marker via participating:true)");
   }
 
   {
@@ -1807,6 +1875,8 @@ registerConfig({
   ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z" && row.lastTurnAt === "2026-07-01T00:00:00Z", "sqlite migration: pre-existing row preserved (not dropped)");
   ok(row!.participating === false && row!.silentStreak === 0, "sqlite migration: new columns backfill to warm/zero for old rows");
   ok(row!.kind === "thread" && row!.ownerToken === undefined, "sqlite migration: owner_token/kind backfill to 'thread'/absent for a pre-T1.1 row");
+  ok(row!.stopped === false, "sqlite migration: stopped backfills to false for a pre-marker row");
+  ok((await migStore.markStopped("orgM", "slack/T/CM", "m.1")) === true && (await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.stopped === true, "sqlite migration: markStopped works on the migrated table");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "sqlite migration: promotion works on the migrated table");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T02:00:00Z", { ownerToken: "T:oe-sup:1" });
@@ -1821,4 +1891,4 @@ registerConfig({
   _resetOperationalDbForTest();
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);
+console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + supervisor stop+suppression + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);

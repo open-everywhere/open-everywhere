@@ -7,7 +7,7 @@ import { ingestUntrusted } from "../access/untrusted.js";
 import { nameDropWakeEnabled, engagementTierFor, ambientSupervisorEnabled } from "../memory/domain.js";
 import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
-import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
+import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, markThreadStopped, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
 import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -903,7 +903,7 @@ export interface SupervisorRouteDeps {
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string) => Promise<void>;
   readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
-  readonly disengage?: (p: Partition, threadTs: string) => Promise<boolean>;
+  readonly markStopped?: (p: Partition, threadTs: string) => Promise<boolean>;
   readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
@@ -935,14 +935,17 @@ export async function routeSupervisorEvent(
   const p = resolvePartition(bindableFor(ev));
   const atIso = deps.now ? deps.now() : new Date().toISOString();
 
-  if (ev.threadTs && deps.getEngagement && isStopRequest(ev.text)) {
-    const eng = await deps.getEngagement(p, ev.threadTs);
-    if (eng) {
-      const dropped = deps.disengage ? await deps.disengage(p, ev.threadTs) : false;
-      if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs);
-      if (deps.audit) await deps.audit("engagement.stop", { surfaceKey: p.surfaceKey, threadTs: ev.threadTs });
-      return { deliver: false, reason: `stop request — thread disengaged${dropped ? "" : " (no record found)"}`, woke: false };
-    }
+  const engRow = ev.threadTs && deps.getEngagement ? await deps.getEngagement(p, ev.threadTs) : null;
+
+  if (ev.threadTs && isStopRequest(ev.text) && engRow) {
+    const marked = deps.markStopped ? await deps.markStopped(p, ev.threadTs) : false;
+    if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs);
+    if (deps.audit) await deps.audit("engagement.stop", { surfaceKey: p.surfaceKey, threadTs: ev.threadTs });
+    return { deliver: false, reason: `stop request — thread stopped${marked ? "" : " (no record found)"}`, woke: false };
+  }
+
+  if (ev.threadTs && !directMention && engRow?.stopped) {
+    return { deliver: false, reason: "thread stopped — deterministic silence until an explicit @-mention re-invites", woke: false };
   }
 
   if (directMention && deps.markEngaged) {
@@ -1092,7 +1095,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
     },
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
-    disengage: (p, threadTs) => disengageThread(p, threadTs),
+    markStopped: (p, threadTs) => markThreadStopped(p, threadTs),
     markEngaged: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso, { participating: true }),
     stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
     now: () => new Date().toISOString(),

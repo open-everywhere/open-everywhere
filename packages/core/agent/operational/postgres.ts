@@ -69,6 +69,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      last_turn_at  text    NOT NULL,
      participating boolean NOT NULL DEFAULT false, -- true = invited participant; false = warm watcher
      silent_streak integer NOT NULL DEFAULT 0,     -- consecutive silent woken turns since last engage/participation
+     stopped       boolean NOT NULL DEFAULT false, -- true = an explicit stop landed (window path); suppress non-mention wakes until re-invited
      PRIMARY KEY (org_id, surface_key, thread_ts)
    )`,
   `CREATE TABLE IF NOT EXISTS channel_session (
@@ -182,6 +183,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS silent_streak integer NOT NULL DEFAULT 0`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS owner_token text`,
   `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'thread'`,
+  `ALTER TABLE thread_engagement ADD COLUMN IF NOT EXISTS stopped boolean NOT NULL DEFAULT false`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS input_tokens_total bigint`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS first_wake_at text`,
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS handoff_note text`,
@@ -824,15 +826,24 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async markEngaged(org, surfaceKey, threadTs, at, opts) {
       await client.query(
-        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind)
-         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8)
+        `INSERT INTO thread_engagement (org_id, surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, false)
          ON CONFLICT (org_id, surface_key, thread_ts) DO UPDATE SET
            last_turn_at  = excluded.last_turn_at,
            participating = thread_engagement.participating OR excluded.participating,
            silent_streak = CASE WHEN excluded.participating THEN 0 ELSE thread_engagement.silent_streak END,
-           owner_token   = COALESCE(excluded.owner_token, thread_engagement.owner_token)`,
+           owner_token   = COALESCE(excluded.owner_token, thread_engagement.owner_token),
+           stopped       = CASE WHEN excluded.participating THEN false ELSE thread_engagement.stopped END`,
         [org, surfaceKey, threadTs, at, at, opts?.participating ?? false, opts?.ownerToken ?? null, opts?.kind ?? "thread"],
       );
+    },
+
+    async markStopped(org, surfaceKey, threadTs) {
+      const { rows } = await client.query(
+        "UPDATE thread_engagement SET stopped = true WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3 RETURNING thread_ts",
+        [org, surfaceKey, threadTs],
+      );
+      return rows.length > 0;
     },
 
     async bumpSilentStreak(org, surfaceKey, threadTs) {
@@ -847,10 +858,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async getEngagement(org, surfaceKey, threadTs) {
       const { rows } = await client.query(
-        "SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
+        "SELECT engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped FROM thread_engagement WHERE org_id = $1 AND surface_key = $2 AND thread_ts = $3",
         [org, surfaceKey, threadTs],
       );
-      const r = (rows as { engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number; owner_token: string | null; kind: string | null }[])[0];
+      const r = (rows as { engaged_at: string; last_turn_at: string; participating: boolean; silent_streak: number; owner_token: string | null; kind: string | null; stopped: boolean }[])[0];
       return r
         ? {
             org,
@@ -862,6 +873,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
             silentStreak: Number(r.silent_streak),
             ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
             kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
+            stopped: r.stopped,
           }
         : null;
     },
@@ -876,7 +888,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listEngagements(org) {
       const { rows } = await client.query(
-        "SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind FROM thread_engagement WHERE org_id = $1",
+        "SELECT surface_key, thread_ts, engaged_at, last_turn_at, participating, silent_streak, owner_token, kind, stopped FROM thread_engagement WHERE org_id = $1",
         [org],
       );
       return (rows as {
@@ -888,6 +900,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         silent_streak: number;
         owner_token: string | null;
         kind: string | null;
+        stopped: boolean;
       }[]).map((r) => ({
         org,
         surfaceKey: r.surface_key,
@@ -898,6 +911,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         silentStreak: Number(r.silent_streak),
         ...(r.owner_token ? { ownerToken: r.owner_token } : {}),
         kind: (r.kind as "thread" | "spawned" | null) ?? "thread",
+        stopped: r.stopped,
       }));
     },
 

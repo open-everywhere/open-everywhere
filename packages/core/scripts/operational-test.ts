@@ -320,6 +320,30 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const sk = "slack/T/CSTOP";
+
+  await store.markEngaged("acme", sk, "s.1", "2026-07-19T10:00:00Z", { participating: true });
+  ok((await store.getEngagement("acme", sk, "s.1"))!.stopped === false, "pg: a fresh engaged row is not stopped");
+
+  ok((await store.markStopped("acme", sk, "s.1")) === true, "pg: markStopped returns true for an existing row");
+  const stopped = await store.getEngagement("acme", sk, "s.1");
+  ok(stopped !== null && stopped.stopped === true && stopped.participating === true, "pg: markStopped sets stopped=true and KEEPS the row (participating preserved)");
+
+  ok((await store.markStopped("acme", sk, "s.1")) === true && (await store.getEngagement("acme", sk, "s.1"))!.stopped === true, "pg: markStopped is idempotent");
+
+  await store.markEngaged("acme", sk, "s.1", "2026-07-19T11:00:00Z", { participating: true });
+  ok((await store.getEngagement("acme", sk, "s.1"))!.stopped === false, "pg: markEngaged(participating:true) clears the stopped marker (re-invitation)");
+
+  await store.markStopped("acme", sk, "s.1");
+  await store.markEngaged("acme", sk, "s.1", "2026-07-19T12:00:00Z");
+  ok((await store.getEngagement("acme", sk, "s.1"))!.stopped === true, "pg: a warm refresh (no participating) leaves the stopped marker set");
+
+  ok((await store.markStopped("acme", sk, "nope.0")) === false, "pg: markStopped on a missing row → false");
+
+  ok((await store.listEngagements("acme")).find((r) => r.surfaceKey === sk && r.threadTs === "s.1")?.stopped === true, "pg: listEngagements maps stopped");
+}
+
+{
   const sk = "slack/T/CSUP";
 
   ok((await store.getChannelSession("acme", sk)) === null, "pg: no session minted yet → null");
@@ -383,6 +407,8 @@ const store = makeOperationalPostgresStore(client);
   ok(row !== null && row.engagedAt === "2026-07-01T00:00:00Z", "pg migration: pre-existing row preserved (not dropped)");
   ok(row!.participating === false && row!.silentStreak === 0, "pg migration: new columns backfill to warm/zero for old rows");
   ok(row!.kind === "thread" && row!.ownerToken === undefined, "pg migration: owner_token/kind backfill to 'thread'/absent for a pre-T1.1 row");
+  ok(row!.stopped === false, "pg migration: stopped backfills to false for a pre-marker row");
+  ok((await migStore.markStopped("orgM", "slack/T/CM", "m.1")) === true && (await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.stopped === true, "pg migration: markStopped works on the migrated table");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T01:00:00Z", { participating: true });
   ok((await migStore.getEngagement("orgM", "slack/T/CM", "m.1"))!.participating === true, "pg migration: promotion works on the migrated table");
   await migStore.markEngaged("orgM", "slack/T/CM", "m.1", "2026-07-01T02:00:00Z", { ownerToken: "T:oe-sup:1" });
@@ -589,4 +615,4 @@ const store = makeOperationalPostgresStore(client);
 }
 
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), channel supervisor sessions, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, migration)`);

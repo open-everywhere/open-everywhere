@@ -44,6 +44,15 @@ export async function disengageThread(p: Partition, threadTs: string): Promise<b
   }
 }
 
+export async function markThreadStopped(p: Partition, threadTs: string): Promise<boolean> {
+  try {
+    return await getOperationalStore().markStopped(p.org, p.surfaceKey, threadTs);
+  } catch (err) {
+    console.warn(`[open-everywhere:engagement] markStopped failed (${p.surfaceKey}/${threadTs}): ${String(err)}`);
+    return false;
+  }
+}
+
 export async function isThreadEngaged(p: Partition, threadTs: string): Promise<boolean> {
   try {
     return (await getOperationalStore().getEngagement(p.org, p.surfaceKey, threadTs)) !== null;
