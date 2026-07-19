@@ -185,7 +185,8 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
 
 async function liveSlackPost(origin: SlackOrigin, text: string): Promise<string> {
   const body = new URLSearchParams({ channel: origin.channelId, text });
-  if (origin.threadTs) body.set("thread_ts", origin.threadTs);
+  const threadTarget = origin.threadTs ?? origin.replyAnchorTs;
+  if (threadTarget) body.set("thread_ts", threadTarget);
   const res = await slackForm("chat.postMessage", body.toString());
   const ts = typeof res?.ts === "string" ? res.ts : undefined;
   if (res?.ok !== true || !ts) {

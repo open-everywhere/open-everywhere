@@ -949,7 +949,15 @@ export async function routeSupervisorEvent(
     unifiedMeta?.singleWindow === true
       ? {
           wakeId: mintWakeId(),
-          origin: { platform: "slack", channelId: ev.channelId, ...(ev.threadTs ? { threadTs: ev.threadTs } : {}) },
+          origin: {
+            platform: "slack",
+            channelId: ev.channelId,
+            ...(ev.threadTs
+              ? { threadTs: ev.threadTs }
+              : mentionPolicy.addressing !== undefined
+                ? { replyAnchorTs: ev.ts }
+                : {}),
+          },
           ...(mentionPolicy.addressing !== undefined ? { addressing: mentionPolicy.addressing } : {}),
         }
       : undefined;

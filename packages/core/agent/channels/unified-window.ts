@@ -6,6 +6,7 @@ export type UnifiedWakeOrigin =
       readonly platform: "slack";
       readonly channelId: string;
       readonly threadTs?: string;
+      readonly replyAnchorTs?: string;
     }
   | {
       readonly platform: "github";
@@ -112,7 +113,12 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return false;
   if (o.platform === "slack") {
-    return typeof o.channelId === "string" && o.channelId.length > 0 && (o.threadTs === undefined || typeof o.threadTs === "string");
+    return (
+      typeof o.channelId === "string" &&
+      o.channelId.length > 0 &&
+      (o.threadTs === undefined || typeof o.threadTs === "string") &&
+      (o.replyAnchorTs === undefined || typeof o.replyAnchorTs === "string")
+    );
   }
   if (o.platform === "github") {
     return (
