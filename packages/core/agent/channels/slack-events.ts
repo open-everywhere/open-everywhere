@@ -435,6 +435,16 @@ async function appendRouteAudit(surfaceKey: string, action: string, detail: Reco
   }
 }
 
+export async function postSlackStopAck(channelId: string, threadTs: string): Promise<void> {
+  try {
+    await slackForm(
+      "chat.postMessage",
+      `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(STOP_ACK_COPY)}`,
+    );
+  } catch {
+  }
+}
+
 export function liveDeps(send: WakeSend): MessageRouteDeps {
   return {
     isEngaged: (p, threadTs) => isThreadEngaged(p, threadTs),
@@ -443,15 +453,7 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     confirmInternal: confirmChannelInternal,
     resolveProfile: liveResolveProfile,
     disengage: (p, threadTs) => disengageThread(p, threadTs),
-    async stopAck(channelId, threadTs) {
-      try {
-        await slackForm(
-          "chat.postMessage",
-          `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(STOP_ACK_COPY)}`,
-        );
-      } catch {
-      }
-    },
+    stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
     async deathNotice(channelId, threadTs) {
       try {
         await slackForm(
@@ -716,6 +718,15 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   return singleWindowMentionPolicy(true, true, privacyOk);
 }
 
+export function slackDomainUsesUnifiedWindow(surfaceKey: string): boolean {
+  try {
+    const domains = getConfig().loadDomains();
+    return grainUsesUnifiedWindow(supervisorGrainFor(surfaceKey, domains)) && ambientSupervisorEnabled(surfaceKey, domains);
+  } catch {
+    return false;
+  }
+}
+
 const TRANSCRIPT_MESSAGES = 50;
 const TRANSCRIPT_LINE_CHARS = 240;
 const TRANSCRIPT_TOTAL_CHARS = 4000;
@@ -890,6 +901,10 @@ export interface SupervisorRouteDeps {
   readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
   readonly forceRotate?: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
+  readonly markEngaged?: (p: Partition, threadTs: string, atIso: string) => Promise<void>;
+  readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
+  readonly disengage?: (p: Partition, threadTs: string) => Promise<boolean>;
+  readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
   readonly now?: () => string;
   readonly resolveProfile?: ResolveProfile;
   readonly engagementTier?: (surfaceKey: string) => WakeEngagementTier;
@@ -919,6 +934,21 @@ export async function routeSupervisorEvent(
 
   const p = resolvePartition(bindableFor(ev));
   const atIso = deps.now ? deps.now() : new Date().toISOString();
+
+  if (ev.threadTs && deps.getEngagement && isStopRequest(ev.text)) {
+    const eng = await deps.getEngagement(p, ev.threadTs);
+    if (eng) {
+      const dropped = deps.disengage ? await deps.disengage(p, ev.threadTs) : false;
+      if (deps.stopAck) await deps.stopAck(ev.channelId, ev.threadTs);
+      if (deps.audit) await deps.audit("engagement.stop", { surfaceKey: p.surfaceKey, threadTs: ev.threadTs });
+      return { deliver: false, reason: `stop request — thread disengaged${dropped ? "" : " (no record found)"}`, woke: false };
+    }
+  }
+
+  if (directMention && deps.markEngaged) {
+    await deps.markEngaged(p, ev.threadTs ?? ev.ts, atIso);
+  }
+
   const wakeTrust = resolveWakeTrust({
     authorIsBot: base.authorIsBot,
     authorId: ev.userId,
@@ -1061,6 +1091,10 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
+    getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
+    disengage: (p, threadTs) => disengageThread(p, threadTs),
+    markEngaged: (p, threadTs, atIso) => markThreadEngaged(p, threadTs, atIso, { participating: true }),
+    stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, state }) {
       await send({ message }, { auth, continuationToken: token, state });

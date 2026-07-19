@@ -1068,6 +1068,81 @@ registerConfig({
   out = await routeSupervisorEvent(supEv({ subtype: "channel_join" }), supDeps(true, 12));
   ok(!out.woke && confirmCalls === 0, "system subtype → dropped before the internal confirmation");
 
+  {
+    const disengaged: string[] = [];
+    const acked: string[] = [];
+    const stopAudits: Array<{ action: string; detail: Record<string, unknown> }> = [];
+    const stopEv = (over: Record<string, unknown> = {}) =>
+      parseMessageEvent({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event: { type: "message", channel: "C_SUP", ts: "80.1", thread_ts: "77.7", user: "U1", channel_type: "channel", text: "stop", ...over },
+      })!;
+    const stopDeps = (engaged: boolean): SupervisorRouteDeps =>
+      supDeps(true, 12, {
+        getEngagement: async () => (engaged ? ({ participating: true } as unknown as Awaited<ReturnType<NonNullable<SupervisorRouteDeps["getEngagement"]>>>) : null),
+        disengage: async (_p, threadTs) => {
+          disengaged.push(threadTs);
+          return true;
+        },
+        stopAck: async (channelId, threadTs) => {
+          acked.push(`${channelId}:${threadTs}`);
+        },
+        audit: async (action, detail) => {
+          stopAudits.push({ action, detail });
+        },
+      });
+    wakes.length = 0;
+    out = await routeSupervisorEvent(stopEv(), stopDeps(true));
+    ok(!out.woke && wakes.length === 0, "engaged thread + 'stop' → NO supervisor wake (no session mint, no divert)");
+    ok(disengaged.length === 1 && disengaged[0] === "77.7", "engaged 'stop' drops the thread's engagement row (same disengage the plain path uses)");
+    ok(acked.length === 1 && acked[0] === "C_SUP:77.7", "engaged 'stop' posts the shared stop ack into the thread");
+    ok(stopAudits.length === 1 && stopAudits[0].action === "engagement.stop" && stopAudits[0].detail.threadTs === "77.7", "engaged 'stop' writes an engagement.stop audit row");
+    ok(/stop request/.test(out.reason), "the stop outcome reason says why");
+
+    disengaged.length = 0;
+    acked.length = 0;
+    stopAudits.length = 0;
+    wakes.length = 0;
+    out = await routeSupervisorEvent(stopEv(), stopDeps(false));
+    ok(out.woke && disengaged.length === 0 && acked.length === 0 && stopAudits.length === 0, "'stop' in a NON-engaged thread → no disengage/ack/audit; wakes the supervisor as normal traffic");
+
+    disengaged.length = 0;
+    acked.length = 0;
+    wakes.length = 0;
+    out = await routeSupervisorEvent(stopEv({ text: "don't stop the deploy" }), stopDeps(true));
+    ok(out.woke && disengaged.length === 0 && acked.length === 0, "a sentence containing 'stop' still wakes the supervisor (no false disengage)");
+
+    disengaged.length = 0;
+    acked.length = 0;
+    wakes.length = 0;
+    out = await routeSupervisorEvent(stopEv({ thread_ts: undefined, ts: "81.0" }), stopDeps(true));
+    ok(out.woke && disengaged.length === 0, "a top-level 'stop' (no thread) is not a thread stop — wakes as normal ambient traffic");
+  }
+
+  {
+    const engagedThreads: Array<{ threadTs: string }> = [];
+    const engageDeps = (over: Record<string, unknown> = {}) => {
+      const ev = parseMessageEvent({
+        type: "event_callback",
+        team_id: "T_ENG",
+        event: { type: "app_mention", channel: "C_SUP", ts: "90.1", user: "U1", text: "<@UBOT> pick this up", ...over },
+      })!;
+      return { ev, deps: supDeps(true, 12, { unifiedMeta: () => ({ unified: true, singleWindow: true }), markEngaged: async (_p, threadTs) => { engagedThreads.push({ threadTs }); } }) };
+    };
+    let em = engageDeps();
+    let o = await routeSupervisorEvent(em.ev, em.deps, { directMention: true });
+    ok(o.woke && engagedThreads.length === 1 && engagedThreads[0].threadTs === "90.1", "a top-level directMention engages its reply-anchor thread (ts) as participating");
+    engagedThreads.length = 0;
+    em = engageDeps({ thread_ts: "88.0" });
+    o = await routeSupervisorEvent(em.ev, em.deps, { directMention: true });
+    ok(o.woke && engagedThreads.length === 1 && engagedThreads[0].threadTs === "88.0", "a threaded directMention engages the existing thread (thread_ts)");
+    engagedThreads.length = 0;
+    const amb = parseMessageEvent({ type: "event_callback", team_id: "T_ENG", event: { type: "message", channel: "C_SUP", ts: "91.0", thread_ts: "88.0", user: "U1", channel_type: "channel", text: "just chatter" } })!;
+    o = await routeSupervisorEvent(amb, supDeps(true, 12, { markEngaged: async (_p, threadTs) => { engagedThreads.push({ threadTs }); } }));
+    ok(o.woke && engagedThreads.length === 0, "an ambient (non-directMention) in-thread wake does NOT engage the thread");
+  }
+
   wakes.length = 0;
   {
     const bs = [

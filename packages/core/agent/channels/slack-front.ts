@@ -20,6 +20,7 @@ import {
   bindableForJoin,
   bindableForReaction,
   slackSingleWindowMentionPolicy,
+  slackDomainUsesUnifiedWindow,
   type SlackEventEnvelope,
   type ParsedMessageEvent,
   type RouteOutcome,
@@ -461,7 +462,13 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       return OK();
     }
 
-    const engaged = await isThreadEngaged(resolvePartition(bindableFor(ev)), ev.threadTs);
+    const p = resolvePartition(bindableFor(ev));
+    if (slackDomainUsesUnifiedWindow(p.surfaceKey)) {
+      scheduleUnownedWake(ev, "in-thread-window");
+      return OK();
+    }
+
+    const engaged = await isThreadEngaged(p, ev.threadTs);
     if (!engaged) {
       scheduleUnownedWake(ev, "name-drop-thread");
       return OK();
