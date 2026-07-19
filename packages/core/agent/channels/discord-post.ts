@@ -42,3 +42,25 @@ export async function discordPostMessage(channelId: string, content: string, opt
   return id;
 }
 
+export async function discordThreadForMessage(channelId: string, messageId: string, name: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${API}/channels/${channelId}/messages/${messageId}/threads`, {
+      method: "POST",
+      headers: botHeaders(botToken()),
+      body: JSON.stringify({ name: name.slice(0, 100) || "thread", auto_archive_duration: 1440 }),
+    });
+    if (res.ok) {
+      const body = (await res.json()) as { id?: unknown };
+      return typeof body?.id === "string" ? body.id : null;
+    }
+    const msgRes = await fetch(`${API}/channels/${channelId}/messages/${messageId}`, {
+      headers: botHeaders(botToken()),
+    });
+    if (!msgRes.ok) return null;
+    const msg = (await msgRes.json()) as { thread?: { id?: unknown } };
+    return typeof msg?.thread?.id === "string" ? msg.thread.id : null;
+  } catch {
+    return null;
+  }
+}
+

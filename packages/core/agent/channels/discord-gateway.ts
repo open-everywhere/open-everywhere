@@ -674,6 +674,9 @@ async function divertDiscordWakeToUnifiedWindow(input: {
       channelId: msg.channelId,
       guildId: msg.guildId ?? "",
       ...(msg.id ? { messageId: msg.id } : {}),
+      ...(msg.id && input.addressing === "direct-mention" && shouldAutoThread(msg.channelType, autoThreadEnabled())
+        ? { autoThreadName: deriveThreadName(msg.content) }
+        : {}),
     };
     const rendered = renderWake(
       buildDiscordUnifiedWake({

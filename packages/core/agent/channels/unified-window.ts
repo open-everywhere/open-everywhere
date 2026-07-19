@@ -33,6 +33,7 @@ export type UnifiedWakeOrigin =
       readonly channelId: string;
       readonly guildId: string;
       readonly messageId?: string;
+      readonly autoThreadName?: string;
     }
   | {
       readonly platform: "teams";
@@ -153,7 +154,8 @@ export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
       o.channelId.length > 0 &&
       typeof o.guildId === "string" &&
       o.guildId.length > 0 &&
-      (o.messageId === undefined || typeof o.messageId === "string")
+      (o.messageId === undefined || typeof o.messageId === "string") &&
+      (o.autoThreadName === undefined || typeof o.autoThreadName === "string")
     );
   }
   if (o.platform === "teams") {

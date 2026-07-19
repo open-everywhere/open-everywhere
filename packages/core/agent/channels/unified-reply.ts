@@ -4,7 +4,7 @@ import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { createCommentReply } from "./notion-api.js";
-import { discordPostMessage, splitForDiscord } from "./discord-post.js";
+import { discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import { isTrustedTeamsServiceUrl } from "./unified-window.js";
 import { auditReplyPost, type ReplyAudit } from "./reply-post.js";
@@ -57,15 +57,24 @@ async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, dep
 }
 
 async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<string> {
+  let targetChannelId = origin.channelId;
+  let anchorToMessage = origin.messageId;
+  if (origin.autoThreadName && origin.messageId) {
+    const threadId = await discordThreadForMessage(origin.channelId, origin.messageId, origin.autoThreadName);
+    if (threadId) {
+      targetChannelId = threadId;
+      anchorToMessage = undefined;
+    }
+  }
   let first: string | undefined;
   try {
     for (const chunk of splitForDiscord(text)) {
       if (!chunk.trim()) continue;
-      const id = await discordPostMessage(origin.channelId, chunk, first === undefined && origin.messageId ? { replyToMessageId: origin.messageId } : undefined);
+      const id = await discordPostMessage(targetChannelId, chunk, first === undefined && anchorToMessage ? { replyToMessageId: anchorToMessage } : undefined);
       first ??= id;
     }
   } catch {
-    throw new Error(`unified reply couldn't post to Discord — create-message failed on channel ${origin.channelId}`);
+    throw new Error(`unified reply couldn't post to Discord — create-message failed on channel ${targetChannelId}`);
   }
   if (first === undefined) {
     throw new Error(`unified reply couldn't post to Discord — nothing to post (empty reply) for channel ${origin.channelId}`);
