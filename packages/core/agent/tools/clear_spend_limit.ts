@@ -105,6 +105,14 @@ const clearSpendLimitEntry = defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    if (posted.deduped) {
+      return {
+        requested: false,
+        pendingId: posted.id,
+        expiresAt: posted.expiresAt,
+        note: `Already pending — an identical clear of the ${plan.args.level} override on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,

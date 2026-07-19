@@ -8,7 +8,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
-import type { PendingActionRow } from "./types.js";
+import type { PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-forget.js";
 import "./access-request.js";
 import "./skill-create.js";
@@ -58,7 +58,7 @@ export interface RequestApprovalDeps {
   readonly postCard?: CardPoster;
 }
 
-export async function requestApproval(input: RequestApprovalInput, deps: RequestApprovalDeps = {}): Promise<{ id: string; expiresAt: string }> {
+export async function requestApproval(input: RequestApprovalInput, deps: RequestApprovalDeps = {}): Promise<{ id: string; expiresAt: string; deduped?: boolean }> {
   const kindDef = actionKind(input.kind);
   if (!kindDef) {
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);
@@ -70,6 +70,15 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   const now = new Date();
   const expiresAt = new Date(now.getTime() + approvalTtlHours() * 3_600_000).toISOString();
   const argsJson = JSON.stringify(input.args ?? null);
+
+  const nowIso = now.toISOString();
+  const dup = (await store.listPendingActions(input.org)).find(
+    (r) => r.kind === input.kind && r.scopeKey === input.scopeKey && r.channelId === input.channelId && r.argsJson === argsJson && r.expiresAt > nowIso,
+  );
+  if (dup) {
+    emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "deduped" });
+    return { id: dup.id, expiresAt: dup.expiresAt, deduped: true };
+  }
 
   const row: PendingActionRow = {
     id: randomUUID(),
@@ -194,6 +203,13 @@ async function postThreadNote(post: PostFn, channelId: string, threadTs: string 
   if (threadTs) body.set("thread_ts", threadTs);
   body.set("text", text);
   await post("chat.postMessage", body.toString());
+}
+
+function decisionNoticeText(summaryLines: string[], outcomeLine: string, clickerId: string, status: PendingStatus): string {
+  const what = summaryLines[0] ?? "the requested change";
+  if (status === "rejected") return `⛔ Approval REJECTED by <@${clickerId}> — "${what}" was NOT applied. Propose again if it's still needed.`;
+  if (status === "expired") return `⌛ Approval EXPIRED without a decision — "${what}" was NOT applied. Propose again if it's still needed.`;
+  return `✅ Approval APPROVED by <@${clickerId}> — "${what}": ${outcomeLine}`;
 }
 
 function summaryLinesFor(row: PendingActionRow): string[] {
@@ -340,12 +356,14 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
         return true;
       case "expired":
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, "expired"));
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, "expired", clickerId, "expired"));
         return true;
       case "denied":
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
         return true;
       case "decided":
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, decisionNoticeText(res.summaryLines, res.outcomeLine, clickerId, res.row.status));
         return true;
     }
   } catch (err) {

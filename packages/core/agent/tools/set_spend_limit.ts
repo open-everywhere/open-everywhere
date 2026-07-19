@@ -181,6 +181,14 @@ export default defineTool({
       ...(plan.args.monthlyTokens != null ? [`${plan.args.monthlyTokens.toLocaleString()} tokens/month (current: ${plan.args.currentCap === null ? "uncapped" : plan.args.currentCap.toLocaleString()})`] : []),
       ...(plan.args.monthlyUsd != null ? [`$${plan.args.monthlyUsd.toFixed(2)}/month (current: ${plan.args.currentUsd === null ? "uncapped" : `$${plan.args.currentUsd.toFixed(2)}`})`] : []),
     ].join(" + ");
+    if (posted.deduped) {
+      return {
+        requested: false,
+        pendingId: posted.id,
+        expiresAt: posted.expiresAt,
+        note: `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,

@@ -362,7 +362,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
     {
       org: "default",
       kind: "spend.set",
-      args: { org: "default", scopeKey: "slack/T4/C4", level: "surface", monthlyTokens: 750, currentCap: null },
+      args: { org: "default", scopeKey: "slack/T4/C4", level: "surface", monthlyTokens: 751, currentCap: null },
       scopeKey: "slack/T4/C4",
       requestedBy: "U_REQUESTER",
       channelId: "C4",
@@ -396,6 +396,95 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(threw, "requestApproval: throws when the Slack post fails (a pending nobody can see must not linger)");
   const postFailExpiry = (await readAudit({ org: "default", action: "approval.expired" })).find((e) => e.detail?.cause === "card_post_failed");
   ok(postFailExpiry?.detail?.kind === "spend.set" && postFailExpiry?.principalId === "U_REQUESTER", "requestApproval: a failed card post audits approval.expired with cause \"card_post_failed\"");
+}
+
+{
+  const store = getOperationalStore();
+  const calls: { method: string; body: string }[] = [];
+  let ts = 700;
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true, ts: `${ts++}.0` };
+  };
+  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T9/C9", level: "surface", monthlyTokens: 1234, currentCap: null }, scopeKey: "slack/T9/C9", requestedBy: "U_REQUESTER", channelId: "C9" } as const;
+
+  const first = await requestApproval(args, { post });
+  ok(first.deduped !== true, "requestApproval dedup: the FIRST proposal is a real mint (not deduped)");
+  const postsAfterFirst = calls.filter((c) => c.method === "chat.postMessage").length;
+
+  const second = await requestApproval(args, { post });
+  ok(second.deduped === true, "requestApproval dedup: an IDENTICAL pending proposal on the same surface is deduped");
+  ok(second.id === first.id, "requestApproval dedup: the deduped result points at the SAME live pending id");
+  ok(calls.filter((c) => c.method === "chat.postMessage").length === postsAfterFirst, "requestApproval dedup: no SECOND card is posted for the duplicate");
+  ok((await store.listPendingActions("default")).filter((r) => r.scopeKey === "slack/T9/C9").length === 1, "requestApproval dedup: exactly ONE pending row exists for the duplicated action");
+
+  const different = await requestApproval({ ...args, args: { ...args.args, monthlyTokens: 5678 } }, { post });
+  ok(different.deduped !== true && different.id !== first.id, "requestApproval dedup: a different proposed value is NOT deduped — it mints a fresh card");
+}
+
+{
+  const calls: { method: string; body: string }[] = [];
+  let ts = 750;
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true, ts: `${ts++}.0` };
+  };
+  const proposal = { org: "default", scopeKey: "slack/T11/C11", level: "surface", monthlyTokens: 4321, currentCap: null };
+  await getOperationalStore().addPendingAction(
+    row({ id: "p-wall-expired", scopeKey: "slack/T11/C11", channelId: "C11", argsJson: JSON.stringify(proposal), expiresAt: new Date(Date.now() - 60_000).toISOString() }),
+  );
+  const fresh = await requestApproval(
+    { org: "default", kind: "spend.set", args: proposal, scopeKey: "slack/T11/C11", requestedBy: "U_REQUESTER", channelId: "C11" },
+    { post },
+  );
+  ok(fresh.deduped !== true, "dedup: a wall-expired row the sweep hasn't reaped yet is NOT deduped against");
+  ok(fresh.id !== "p-wall-expired", "dedup: the proposal past a wall-expired twin mints a genuinely NEW pending id");
+}
+
+{
+  const store = getOperationalStore();
+  const calls: { method: string; body: string }[] = [];
+  let ts = 800;
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true, ts: `${ts++}.0` };
+  };
+  const args = { org: "default", kind: "spend.set", args: { org: "default", scopeKey: "slack/T10/C10", level: "surface", monthlyTokens: 42, currentCap: null }, scopeKey: "slack/T10/C10", requestedBy: "U_REQUESTER", channelId: "C10", threadTs: "ANCHOR.10" } as const;
+
+  const first = await requestApproval(args, { post });
+  await handleApprovalPayload(payloadFor(`oe_approval:reject:${first.id}`, { user: "U_ORG_ADMIN", channel: "C10", ts: "800.0" }), { post });
+  ok((await store.getPendingAction("default", first.id))?.status === "rejected", "re-propose: the reject decides the row to rejected");
+
+  const again = await requestApproval(args, { post });
+  ok(again.deduped !== true, "re-propose: an identical proposal after a REJECTION is NOT deduped");
+  ok(again.id !== first.id, "re-propose: the re-proposal is a genuinely NEW pending id, not the rejected one");
+
+  const notice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.10" && (bodyField(c.body, "text") ?? "").includes("REJECTED"));
+  ok(!!notice, "decision notice: a REJECT posts a fresh message into the pending's anchor thread (thread_ts = the mint-time anchor)");
+  ok((bodyField(notice!.body, "text") ?? "").includes("NOT applied"), "decision notice: the reject notice states plainly the change was NOT applied (never an auto-retry)");
+}
+
+{
+  const store = getOperationalStore();
+  await store.addPendingAction(
+    row({
+      id: "p-notice-approve",
+      argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T11/C11", level: "surface", monthlyTokens: 900, currentCap: null }),
+      scopeKey: "slack/T11/C11",
+      channelId: "C11",
+      threadTs: "ANCHOR.11",
+      domain: null,
+    }),
+  );
+  const calls: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string) => {
+    calls.push({ method, body });
+    return { ok: true };
+  };
+  await handleApprovalPayload(payloadFor("oe_approval:approve:p-notice-approve", { user: "U_ORG_ADMIN", channel: "C11", ts: "111.222" }), { post });
+  const approveNotice = calls.find((c) => c.method === "chat.postMessage" && bodyField(c.body, "thread_ts") === "ANCHOR.11" && (bodyField(c.body, "text") ?? "").includes("APPROVED"));
+  ok(!!approveNotice, "decision notice: an APPROVE posts a fresh 'APPROVED' message into the anchor thread");
+  await getOperationalStore().clearSpendLimit("default", "slack/T11/C11", "surface");
 }
 
 {
