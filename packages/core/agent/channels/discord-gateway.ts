@@ -650,6 +650,10 @@ async function divertDiscordWakeToUnifiedWindow(input: {
   const org = deploymentOrg();
   const store = getOperationalStore();
   const atIso = new Date().toISOString();
+
+  if (input.addressing === "direct-mention" && isThreadChannelType(msg.channelType)) {
+    await markThreadEngaged(input.partition, msg.channelId, atIso, { participating: true });
+  }
   const domainName = grain.domainName ?? "unknown";
   const tokenFor = (gen: number) => supervisorTokenForGrain(grain, gen, () => unifiedSupervisorToken(domainName, gen));
 

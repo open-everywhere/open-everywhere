@@ -5,6 +5,8 @@ import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.
 import { loadGitHubAppConfig } from "../scm/config.js";
 import { createCommentReply } from "./notion-api.js";
 import { discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
+import { markThreadEngaged } from "./engagement.js";
+import { deploymentOrg } from "../identity/binding.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import { isTrustedTeamsServiceUrl } from "./unified-window.js";
 import { auditReplyPost, type ReplyAudit } from "./reply-post.js";
@@ -64,6 +66,14 @@ async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<str
     if (threadId) {
       targetChannelId = threadId;
       anchorToMessage = undefined;
+      const workspaceKey = `discord/${origin.guildId}`;
+      const surfaceKey = `${workspaceKey}/${threadId}`;
+      await markThreadEngaged(
+        { org: deploymentOrg(), platform: "discord", workspace: origin.guildId, surface: threadId, workspaceKey, surfaceKey, key: surfaceKey },
+        threadId,
+        new Date().toISOString(),
+        { participating: true },
+      );
     }
   }
   let first: string | undefined;
