@@ -57,6 +57,13 @@ const bundles: Bundle[] = [
     ],
   }),
 
+  defineBundle({
+    name: "e2e-pr-fixture",
+    repos: ["example-owner/e2e-scratch"],
+    instructions:
+      "example-owner/e2e-scratch is a scratch repository for exercising the PR flow. Changes go via branch + open_pull_request.",
+  }),
+
 ];
 
 const bindings: Binding[] = [
@@ -67,6 +74,8 @@ const bindings: Binding[] = [
   defineBinding({ bundle: "notion-connectors", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
 
   defineBinding({ bundle: "e2e-access-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
+
+  defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
 
   defineBinding({
     bundle: "notion-connectors",
