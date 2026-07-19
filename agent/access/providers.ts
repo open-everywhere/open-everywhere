@@ -9,10 +9,11 @@ const providers: Provider[] = [
     name: "notion",
     description: "Notion workspace (host-side MCP) — read/write the team knowledge base.",
     connection: "notion",
-    allows: ["api-key", "service-oauth"],
+    allows: ["api-key", "service-oauth", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY" },
-      { id: "team-oauth", type: "service-oauth", vercelConnector: "oauth/notion-app" },
+      { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere" },
+      { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
     ],
   }),
 ];

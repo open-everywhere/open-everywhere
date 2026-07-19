@@ -35,13 +35,21 @@ const bundles: Bundle[] = [
       },
     ],
     plugins: ["notion"],
-    providers: [{ provider: "notion", credential: "team-key" }],
+    providers: [{ provider: "notion", credential: "team-oauth" }],
     instructions:
       "This channel is a live-test bed for the three ways this agent can reach Notion " +
       "(backlog item 19): direct REST over api.notion.com (auth is injected automatically " +
       "at the network boundary — never ask for or fabricate a token), the notion-rest " +
       "skill (a scripted version of the same REST calls), and the notion MCP connector. " +
       "All three reach the same Notion workspace; use whichever a request asks for.",
+  }),
+
+  defineBundle({
+    name: "notion-personal",
+    providers: [{ provider: "notion", credential: "user-oauth" }],
+    instructions:
+      "Your Notion connector in this DM acts as this user's own account — reads and writes " +
+      "carry their identity and access, not the shared team integration.",
   }),
 
   defineBundle({
@@ -81,6 +89,11 @@ const bindings: Binding[] = [
     bundle: "notion-connectors",
     scope: { level: "workspace", workspace: "1300000000000000100" },
     allowBroad: "single-operator Discord test guild — every channel in it is the operator's own live-test surface",
+  }),
+
+  defineBinding({
+    bundle: "notion-personal",
+    scope: { level: "workspace", workspace: "dm:U0EXOWNER" },
   }),
 
 ];

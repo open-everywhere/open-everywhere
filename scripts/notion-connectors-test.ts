@@ -62,7 +62,8 @@ ok(
 ok(bound.connectors.includes("notion"), "route ③: the 'notion' MCP connection is granted");
 const notionCred = bound.connectorCredentials["notion"];
 ok(notionCred !== undefined, "route ③: a provider credential is bound for 'notion'");
-ok(notionCred?.provider === "notion" && notionCred?.credential === "team-key" && notionCred?.type === "api-key", "route ③: bound to the 'team-key' api-key credential");
+ok(notionCred?.provider === "notion" && notionCred?.credential === "team-oauth" && notionCred?.type === "service-oauth", "route ③: bound to the 'team-oauth' service-oauth credential (hosted MCP rejects api-keys)");
+ok(notionCred?.vercelConnector === "notion.so/open-everywhere", "route ③: credential carries the Connect connector UID");
 ok(notionCred?.principal === "app", "route ③: app principal (the shared service identity, not a personal DM grant)");
 
 const unbound = resolveFor("T_SOME_OTHER_WORKSPACE", "C_SOME_OTHER_CHANNEL");
