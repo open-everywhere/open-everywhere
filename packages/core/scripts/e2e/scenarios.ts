@@ -1153,12 +1153,15 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
 
-      const anchorBlocks = await not.pageBlocks();
-      if (anchorBlocks.length < 3) {
-        ctx.log(`addressed legs skipped — the scratch page has only ${anchorBlocks.length} top-level blocks (need 3 distinct discussion anchors)`);
-        return;
-      }
       const runTag = factToken("not");
+      const anchorBlocks = [
+        await not.appendParagraphBlock(`e2e J-NOT anchor A (${runTag}) — safe to archive`),
+        await not.appendParagraphBlock(`e2e J-NOT anchor B (${runTag}) — safe to archive`),
+        await not.appendParagraphBlock(`e2e J-NOT anchor C (${runTag}) — safe to archive`),
+      ];
+      const archiveAnchors = async () => {
+        for (const b of anchorBlocks) await not.archiveBlock(b);
+      };
 
       const c1 = await not.createBlockDiscussion(anchorBlocks[0], `OE — quick check (${runTag}-a): what is this page for? A one-line answer right here is perfect.`);
       ctx.gate(c1.commentId.length > 0 && c1.discussionId.length > 0, "on-topic: the fresh addressed comment minted its own discussion");
@@ -1198,12 +1201,14 @@ export const SCENARIOS: readonly Scenario[] = [
 
       if (!(not.webhookSecret && ctx.targetUrl)) {
         ctx.log("webhook-gate leg skipped — set E2E_NOTION_WEBHOOK_SECRET + E2E_TARGET_URL to exercise the route contract");
+        await archiveAnchors();
         return;
       }
       const unsigned = await not.forgeCommentCreated(ctx.targetUrl, c1.commentId, { signed: false });
       ctx.gate(unsigned.status === 401 || unsigned.status === 403, "webhook gate: an unsigned comment.created replay is rejected (401/403)");
       const bogus = await not.forgeCommentCreated(ctx.targetUrl, "00000000-0000-0000-0000-000000000000");
       ctx.gate(bogus.status === 200, "webhook gate: a signed replay for an unfetchable comment id is acked fail-soft (200, no post)");
+      await archiveAnchors();
     },
   },
   {

@@ -113,6 +113,28 @@ export class NotionDriver {
     return c.authorId === this.cfg.botUserId;
   }
 
+  async appendParagraphBlock(text: string): Promise<string> {
+    const res = await fetch(`${NOTION_API}/blocks/${encodeURIComponent(this.cfg.pageId)}/children`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
+      body: JSON.stringify({ children: [{ object: "block", type: "paragraph", paragraph: { rich_text: [{ text: { content: text } }] } }] }),
+    });
+    if (!res.ok) throw new Error(`notion PATCH /blocks/:page/children → ${res.status}`);
+    const json = (await res.json()) as { results?: { id?: unknown }[] };
+    const id = typeof json.results?.[0]?.id === "string" ? json.results[0].id : "";
+    if (!id) throw new Error("notion block append returned no block id");
+    this.blockIdsCache = undefined;
+    return id;
+  }
+
+  async archiveBlock(blockId: string): Promise<void> {
+    await fetch(`${NOTION_API}/blocks/${encodeURIComponent(blockId)}`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${this.cfg.driverKey}`, "notion-version": NOTION_VERSION, "content-type": "application/json" },
+      body: JSON.stringify({ archived: true }),
+    }).catch(() => undefined);
+  }
+
   async pageBlocks(): Promise<readonly string[]> {
     const json = await this.api(`/blocks/${encodeURIComponent(this.cfg.pageId)}/children?page_size=50`);
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
