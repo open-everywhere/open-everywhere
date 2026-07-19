@@ -285,7 +285,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const card1 = await awaitCard(slack, ask1Ts, REPLY_WAIT);
       const btn1 = approveButton(card1)!;
       ctx.gate(btn1.pendingId.length > 0 && btn1.org.length > 0, "S15: card1 button carries a real pending id + org");
-      const denied = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "approve", messageTs: card1.ts, channelId: slack.channelId, userId: user2 });
+      const denied = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "approve", messageTs: card1.ts, channelId: slack.channelId, userId: user2, teamId });
       ctx.log(`${denied.label}: NON-admin approve ${btn1.pendingId} as ${user2} → ${denied.status}`);
       ctx.gate(denied.status === 200, "S15: non-admin forged approve acked 200 (route contract, not consent)");
       const note = await slack.awaitThreadMessage(
@@ -300,11 +300,12 @@ export const SCENARIOS: readonly Scenario[] = [
         stillPending !== undefined && approveButton(stillPending) !== undefined,
         "S15: card1 still PENDING after the non-admin click (buttons intact — NOT decided)",
       );
-      const rejected = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "reject", messageTs: card1.ts, channelId: slack.channelId });
+      const rejected = await synthetic.click({ pendingId: btn1.pendingId, org: btn1.org, decision: "reject", messageTs: card1.ts, channelId: slack.channelId, teamId });
       ctx.log(`${rejected.label}: admin reject ${btn1.pendingId} → ${rejected.status}`);
       ctx.gate(rejected.status === 200, "S15: admin forged reject acked 200");
       await awaitDecided(slack, ask1Ts, card1.ts, REPLY_WAIT);
       ctx.gate(true, "S15: admin reject DECIDES card1 (buttons removed) — reject-path coverage");
+      await sleep(15_000);
 
       const card2 = await driveDecide({
         slack, synthetic, gate: ctx.gate, log: ctx.log,

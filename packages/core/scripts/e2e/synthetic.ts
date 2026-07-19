@@ -23,6 +23,7 @@ export interface ApprovalClickInput {
   readonly channelId: string;
   readonly messageTs: string;
   readonly org: string;
+  readonly teamId?: string;
 }
 
 export function buildApprovalClickPayload(input: ApprovalClickInput): Record<string, unknown> {
@@ -31,6 +32,7 @@ export function buildApprovalClickPayload(input: ApprovalClickInput): Record<str
     user: { id: input.userId },
     channel: { id: input.channelId },
     message: { ts: input.messageTs },
+    ...(input.teamId ? { team: { id: input.teamId } } : {}),
     actions: [{ action_id: `${APPROVAL_PREFIX}${input.decision}:${input.pendingId}`, type: "button", value: input.org }],
   };
 }

@@ -73,7 +73,8 @@ export async function driveDecide(args: {
   const btn = approveButton(card)!;
   gate(btn.pendingId.length > 0, "card button carries a real pending id in its action_id");
   gate(btn.org.length > 0, "card button carries the org in its value (flow.ts needs it pre-lookup)");
-  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision, messageTs: card.ts, channelId: slack.channelId });
+  const { teamId } = await slack.identity();
+  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision, messageTs: card.ts, channelId: slack.channelId, teamId });
   args.log(`${clicked.label}: ${decision} ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
   gate(clicked.status === 200, `forged ${decision} click acked 200`);
   await awaitDecided(slack, askTs, card.ts, timeoutMs);
@@ -125,7 +126,8 @@ export async function drivePrOpen(args: {
   gate(btn.org.length > 0, "pr.open card carries the org in its value (flow.ts needs it pre-lookup)");
   await args.beforeApprove?.(card);
 
-  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId });
+  const { teamId } = await slack.identity();
+  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId, teamId });
   args.log(`${clicked.label}: approve pr.open ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
   gate(clicked.status === 200, "forged admin approve click acked 200");
   const decided = await awaitDecided(slack, askTs, card.ts, timeoutMs);
