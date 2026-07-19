@@ -1827,6 +1827,8 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 300_000,
     judged: true,
     run: async (ctx) => {
+      if (process.env.E2E_CONNECTOR_OAUTH?.trim() !== "1")
+        ctx.skip("needs an OAuth-armed Notion connector (hosted MCP rejects API keys — task #93); set E2E_CONNECTOR_OAUTH=1 once Vercel Connect is provisioned");
       const connector = ctx.connectorWrite!;
       const rToken = factToken("ctread");
       const { ts: readTs } = await connector.post(
