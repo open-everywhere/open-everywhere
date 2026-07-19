@@ -31,6 +31,9 @@ const {
   resolveLinear,
   resolveNotionAmbient,
   resolveSlackUnified,
+  resolvePr,
+  resolveConnectorWrite,
+  auditSilencesExpected,
   resolveCapabilities,
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("./e2e/env.js");
@@ -201,13 +204,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   const EXPECTED_IDS = new Set([
     "J1", "J2", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
-    "J-UNIFIED", "J-UNI-X",
+    "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split — both self-skipping until the connectorWrite fixture is armed)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -219,8 +222,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S8,S9,S10,S24,J-UNI-X",
-    "the plan's stretch scenarios PLUS the gated Notion leg PLUS the cross-surface unified money-shot are optional (S11–S23 are core coverage)",
+    optional.join(",") === "S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios are optional (S11–S23 are core coverage)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -236,12 +239,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-TEAMS,J-UNI-X,S8",
-    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT(notion)",
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-CONNECTOR-TIER,S-NOTION-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER(notion)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
-  ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC", "the security suite is exactly F-SEC (tainted-remember/SSRF/injection probes)");
+  ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC,S-PR-BOUNDARY", "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
   ok(unjudged.join(",") === "S6,S10,J-NOT,J-SUP", "S6/S10/J-NOT/J-SUP are fully deterministic — no judge (S15's deterministic legs folded into judged J3; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
@@ -256,10 +259,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(req("J-TEAMS") === "teams", "J-TEAMS requires only the teams driver");
   ok(req("J-UNIFIED") === "slack+slackUnified", "J-UNIFIED requires slack + slackUnified (the two-channel unified-domain fixture; audit legs guard on targetUrl/token at runtime)");
   ok(req("J-UNI-X") === "slack+slackUnified+github", "J-UNI-X (plan-only) requires slack + slackUnified + github — the eventual cross-surface fixture union");
+  ok(req("J-PR") === "slack+synthetic+pr", "J-PR requires slack + synthetic (forge the approve) + pr (the granted target repo + readback token)");
+  ok(req("S-PR-BOUNDARY") === "slack", "S-PR-BOUNDARY requires only slack (the ungranted-repo ask needs no repo/token — the refusal precedes any remote touch)");
+  ok(req("J-WORKFLOW") === "slack+synthetic+pr", "J-WORKFLOW requires slack + synthetic + pr (the read→PR→remember→recall chain reuses the PR drive)");
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
@@ -276,13 +282,15 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     linear: [ENV.linearApiKey, ENV.linearTeamId, ENV.linearAppUserId, ENV.linearAgentHandle],
     notionAmbient: [ENV.notionDriverKey, ENV.notionAmbientPageId, ENV.notionBotUserId, ENV.notionWorkspaceId],
     slackUnified: [ENV.slackUnifiedChannelA, ENV.slackUnifiedChannelB],
+    pr: [ENV.prRepo, ENV.githubDriverToken],
+    connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
   } as const;
   for (const s of SCENARIOS) {
     const reason = skipReason(s, none, missing, false);
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
@@ -299,6 +307,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     linear: [],
     notionAmbient: [],
     slackUnified: [],
+    pr: [],
+    connectorWrite: [],
   } as const;
   ok(skipReason(SCENARIOS[0], all, noneMissing, false) === undefined, "the first scenario (J1) runs when its capability is live");
   ok(
@@ -348,8 +358,16 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     jUni === `missing slackUnified driver (set ${ENV.slackUnifiedChannelA}, ${ENV.slackUnifiedChannelB})`,
     "J-UNIFIED skip names exactly E2E_SLACK_UNIFIED_CHANNEL_A + E2E_SLACK_UNIFIED_CHANNEL_B",
   );
-  for (const id of ["S11", "J2", "J3", "J4", "S13", "S14", "S20", "S23", "J-UNIFIED"]) {
+  for (const id of ["S11", "J2", "J3", "J4", "S13", "S14", "S20", "S23", "J-UNIFIED", "J-PR", "S-PR-BOUNDARY", "J-WORKFLOW"]) {
     ok(skipReason(SCENARIOS.find((s) => s.id === id)!, all, noneMissing, false) === undefined, `${id} runs (non-optional) when its fixtures are live`);
+  }
+  {
+    const baseSyn = new Set(["slack", "synthetic"] as const);
+    const jpr = skipReason(SCENARIOS.find((s) => s.id === "J-PR")!, baseSyn, missing, false);
+    ok(jpr === `missing pr driver (set ${ENV.prRepo}, ${ENV.githubDriverToken})`, "J-PR skip names exactly E2E_PR_REPO + E2E_GITHUB_DRIVER_TOKEN (the pr capability)");
+    const jwf = skipReason(SCENARIOS.find((s) => s.id === "J-WORKFLOW")!, baseSyn, missing, false);
+    ok(jwf === `missing pr driver (set ${ENV.prRepo}, ${ENV.githubDriverToken})`, "J-WORKFLOW skip names exactly the pr capability vars");
+    ok(skipReason(SCENARIOS.find((s) => s.id === "S-PR-BOUNDARY")!, new Set(["slack"] as const), missing, false) === undefined, "S-PR-BOUNDARY runs with slack alone (no pr fixture — the ungranted-repo refusal needs none)");
   }
   {
     const jx = SCENARIOS.find((s) => s.id === "J-UNI-X")!;
@@ -428,6 +446,53 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(ev.action === "created" && comment.user?.type === "User", "forged issue_comment is action=created with a User-typed (not Bot) author");
   ok((comment.body ?? "").startsWith("@open-everywhere"), "forged comment body carries the @slug mention (githubBotMentioned wakes on it)");
   ok((ev.repository as { full_name?: string }).full_name === "o/r", "forged event names the repo full_name");
+}
+
+{
+  const prMiss = resolvePr({});
+  ok(!prMiss.ok && prMiss.missing.length === 2 && prMiss.missing.includes(ENV.prRepo) && prMiss.missing.includes(ENV.githubDriverToken), "pr half reports E2E_PR_REPO + E2E_GITHUB_DRIVER_TOKEN missing in an empty env");
+  const prRepoOnly = resolvePr({ [ENV.prRepo]: "acme/e2e-scratch" });
+  ok(!prRepoOnly.ok && prRepoOnly.missing.join(",") === ENV.githubDriverToken, "pr half still fails-closed on the reused driver PAT when only E2E_PR_REPO is set");
+  const prFull = resolvePr({ [ENV.prRepo]: "acme/e2e-scratch", [ENV.githubDriverToken]: "ghp_x" });
+  ok(prFull.ok && prFull.cfg.repo === "acme/e2e-scratch" && prFull.cfg.token === "ghp_x", "pr cfg carries the target repo + the reused driver token");
+
+  const { classifyPrMiss } = await import("./e2e/journey.js");
+  ok(classifyPrMiss('repo "acme/x" is not granted to this channel. Allowed: (none). Grant it via a bundle') === "grant-refused", "classifyPrMiss: a fail-closed grant refusal → grant-refused (SKIP with provisioning guidance)");
+  ok(classifyPrMiss("the staging push of my-branch failed — checkout the repo first") === "errored", "classifyPrMiss: a push/checkout failure → errored (prefer FAIL)");
+  ok(classifyPrMiss("couldn't push your branch to the remote") === "errored", "classifyPrMiss: a couldn't-push reply → errored");
+  ok(classifyPrMiss("Sure — what change would you like in the PR?") === "no-tool", "classifyPrMiss: a plain narration reply (no tool call) → no-tool (SKIP as model-choice)");
+}
+
+{
+  const cwEmpty = resolveConnectorWrite({});
+  ok(
+    !cwEmpty.ok && cwEmpty.missing.length === 2 && cwEmpty.missing.includes(ENV.notionChannel) && cwEmpty.missing.includes(ENV.connectorWrite),
+    "connectorWrite half reports BOTH E2E_NOTION_CHANNEL + E2E_CONNECTOR_WRITE missing in an empty env",
+  );
+  const cwChannelOnly = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION" });
+  ok(!cwChannelOnly.ok && cwChannelOnly.missing.join(",") === ENV.connectorWrite, "connectorWrite still fails-closed on the arming flag when only the channel is set");
+  const cwFlagZero = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", [ENV.connectorWrite]: "0" });
+  ok(!cwFlagZero.ok && cwFlagZero.missing.join(",") === ENV.connectorWrite, "connectorWrite treats E2E_CONNECTOR_WRITE=0 as UNSET (explicit '1' opt-in, not mere truthiness)");
+  const cwArmed = resolveConnectorWrite({ [ENV.notionChannel]: "C0NOTION", [ENV.connectorWrite]: "1" });
+  ok(cwArmed.ok && cwArmed.cfg.channel === "C0NOTION", "connectorWrite resolves only with the channel AND E2E_CONNECTOR_WRITE=1 (carries the bound channel)");
+
+  ok(!auditSilencesExpected({}), "auditSilencesExpected is FALSE by default (prod is actions-only)");
+  ok(!auditSilencesExpected({ [ENV.auditSilences]: "0" }), "auditSilencesExpected is FALSE for E2E_AUDIT_SILENCES=0");
+  ok(auditSilencesExpected({ [ENV.auditSilences]: "1" }), "auditSilencesExpected is TRUE only at E2E_AUDIT_SILENCES=1");
+
+  const baseOnly = new Set(["slack"] as const);
+  const cwMissing = {
+    slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackSupervisor: [],
+    syntheticDm: [], slackUser2: [], webhook: [], notion: [], teams: [], github: [], linear: [],
+    notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
+  } as const;
+  for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {
+    const r = skipReason(SCENARIOS.find((s) => s.id === id)!, baseOnly, cwMissing, true);
+    ok(
+      r === `missing connectorWrite driver (set ${ENV.notionChannel}, ${ENV.connectorWrite})`,
+      `${id} dry-skip names exactly E2E_NOTION_CHANNEL + E2E_CONNECTOR_WRITE (capability wins over the optional gate)`,
+    );
+  }
 }
 
 {

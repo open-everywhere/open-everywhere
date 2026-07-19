@@ -1,6 +1,7 @@
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { SyntheticSlack } from "./synthetic.js";
 import { APPROVAL_PREFIX } from "./synthetic.js";
+import { pollUntil } from "./poll.js";
 
 export function factToken(stem: string): string {
   return `${stem}-${Date.now() % 100_000}`;
@@ -78,4 +79,65 @@ export async function driveDecide(args: {
   await awaitDecided(slack, askTs, card.ts, timeoutMs);
   gate(true, `card DECIDED — buttons removed by the deployment's chat.update (hard gate)`);
   return card;
+}
+
+export interface PrReadback {
+  getPr(prNumber: number): Promise<{ readonly head: string; readonly base: string } | undefined>;
+  prContainsToken(prNumber: number, token: string): Promise<boolean>;
+}
+
+export function classifyPrMiss(replyText: string): "grant-refused" | "errored" | "no-tool" {
+  if (/not granted to this channel|grant it via a bundle|not in the granted/i.test(replyText)) return "grant-refused";
+  if (/(push|staging|commit|checkout|clone|git)[^.]{0,48}(fail|error)|could ?n.?t (?:push|open|create|stage|commit|clone|check ?out)/i.test(replyText))
+    return "errored";
+  return "no-tool";
+}
+
+export type PrDriveResult =
+  | { readonly published: true; readonly card: SlackMessage; readonly prNumber: number; readonly head: string }
+  | { readonly published: false; readonly miss: "grant-refused" | "errored" | "no-tool"; readonly reason: string };
+
+export async function drivePrOpen(args: {
+  slack: SlackDriver;
+  synthetic: SyntheticSlack;
+  gate: GateFn;
+  log: (line: string) => void;
+  pr: PrReadback;
+  ask: string;
+  token: string;
+  base: string;
+  leg: string;
+  timeoutMs: number;
+  beforeApprove?: (card: SlackMessage) => void | Promise<void>;
+}): Promise<PrDriveResult> {
+  const { slack, synthetic, pr, ask, token, base, timeoutMs } = args;
+  const gate = legGate(args.gate, args.leg);
+  const { ts: askTs } = await slack.post(slack.mention(ask));
+  const firstReply = await slack.awaitThreadReply(askTs, { timeoutMs });
+  let card = approveButton(firstReply) !== undefined ? firstReply : await awaitCard(slack, askTs, timeoutMs).catch(() => undefined);
+  if (!card) {
+    const reason = firstReply.text.replace(/\s+/g, " ").trim().slice(0, 240);
+    return { published: false, miss: classifyPrMiss(firstReply.text), reason };
+  }
+
+  const btn = approveButton(card)!;
+  gate(btn.pendingId.length > 0, "pr.open card carries a real pending id in its action_id");
+  gate(btn.org.length > 0, "pr.open card carries the org in its value (flow.ts needs it pre-lookup)");
+  await args.beforeApprove?.(card);
+
+  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId });
+  args.log(`${clicked.label}: approve pr.open ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
+  gate(clicked.status === 200, "forged admin approve click acked 200");
+  const decided = await awaitDecided(slack, askTs, card.ts, timeoutMs);
+
+  const urlMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
+  gate(urlMatch !== null, `decided card names a published PR URL (execute succeeded) — got: "${decided.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`);
+  const prNumber = Number.parseInt(urlMatch![2], 10);
+  args.log(`published PR ${urlMatch![1]}#${prNumber}`);
+
+  const details = await pollUntil(async () => args.pr.getPr(prNumber), { timeoutMs, what: `the published PR #${prNumber} readable via the GitHub API` });
+  gate(details.base === base, `the published PR targets the "${base}" base branch (got "${details.base}")`);
+  const hasToken = await pr.prContainsToken(prNumber, token);
+  gate(hasToken, `the published PR's diff carries the run token "${token}" (the agent really made the change)`);
+  return { published: true, card, prNumber, head: details.head };
 }

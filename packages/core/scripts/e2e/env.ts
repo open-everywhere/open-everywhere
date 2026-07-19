@@ -14,12 +14,14 @@ export const ENV = {
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
   includeOptional: "E2E_INCLUDE_OPTIONAL",
+  auditSilences: "E2E_AUDIT_SILENCES",
   webhookSecret: "E2E_WEBHOOK_SECRET",
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
   slackSupervisorChannel: "E2E_SLACK_SUPERVISOR_CHANNEL",
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
+  connectorWrite: "E2E_CONNECTOR_WRITE",
   teamsTenantId: "E2E_TEAMS_TENANT_ID",
   teamsClientId: "E2E_TEAMS_CLIENT_ID",
   teamsRefreshToken: "E2E_TEAMS_REFRESH_TOKEN",
@@ -34,6 +36,10 @@ export const ENV = {
   githubIssue: "E2E_GITHUB_ISSUE",
   githubWebhookSecret: "E2E_GITHUB_WEBHOOK_SECRET",
   githubInstallationId: "E2E_GITHUB_INSTALLATION_ID",
+
+  prRepo: "E2E_PR_REPO",
+  prBase: "E2E_PR_BASE",
+  prUngrantedRepo: "E2E_PR_UNGRANTED_REPO",
 
   linearApiKey: "E2E_LINEAR_API_KEY",
   linearTeamId: "E2E_LINEAR_TEAM_ID",
@@ -74,7 +80,9 @@ export type Capability =
   | "github"
   | "linear"
   | "notionAmbient"
-  | "slackUnified";
+  | "slackUnified"
+  | "pr"
+  | "connectorWrite";
 
 export interface SlackDriverConfig {
   readonly token: string;
@@ -163,6 +171,15 @@ export interface SlackUnifiedConfig {
   readonly channelA: string;
   readonly channelB: string;
   readonly domain: string;
+}
+
+export interface PrConfig {
+  readonly repo: string;
+  readonly token: string;
+}
+
+export interface ConnectorWriteConfig {
+  readonly channel: string;
 }
 
 export type Resolved<T> =
@@ -315,6 +332,23 @@ export function resolveSlackUnified(env: Env = process.env): Resolved<SlackUnifi
   return { ok: true, cfg: { channelA: values[0], channelB: values[1], domain } };
 }
 
+export function resolvePr(env: Env = process.env): Resolved<PrConfig> {
+  const { values, missing } = need(env, [ENV.prRepo, ENV.githubDriverToken]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { repo: values[0], token: values[1] } };
+}
+
+export function resolveConnectorWrite(env: Env = process.env): Resolved<ConnectorWriteConfig> {
+  const { values, missing } = need(env, [ENV.notionChannel, ENV.connectorWrite]);
+  if (missing.length > 0) return { ok: false, missing };
+  if (env[ENV.connectorWrite]?.trim() !== "1") return { ok: false, missing: [ENV.connectorWrite] };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
+export function auditSilencesExpected(env: Env = process.env): boolean {
+  return env[ENV.auditSilences]?.trim() === "1";
+}
+
 export interface CapabilityReport {
   readonly available: ReadonlySet<Capability>;
   readonly missing: Readonly<Record<Capability, readonly string[]>>;
@@ -337,6 +371,8 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const linear = resolveLinear(env);
   const notionAmbient = resolveNotionAmbient(env);
   const slackUnified = resolveSlackUnified(env);
+  const pr = resolvePr(env);
+  const connectorWrite = resolveConnectorWrite(env);
   const available = new Set<Capability>();
   if (slack.ok) available.add("slack");
   if (discord.ok) available.add("discord");
@@ -353,6 +389,8 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (linear.ok) available.add("linear");
   if (notionAmbient.ok) available.add("notionAmbient");
   if (slackUnified.ok) available.add("slackUnified");
+  if (pr.ok) available.add("pr");
+  if (connectorWrite.ok) available.add("connectorWrite");
   return {
     available,
     missing: {
@@ -371,6 +409,8 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       linear: linear.ok ? [] : linear.missing,
       notionAmbient: notionAmbient.ok ? [] : notionAmbient.missing,
       slackUnified: slackUnified.ok ? [] : slackUnified.missing,
+      pr: pr.ok ? [] : pr.missing,
+      connectorWrite: connectorWrite.ok ? [] : connectorWrite.missing,
     },
     includeOptional: env[ENV.includeOptional] === "1",
   };
