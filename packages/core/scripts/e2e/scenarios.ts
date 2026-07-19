@@ -318,7 +318,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "S5/S15: card2's pending id DIFFERS from card1's (cards independently addressable — a reject cannot bleed into a later approve)",
       );
       await ctx.judgePass(
-        closedQA("Does the card clearly state what will change, the scope, and who asked?", { mustMatch: [new RegExp(`\\$?${capDollars}`)] }),
+        closedQA("Does the card clearly state what will change, the scope, and who asked?", { mustMatch: [new RegExp(`\\$?${String(capDollars).replace(/\B(?=(\d{3})+(?!\d))/g, ",?")}`)] }),
         card2.text,
         "S5: approved card legibility",
       );
