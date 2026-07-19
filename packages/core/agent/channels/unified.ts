@@ -274,7 +274,8 @@ export async function divertToUnifiedWindow(
   rememberUnifiedReceive(receive);
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
   const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
-  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken);
+  const replyAnchor = input.window.origin.platform === "slack" ? input.window.origin.replyAnchorTs : undefined;
+  const auth = stampUnifiedWindowAuth(input.auth, input.window.origin.platform, input.window.wakeId, input.window.addressing, sources, bareToken, replyAnchor);
   const target: UnifiedReceiveTarget = {
     token: input.token,
     wakeId: input.window.wakeId,

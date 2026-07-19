@@ -137,7 +137,7 @@ const bindSlack: Mapper = (ctx) => {
     trustVerified: mode === "dm" ? dmPartnerTrust !== undefined : undefined,
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target: channelId ? { channelId } : undefined,
-    threadTs: attr(a, ["thread_ts", "threadTs"]),
+    threadTs: attr(a, ["thread_ts", "threadTs"]) ?? attr(a, ["oe_reply_anchor", "oeReplyAnchor"]),
   };
 };
 

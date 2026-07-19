@@ -216,6 +216,8 @@ export const OE_GRAIN_ATTR = "oe_grain";
 export const OE_SOURCES_ATTR = "oe_sources";
 export const OE_WINDOW_TOKEN_ATTR = "oe_window_token";
 
+export const OE_REPLY_ANCHOR_ATTR = "oe_reply_anchor";
+
 export function rootDmGrainAttrs(isDm: boolean): Record<string, string> {
   return isDm ? { [OE_GRAIN_ATTR]: "standing" } : {};
 }
@@ -227,6 +229,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
   addressing?: "direct-mention",
   sources?: readonly string[],
   windowToken?: string,
+  replyAnchor?: string,
 ): A {
   return {
     ...auth,
@@ -238,6 +241,7 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
       ...(addressing ? { [OE_ADDRESSING_ATTR]: addressing } : {}),
       ...(sources && sources.length > 0 ? { [OE_SOURCES_ATTR]: encodeSources(sources) } : {}),
       ...(windowToken && windowToken.length > 0 ? { [OE_WINDOW_TOKEN_ATTR]: windowToken } : {}),
+      ...(replyAnchor && replyAnchor.length > 0 ? { [OE_REPLY_ANCHOR_ATTR]: replyAnchor } : {}),
     },
   };
 }
