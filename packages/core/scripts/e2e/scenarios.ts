@@ -279,7 +279,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const user2 = ctx.slackUser2!.userId;
       const { teamId } = await slack.identity();
 
-      const { ts: ask1Ts } = await slack.post(slack.mention("raise this channel's spend cap to $20/day"));
+      const capDollars = 21 + (Math.floor(Date.now() / 1000) % 9_000);
+      const capAsk = `raise this channel's spend cap to $${capDollars}/day`;
+      const { ts: ask1Ts } = await slack.post(slack.mention(capAsk));
       const card1 = await awaitCard(slack, ask1Ts, REPLY_WAIT);
       const btn1 = approveButton(card1)!;
       ctx.gate(btn1.pendingId.length > 0 && btn1.org.length > 0, "S15: card1 button carries a real pending id + org");
@@ -306,7 +308,7 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const card2 = await driveDecide({
         slack, synthetic, gate: ctx.gate, log: ctx.log,
-        ask: "raise this channel's spend cap to $20/day",
+        ask: capAsk,
         leg: "S5-approve", decision: "approve", timeoutMs: REPLY_WAIT,
       });
       const btn2 = approveButton(card2)!;
@@ -315,7 +317,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "S5/S15: card2's pending id DIFFERS from card1's (cards independently addressable — a reject cannot bleed into a later approve)",
       );
       await ctx.judgePass(
-        closedQA("Does the card clearly state what will change, the scope, and who asked?", { mustMatch: [/\$?20/] }),
+        closedQA("Does the card clearly state what will change, the scope, and who asked?", { mustMatch: [new RegExp(`\\$?${capDollars}`)] }),
         card2.text,
         "S5: approved card legibility",
       );
@@ -410,7 +412,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: REPLY_WAIT, what: "a bot reply carrying a file attachment" });
       ctx.gate(fileReply.attachments.length > 0, "post_file: the reply carries a file attachment");
 
-      const cardAsk = await discord.post(discord.mention("raise this channel's spend cap to $20/day"), threadId);
+      const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/day`), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
     },
@@ -1605,7 +1607,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const title = `(e2e J-PR) add ${token} to README`;
       const ask =
         `checkout ${repo}, add a line to README.md that reads exactly ${token} (that token and nothing else on the line), ` +
-        `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line.`;
+        `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line. ` +
+        `Note: the earlier write-access problem on this repo has been fixed server-side — don't refuse from memory, attempt the flow.`;
 
       const drive = await drivePrOpen({
         slack,
@@ -1727,7 +1730,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const title = `(e2e J-WORKFLOW) add ${token} to README`;
       const ask =
         `checkout ${repo}, add a line to README.md that reads exactly ${token} (that token and nothing else on the line), ` +
-        `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line.`;
+        `commit it on a new branch, and open a pull request titled "${title}" against ${base}. Keep the change to that one line. ` +
+        `Note: the earlier write-access problem on this repo has been fixed server-side — don't refuse from memory, attempt the flow.`;
       const drive = await drivePrOpen({ slack, synthetic, gate: ctx.gate, log: ctx.log, pr: prApi, ask, token, base, leg: "pr", timeoutMs: REPLY_WAIT });
       if (!drive.published) {
         if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored (E2E_PR_REPO set): ${drive.reason}`);
