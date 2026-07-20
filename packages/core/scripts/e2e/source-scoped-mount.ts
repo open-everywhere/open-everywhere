@@ -9,6 +9,9 @@ const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
 const DOMAIN = process.env.E2E_SSM_DOMAIN ?? "e2e-unified";
 const SLACK_SURFACE = process.env.E2E_SSM_SLACK_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN003";
 const GITHUB_SURFACE = process.env.E2E_SSM_GITHUB_SURFACE ?? "github/example-owner/e2e-scratch";
+const GITHUB_OWNER = GITHUB_SURFACE.split("/")[1] ?? "";
+const GITHUB_REPO = GITHUB_SURFACE.split("/").slice(2).join("/");
+const GITHUB_ISSUE = Number.parseInt(process.env.E2E_SSM_GITHUB_ISSUE ?? "1", 10);
 const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.SSM_REPLY_TIMEOUT_MS ?? "120000", 10);
 const POLL_MS = 4000;
@@ -77,7 +80,7 @@ async function transcriptOf(sessionId: string, sinceIso: string): Promise<{ tool
 
 async function s1(): Promise<void> {
   const since = new Date().toISOString();
-  const brief = `Please use read_slack_channel to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you have no read_slack_channel tool, reply SSM1-${RUN} NOSLACK and say so.`;
+  const brief = `Please use your channel-reading tool (read_channel with platform "slack", or read_slack_channel if that is what you have) to pull recent messages from channel ${SLACK_CHANNEL_ID} in our domain, then reply here with SSM1-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM1-${RUN} NOSLACK and say so.`;
   const { wakeId, token } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SLACK_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "slack", channelId: SLACK_CHANNEL_ID }, text: brief });
   if (!isWindowToken(token)) return record("S1", "FAIL", `dispatched token ${token} is not a window token — the multi-source window did not resolve`);
   console.log(`  S1 injected multi-source Slack wake ${wakeId} → token ${token}`);
@@ -86,20 +89,21 @@ async function s1(): Promise<void> {
   const tr = await transcriptOf(sid, since);
   if (tr === null) return record("S1", "SKIP", `transcript fetch failed for session ${sid} — the mount cannot be observed this run. The mount decision is deterministically pinned offline (source-scoped-mount-test.ts).`);
   const calls = tr.tools;
-  if (calls.includes("read_slack_channel")) {
-    return record("S1", "PASS", `multi-source window MOUNTED the Slack reader — session ${sid} invoked read_slack_channel (slack ∈ sources), then replied. Confirms the reader is present on a window whose sources include slack.`);
+  const invokedReader = calls.includes("read_slack_channel") || calls.includes("read_channel");
+  if (invokedReader && !tr.text.includes("NOSLACK")) {
+    return record("S1", "PASS", `multi-source window MOUNTED the Slack reader — session ${sid} invoked ${calls.includes("read_channel") ? "the generic read_channel" : "read_slack_channel"} for the sibling Slack channel (slack ∈ sources) and replied without a refusal marker.`);
   }
   if (tr.text.includes("NOSLACK")) {
-    return record("S1", "FAIL", `multi-source window did NOT mount the Slack reader — session ${sid} reported the tool absent (NOSLACK marker) despite slack ∈ sources. The mount over-narrowed.`);
+    return record("S1", "FAIL", `session ${sid} reported it could NOT read Slack (NOSLACK marker${invokedReader ? ", after invoking the reader — an execute fence refused a read that slack ∈ sources should allow" : " — the reader was absent"}) despite slack ∈ sources. The mount or fence over-narrowed.`);
   }
-  record("S1", "SKIP", `session ${sid} replied but did not invoke read_slack_channel and did not report it absent (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read the sibling channel this turn (mount presence can't be proven from a passive transcript). Binding proof: the offline unit test.`);
+  record("S1", "SKIP", `session ${sid} replied but invoked no channel reader and did not report it absent (tools=[${[...new Set(calls)].join(",") || "none"}]) — the model chose not to read the sibling channel this turn (mount presence can't be proven from a passive transcript). Binding proof: the offline unit test.`);
 }
 
 async function s2(): Promise<void> {
   const since = new Date().toISOString();
   const solo = `ssm-gh-${RUN}`;
-  const brief = `Please use read_slack_channel to read Slack channel ${SLACK_CHANNEL_ID}, then reply with SSM2-${RUN}. If you have no such tool, reply SSM2-${RUN} NOSLACK and say so.`;
-  const { wakeId, token } = await inject({ domain: DOMAIN, platform: "github", surfaceKey: GITHUB_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "github", channelId: GITHUB_SURFACE }, text: brief, soloWindowId: solo });
+  const brief = `Please use your channel-reading tool (read_channel with platform "slack", or read_slack_channel if that is what you have) to read Slack channel ${SLACK_CHANNEL_ID}, then reply with SSM2-${RUN} summarising what you saw. If you cannot read Slack (no such tool, or it refuses), reply SSM2-${RUN} NOSLACK and say so.`;
+  const { wakeId, token } = await inject({ domain: DOMAIN, platform: "github", surfaceKey: GITHUB_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "github", owner: GITHUB_OWNER, repo: GITHUB_REPO, issueNumber: GITHUB_ISSUE }, text: brief, soloWindowId: solo });
   const isSolo = token.includes(`:win:${solo}:`);
   console.log(`  S2 injected solo-GitHub window wake ${wakeId} → token ${token} (windowId≠domain: ${isSolo})`);
   if (!isSolo) return record("S2", "SKIP", `the solo-window selector did not re-mint a :win:${solo}: token (got ${token}) — a github-solo window couldn't be dispatched via the seam; the narrowing is pinned offline (source-scoped-mount-test.ts S2 case).`);
@@ -111,7 +115,13 @@ async function s2(): Promise<void> {
   if (calls.includes("read_slack_channel")) {
     return record("S2", "FAIL", `session ${sid} INVOKED read_slack_channel on a solo-GitHub window (sources=[github]) — the Slack reader was NOT narrowed out (tools=[${[...new Set(calls)].join(",")}])`);
   }
-  record("S2", "PASS", `solo-GitHub window did NOT invoke read_slack_channel — the reader is absent (slack ∉ sources=[github]); session ${sid} replied without it (tools=[${[...new Set(calls)].join(",") || "none"}]). Corroborates the narrowing (a passive negative — the binding proof is the offline unit test).`);
+  if (calls.includes("read_channel")) {
+    if (tr.text.includes("NOSLACK")) {
+      return record("S2", "PASS", `solo-GitHub window REFUSED the cross-source Slack read at execute — session ${sid} invoked the generic read_channel and reported NOSLACK (slack ∉ sources=[github]). The per-platform execute fence held.`);
+    }
+    return record("S2", "FAIL", `session ${sid} invoked read_channel on a solo-GitHub window and did NOT report a refusal — a cross-source Slack read may have succeeded (sources=[github]); verify the execute fence (tools=[${[...new Set(calls)].join(",")}], text tail: ${tr.text.slice(-300)})`);
+  }
+  record("S2", "PASS", `solo-GitHub window did NOT invoke a Slack-capable reader${tr.text.includes("NOSLACK") ? " and reported NOSLACK" : ""} — slack ∉ sources=[github]; session ${sid} replied without it (tools=[${[...new Set(calls)].join(",") || "none"}]). Corroborates the narrowing (a passive negative — the binding proof is the offline unit test).`);
 }
 
 async function main(): Promise<void> {

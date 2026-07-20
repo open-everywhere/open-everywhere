@@ -11,6 +11,7 @@ const SLACK_SURFACE = process.env.E2E_GRV_SLACK_SURFACE ?? "slack/T0EXAMPLE/C0EX
 const DISCORD_SURFACE = process.env.E2E_GRV_DISCORD_SURFACE ?? "";
 const SLACK_CHANNEL_ID = SLACK_SURFACE.split("/").slice(2).join("/");
 const DISCORD_CHANNEL_ID = DISCORD_SURFACE.split("/").slice(2).join("/");
+const DISCORD_GUILD_ID = DISCORD_SURFACE.split("/")[1] ?? "";
 const REPLY_TIMEOUT_MS = Number.parseInt(process.env.GRV_REPLY_TIMEOUT_MS ?? "120000", 10);
 const POLL_MS = 4000;
 const RUN = Date.now().toString().slice(-7);
@@ -114,7 +115,7 @@ async function g2(): Promise<void> {
   if (!DISCORD_SURFACE) return record("G2", "SKIP", "no E2E_GRV_DISCORD_SURFACE set — supply a discord/<guild>/<channel> surface in the domain to drive the additive Discord read.");
   const since = new Date().toISOString();
   const brief = `Please use read_channel with target {platform:"discord", channel:"${DISCORD_CHANNEL_ID}"} to read that Discord channel, then reply with GRV2-${RUN} summarising what you saw.`;
-  const { wakeId, token } = await inject({ domain: DOMAIN, platform: "discord", surfaceKey: DISCORD_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "discord", channelId: DISCORD_CHANNEL_ID }, text: brief });
+  const { wakeId, token } = await inject({ domain: DOMAIN, platform: "discord", surfaceKey: DISCORD_SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: { platform: "discord", channelId: DISCORD_CHANNEL_ID, guildId: DISCORD_GUILD_ID }, text: brief });
   console.log(`  G2 injected Discord wake ${wakeId} → token ${token}`);
   const sid = await pollForReplySession(since, wakeId, REPLY_TIMEOUT_MS);
   if (!sid) return classifyNoReply("G2", since, wakeId, "The Discord adapter render/normalize is pinned offline (generic-read-verbs-test.ts).");
