@@ -30,6 +30,7 @@ interface ToolCase {
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
 const notionCtx = { channel: { kind: "notion" }, session: { auth: { current: { attributes: {} } } } };
+const linearCtx = { channel: { kind: "linear" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const CASES: readonly ToolCase[] = [
   { slug: "reply", entryKey: "_base", ctx: slackCtx },
@@ -41,6 +42,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_slack_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "read_notion_page", entryKey: "_single", ctx: notionCtx },
   { slug: "read_notion_comments", entryKey: "_single", ctx: notionCtx },
+  { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "forget", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },

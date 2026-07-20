@@ -327,6 +327,10 @@ export function currentTurnAddressing(ctx: BindableContext): string | undefined 
   return attr(authOf(ctx)?.attributes, ["oe_addressing", "oeAddressing"]);
 }
 
+export function currentTurnIssue(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["issue_id", "issueId", "issue_identifier", "issueIdentifier"]);
+}
+
 export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   if (!isUnifiedWindowContext(ctx)) return;
   const origin = channelPlatform(ctx);

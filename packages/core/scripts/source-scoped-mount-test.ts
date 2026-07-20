@@ -120,6 +120,7 @@ firesWith(
     { name: "read_slack_thread", source: gated("slack") },
     { name: "read_notion_page", source: gated("notion") },
     { name: "read_notion_comments", source: gated("notion") },
+    { name: "read_linear_issue", source: gated("linear") },
     { name: "read_channel", source: "resolveReadAdapter();" },
     { name: "read_thread", source: "resolveReadAdapter();" },
     { name: "request_access", source: cardGuard },
@@ -135,7 +136,7 @@ firesWith(
   "a declared tool absent from the scanned surface FAILS (no stale row)",
 );
 
-ok(JSON.stringify(SOURCE_SCOPED_TOOLS) === JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion", read_notion_comments: "notion" }), "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (slack channel/thread + notion page/comments)");
+ok(JSON.stringify(SOURCE_SCOPED_TOOLS) === JSON.stringify({ read_slack_channel: "slack", read_slack_thread: "slack", read_notion_page: "notion", read_notion_comments: "notion", read_linear_issue: "linear" }), "SOURCE_SCOPED_TOOLS pins the per-surface readers → their platforms (slack channel/thread + notion page/comments + linear issue)");
 
 ok(JSON.stringify([...GENERIC_READ_VERBS]) === JSON.stringify(["read_channel", "read_thread"]), "GENERIC_READ_VERBS pins the two generic read verbs");
 
@@ -144,6 +145,7 @@ const perSurfaceOk = [
   { name: "read_slack_thread", source: gated("slack") },
   { name: "read_notion_page", source: gated("notion") },
   { name: "read_notion_comments", source: gated("notion") },
+  { name: "read_linear_issue", source: gated("linear") },
 ];
 
 firesWith(
