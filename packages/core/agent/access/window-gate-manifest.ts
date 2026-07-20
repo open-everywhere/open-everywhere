@@ -50,6 +50,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "remember",
   "forget",
   "request_access",
+  "connector",
   "cancel_routine",
   "create_routine",
   "record_watch_state",

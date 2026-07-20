@@ -44,6 +44,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_notion_comments", entryKey: "_single", ctx: notionCtx },
   { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
+  { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "forget", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_spend_limit", entryKey: "_single", ctx: slackCtx },

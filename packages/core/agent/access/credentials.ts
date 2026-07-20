@@ -29,6 +29,10 @@ export function resetBrokers(): void {
   registerBroker(DEFAULT_BROKER, envBroker);
 }
 
+export function activeBrokerName(): string {
+  return process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : DEFAULT_BROKER);
+}
+
 export function selectBroker(): CredentialBroker {
   const choice = process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : DEFAULT_BROKER);
   const broker = BROKERS[choice];

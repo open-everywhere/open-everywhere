@@ -41,6 +41,7 @@ import {
   handleSetKeyViewSubmission as liveHandleSetKeyViewSubmission,
   type SetKeyViewResult,
 } from "../credentials/intake.js";
+import { OE_CONNECT_ACTION_PREFIX, handleConnectClick as liveHandleConnectClick } from "../connections/connector-card.js";
 import { buildRecord, enqueue as enqueueLogRecord, flushLogShip } from "../observability/ship.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -56,6 +57,7 @@ export type FrontDecision =
   | { readonly kind: "approval-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "setkey-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
+  | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
@@ -105,6 +107,19 @@ function parseOeSetKeyClickPayload(rawBody: string): unknown | undefined {
   return isOurs ? p : undefined;
 }
 
+function parseOeConnectClickPayload(rawBody: string): unknown | undefined {
+  const p = decodeInteractivityPayload(rawBody);
+  if (!p || p.type !== "block_actions" || !Array.isArray(p.actions)) return undefined;
+  const isOurs = (p.actions as unknown[]).some(
+    (a) =>
+      typeof a === "object" &&
+      a !== null &&
+      typeof (a as Record<string, unknown>).action_id === "string" &&
+      ((a as Record<string, unknown>).action_id as string).startsWith(OE_CONNECT_ACTION_PREFIX),
+  );
+  return isOurs ? p : undefined;
+}
+
 function parseOeSetKeyViewSubmission(rawBody: string): unknown | undefined {
   const p = decodeInteractivityPayload(rawBody);
   if (!p || p.type !== "view_submission") return undefined;
@@ -125,6 +140,10 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     const setKeySubmit = parseOeSetKeyViewSubmission(rawBody);
     if (setKeySubmit !== undefined) {
       return { kind: "setkey-submit", reason: "view_submission for our credential-intake modal — ours, never forwarded", payload: setKeySubmit };
+    }
+    const connectClick = parseOeConnectClickPayload(rawBody);
+    if (connectClick !== undefined) {
+      return { kind: "connect-click", reason: "block_actions oe_connect: click — ours, never forwarded", payload: connectClick };
     }
     return { kind: "forward", reason: "urlencoded interaction/slash — slackChannel owns it" };
   }
@@ -277,6 +296,7 @@ export interface FrontOptions {
   readonly handleApprovalPayload?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
   readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
+  readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
 }
 
@@ -366,6 +386,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const handleApproval = opts.handleApprovalPayload ?? liveHandleApprovalPayload;
   const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
   const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
+  const handleConnectClick = opts.handleConnectClick ?? liveHandleConnectClick;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
 
@@ -478,6 +499,14 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (decision.kind === "setkey-click") {
       if (await handleSetKeyClick(decision.payload)) {
+        return new Response(null, { status: 200 });
+      }
+      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
+      return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "connect-click") {
+      if (await handleConnectClick(decision.payload)) {
         return new Response(null, { status: 200 });
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });

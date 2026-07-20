@@ -130,7 +130,7 @@ export type ConnectAuthorizationStarter = (
   options: { readonly expiresInMs?: number },
 ) => Promise<{ url: string }>;
 
-const AUTH_URL_TTL_MS = 15 * 60 * 1000;
+export const AUTH_URL_TTL_MS = 15 * 60 * 1000;
 
 type ConnectBaseModule = {
   getTokenResponse(connector: string, params: unknown): Promise<{ token: string }>;
@@ -167,11 +167,31 @@ const defaultUserMinter: ConnectUserTokenMinter = async (vercelConnector, params
   return { token: resp.token };
 };
 
-const defaultAuthStarter: ConnectAuthorizationStarter = async (vercelConnector, params, options) => {
+export const defaultAuthStarter: ConnectAuthorizationStarter = async (vercelConnector, params, options) => {
   const mod = await loadConnectBase();
   const resp = await mod.startAuthorization(
     vercelConnector,
     { subject: { type: "user", id: params.subject.id } },
+    { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) },
+  );
+  return { url: resp.url };
+};
+
+export type ConnectorAuthSubject =
+  | { readonly type: "user"; readonly id: string }
+  | { readonly type: "app" };
+
+export type ConnectorAuthorizationStarter = (
+  vercelConnector: string,
+  params: { readonly subject: ConnectorAuthSubject },
+  options: { readonly expiresInMs?: number },
+) => Promise<{ url: string }>;
+
+export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = async (vercelConnector, params, options) => {
+  const mod = await loadConnectBase();
+  const resp = await mod.startAuthorization(
+    vercelConnector,
+    { subject: params.subject },
     { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) },
   );
   return { url: resp.url };
