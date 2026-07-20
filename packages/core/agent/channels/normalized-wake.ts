@@ -244,6 +244,7 @@ export function renderWake(nw: NormalizedWake, now: () => string = () => new Dat
             reason: nw.reason,
             currentTime: now(),
             wakeId: nw.wakeId,
+            sourcePlatform: nw.platform,
             channel: nw.locus.channel,
             participants: nw.participants,
             thread: nw.locus.thread,

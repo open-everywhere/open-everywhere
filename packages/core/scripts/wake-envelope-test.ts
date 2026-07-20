@@ -35,6 +35,7 @@ const countOccurrences = (haystack: string, needle: string): number =>
   ok(out.includes(`trigger="true"`), "peer wake: sole message carries trigger=true");
   ok(!out.includes(`mention="true"`), "peer wake: no mention attribute when unset");
   ok(out.includes(UNTRUSTED_OPEN) && out.includes(UNTRUSTED_CLOSE), "peer wake: body is wrapped in the untrusted envelope");
+  ok(out.includes(`source="slack-message"`), "peer wake: sourcePlatform unset defaults the body provenance label to slack-message (byte-identity)");
   ok(out.includes(`&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;`), "peer wake: body text is XML-escaped (<, >, \" all escaped)");
   ok(out.includes(`&amp;`), "peer wake: bare & is escaped");
   ok(!out.includes(`<script>`), "peer wake: raw unescaped <script> tag never appears");
@@ -92,6 +93,33 @@ const countOccurrences = (haystack: string, needle: string): number =>
   ok(out.includes("can you fix the bug"), "edited wake: message body carries the NEW (authoritative) text");
   ok(countOccurrences(out, UNTRUSTED_OPEN) === 2, "edited wake: BOTH the body and the previous-body are independently untrusted-wrapped");
   ok(out.indexOf("</previous-body>") < out.lastIndexOf("</message>"), "edited wake: previous-body nests inside the message element");
+}
+
+{
+  const input: WakeEnvelopeInput = {
+    reason: "message-edited",
+    currentTime: "2026-03-25T19:59:00Z",
+    sourcePlatform: "discord",
+    channel: { id: "9876", type: "channel" },
+    messages: [
+      {
+        from: "human",
+        author: "Ada",
+        id: "42",
+        sentAt: "2026-03-25T19:58:55Z",
+        trust: "peer",
+        trigger: true,
+        edited: true,
+        previousBody: "raise the cpa to $50",
+        body: "raise the cap to $50",
+      },
+    ],
+  };
+  const out = renderWakeEnvelope(input);
+  ok(out.includes(`source="discord-message"`), "sourcePlatform=discord: the body provenance label is discord-message");
+  ok(out.includes(`source="discord-message-previous"`), "sourcePlatform=discord: the previous-body keeps the -previous suffix on the true platform (discord-message-previous)");
+  ok(!out.includes(`source="slack-message"`), "sourcePlatform=discord: NO body renders as slack-message (the hardcode is gone)");
+  ok(!out.includes(`platform="discord"`), "sourcePlatform is provenance-only — it is NOT rendered as a <channel platform> attribute");
 }
 
 {
