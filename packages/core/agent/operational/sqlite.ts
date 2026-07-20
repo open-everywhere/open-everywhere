@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
@@ -128,6 +128,16 @@ function getDb(): DatabaseSync {
       caller_token TEXT,                      -- the delegating seat's standing window token (F1 reader key); NULL = unaddressable (degrade flag / pre-migration)
       delivered_at TEXT,                      -- ISO-8601 when the result reached the caller; NULL = undelivered (reader recovers)
       PRIMARY KEY (org_id, task_id)
+    );
+    CREATE TABLE IF NOT EXISTS slack_attachment (
+      org_id      TEXT NOT NULL,
+      file_id     TEXT NOT NULL,              -- Slack file id (the model-named ref; trusted-provenance key)
+      url_private TEXT NOT NULL,              -- event-supplied url_private (opaque; never a model string)
+      mime_type   TEXT,                       -- IANA media type from the event, when known
+      name        TEXT,                       -- original filename, when known (extension fallback for the read path)
+      team_id     TEXT,                       -- Slack team id, when known
+      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      PRIMARY KEY (org_id, file_id)
     );
     CREATE TABLE IF NOT EXISTS pending_actions (
       org_id       TEXT NOT NULL,
@@ -931,6 +941,35 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb()
       .prepare("UPDATE task_result SET delivered_at = ? WHERE org_id = ? AND task_id = ? AND delivered_at IS NULL")
       .run(at, org, taskId);
+  },
+
+  async putSlackAttachment(org, fileId, rec, at, ttlMs) {
+    const handle = getDb();
+    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+    handle.prepare("DELETE FROM slack_attachment WHERE created_at < ? AND org_id = ?").run(cutoff, org);
+    handle
+      .prepare(
+        `INSERT INTO slack_attachment (org_id, file_id, url_private, mime_type, name, team_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, file_id) DO UPDATE SET
+           url_private = excluded.url_private, mime_type = excluded.mime_type,
+           name = excluded.name, team_id = excluded.team_id, created_at = excluded.created_at`,
+      )
+      .run(org, fileId, rec.urlPrivate, rec.mimeType ?? null, rec.name ?? null, rec.teamId ?? null, at);
+  },
+
+  async getSlackAttachment(org, fileId) {
+    const row = getDb()
+      .prepare("SELECT url_private, mime_type, name, team_id FROM slack_attachment WHERE org_id = ? AND file_id = ?")
+      .get(org, fileId) as { url_private: string; mime_type: string | null; name: string | null; team_id: string | null } | undefined;
+    if (!row) return null;
+    const rec: SlackAttachmentRow = {
+      urlPrivate: row.url_private,
+      ...(row.mime_type ? { mimeType: row.mime_type } : {}),
+      ...(row.name ? { name: row.name } : {}),
+      ...(row.team_id ? { teamId: row.team_id } : {}),
+    };
+    return rec;
   },
 
   async addPendingAction(row) {

@@ -90,7 +90,7 @@ export function parseMessageEvent(envelope: SlackEventEnvelope): ParsedMessageEv
   const teamId = envelope.team_id ?? (typeof e.team === "string" ? e.team : undefined);
   const attachments = parseSlackFiles(inner.files);
   for (const a of attachments) {
-    if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, teamId });
+    if (a.kind === "image" && a.id && a.url) registerSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId });
   }
   return {
     channelId,

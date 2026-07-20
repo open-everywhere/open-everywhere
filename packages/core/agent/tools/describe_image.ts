@@ -3,7 +3,8 @@ import { z } from "zod";
 import { type BindableContext } from "../identity/binding.js";
 import { oeFetch } from "../access/host-egress.js";
 import { fetchSlackAttachment } from "../access/slack-attachment-fetch.js";
-import { resolveSlackAttachment, type SlackAttachmentRecord } from "../channels/slack-attachments.js";
+import { resolveSlackAttachmentDurable, type SlackAttachmentRecord } from "../channels/slack-attachments.js";
+import { resolvePartition } from "../memory/partition.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { getImageDescriber } from "../model/vision.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
@@ -103,7 +104,7 @@ export default defineTool({
 
     let slackRec: SlackAttachmentRecord | undefined;
     if ("slackFileId" in input.source) {
-      slackRec = resolveSlackAttachment(input.source.slackFileId);
+      slackRec = await resolveSlackAttachmentDurable(input.source.slackFileId, resolvePartition(bctx).org);
       if (!slackRec) {
         await auditToolAction(ctx, "describe_image", { ok: false, reason: "unknown-slack-attachment", ref });
         return { ok: false, message: `image could not be described: no Slack attachment with id "${input.source.slackFileId}" was seen in this conversation — only images posted here can be read.` };

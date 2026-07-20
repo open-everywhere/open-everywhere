@@ -266,6 +266,22 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const REC = { urlPrivate: "https://files.slack.com/files-pri/T/F_UP/data.csv", mimeType: "text/csv", name: "data.csv", teamId: "T_UP" };
+  ok((await store.getSlackAttachment("acme", "F_UP")) === null, "pg: a fresh file id has no attachment row");
+  await store.putSlackAttachment("acme", "F_UP", REC, "2026-07-19T10:00:00Z", 24 * 60 * 60 * 1000);
+  const got = await store.getSlackAttachment("acme", "F_UP");
+  ok(got?.urlPrivate === REC.urlPrivate && got?.mimeType === "text/csv" && got?.name === "data.csv" && got?.teamId === "T_UP", "pg: put then get round-trips the trusted record (url + mime + name + team)");
+  ok((await store.getSlackAttachment("globex", "F_UP")) === null, "pg: attachments are org-partitioned (another org can't resolve the id)");
+  await store.putSlackAttachment("acme", "F_UP", { urlPrivate: "https://files.slack.com/files-pri/T/F_UP/v2.csv" }, "2026-07-19T11:00:00Z", 24 * 60 * 60 * 1000);
+  const v2 = await store.getSlackAttachment("acme", "F_UP");
+  ok(v2?.urlPrivate.endsWith("/v2.csv") === true && v2?.mimeType === undefined, "pg: a second put on the same id replaces the record (mime cleared)");
+  await store.putSlackAttachment("acme", "F_OLD", REC, "2026-01-01T00:00:00Z", 24 * 60 * 60 * 1000);
+  await store.putSlackAttachment("acme", "F_NEW", REC, "2026-03-01T00:00:00Z", 24 * 60 * 60 * 1000);
+  ok((await store.getSlackAttachment("acme", "F_OLD")) === null, "pg: a row past its TTL is pruned on the next same-org write");
+  ok((await store.getSlackAttachment("acme", "F_NEW"))?.urlPrivate === REC.urlPrivate, "pg: the fresh row survives the prune");
+}
+
+{
   const sk = "slack/T/CW";
   await store.markEngaged("acme", sk, "w.1", "2026-07-08T10:00:00Z");
   let row = await store.getEngagement("acme", sk, "w.1");

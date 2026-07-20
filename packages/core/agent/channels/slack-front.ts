@@ -27,6 +27,7 @@ import {
 } from "./slack-events.js";
 import type { SingleWindowMentionPolicy } from "./unified-window.js";
 import { resolvePartition } from "../memory/partition.js";
+import { persistSlackAttachment } from "./slack-attachments.js";
 import { isThreadEngaged } from "./engagement.js";
 import { divertInboundToUnifiedWindow } from "./unified.js";
 import { ambientSupervisorEnabled } from "../memory/domain.js";
@@ -370,6 +371,22 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
     };
 
+    const persistAttachments = (ev: ParsedMessageEvent): void => {
+      const atts = ev.attachments;
+      if (!atts || atts.length === 0) return;
+      let org: string;
+      try {
+        org = resolvePartition(bindableFor(ev)).org;
+      } catch {
+        return;
+      }
+      for (const a of atts) {
+        if (a.id && a.url) {
+          args.waitUntil(persistSlackAttachment(a.id, { urlPrivate: a.url, mimeType: a.mimeType, name: a.name, teamId: ev.teamId }, org));
+        }
+      }
+    };
+
     if (decision.kind === "forward") {
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);
@@ -377,6 +394,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     if (decision.kind === "mention") {
       const mev = parseMessageEvent(decision.env);
+      if (mev) persistAttachments(mev);
       let owned = false;
       if (mev) {
         try {
@@ -451,6 +469,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
 
     const ev = parseMessageEvent(decision.env);
     if (!ev) return OK();
+    persistAttachments(ev);
 
     const { userId: botUserId } = await getBotIdentity();
     if (botUserId && ev.text.includes(`<@${botUserId}>`)) return OK();

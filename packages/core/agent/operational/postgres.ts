@@ -1,7 +1,7 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
@@ -115,6 +115,16 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      delivered_at text,
      PRIMARY KEY (org_id, task_id)
    )`,
+  `CREATE TABLE IF NOT EXISTS slack_attachment (
+     org_id      text NOT NULL,
+     file_id     text NOT NULL,
+     url_private text NOT NULL,
+     mime_type   text,
+     name        text,
+     team_id     text,
+     created_at  text NOT NULL,
+     PRIMARY KEY (org_id, file_id)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -202,6 +212,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -220,6 +231,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
   `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
+  `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -255,6 +267,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY task_result_org_isolation ON task_result
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY slack_attachment_org_isolation ON slack_attachment
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -511,6 +526,7 @@ export function runtimeRoleGrantsSql(role: string): string[] {
   const mutable =
     "spend_ledger, routine, spend_limit, connector_override, thread_engagement, " +
     "channel_session, event_dedupe, pending_actions, domain_skill, domain_model, instance_meta, " +
+    "thread_ownership, task_result, slack_attachment, " +
     "unified_wake_target";
   return [
     `GRANT USAGE ON SCHEMA public TO ${role}`,
@@ -1222,6 +1238,35 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async markTaskResultDelivered(org, taskId, at) {
       await client.query("UPDATE task_result SET delivered_at = $1 WHERE org_id = $2 AND task_id = $3 AND delivered_at IS NULL", [at, org, taskId]);
+    },
+
+    async putSlackAttachment(org, fileId, rec, at, ttlMs) {
+      const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
+      await client.query("DELETE FROM slack_attachment WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
+      await client.query(
+        `INSERT INTO slack_attachment (org_id, file_id, url_private, mime_type, name, team_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (org_id, file_id) DO UPDATE SET
+           url_private = EXCLUDED.url_private, mime_type = EXCLUDED.mime_type,
+           name = EXCLUDED.name, team_id = EXCLUDED.team_id, created_at = EXCLUDED.created_at`,
+        [org, fileId, rec.urlPrivate, rec.mimeType ?? null, rec.name ?? null, rec.teamId ?? null, at],
+      );
+    },
+
+    async getSlackAttachment(org, fileId) {
+      const { rows } = await client.query(
+        "SELECT url_private, mime_type, name, team_id FROM slack_attachment WHERE org_id = $1 AND file_id = $2",
+        [org, fileId],
+      );
+      const r = (rows as { url_private: string; mime_type: string | null; name: string | null; team_id: string | null }[])[0];
+      if (!r) return null;
+      const rec: SlackAttachmentRow = {
+        urlPrivate: r.url_private,
+        ...(r.mime_type ? { mimeType: r.mime_type } : {}),
+        ...(r.name ? { name: r.name } : {}),
+        ...(r.team_id ? { teamId: r.team_id } : {}),
+      };
+      return rec;
     },
 
     async addPendingAction(row: PendingActionRow) {

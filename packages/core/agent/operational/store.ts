@@ -177,6 +177,13 @@ export interface TaskResultRow {
   readonly createdAt: string;
 }
 
+export interface SlackAttachmentRow {
+  readonly urlPrivate: string;
+  readonly mimeType?: string;
+  readonly name?: string;
+  readonly teamId?: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -245,6 +252,9 @@ export interface OperationalStore {
   deleteTaskResult(org: string, taskId: string): Promise<boolean>;
   listUndeliveredTaskResults(org: string, callerToken: string, limit: number): Promise<readonly TaskResultRow[]>;
   markTaskResultDelivered(org: string, taskId: string, at: string): Promise<void>;
+
+  putSlackAttachment(org: string, fileId: string, rec: SlackAttachmentRow, at: string, ttlMs: number): Promise<void>;
+  getSlackAttachment(org: string, fileId: string): Promise<SlackAttachmentRow | null>;
 
   addPendingAction(row: PendingActionRow): Promise<void>;
   getPendingAction(org: string, id: string): Promise<PendingActionRow | null>;

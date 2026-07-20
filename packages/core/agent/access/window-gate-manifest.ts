@@ -36,6 +36,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "list_repos",
   "list_routines",
   "list_skills",
+  "read_file_upload",
   "read_notion_page",
   "read_channel",
   "read_thread",
