@@ -16,7 +16,8 @@ import {
 import { classifyConnectorOp, isConnectorOpTool } from "../access/consequence.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
 import { getSecret } from "../access/credentials.js";
-import { bindFrom } from "../identity/binding.js";
+import { bindFrom, deploymentOrg } from "../identity/binding.js";
+import { appendAudit } from "../audit/audit.js";
 import {
   connectorAuthRequiredThisTurn,
   connectorAuthUrlThisTurn,
@@ -153,6 +154,28 @@ function loadConnectBase(): Promise<ConnectBaseModule> {
   return connectBase;
 }
 
+async function oidcEnvironmentClaim(): Promise<string> {
+  try {
+    const mod = (await import("@vercel/" + "oidc")) as { getVercelOidcToken?: () => Promise<string> };
+    const tok = mod.getVercelOidcToken ? await mod.getVercelOidcToken() : process.env.VERCEL_OIDC_TOKEN;
+    if (!tok) return "no-token";
+    const payload = JSON.parse(Buffer.from(tok.split(".")[1] ?? "", "base64url").toString()) as { environment?: string };
+    return typeof payload.environment === "string" ? payload.environment : "no-claim";
+  } catch {
+    return "decode-failed";
+  }
+}
+
+async function auditMintOutcome(connector: string, detail: Readonly<Record<string, unknown>>): Promise<void> {
+  await appendAudit({
+    org: deploymentOrg(),
+    platform: "connector",
+    workspace: "connector",
+    action: "connector.mint",
+    detail: { connector, oidcEnv: await oidcEnvironmentClaim(), ...detail },
+  });
+}
+
 const defaultUserMinter: ConnectUserTokenMinter = async (vercelConnector, params) => {
   const mod = await loadConnectBase();
   const resp = await mod.getTokenResponse(vercelConnector, {
@@ -248,8 +271,16 @@ export function userAwareProviderToken(
         if (!cred.vercelConnector)
           throw new Error(`connection "${opts.connector}": user-oauth credential has no vercelConnector`);
         try {
-          return await mintUser(cred.vercelConnector, { subject: { type: "user", id: principalId } });
+          const minted = await mintUser(cred.vercelConnector, { subject: { type: "user", id: principalId } });
+          await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok" });
+          return minted;
         } catch (e) {
+          await auditMintOutcome(opts.connector, {
+            subject: "user",
+            outcome: isUserAuthRequired(e) ? "auth-required" : "error",
+            name: e instanceof Error ? e.name : "unknown",
+            ...(isUserAuthRequired(e) ? {} : { message: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160) }),
+          });
           if (isUserAuthRequired(e)) {
             let url: string | undefined;
             try {
