@@ -1,7 +1,7 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
@@ -125,6 +125,30 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      created_at  text NOT NULL,
      PRIMARY KEY (org_id, file_id)
    )`,
+  `CREATE TABLE IF NOT EXISTS stored_credential (
+     org_id     text NOT NULL,
+     ref        text NOT NULL,
+     ciphertext text NOT NULL,
+     provider   text,
+     domain     text,
+     created_by text NOT NULL,
+     created_at text NOT NULL,
+     PRIMARY KEY (org_id, ref)
+   )`,
+  `CREATE TABLE IF NOT EXISTS credential_intake (
+     org_id       text NOT NULL,
+     id           text NOT NULL,
+     ref          text NOT NULL,
+     provider     text NOT NULL,
+     domain       text,
+     requested_by text NOT NULL,
+     channel_id   text NOT NULL,
+     thread_ts    text,
+     created_at   text NOT NULL,
+     expires_at   text NOT NULL,
+     used_at      text,
+     PRIMARY KEY (org_id, id)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -213,6 +237,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE stored_credential ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE credential_intake ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -232,6 +258,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
   `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
   `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
+  `DROP POLICY IF EXISTS stored_credential_org_isolation ON stored_credential`,
+  `DROP POLICY IF EXISTS credential_intake_org_isolation ON credential_intake`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -270,6 +298,12 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY slack_attachment_org_isolation ON slack_attachment
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY stored_credential_org_isolation ON stored_credential
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY credential_intake_org_isolation ON credential_intake
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -527,6 +561,7 @@ export function runtimeRoleGrantsSql(role: string): string[] {
     "spend_ledger, routine, spend_limit, connector_override, thread_engagement, " +
     "channel_session, event_dedupe, pending_actions, domain_skill, domain_model, instance_meta, " +
     "thread_ownership, task_result, slack_attachment, " +
+    "stored_credential, credential_intake, " +
     "unified_wake_target";
   return [
     `GRANT USAGE ON SCHEMA public TO ${role}`,
@@ -1267,6 +1302,72 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.team_id ? { teamId: r.team_id } : {}),
       };
       return rec;
+    },
+
+    async putStoredCredential(org, rec: StoredCredentialRow) {
+      await client.query(
+        `INSERT INTO stored_credential (org_id, ref, ciphertext, provider, domain, created_by, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (org_id, ref) DO UPDATE SET
+           ciphertext = EXCLUDED.ciphertext, provider = EXCLUDED.provider,
+           domain = EXCLUDED.domain, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
+        [org, rec.ref, rec.ciphertext, rec.provider ?? null, rec.domain ?? null, rec.createdBy, rec.createdAt],
+      );
+    },
+
+    async getStoredCredential(org, ref) {
+      const { rows } = await client.query(
+        "SELECT ref, ciphertext, provider, domain, created_by, created_at FROM stored_credential WHERE org_id = $1 AND ref = $2",
+        [org, ref],
+      );
+      const r = (rows as { ref: string; ciphertext: string; provider: string | null; domain: string | null; created_by: string; created_at: string }[])[0];
+      if (!r) return null;
+      return {
+        ref: r.ref,
+        ciphertext: r.ciphertext,
+        ...(r.provider ? { provider: r.provider } : {}),
+        ...(r.domain ? { domain: r.domain } : {}),
+        createdBy: r.created_by,
+        createdAt: r.created_at,
+      };
+    },
+
+    async addCredentialIntake(row: CredentialIntakeRow) {
+      await client.query(
+        `INSERT INTO credential_intake (org_id, id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [row.org, row.id, row.ref, row.provider, row.domain ?? null, row.requestedBy, row.channelId, row.threadTs ?? null, row.createdAt, row.expiresAt, row.usedAt ?? null],
+      );
+    },
+
+    async getCredentialIntake(org, id) {
+      const { rows } = await client.query(
+        "SELECT id, ref, provider, domain, requested_by, channel_id, thread_ts, created_at, expires_at, used_at FROM credential_intake WHERE org_id = $1 AND id = $2",
+        [org, id],
+      );
+      const r = (rows as { id: string; ref: string; provider: string; domain: string | null; requested_by: string; channel_id: string; thread_ts: string | null; created_at: string; expires_at: string; used_at: string | null }[])[0];
+      if (!r) return null;
+      return {
+        org,
+        id: r.id,
+        ref: r.ref,
+        provider: r.provider,
+        ...(r.domain ? { domain: r.domain } : {}),
+        requestedBy: r.requested_by,
+        channelId: r.channel_id,
+        ...(r.thread_ts ? { threadTs: r.thread_ts } : {}),
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+        ...(r.used_at ? { usedAt: r.used_at } : {}),
+      };
+    },
+
+    async consumeCredentialIntake(org, id, usedAt) {
+      const { rows } = await client.query(
+        "UPDATE credential_intake SET used_at = $1 WHERE org_id = $2 AND id = $3 AND used_at IS NULL RETURNING id",
+        [usedAt, org, id],
+      );
+      return rows.length > 0;
     },
 
     async addPendingAction(row: PendingActionRow) {

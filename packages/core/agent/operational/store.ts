@@ -184,6 +184,29 @@ export interface SlackAttachmentRow {
   readonly teamId?: string;
 }
 
+export interface StoredCredentialRow {
+  readonly ref: string;
+  readonly ciphertext: string;
+  readonly provider?: string;
+  readonly domain?: string;
+  readonly createdBy: string;
+  readonly createdAt: string;
+}
+
+export interface CredentialIntakeRow {
+  readonly org: string;
+  readonly id: string;
+  readonly ref: string;
+  readonly provider: string;
+  readonly domain?: string;
+  readonly requestedBy: string;
+  readonly channelId: string;
+  readonly threadTs?: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly usedAt?: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -262,6 +285,13 @@ export interface OperationalStore {
   listExpiredPendingActions(org: string, nowIso: string): Promise<readonly PendingActionRow[]>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
+
+  putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
+  getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;
+
+  addCredentialIntake(row: CredentialIntakeRow): Promise<void>;
+  getCredentialIntake(org: string, id: string): Promise<CredentialIntakeRow | null>;
+  consumeCredentialIntake(org: string, id: string, usedAt: string): Promise<boolean>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

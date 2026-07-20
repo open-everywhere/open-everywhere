@@ -34,6 +34,13 @@ import { ambientSupervisorEnabled } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
+import {
+  OE_SETKEY_ACTION_PREFIX,
+  OE_SETKEY_MODAL_CALLBACK,
+  handleSetKeyClick as liveHandleSetKeyClick,
+  handleSetKeyViewSubmission as liveHandleSetKeyViewSubmission,
+  type SetKeyViewResult,
+} from "../credentials/intake.js";
 import { buildRecord, enqueue as enqueueLogRecord, flushLogShip } from "../observability/ship.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
@@ -47,6 +54,8 @@ export type FrontDecision =
   | { readonly kind: "join"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "reaction"; readonly reason: string; readonly env: SlackEventEnvelope }
   | { readonly kind: "approval-click"; readonly reason: string; readonly payload: unknown }
+  | { readonly kind: "setkey-click"; readonly reason: string; readonly payload: unknown }
+  | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
@@ -71,11 +80,51 @@ function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   return isOurs ? payload : undefined;
 }
 
+function decodeInteractivityPayload(rawBody: string): Record<string, unknown> | undefined {
+  const raw = new URLSearchParams(rawBody).get("payload");
+  if (!raw) return undefined;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : undefined;
+}
+
+function parseOeSetKeyClickPayload(rawBody: string): unknown | undefined {
+  const p = decodeInteractivityPayload(rawBody);
+  if (!p || p.type !== "block_actions" || !Array.isArray(p.actions)) return undefined;
+  const isOurs = (p.actions as unknown[]).some(
+    (a) =>
+      typeof a === "object" &&
+      a !== null &&
+      typeof (a as Record<string, unknown>).action_id === "string" &&
+      ((a as Record<string, unknown>).action_id as string).startsWith(OE_SETKEY_ACTION_PREFIX),
+  );
+  return isOurs ? p : undefined;
+}
+
+function parseOeSetKeyViewSubmission(rawBody: string): unknown | undefined {
+  const p = decodeInteractivityPayload(rawBody);
+  if (!p || p.type !== "view_submission") return undefined;
+  const view = p.view as Record<string, unknown> | undefined;
+  return view?.callback_id === OE_SETKEY_MODAL_CALLBACK ? p : undefined;
+}
+
 export function classifyEnvelope(rawBody: string, contentType: string): FrontDecision {
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const approvalPayload = parseOeApprovalPayload(rawBody);
     if (approvalPayload !== undefined) {
       return { kind: "approval-click", reason: "block_actions oe_approval: click — ours, never forwarded", payload: approvalPayload };
+    }
+    const setKeyClick = parseOeSetKeyClickPayload(rawBody);
+    if (setKeyClick !== undefined) {
+      return { kind: "setkey-click", reason: "block_actions oe_setkey: click — ours, never forwarded", payload: setKeyClick };
+    }
+    const setKeySubmit = parseOeSetKeyViewSubmission(rawBody);
+    if (setKeySubmit !== undefined) {
+      return { kind: "setkey-submit", reason: "view_submission for our credential-intake modal — ours, never forwarded", payload: setKeySubmit };
     }
     return { kind: "forward", reason: "urlencoded interaction/slash — slackChannel owns it" };
   }
@@ -226,6 +275,8 @@ export interface FrontOptions {
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
   readonly ambientEnabledFor?: (surfaceKey: string) => boolean;
   readonly handleApprovalPayload?: (payload: unknown) => Promise<boolean>;
+  readonly handleSetKeyClick?: (payload: unknown) => Promise<boolean>;
+  readonly handleSetKeyViewSubmission?: (payload: unknown) => Promise<SetKeyViewResult>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
 }
 
@@ -313,6 +364,8 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
   const signingSecret = () => opts.signingSecret ?? process.env.SLACK_SIGNING_SECRET;
   const markEventSeen = opts.markEventSeen ?? liveMarkEventSeen;
   const handleApproval = opts.handleApprovalPayload ?? liveHandleApprovalPayload;
+  const handleSetKeyClick = opts.handleSetKeyClick ?? liveHandleSetKeyClick;
+  const handleSetKeyViewSubmission = opts.handleSetKeyViewSubmission ?? liveHandleSetKeyViewSubmission;
   const ambientEnabledFor = opts.ambientEnabledFor ?? ((surfaceKey: string) => ambientSupervisorEnabled(surfaceKey, getConfig().loadDomains()));
   const mentionPolicyFor = opts.mentionPolicyFor ?? slackSingleWindowMentionPolicy;
 
@@ -418,6 +471,25 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     if (decision.kind === "approval-click") {
       if (await handleApproval(decision.payload)) {
         return new Response(null, { status: 200 });
+      }
+      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
+      return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "setkey-click") {
+      if (await handleSetKeyClick(decision.payload)) {
+        return new Response(null, { status: 200 });
+      }
+      const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
+      return innerHandler(forwarded, args);
+    }
+
+    if (decision.kind === "setkey-submit") {
+      const result = await handleSetKeyViewSubmission(decision.payload);
+      if (result.handled) {
+        return result.response
+          ? new Response(JSON.stringify(result.response), { status: 200, headers: { "content-type": "application/json" } })
+          : new Response(null, { status: 200 });
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);
