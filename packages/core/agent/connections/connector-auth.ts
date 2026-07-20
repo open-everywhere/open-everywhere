@@ -19,6 +19,7 @@ import { getSecret } from "../access/credentials.js";
 import { bindFrom } from "../identity/binding.js";
 import {
   connectorAuthRequiredThisTurn,
+  connectorAuthUrlThisTurn,
   markConnectorAuthRequired,
   connectorAuthRequiredError,
 } from "./auth-retry-memo.js";
@@ -123,13 +124,25 @@ export interface ConnectUserTokenParams {
 
 export type ConnectUserTokenMinter = (vercelConnector: string, params: ConnectUserTokenParams) => Promise<TokenResult>;
 
-let connectBase: Promise<{ getTokenResponse(connector: string, params: unknown): Promise<{ token: string }> }> | undefined;
-function loadConnectBase(): Promise<{ getTokenResponse(connector: string, params: unknown): Promise<{ token: string }> }> {
+export type ConnectAuthorizationStarter = (
+  vercelConnector: string,
+  params: { readonly subject: { readonly type: "user"; readonly id: string } },
+  options: { readonly expiresInMs?: number },
+) => Promise<{ url: string }>;
+
+const AUTH_URL_TTL_MS = 15 * 60 * 1000;
+
+type ConnectBaseModule = {
+  getTokenResponse(connector: string, params: unknown): Promise<{ token: string }>;
+  startAuthorization(connector: string, params: unknown, options?: unknown): Promise<{ url: string }>;
+};
+let connectBase: Promise<ConnectBaseModule> | undefined;
+function loadConnectBase(): Promise<ConnectBaseModule> {
   if (!connectBase) {
     connectBase = (async () => {
       try {
         const spec = "@vercel/" + "connect";
-        return (await import(spec)) as { getTokenResponse(connector: string, params: unknown): Promise<{ token: string }> };
+        return (await import(spec)) as ConnectBaseModule;
       } catch {
         throw new Error(
           "per-user connector credential needs @vercel/connect (LIVE-ONLY). Install it + link a Vercel project.",
@@ -154,6 +167,16 @@ const defaultUserMinter: ConnectUserTokenMinter = async (vercelConnector, params
   return { token: resp.token };
 };
 
+const defaultAuthStarter: ConnectAuthorizationStarter = async (vercelConnector, params, options) => {
+  const mod = await loadConnectBase();
+  const resp = await mod.startAuthorization(
+    vercelConnector,
+    { subject: { type: "user", id: params.subject.id } },
+    { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) },
+  );
+  return { url: resp.url };
+};
+
 function isUserAuthRequired(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const code = (e as { code?: unknown }).code;
@@ -166,13 +189,15 @@ function isUserAuthRequired(e: unknown): boolean {
 
 export function userAwareProviderToken(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string },
-  deps: { readonly mintUser?: ConnectUserTokenMinter } = {},
+  deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
 ): ConnectionAuthResolver {
   const mintUser = deps.mintUser ?? defaultUserMinter;
+  const startAuth = deps.startAuth ?? defaultAuthStarter;
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      if (connectorAuthRequiredThisTurn(opts.connector)) throw connectorAuthRequiredError(opts.connector);
+      if (connectorAuthRequiredThisTurn(opts.connector))
+        throw connectorAuthRequiredError(opts.connector, connectorAuthUrlThisTurn(opts.connector));
       await assertConnectorGranted(opts.connector, ctx.session.auth);
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
@@ -206,10 +231,17 @@ export function userAwareProviderToken(
           return await mintUser(cred.vercelConnector, { subject: { type: "user", id: principalId } });
         } catch (e) {
           if (isUserAuthRequired(e)) {
-            markConnectorAuthRequired(opts.connector);
+            let url: string | undefined;
+            try {
+              url = (await startAuth(cred.vercelConnector, { subject: { type: "user", id: principalId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+            } catch {
+            }
+            markConnectorAuthRequired(opts.connector, url);
             throw new Error(
-              `connection "${opts.connector}": your personal account isn't connected yet. Authorize it ` +
-                `in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. ` +
+              `connection "${opts.connector}": your personal account isn't connected yet. ` +
+                (url
+                  ? `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `
+                  : `Authorize it in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. `) +
                 `This connector acts as YOU with YOUR own access — not the shared service account.`,
             );
           }

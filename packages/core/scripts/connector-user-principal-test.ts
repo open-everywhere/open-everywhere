@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,8 +81,31 @@ function makeMinter(mode: "ok" | "auth-required") {
   return { calls, mint };
 }
 
-async function getToken(auth: unknown, minter: ReturnType<typeof makeMinter>): Promise<{ token?: string; err?: string }> {
-  const resolver = userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" }, { mintUser: minter.mint });
+interface StartCall { connector: string; id: string; expiresInMs?: number }
+function makeStarter(mode: "ok" | "fail", url = "https://connect.vercel.com/auth/PERSONAL-LINK") {
+  const calls: StartCall[] = [];
+  const start = async (
+    connector: string,
+    params: { subject: { id: string } },
+    options: { expiresInMs?: number },
+  ) => {
+    calls.push({ connector, id: params.subject.id, expiresInMs: options.expiresInMs });
+    if (mode === "fail") throw new Error("startAuthorization failed (no OIDC session)");
+    return { url };
+  };
+  return { calls, start };
+}
+const notInjectedStarter = { calls: [] as StartCall[], start: async () => { throw new Error("startAuthorization not-injected"); } };
+
+async function getToken(
+  auth: unknown,
+  minter: ReturnType<typeof makeMinter>,
+  starter: { start: (...a: never[]) => Promise<{ url: string }> } = notInjectedStarter,
+): Promise<{ token?: string; err?: string }> {
+  const resolver = userAwareProviderToken(
+    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY" },
+    { mintUser: minter.mint, startAuth: starter.start as never },
+  );
   const provider = await resolver({ session: { auth } } as never);
   try {
     const getToken = provider.getToken as (o: unknown) => Promise<{ token: string }>;
@@ -90,6 +114,24 @@ async function getToken(auth: unknown, minter: ReturnType<typeof makeMinter>): P
   } catch (e) {
     return { err: e instanceof Error ? e.message : String(e) };
   }
+}
+
+class FakeSession {
+  private readonly store = new Map<string, unknown>();
+  get<T>(k: { name: string }): T | undefined { return this.store.get(k.name) as T | undefined; }
+  has(k: { name: string }): boolean { return this.store.has(k.name); }
+  require<T>(k: { name: string }): T { if (!this.has(k)) throw new Error(`missing ${k.name}`); return this.get(k) as T; }
+  set<T>(k: { name: string }, v: T | ((c: T | undefined) => T)): T { const next = typeof v === "function" ? (v as (c: T | undefined) => T)(this.get(k)) : v; this.store.set(k.name, next); return next; }
+  ensure<T>(k: { name: string }, create: () => T): T { return this.has(k) ? this.require(k) : this.set(k, create()); }
+  clearVirtualContext(): void {}
+  setVirtualContext(): void {}
+  *entries(): Generator<readonly [unknown, unknown]> {}
+}
+function eveContextStorage(): AsyncLocalStorage<unknown> {
+  const g = globalThis as Record<PropertyKey, unknown>;
+  const key = Symbol.for("eve.context-storage");
+  g[key] ??= new AsyncLocalStorage();
+  return g[key] as AsyncLocalStorage<unknown>;
 }
 
 delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
@@ -107,11 +149,37 @@ delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
 
 {
   const m = makeMinter("auth-required");
-  const r = await getToken(dmAuth, m);
+  const s = makeStarter("ok");
+  const r = await getToken(dmAuth, m, s);
   ok(r.token === undefined && !!r.err, "DM + UserAuthorizationRequired → getToken throws (no token)");
   ok(/connect|authoriz/i.test(r.err ?? ""), "the error is the actionable 'connect/authorize your account' message");
   ok(!/user_authorization_required/i.test(r.err ?? ""), "the raw SDK error is NOT surfaced to the model");
+  ok((r.err ?? "").includes("https://connect.vercel.com/auth/PERSONAL-LINK"), "the minted PERSONAL authorization URL appears in the relayed error");
+  ok(/expires/i.test(r.err ?? "") && /YOU with YOUR own access/.test(r.err ?? ""), "keeps the personal + expiry framing (link is personal, acts as YOU)");
+  ok(s.calls.length === 1 && s.calls[0].connector === "oauth/notion-user" && s.calls[0].id === "U_caller", "#112: startAuthorization used the user-oauth vercelConnector + subject id = surface principal");
+  ok(typeof s.calls[0].expiresInMs === "number" && (s.calls[0].expiresInMs ?? 0) > 0 && (s.calls[0].expiresInMs ?? 0) <= 20 * 60 * 1000, "a short (~15 min) TTL is passed to the mint");
 }
+
+{
+  const m = makeMinter("auth-required");
+  const s = makeStarter("fail");
+  const r = await getToken(dmAuth, m, s);
+  ok(r.token === undefined && /authoriz/i.test(r.err ?? ""), "URL mint failure still throws the auth-required 'connect your account' error");
+  ok(!/https?:\/\//.test(r.err ?? ""), "startAuthorization failure → falls back to the no-URL copy (never masks the auth-required signal)");
+  ok(s.calls.length === 1, "the URL mint was attempted exactly once before degrading");
+}
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  const m = makeMinter("auth-required");
+  const s = makeStarter("ok", "https://connect.vercel.com/auth/ONE-SHOT");
+  const r1 = await getToken(dmAuth, m, s);
+  ok((r1.err ?? "").includes("https://connect.vercel.com/auth/ONE-SHOT"), "memo: first refusal carries the minted URL");
+  const r2 = await getToken(dmAuth, m, s);
+  ok((r2.err ?? "").includes("https://connect.vercel.com/auth/ONE-SHOT"), "memo: second same-turn call REPEATS the SAME link (from the cache, not a fresh mint)");
+  ok(/not retrying|already failed this turn/i.test(r2.err ?? ""), "memo: the repeat is the deterministic short-circuit error");
+  ok(s.calls.length === 1, "memo: startAuthorization minted EXACTLY ONCE per connector per turn");
+  ok(m.calls.length === 1, "memo: the token mint was NOT re-hit on the short-circuited retry");
+});
 
 {
   const m = makeMinter("ok");
