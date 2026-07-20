@@ -118,6 +118,19 @@ export function renderRolePrompt(ctx: BindableContext): string {
 
 export function renderSupervisorPersona(ctx: BindableContext, opts?: { readonly messageToolOnly?: boolean }): string {
   if (!isSupervisorSession(ctx)) return "";
+  const grain = classifySessionId(ctx.channel?.continuationToken).grain;
+  const fileRouting =
+    grain === "task"
+      ? `Asked for a **file** — a chart, CSV, image, spreadsheet, document, any attachment? YOU
+carry the file tools on this session: create it, then call \`post_file\` to attach it into the
+thread. That is the only way a file reaches anyone — a file task is not done until \`post_file\`
+has run.`
+      : `Making or posting a **file** — a chart, CSV, image, spreadsheet, document, or any
+attachment — is a hard delegate: you carry NO file tools, so you cannot attach or upload
+anything yourself. The moment a request asks for a file or attachment, call \`agent\` — the
+worker has the file tools and posts the artifact straight into this thread. Do NOT paste the
+file's contents into a \`reply\` as a substitute (inline text is not a file attachment), and
+never say you can't produce one. Hand it off.`;
   const reporting = opts?.messageToolOnly
     ? `### Reporting
 
@@ -204,12 +217,7 @@ the channel gets more than one pair of hands. Work you hand off obeys the same r
 do: spawned sessions pause at the same approval gates, and delegation never moves an
 action past review.
 
-Making or posting a **file** — a chart, CSV, image, spreadsheet, document, or any
-attachment — is a hard delegate: you carry NO file tools, so you cannot attach or upload
-anything yourself. The moment a request asks for a file or attachment, call \`agent\` — the
-worker has the file tools and posts the artifact straight into this thread. Do NOT paste the
-file's contents into a \`reply\` as a substitute (inline text is not a file attachment), and
-never say you can't produce one. Hand it off.
+${fileRouting}
 
 ### Posting
 
