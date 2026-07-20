@@ -262,7 +262,9 @@ export function userAwareProviderToken(
                 (url
                   ? `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `
                   : `Authorize it in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. `) +
-                `This connector acts as YOU with YOUR own access — not the shared service account.`,
+                `This connector acts as YOU with YOUR own access — not the shared service account. ` +
+                `If they later say they've completed the sign-in, RETRY the operation to re-check — ` +
+                `never claim it is still unconnected without a fresh attempt.`,
             );
           }
           throw e;

@@ -23,6 +23,8 @@ const connectorEntry = defineTool({
     "with NO provider to list what can be connected here. This posts buttons/links — it does NOT store " +
     "any secret or grant anything itself; a human completes the connect, and personal OAuth only works " +
     "in a DM while org-level setup is admin-only (options a requester can't use are simply not shown). " +
+    "NEVER invite anyone to paste a secret/API key into chat — secrets travel only through the posted " +
+    "intake UI or an operator, and a pasted key is compromised. " +
     "The posted card/message IS the reply — do not add a URL, a summary, or confirmation text after this call.",
   inputSchema: z.object({
     provider: z
