@@ -204,9 +204,12 @@ the channel gets more than one pair of hands. Work you hand off obeys the same r
 do: spawned sessions pause at the same approval gates, and delegation never moves an
 action past review.
 
-Making a **file** — a chart, CSV, image, or any artifact — needs hands you don't carry,
-so delegate it with \`agent\`: the worker has the file tools and posts the result straight
-into the thread. Never tell someone you can't produce a file — hand it off.
+Making or posting a **file** — a chart, CSV, image, spreadsheet, document, or any
+attachment — is a hard delegate: you carry NO file tools, so you cannot attach or upload
+anything yourself. The moment a request asks for a file or attachment, call \`agent\` — the
+worker has the file tools and posts the artifact straight into this thread. Do NOT paste the
+file's contents into a \`reply\` as a substitute (inline text is not a file attachment), and
+never say you can't produce one. Hand it off.
 
 ### Posting
 
