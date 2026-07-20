@@ -48,22 +48,22 @@ const R = (over: Partial<Parameters<typeof resolveConnectorOptions>[0]>) =>
 
 console.log("1. resolver matrix:");
 {
-  eq(kinds(R({ mode: "dm", isAdmin: true })), ["personal-oauth:url", "service-oauth:url", "api-key:modal"], "DM + admin + slack + db ⇒ all three, api-key via modal");
-  eq(kinds(R({ mode: "channel", isAdmin: true })), ["service-oauth:url", "api-key:modal"], "channel + admin ⇒ personal-oauth OMITTED (DM-only), org-level offered");
+  eq(kinds(R({ mode: "dm", isAdmin: true })), ["Connect my account:url", "Connect org account:url", "Set API key:modal"], "DM + admin + slack + db ⇒ all three, api-key via modal");
+  eq(kinds(R({ mode: "channel", isAdmin: true })), ["Connect org account:url", "Set API key:modal"], "channel + admin ⇒ personal-oauth OMITTED (DM-only), org-level offered");
   eq(kinds(R({ mode: "channel", isAdmin: false })), [], "channel + member ⇒ nothing (org-level admin-only, personal DM-only)");
-  eq(kinds(R({ mode: "dm", isAdmin: false })), ["personal-oauth:url"], "DM + member ⇒ personal-oauth self-serve; org-level still OMITTED");
-  eq(kinds(R({ platform: "discord", isAdmin: true })), ["service-oauth:url", "api-key:text-degrade"], "discord ⇒ no secret modal ⇒ api-key text-degrades");
-  eq(kinds(R({ platform: "notion", isAdmin: true })), ["service-oauth:url", "api-key:text-degrade"], "notion surface ⇒ api-key text-degrades (no modal there)");
-  eq(kinds(R({ broker: "env" })), ["service-oauth:url", "api-key:unavailable"], "env broker ⇒ api-key UNAVAILABLE (no host write path)");
-  eq(kinds(R({ broker: "vercel-connect" })), ["service-oauth:url", "api-key:unavailable"], "vercel-connect broker ⇒ api-key UNAVAILABLE (REST write not implemented)");
+  eq(kinds(R({ mode: "dm", isAdmin: false })), ["Connect my account:url"], "DM + member ⇒ personal-oauth self-serve; org-level still OMITTED");
+  eq(kinds(R({ platform: "discord", isAdmin: true })), ["Connect org account:url", "Set API key:text-degrade"], "discord ⇒ no secret modal ⇒ api-key text-degrades");
+  eq(kinds(R({ platform: "notion", isAdmin: true })), ["Connect org account:url", "Set API key:text-degrade"], "notion surface ⇒ api-key text-degrades (no modal there)");
+  eq(kinds(R({ broker: "env" })), ["Connect org account:url", "Set API key:unavailable"], "env broker ⇒ api-key UNAVAILABLE (no host write path)");
+  eq(kinds(R({ broker: "vercel-connect" })), ["Connect org account:url", "Set API key:unavailable"], "vercel-connect broker ⇒ api-key UNAVAILABLE (REST write not implemented)");
 
   ok(R({ mode: "channel", isAdmin: false, platform: "discord" }).length === 0, "member on discord ⇒ still nothing offerable");
 
   const NARROW: Provider = { name: "narrow", connection: "n", allows: ["user-oauth"], credentials: NOTION.credentials };
-  eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, broker: "db" })), ["personal-oauth:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
+  eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, broker: "db" })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
 
   const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY" }] };
-  eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, broker: "db" })), ["api-key:modal"], "api-key-only provider ⇒ just the api-key option");
+  eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, broker: "db" })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
 
   const dmOpts = R({ mode: "dm", isAdmin: true });
   const api = dmOpts.find((o) => o.credentialType === "api-key")!;
@@ -94,7 +94,7 @@ console.log("2. card build:");
   const dActions = dCard.find((b) => b.type === "actions") as { elements: unknown[] } | undefined;
   ok(!!dActions && dActions.elements.length === 1, "discord ⇒ only the service-oauth button is actionable");
   const context = dCard.find((b) => b.type === "context") as { elements: Array<{ text: string }> } | undefined;
-  ok(!!context && /api-key/.test(context.elements[0].text), "the api-key text-degrade is a context line, not a dead button");
+  ok(!!context && /Set API key/.test(context.elements[0].text), "the api-key text-degrade is a context line, not a dead button");
 }
 
 console.log("3. click handlers:");

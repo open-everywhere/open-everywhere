@@ -52,7 +52,9 @@ const connectorEntry = defineTool({
         return { action: "none" as const, options: [], note: "No providers are configured on this deployment." };
       }
       const lines = providers.map((p) => {
-        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, broker }).map(optionLabel);
+        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, broker })
+          .filter((o) => o.route.kind !== "unavailable")
+          .map(optionLabel);
         return `- ${p.name}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
       });
       return {
@@ -69,7 +71,9 @@ const connectorEntry = defineTool({
       );
     }
 
-    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, broker });
+    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, broker }).filter(
+      (o) => o.route.kind !== "unavailable",
+    );
     const labels = options.map(optionLabel);
     if (options.length === 0) {
       return {

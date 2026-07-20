@@ -116,5 +116,5 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
 }
 
 export function optionLabel(o: ConnectorOption): string {
-  return o.credentialType === "user-oauth" ? "personal-oauth" : o.credentialType === "service-oauth" ? "service-oauth" : "api-key";
+  return o.credentialType === "user-oauth" ? "Connect my account" : o.credentialType === "service-oauth" ? "Connect org account" : "Set API key";
 }

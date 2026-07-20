@@ -41,7 +41,7 @@ export function buildConnectCard(
       ...(o.credentialType === "user-oauth" ? { style: "primary" } : {}),
       text: { type: "plain_text", text: buttonText(o) },
     }));
-  const degraded = options.filter((o) => o.route.kind === "text-degrade" || o.route.kind === "unavailable");
+  const degraded = options.filter((o) => o.route.kind === "text-degrade");
   const blocks: unknown[] = [header];
   if (buttons.length > 0) blocks.push({ type: "actions", elements: buttons });
   for (const o of degraded) {
