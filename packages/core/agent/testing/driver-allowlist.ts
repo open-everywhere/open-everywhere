@@ -28,3 +28,12 @@ export function isAllowedSlackDriver(
   if (!teamId || !botId) return false;
   return allowlist.has(`${teamId}:${botId}`);
 }
+
+export function isAllowlistedDriverAuthor(
+  workspace: string | undefined,
+  authorId: string | undefined,
+  allowlist: ReadonlySet<string> = parseDriverAllowlist(process.env.OE_TEST_DRIVER_IDS),
+): boolean {
+  if (!workspace || !authorId) return false;
+  return allowlist.has(`${workspace}:${authorId}`);
+}

@@ -1,4 +1,4 @@
-for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST"]) {
+for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
   delete process.env[k];
 }
 
@@ -39,6 +39,12 @@ ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: false, au
 ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: false }) === "peer", "identified internal member → peer");
 ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: true }) === "principal", "rostered admin on an internal surface → principal");
 
+ok(wakeTrustFor({ authorIsBot: true, authorId: "BDRV", surfaceInternal: true, authorIsAdmin: false, isAllowlistedDriver: true }) === "peer", "allowlisted driver bot → peer (the one relay→peer lift)");
+ok(wakeTrustFor({ authorIsBot: true, authorId: "BDRV", surfaceInternal: true, authorIsAdmin: true, isAllowlistedDriver: true }) === "peer", "allowlisted driver bot that is ALSO on an admin roster → STILL peer, NEVER principal (the bot branch returns before the roster check — peer is the hard ceiling)");
+ok(wakeTrustFor({ authorIsBot: true, authorId: "BDRV", surfaceInternal: true, authorIsAdmin: false, isAllowlistedDriver: false }) === "relay", "a non-allowlisted bot stays relay (default, byte-identical)");
+ok(wakeTrustFor({ authorIsBot: true, authorId: "BDRV", surfaceInternal: true, authorIsAdmin: false }) === "relay", "isAllowlistedDriver unset ⇒ relay (dead code unless the operator opts in)");
+ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: true, isAllowlistedDriver: true }) === "principal", "the lift NEVER touches the human path: a real human admin is still principal even if the flag is (spuriously) set");
+
 ok(wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_RANDOM", DOMAINS), "org admin is an admin on EVERY channel");
 ok(wakeAuthorIsAdmin("U_ORG_ADMIN", undefined, DOMAINS), "org admin resolves even without a channel key");
 ok(wakeAuthorIsAdmin("U_ENG_ADMIN", "slack/T1/C_ENG", DOMAINS), "domain admin is an admin on the domain's own channel");
@@ -57,6 +63,13 @@ ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceIntern
 
 ok(loadDomainsForWakeTrust().length === 0, "unregistered config → empty rosters (fail-closed direction)");
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG" }) === "peer", "unregistered config: an internal human is peer, NEVER principal");
+
+const DISCORD_DRIVERS = new Set<string>(["G_GUILD:B_DRV"]);
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "B_DRV", surfaceInternal: false, channelKey: "discord/G_GUILD/C_CHAN", driverAllowlist: DISCORD_DRIVERS }) === "peer", "seam: an allowlisted Discord driver bot (guildId:botUserId matched off channelKey workspace) → peer, not relay");
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "B_OTHER", surfaceInternal: false, channelKey: "discord/G_GUILD/C_CHAN", driverAllowlist: DISCORD_DRIVERS }) === "relay", "seam: a NON-allowlisted bot in the same guild → relay (exact pair match, no widening)");
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "B_DRV", surfaceInternal: false, channelKey: "discord/G_WRONG/C_CHAN", driverAllowlist: DISCORD_DRIVERS }) === "relay", "seam: the right driver bot in the WRONG guild → relay (workspace pin holds through the channelKey)");
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS, driverAllowlist: new Set(["T1:U_ORG_ADMIN"]) }) === "peer", "seam: an allowlisted driver whose id is ALSO an org admin → STILL peer, NEVER principal (ceiling holds at the seam too)");
+ok(resolveWakeTrust({ authorIsBot: true, authorId: "B_DRV", surfaceInternal: false, channelKey: "discord/G_GUILD/C_CHAN" }) === "relay", "seam: no injected allowlist + empty env (the default) → relay, byte-identical to before the carve-out");
 
 function slackCtx(attributes: Record<string, string>): BindableContext {
   return { channel: { kind: "slack" }, session: { auth: { current: { attributes, principalId: "", principalType: "slack-user" } } } };

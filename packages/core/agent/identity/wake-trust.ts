@@ -4,16 +4,18 @@ import type { BindableContext } from "./binding.js";
 import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
+import { isAllowlistedDriverAuthor } from "../testing/driver-allowlist.js";
 
 export interface WakeTrustFacts {
   readonly authorIsBot: boolean;
   readonly authorId?: string;
   readonly surfaceInternal: boolean;
   readonly authorIsAdmin: boolean;
+  readonly isAllowlistedDriver?: boolean;
 }
 
 export function wakeTrustFor(f: WakeTrustFacts): WakeTrust {
-  if (f.authorIsBot) return "relay";
+  if (f.authorIsBot) return f.isAllowlistedDriver ? "peer" : "relay";
   if (!f.authorId) return "unauth";
   if (!f.surfaceInternal) return "unauth";
   return f.authorIsAdmin ? "principal" : "peer";
@@ -44,13 +46,17 @@ export function resolveWakeTrust(input: {
   readonly surfaceInternal: boolean;
   readonly channelKey?: string;
   readonly domains?: readonly Domain[];
+  readonly driverAllowlist?: ReadonlySet<string>;
 }): WakeTrust {
   const domains = input.domains ?? loadDomainsForWakeTrust();
+  const workspace = input.channelKey?.split("/")[1];
+  const isAllowlistedDriver = isAllowlistedDriverAuthor(workspace, input.authorId, input.driverAllowlist);
   return wakeTrustFor({
     authorIsBot: input.authorIsBot,
     authorId: input.authorId,
     surfaceInternal: input.surfaceInternal,
     authorIsAdmin: wakeAuthorIsAdmin(input.authorId, input.channelKey, domains),
+    isAllowlistedDriver,
   });
 }
 
