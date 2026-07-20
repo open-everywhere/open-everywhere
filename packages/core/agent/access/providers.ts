@@ -9,6 +9,7 @@ export interface ProviderCredential {
   readonly type: ProviderCredentialType;
   readonly secretRef?: string;
   readonly vercelConnector?: string;
+  readonly dashboardUrl?: string;
 }
 
 export interface Provider {

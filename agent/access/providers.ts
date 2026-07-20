@@ -12,7 +12,12 @@ const providers: Provider[] = [
     allows: ["api-key", "service-oauth", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY" },
-      { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere" },
+      {
+        id: "team-oauth",
+        type: "service-oauth",
+        vercelConnector: "notion.so/open-everywhere",
+        dashboardUrl: "https://vercel.com/<your-team>/~/connect/scl_example4",
+      },
       { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
     ],
   }),

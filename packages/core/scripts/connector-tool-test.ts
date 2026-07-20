@@ -37,7 +37,7 @@ const NOTION: Provider = {
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY" },
-    { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere" },
+    { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere", dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
     { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
   ],
 };
@@ -159,8 +159,14 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec = recorder();
   const st = starter();
   ok((await handleConnectClick(click("service-oauth", "U_ADMIN", "C123"), deps({ post: rec.post, startAuth: st.startAuth }))) === true, "service-oauth admin click handled");
-  eq(st.calls.length, 1, "admin service-oauth ⇒ one mint");
-  eq(st.calls[0].subject, { type: "app" }, "service-oauth mints the {type:app} shared service subject");
+  eq(st.calls.length, 0, "service-oauth NEVER calls startAuthorization (app subjects rejected by the hosted flow)");
+  ok(rec.methods().includes("chat.postEphemeral"), "the dashboard link is delivered EPHEMERALLY");
+  ok(
+    rec.calls.some((c) => decodeURIComponent(c.body.replace(/\+/g, " ")).includes("https://vercel.com/team-x/~/connect/scl_TEST")),
+    "the ephemeral post carries the configured dashboard URL",
+  );
+  const dashRows = (await readAudit({ org: ORG })).filter((r) => r.action === "connector.dashboard_link_issued");
+  ok(dashRows.length >= 1 && JSON.stringify(dashRows[0].detail).includes('"configured":true'), "audit: connector.dashboard_link_issued with configured:true");
 
   const rec2 = recorder();
   const st2 = starter();

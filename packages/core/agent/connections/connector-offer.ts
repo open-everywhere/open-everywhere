@@ -45,6 +45,7 @@ export interface ConnectorOption {
   readonly credentialId: string;
   readonly secretRef?: string;
   readonly vercelConnector?: string;
+  readonly dashboardUrl?: string;
   readonly route: ConnectRoute;
 }
 
@@ -106,6 +107,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
       credentialId: cred.id,
       ...(cred.secretRef ? { secretRef: cred.secretRef } : {}),
       ...(cred.vercelConnector ? { vercelConnector: cred.vercelConnector } : {}),
+      ...(cred.dashboardUrl ? { dashboardUrl: cred.dashboardUrl } : {}),
       route,
     });
   }

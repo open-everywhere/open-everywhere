@@ -70,18 +70,19 @@ export async function renderNonSlackConnect(
   const lines: string[] = [`Connect *${providerName}*:`];
   const issued: ConnectorOption[] = [];
   for (const o of options) {
-    if (o.route.kind === "url" && o.vercelConnector) {
-      const subject =
-        o.credentialType === "user-oauth"
-          ? ctx.mode === "dm" && ctx.principalId
-            ? ({ type: "user", id: ctx.principalId } as const)
-            : undefined
-          : ({ type: "app" } as const);
-      if (!subject) continue;
+    if (o.credentialType === "service-oauth") {
+      lines.push(
+        o.dashboardUrl
+          ? `• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`
+          : `• *${optionLabel(o)}* — an operator authorizes the org account on the Vercel dashboard (\`vercel connect open\`).`,
+      );
+      continue;
+    }
+    if (o.route.kind === "url" && o.vercelConnector && o.credentialType === "user-oauth") {
+      if (!(ctx.mode === "dm" && ctx.principalId)) continue;
       try {
-        const url = await mintOAuthUrl(startAuth, o.vercelConnector, subject);
-        const who = o.credentialType === "user-oauth" ? "your personal account" : "the org service account";
-        lines.push(`• *${optionLabel(o)}* — connect ${who} (expires soon): ${url}`);
+        const url = await mintOAuthUrl(startAuth, o.vercelConnector, { type: "user", id: ctx.principalId });
+        lines.push(`• *${optionLabel(o)}* — connect your personal account (expires soon): ${url}`);
         issued.push(o);
       } catch {
         lines.push(`• *${optionLabel(o)}* — couldn't start the connect flow (the connector isn't fully provisioned; ask an operator).`);
@@ -189,14 +190,22 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "Connecting the *org* account is admin-only — your id isn't listed as an admin for this workspace/domain.");
         return true;
       }
-      if (!cred.vercelConnector) {
-        await ephemeral(post, channelId, clickerId, "This provider isn't configured for service OAuth (no connector id). Ask an operator.");
-        return true;
-      }
-      return await mintAndDeliverOAuth(post, startAuth, {
-        org, teamId, channelId, clickerId, providerName, vercelConnector: cred.vercelConnector,
-        subject: { type: "app" }, subjectLabel: "app",
+      const dash = cred.dashboardUrl;
+      await ephemeral(
+        post,
+        channelId,
+        clickerId,
+        dash
+          ? `Connecting the *org* ${providerName} account is completed on the Vercel dashboard (needs a Vercel team member): ${dash} — authorize there, then ask me again.`
+          : `Connecting the *org* ${providerName} account is done by an operator on the Vercel dashboard (\`vercel connect open\`) — no self-serve link is configured for it here.`,
+      );
+      await appendAudit({
+        ...connectWhere(org, teamId, channelId),
+        principalId: clickerId,
+        action: "connector.dashboard_link_issued",
+        detail: { provider: providerName, configured: Boolean(dash) },
       });
+      return true;
     }
 
     if (type === "api-key") {
