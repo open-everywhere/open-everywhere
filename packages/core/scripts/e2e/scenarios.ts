@@ -414,7 +414,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`(stop driven at ${stopMsg.id})`);
 
       const fileAsk = await discord.post(discord.mention("post a tiny text or image file here as an attachment using post_file"), threadId);
-      const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: REPLY_WAIT, what: "a bot reply carrying a file attachment" });
+      const fileReply = await discord.awaitReplyMatching(threadId, fileAsk.id, (m) => m.attachments.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "a bot reply carrying a file attachment" });
       ctx.gate(fileReply.attachments.length > 0, "post_file: the reply carries a file attachment");
 
       const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/day`), threadId);
