@@ -60,6 +60,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   list_skills: open("read of the domain's own skills"),
   read_file_upload: open("read/decode of a text upload already in the room; bot-token fetch is host-pinned to Slack, type-allowlisted, size-capped, content ingested untrusted"),
   read_notion_page: open("granted read; disclosure is bounded by the room-level grant (membership is the ACL)"),
+  read_notion_comments: open("granted read of page comments/inline discussions; bounded by the room-level grant (membership is the ACL)"),
   read_channel: open("generic channel read (Stage 2): a read of a channel the domain grants, into that conversation; per-platform gated by X ∈ sources in execute"),
   read_thread: open("generic thread read (Stage 2): same-surface thread read of a domain-granted channel; per-platform gated in execute"),
   read_slack_channel: open("read of a channel the bot is already in, into that conversation"),

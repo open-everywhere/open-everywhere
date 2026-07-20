@@ -140,6 +140,82 @@ export async function listBlockComments(blockId: string, opts: NotionCallOpts): 
   return Array.isArray(body.results) ? body.results : [];
 }
 
+export interface NotionCommentSummary {
+  readonly discussionId?: string;
+  readonly anchorId?: string;
+  readonly authorId?: string;
+  readonly authorKind?: string;
+  readonly createdTime?: string;
+  readonly text: string;
+}
+
+function toCommentSummary(c: NotionComment, fallbackAnchor: string): NotionCommentSummary {
+  return {
+    discussionId: c.discussion_id,
+    anchorId: c.parent?.block_id ?? c.parent?.page_id ?? fallbackAnchor,
+    authorId: c.created_by?.id,
+    authorKind: c.created_by?.type,
+    createdTime: c.created_time,
+    text: richTextToPlainText(c.rich_text),
+  };
+}
+
+export async function readNotionComments(
+  pageId: string,
+  opts: NotionCallOpts & { readonly block?: string; readonly maxComments?: number; readonly maxBlockScans?: number },
+): Promise<{ readonly comments: NotionCommentSummary[]; readonly discussionCount: number; readonly blocksScanned: number; readonly truncated: boolean }> {
+  const maxComments = opts.maxComments ?? 100;
+  const maxBlockScans = opts.maxBlockScans ?? 80;
+  const comments: NotionCommentSummary[] = [];
+  const discussions = new Set<string>();
+  let truncated = false;
+  let blocksScanned = 0;
+
+  const take = (raw: NotionComment[], anchor: string): boolean => {
+    for (const c of raw) {
+      if (comments.length >= maxComments) {
+        truncated = true;
+        return true;
+      }
+      comments.push(toCommentSummary(c, anchor));
+      if (typeof c.discussion_id === "string" && c.discussion_id.length > 0) discussions.add(c.discussion_id);
+    }
+    return false;
+  };
+
+  if (opts.block) {
+    take(await listBlockComments(opts.block, opts), opts.block);
+    return { comments, discussionCount: discussions.size, blocksScanned: 1, truncated };
+  }
+
+  if (take(await listBlockComments(pageId, opts), pageId)) {
+    return { comments, discussionCount: discussions.size, blocksScanned, truncated };
+  }
+
+  let cursor: string | undefined;
+  outer: do {
+    const { blocks, nextCursor } = await getBlockChildren(pageId, { ...opts, startCursor: cursor });
+    for (const b of blocks) {
+      if (blocksScanned >= maxBlockScans) {
+        truncated = true;
+        break outer;
+      }
+      blocksScanned += 1;
+      const id = typeof b.id === "string" ? b.id : undefined;
+      if (!id) continue;
+      if (take(await listBlockComments(id, opts), id)) break outer;
+    }
+    if (nextCursor && blocksScanned < maxBlockScans) {
+      cursor = nextCursor;
+    } else {
+      if (nextCursor) truncated = true;
+      cursor = undefined;
+    }
+  } while (cursor);
+
+  return { comments, discussionCount: discussions.size, blocksScanned, truncated };
+}
+
 export interface NotionBlock {
   readonly id?: string;
   readonly type?: string;

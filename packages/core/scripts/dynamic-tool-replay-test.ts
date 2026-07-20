@@ -40,6 +40,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_slack_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_slack_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "read_notion_page", entryKey: "_single", ctx: notionCtx },
+  { slug: "read_notion_comments", entryKey: "_single", ctx: notionCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "forget", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },

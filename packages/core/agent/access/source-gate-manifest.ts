@@ -7,6 +7,7 @@ export const SOURCE_SCOPED_TOOLS: Readonly<Record<string, string>> = {
   read_slack_channel: "slack",
   read_slack_thread: "slack",
   read_notion_page: "notion",
+  read_notion_comments: "notion",
 };
 
 export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread"];

@@ -1,0 +1,110 @@
+import { defineDynamic, defineTool } from "eve/tools";
+import { z } from "zod";
+import { readNotionComments, type NotionCommentSummary } from "../channels/notion-api.js";
+import { ingestUntrustedModelOutput } from "../access/untrusted.js";
+import { assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
+import { sourceScopedMount } from "../access/source-scoped-mount.js";
+import { getConfig } from "../access/config.js";
+import { preRegisterDynamicEntry } from "../access/window-gated.js";
+
+const MAX_COMMENTS = 100;
+const MAX_BLOCK_SCANS = 80;
+
+function notionApiKey(): string | undefined {
+  const k = process.env.NOTION_API_KEY;
+  return k && k.length > 0 ? k : undefined;
+}
+
+function renderComments(comments: readonly NotionCommentSummary[]): string {
+  if (comments.length === 0) return "";
+  const byAnchor = new Map<string, NotionCommentSummary[]>();
+  for (const c of comments) {
+    const key = c.anchorId ?? "(unknown)";
+    let list = byAnchor.get(key);
+    if (!list) {
+      list = [];
+      byAnchor.set(key, list);
+    }
+    list.push(c);
+  }
+  const sections: string[] = [];
+  for (const [anchor, list] of byAnchor) {
+    const disc = list.find((c) => c.discussionId)?.discussionId;
+    const head = `discussion on block ${anchor}${disc ? ` (discussion_id ${disc})` : ""}:`;
+    const lines = list.map((c) => {
+      const who = c.authorId ? `${c.authorKind ?? "user"} ${c.authorId}` : "unknown author";
+      const when = c.createdTime ? ` at ${c.createdTime}` : "";
+      return `  - ${who}${when}: ${c.text}`;
+    });
+    sections.push([head, ...lines].join("\n"));
+  }
+  return sections.join("\n\n");
+}
+
+export const readNotionCommentsEntry = defineTool({
+  description:
+    "Read the comments / inline discussions on a Notion page (this doc, or another page shared with " +
+    "the integration). Use it when a reply needs OTHER discussions on the page — a comment on a " +
+    "different block, or an older thread — beyond the one you were woken on (already in context). " +
+    "Pass `block` to read just one block's inline discussion. Bounded; truncates a heavily-commented page.",
+  inputSchema: z.object({
+    page: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("The Notion page id whose comments to read. Defaults to THIS doc — the page the comment you're on lives in."),
+    block: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Read ONLY this block's inline discussion (a block/page id), instead of sweeping the whole page."),
+  }),
+  outputSchema: z.object({
+    page: z.string(),
+    discussions: z.number(),
+    comments: z.number(),
+    blocksScanned: z.number(),
+    truncated: z.boolean(),
+    text: z.string(),
+  }),
+  async execute(input, ctx2) {
+    assertTurnSurface(ctx2 as BindableContext, "notion");
+    const apiKey = notionApiKey();
+    if (!apiKey) throw new Error("NOTION_API_KEY is not set — cannot read the comments.");
+    const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
+    if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
+    const res = await readNotionComments(page, {
+      apiKey,
+      block: input.block,
+      maxComments: MAX_COMMENTS,
+      maxBlockScans: MAX_BLOCK_SCANS,
+    });
+    return {
+      page,
+      discussions: res.discussionCount,
+      comments: res.comments.length,
+      blocksScanned: res.blocksScanned,
+      truncated: res.truncated,
+      text: renderComments(res.comments),
+    };
+  },
+  toModelOutput(output) {
+    const header =
+      output.comments === 0
+        ? `Notion page ${output.page} has no readable comments.`
+        : `Notion page ${output.page} — ${output.comments} comment(s) across ${output.discussions} discussion(s):`;
+    const suffix = output.truncated ? "\n\n[truncated — the page has more comments/blocks than shown]" : "";
+    const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}`;
+    return ingestUntrustedModelOutput(body, { source: `notion comments ${output.page}` });
+  },
+});
+preRegisterDynamicEntry("read_notion_comments", "_single", readNotionCommentsEntry);
+
+export default defineDynamic({
+  events: {
+    "session.started": (_event, ctx) => {
+      if (!sourceScopedMount(ctx as BindableContext, "notion", () => getConfig().loadDomains())) return null;
+      return readNotionCommentsEntry;
+    },
+  },
+});
