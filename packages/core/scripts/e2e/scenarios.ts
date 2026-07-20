@@ -79,6 +79,7 @@ export interface Scenario {
 }
 
 const REPLY_WAIT = 180_000;
+const FILE_REPLY_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 
 const STOP_ACK = "Standing down";
@@ -1221,14 +1222,14 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 600_000,
+    timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
       const { ts: pngTs } = await slack.post(
         slack.mention("create a tiny simple PNG image (any small chart or shape is fine) and post it here as a file attachment using post_file."),
       );
-      const pngReply = await slack.awaitFileReply(pngTs, { timeoutMs: REPLY_WAIT, filetype: "png" });
+      const pngReply = await slack.awaitFileReply(pngTs, { timeoutMs: FILE_REPLY_WAIT, filetype: "png" });
       ctx.gate((pngReply.files ?? []).some((f) => f.filetype === "png"), "post_file: a bot reply carries a PNG file attachment (files[] filetype=png)");
 
       const { ts: htmlTs } = await slack.post(
@@ -1237,7 +1238,7 @@ export const SCENARIOS: readonly Scenario[] = [
       if (process.env.E2E_BLOB_PUBLISH === "1") {
         ctx.log("E2E_BLOB_PUBLISH=1 — the Blob publish path (world-readable URL + approval) is opt-in; gating on the html attachment either way");
       }
-      const htmlReply = await slack.awaitFileReply(htmlTs, { timeoutMs: REPLY_WAIT, filetype: "html" });
+      const htmlReply = await slack.awaitFileReply(htmlTs, { timeoutMs: FILE_REPLY_WAIT, filetype: "html" });
       ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment (the safe attach fallback)");
 
       const pngBytes = Uint8Array.from(

@@ -60,7 +60,11 @@ async function resolveBytes(source: FileSource, ctx: BindableContext): Promise<U
   try {
     return new Uint8Array(await readFile(source.path));
   } catch (err) {
-    throw new Error(`post_file: could not read the file at "${source.path}" — ${err instanceof Error ? err.message : String(err)}.`);
+    throw new Error(
+      `post_file: could not read the file at "${source.path}" — ${err instanceof Error ? err.message : String(err)}. ` +
+        `NOTE: \`path\` reads the tool host's filesystem, NOT the bash sandbox — a file you created with bash lives in the sandbox and is invisible here. ` +
+        `Instead run \`base64 <file>\` in bash and pass the output as \`source: { base64: ... }\`.`,
+    );
   }
 }
 
@@ -174,7 +178,7 @@ const inputSchema = z.object({
       z.object({
         source: z
           .union([
-            z.object({ path: z.string().min(1) }).describe("A local filesystem path readable by the agent runtime."),
+            z.object({ path: z.string().min(1) }).describe("A path on the tool host's filesystem — NOT the bash sandbox. For a file you created with bash, use base64 instead."),
             z.object({ url: z.string().min(1) }).describe("An http(s) URL to fetch the file bytes from."),
             z.object({ base64: z.string().min(1) }).describe("Base64-encoded file bytes (optionally a data: URL)."),
           ])
