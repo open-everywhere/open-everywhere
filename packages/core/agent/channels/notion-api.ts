@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getSecretVia, CredentialError } from "../access/credentials.js";
+import { findProviderCredential } from "../access/providers.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
 export function notionVersion(): string {
@@ -8,8 +9,10 @@ export function notionVersion(): string {
 }
 
 export async function resolveNotionApiKey(): Promise<string | undefined> {
+  const cred = findProviderCredential("notion", "team-key");
+  if (!cred?.secretRef) return undefined;
   try {
-    const k = await getSecretVia("env", "NOTION_API_KEY");
+    const k = await getSecretVia(cred.broker, cred.secretRef);
     return k.length > 0 ? k : undefined;
   } catch (err) {
     if (err instanceof CredentialError) return undefined;

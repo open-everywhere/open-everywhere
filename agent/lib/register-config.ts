@@ -1,4 +1,5 @@
 import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
+import { setRegisteredProviders } from "@open-everywhere/core/agent/access/providers.js";
 import { assertRoutesWithinPolicy } from "@open-everywhere/core/agent/model/policy.js";
 import { assertWindowSourcesVouched } from "@open-everywhere/core/agent/memory/domain.js";
 import { vouchedSurfaces } from "@open-everywhere/core/agent/identity/trust.js";
@@ -41,6 +42,8 @@ registerConfig({
   loadBlobHosting,
   loadPrincipals,
 });
+
+setRegisteredProviders(loadProviders());
 
 assertRoutesWithinPolicy(loadDomains(), loadRoles(), loadModelPolicy());
 

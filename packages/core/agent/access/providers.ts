@@ -113,3 +113,18 @@ export function expandProviderGrant(
     warnings: [],
   };
 }
+
+let registeredProviders: readonly Provider[] = [];
+
+export function setRegisteredProviders(providers: readonly Provider[]): void {
+  registeredProviders = providers;
+}
+
+export function resetRegisteredProviders(): void {
+  registeredProviders = [];
+}
+
+export function findProviderCredential(providerName: string, credentialId: string): ProviderCredential | undefined {
+  const provider = registeredProviders.find((p) => p.name === providerName);
+  return provider?.credentials.find((c) => c.id === credentialId);
+}

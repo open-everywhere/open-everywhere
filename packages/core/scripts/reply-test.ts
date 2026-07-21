@@ -17,6 +17,16 @@ process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
 
+const { setRegisteredProviders } = await import("../agent/access/providers.js");
+setRegisteredProviders([
+  {
+    name: "notion",
+    connection: "notion",
+    allows: ["api-key"],
+    credentials: [{ id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" }],
+  },
+]);
+
 const reply = (await import("../agent/tools/reply.js")).default;
 const { resolveReplyTarget } = await import("../agent/channels/reply-post.js");
 const { markRepliedThisTurn, consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");

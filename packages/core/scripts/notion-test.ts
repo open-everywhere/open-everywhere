@@ -24,6 +24,7 @@ import {
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
+import { setRegisteredProviders, resetRegisteredProviders } from "../agent/access/providers.js";
 import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 
 let passed = 0;
@@ -287,6 +288,14 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
   process.env.NOTION_API_KEY = "ntn_test_key";
+  setRegisteredProviders([
+    {
+      name: "notion",
+      connection: "notion",
+      allows: ["api-key"],
+      credentials: [{ id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" }],
+    },
+  ]);
 
   const nodeRequire = createRequire(import.meta.url);
   const eveRoot = dirname(nodeRequire.resolve("eve/package.json"));
@@ -399,6 +408,7 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
     ok(posts.length === 1, "per-doc (non-unified) notion turn: terminal text still posts (byte-identical flag-off)");
   } finally {
     globalThis.fetch = realFetch;
+    resetRegisteredProviders();
   }
 }
 
