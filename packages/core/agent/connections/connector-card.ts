@@ -11,6 +11,7 @@ import {
   type ConnectorAuthorizationStarter,
 } from "./connector-auth.js";
 import { requestCredentialIntake, type CredentialIntakeDeps } from "../credentials/intake.js";
+import { dbCredentialRef } from "../credentials/ref.js";
 import { optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
@@ -223,7 +224,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         org,
         provider: providerName,
         ...(role.domain ? { domain: role.domain } : {}),
-        ref: cred.secretRef,
+        ref: dbCredentialRef(providerName, cred.id),
         requestedBy: clickerId,
         channelId,
         ...(teamId ? { teamId } : {}),

@@ -2061,7 +2061,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;
       const intakeRef = typeof intakeDetail?.ref === "string" ? intakeDetail.ref : undefined;
       ctx.gate(!!intakeId && !!intakeRef, "forge: the intake_requested audit carries the intake id + ref (labels only, never a value)");
-      ctx.gate(intakeRef !== "NOTION_API_KEY", "safety: the e2e intake targets the isolated OE_E2E_INTAKE_KEY ref, NEVER the live NOTION_API_KEY");
+      ctx.gate(
+        intakeRef!.startsWith("db:e2e-intake:") && intakeRef !== "NOTION_API_KEY" && !intakeRef!.includes("notion"),
+        "safety: the e2e intake targets the isolated db:e2e-intake:… ref, NEVER a live provider ref",
+      );
 
       const FAKE_KEY = `oe-e2e-fake-secret-${Date.now().toString(36)}`;
       const submitRes = await synthetic.setKeySubmit({ org, intakeId: intakeId!, channelId, value: FAKE_KEY, userId: admin, teamId });
@@ -2084,6 +2087,27 @@ export const SCENARIOS: readonly Scenario[] = [
           "store: absent a stored row, the submit returned a modal-close / validation-error response (no silent drop)",
         );
         ctx.log("store: no credential.stored row — the submit was validation-rejected (a hypothetical future live provider check); documented as the alternative valid outcome.");
+      }
+
+      if (storedRows) {
+        const bindingRows = await pollUntil(
+          async () => {
+            const r = await auditRead!({ sinceIso: runStart, actions: ["credential.binding_proposed"] });
+            const mine = r.filter((e) => (e.detail as { credentialAuditId?: unknown } | undefined)?.credentialAuditId === intakeId);
+            return mine.length > 0 ? mine : undefined;
+          },
+          { timeoutMs: REPLY_WAIT, what: "a credential.binding_proposed audit row for the stored credential" },
+        ).catch(() => undefined);
+        if (bindingRows) {
+          const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; provider?: unknown; credential?: unknown };
+          ctx.gate(bd.dryRun === true, "binding: the credential-binding PR ran DRY-RUN — nothing opened a real PR against the config repo");
+          ctx.gate(
+            bd.credentialAuditId === intakeId && typeof bd.storedRef === "string" && (bd.storedRef as string).startsWith("db:e2e-intake:") && bd.provider === PROVIDER,
+            "binding: binding_proposed cites the intake id + carries references only (provider/credential/storedRef), never a value",
+          );
+        } else {
+          ctx.log("binding: no credential.binding_proposed row — the binding follow-on fail-safe-SKIPPED (OE_ACCESS_CONFIG_REPO unset in prod); the store leg still proved out. Configure the access config repo to exercise the binding PR.");
+        }
       }
 
       const allRows = await auditRead!({ sinceIso: runStart });

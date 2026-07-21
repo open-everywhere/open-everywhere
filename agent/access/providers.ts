@@ -3,6 +3,8 @@ import {
   defineProvider,
   type Provider,
 } from "@open-everywhere/core/agent/access/providers.js";
+import { applyOverridesToProviders } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
+import { loadCredentialBindingsOverlay } from "./credential-bindings.js";
 
 const providers: Provider[] = [
   defineProvider({
@@ -22,7 +24,7 @@ const providers: Provider[] = [
     connection: "notion",
     allows: ["api-key", "service-oauth"],
     credentials: [
-      { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "db" },
+      { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "env" },
       { id: "e2e-oauth", type: "service-oauth", vercelConnector: "example.com/e2e-intake" },
     ],
   }),
@@ -30,6 +32,13 @@ const providers: Provider[] = [
 
 assertProvidersValid(providers);
 
+const merged: readonly Provider[] = applyOverridesToProviders(providers, loadCredentialBindingsOverlay().overrides);
+assertProvidersValid(merged);
+
 export function loadProviders(): readonly Provider[] {
+  return merged;
+}
+
+export function loadBaseProviders(): readonly Provider[] {
   return providers;
 }

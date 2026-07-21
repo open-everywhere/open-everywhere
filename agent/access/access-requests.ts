@@ -1,5 +1,6 @@
 import type { AccessRequestsConfig } from "@open-everywhere/core/agent/access/config.js";
 import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
+import { loadBaseProviders } from "./providers.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {
   return {
@@ -10,5 +11,6 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     dryRun: process.env.OE_ACCESS_DRY_RUN === "1",
     baseBundles: loadBaseBundles,
     baseBindings: loadBaseBindings,
+    baseProviders: loadBaseProviders,
   };
 }

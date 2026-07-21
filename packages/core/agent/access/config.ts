@@ -19,6 +19,7 @@ export interface AccessRequestsConfig {
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
+  baseProviders?(): readonly Provider[];
 }
 
 export interface AppConfig {

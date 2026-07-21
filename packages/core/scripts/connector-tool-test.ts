@@ -188,7 +188,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec = recorder();
   ok((await handleConnectClick(click("api-key", "U_ADMIN", "C123"), deps({ post: rec.post, requestIntake }))) === true, "api-key admin click handled");
   eq(intakeCalls.length, 1, "admin api-key ⇒ the intake flow is invoked");
-  ok(intakeCalls[0].ref === "NOTION_API_KEY" && intakeCalls[0].requestedBy === "U_ADMIN" && intakeCalls[0].provider === "notion", "the intake is asked for the credential's secretRef, on behalf of the clicker");
+  ok(intakeCalls[0].ref === "db:notion:team-key" && intakeCalls[0].requestedBy === "U_ADMIN" && intakeCalls[0].provider === "notion", "the intake is asked for the credential's reversible db ref (db:notion:team-key), on behalf of the clicker");
 
   const intakeCalls2: Array<Record<string, unknown>> = [];
   const requestIntake2 = async (input: Record<string, unknown>) => {

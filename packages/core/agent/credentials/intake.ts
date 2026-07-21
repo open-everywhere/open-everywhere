@@ -3,6 +3,8 @@ import { slackForm } from "../channels/slack-events.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { storeDbSecret } from "./db-broker.js";
+import { parseDbCredentialRef } from "./ref.js";
+import { stageCredentialBindingPr } from "./binding-pr.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -259,9 +261,27 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
       detail: { id, ref: intake.ref, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}) },
     });
 
+    let bindingNote = "";
+    try {
+      const target = parseDbCredentialRef(intake.ref);
+      if (target) {
+        const res = await stageCredentialBindingPr({
+          provider: target.provider,
+          credential: target.credentialId,
+          storedRef: intake.ref,
+          credentialAuditId: id,
+          requestedBy: clickerId,
+          where: intakeWhere(org, teamId, channelId ?? intake.channelId),
+        });
+        if (res.url) bindingNote = ` A config PR to bind it (custody → db broker) is open for review: ${res.url}`;
+      }
+    } catch (err) {
+      console.error(`[open-everywhere:credentials] credential-binding PR staging failed softly for ref "${intake.ref}": ${String(err)}`);
+    }
+
     const confirmChannel = channelId ?? intake.channelId;
     const forWhom = intake.domain ? `*${intake.provider}* key for *${intake.domain}*` : `*${intake.provider}* key`;
-    await ephemeral(post, confirmChannel, clickerId, `✅ Your ${forWhom} was stored securely. The agent never saw the value.`).catch(() => undefined);
+    await ephemeral(post, confirmChannel, clickerId, `✅ Your ${forWhom} was stored securely. The agent never saw the value.${bindingNote}`).catch(() => undefined);
 
     return { handled: true };
   } catch (err) {
