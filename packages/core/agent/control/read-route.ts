@@ -315,12 +315,40 @@ export async function handleConnectProbeRead(req: Request): Promise<Response> {
     : undefined;
 
   let probe: Record<string, unknown>;
+  let verify: Record<string, unknown> | undefined;
   try {
     const connect = (await import("@vercel/" + "connect")) as {
       getTokenResponse: (c: string, p: unknown, o?: unknown) => Promise<{ token: string }>;
     };
     const r = await connect.getTokenResponse(connector, { subject: { type: "user", id: subjectId } }, { forceRefresh: true });
     probe = { outcome: "ok", tokenLength: r.token.length };
+    const mode = (url.searchParams.get("verify") ?? "").trim();
+    if (mode === "api") {
+      const res = await fetch("https://api.notion.com/v1/users/me", {
+        headers: { Authorization: `Bearer ${r.token}`, "Notion-Version": "2022-06-28" },
+      });
+      verify = { target: "api.notion.com/v1/users/me", status: res.status };
+    } else if (mode === "mcp") {
+      const res = await fetch("https://mcp.notion.com/mcp", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${r.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "oe-probe", version: "0" } } }),
+      });
+      verify = { target: "mcp.notion.com/mcp initialize", status: res.status };
+    } else if (mode === "sse") {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 5000);
+      try {
+        const res = await fetch("https://mcp.notion.com/sse", {
+          headers: { Authorization: `Bearer ${r.token}`, accept: "text/event-stream" },
+          signal: ac.signal,
+        });
+        verify = { target: "mcp.notion.com/sse", status: res.status };
+        await res.body?.cancel().catch(() => undefined);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
   } catch (err) {
     probe = {
       outcome: "error",
@@ -328,5 +356,5 @@ export async function handleConnectProbeRead(req: Request): Promise<Response> {
       message: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
     };
   }
-  return json(200, { connector, subject: subjectId, oidcSource, claims, probe });
+  return json(200, { connector, subject: subjectId, oidcSource, claims, probe, ...(verify ? { verify } : {}) });
 }
