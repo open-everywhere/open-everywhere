@@ -4,6 +4,12 @@ export function principalOf(type: ProviderCredentialType): "app" | "user" {
   return type === "user-oauth" ? "user" : "app";
 }
 
+export interface ExecutorConnectionRef {
+  readonly integration: string;
+  readonly owner: string;
+  readonly connection: string;
+}
+
 export interface ProviderCredential {
   readonly id: string;
   readonly type: ProviderCredentialType;
@@ -11,6 +17,7 @@ export interface ProviderCredential {
   readonly broker?: string;
   readonly intake?: boolean;
   readonly vercelConnector?: string;
+  readonly executor?: ExecutorConnectionRef;
   readonly dashboardUrl?: string;
 }
 
@@ -37,6 +44,7 @@ export interface ResolvedConnectorCredential {
   readonly secretRef?: string;
   readonly broker?: string;
   readonly vercelConnector?: string;
+  readonly executor?: ExecutorConnectionRef;
 }
 
 export function defineProvider(p: Provider): Provider {
@@ -55,14 +63,37 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
     for (const c of p.credentials) {
       if (credIds.has(c.id)) throw new Error(`provider "${p.name}": duplicate credential id "${c.id}"`);
       credIds.add(c.id);
-      if (c.type === "api-key" && !c.secretRef)
+      if (c.executor) {
+        const e = c.executor;
+        if (!e.integration || !e.owner || !e.connection)
+          throw new Error(
+            `provider "${p.name}" credential "${c.id}": executor binding needs non-empty ` +
+              `{ integration, owner, connection }`,
+          );
+        if (c.secretRef)
+          throw new Error(
+            `provider "${p.name}" credential "${c.id}": an executor-homed credential must NOT carry a ` +
+              `secretRef — its secret lives inside Executor, not on a broker (one home; mutual exclusivity)`,
+          );
+        if (c.broker)
+          throw new Error(
+            `provider "${p.name}" credential "${c.id}": an executor-homed credential must NOT carry a ` +
+              `broker — Executor is the connector-plane transport, not a token-vending broker (mutual exclusivity)`,
+          );
+        if (c.vercelConnector)
+          throw new Error(
+            `provider "${p.name}" credential "${c.id}": an executor-homed credential must NOT carry a ` +
+              `vercelConnector — its OAuth is minted + held inside Executor (mutual exclusivity)`,
+          );
+      }
+      if (c.type === "api-key" && !c.executor && !c.secretRef)
         throw new Error(`provider "${p.name}" credential "${c.id}": api-key needs a secretRef`);
-      if (c.type === "api-key" && !c.broker)
+      if (c.type === "api-key" && !c.executor && !c.broker)
         throw new Error(
           `provider "${p.name}" credential "${c.id}": api-key needs an explicit broker stamp ` +
             `("env" | "db" | ...) — a credential has exactly one home; unstamped-follows-selection is not allowed`,
         );
-      if ((c.type === "service-oauth" || c.type === "user-oauth") && !c.vercelConnector)
+      if ((c.type === "service-oauth" || c.type === "user-oauth") && !c.executor && !c.vercelConnector)
         throw new Error(`provider "${p.name}" credential "${c.id}": ${c.type} needs a vercelConnector`);
       if (c.intake === false && c.type !== "api-key")
         throw new Error(
@@ -120,6 +151,7 @@ export function expandProviderGrant(
       secretRef: cred.secretRef,
       broker: cred.broker,
       vercelConnector: cred.vercelConnector,
+      executor: cred.executor,
     },
     warnings: [],
   };

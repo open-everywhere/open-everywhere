@@ -1,4 +1,6 @@
 import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentials/vercel-connect.js";
+import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
+import { executorEnabled, loadExecutorConfig } from "@open-everywhere/adapters/agent/executor/config.js";
 import { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "@open-everywhere/core/agent/credentials/db-broker.js";
 import { registerGitHubMemory } from "@open-everywhere/core/agent/memory/github.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
@@ -13,6 +15,13 @@ registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
 
 if (process.env[CREDENTIAL_KEY_ENV]) {
   registerDbCredentialBroker();
+}
+
+{
+  const executorCfg = executorEnabled() ? loadExecutorConfig() : undefined;
+  if (executorCfg) {
+    registerExecutor(executorCfg);
+  }
 }
 
 registerGitHubMemory();
