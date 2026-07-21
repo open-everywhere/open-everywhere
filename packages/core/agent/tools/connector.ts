@@ -25,6 +25,9 @@ const connectorEntry = defineTool({
     "in a DM while org-level setup is admin-only (options a requester can't use are simply not shown). " +
     "NEVER invite anyone to paste a secret/API key into chat — secrets travel only through the posted " +
     "intake UI or an operator, and a pasted key is compromised. " +
+    "If the person says they have ALREADY completed a sign-in/authorization, do NOT call this — retry " +
+    "the actual operation instead (the provider's own tools / connection_search); grants land server-side, " +
+    "so only a fresh attempt can see them, and re-posting connect options reads as a runaround. " +
     "The posted card/message IS the reply — do not add a URL, a summary, or confirmation text after this call.",
   inputSchema: z.object({
     provider: z
