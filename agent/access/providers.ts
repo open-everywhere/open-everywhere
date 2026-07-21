@@ -9,25 +9,22 @@ const providers: Provider[] = [
     name: "notion",
     description: "Notion workspace (host-side MCP) — read/write the team knowledge base.",
     connection: "notion",
-    allows: ["api-key", "service-oauth", "user-oauth"],
+    allows: ["api-key", "user-oauth"],
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-      {
-        id: "team-oauth",
-        type: "service-oauth",
-        vercelConnector: "notion.so/open-everywhere",
-        dashboardUrl: "https://vercel.com/<your-team>/~/connect/scl_example4",
-      },
       { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
     ],
   }),
 
   defineProvider({
     name: "e2e-intake",
-    description: "E2E-only: isolated api-key credential the Set-API-key intake leg forges against (inert — never granted).",
+    description: "E2E-only: isolated credentials the connector intake / org-click legs forge against (inert — never granted).",
     connection: "notion",
-    allows: ["api-key"],
-    credentials: [{ id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY" }],
+    allows: ["api-key", "service-oauth"],
+    credentials: [
+      { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "db" },
+      { id: "e2e-oauth", type: "service-oauth", vercelConnector: "example.com/e2e-intake" },
+    ],
   }),
 ];
 

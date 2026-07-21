@@ -1943,7 +1943,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-CONNECT-CARD",
     title:
-      "Channel connector card: a 'connect notion here' ask posts the connector-offer card → a forged admin click on the org (service-oauth) button issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
+      "Channel connector card: (A) a 'connect notion here' ask posts a card that is now API-KEY ONLY — the 'Set API key' button is present, NO org (service-oauth) button (service-oauth removed as a dead end); (B) a forged admin service-oauth click against the ISOLATED e2e-intake fixture issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
     requires: ["slack", "synthetic"],
     surface: "notion",
     suite: "extended",
@@ -1955,39 +1955,46 @@ export const SCENARIOS: readonly Scenario[] = [
       const synthetic = ctx.synthetic!;
       const auditRead = ctx.auditRead;
       if (!auditRead) ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
-      const { userId, teamId } = await slack.identity();
+      const { teamId } = await slack.identity();
+      const admin = synthetic.adminUserId;
+      const org = synthetic.org;
       const runStart = new Date(Date.now() - 60_000).toISOString();
+
       const { ts: rootTs } = await slack.post(slack.mention("can you connect notion here?"));
-      const card = await slack.awaitThreadMessage(
-        rootTs,
-        { timeoutMs: REPLY_WAIT, what: "the connector-offer card carrying an oe_connect:* button" },
-        (msgs) => msgs.find((m) => slack.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId.startsWith("oe_connect:"))),
-      );
-      ctx.log(`connect card ts=${card.ts} buttons=[${(card.actions ?? []).map((a) => a.actionId).join(", ")}]`);
-      const orgButton = (card.actions ?? []).find((a) => a.actionId.startsWith("oe_connect:") && a.actionId.endsWith(":service-oauth"));
-      ctx.gate(orgButton !== undefined, "the connect card offers the org (service-oauth) button");
-      const res = await synthetic.clickBlockAction({
-        actionId: orgButton!.actionId,
-        blockId: orgButton!.blockId,
-        value: orgButton!.value,
-        buttonText: orgButton!.text,
-        userId,
-        teamId,
-        channelId: slack.channelId,
-        messageTs: card.ts,
-        threadTs: card.threadTs ?? rootTs,
-      });
-      ctx.gate(res.status === 200, "synthetic org-account click acked 200 by the deployment's Slack route");
+      const notionCard = await slack
+        .awaitThreadMessage(
+          rootTs,
+          { timeoutMs: REPLY_WAIT, what: "the notion connector-offer card (api-key only)" },
+          (msgs) => msgs.find((m) => slack.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId.startsWith("oe_connect:"))),
+        )
+        .catch(() => undefined);
+      if (notionCard) {
+        const ids = (notionCard.actions ?? []).map((a) => a.actionId);
+        ctx.log(`notion connect card ts=${notionCard.ts} buttons=[${ids.join(", ")}]`);
+        ctx.gate(!ids.some((id) => id.endsWith(":service-oauth")), "notion card offers NO org (service-oauth) button — service-oauth removed as a dead end");
+        ctx.gate(ids.includes("oe_connect:notion:api-key"), "notion card offers the 'Set API key' (api-key) button — the api-key-only offer under the db broker");
+      } else {
+        ctx.log(
+          "no notion connect card observed (the model may not have posted it, or the active broker isn't db so the channel card has no offerable option) — proceeding to the deterministic org-click forge (B)",
+        );
+      }
+
+      const PROVIDER = "e2e-intake";
+      const connectRes = await synthetic.connectClick({ provider: PROVIDER, credentialType: "service-oauth", userId: admin, channelId: slack.channelId, teamId, org });
+      ctx.gate(connectRes.status === 200, "synthetic org-account (service-oauth) click acked 200 by the deployment's Slack route");
       const rows = await pollUntil(
         async () => {
           const r = await auditRead!({ sinceIso: runStart, actions: ["connector.dashboard_link_issued"] });
-          const mine = r.filter((e) => e.principalId === userId);
+          const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
           return mine.length > 0 ? mine : undefined;
         },
-        { timeoutMs: REPLY_WAIT, what: "a connector.dashboard_link_issued audit row for the admin clicker" },
+        { timeoutMs: REPLY_WAIT, what: "a connector.dashboard_link_issued audit row for the admin clicker (provider e2e-intake)" },
       );
       ctx.gate(rows.length > 0, "audit: a connector.dashboard_link_issued row was written for the org-account click (service-oauth handler ran)");
-      ctx.log(`connector.dashboard_link_issued rows=${rows.length} provider=${String((rows[0].detail as { provider?: unknown } | undefined)?.provider ?? "?")}`);
+      const configured = Boolean((rows[0].detail as { configured?: unknown } | undefined)?.configured);
+      ctx.log(
+        `connector.dashboard_link_issued rows=${rows.length} provider=${String((rows[0].detail as { provider?: unknown } | undefined)?.provider ?? "?")} configured=${configured} (fixture has no dashboardUrl ⇒ false expected)`,
+      );
     },
   },
   {

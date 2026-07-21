@@ -36,7 +36,7 @@ const NOTION: Provider = {
   connection: "notion",
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
-    { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY" },
+    { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
     { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere", dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
     { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
   ],
@@ -62,7 +62,7 @@ console.log("1. resolver matrix:");
   const NARROW: Provider = { name: "narrow", connection: "n", allows: ["user-oauth"], credentials: NOTION.credentials };
   eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, broker: "db" })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
 
-  const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY" }] };
+  const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY", broker: "env" }] };
   eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, broker: "db" })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
 
   const dmOpts = R({ mode: "dm", isAdmin: true });

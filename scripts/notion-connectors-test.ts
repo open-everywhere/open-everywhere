@@ -59,12 +59,8 @@ ok(
   "route ②: skill package ships scripts/notion.mjs",
 );
 
-ok(bound.connectors.includes("notion"), "route ③: the 'notion' MCP connection is granted");
-const notionCred = bound.connectorCredentials["notion"];
-ok(notionCred !== undefined, "route ③: a provider credential is bound for 'notion'");
-ok(notionCred?.provider === "notion" && notionCred?.credential === "team-oauth" && notionCred?.type === "service-oauth", "route ③: bound to the 'team-oauth' service-oauth credential (hosted MCP rejects api-keys)");
-ok(notionCred?.vercelConnector === "notion.so/open-everywhere", "route ③: credential carries the Connect connector UID");
-ok(notionCred?.principal === "app", "route ③: app principal (the shared service identity, not a personal DM grant)");
+ok(!bound.connectors.includes("notion"), "route ③ REMOVED: the org/channel does NOT grant the notion MCP connector (service-oauth was a dead end)");
+ok(bound.connectorCredentials["notion"] === undefined, "route ③ REMOVED: no service/org connector credential is bound for 'notion' on the channel");
 
 const unbound = resolveFor("T_SOME_OTHER_WORKSPACE", "C_SOME_OTHER_CHANNEL");
 ok(!unbound.reachableHosts.some((h) => h.host === "api.notion.com"), "unbound channel: api.notion.com NOT reachable");
@@ -183,4 +179,4 @@ ok(append.method === "PATCH" && append.path === "/v1/blocks/blk123/children", "b
 const appendBody = append.body as { children: { paragraph: { rich_text: { text: { content: string } }[] } }[] };
 ok(appendBody.children.length === 1 && appendBody.children[0].paragraph.rich_text[0].text.content === "hello from the test", "buildAppendRequest: exactly one paragraph block with the given text");
 
-console.log(`✓ notion-connectors: ${passed} assertions passed (3-route bundle wiring, scoping, egress policy, skill script)`);
+console.log(`✓ notion-connectors: ${passed} assertions passed (REST + skill route wiring, route ③ removal, scoping, egress policy, skill script)`);

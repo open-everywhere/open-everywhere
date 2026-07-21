@@ -31,7 +31,7 @@ const notion: Provider = defineProvider({
   connection: "notion",
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
-    { id: "team-key", type: "api-key", secretRef: "NOTION_TEAM" },
+    { id: "team-key", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
     { id: "team-oauth", type: "service-oauth", vercelConnector: "oauth/notion-app" },
     { id: "mine", type: "user-oauth", vercelConnector: "oauth/notion-user" },
   ],
@@ -47,6 +47,10 @@ throws(() => assertProvidersValid([notion, notion]), "duplicate provider name th
 throws(
   () => assertProvidersValid([{ name: "x", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key" }] }]),
   "api-key credential without secretRef throws",
+);
+throws(
+  () => assertProvidersValid([{ name: "x", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: "K" }] }]),
+  "api-key credential without an explicit broker stamp throws (a credential has exactly one home)",
 );
 throws(
   () => assertProvidersValid([{ name: "x", connection: "c", allows: ["service-oauth"], credentials: [{ id: "o", type: "service-oauth" }] }]),
@@ -95,7 +99,7 @@ throws(
 {
   const tightProvider: Provider = {
     ...notion,
-    credentials: [...notion.credentials, { id: "payments-key", type: "api-key", secretRef: "NOTION_PAYMENTS" }],
+    credentials: [...notion.credentials, { id: "payments-key", type: "api-key", secretRef: "NOTION_PAYMENTS", broker: "env" }],
   };
   const bundles: Bundle[] = [
     { name: "org-notion", providers: [{ provider: "notion", credential: "team-key" }] },

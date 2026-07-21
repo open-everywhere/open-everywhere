@@ -56,6 +56,11 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
       credIds.add(c.id);
       if (c.type === "api-key" && !c.secretRef)
         throw new Error(`provider "${p.name}" credential "${c.id}": api-key needs a secretRef`);
+      if (c.type === "api-key" && !c.broker)
+        throw new Error(
+          `provider "${p.name}" credential "${c.id}": api-key needs an explicit broker stamp ` +
+            `("env" | "db" | ...) — a credential has exactly one home; unstamped-follows-selection is not allowed`,
+        );
       if ((c.type === "service-oauth" || c.type === "user-oauth") && !c.vercelConnector)
         throw new Error(`provider "${p.name}" credential "${c.id}": ${c.type} needs a vercelConnector`);
     }
