@@ -4,6 +4,8 @@ import { pollUntil, sleep } from "./poll.js";
 export interface SlackMessageAction {
   readonly actionId: string;
   readonly value?: string;
+  readonly blockId?: string;
+  readonly text?: string;
 }
 
 export interface SlackFile {
@@ -23,22 +25,40 @@ export interface SlackMessage {
   readonly files?: readonly SlackFile[];
 }
 
+interface SlackApiButton {
+  action_id?: string;
+  value?: string;
+  text?: string | { text?: string };
+}
+interface SlackApiBlock {
+  type?: string;
+  block_id?: string;
+  elements?: readonly SlackApiButton[];
+  actions?: readonly SlackApiButton[];
+}
 interface SlackApiMessage {
   ts?: string;
   thread_ts?: string;
   user?: string;
   bot_id?: string;
   text?: string;
-  blocks?: readonly { type?: string; elements?: readonly { action_id?: string; value?: string }[] }[];
+  blocks?: readonly SlackApiBlock[];
   files?: readonly { id?: string; name?: string; filetype?: string; mimetype?: string }[];
+}
+
+function buttonLabel(b: SlackApiButton): string | undefined {
+  if (typeof b.text === "string") return b.text;
+  if (b.text && typeof b.text.text === "string") return b.text.text;
+  return undefined;
 }
 
 function toMessage(m: SlackApiMessage): SlackMessage {
   const actions = (m.blocks ?? [])
-    .filter((b) => b.type === "actions")
-    .flatMap((b) => b.elements ?? [])
-    .filter((e): e is { action_id: string; value?: string } => typeof e.action_id === "string")
-    .map((e) => ({ actionId: e.action_id, value: e.value }));
+    .flatMap((b) =>
+      [...(b.elements ?? []), ...(b.actions ?? [])]
+        .filter((e): e is SlackApiButton & { action_id: string } => typeof e.action_id === "string")
+        .map((e) => ({ actionId: e.action_id, value: e.value, blockId: b.block_id, text: buttonLabel(e) })),
+    );
   const files = (m.files ?? []).map((f) => ({ id: f.id, name: f.name, filetype: f.filetype, mimetype: f.mimetype }));
   return {
     ts: m.ts ?? "",

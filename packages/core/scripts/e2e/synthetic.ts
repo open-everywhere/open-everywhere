@@ -41,6 +41,44 @@ export function encodeInteractionBody(payload: Record<string, unknown>): string 
   return new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
 }
 
+export interface BlockActionClickInput {
+  readonly actionId: string;
+  readonly blockId?: string;
+  readonly value?: string;
+  readonly buttonText?: string;
+  readonly userId: string;
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly messageTs: string;
+  readonly threadTs?: string;
+}
+
+export function buildBlockActionPayload(input: BlockActionClickInput): Record<string, unknown> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return {
+    type: "block_actions",
+    user: { id: input.userId, team_id: input.teamId },
+    api_app_id: "A_E2E",
+    token: "e2e",
+    trigger_id: `${Date.now()}.e2e`,
+    team: { id: input.teamId },
+    channel: { id: input.channelId },
+    container: { type: "message", message_ts: input.messageTs, channel_id: input.channelId, is_ephemeral: false },
+    message: { ts: input.messageTs, ...(input.threadTs ? { thread_ts: input.threadTs } : {}), type: "message" },
+    response_url: "https://hooks.slack.com/actions/E2E/synthetic/unused",
+    actions: [
+      {
+        type: "button",
+        action_id: input.actionId,
+        ...(input.blockId ? { block_id: input.blockId } : {}),
+        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.buttonText ? { text: { type: "plain_text", text: input.buttonText } } : {}),
+        action_ts: `${nowSec}.000001`,
+      },
+    ],
+  };
+}
+
 export interface SlashCommandInput {
   readonly text: string;
   readonly userId: string;
@@ -157,6 +195,17 @@ export class SyntheticSlack {
       userId: input.userId ?? this.cfg.adminUserId,
       channelId: input.channelId ?? this.cfg.channel,
       org: input.org ?? this.cfg.org,
+    });
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
+  }
+
+  async clickBlockAction(
+    input: Omit<BlockActionClickInput, "userId" | "channelId"> & { userId?: string; channelId?: string },
+  ): Promise<SyntheticResult> {
+    const payload = buildBlockActionPayload({
+      ...input,
+      userId: input.userId ?? this.cfg.adminUserId,
+      channelId: input.channelId ?? this.cfg.channel,
     });
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }

@@ -1872,4 +1872,122 @@ export const SCENARIOS: readonly Scenario[] = [
       );
     },
   },
+  {
+    id: "S-DM-NOTION",
+    title:
+      "DM personal-Notion journey: forged message.im wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
+    requires: ["slack", "syntheticDm", "synthetic"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 420_000,
+    judged: true,
+    run: async (ctx) => {
+      const dm = ctx.dm!;
+      const forge = ctx.syntheticDm!;
+      const synthetic = ctx.synthetic!;
+      const { userId, teamId } = await ctx.slack!.identity();
+      const ask = "can you list the pages in my Notion workspace?";
+      const { ts: anchorTs } = await dm.post(ask);
+      const sent = await forge.message({ text: ask, userId, teamId, ts: anchorTs });
+      ctx.log(`${sent.label}: POST → ${sent.status}`);
+      ctx.gate(sent.status === 200, "synthetic DM event acked 200 by the deployment's Slack route");
+
+      const clicked = new Set<string>();
+      const answer = await pollUntil(
+        async () => {
+          const msgs = await dm.replies(anchorTs);
+          let pending: SlackMessage | undefined;
+          for (const m of msgs) {
+            if (!dm.isBotReply(m) || Number.parseFloat(m.ts) <= Number.parseFloat(anchorTs)) continue;
+            const buttons = m.actions ?? [];
+            const isApprovalCard = buttons.some((a) => a.value === "approve" || /^(allow|deny)$/i.test((a.text ?? "").trim()));
+            if (isApprovalCard) {
+              if (!clicked.has(m.ts)) {
+                clicked.add(m.ts);
+                const allow = buttons.find((a) => a.value === "approve" || /allow/i.test(a.text ?? ""));
+                if (allow) {
+                  const res = await synthetic.clickBlockAction({
+                    actionId: allow.actionId,
+                    blockId: allow.blockId,
+                    value: allow.value,
+                    buttonText: allow.text,
+                    userId,
+                    teamId,
+                    channelId: dm.channelId,
+                    messageTs: m.ts,
+                    threadTs: m.threadTs ?? anchorTs,
+                  });
+                  ctx.log(`approval card Allow → synthetic click ${res.status}`);
+                }
+              }
+              continue;
+            }
+            if (m.text.trim().length > 0) pending = pending ?? m;
+          }
+          return pending;
+        },
+        { timeoutMs: REPLY_WAIT, what: "a substantive (non-card) bot reply to the DM Notion-pages ask" },
+      );
+      ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
+      await ctx.judgePass(
+        closedQA(
+          "Does the reply substantively answer a request to list the user's Notion pages — naming/describing pages or workspace content, or an honest 'your workspace has no pages' — rather than an error, a permissions failure, or a refusal to access Notion?",
+          { mustNotMatch: [/error|exception|traceback/i, /can'?t (access|connect|reach)|unable to (access|connect)|not connected|no access to (your )?notion/i] },
+        ),
+        answer.text,
+        "DM personal-Notion: a real answer about the user's Notion pages",
+      );
+    },
+  },
+  {
+    id: "S-CONNECT-CARD",
+    title:
+      "Channel connector card: a 'connect notion here' ask posts the connector-offer card → a forged admin click on the org (service-oauth) button issues the dashboard link, asserted via the connector.dashboard_link_issued audit row (the link itself is ephemeral)",
+    requires: ["slack", "synthetic"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 240_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const synthetic = ctx.synthetic!;
+      const auditRead = ctx.auditRead;
+      if (!auditRead) ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN)");
+      const { userId, teamId } = await slack.identity();
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const { ts: rootTs } = await slack.post(slack.mention("can you connect notion here?"));
+      const card = await slack.awaitThreadMessage(
+        rootTs,
+        { timeoutMs: REPLY_WAIT, what: "the connector-offer card carrying an oe_connect:* button" },
+        (msgs) => msgs.find((m) => slack.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId.startsWith("oe_connect:"))),
+      );
+      ctx.log(`connect card ts=${card.ts} buttons=[${(card.actions ?? []).map((a) => a.actionId).join(", ")}]`);
+      const orgButton = (card.actions ?? []).find((a) => a.actionId.startsWith("oe_connect:") && a.actionId.endsWith(":service-oauth"));
+      ctx.gate(orgButton !== undefined, "the connect card offers the org (service-oauth) button");
+      const res = await synthetic.clickBlockAction({
+        actionId: orgButton!.actionId,
+        blockId: orgButton!.blockId,
+        value: orgButton!.value,
+        buttonText: orgButton!.text,
+        userId,
+        teamId,
+        channelId: slack.channelId,
+        messageTs: card.ts,
+        threadTs: card.threadTs ?? rootTs,
+      });
+      ctx.gate(res.status === 200, "synthetic org-account click acked 200 by the deployment's Slack route");
+      const rows = await pollUntil(
+        async () => {
+          const r = await auditRead!({ sinceIso: runStart, actions: ["connector.dashboard_link_issued"] });
+          const mine = r.filter((e) => e.principalId === userId);
+          return mine.length > 0 ? mine : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: "a connector.dashboard_link_issued audit row for the admin clicker" },
+      );
+      ctx.gate(rows.length > 0, "audit: a connector.dashboard_link_issued row was written for the org-account click (service-oauth handler ran)");
+      ctx.log(`connector.dashboard_link_issued rows=${rows.length} provider=${String((rows[0].detail as { provider?: unknown } | undefined)?.provider ?? "?")}`);
+    },
+  },
 ];

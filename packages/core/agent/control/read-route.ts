@@ -9,7 +9,6 @@ export const CONTROL_READ_USAGE_PATH = "/control/v1/usage";
 export const CONTROL_READ_AUDIT_PATH = "/control/v1/audit";
 export const CONTROL_READ_UNIFIED_AUDIT_PATH = "/control/v1/unified-audit";
 export const CONTROL_READ_TRANSCRIPT_PATH = "/control/v1/session/:sessionId/transcript";
-export const CONTROL_READ_CONNECT_PROBE_PATH = "/control/v1/connect-probe";
 const AUDIT_MAX_LIMIT = 1000;
 const AUDIT_DEFAULT_LIMIT = 200;
 const TRANSCRIPT_DEFAULT_LIMIT = 2000;
@@ -263,98 +262,4 @@ export async function handleSessionTranscriptRead(
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }
-}
-
-function decodeJwtClaims(token: string): Record<string, unknown> | undefined {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return undefined;
-    return JSON.parse(Buffer.from(payload, "base64url").toString()) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function handleConnectProbeRead(req: Request): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
-  if (entries.length === 0) return new Response("not found", { status: 404 });
-  const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
-  if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
-
-  const url = new URL(req.url);
-  const subjectId = (url.searchParams.get("subject") ?? "").trim();
-  const connector = (url.searchParams.get("connector") ?? "notion.so/open-everywhere").trim();
-  if (!subjectId) return json(400, { error: "expected query param: subject=<user subject id>" });
-
-  await appendAudit({
-    org: deploymentOrg(),
-    platform: "control",
-    workspace: "control",
-    principalId: identity.subject,
-    action: "control.service_call",
-    detail: { service: identity.subject, view: "connect_probe", connector, subject: subjectId },
-  });
-
-  let oidc: Record<string, unknown> | undefined;
-  let oidcSource = "none";
-  try {
-    const mod = (await import("@vercel/" + "oidc")) as { getVercelOidcToken?: () => Promise<string> };
-    if (mod.getVercelOidcToken) {
-      oidc = decodeJwtClaims(await mod.getVercelOidcToken());
-      oidcSource = "sdk";
-    }
-  } catch {
-  }
-  if (!oidc && process.env.VERCEL_OIDC_TOKEN) {
-    oidc = decodeJwtClaims(process.env.VERCEL_OIDC_TOKEN);
-    oidcSource = "env";
-  }
-  const claims = oidc
-    ? { environment: oidc.environment, sub: oidc.sub, project: oidc.project, owner: oidc.owner }
-    : undefined;
-
-  let probe: Record<string, unknown>;
-  let verify: Record<string, unknown> | undefined;
-  try {
-    const connect = (await import("@vercel/" + "connect")) as {
-      getTokenResponse: (c: string, p: unknown, o?: unknown) => Promise<{ token: string }>;
-    };
-    const r = await connect.getTokenResponse(connector, { subject: { type: "user", id: subjectId } }, { forceRefresh: true });
-    probe = { outcome: "ok", tokenLength: r.token.length };
-    const mode = (url.searchParams.get("verify") ?? "").trim();
-    if (mode === "api") {
-      const res = await fetch("https://api.notion.com/v1/users/me", {
-        headers: { Authorization: `Bearer ${r.token}`, "Notion-Version": "2022-06-28" },
-      });
-      verify = { target: "api.notion.com/v1/users/me", status: res.status };
-    } else if (mode === "mcp") {
-      const res = await fetch("https://mcp.notion.com/mcp", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${r.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "oe-probe", version: "0" } } }),
-      });
-      verify = { target: "mcp.notion.com/mcp initialize", status: res.status };
-    } else if (mode === "sse") {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 5000);
-      try {
-        const res = await fetch("https://mcp.notion.com/sse", {
-          headers: { Authorization: `Bearer ${r.token}`, accept: "text/event-stream" },
-          signal: ac.signal,
-        });
-        verify = { target: "mcp.notion.com/sse", status: res.status };
-        await res.body?.cancel().catch(() => undefined);
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-  } catch (err) {
-    probe = {
-      outcome: "error",
-      name: err instanceof Error ? err.name : "unknown",
-      message: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
-    };
-  }
-  return json(200, { connector, subject: subjectId, oidcSource, claims, probe, ...(verify ? { verify } : {}) });
 }
