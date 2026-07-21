@@ -18,7 +18,7 @@ const providers: Provider[] = [
         vercelConnector: "notion.so/open-everywhere",
         dashboardUrl: "https://vercel.com/<your-team>/~/connect/scl_example4",
       },
-      { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
+      { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
     ],
   }),
 ];

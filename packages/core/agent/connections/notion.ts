@@ -2,7 +2,7 @@ import { defineMcpClientConnection } from "eve/connections";
 import { appProviderToken, userAwareProviderToken, connectorApprovalPolicy } from "./connector-auth.js";
 import { connectorUserPrincipalEnabled } from "./connector-flags.js";
 
-const NOTION_MCP_URL = "https://mcp.notion.com/sse";
+const NOTION_MCP_URL = "https://mcp.notion.com/mcp";
 
 export default defineMcpClientConnection({
   url: NOTION_MCP_URL,
