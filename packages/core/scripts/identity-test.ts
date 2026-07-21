@@ -84,6 +84,11 @@ const dm = bindFrom(slackCtx({ team_id: "T1", channel_id: "D3", channel_type: "i
 ok(dm.mode === "dm" && dm.visibility === "private", "slack im -> dm/private");
 ok(dm.principalId === "U7", "slack: principalId prefers auth.principalId");
 
+const dmResume = bindFrom(slackCtx({ team_id: "T1", channel_id: "D3", channel_type: "im", user_id: "U7" }, "slack:T1:U7"));
+ok(dmResume.principalId === "U7", "slack: composite auth principalId (slack:T:U) collapses to the raw user id");
+const dmResumeNoAttr = bindFrom(slackCtx({ team_id: "T1", channel_id: "D3", channel_type: "im" }, "slack:T1:U7"));
+ok(dmResumeNoAttr.principalId === "U7", "slack: composite collapses even with no user_id attribute to fall back on");
+
 const mpim = bindFrom(slackCtx({ team_id: "T1", channel_id: "C4", channel_type: "mpim", user_id: "U7" }));
 ok(mpim.mode === "mpim" && mpim.visibility === "private", "slack mpim -> mpim/private");
 

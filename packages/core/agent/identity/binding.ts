@@ -120,6 +120,12 @@ export function slackTrust(
   return "internal";
 }
 
+function rawSlackPrincipal(pid: string | undefined): string | undefined {
+  if (!pid || !pid.startsWith("slack:")) return pid;
+  const last = pid.slice(pid.lastIndexOf(":") + 1);
+  return last.length > 0 ? last : undefined;
+}
+
 const bindSlack: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -135,7 +141,7 @@ const bindSlack: Mapper = (ctx) => {
     visibility: slackVisibility(channelType, isPrivate, mode),
     trust: mode === "dm" ? dmPartnerTrust : slackTrust(attr(a, ["is_ext_shared", "isExtShared"]), attr(a, ["trust_checked", "trustChecked"]), mode),
     trustVerified: mode === "dm" ? dmPartnerTrust !== undefined : undefined,
-    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
+    principalId: rawSlackPrincipal(authPrincipalId(ctx)) ?? attr(a, ["user_id", "userId"]),
     target: channelId ? { channelId } : undefined,
     threadTs: attr(a, ["thread_ts", "threadTs"]) ?? attr(a, ["oe_reply_anchor", "oeReplyAnchor"]),
   };
