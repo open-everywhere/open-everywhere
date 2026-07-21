@@ -10,7 +10,7 @@ import { liveMemoryDeltaDep } from "../memory/wake-delta.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { createCommentReply, retrieveBotUser } from "./notion-api.js";
+import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { isVouchedInternal } from "../identity/trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
@@ -30,11 +30,6 @@ const ROUTE = "/eve/v1/notion";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:notion] ${msg}`);
-}
-
-function notionApiKey(): string | undefined {
-  const k = process.env.NOTION_API_KEY;
-  return k && k.length > 0 ? k : undefined;
 }
 
 let botUserCache: Promise<{ id?: string; name?: string }> | undefined;
@@ -144,7 +139,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
     POST(ROUTE, async (req, { send, waitUntil, receive }) => {
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
-      const apiKey = notionApiKey();
+      const apiKey = await resolveNotionApiKey();
       const botUser = resolveBotUser(apiKey ?? "");
 
       const dispatch = async (d: NotionSupervisorDispatch): Promise<void> => {
@@ -252,7 +247,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
         droppedAnchor: { discussionId: discussionId ?? null },
         repliedAnchor: { discussionId },
         post: async (text) => {
-          const apiKey = notionApiKey();
+          const apiKey = await resolveNotionApiKey();
           if (!apiKey) throw new Error("reply couldn't post to Notion — NOTION_API_KEY is not set.");
           await createCommentReply({ discussionId: discussionId!, text, apiKey });
         },

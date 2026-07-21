@@ -3,7 +3,7 @@ import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "ev
 import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
-import { createCommentReply } from "./notion-api.js";
+import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
 import { discordPostMessage, discordThreadForMessage, splitForDiscord } from "./discord-post.js";
 import { markThreadEngaged } from "./engagement.js";
 import { deploymentOrg } from "../identity/binding.js";
@@ -121,7 +121,7 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
 }
 
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
-  const apiKey = process.env.NOTION_API_KEY;
+  const apiKey = await resolveNotionApiKey();
   if (!apiKey || apiKey.length === 0) {
     throw new Error(`unified reply couldn't post to Notion — NOTION_API_KEY is not set (discussion ${origin.discussionId})`);
   }

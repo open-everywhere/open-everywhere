@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionPage } from "../channels/notion-api.js";
+import { readNotionPage, resolveNotionApiKey } from "../channels/notion-api.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
 import { sourceScopedMount } from "../access/source-scoped-mount.js";
@@ -9,11 +9,6 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const MAX_CHARS = 20_000;
 const MAX_BLOCKS = 200;
-
-function notionApiKey(): string | undefined {
-  const k = process.env.NOTION_API_KEY;
-  return k && k.length > 0 ? k : undefined;
-}
 
 const readNotionPageEntry = defineTool({
         description:
@@ -36,7 +31,7 @@ const readNotionPageEntry = defineTool({
         }),
         async execute(input, ctx2) {
           assertTurnSurface(ctx2 as BindableContext, "notion");
-          const apiKey = notionApiKey();
+          const apiKey = await resolveNotionApiKey();
           if (!apiKey) throw new Error("NOTION_API_KEY is not set — cannot read the page.");
           const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
           if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");

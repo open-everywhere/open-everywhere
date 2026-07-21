@@ -3,7 +3,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { slackForm } from "./slack-events.js";
 import { discordPostMessage, splitForDiscord } from "./discord-post.js";
-import { createCommentReply } from "./notion-api.js";
+import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
 import { sendTelegramMessage } from "eve/channels/telegram";
 import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText } from "eve/channels/teams";
 import { createLinearAgentActivity } from "eve/channels/linear";
@@ -112,7 +112,7 @@ async function dispatchReply(target: ReplyTarget, text: string): Promise<string>
     return discordPostMessage(target.channelId, text);
   }
   if (target.platform === "notion") {
-    const apiKey = process.env.NOTION_API_KEY;
+    const apiKey = await resolveNotionApiKey();
     if (!apiKey || apiKey.length === 0) {
       throw new Error("reply couldn't post to Notion — NOTION_API_KEY is not set.");
     }

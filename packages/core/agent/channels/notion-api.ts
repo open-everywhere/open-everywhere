@@ -1,9 +1,20 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { getSecretVia, CredentialError } from "../access/credentials.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
 export function notionVersion(): string {
   const v = process.env.NOTION_VERSION;
   return v && v.trim().length > 0 ? v.trim() : "2022-06-28";
+}
+
+export async function resolveNotionApiKey(): Promise<string | undefined> {
+  try {
+    const k = await getSecretVia("env", "NOTION_API_KEY");
+    return k.length > 0 ? k : undefined;
+  } catch (err) {
+    if (err instanceof CredentialError) return undefined;
+    throw err;
+  }
 }
 
 export function parseVerificationHandshake(rawBody: string): string | null {
