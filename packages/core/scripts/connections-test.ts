@@ -46,40 +46,35 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 }
 
 {
-  const { resolveHeaders, selectBroker, registerBroker, resetBrokers } = await import(
+  const { resolveHeaders, registeredBrokerNames, brokerFor, registerBroker, resetBrokers, getSecretVia } = await import(
     "../agent/access/credentials.js"
   );
   const { CredentialError } = await import("../agent/access/credentials.js");
 
-  const savedBroker = process.env.OE_CREDENTIAL_BROKER;
-  const savedVercel = process.env.VERCEL;
-
-  process.env.OE_CREDENTIAL_BROKER = "env";
-  ok(typeof selectBroker().getSecret === "function", "OE_CREDENTIAL_BROKER=env selects a broker");
-
   resetBrokers();
-  delete process.env.OE_CREDENTIAL_BROKER;
-  delete process.env.VERCEL;
-  const envSel = selectBroker();
-  ok(typeof envSel.getSecret === "function", "off Vercel, selectBroker picks the core env adapter");
+  ok(registeredBrokerNames().includes("env"), "the core env adapter is always registered (the floor)");
+  ok(typeof brokerFor("env").getSecret === "function", "brokerFor('env') resolves the registered env adapter");
 
-  process.env.VERCEL = "1";
   let failedClosed = false;
   try {
-    selectBroker();
-  } catch {
-    failedClosed = true;
+    brokerFor("vercel-connect");
+  } catch (e) {
+    failedClosed = e instanceof CredentialError;
   }
-  ok(failedClosed, "auto-on-Vercel with vercel-connect unregistered fails closed (no env fallback)");
+  ok(failedClosed, "brokerFor('vercel-connect') fails closed when the adapter isn't registered (no fallback)");
 
   const sentinel = { async getSecret() { return "sentinel"; } };
   registerBroker("vercel-connect", sentinel);
-  ok(selectBroker() === sentinel, "auto-on-Vercel selects the registered vercel-connect broker");
-  delete process.env.VERCEL;
-  ok(selectBroker() === envSel, "auto-off-Vercel still selects the env adapter even with vercel-connect registered");
+  ok(brokerFor("vercel-connect") === sentinel, "a registered vendor broker resolves by its name");
   resetBrokers();
-  if (savedVercel === undefined) delete process.env.VERCEL;
-  else process.env.VERCEL = savedVercel;
+
+  let noDefault = false;
+  try {
+    await getSecretVia(undefined, "ANY_REF");
+  } catch (e) {
+    noDefault = e instanceof CredentialError && /no credential broker/.test((e as Error).message);
+  }
+  ok(noDefault, "getSecretVia(undefined, ...) rejects — there is no selected default (fail closed)");
 
   {
     const seenArgs: unknown[][] = [];
@@ -89,9 +84,8 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
         return "secret";
       },
     });
-    process.env.OE_CREDENTIAL_BROKER = "captor";
 
-    await resolveHeaders({ id: "plain", credentialType: "bearer", secretRef: "REF", allowedWebsites: ["x"] });
+    await resolveHeaders({ id: "plain", credentialType: "bearer", secretRef: "REF", broker: "captor", allowedWebsites: ["x"] });
     ok(seenArgs.at(-1)?.[1] === undefined, "no authorizationDetails declared -> broker's getSecret gets undefined (unchanged behaviour)");
 
     const details = [{ type: "github_app_installation", repositories: ["acme/web"] }];
@@ -99,6 +93,7 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
       id: "scoped",
       credentialType: "bearer",
       secretRef: "REF",
+      broker: "captor",
       allowedWebsites: ["x"],
       authorizationDetails: details,
     });
@@ -107,28 +102,28 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
     resetBrokers();
   }
 
-  process.env.OE_CREDENTIAL_BROKER = "env";
-
   process.env.DD_API_KEY = "api123";
   process.env.DD_APP_KEY = "app456";
   const h = await resolveHeaders({
     id: "datadog",
     credentialType: "bearer",
     secretRef: "DD_API_KEY",
+    broker: "env",
     allowedWebsites: ["api.datadoghq.com"],
     customHeaders: [
       { name: "DD-API-KEY", secretRef: "DD_API_KEY" },
       { name: "DD-APPLICATION-KEY", prefix: "", secretRef: "DD_APP_KEY" },
     ],
   });
-  ok(h.authorization === "Bearer api123", "bearer stamps Authorization from secretRef via the broker");
-  ok(h["DD-API-KEY"] === "api123" && h["DD-APPLICATION-KEY"] === "app456", "secret-valued custom headers resolve from their secretRefs");
+  ok(h.authorization === "Bearer api123", "bearer stamps Authorization from secretRef via the connection's home broker");
+  ok(h["DD-API-KEY"] === "api123" && h["DD-APPLICATION-KEY"] === "app456", "secret-valued custom headers resolve from their secretRefs (same broker)");
 
   process.env.OKTA_TOKEN = "tok";
   const hp = await resolveHeaders({
     id: "okta",
     credentialType: "bearer",
     secretRef: "OKTA_TOKEN",
+    broker: "env",
     allowedWebsites: ["x.okta.com"],
     customHeaders: [{ name: "Authorization", prefix: "SSWS ", secretRef: "OKTA_TOKEN" }],
   });
@@ -136,17 +131,23 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 
   let threw = false;
   try {
-    await resolveHeaders({ id: "x", credentialType: "bearer", secretRef: "MISSING_KEY", allowedWebsites: ["x"] });
+    await resolveHeaders({ id: "x", credentialType: "bearer", secretRef: "MISSING_KEY", broker: "env", allowedWebsites: ["x"] });
   } catch (e) {
     threw = e instanceof CredentialError;
   }
   ok(threw, "missing secret throws CredentialError (fail closed)");
 
+  let unstampedClosed = false;
+  try {
+    await resolveHeaders({ id: "u", credentialType: "bearer", secretRef: "DD_API_KEY", allowedWebsites: ["x"] });
+  } catch (e) {
+    unstampedClosed = e instanceof CredentialError && /no credential broker/.test((e as Error).message);
+  }
+  ok(unstampedClosed, "an unstamped connection fails closed at resolveHeaders — there is no default broker");
+
   delete process.env.DD_API_KEY;
   delete process.env.DD_APP_KEY;
   delete process.env.OKTA_TOKEN;
-  if (savedBroker === undefined) delete process.env.OE_CREDENTIAL_BROKER;
-  else process.env.OE_CREDENTIAL_BROKER = savedBroker;
 }
 
 console.log(`✓ connections: ${passed} assertions passed`);

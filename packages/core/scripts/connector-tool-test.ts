@@ -13,6 +13,7 @@ const {
   resolveConnectorOptions,
   optionLabel,
   BROKER_INTAKE_CAPS,
+  hostWriteBrokerAvailable,
 } = await import("../agent/connections/connector-offer.js");
 const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
@@ -44,7 +45,7 @@ const NOTION: Provider = {
 
 const kinds = (opts: readonly ConnectorOption[]): string[] => opts.map((o) => `${optionLabel(o)}:${o.route.kind}`);
 const R = (over: Partial<Parameters<typeof resolveConnectorOptions>[0]>) =>
-  resolveConnectorOptions({ provider: NOTION, platform: "slack", mode: "channel", isAdmin: true, broker: "db", ...over });
+  resolveConnectorOptions({ provider: NOTION, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true, ...over });
 
 console.log("1. resolver matrix:");
 {
@@ -54,16 +55,15 @@ console.log("1. resolver matrix:");
   eq(kinds(R({ mode: "dm", isAdmin: false })), ["Connect my account:url"], "DM + member ⇒ personal-oauth self-serve; org-level still OMITTED");
   eq(kinds(R({ platform: "discord", isAdmin: true })), ["Connect org account:url", "Set API key:text-degrade"], "discord ⇒ no secret modal ⇒ api-key text-degrades");
   eq(kinds(R({ platform: "notion", isAdmin: true })), ["Connect org account:url", "Set API key:text-degrade"], "notion surface ⇒ api-key text-degrades (no modal there)");
-  eq(kinds(R({ broker: "env" })), ["Connect org account:url", "Set API key:unavailable"], "env broker ⇒ api-key UNAVAILABLE (no host write path)");
-  eq(kinds(R({ broker: "vercel-connect" })), ["Connect org account:url", "Set API key:unavailable"], "vercel-connect broker ⇒ api-key UNAVAILABLE (REST write not implemented)");
+  eq(kinds(R({ hostWriteBroker: false })), ["Connect org account:url", "Set API key:unavailable"], "no host-write broker registered ⇒ api-key UNAVAILABLE (nothing can store a pasted key)");
 
   ok(R({ mode: "channel", isAdmin: false, platform: "discord" }).length === 0, "member on discord ⇒ still nothing offerable");
 
   const NARROW: Provider = { name: "narrow", connection: "n", allows: ["user-oauth"], credentials: NOTION.credentials };
-  eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, broker: "db" })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
+  eq(kinds(resolveConnectorOptions({ provider: NARROW, platform: "slack", mode: "dm", isAdmin: true, hostWriteBroker: true })), ["Connect my account:url"], "allowlist ⇒ only user-oauth offered though api-key/service-oauth creds exist");
 
   const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY", broker: "env" }] };
-  eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, broker: "db" })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
+  eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
 
   const dmOpts = R({ mode: "dm", isAdmin: true });
   const api = dmOpts.find((o) => o.credentialType === "api-key")!;
@@ -72,6 +72,10 @@ console.log("1. resolver matrix:");
   ok(svc.vercelConnector === "notion.so/open-everywhere", "service-oauth option carries its vercelConnector");
 
   ok(BROKER_INTAKE_CAPS.db.hostWrite === true && BROKER_INTAKE_CAPS.env.hostWrite === false, "broker declarations: only db can host-write today");
+
+  ok(hostWriteBrokerAvailable(["env", "vercel-connect"]) === false, "hostWriteBrokerAvailable: env+vercel-connect only ⇒ no host-write broker");
+  ok(hostWriteBrokerAvailable(["env", "db"]) === true, "hostWriteBrokerAvailable: db registered ⇒ host-write available");
+  ok(hostWriteBrokerAvailable([]) === false, "hostWriteBrokerAvailable: nothing registered ⇒ false (fail closed)");
 }
 
 console.log("2. card build:");

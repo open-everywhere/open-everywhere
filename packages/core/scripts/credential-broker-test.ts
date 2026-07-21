@@ -15,7 +15,7 @@ process.env.OE_CREDENTIAL_ENCRYPTION_KEY = KEY;
 const SENTINEL = "sk-SUPER-SECRET-VALUE-9f8e7d6c5b4a-DO-NOT-LEAK";
 
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { getSecret, registerBroker, resetBrokers, CredentialError } = await import("../agent/access/credentials.js");
+const { getSecretVia, brokerFor, resolveHeaders, registerBroker, resetBrokers, CredentialError } = await import("../agent/access/credentials.js");
 const dbBroker = await import("../agent/credentials/db-broker.js");
 const intake = await import("../agent/credentials/intake.js");
 const { readAudit } = await import("../agent/audit/audit.js");
@@ -44,10 +44,9 @@ function recorder() {
 
   resetBrokers();
   dbBroker.registerDbCredentialBroker();
-  process.env.OE_CREDENTIAL_BROKER = "db";
-  ok((await getSecret("db:notion-eng-key")) === SENTINEL, "seam: getSecret(ref) resolves through the registered db broker (OE_CREDENTIAL_BROKER=db)");
+  ok((await getSecretVia("db", "db:notion-eng-key")) === SENTINEL, "seam: getSecretVia('db', ref) resolves through the registered db broker");
 
-  await assert.rejects(() => getSecret("db:does-not-exist"), (e) => e instanceof CredentialError && /secret not found/.test((e as Error).message), "seam: a missing ref is a CredentialError");
+  await assert.rejects(() => getSecretVia("db", "db:does-not-exist"), (e) => e instanceof CredentialError && /secret not found/.test((e as Error).message), "seam: a missing ref is a CredentialError");
 
   await dbBroker.storeDbSecret({ org: ORG, ref: "db:iv-a", plaintext: SENTINEL, createdBy: "U_OWNER" });
   await dbBroker.storeDbSecret({ org: ORG, ref: "db:iv-b", plaintext: SENTINEL, createdBy: "U_OWNER" });
@@ -55,7 +54,7 @@ function recorder() {
   const b = await getOperationalStore().getStoredCredential(ORG, "db:iv-b");
   ok(!!a && !!b && a.ciphertext !== b.ciphertext, "broker: same plaintext ⇒ different ciphertext (random IV per store)");
   ok(!!a && !a.ciphertext.includes(SENTINEL), "broker: the stored ciphertext does not contain the plaintext");
-  ok((await getSecret("db:iv-a")) === SENTINEL && (await getSecret("db:iv-b")) === SENTINEL, "broker: both distinct ciphertexts decrypt back to the same plaintext");
+  ok((await getSecretVia("db", "db:iv-a")) === SENTINEL && (await getSecretVia("db", "db:iv-b")) === SENTINEL, "broker: both distinct ciphertexts decrypt back to the same plaintext");
 }
 
 {
@@ -158,7 +157,7 @@ function recorder() {
   }
 
   ok(res.handled === true && res.response === undefined, "store: a valid submit succeeds and closes the modal (empty response)");
-  ok((await getSecret(REF)) === SENTINEL, "store: the value is retrievable through the broker (end-to-end store worked)");
+  ok((await getSecretVia("db", REF)) === SENTINEL, "store: the value is retrievable through the broker (end-to-end store worked)");
 
   ok(!logs.some((l) => l.includes(SENTINEL)), "leak-proof: the secret value appears in NO captured console output");
   ok(!sub.calls.some((c) => c.body.includes(SENTINEL)), "leak-proof: the secret value appears in NO posted Slack body (confirmation names provider/domain only)");
@@ -180,25 +179,21 @@ function recorder() {
 }
 
 {
-  const { getSecretVia, brokerFor, resolveHeaders } = await import("../agent/access/credentials.js");
   const { expandProviderGrant } = await import("../agent/access/providers.js");
   type ApiKeyProvider = Parameters<typeof expandProviderGrant>[1] & object;
 
   resetBrokers();
   dbBroker.registerDbCredentialBroker();
-  process.env.OE_CREDENTIAL_BROKER = "db";
 
   const ENV_ONLY_REF = "OE_TEST_ENV_ONLY_SECRET";
   process.env[ENV_ONLY_REF] = "env-value-xyz";
 
-  ok((await getSecretVia("env", ENV_ONLY_REF)) === "env-value-xyz", "stamp: getSecretVia('env', ref) reads env regardless of OE_CREDENTIAL_BROKER=db");
+  ok((await getSecretVia("env", ENV_ONLY_REF)) === "env-value-xyz", "stamp: getSecretVia('env', ref) reads the env broker");
 
-  await assert.rejects(() => getSecretVia(undefined, ENV_ONLY_REF), (e) => e instanceof CredentialError && /secret not found/.test((e as Error).message), "unstamped: getSecretVia(undefined, envRef) follows selection (db) and fails closed on the missing db row");
-  await assert.rejects(() => getSecret(ENV_ONLY_REF), (e) => e instanceof CredentialError, "unstamped: getSecret(ref) is byte-identical to getSecretVia(undefined, ...) — also follows selection (db)");
+  await assert.rejects(() => getSecretVia(undefined, ENV_ONLY_REF), (e) => e instanceof CredentialError && /no credential broker/.test((e as Error).message), "no default: getSecretVia(undefined, ref) rejects — there is no selected default (fail closed)");
 
   await dbBroker.storeDbSecret({ org: ORG, ref: "db:stamp-check", plaintext: "db-value", createdBy: "U" });
   ok((await getSecretVia("db", "db:stamp-check")) === "db-value", "stamp: getSecretVia('db', ref) reads the db store");
-  ok((await getSecretVia(undefined, "db:stamp-check")) === "db-value", "unstamped: getSecretVia(undefined, ...) follows selection=db and reads the db store (the paste-into-db path)");
 
   ok(brokerFor("env") !== undefined && brokerFor("db") !== undefined, "brokerFor resolves registered brokers by name");
   assert.throws(() => brokerFor("nope"), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "brokerFor('unregistered') throws (fail closed, no fallback)");
@@ -209,14 +204,13 @@ function recorder() {
   ok(rStamped.resolved?.broker === "env" && rStamped.resolved?.secretRef === ENV_ONLY_REF, "expandProviderGrant carries the credential's home broker into the resolved binding");
   const providerUnstamped = { name: "p2", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF }] } as ApiKeyProvider;
   const rUnstamped = expandProviderGrant({ provider: "p2", credential: "k" }, providerUnstamped, { dm: false });
-  ok(rUnstamped.resolved?.broker === undefined, "an unstamped credential resolves with broker: undefined (follows selection)");
+  ok(rUnstamped.resolved?.broker === undefined, "an unstamped credential resolves with broker: undefined (validation rejects it at definition; runtime resolution would fail closed)");
 
   const stampedHeaders = await resolveHeaders({ id: "notion-rest", credentialType: "bearer", secretRef: ENV_ONLY_REF, broker: "env", allowedWebsites: ["api.notion.com"] });
-  ok(stampedHeaders.authorization === "Bearer env-value-xyz", "resolveHeaders: a broker:'env'-stamped bearer connection injects the ENV value under selection=db (flip-safe)");
-  await assert.rejects(() => resolveHeaders({ id: "unstamped", credentialType: "bearer", secretRef: ENV_ONLY_REF, allowedWebsites: ["api.notion.com"] }), (e) => e instanceof CredentialError, "resolveHeaders: an UNSTAMPED env-ref bearer connection fails closed under selection=db — the stamp is what saves the read");
+  ok(stampedHeaders.authorization === "Bearer env-value-xyz", "resolveHeaders: a broker:'env'-stamped bearer connection injects the ENV value");
+  await assert.rejects(() => resolveHeaders({ id: "unstamped", credentialType: "bearer", secretRef: ENV_ONLY_REF, allowedWebsites: ["api.notion.com"] }), (e) => e instanceof CredentialError && /no credential broker/.test((e as Error).message), "resolveHeaders: an UNSTAMPED bearer connection fails closed — there is no default broker");
 
   delete process.env[ENV_ONLY_REF];
 }
 
-delete process.env.OE_CREDENTIAL_BROKER;
 console.log(`credential-broker-test: ${n} checks passed`);

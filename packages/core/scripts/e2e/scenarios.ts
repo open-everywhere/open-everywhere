@@ -2010,7 +2010,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       if (process.env.E2E_CREDENTIAL_BROKER_DB?.trim() !== "1")
         ctx.skip(
-          "needs OE_CREDENTIAL_BROKER=db deployed — set E2E_CREDENTIAL_BROKER_DB=1 once the broker flip is live (packages/core/scripts/e2e/README-db-broker-flip.md). With vercel-connect selected the card correctly OMITS the api-key option, so this path can't arm.",
+          "needs the db broker CONFIGURED (OE_CREDENTIAL_ENCRYPTION_KEY armed ⇒ db registered) — set E2E_CREDENTIAL_BROKER_DB=1 once it is (packages/core/scripts/e2e/README-db-broker-flip.md). With no host-write broker the card correctly OMITS the api-key option, so this path can't arm.",
         );
       const connector = ctx.connectorWrite!;
       const synthetic = ctx.synthetic!;
@@ -2055,7 +2055,7 @@ export const SCENARIOS: readonly Scenario[] = [
           { timeoutMs: REPLY_WAIT, what: "a credential.intake_requested audit row for the forged admin oe_connect click" },
         ).catch(() => undefined)) ??
         ctx.skip(
-          `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or OE_CREDENTIAL_BROKER≠db. Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the flip, then re-run.`,
+          `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
         );
       const intakeDetail = intakeRows[0].detail as { id?: unknown; ref?: unknown } | undefined;
       const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;

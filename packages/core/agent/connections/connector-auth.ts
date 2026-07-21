@@ -15,7 +15,7 @@ import {
 } from "../access/connector-scope.js";
 import { classifyConnectorOp, isConnectorOpTool } from "../access/consequence.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
-import { getSecret, getSecretVia } from "../access/credentials.js";
+import { getSecretVia } from "../access/credentials.js";
 import { bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
@@ -49,12 +49,13 @@ function connectAuthFor(connector: string, vercelConnector: string): Promise<Con
 export function appStaticToken(opts: {
   readonly connector: string;
   readonly secretRef: string;
+  readonly broker: string;
 }): ConnectionAuthResolver {
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken() {
       await assertConnectorGranted(opts.connector, ctx.session.auth);
-      return { token: await getSecret(opts.secretRef) };
+      return { token: await getSecretVia(opts.broker, opts.secretRef) };
     },
   });
 }
@@ -76,6 +77,7 @@ export function appConnectToken(opts: {
 export function appProviderToken(opts: {
   readonly connector: string;
   readonly fallbackSecretRef?: string;
+  readonly fallbackBroker?: string;
 }): ConnectionAuthResolver {
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
@@ -89,12 +91,12 @@ export function appProviderToken(opts: {
 }
 
 async function resolveAppTokenFromCred(
-  opts: { readonly connector: string; readonly fallbackSecretRef?: string },
+  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
   cred: import("../access/providers.js").ResolvedConnectorCredential | null,
   o: unknown,
 ): Promise<TokenResult> {
   if (!cred) {
-    if (opts.fallbackSecretRef) return { token: await getSecret(opts.fallbackSecretRef) };
+    if (opts.fallbackSecretRef) return { token: await getSecretVia(opts.fallbackBroker, opts.fallbackSecretRef) };
     throw new Error(
       `connection "${opts.connector}": no provider credential bound for this surface and no ` +
         `fallback secret — grant it via a provider (bundle.providers) or a raw connection secretRef.`,
@@ -231,7 +233,7 @@ function isUserAuthRequired(e: unknown): boolean {
 }
 
 export function userAwareProviderToken(
-  opts: { readonly connector: string; readonly fallbackSecretRef?: string },
+  opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
   deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
 ): ConnectionAuthResolver {
   const mintUser = deps.mintUser ?? defaultUserMinter;

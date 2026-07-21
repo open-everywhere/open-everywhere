@@ -4,12 +4,12 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolveRole } from "../access/roles.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import { activeBrokerName } from "../access/credentials.js";
+import { registeredBrokerNames } from "../access/credentials.js";
 import { appendAudit } from "../audit/audit.js";
 import { slackForm } from "../channels/slack-events.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
-import { resolveConnectorOptions, optionLabel, type ConnectMode } from "../connections/connector-offer.js";
+import { resolveConnectorOptions, optionLabel, hostWriteBrokerAvailable, type ConnectMode } from "../connections/connector-offer.js";
 import { buildConnectCard, renderNonSlackConnect } from "../connections/connector-card.js";
 
 function connectModeOf(mode: string): ConnectMode {
@@ -47,7 +47,7 @@ const connectorEntry = defineTool({
     const platform = binding.platform;
     const mode = connectModeOf(binding.mode);
     const isAdmin = resolveRole(ctx as BindableContext).isDomainAdmin;
-    const broker = activeBrokerName();
+    const hostWriteBroker = hostWriteBrokerAvailable(registeredBrokerNames());
     const providers = getConfig().loadProviders?.() ?? [];
 
     if (!input.provider) {
@@ -55,7 +55,7 @@ const connectorEntry = defineTool({
         return { action: "none" as const, options: [], note: "No providers are configured on this deployment." };
       }
       const lines = providers.map((p) => {
-        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, broker })
+        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, hostWriteBroker })
           .filter((o) => o.route.kind !== "unavailable")
           .map(optionLabel);
         return `- ${p.name}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
@@ -74,7 +74,7 @@ const connectorEntry = defineTool({
       );
     }
 
-    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, broker }).filter(
+    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, hostWriteBroker }).filter(
       (o) => o.route.kind !== "unavailable",
     );
     const labels = options.map(optionLabel);

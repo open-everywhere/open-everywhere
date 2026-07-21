@@ -1,6 +1,6 @@
 import type { MemoryProvider } from "@open-everywhere/core/agent/memory/provider.js";
 import { registerProvider } from "@open-everywhere/core/agent/memory/provider.js";
-import { getSecret } from "@open-everywhere/core/agent/access/credentials.js";
+import { getSecretVia } from "@open-everywhere/core/agent/access/credentials.js";
 import { safeName } from "@open-everywhere/core/agent/memory/layout.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
@@ -167,6 +167,9 @@ export function makeNotionProvider(deps: NotionMemoryDeps): MemoryProvider {
   };
 }
 
-export function registerNotionMemory(secretRef = process.env.OE_NOTION_SECRET_REF ?? "NOTION_TOKEN"): void {
-  registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecret(secretRef)) }));
+export function registerNotionMemory(
+  secretRef = process.env.OE_NOTION_SECRET_REF ?? "NOTION_TOKEN",
+  broker = process.env.OE_NOTION_SECRET_BROKER ?? "env",
+): void {
+  registerProvider(makeNotionProvider({ client: async () => new NotionClient(await getSecretVia(broker, secretRef)) }));
 }

@@ -32,6 +32,11 @@ export function brokerHostWrite(broker: string): boolean {
   return BROKER_INTAKE_CAPS[broker]?.hostWrite === true;
 }
 
+export function hostWriteBrokerAvailable(registeredBrokers: Iterable<string>): boolean {
+  for (const name of registeredBrokers) if (brokerHostWrite(name)) return true;
+  return false;
+}
+
 export type ConnectRouteKind = "modal" | "url" | "text-degrade" | "unavailable";
 
 export interface ConnectRoute {
@@ -56,7 +61,7 @@ export interface ResolveConnectorInput {
   readonly platform: string;
   readonly mode: ConnectMode;
   readonly isAdmin: boolean;
-  readonly broker: string;
+  readonly hostWriteBroker: boolean;
   readonly declarations?: SurfaceIntakeDeclarations;
 }
 
@@ -84,12 +89,12 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
     if (type === "user-oauth" || type === "service-oauth") {
       route = { kind: "url" };
     } else {
-      if (!brokerHostWrite(input.broker)) {
+      if (!input.hostWriteBroker) {
         route = {
           kind: "unavailable",
-          reason: BROKER_INTAKE_CAPS[input.broker]?.operatorOnly
-            ? `this deployment stores secrets in environment variables (broker "${input.broker}") — an operator sets ${cred.secretRef ?? "the key"} out of band, it can't be pasted here.`
-            : `this deployment's credential broker ("${input.broker}") can't accept a key pasted in chat yet — an operator provisions it via the Vercel dashboard or CLI.`,
+          reason:
+            `this deployment has no host-side secret store configured — an operator sets ${cred.secretRef ?? "the key"} ` +
+            `out of band (environment variables) or provisions it via the Vercel dashboard/CLI; it can't be pasted here.`,
         };
       } else if (input.platform === "slack" && surface.secretModal) {
         route = { kind: "modal" };

@@ -14,8 +14,8 @@ export default defineMcpClientConnection({
     "rewrite whole pages. Notion's API owns the block model, so there's no markdown round-trip.",
 
   auth: connectorUserPrincipalEnabled()
-    ? userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" })
-    : appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY" }),
+    ? userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" })
+    : appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" }),
 
   approval: connectorApprovalPolicy(),
 });

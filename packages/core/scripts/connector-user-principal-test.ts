@@ -103,7 +103,7 @@ async function getToken(
   starter: { start: (...a: never[]) => Promise<{ url: string }> } = notInjectedStarter,
 ): Promise<{ token?: string; err?: string }> {
   const resolver = userAwareProviderToken(
-    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY" },
+    { connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" },
     { mintUser: minter.mint, startAuth: starter.start as never },
   );
   const provider = await resolver({ session: { auth } } as never);

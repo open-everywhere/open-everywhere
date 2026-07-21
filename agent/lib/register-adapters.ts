@@ -1,5 +1,5 @@
 import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentials/vercel-connect.js";
-import { registerDbCredentialBroker } from "@open-everywhere/core/agent/credentials/db-broker.js";
+import { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "@open-everywhere/core/agent/credentials/db-broker.js";
 import { registerGitHubMemory } from "@open-everywhere/core/agent/memory/github.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
@@ -11,7 +11,9 @@ import { loadBundles } from "../access/bundles.js";
 
 registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
 
-registerDbCredentialBroker();
+if (process.env[CREDENTIAL_KEY_ENV]) {
+  registerDbCredentialBroker();
+}
 
 registerGitHubMemory();
 

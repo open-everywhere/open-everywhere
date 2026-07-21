@@ -14,7 +14,7 @@ export const envBroker: CredentialBroker = {
   },
 };
 
-export const DEFAULT_BROKER = "env";
+export const ENV_BROKER = "env";
 
 const BROKERS: Record<string, CredentialBroker> = {};
 
@@ -22,32 +22,18 @@ export function registerBroker(name: string, broker: CredentialBroker): void {
   BROKERS[name] = broker;
 }
 
-registerBroker(DEFAULT_BROKER, envBroker);
+registerBroker(ENV_BROKER, envBroker);
 
 export function resetBrokers(): void {
   for (const k of Object.keys(BROKERS)) delete BROKERS[k];
-  registerBroker(DEFAULT_BROKER, envBroker);
+  registerBroker(ENV_BROKER, envBroker);
 }
 
-export function activeBrokerName(): string {
-  return process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : DEFAULT_BROKER);
+export function registeredBrokerNames(): readonly string[] {
+  return Object.keys(BROKERS);
 }
 
-export function selectBroker(): CredentialBroker {
-  const choice = process.env.OE_CREDENTIAL_BROKER ?? (process.env.VERCEL ? "vercel-connect" : DEFAULT_BROKER);
-  const broker = BROKERS[choice];
-  if (!broker) {
-    throw new CredentialError(
-      `credential broker "${choice}" is not registered — register it at startup ` +
-        `(see @open-everywhere/adapters) or set OE_CREDENTIAL_BROKER to a registered broker. ` +
-        `Refusing to fall back to another broker (fail closed).`,
-    );
-  }
-  return broker;
-}
-
-export function brokerFor(name?: string): CredentialBroker {
-  if (name === undefined) return selectBroker();
+export function brokerFor(name: string): CredentialBroker {
   const broker = BROKERS[name];
   if (!broker) {
     throw new CredentialError(
@@ -64,11 +50,13 @@ export async function getSecretVia(
   ref: string,
   authorizationDetails?: readonly CredentialAuthorizationDetail[],
 ): Promise<string> {
+  if (broker === undefined) {
+    throw new CredentialError(
+      `no credential broker for ref "${ref}" — every credential must name its home broker ` +
+        `(\`broker: "env" | "db" | ...\`); there is no selected default. Stamp the credential's broker.`,
+    );
+  }
   return brokerFor(broker).getSecret(ref, authorizationDetails);
-}
-
-export function getSecret(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<string> {
-  return getSecretVia(undefined, ref, authorizationDetails);
 }
 
 async function resolveCustomHeaders(
