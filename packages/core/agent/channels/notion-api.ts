@@ -9,7 +9,7 @@ export function notionVersion(): string {
 }
 
 export async function resolveNotionApiKey(): Promise<string | undefined> {
-  const cred = findProviderCredential("notion", "team-key");
+  const cred = findProviderCredential("notion", "channel-key");
   if (!cred?.secretRef) return undefined;
   try {
     const k = await getSecretVia(cred.broker, cred.secretRef);

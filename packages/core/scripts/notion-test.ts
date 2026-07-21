@@ -287,13 +287,13 @@ ok(commentIdFromEvent({ entity: { id: "x", type: "page" } }) === undefined, "com
   const dir = join(tmpdir(), `open-everywhere-notion-no-reply-${process.pid}`);
   rmSync(dir, { recursive: true, force: true });
   process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
-  process.env.NOTION_API_KEY = "ntn_test_key";
+  process.env.NOTION_CHANNEL_API_KEY = "ntn_test_key";
   setRegisteredProviders([
     {
       name: "notion",
       connection: "notion",
       allows: ["api-key"],
-      credentials: [{ id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" }],
+      credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
     },
   ]);
 

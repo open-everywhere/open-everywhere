@@ -67,8 +67,8 @@ export interface ResolveConnectorInput {
 
 const OFFER_ORDER: readonly ProviderCredentialType[] = ["user-oauth", "service-oauth", "api-key"];
 
-function firstCredential(provider: Provider, type: ProviderCredentialType): ProviderCredential | undefined {
-  return provider.credentials.find((c) => c.type === type);
+export function offerableCredential(provider: Provider, type: ProviderCredentialType): ProviderCredential | undefined {
+  return provider.credentials.find((c) => c.type === type && c.intake !== false);
 }
 
 export function resolveConnectorOptions(input: ResolveConnectorInput): readonly ConnectorOption[] {
@@ -78,7 +78,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
 
   for (const type of OFFER_ORDER) {
     if (!input.provider.allows.includes(type)) continue;
-    const cred = firstCredential(input.provider, type);
+    const cred = offerableCredential(input.provider, type);
     if (!cred) continue;
     const principal = principalOf(type);
 

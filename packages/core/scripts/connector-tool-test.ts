@@ -65,6 +65,19 @@ console.log("1. resolver matrix:");
   const OAUTHLESS: Provider = { name: "k", connection: "k", allows: ["api-key"], credentials: [{ id: "key", type: "api-key", secretRef: "K_KEY", broker: "env" }] };
   eq(kinds(resolveConnectorOptions({ provider: OAUTHLESS, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Set API key:modal"], "api-key-only provider ⇒ just the api-key option");
 
+  const PLUMBING_FIRST: Provider = {
+    name: "notion",
+    connection: "notion",
+    allows: ["api-key"],
+    credentials: [
+      { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
+      { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
+    ],
+  };
+  const plumbOpts = resolveConnectorOptions({ provider: PLUMBING_FIRST, platform: "slack", mode: "channel", isAdmin: true, hostWriteBroker: true });
+  eq(kinds(plumbOpts), ["Set API key:modal"], "two api-key creds (plumbing first) ⇒ still exactly one api-key option");
+  ok(plumbOpts[0].credentialId === "team-key" && plumbOpts[0].secretRef === "NOTION_API_KEY", "the offered api-key option binds the INTAKE-ABLE team-key, never the intake:false plumbing channel-key");
+
   const dmOpts = R({ mode: "dm", isAdmin: true });
   const api = dmOpts.find((o) => o.credentialType === "api-key")!;
   const svc = dmOpts.find((o) => o.credentialType === "service-oauth")!;
@@ -198,6 +211,28 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const rec2 = recorder();
   await handleConnectClick(click("api-key", "U_MEMBER", "C123"), deps({ post: rec2.post, requestIntake: requestIntake2 }));
   eq(intakeCalls2.length, 0, "api-key by a NON-admin does NOT open the intake (standing re-verified)");
+
+  const NOTION_WITH_PLUMBING: Provider = {
+    name: "notion",
+    connection: "notion",
+    allows: ["api-key"],
+    credentials: [
+      { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
+      { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
+    ],
+  };
+  const intakeCalls3: Array<Record<string, unknown>> = [];
+  const requestIntake3 = async (input: Record<string, unknown>) => {
+    intakeCalls3.push(input);
+    return { id: "z" };
+  };
+  const rec3 = recorder();
+  await handleConnectClick(
+    click("api-key", "U_ADMIN", "C123"),
+    deps({ loadProviders: () => [NOTION_WITH_PLUMBING], post: rec3.post, requestIntake: requestIntake3 }),
+  );
+  eq(intakeCalls3.length, 1, "admin api-key click against the plumbing-carrying provider ⇒ intake invoked");
+  ok(intakeCalls3[0].ref === "db:notion:team-key", "the forged api-key click resolves the intake-able team-key (db:notion:team-key), NEVER the intake:false channel-key plumbing");
 }
 
 {

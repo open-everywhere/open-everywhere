@@ -11,7 +11,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
-process.env.NOTION_API_KEY = "ntn-test-key";
+process.env.NOTION_CHANNEL_API_KEY = "ntn-test-key";
 process.env.TELEGRAM_BOT_TOKEN = "telegram-test-token";
 process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
@@ -23,7 +23,7 @@ setRegisteredProviders([
     name: "notion",
     connection: "notion",
     allows: ["api-key"],
-    credentials: [{ id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" }],
+    credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
   },
 ]);
 

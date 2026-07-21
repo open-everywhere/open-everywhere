@@ -123,7 +123,7 @@ async function liveTeamsPost(origin: TeamsOrigin, text: string): Promise<string>
 async function liveNotionPost(origin: NotionOrigin, text: string): Promise<string> {
   const apiKey = await resolveNotionApiKey();
   if (!apiKey || apiKey.length === 0) {
-    throw new Error(`unified reply couldn't post to Notion — NOTION_API_KEY is not set (discussion ${origin.discussionId})`);
+    throw new Error(`unified reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set (discussion ${origin.discussionId})`);
   }
   let id: string;
   try {

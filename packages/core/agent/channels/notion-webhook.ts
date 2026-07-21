@@ -87,7 +87,7 @@ export async function handleNotionDelivery(
   const commentId = commentIdFromEvent(ev);
   if (!commentId) return { status: 200, body: "ignored", action: "ignored", detail: "no comment id" };
 
-  if (!deps.apiKey) return { status: 200, body: "ok", action: "no-api-key", detail: "NOTION_API_KEY not set" };
+  if (!deps.apiKey) return { status: 200, body: "ok", action: "no-api-key", detail: "NOTION_CHANNEL_API_KEY not set" };
   const apiKey = deps.apiKey;
 
   const botUserId = await deps.resolveBotUserId();

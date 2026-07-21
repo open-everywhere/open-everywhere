@@ -12,7 +12,7 @@ import {
 } from "./connector-auth.js";
 import { requestCredentialIntake, type CredentialIntakeDeps } from "../credentials/intake.js";
 import { dbCredentialRef } from "../credentials/ref.js";
-import { optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
+import { offerableCredential, optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
@@ -162,7 +162,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
 
     const providers = deps.loadProviders ? deps.loadProviders() : (getConfig().loadProviders?.() ?? []);
     const provider = providers.find((pr) => pr.name === providerName);
-    const cred = provider?.credentials.find((c) => c.type === type);
+    const cred = provider ? offerableCredential(provider, type) : undefined;
     if (!provider || !cred) {
       await ephemeral(post, channelId, clickerId, "This connect option is no longer available.");
       return true;

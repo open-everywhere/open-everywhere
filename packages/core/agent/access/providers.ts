@@ -9,6 +9,7 @@ export interface ProviderCredential {
   readonly type: ProviderCredentialType;
   readonly secretRef?: string;
   readonly broker?: string;
+  readonly intake?: boolean;
   readonly vercelConnector?: string;
   readonly dashboardUrl?: string;
 }
@@ -63,6 +64,11 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
         );
       if ((c.type === "service-oauth" || c.type === "user-oauth") && !c.vercelConnector)
         throw new Error(`provider "${p.name}" credential "${c.id}": ${c.type} needs a vercelConnector`);
+      if (c.intake === false && c.type !== "api-key")
+        throw new Error(
+          `provider "${p.name}" credential "${c.id}": intake:false is only valid on an api-key credential ` +
+            `(it marks operator-env plumbing that is never offered for intake)`,
+        );
     }
   }
 }

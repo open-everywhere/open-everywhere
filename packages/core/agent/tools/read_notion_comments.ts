@@ -65,7 +65,7 @@ export const readNotionCommentsEntry = defineTool({
   async execute(input, ctx2) {
     assertTurnSurface(ctx2 as BindableContext, "notion");
     const apiKey = await resolveNotionApiKey();
-    if (!apiKey) throw new Error("NOTION_API_KEY is not set — cannot read the comments.");
+    if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the comments.");
     const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
     if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
     const res = await readNotionComments(page, {

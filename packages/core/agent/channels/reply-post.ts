@@ -114,7 +114,7 @@ async function dispatchReply(target: ReplyTarget, text: string): Promise<string>
   if (target.platform === "notion") {
     const apiKey = await resolveNotionApiKey();
     if (!apiKey || apiKey.length === 0) {
-      throw new Error("reply couldn't post to Notion — NOTION_API_KEY is not set.");
+      throw new Error("reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set.");
     }
     return createCommentReply({ discussionId: target.discussionId, text, apiKey });
   }
