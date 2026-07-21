@@ -15,7 +15,7 @@ import {
 } from "../access/connector-scope.js";
 import { classifyConnectorOp, isConnectorOpTool } from "../access/consequence.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
-import { getSecret } from "../access/credentials.js";
+import { getSecret, getSecretVia } from "../access/credentials.js";
 import { bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
@@ -102,7 +102,7 @@ async function resolveAppTokenFromCred(
   }
   if (cred.type === "api-key") {
     if (!cred.secretRef) throw new Error(`connection "${opts.connector}": api-key credential has no secretRef`);
-    return { token: await getSecret(cred.secretRef) };
+    return { token: await getSecretVia(cred.broker, cred.secretRef) };
   }
   if (cred.type === "service-oauth") {
     if (!cred.vercelConnector)

@@ -8,6 +8,7 @@ export interface ProviderCredential {
   readonly id: string;
   readonly type: ProviderCredentialType;
   readonly secretRef?: string;
+  readonly broker?: string;
   readonly vercelConnector?: string;
   readonly dashboardUrl?: string;
 }
@@ -33,6 +34,7 @@ export interface ResolvedConnectorCredential {
   readonly type: ProviderCredentialType;
   readonly principal: "app" | "user";
   readonly secretRef?: string;
+  readonly broker?: string;
   readonly vercelConnector?: string;
 }
 
@@ -105,6 +107,7 @@ export function expandProviderGrant(
       type: cred.type,
       principal,
       secretRef: cred.secretRef,
+      broker: cred.broker,
       vercelConnector: cred.vercelConnector,
     },
     warnings: [],

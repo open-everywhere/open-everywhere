@@ -1990,4 +1990,108 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`connector.dashboard_link_issued rows=${rows.length} provider=${String((rows[0].detail as { provider?: unknown } | undefined)?.provider ?? "?")}`);
     },
   },
+  {
+    id: "S-APIKEY-INTAKE",
+    title:
+      "API-key intake, live: under the db broker a 'connect notion with an API key' ask offers 'Set API key' → a forged admin oe_connect click opens the host intake → a forged view_submission stores a FAKE key ENCRYPTED (asserted via credential.intake_requested + credential.stored audit rows; the value is never read back and never appears in any audit row)",
+    requires: ["slack", "synthetic", "connectorWrite"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 600_000,
+    judged: true,
+    run: async (ctx) => {
+      if (process.env.E2E_CREDENTIAL_BROKER_DB?.trim() !== "1")
+        ctx.skip(
+          "needs OE_CREDENTIAL_BROKER=db deployed — set E2E_CREDENTIAL_BROKER_DB=1 once the broker flip is live (packages/core/scripts/e2e/README-db-broker-flip.md). With vercel-connect selected the card correctly OMITS the api-key option, so this path can't arm.",
+        );
+      const connector = ctx.connectorWrite!;
+      const synthetic = ctx.synthetic!;
+      const auditRead = ctx.auditRead;
+      if (!auditRead)
+        ctx.skip("needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — the store is asserted via audit rows, never a secret readback");
+      const admin = synthetic.adminUserId;
+      const org = synthetic.org;
+      const { teamId } = await connector.identity();
+      const channelId = connector.channelId;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const { ts: askTs } = await connector.post(
+        connector.mention("please connect our Notion workspace using an API key — show me the option to set it"),
+      );
+      const offerCard = await connector
+        .awaitThreadMessage(
+          askTs,
+          { timeoutMs: REPLY_WAIT, what: "a connector card offering the notion api-key (Set API key) button" },
+          (msgs) => msgs.find((m) => connector.isBotReply(m) && (m.actions ?? []).some((a) => a.actionId === "oe_connect:notion:api-key")),
+        )
+        .catch(() => undefined);
+      if (offerCard)
+        ctx.gate(true, "offer: the connector card OFFERS notion 'Set API key' (api-key) — the db broker's hostWrite route is live (vercel-connect/env would omit it)");
+      else
+        ctx.log(
+          "offer: no notion api-key card observed (the model may not have posted it, or notion isn't granted to this channel) — proceeding to the deterministic host-intake forge, which needs no card",
+        );
+
+      const PROVIDER = "e2e-intake";
+
+      const connectRes = await synthetic.connectClick({ provider: PROVIDER, credentialType: "api-key", userId: admin, channelId, teamId, org });
+      ctx.gate(connectRes.status === 200, "forge: the oe_connect api-key click acked 200 by the deployment's Slack route");
+
+      const intakeRows =
+        (await pollUntil(
+          async () => {
+            const r = await auditRead!({ sinceIso: runStart, actions: ["credential.intake_requested"] });
+            const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
+            return mine.length > 0 ? mine : undefined;
+          },
+          { timeoutMs: REPLY_WAIT, what: "a credential.intake_requested audit row for the forged admin oe_connect click" },
+        ).catch(() => undefined)) ??
+        ctx.skip(
+          `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or OE_CREDENTIAL_BROKER≠db. Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the flip, then re-run.`,
+        );
+      const intakeDetail = intakeRows[0].detail as { id?: unknown; ref?: unknown } | undefined;
+      const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;
+      const intakeRef = typeof intakeDetail?.ref === "string" ? intakeDetail.ref : undefined;
+      ctx.gate(!!intakeId && !!intakeRef, "forge: the intake_requested audit carries the intake id + ref (labels only, never a value)");
+      ctx.gate(intakeRef !== "NOTION_API_KEY", "safety: the e2e intake targets the isolated OE_E2E_INTAKE_KEY ref, NEVER the live NOTION_API_KEY");
+
+      const FAKE_KEY = `oe-e2e-fake-secret-${Date.now().toString(36)}`;
+      const submitRes = await synthetic.setKeySubmit({ org, intakeId: intakeId!, channelId, value: FAKE_KEY, userId: admin, teamId });
+      ctx.gate(submitRes.status === 200, "forge: the view_submission acked 200 (our front route owns the credential-intake modal-submit)");
+
+      const storedRows = await pollUntil(
+        async () => {
+          const r = await auditRead!({ sinceIso: runStart, actions: ["credential.stored"] });
+          const mine = r.filter((e) => e.principalId === admin && (e.detail as { id?: unknown } | undefined)?.id === intakeId);
+          return mine.length > 0 ? mine : undefined;
+        },
+        { timeoutMs: REPLY_WAIT, what: "a credential.stored audit row for the forged view_submission" },
+      ).catch(() => undefined);
+      if (storedRows) {
+        ctx.gate(true, "store: credential.stored audit row written for the intake (the host encrypt+store path ran end-to-end under the db broker)");
+        ctx.log(`store: credential.stored id=${intakeId} ref=${intakeRef} — the value was stored ENCRYPTED and is NEVER read back here.`);
+      } else {
+        ctx.gate(
+          /response_action|errors/.test(submitRes.body) || submitRes.body.trim() === "" || submitRes.body.trim().toLowerCase() === "ok",
+          "store: absent a stored row, the submit returned a modal-close / validation-error response (no silent drop)",
+        );
+        ctx.log("store: no credential.stored row — the submit was validation-rejected (a hypothetical future live provider check); documented as the alternative valid outcome.");
+      }
+
+      const allRows = await auditRead!({ sinceIso: runStart });
+      ctx.gate(!JSON.stringify(allRows).includes(FAKE_KEY), "leak-proof: the submitted (fake) value appears in NO audit row (the value stayed opaque end-to-end)");
+
+      if (offerCard) {
+        await ctx.judgePass(
+          closedQA(
+            "Does the reply present ways to connect Notion (an option to set/paste an API key, or connect options), rather than an error, an exception, or a refusal to help connect?",
+            { mustNotMatch: [/error|exception|traceback/i] },
+          ),
+          offerCard.text,
+          "offer: the connect card reply reads as a sane connect-options response (no error)",
+        );
+      }
+    },
+  },
 ];

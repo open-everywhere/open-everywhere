@@ -50,6 +50,12 @@ const {
   SYNTHETIC_SLACK_ROUTE,
   SYNTHETIC_COMMANDS_ROUTE,
   APPROVAL_PREFIX,
+  buildConnectClickPayload,
+  buildSetKeySubmissionPayload,
+  CONNECT_ACTION_PREFIX,
+  SETKEY_MODAL_CALLBACK,
+  SETKEY_INPUT_BLOCK,
+  SETKEY_INPUT_ACTION,
 } = await import("./e2e/synthetic.js");
 const { signWebhookBody } = await import("./e2e/webhook.js");
 const { runFallbackCheck, FallbackJudge, judge3 } = await import("./e2e/judge.js");
@@ -57,6 +63,12 @@ const { SCENARIOS, skipReason, ScenarioSkip } = await import("./e2e/scenarios.js
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
 const { OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
+const { OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
+const {
+  OE_SETKEY_MODAL_CALLBACK,
+  SETKEY_INPUT_BLOCK: REAL_SETKEY_INPUT_BLOCK,
+  SETKEY_INPUT_ACTION: REAL_SETKEY_INPUT_ACTION,
+} = await import("../agent/credentials/intake.js");
 const { verifyWebhookSignature } = await import("../agent/webhooks/gate.js");
 const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../../node_modules/eve/dist/src/public/channels/slack/inbound.js");
 
@@ -205,11 +217,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     "J1", "J2", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
-    "S-DM-NOTION", "S-CONNECT-CARD",
+    "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit — all self-skipping until their fixtures are armed)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
@@ -223,8 +235,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys are optional (S11–S23 are core coverage)",
+    optional.join(",") === "S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg are optional (S11–S23 are core coverage)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -240,8 +252,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(SCENARIOS.find((s) => s.id === "J-GH")!.surface === "github", "J-GH is the github surface");
   const nonSlack = SCENARIOS.filter((s) => s.surface !== "slack").map((s) => s.id).sort();
   ok(
-    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-NOTION,S-NOTION-WRITE,S8",
-    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD(notion)",
+    nonSlack.join(",") === "J-DISC,J-GH,J-LIN,J-NOT,J-PR,J-TEAMS,J-UNI-X,J-WORKFLOW,S-APIKEY-INTAKE,S-CONNECT-CARD,S-CONNECTOR-TIER,S-DM-NOTION,S-NOTION-WRITE,S8",
+    "the non-slack scenarios are exactly J-DISC(discord)/S8+J-UNI-X+J-PR+J-WORKFLOW(cross)/J-TEAMS(teams)/J-GH(github)/J-LIN(linear)/J-NOT+S-NOTION-WRITE+S-CONNECTOR-TIER+S-DM-NOTION+S-CONNECT-CARD+S-APIKEY-INTAKE(notion)",
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
@@ -651,6 +663,32 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     "application/x-www-form-urlencoded",
   );
   ok(foreign.kind === "forward", "a non-oe action id still forwards (we only ever forge OUR clicks)");
+}
+
+{
+  ok(CONNECT_ACTION_PREFIX === OE_CONNECT_ACTION_PREFIX, "synthetic CONNECT_ACTION_PREFIX matches connector-card.ts OE_CONNECT_ACTION_PREFIX");
+  ok(SETKEY_MODAL_CALLBACK === OE_SETKEY_MODAL_CALLBACK, "synthetic SETKEY_MODAL_CALLBACK matches intake.ts OE_SETKEY_MODAL_CALLBACK");
+  ok(SETKEY_INPUT_BLOCK === REAL_SETKEY_INPUT_BLOCK && SETKEY_INPUT_ACTION === REAL_SETKEY_INPUT_ACTION, "synthetic modal input block/action ids match intake.ts");
+
+  const connectPayload = buildConnectClickPayload({ provider: "e2e-intake", credentialType: "api-key", userId: "U2ADMIN", channelId: "C1", teamId: "T1", org: "default" });
+  const connectActions = connectPayload.actions as readonly { action_id: string; value?: string }[];
+  ok(connectActions[0].action_id === "oe_connect:e2e-intake:api-key", "the forged connect click carries oe_connect:<provider>:api-key");
+  ok(connectActions[0].value === "default", "the forged connect click carries the org in actions[0].value (handleConnectClick reads it)");
+  ok(
+    classifyEnvelope(encodeInteractionBody(connectPayload), "application/x-www-form-urlencoded").kind === "connect-click",
+    "the real classifyEnvelope routes the forged oe_connect body to the connect-click handler",
+  );
+
+  const submitPayload = buildSetKeySubmissionPayload({ org: "default", intakeId: "intake-xyz", channelId: "C1", value: "FAKE-KEY-NOT-REAL", userId: "U2ADMIN", teamId: "T1" });
+  ok(
+    classifyEnvelope(encodeInteractionBody(submitPayload), "application/x-www-form-urlencoded").kind === "setkey-submit",
+    "the real classifyEnvelope routes the forged view_submission to the setkey-submit handler",
+  );
+  const view = submitPayload.view as { callback_id: string; private_metadata: string; state: { values: Record<string, Record<string, { value: string }>> } };
+  ok(view.callback_id === OE_SETKEY_MODAL_CALLBACK, "the forged view_submission carries our modal callback_id");
+  const meta = JSON.parse(view.private_metadata) as { org: string; id: string; channelId: string };
+  ok(meta.org === "default" && meta.id === "intake-xyz" && meta.channelId === "C1", "the forged view_submission's private_metadata carries {org,id,channelId}");
+  ok(view.state.values[REAL_SETKEY_INPUT_BLOCK]?.[REAL_SETKEY_INPUT_ACTION]?.value === "FAKE-KEY-NOT-REAL", "the forged view_submission carries the pasted value at the modal's input block/action");
 }
 
 {

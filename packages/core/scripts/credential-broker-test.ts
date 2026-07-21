@@ -179,5 +179,44 @@ function recorder() {
   ok(!!dml && dml.includes("credential_intake"), "runtime-role: credential_intake is in the mutable DML grant");
 }
 
+{
+  const { getSecretVia, brokerFor, resolveHeaders } = await import("../agent/access/credentials.js");
+  const { expandProviderGrant } = await import("../agent/access/providers.js");
+  type ApiKeyProvider = Parameters<typeof expandProviderGrant>[1] & object;
+
+  resetBrokers();
+  dbBroker.registerDbCredentialBroker();
+  process.env.OE_CREDENTIAL_BROKER = "db";
+
+  const ENV_ONLY_REF = "OE_TEST_ENV_ONLY_SECRET";
+  process.env[ENV_ONLY_REF] = "env-value-xyz";
+
+  ok((await getSecretVia("env", ENV_ONLY_REF)) === "env-value-xyz", "stamp: getSecretVia('env', ref) reads env regardless of OE_CREDENTIAL_BROKER=db");
+
+  await assert.rejects(() => getSecretVia(undefined, ENV_ONLY_REF), (e) => e instanceof CredentialError && /secret not found/.test((e as Error).message), "unstamped: getSecretVia(undefined, envRef) follows selection (db) and fails closed on the missing db row");
+  await assert.rejects(() => getSecret(ENV_ONLY_REF), (e) => e instanceof CredentialError, "unstamped: getSecret(ref) is byte-identical to getSecretVia(undefined, ...) — also follows selection (db)");
+
+  await dbBroker.storeDbSecret({ org: ORG, ref: "db:stamp-check", plaintext: "db-value", createdBy: "U" });
+  ok((await getSecretVia("db", "db:stamp-check")) === "db-value", "stamp: getSecretVia('db', ref) reads the db store");
+  ok((await getSecretVia(undefined, "db:stamp-check")) === "db-value", "unstamped: getSecretVia(undefined, ...) follows selection=db and reads the db store (the paste-into-db path)");
+
+  ok(brokerFor("env") !== undefined && brokerFor("db") !== undefined, "brokerFor resolves registered brokers by name");
+  assert.throws(() => brokerFor("nope"), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "brokerFor('unregistered') throws (fail closed, no fallback)");
+  await assert.rejects(() => getSecretVia("nope", ENV_ONLY_REF), (e) => e instanceof CredentialError && /not registered/.test((e as Error).message), "getSecretVia('unregistered', ...) fails closed");
+
+  const providerStamped = { name: "p", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF, broker: "env" }] } as ApiKeyProvider;
+  const rStamped = expandProviderGrant({ provider: "p", credential: "k" }, providerStamped, { dm: false });
+  ok(rStamped.resolved?.broker === "env" && rStamped.resolved?.secretRef === ENV_ONLY_REF, "expandProviderGrant carries the credential's home broker into the resolved binding");
+  const providerUnstamped = { name: "p2", connection: "c", allows: ["api-key"], credentials: [{ id: "k", type: "api-key", secretRef: ENV_ONLY_REF }] } as ApiKeyProvider;
+  const rUnstamped = expandProviderGrant({ provider: "p2", credential: "k" }, providerUnstamped, { dm: false });
+  ok(rUnstamped.resolved?.broker === undefined, "an unstamped credential resolves with broker: undefined (follows selection)");
+
+  const stampedHeaders = await resolveHeaders({ id: "notion-rest", credentialType: "bearer", secretRef: ENV_ONLY_REF, broker: "env", allowedWebsites: ["api.notion.com"] });
+  ok(stampedHeaders.authorization === "Bearer env-value-xyz", "resolveHeaders: a broker:'env'-stamped bearer connection injects the ENV value under selection=db (flip-safe)");
+  await assert.rejects(() => resolveHeaders({ id: "unstamped", credentialType: "bearer", secretRef: ENV_ONLY_REF, allowedWebsites: ["api.notion.com"] }), (e) => e instanceof CredentialError, "resolveHeaders: an UNSTAMPED env-ref bearer connection fails closed under selection=db — the stamp is what saves the read");
+
+  delete process.env[ENV_ONLY_REF];
+}
+
 delete process.env.OE_CREDENTIAL_BROKER;
 console.log(`credential-broker-test: ${n} checks passed`);

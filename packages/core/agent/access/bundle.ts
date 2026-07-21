@@ -28,6 +28,7 @@ export interface Connection {
   readonly id: string;
   readonly credentialType: CredentialType;
   readonly secretRef: string;
+  readonly broker?: string;
   readonly allowedWebsites: readonly string[];
   readonly pathPrefixes?: readonly string[];
   readonly customHeaders?: readonly CustomHeader[];

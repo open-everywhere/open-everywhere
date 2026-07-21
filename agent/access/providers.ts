@@ -11,7 +11,7 @@ const providers: Provider[] = [
     connection: "notion",
     allows: ["api-key", "service-oauth", "user-oauth"],
     credentials: [
-      { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY" },
+      { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
       {
         id: "team-oauth",
         type: "service-oauth",
@@ -20,6 +20,14 @@ const providers: Provider[] = [
       },
       { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
     ],
+  }),
+
+  defineProvider({
+    name: "e2e-intake",
+    description: "E2E-only: isolated api-key credential the Set-API-key intake leg forges against (inert — never granted).",
+    connection: "notion",
+    allows: ["api-key"],
+    credentials: [{ id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY" }],
   }),
 ];
 

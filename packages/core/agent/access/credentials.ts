@@ -46,15 +46,37 @@ export function selectBroker(): CredentialBroker {
   return broker;
 }
 
+export function brokerFor(name?: string): CredentialBroker {
+  if (name === undefined) return selectBroker();
+  const broker = BROKERS[name];
+  if (!broker) {
+    throw new CredentialError(
+      `credential home broker "${name}" is not registered — register it at startup ` +
+        `(see @open-everywhere/adapters) or correct the credential's \`broker\` field. ` +
+        `Refusing to fall back to another broker (fail closed).`,
+    );
+  }
+  return broker;
+}
+
+export async function getSecretVia(
+  broker: string | undefined,
+  ref: string,
+  authorizationDetails?: readonly CredentialAuthorizationDetail[],
+): Promise<string> {
+  return brokerFor(broker).getSecret(ref, authorizationDetails);
+}
+
 export function getSecret(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<string> {
-  return selectBroker().getSecret(ref, authorizationDetails);
+  return getSecretVia(undefined, ref, authorizationDetails);
 }
 
 async function resolveCustomHeaders(
   headers: readonly CustomHeader[] | undefined,
+  broker?: string,
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
-  for (const h of headers ?? []) out[h.name] = `${h.prefix ?? ""}${await getSecret(h.secretRef)}`;
+  for (const h of headers ?? []) out[h.name] = `${h.prefix ?? ""}${await getSecretVia(broker, h.secretRef)}`;
   return out;
 }
 
@@ -62,16 +84,16 @@ type Handler = (conn: Connection) => Promise<Record<string, string>>;
 
 const HANDLERS: Record<CredentialType, Handler> = {
   bearer: async (conn) => ({
-    authorization: `Bearer ${await getSecret(conn.secretRef, conn.authorizationDetails)}`,
-    ...(await resolveCustomHeaders(conn.customHeaders)),
+    authorization: `Bearer ${await getSecretVia(conn.broker, conn.secretRef, conn.authorizationDetails)}`,
+    ...(await resolveCustomHeaders(conn.customHeaders, conn.broker)),
   }),
   basic: async (conn) => {
-    const b64 = Buffer.from(await getSecret(conn.secretRef, conn.authorizationDetails), "utf-8").toString("base64");
-    return { authorization: `Basic ${b64}`, ...(await resolveCustomHeaders(conn.customHeaders)) };
+    const b64 = Buffer.from(await getSecretVia(conn.broker, conn.secretRef, conn.authorizationDetails), "utf-8").toString("base64");
+    return { authorization: `Basic ${b64}`, ...(await resolveCustomHeaders(conn.customHeaders, conn.broker)) };
   },
   "github-app": async (conn) => ({
-    authorization: `Bearer ${await getSecret(conn.secretRef, conn.authorizationDetails)}`,
-    ...(await resolveCustomHeaders(conn.customHeaders)),
+    authorization: `Bearer ${await getSecretVia(conn.broker, conn.secretRef, conn.authorizationDetails)}`,
+    ...(await resolveCustomHeaders(conn.customHeaders, conn.broker)),
   }),
 };
 

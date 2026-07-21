@@ -4,6 +4,10 @@ import type { SyntheticConfig, SyntheticDmConfig } from "./env.js";
 export const SYNTHETIC_SLACK_ROUTE = "/eve/v1/slack";
 export const SYNTHETIC_COMMANDS_ROUTE = "/eve/v1/slack/commands";
 export const APPROVAL_PREFIX = "oe_approval:";
+export const CONNECT_ACTION_PREFIX = "oe_connect:";
+export const SETKEY_MODAL_CALLBACK = "oe_setkey_modal";
+export const SETKEY_INPUT_BLOCK = "oe_setkey_secret_block";
+export const SETKEY_INPUT_ACTION = "oe_setkey_secret_input";
 
 export interface SlackSignature {
   readonly timestamp: string;
@@ -76,6 +80,47 @@ export function buildBlockActionPayload(input: BlockActionClickInput): Record<st
         action_ts: `${nowSec}.000001`,
       },
     ],
+  };
+}
+
+export interface ConnectClickInput {
+  readonly provider: string;
+  readonly credentialType: "api-key" | "service-oauth" | "user-oauth";
+  readonly userId: string;
+  readonly channelId: string;
+  readonly teamId: string;
+  readonly org: string;
+}
+
+export function buildConnectClickPayload(input: ConnectClickInput): Record<string, unknown> {
+  return {
+    type: "block_actions",
+    user: { id: input.userId },
+    channel: { id: input.channelId },
+    team: { id: input.teamId },
+    actions: [{ action_id: `${CONNECT_ACTION_PREFIX}${input.provider}:${input.credentialType}`, type: "button", value: input.org }],
+  };
+}
+
+export interface SetKeySubmissionInput {
+  readonly org: string;
+  readonly intakeId: string;
+  readonly channelId: string;
+  readonly value: string;
+  readonly userId: string;
+  readonly teamId: string;
+}
+
+export function buildSetKeySubmissionPayload(input: SetKeySubmissionInput): Record<string, unknown> {
+  return {
+    type: "view_submission",
+    user: { id: input.userId },
+    team: { id: input.teamId },
+    view: {
+      callback_id: SETKEY_MODAL_CALLBACK,
+      private_metadata: JSON.stringify({ org: input.org, id: input.intakeId, channelId: input.channelId }),
+      state: { values: { [SETKEY_INPUT_BLOCK]: { [SETKEY_INPUT_ACTION]: { value: input.value } } } },
+    },
   };
 }
 
@@ -168,6 +213,10 @@ export class SyntheticSlack {
     return this.cfg.adminUserId;
   }
 
+  get org(): string {
+    return this.cfg.org;
+  }
+
   private async signedPost(
     route: string,
     rawBody: string,
@@ -218,6 +267,16 @@ export class SyntheticSlack {
   async channelMention(input: { text: string; userId: string; teamId: string; ts: string }): Promise<SyntheticResult> {
     const rawBody = JSON.stringify(buildChannelMentionEnvelope({ ...input, channelId: this.cfg.channel }));
     return this.signedPost(SYNTHETIC_SLACK_ROUTE, rawBody, "synthetic mention", "application/json");
+  }
+
+  async connectClick(input: Omit<ConnectClickInput, "userId" | "org"> & { userId?: string; org?: string }): Promise<SyntheticResult> {
+    const payload = buildConnectClickPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId, org: input.org ?? this.cfg.org });
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
+  }
+
+  async setKeySubmit(input: Omit<SetKeySubmissionInput, "userId"> & { userId?: string }): Promise<SyntheticResult> {
+    const payload = buildSetKeySubmissionPayload({ ...input, userId: input.userId ?? this.cfg.adminUserId });
+    return this.signedPost(SYNTHETIC_SLACK_ROUTE, encodeInteractionBody(payload), "synthetic click");
   }
 }
 
