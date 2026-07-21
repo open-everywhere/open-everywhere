@@ -15,7 +15,12 @@ export function isConnectorOpTool(toolName: string): boolean {
 }
 
 export function classifyConnectorOp(toolName: string): "open" | "gate:member" {
-  const op = connectorOpName(toolName).toLowerCase();
+  let op = connectorOpName(toolName).toLowerCase();
+  const sep = toolName.indexOf("__");
+  if (sep > 0) {
+    const conn = toolName.slice(0, sep).toLowerCase();
+    if (op.startsWith(`${conn}-`) || op.startsWith(`${conn}_`)) op = op.slice(conn.length + 1);
+  }
   const verb = op.split(/[_-]/, 1)[0] ?? op;
   return CONNECTOR_READ_VERBS.includes(verb) ? "open" : "gate:member";
 }

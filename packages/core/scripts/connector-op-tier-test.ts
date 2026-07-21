@@ -32,6 +32,11 @@ for (const op of ["notion__create_page", "notion__update_page", "notion__append_
 ok(classifyConnectorOp("notion__frobnicate_widget") === "gate:member", "unknown verb → gate:member (fail-safe to gated)");
 ok(classifyConnectorOp("notion__") === "gate:member", "empty op → gate:member (fail-safe)");
 
+ok(classifyConnectorOp("notion__notion-fetch") === "open", "vendor-prefixed read (notion__notion-fetch) → open");
+ok(classifyConnectorOp("notion__notion-search") === "open", "vendor-prefixed read (notion__notion-search) → open");
+ok(classifyConnectorOp("notion__notion-create-pages") === "gate:member", "vendor-prefixed write (notion__notion-create-pages) → gate:member");
+ok(classifyConnectorOp("notion__notionette") === "gate:member", "prefix strip requires a separator — notionette is not stripped (fail-safe)");
+
 const approve = connectorOpApproval();
 const noneApproved = new Set<string>();
 ok(approve({ toolName: "notion__search", approvedTools: noneApproved } as never) === "not-applicable", "read op → not-applicable (no prompt)");
