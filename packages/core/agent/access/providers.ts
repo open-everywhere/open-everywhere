@@ -8,6 +8,8 @@ export interface ExecutorConnectionRef {
   readonly integration: string;
   readonly owner: string;
   readonly connection: string;
+  readonly client?: string;
+  readonly template?: string;
 }
 
 export interface ProviderCredential {

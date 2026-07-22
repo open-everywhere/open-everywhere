@@ -222,6 +222,33 @@ export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = async 
   return { url: resp.url };
 };
 
+export function personalAuthUrlClause(url: string): string {
+  return `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `;
+}
+
+export function connectorAuthRequiredUserMessage(connector: string, authorizeClause: string): string {
+  return (
+    `connection "${connector}": your personal account isn't connected yet. ` +
+    authorizeClause +
+    `This connector acts as YOU with YOUR own access — not the shared service account. ` +
+    `If they later say they've completed the sign-in, RETRY the operation to re-check — ` +
+    `never claim it is still unconnected without a fresh attempt.`
+  );
+}
+
+export async function resolveDmPrincipal(
+  auth: import("eve/context").SessionAuth,
+): Promise<{ mode?: string; principalId?: string }> {
+  const bindCtx = await surfaceContextFromAuth(auth);
+  if (!bindCtx) return {};
+  try {
+    const b = bindFrom(bindCtx);
+    return { mode: b.mode, principalId: b.principalId };
+  } catch {
+    return {};
+  }
+}
+
 function isUserAuthRequired(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const code = (e as { code?: unknown }).code;
@@ -247,17 +274,7 @@ export function userAwareProviderToken(
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
       if (cred?.type === "user-oauth") {
-        const bindCtx = await surfaceContextFromAuth(ctx.session.auth);
-        let mode: string | undefined;
-        let principalId: string | undefined;
-        if (bindCtx) {
-          try {
-            const b = bindFrom(bindCtx);
-            mode = b.mode;
-            principalId = b.principalId;
-          } catch {
-          }
-        }
+        const { mode, principalId } = await resolveDmPrincipal(ctx.session.auth);
         if (mode !== "dm") {
           throw new Error(
             `connection "${opts.connector}": a per-user credential resolved on a non-DM surface ` +
@@ -290,15 +307,10 @@ export function userAwareProviderToken(
             } catch {
             }
             markConnectorAuthRequired(opts.connector, url);
-            throw new Error(
-              `connection "${opts.connector}": your personal account isn't connected yet. ` +
-                (url
-                  ? `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `
-                  : `Authorize it in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. `) +
-                `This connector acts as YOU with YOUR own access — not the shared service account. ` +
-                `If they later say they've completed the sign-in, RETRY the operation to re-check — ` +
-                `never claim it is still unconnected without a fresh attempt.`,
-            );
+            const authorizeClause = url
+              ? personalAuthUrlClause(url)
+              : `Authorize it in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. `;
+            throw new Error(connectorAuthRequiredUserMessage(opts.connector, authorizeClause));
           }
           throw e;
         }

@@ -1937,6 +1937,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const forge = ctx.syntheticDm!;
       const synthetic = ctx.synthetic!;
+      const dmNotionVia = (process.env.E2E_DM_NOTION_VIA ?? "connect").trim().toLowerCase();
+      if (dmNotionVia === "executor" && !process.env.E2E_EXECUTOR_URL?.trim())
+        ctx.skip("E2E_DM_NOTION_VIA=executor but no E2E_EXECUTOR_URL — arm the Executor layer (OE_EXECUTOR_ENABLED + config) and set E2E_EXECUTOR_URL to run the DM-Notion journey through Executor DCR");
+      ctx.log(`S-DM-NOTION transport = ${dmNotionVia} (default connect; set E2E_DM_NOTION_VIA=executor for the Executor DCR path)`);
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
       const { ts: anchorTs } = await dm.post(ask);

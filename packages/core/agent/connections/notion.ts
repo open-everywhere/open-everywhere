@@ -1,11 +1,14 @@
 import { defineMcpClientConnection } from "eve/connections";
 import { appProviderToken, userAwareProviderToken, connectorApprovalPolicy } from "./connector-auth.js";
 import { connectorUserPrincipalEnabled } from "./connector-flags.js";
+import { executorNotionArmed, executorMcpUrl, notionExecutorAuth } from "./executor-user-oauth.js";
 
 const NOTION_MCP_URL = "https://mcp.notion.com/mcp";
 
+const CONNECTION_URL = executorNotionArmed() ? executorMcpUrl()! : NOTION_MCP_URL;
+
 export default defineMcpClientConnection({
-  url: NOTION_MCP_URL,
+  url: CONNECTION_URL,
   description:
     "Notion workspace (MCP): search and read pages/databases, AND — when the connected " +
     "integration has edit access — create/update pages and append blocks. This is the team's " +
@@ -13,9 +16,11 @@ export default defineMcpClientConnection({
     "into the page/database a channel points you at. Append under the right heading; don't " +
     "rewrite whole pages. Notion's API owns the block model, so there's no markdown round-trip.",
 
-  auth: connectorUserPrincipalEnabled()
-    ? userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" })
-    : appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" }),
+  auth: executorNotionArmed()
+    ? notionExecutorAuth({ connector: "notion", provider: "notion", credentialId: "user-oauth-executor" })
+    : connectorUserPrincipalEnabled()
+      ? userAwareProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" })
+      : appProviderToken({ connector: "notion", fallbackSecretRef: "NOTION_API_KEY", fallbackBroker: "env" }),
 
   approval: connectorApprovalPolicy(),
 });

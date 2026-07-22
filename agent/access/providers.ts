@@ -16,6 +16,17 @@ const providers: Provider[] = [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
       { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
       { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
+      {
+        id: "user-oauth-executor",
+        type: "user-oauth",
+        executor: {
+          integration: "notion-mcp",
+          owner: "user",
+          connection: "personal",
+          client: "dcr-mcp-notion-com",
+          template: "notion-mcp",
+        },
+      },
     ],
   }),
 
