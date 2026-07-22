@@ -1873,6 +1873,57 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    id: "S-CONNECTOR-TIER-EXECUTOR",
+    title:
+      "Executor-transport variant of the tier split: a READ routed THROUGH Executor sails through, while a WRITE that PAUSES inside Executor is surfaced as OE's OWN durable Slack card (not eve-native HITL, not Executor's ephemeral in-process pause) — approve → OE resumes Executor as the MCP client (optional — needs an Executor layer ARMED; wired live at Stage 3)",
+    requires: ["slack", "connectorWrite"],
+    surface: "notion",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 300_000,
+    judged: true,
+    run: async (ctx) => {
+      if (!process.env.E2E_EXECUTOR_URL?.trim())
+        ctx.skip("needs an Executor layer (set E2E_EXECUTOR_URL to the armed self-host/sidecar base URL) — the executor transport is unregistered otherwise");
+      if (process.env.E2E_EXECUTOR_WRITE?.trim() !== "1")
+        ctx.skip("needs a connection routed through the Executor transport with a write-capable Notion connection (armed at Stage 3); set E2E_EXECUTOR_WRITE=1 once that fixture is live");
+      const connector = ctx.connectorWrite!;
+
+      const rToken = factToken("exread");
+      const { ts: readTs } = await connector.post(
+        connector.mention(`search Notion for "${ctx.notionQuery ?? "team handbook"}" and tell me the first result's title (ref ${rToken}). Just answer — no confirmation for a read.`),
+      );
+      const readReply = await connector.awaitThreadReply(readTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(readReply.text.trim().length > 0, "executor tier-split: the READ op returned a reply (turn ran)");
+      await ctx.judgePass(
+        closedQA(
+          "Is this a DIRECT answer to a Notion search (a page title, or an honest 'nothing found') and NOT a request to confirm/approve an action?",
+          { mustNotMatch: [/error|exception|traceback/i, /shall I proceed|do you want me to|are you sure|please confirm|awaiting your approval/i] },
+        ),
+        readReply.text,
+        "executor tier-split: the read op sails through Executor with no approval (never touches the bridge)",
+      );
+
+      const wToken = factToken("exwrite");
+      const { ts: writeTs } = await connector.post(
+        connector.mention(`now create a Notion page titled "OE exec ${wToken}" whose body includes the exact token ${wToken}.`),
+      );
+      const writeReply = await connector.awaitThreadReply(writeTs, { timeoutMs: REPLY_WAIT });
+      ctx.gate(writeReply.text.trim().length > 0, "executor tier-split: the WRITE op drew a reply (turn ran)");
+      await ctx.judgePass(
+        closedQA(
+          "Does this reply say the write was POSTED FOR APPROVAL / is AWAITING an admin's Approve (a durable card), rather than claiming it already completed or acting as if no consent were required?",
+          { mustMatch: [/approv|awaiting|posted|card|admin|confirm/i], mustNotMatch: [/error|exception|traceback/i] },
+        ),
+        writeReply.text,
+        "executor tier-split: the write is surfaced as OE's durable approval (executor-approval-bridge), not silently executed",
+      );
+      ctx.log(
+        "executor tier-split: proves the Stage-2 bridge routes a write PAUSE to OE's durable card + resume-on-approve. Needs E2E_EXECUTOR_URL + E2E_EXECUTOR_WRITE=1 (a live Executor-routed write connection — armed at Stage 3).",
+      );
+    },
+  },
+  {
     id: "S-DM-NOTION",
     title:
       "DM personal-Notion journey: forged message.im wakes the seat on a Notion ask → real answer about the user's pages (reads are consequence-tier open since e768c58, so any eve-native approval card that DOES appear is Allow-clicked, but its absence is not a failure)",
