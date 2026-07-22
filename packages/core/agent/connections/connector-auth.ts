@@ -19,32 +19,16 @@ import { getSecretVia } from "../access/credentials.js";
 import { bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
+  requireUserAuthFlow,
+  userAuthFlowProvider,
+  userAuthRequiredSignal,
+} from "./user-auth-flow.js";
+import {
   connectorAuthRequiredThisTurn,
   connectorAuthUrlThisTurn,
   markConnectorAuthRequired,
   connectorAuthRequiredError,
 } from "./auth-retry-memo.js";
-
-const connectAuthById = new Map<string, Promise<ConnectionAuthProvider>>();
-function connectAuthFor(connector: string, vercelConnector: string): Promise<ConnectionAuthProvider> {
-  let p = connectAuthById.get(vercelConnector);
-  if (!p) {
-    p = (async () => {
-      try {
-        const spec = "@vercel/connect" + "/eve";
-        const mod = (await import(spec)) as { connect(o: { connector: string }): ConnectionAuthProvider };
-        return mod.connect({ connector: vercelConnector });
-      } catch {
-        throw new Error(
-          `connection "${connector}": service OAuth needs @vercel/connect (LIVE-ONLY). ` +
-            `Install it + link a Vercel project, or use a fixed-key credential.`,
-        );
-      }
-    })();
-    connectAuthById.set(vercelConnector, p);
-  }
-  return p;
-}
 
 export function appStaticToken(opts: {
   readonly connector: string;
@@ -68,8 +52,7 @@ export function appConnectToken(opts: {
     principalType: "app",
     async getToken(o) {
       await assertConnectorGranted(opts.connector, ctx.session.auth);
-      const base = await connectAuthFor(opts.connector, opts.vercelConnector);
-      return (base as { getToken(o: unknown): unknown }).getToken(o) as Promise<TokenResult>;
+      return requireUserAuthFlow(opts.connector).mintServiceToken(opts.vercelConnector, o);
     },
   });
 }
@@ -109,8 +92,7 @@ async function resolveAppTokenFromCred(
   if (cred.type === "service-oauth") {
     if (!cred.vercelConnector)
       throw new Error(`connection "${opts.connector}": service-oauth credential has no vercelConnector`);
-    const base = await connectAuthFor(opts.connector, cred.vercelConnector);
-    return (base as { getToken(o: unknown): unknown }).getToken(o) as Promise<TokenResult>;
+    return requireUserAuthFlow(opts.connector).mintServiceToken(cred.vercelConnector, o);
   }
   throw new Error(
     `connection "${opts.connector}": credential type "${cred.type}" is not valid on an app connection ` +
@@ -135,72 +117,17 @@ export type ConnectAuthorizationStarter = (
 
 export const AUTH_URL_TTL_MS = 15 * 60 * 1000;
 
-type ConnectBaseModule = {
-  getTokenResponse(connector: string, params: unknown): Promise<{ token: string }>;
-  startAuthorization(connector: string, params: unknown, options?: unknown): Promise<{ url: string }>;
-};
-let connectBase: Promise<ConnectBaseModule> | undefined;
-function loadConnectBase(): Promise<ConnectBaseModule> {
-  if (!connectBase) {
-    connectBase = (async () => {
-      try {
-        const spec = "@vercel/" + "connect";
-        return (await import(spec)) as ConnectBaseModule;
-      } catch {
-        throw new Error(
-          "per-user connector credential needs @vercel/connect (LIVE-ONLY). Install it + link a Vercel project.",
-        );
-      }
-    })();
-  }
-  return connectBase;
-}
-
-async function oidcEnvironmentClaim(): Promise<string> {
-  try {
-    const mod = (await import("@vercel/" + "oidc")) as { getVercelOidcToken?: () => Promise<string> };
-    const tok = mod.getVercelOidcToken ? await mod.getVercelOidcToken() : process.env.VERCEL_OIDC_TOKEN;
-    if (!tok) return "no-token";
-    const payload = JSON.parse(Buffer.from(tok.split(".")[1] ?? "", "base64url").toString()) as { environment?: string };
-    return typeof payload.environment === "string" ? payload.environment : "no-claim";
-  } catch {
-    return "decode-failed";
-  }
-}
-
 async function auditMintOutcome(connector: string, detail: Readonly<Record<string, unknown>>): Promise<void> {
+  const flow = userAuthFlowProvider();
+  const oidcEnv = flow ? await flow.environmentClaim() : "unregistered";
   await appendAudit({
     org: deploymentOrg(),
     platform: "connector",
     workspace: "connector",
     action: "connector.mint",
-    detail: { connector, oidcEnv: await oidcEnvironmentClaim(), ...detail },
+    detail: { connector, oidcEnv, ...detail },
   });
 }
-
-const defaultUserMinter: ConnectUserTokenMinter = async (vercelConnector, params) => {
-  const mod = await loadConnectBase();
-  const resp = await mod.getTokenResponse(vercelConnector, {
-    subject: {
-      type: "user",
-      id: params.subject.id,
-      ...(params.subject.issuer ? { issuer: params.subject.issuer } : {}),
-    },
-    ...(params.scopes?.length ? { scopes: [...params.scopes] } : {}),
-    ...(params.resources?.length ? { resources: [...params.resources] } : {}),
-  });
-  return { token: resp.token };
-};
-
-export const defaultAuthStarter: ConnectAuthorizationStarter = async (vercelConnector, params, options) => {
-  const mod = await loadConnectBase();
-  const resp = await mod.startAuthorization(
-    vercelConnector,
-    { subject: { type: "user", id: params.subject.id } },
-    { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) },
-  );
-  return { url: resp.url };
-};
 
 export type ConnectorAuthSubject =
   | { readonly type: "user"; readonly id: string }
@@ -212,15 +139,8 @@ export type ConnectorAuthorizationStarter = (
   options: { readonly expiresInMs?: number },
 ) => Promise<{ url: string }>;
 
-export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = async (vercelConnector, params, options) => {
-  const mod = await loadConnectBase();
-  const resp = await mod.startAuthorization(
-    vercelConnector,
-    { subject: params.subject },
-    { ...(options.expiresInMs ? { expiresInMs: options.expiresInMs } : {}) },
-  );
-  return { url: resp.url };
-};
+export const defaultConnectorAuthStarter: ConnectorAuthorizationStarter = (vercelConnector, params, options) =>
+  requireUserAuthFlow(vercelConnector).startAuthorization(vercelConnector, params, options);
 
 export function personalAuthUrlClause(url: string): string {
   return `Open this personal link to connect it (expires soon): ${url} — complete the sign-in, then ask again. `;
@@ -249,22 +169,18 @@ export async function resolveDmPrincipal(
   }
 }
 
-function isUserAuthRequired(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const code = (e as { code?: unknown }).code;
-  return (
-    e.name === "UserAuthorizationRequiredError" ||
-    (typeof code === "string" && /user_authorization_required/i.test(code)) ||
-    /user[_ ]?authorization[_ ]?required/i.test(e.message)
-  );
+function classifyUserAuthRequired(e: unknown): boolean {
+  const flow = userAuthFlowProvider();
+  return flow ? flow.isUserAuthRequired(e) : userAuthRequiredSignal(e);
 }
 
 export function userAwareProviderToken(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
   deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
 ): ConnectionAuthResolver {
-  const mintUser = deps.mintUser ?? defaultUserMinter;
-  const startAuth = deps.startAuth ?? defaultAuthStarter;
+  const mintUser = deps.mintUser ?? ((ref, params) => requireUserAuthFlow(opts.connector).mintUserToken(ref, params));
+  const startAuth =
+    deps.startAuth ?? ((ref, params, options) => requireUserAuthFlow(opts.connector).startAuthorization(ref, params, options));
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
@@ -294,13 +210,14 @@ export function userAwareProviderToken(
           await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok" });
           return minted;
         } catch (e) {
+          const authRequired = classifyUserAuthRequired(e);
           await auditMintOutcome(opts.connector, {
             subject: "user",
-            outcome: isUserAuthRequired(e) ? "auth-required" : "error",
+            outcome: authRequired ? "auth-required" : "error",
             name: e instanceof Error ? e.name : "unknown",
-            ...(isUserAuthRequired(e) ? {} : { message: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160) }),
+            ...(authRequired ? {} : { message: e instanceof Error ? e.message.slice(0, 160) : String(e).slice(0, 160) }),
           });
-          if (isUserAuthRequired(e)) {
+          if (authRequired) {
             let url: string | undefined;
             try {
               url = (await startAuth(cred.vercelConnector, { subject: { type: "user", id: principalId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
@@ -309,7 +226,7 @@ export function userAwareProviderToken(
             markConnectorAuthRequired(opts.connector, url);
             const authorizeClause = url
               ? personalAuthUrlClause(url)
-              : `Authorize it in your browser (Vercel Connect connector "${cred.vercelConnector}"), then ask again. `;
+              : `Authorize it in your browser (connector "${cred.vercelConnector}"), then ask again. `;
             throw new Error(connectorAuthRequiredUserMessage(opts.connector, authorizeClause));
           }
           throw e;
