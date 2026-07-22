@@ -86,6 +86,28 @@ export function isThreadSeatWindowToken(token: unknown): boolean {
   return key !== undefined && isThreadSeatWindowId(key.windowId);
 }
 
+const DM_SEAT_TOKEN_RE = /^(.+):oe-dm:g(\d+)$/;
+
+export function formatDmSeatToken(dmChannelId: string, generation: number): string {
+  if (dmChannelId.length === 0) throw new Error("formatDmSeatToken: dmChannelId must be non-empty");
+  return `${dmChannelId}:oe-dm:g${generation}`;
+}
+
+export function parseDmSeatToken(token: unknown): { channelId: string; generation: number } | undefined {
+  if (typeof token !== "string") return undefined;
+  const raw = token.startsWith("unified:") ? token.slice("unified:".length) : token;
+  const m = DM_SEAT_TOKEN_RE.exec(raw);
+  return m ? { channelId: m[1], generation: Number(m[2]) } : undefined;
+}
+
+export function isDmSeatToken(token: unknown): token is string {
+  return parseDmSeatToken(token) !== undefined;
+}
+
+export function dmSeatRegistryKey(dmChannelId: string): string {
+  return `oe-dm-seat::${dmChannelId}`;
+}
+
 const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)$/;
 
 const UNIFIED_SEND_PREFIX = "unified:";
@@ -95,6 +117,7 @@ export type SessionId =
   | { kind: "task"; grain: "task"; key: WindowKey; nonce?: string }
   | { kind: "thread-seat"; grain: "thread"; key: WindowKey }
   | { kind: "container-supervisor"; grain: "standing"; containerKey: string; generation: number }
+  | { kind: "dm-seat"; grain: "native"; channelId: string; generation: number }
   | { kind: "native"; grain: "native" };
 
 export function classifySessionId(token: unknown): SessionId {
@@ -106,6 +129,8 @@ export function classifySessionId(token: unknown): SessionId {
     if (isThreadSeatWindowId(key.windowId)) return { kind: "thread-seat", grain: "thread", key };
     return { kind: "window", grain: "standing", key };
   }
+  const dm = parseDmSeatToken(raw);
+  if (dm) return { kind: "dm-seat", grain: "native", channelId: dm.channelId, generation: dm.generation };
   const sup = SUPERVISOR_SUFFIX_RE.exec(raw);
   if (sup) {
     const idx = raw.lastIndexOf(":oe-sup:g");
@@ -120,5 +145,6 @@ export function classifySessionId(token: unknown): SessionId {
 }
 
 export function isSupervisorShapedToken(token: unknown): boolean {
-  return classifySessionId(token).kind !== "native";
+  const k = classifySessionId(token).kind;
+  return k === "window" || k === "task" || k === "thread-seat" || k === "container-supervisor";
 }

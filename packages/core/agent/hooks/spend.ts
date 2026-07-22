@@ -8,6 +8,7 @@ import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { unifiedWindowFromToken, unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
+import { parseDmSeatToken, dmSeatRegistryKey } from "../channels/window-key.js";
 
 function isSupervisorToken(token: unknown): token is string {
   return typeof token === "string" && token.includes(":oe-sup:g");
@@ -64,6 +65,18 @@ export default defineHook({
           if (delta > 0) await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
         } catch (err) {
           console.warn(`[open-everywhere:spend] supervisor token counter bump skipped: ${String(err)}`);
+        }
+      }
+
+      const dmSeat = parseDmSeatToken(token);
+      if (dmSeat) {
+        try {
+          const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+          if (delta > 0) {
+            await getOperationalStore().bumpChannelSessionUsage(p.org, dmSeatRegistryKey(dmSeat.channelId), token as string, delta);
+          }
+        } catch (err) {
+          console.warn(`[open-everywhere:spend] dm-seat token counter bump skipped: ${String(err)}`);
         }
       }
     },

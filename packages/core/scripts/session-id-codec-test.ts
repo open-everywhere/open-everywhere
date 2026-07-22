@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import {
   classifySessionId,
   isSupervisorShapedToken,
+  formatDmSeatToken,
+  parseDmSeatToken,
+  isDmSeatToken,
+  dmSeatRegistryKey,
   type SessionId,
 } from "../agent/channels/window-key.js";
 
@@ -200,6 +204,35 @@ expectKind("x:oe-sup:g", "native", "native", "no-digit suffix");
   ok(t.kind === "task" && t.key.domain === "payments", "task token still anchors its domain (payments)");
   ok(t.kind === "task" && t.key.windowId === `t/${CK}/${TS}/nonce9`, "task windowId preserved verbatim");
   ok(t.kind === "task" && t.nonce === undefined, "nonce left undefined (not segment-recoverable — multi-segment channelKey)");
+}
+
+{
+  const dmTok = formatDmSeatToken("D0EXDMCH001", 7);
+  eq(dmTok, "D0EXDMCH001:oe-dm:g7", "formatDmSeatToken shape");
+
+  const sid = classifySessionId(dmTok);
+  eq(sid.kind, "dm-seat", "dm-seat token classifies kind=dm-seat");
+  eq(sid.grain, "native", "dm-seat grain is native (same hands as a plain DM)");
+  ok(sid.kind === "dm-seat" && sid.channelId === "D0EXDMCH001", "dm-seat channelId recovered");
+  ok(sid.kind === "dm-seat" && sid.generation === 7, "dm-seat generation recovered");
+
+  ok(!isSupervisorShapedToken(dmTok), "dm-seat token is NOT supervisor-shaped (primary model, like a native DM)");
+
+  eq(oldClassifyTokenGrain(dmTok), "native", "OLD grain oracle sees a dm-seat token as native");
+  eq(oldIsSupervisorSession(dmTok), false, "OLD routing oracle: a dm-seat token is not supervisor");
+  eq(sid.grain, oldClassifyTokenGrain(dmTok), "dm-seat grain byte-identity: codec === old classifyTokenGrain");
+  eq(isSupervisorShapedToken(dmTok), oldIsSupervisorSession(dmTok), "dm-seat routing byte-identity: codec === old regex");
+  eq(oldDomainLabel(dmTok), "unknown", "OLD label oracle: a dm-seat token → unknown (no oe-sup suffix)");
+  ok(!oldIsSupervisorTokenSpend(dmTok), "spend supervisor-substring is inert to a dm-seat token");
+
+  const parsed = parseDmSeatToken(dmTok);
+  ok(parsed !== undefined && parsed.channelId === "D0EXDMCH001" && parsed.generation === 7, "parseDmSeatToken round-trips");
+  ok(isDmSeatToken(dmTok), "isDmSeatToken true for a seat token");
+  ok(!isDmSeatToken("D123:1720000000.001"), "isDmSeatToken false for a bare DM thread ts");
+  ok(!isDmSeatToken("C_PAY:oe-sup:g3"), "isDmSeatToken false for a supervisor token");
+  eq(dmSeatRegistryKey("D0EXDMCH001"), "oe-dm-seat::D0EXDMCH001", "dmSeatRegistryKey shape");
+  ok(formatDmSeatToken("D0EXDMCH001", 7) !== formatDmSeatToken("D0EXDMCH001", 8), "generation bump ⇒ different token");
+  ok(parseDmSeatToken("unified:D9:oe-dm:g2")?.generation === 2, "parseDmSeatToken strips unified: prefix");
 }
 
 console.log(`session-id-codec-test: ${n} assertions passed (corpus size ${CORPUS.length})`);
