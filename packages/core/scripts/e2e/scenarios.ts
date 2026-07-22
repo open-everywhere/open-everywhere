@@ -1940,7 +1940,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const dmNotionVia = (process.env.E2E_DM_NOTION_VIA ?? "connect").trim().toLowerCase();
       if (dmNotionVia === "executor" && !process.env.E2E_EXECUTOR_URL?.trim())
         ctx.skip("E2E_DM_NOTION_VIA=executor but no E2E_EXECUTOR_URL — arm the Executor layer (OE_EXECUTOR_ENABLED + config) and set E2E_EXECUTOR_URL to run the DM-Notion journey through Executor DCR");
-      ctx.log(`S-DM-NOTION transport = ${dmNotionVia} (default connect; set E2E_DM_NOTION_VIA=executor for the Executor DCR path)`);
+      if (dmNotionVia === "oe-oauth" && process.env.E2E_OE_OAUTH_ARMED?.trim() !== "1")
+        ctx.skip("E2E_DM_NOTION_VIA=oe-oauth but E2E_OE_OAUTH_ARMED != 1 — arm the deployment (OE_OAUTH_ENABLED + provider config + one-time consent click, runbook on OPE-88), then set E2E_OE_OAUTH_ARMED=1 to assert it");
+      ctx.log(`S-DM-NOTION transport = ${dmNotionVia} (default connect; E2E_DM_NOTION_VIA=executor|oe-oauth for the alternate credential paths)`);
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
       const { ts: anchorTs } = await dm.post(ask);
