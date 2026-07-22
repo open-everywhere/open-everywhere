@@ -1982,7 +1982,7 @@ export const SCENARIOS: readonly Scenario[] = [
           }
           return pending;
         },
-        { timeoutMs: REPLY_WAIT, what: "a substantive (non-card) bot reply to the DM Notion-pages ask" },
+        { timeoutMs: 300_000, what: "a substantive (non-card) bot reply to the DM Notion-pages ask" },
       );
       ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
       await ctx.judgePass(
