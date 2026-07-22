@@ -24,6 +24,90 @@ export function emptyCredentialBindingsFile(): CredentialBindingsFile {
   return { overrides: [] };
 }
 
+export interface OverlayHomeCodec {
+  readonly kind: string;
+  readonly display: string;
+  readonly emptyHint: string;
+  claimsRaw(o: Record<string, unknown>): boolean;
+  parseRaw(o: Record<string, unknown>, where: string): Partial<CredentialBindingOverride>;
+  claims(o: CredentialBindingOverride): boolean;
+  serialize(o: CredentialBindingOverride): Record<string, unknown>;
+  sameHome(a: CredentialBindingOverride, b: CredentialBindingOverride): boolean;
+  apply(cred: ProviderCredential, o: CredentialBindingOverride): ProviderCredential;
+}
+
+const OVERLAY_HOMES = new Map<string, OverlayHomeCodec>();
+
+export function registerOverlayHome(codec: OverlayHomeCodec): void {
+  OVERLAY_HOMES.set(codec.kind, codec);
+}
+
+export function resetOverlayHomes(): void {
+  OVERLAY_HOMES.clear();
+  registerCoreOverlayHomes();
+}
+
+function overlayHomeFor(o: CredentialBindingOverride): OverlayHomeCodec | undefined {
+  for (const codec of OVERLAY_HOMES.values()) if (codec.claims(o)) return codec;
+  return undefined;
+}
+
+function registerCoreOverlayHomes(): void {
+  registerOverlayHome({
+    kind: "broker",
+    display: "a broker home",
+    emptyHint: "{ broker, secretRef }",
+    claimsRaw: (o) => "broker" in o || "secretRef" in o,
+    claims: (o) => o.broker !== undefined || o.secretRef !== undefined,
+    parseRaw: (o, where) => {
+      if (typeof o.broker !== "string" || typeof o.secretRef !== "string") {
+        throw new CredentialBindingsCodemodError("every override needs string { provider, credential, broker, secretRef }");
+      }
+      if (!o.broker || !o.secretRef) {
+        throw new CredentialBindingsCodemodError(`override for ${where} has a blank field — provider/credential/broker/secretRef are all required`);
+      }
+      return { broker: o.broker, secretRef: o.secretRef };
+    },
+    serialize: (o) => ({ broker: o.broker, secretRef: o.secretRef }),
+    sameHome: (a, b) => a.broker === b.broker && a.secretRef === b.secretRef,
+    apply: (c, ov) => ({ ...c, broker: ov.broker, secretRef: ov.secretRef }),
+  });
+  registerOverlayHome({
+    kind: "executor",
+    display: "an executor home",
+    emptyHint: "{ executor }",
+    claimsRaw: (o) => "executor" in o,
+    claims: (o) => o.executor !== undefined,
+    parseRaw: (o, where) => {
+      const e = o.executor;
+      if (!isRecord(e) || typeof e.integration !== "string" || typeof e.owner !== "string" || typeof e.connection !== "string") {
+        throw new CredentialBindingsCodemodError(`override for ${where}: executor home needs string { integration, owner, connection }`);
+      }
+      if (!e.integration || !e.owner || !e.connection) {
+        throw new CredentialBindingsCodemodError(`override for ${where}: executor home has a blank field — integration/owner/connection are all required`);
+      }
+      if (e.integration.includes(":") || e.owner.includes(":") || e.connection.includes(":")) {
+        throw new CredentialBindingsCodemodError(`override for ${where}: executor integration/owner/connection must not contain ":"`);
+      }
+      return { executor: { integration: e.integration, owner: e.owner, connection: e.connection } };
+    },
+    serialize: (o) => ({
+      executor: { integration: o.executor!.integration, owner: o.executor!.owner, connection: o.executor!.connection },
+    }),
+    sameHome: (a, b) =>
+      !!a.executor &&
+      !!b.executor &&
+      a.executor.integration === b.executor.integration &&
+      a.executor.owner === b.executor.owner &&
+      a.executor.connection === b.executor.connection,
+    apply: (c, ov) => {
+      const { secretRef: _s, broker: _b, vercelConnector: _v, ...rest } = c;
+      return { ...rest, executor: ov.executor };
+    },
+  });
+}
+registerCoreOverlayHomes();
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -47,40 +131,25 @@ export function parseCredentialBindingsFile(value: unknown): CredentialBindingsF
     if (o.provider.includes(":") || o.credential.includes(":")) {
       throw new CredentialBindingsCodemodError(`override provider/credential ids must not contain ":" (got "${o.provider}"/"${o.credential}")`);
     }
-    const hasBrokerHome = "broker" in o || "secretRef" in o;
-    const hasExecutorHome = "executor" in o;
-    if (hasBrokerHome && hasExecutorHome) {
-      throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}" has BOTH a broker home and an executor home — exactly one is allowed (one home per credential)`);
+    const where = `"${o.provider}/${o.credential}"`;
+    const claimed = [...OVERLAY_HOMES.values()].filter((h) => h.claimsRaw(o));
+    if (claimed.length > 1) {
+      const phrase =
+        claimed.length === 2
+          ? `has BOTH ${claimed[0].display} and ${claimed[1].display}`
+          : `declares more than one home (${claimed.map((h) => h.display).join(", ")})`;
+      throw new CredentialBindingsCodemodError(`override for ${where} ${phrase} — exactly one is allowed (one home per credential)`);
     }
-    if (!hasBrokerHome && !hasExecutorHome) {
-      throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}" has no home — set { broker, secretRef } or { executor }`);
+    if (claimed.length === 0) {
+      throw new CredentialBindingsCodemodError(
+        `override for ${where} has no home — set ${[...OVERLAY_HOMES.values()].map((h) => h.emptyHint).join(" or ")}`,
+      );
     }
     const dupKey = `${o.provider} ${o.credential}`;
     if (seen.has(dupKey)) throw new CredentialBindingsCodemodError(`credential-bindings file has a duplicate override for "${o.provider}/${o.credential}" — one home per credential`);
     seen.add(dupKey);
 
-    if (hasExecutorHome) {
-      const e = o.executor;
-      if (!isRecord(e) || typeof e.integration !== "string" || typeof e.owner !== "string" || typeof e.connection !== "string") {
-        throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}": executor home needs string { integration, owner, connection }`);
-      }
-      if (!e.integration || !e.owner || !e.connection) {
-        throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}": executor home has a blank field — integration/owner/connection are all required`);
-      }
-      if (e.integration.includes(":") || e.owner.includes(":") || e.connection.includes(":")) {
-        throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}": executor integration/owner/connection must not contain ":"`);
-      }
-      overrides.push({ provider: o.provider, credential: o.credential, executor: { integration: e.integration, owner: e.owner, connection: e.connection } });
-      continue;
-    }
-
-    if (typeof o.broker !== "string" || typeof o.secretRef !== "string") {
-      throw new CredentialBindingsCodemodError("every override needs string { provider, credential, broker, secretRef }");
-    }
-    if (!o.broker || !o.secretRef) {
-      throw new CredentialBindingsCodemodError(`override for "${o.provider}/${o.credential}" has a blank field — provider/credential/broker/secretRef are all required`);
-    }
-    overrides.push({ provider: o.provider, credential: o.credential, broker: o.broker, secretRef: o.secretRef });
+    overrides.push({ provider: o.provider, credential: o.credential, ...claimed[0].parseRaw(o, where) });
   }
   return { overrides };
 }
@@ -95,38 +164,21 @@ export function parseCredentialBindingsText(text: string): CredentialBindingsFil
   return parseCredentialBindingsFile(json);
 }
 
-const OVERRIDE_KEYS = ["provider", "credential", "broker", "secretRef", "executor"];
-const EXECUTOR_HOME_KEYS = ["integration", "owner", "connection"];
-
-function orderKeys(obj: Record<string, unknown>, order: readonly string[]): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const k of order) if (k in obj) out[k] = obj[k];
-  for (const k of Object.keys(obj).sort()) if (!(k in out)) out[k] = obj[k];
-  return out;
-}
-
 export function stringifyCredentialBindings(file: CredentialBindingsFile): string {
   const overrides = [...file.overrides]
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.credential.localeCompare(b.credential))
     .map((o) => {
-      const ordered = orderKeys({ ...o }, OVERRIDE_KEYS);
-      if (o.executor) ordered.executor = orderKeys({ ...o.executor }, EXECUTOR_HOME_KEYS);
-      return ordered;
+      const home = overlayHomeFor(o);
+      return { provider: o.provider, credential: o.credential, ...(home ? home.serialize(o) : {}) };
     });
   return JSON.stringify({ overrides }, null, 2) + "\n";
 }
 
 function sameHome(a: CredentialBindingOverride, b: CredentialBindingOverride): boolean {
-  if (a.executor || b.executor) {
-    return (
-      !!a.executor &&
-      !!b.executor &&
-      a.executor.integration === b.executor.integration &&
-      a.executor.owner === b.executor.owner &&
-      a.executor.connection === b.executor.connection
-    );
-  }
-  return a.broker === b.broker && a.secretRef === b.secretRef;
+  const ca = overlayHomeFor(a);
+  const cb = overlayHomeFor(b);
+  if (!ca || !cb || ca.kind !== cb.kind) return false;
+  return ca.sameHome(a, b);
 }
 
 export interface ApplyBindingOverrideResult {
@@ -160,11 +212,7 @@ export function applyOverridesToProviders(providers: readonly Provider[], overri
     const credentials = p.credentials.map((c): ProviderCredential => {
       const ov = forThis.find((o) => o.credential === c.id);
       if (!ov) return c;
-      if (ov.executor) {
-        const { secretRef: _s, broker: _b, vercelConnector: _v, ...rest } = c;
-        return { ...rest, executor: ov.executor };
-      }
-      return { ...c, broker: ov.broker, secretRef: ov.secretRef };
+      return overlayHomeFor(ov)?.apply(c, ov) ?? c;
     });
     return { ...p, credentials };
   });

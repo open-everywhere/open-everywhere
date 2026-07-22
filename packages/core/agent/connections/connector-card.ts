@@ -11,7 +11,7 @@ import {
   type ConnectorAuthorizationStarter,
 } from "./connector-auth.js";
 import { requestCredentialIntake, type CredentialIntakeDeps } from "../credentials/intake.js";
-import { dbCredentialRef, executorCredentialRef } from "../credentials/ref.js";
+import { deriveCredentialRef } from "../credentials/ref.js";
 import { offerableCredential, optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
@@ -220,9 +220,15 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         return true;
       }
       const requestIntake = deps.requestIntake ?? requestCredentialIntake;
-      const ref = cred.executor
-        ? executorCredentialRef(cred.executor.integration, cred.executor.owner, cred.executor.connection)
-        : dbCredentialRef(providerName, cred.id);
+      const ref = deriveCredentialRef({
+        provider: providerName,
+        credentialId: cred.id,
+        ...(cred.executor ? { executor: cred.executor } : {}),
+      });
+      if (!ref) {
+        await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no resolvable storage home. Ask an operator.");
+        return true;
+      }
       await requestIntake({
         org,
         provider: providerName,

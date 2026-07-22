@@ -48,9 +48,16 @@ export function parseExecutorCredentialRef(ref: string): { integration: string; 
   return { integration, owner, connection };
 }
 
+export interface CredentialRefDeriveInput {
+  readonly provider: string;
+  readonly credentialId: string;
+  readonly executor?: { readonly integration: string; readonly owner: string; readonly connection: string };
+}
+
 export interface RefCodec {
   readonly home: string;
   parse(ref: string): Readonly<Record<string, string>> | null;
+  derive?(input: CredentialRefDeriveInput): string | null;
 }
 
 export const DB_HOME = "db";
@@ -78,9 +85,28 @@ export function parseCredentialRef(ref: string): ParsedCredentialRef | null {
   return null;
 }
 
+export function deriveCredentialRef(input: CredentialRefDeriveInput): string | null {
+  for (const codec of REF_CODECS.values()) {
+    const ref = codec.derive?.(input);
+    if (ref !== null && ref !== undefined) return ref;
+  }
+  return null;
+}
+
 function registerCoreRefCodecs(): void {
-  registerRefCodec({ home: DB_HOME, parse: parseDbCredentialRef });
-  registerRefCodec({ home: EXECUTOR_HOME, parse: parseExecutorCredentialRef });
+  registerRefCodec({
+    home: DB_HOME,
+    parse: parseDbCredentialRef,
+    derive: (input) => (input.executor ? null : dbCredentialRef(input.provider, input.credentialId)),
+  });
+  registerRefCodec({
+    home: EXECUTOR_HOME,
+    parse: parseExecutorCredentialRef,
+    derive: (input) =>
+      input.executor
+        ? executorCredentialRef(input.executor.integration, input.executor.owner, input.executor.connection)
+        : null,
+  });
 }
 
 registerCoreRefCodecs();
