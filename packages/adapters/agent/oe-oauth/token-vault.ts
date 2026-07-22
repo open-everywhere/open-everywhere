@@ -10,8 +10,9 @@ import {
   type OAuthFetch,
   type OAuthTokenResponse,
 } from "./oauth-client.js";
+import { randomUUID } from "node:crypto";
 import { makePkce, makeState } from "./pkce.js";
-import { OeOauthNeedsConsentError, OeOauthNeedsReconsentError, isInvalidGrant } from "./errors.js";
+import { OeOauthNeedsConsentError, OeOauthNeedsReconsentError, OeOauthRefreshContendedError, isInvalidGrant } from "./errors.js";
 
 export type OeOauthSubject = { readonly type: "user"; readonly id: string } | { readonly type: "app" };
 
@@ -50,6 +51,12 @@ interface TokenRecord {
 const DEFAULT_PENDING_TTL_MS = 15 * 60 * 1000;
 const DEFAULT_EXPIRY_SKEW_MS = 60 * 1000;
 
+export const CLAIM_LEASE_TTL_MS = 30_000;
+const LOSER_WAIT_BUDGET_MS = 15_000;
+const LOSER_POLL_MS = 250;
+
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export interface OeOauthVaultDeps {
   readonly vault?: EncryptedKvVault;
   readonly fetch?: OAuthFetch;
@@ -59,6 +66,8 @@ export interface OeOauthVaultDeps {
   readonly redirectUri?: () => string | undefined;
   readonly pendingTtlMs?: number;
   readonly expirySkewMs?: number;
+  readonly newClaimId?: () => string;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 function subjectKey(subject: OeOauthSubject): string {
@@ -81,6 +90,8 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   const redirectUriOf = deps.redirectUri ?? defaultRedirectUri;
   const pendingTtl = deps.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
   const skew = deps.expirySkewMs ?? DEFAULT_EXPIRY_SKEW_MS;
+  const newClaimId = deps.newClaimId ?? (() => randomUUID());
+  const sleep = deps.sleep ?? realSleep;
 
   const dcrRef = (providerRef: string) => `oe-oauth:dcr:${providerRef}`;
   const pendRef = (state: string) => `oe-oauth:pend:${state}`;
@@ -210,24 +221,41 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         if (!rec) throw new OeOauthNeedsConsentError(providerRef, subject);
         if (!isExpired(rec)) return rec.accessToken;
         if (!rec.refreshToken) throw new OeOauthNeedsReconsentError(providerRef, subject, "no refresh token stored");
-        const client = await ensureDcrClient(providerRef);
-        let tok: OAuthTokenResponse;
-        try {
-          tok = await refreshToken(
-            client.tokenEndpoint,
-            { refreshToken: rec.refreshToken, clientId: client.clientId, resource: client.resource, ...(client.scopes ? { scopes: client.scopes } : {}) },
-            doFetch,
-          );
-        } catch (e) {
-          if (isInvalidGrant(e)) {
-            const rec2 = await readJson<TokenRecord>(ref);
-            if (rec2 && !isExpired(rec2) && rec2.refreshToken !== rec.refreshToken) return rec2.accessToken;
-            throw new OeOauthNeedsReconsentError(providerRef, subject, "refresh token rejected (invalid_grant)");
+
+        const claimId = newClaimId();
+        const won = await vault.claim(ref, claimId, now(), CLAIM_LEASE_TTL_MS);
+        if (won) {
+          try {
+            const client = await ensureDcrClient(providerRef);
+            let tok: OAuthTokenResponse;
+            try {
+              tok = await refreshToken(
+                client.tokenEndpoint,
+                { refreshToken: rec.refreshToken, clientId: client.clientId, resource: client.resource, ...(client.scopes ? { scopes: client.scopes } : {}) },
+                doFetch,
+              );
+            } catch (e) {
+              if (isInvalidGrant(e)) {
+                const rec2 = await readJson<TokenRecord>(ref);
+                if (rec2 && !isExpired(rec2) && rec2.refreshToken !== rec.refreshToken) return rec2.accessToken;
+                throw new OeOauthNeedsReconsentError(providerRef, subject, "refresh token rejected (invalid_grant)");
+              }
+              throw e;
+            }
+            const stored = await storeToken(providerRef, subject, tok, rec.refreshToken);
+            return stored.accessToken;
+          } finally {
+            await vault.releaseClaim(ref, claimId);
           }
-          throw e;
         }
-        const stored = await storeToken(providerRef, subject, tok, rec.refreshToken);
-        return stored.accessToken;
+
+        const deadline = now() + LOSER_WAIT_BUDGET_MS;
+        for (;;) {
+          const rec2 = await readJson<TokenRecord>(ref);
+          if (rec2 && !isExpired(rec2)) return rec2.accessToken;
+          if (now() >= deadline) throw new OeOauthRefreshContendedError(providerRef, subject);
+          await sleep(LOSER_POLL_MS);
+        }
       });
     },
   };

@@ -18,6 +18,14 @@ export class OeOauthNeedsReconsentError extends Error {
   }
 }
 
+export class OeOauthRefreshContendedError extends Error {
+  readonly code = "oe_oauth_refresh_contended";
+  constructor(providerRef: string, subject: { readonly type: "user"; readonly id: string } | { readonly type: "app" }) {
+    super(`connection "${providerRef}": ${subjectLabel(subject)} token refresh is in progress on another instance and did not complete in time — retry.`);
+    this.name = "OeOauthRefreshContendedError";
+  }
+}
+
 export class OeOauthError extends Error {
   readonly code = "oe_oauth_error";
   readonly oauthError?: string;

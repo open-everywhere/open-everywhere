@@ -663,5 +663,19 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.getPendingAction("default", "pa-frozen"))?.status === "expired", "pending: the losing CAS left the row untouched");
 }
 
+{
+  const REF = "oe-oauth:tok:notion:user:U1";
+  await store.putStoredCredential("default", { ref: REF, ciphertext: "ENVELOPE-OPAQUE", createdBy: "sys", createdAt: "2026-07-22T00:00:00Z" });
+  ok((await store.claimStoredCredential("default", REF, "claim-A", "2026-07-22T00:00:10Z", "2026-07-22T00:00:00Z")) === true, "claim: first claimant wins the free row");
+  ok((await store.claimStoredCredential("default", REF, "claim-B", "2026-07-22T00:00:11Z", "2026-07-22T00:00:00Z")) === false, "claim: a second claimant loses while the lease is held");
+  ok((await store.releaseStoredCredential("default", REF, "claim-B")) === false, "claim: releasing with the wrong claim id is a no-op");
+  ok((await store.claimStoredCredential("default", REF, "claim-B2", "2026-07-22T00:00:12Z", "2026-07-22T00:00:05Z")) === false, "claim: still held before the lease goes stale");
+  ok((await store.releaseStoredCredential("default", REF, "claim-A")) === true, "claim: the true holder releases its claim");
+  ok((await store.claimStoredCredential("default", REF, "claim-C", "2026-07-22T00:00:13Z", "2026-07-22T00:00:00Z")) === true, "claim: a released row is claimable again");
+  ok((await store.claimStoredCredential("default", REF, "claim-D", "2026-07-22T00:05:00Z", "2026-07-22T00:04:00Z")) === true, "claim: an expired lease (claimed_at <= staleBefore) is stolen by a fresh claim");
+  ok((await store.claimStoredCredential("acme", REF, "claim-X", "2026-07-22T00:06:00Z", "2026-07-22T00:00:00Z")) === false, "claim: another org can't claim (row is org-scoped)");
+  ok((await store.getStoredCredential("default", REF))?.ciphertext === "ENVELOPE-OPAQUE", "claim: claim/release never mutate the ciphertext payload");
+}
+
 await db.close();
 console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, migration)`);

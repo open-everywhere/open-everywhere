@@ -253,6 +253,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
 
     "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
+
+    "ALTER TABLE stored_credential ADD COLUMN claim_id TEXT",
+    "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -1026,6 +1029,23 @@ export const sqliteOperationalStore: OperationalStore = {
       createdBy: row.created_by,
       createdAt: row.created_at,
     };
+  },
+
+  async claimStoredCredential(org, ref, claimId, claimedAtIso, staleBeforeIso) {
+    const info = getDb()
+      .prepare(
+        `UPDATE stored_credential SET claim_id = ?, claimed_at = ?
+         WHERE org_id = ? AND ref = ? AND (claim_id IS NULL OR claimed_at <= ?)`,
+      )
+      .run(claimId, claimedAtIso, org, ref, staleBeforeIso);
+    return info.changes > 0;
+  },
+
+  async releaseStoredCredential(org, ref, claimId) {
+    const info = getDb()
+      .prepare("UPDATE stored_credential SET claim_id = NULL, claimed_at = NULL WHERE org_id = ? AND ref = ? AND claim_id = ?")
+      .run(org, ref, claimId);
+    return info.changes > 0;
   },
 
   async addCredentialIntake(row) {

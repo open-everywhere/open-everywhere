@@ -7,10 +7,12 @@ export interface EncryptedKvVault {
   read(ref: string): Promise<string | null>;
   write(ref: string, plaintext: string, labels?: { provider?: string; domain?: string; createdBy?: string }): Promise<void>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+  claim(ref: string, claimId: string, nowMs: number, leaseTtlMs: number): Promise<boolean>;
+  releaseClaim(ref: string, claimId: string): Promise<void>;
 }
 
 export interface EncryptedKvVaultDeps {
-  readonly getStore?: () => Pick<ReturnType<typeof getOperationalStore>, "getStoredCredential" | "putStoredCredential">;
+  readonly getStore?: () => Pick<ReturnType<typeof getOperationalStore>, "getStoredCredential" | "putStoredCredential" | "claimStoredCredential" | "releaseStoredCredential">;
   readonly org?: () => string;
   readonly encrypt?: (plaintext: string) => string;
   readonly decrypt?: (envelope: string) => string;
@@ -59,5 +61,13 @@ export function encryptedKvVault(deps: EncryptedKvVaultDeps = {}): EncryptedKvVa
       await store().putStoredCredential(org(), rec);
     },
     withLock: withKeyedLock,
+    async claim(ref, claimId, nowMs, leaseTtlMs) {
+      const claimedAtIso = new Date(nowMs).toISOString();
+      const staleBeforeIso = new Date(nowMs - leaseTtlMs).toISOString();
+      return store().claimStoredCredential(org(), ref, claimId, claimedAtIso, staleBeforeIso);
+    },
+    async releaseClaim(ref, claimId) {
+      await store().releaseStoredCredential(org(), ref, claimId);
+    },
   };
 }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 import type { EncryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
+import { encryptedKvVault } from "@open-everywhere/core/agent/adapter-api.js";
 
 const dir = join(tmpdir(), `oe-oauth-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -12,9 +13,9 @@ delete process.env.OE_ORG;
 process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 
 const { makePkce, makeState } = await import("../agent/oe-oauth/pkce.js");
-const { makeOeOauthTokenVault } = await import("../agent/oe-oauth/token-vault.js");
+const { makeOeOauthTokenVault, CLAIM_LEASE_TTL_MS } = await import("../agent/oe-oauth/token-vault.js");
 const { makeOeOauth } = await import("../agent/oe-oauth/user-auth-flow.js");
-const { OeOauthNeedsConsentError, OeOauthNeedsReconsentError } = await import("../agent/oe-oauth/errors.js");
+const { OeOauthNeedsConsentError, OeOauthNeedsReconsentError, OeOauthRefreshContendedError } = await import("../agent/oe-oauth/errors.js");
 import type { OeOauthProviderConfig } from "../agent/oe-oauth/config.js";
 
 let n = 0;
@@ -128,11 +129,15 @@ function makeMockFetch(s: MockState) {
   ok(s.refreshCount === 1 && again.token === "AT-1", "a mint within validity reuses the token (no extra refresh)");
 }
 
-function memVault(): EncryptedKvVault & { raw: Map<string, string> } {
-  const raw = new Map<string, string>();
+type ClaimState = { id: string; at: number };
+type SharedBacking = { raw: Map<string, string>; claims: Map<string, ClaimState> };
+function memVault(shared?: SharedBacking): EncryptedKvVault & SharedBacking {
+  const raw = shared?.raw ?? new Map<string, string>();
+  const claims = shared?.claims ?? new Map<string, ClaimState>();
   const tails = new Map<string, Promise<void>>();
   return {
     raw,
+    claims,
     async read(ref) {
       return raw.has(ref) ? raw.get(ref)! : null;
     },
@@ -152,6 +157,19 @@ function memVault(): EncryptedKvVault & { raw: Map<string, string> } {
         release();
         if (tails.get(key) === tail) tails.delete(key);
       }
+    },
+    async claim(ref, claimId, nowMs, leaseTtlMs) {
+      const cur = claims.get(ref);
+      const free = !cur || nowMs - cur.at >= leaseTtlMs;
+      if (free) {
+        claims.set(ref, { id: claimId, at: nowMs });
+        return true;
+      }
+      return false;
+    },
+    async releaseClaim(ref, claimId) {
+      const cur = claims.get(ref);
+      if (cur && cur.id === claimId) claims.delete(ref);
     },
   };
 }
@@ -242,4 +260,102 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   ok((await flow.environmentClaim()) === "self", "environmentClaim is the honest, stable 'self' stamp");
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, forced-rotation single-flight, recovery, typed errors)`);
+{
+  const clock = { t: 5_000_000_000 };
+  const shared: SharedBacking = { raw: new Map(), claims: new Map() };
+  const vA = memVault(shared);
+  const vB = memVault(shared);
+  await seedDcr(vA);
+  await vA.write(tokRef, JSON.stringify({ accessToken: "OLD", refreshToken: "RT-0", expiresAt: clock.t - 1, obtainedAt: 0 }));
+  const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "RT-0", seq: 0, exchangeExpiresIn: 1 };
+  let tokenCalls = 0;
+  const baseFetch = makeMockFetch(s);
+  const countingFetch = async (input: string, init?: RequestInit) => {
+    if (input === TOKEN_URL && (init?.method ?? "GET").toUpperCase() === "POST") tokenCalls++;
+    return baseFetch(input, init);
+  };
+  const yieldSleep = async () => {
+    await Promise.resolve();
+  };
+  const mkVault = (v: EncryptedKvVault) => makeOeOauthTokenVault(providers, { vault: v, fetch: countingFetch, now: () => clock.t, sleep: yieldSleep });
+  const vaultA = mkVault(vA);
+  const vaultB = mkVault(vB);
+  const N = 8;
+  const calls = Array.from({ length: N }, (_, i) => (i % 2 === 0 ? vaultA : vaultB).accessTokenFor("notion", { type: "user", id: "U1" }));
+  const tokens = await Promise.all(calls);
+  ok(s.refreshCount === 1, `⭐ ${N} cross-process concurrent refreshes triggered EXACTLY ONE upstream refresh (got ${s.refreshCount})`);
+  ok(tokenCalls === 1, "cross-process: exactly one token-endpoint call across both instances");
+  ok(tokens.every((t) => t === "AT-1"), "cross-process: every caller (both instances) ended with the SAME rotated token");
+  ok(tokens.length === N, "cross-process: zero bricked connections — every caller got a token");
+}
+
+{
+  const clock = { t: 6_000_000_000 };
+  const shared: SharedBacking = { raw: new Map(), claims: new Map() };
+  const vA = memVault(shared);
+  const vB = memVault(shared);
+  await seedDcr(vA);
+  await vA.write(tokRef, JSON.stringify({ accessToken: "OLD", refreshToken: "RT-0", expiresAt: clock.t - 1, obtainedAt: 0 }));
+  const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "RT-0", seq: 0, exchangeExpiresIn: 1 };
+  shared.claims.set(tokRef, { id: "A-CRASHED", at: clock.t });
+  const advanceSleep = (ms: number) => {
+    clock.t += ms;
+    return Promise.resolve();
+  };
+  const vaultBshort = makeOeOauthTokenVault(providers, { vault: vB, fetch: makeMockFetch(s), now: () => clock.t, sleep: advanceSleep });
+  let caughtEarly: unknown;
+  try {
+    await vaultBshort.accessTokenFor("notion", { type: "user", id: "U1" });
+  } catch (e) {
+    caughtEarly = e;
+  }
+  ok(caughtEarly instanceof OeOauthRefreshContendedError, "crashed-winner: before the lease TTL, a loser times out (claim held)");
+  ok(s.refreshCount === 0, "crashed-winner: the timed-out loser NEVER called the token endpoint");
+  clock.t = 6_000_000_000 + CLAIM_LEASE_TTL_MS + 1;
+  const vaultBsteal = makeOeOauthTokenVault(providers, { vault: vB, fetch: makeMockFetch(s), now: () => clock.t });
+  const token = await vaultBsteal.accessTokenFor("notion", { type: "user", id: "U1" });
+  ok(token === "AT-1" && s.refreshCount === 1, "crashed-winner: after the lease TTL, a fresh attempt steals the stale claim and refreshes once");
+}
+
+{
+  const clock = { t: 7_000_000_000 };
+  const shared: SharedBacking = { raw: new Map(), claims: new Map() };
+  const vB = memVault(shared);
+  await seedDcr(vB);
+  await vB.write(tokRef, JSON.stringify({ accessToken: "OLD", refreshToken: "RT-DEAD-SECRET", expiresAt: clock.t - 1, obtainedAt: 0 }));
+  const s: MockState = { registrations: 0, exchanges: 0, refreshCount: 0, access: "AT-0", validRefresh: "NEVER", seq: 0, exchangeExpiresIn: 1 };
+  const advanceSleep = (ms: number) => {
+    clock.t += ms;
+    shared.claims.set(tokRef, { id: "LIVE-WINNER", at: clock.t });
+    return Promise.resolve();
+  };
+  shared.claims.set(tokRef, { id: "LIVE-WINNER", at: clock.t });
+  const vaultB = makeOeOauthTokenVault(providers, { vault: vB, fetch: makeMockFetch(s), now: () => clock.t, sleep: advanceSleep });
+  let caught: unknown;
+  try {
+    await vaultB.accessTokenFor("notion", { type: "user", id: "U1" });
+  } catch (e) {
+    caught = e;
+  }
+  ok(caught instanceof OeOauthRefreshContendedError, "loser-timeout: a held claim past the wait budget ⇒ typed contended error");
+  ok((caught as { code?: string }).code === "oe_oauth_refresh_contended", "loser-timeout: the error carries the stable transient code");
+  ok(!(caught as Error).message.includes("RT-DEAD-SECRET"), "loser-timeout: no secret leaks into the error message");
+  ok(s.refreshCount === 0, "loser-timeout: the loser NEVER called the token endpoint");
+}
+
+{
+  const rv = encryptedKvVault();
+  const CREF = "oe-oauth:tok:realclaim:user:U1";
+  await rv.write(CREF, JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { provider: "notion" });
+  const base = 8_000_000_000;
+  ok((await rv.claim(CREF, "R-A", base, CLAIM_LEASE_TTL_MS)) === true, "real-store: first claimant wins the free row");
+  ok((await rv.claim(CREF, "R-B", base + 10, CLAIM_LEASE_TTL_MS)) === false, "real-store: a second claimant loses while the lease is held");
+  await rv.releaseClaim(CREF, "R-B");
+  ok((await rv.claim(CREF, "R-B2", base + 20, CLAIM_LEASE_TTL_MS)) === false, "real-store: a wrong-holder release did NOT free the row");
+  await rv.releaseClaim(CREF, "R-A");
+  ok((await rv.claim(CREF, "R-C", base + 30, CLAIM_LEASE_TTL_MS)) === true, "real-store: a released row is claimable again");
+  ok((await rv.claim(CREF, "R-D", base + 30 + CLAIM_LEASE_TTL_MS + 1, CLAIM_LEASE_TTL_MS)) === true, "real-store: an expired lease is stolen by a fresh claim");
+  ok(JSON.parse((await rv.read(CREF))!).accessToken === "AT", "real-store: claim/release never touch the stored value");
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, typed errors)`);

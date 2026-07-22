@@ -289,6 +289,9 @@ export interface OperationalStore {
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;
 
+  claimStoredCredential(org: string, ref: string, claimId: string, claimedAtIso: string, staleBeforeIso: string): Promise<boolean>;
+  releaseStoredCredential(org: string, ref: string, claimId: string): Promise<boolean>;
+
   addCredentialIntake(row: CredentialIntakeRow): Promise<void>;
   getCredentialIntake(org: string, id: string): Promise<CredentialIntakeRow | null>;
   consumeCredentialIntake(org: string, id: string, usedAt: string): Promise<boolean>;

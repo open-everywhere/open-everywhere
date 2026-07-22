@@ -225,6 +225,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
+  `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
+  `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -1330,6 +1332,23 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         createdBy: r.created_by,
         createdAt: r.created_at,
       };
+    },
+
+    async claimStoredCredential(org, ref, claimId, claimedAtIso, staleBeforeIso) {
+      const { rows } = await client.query(
+        `UPDATE stored_credential SET claim_id = $1, claimed_at = $2
+         WHERE org_id = $3 AND ref = $4 AND (claim_id IS NULL OR claimed_at <= $5) RETURNING ref`,
+        [claimId, claimedAtIso, org, ref, staleBeforeIso],
+      );
+      return rows.length > 0;
+    },
+
+    async releaseStoredCredential(org, ref, claimId) {
+      const { rows } = await client.query(
+        "UPDATE stored_credential SET claim_id = NULL, claimed_at = NULL WHERE org_id = $1 AND ref = $2 AND claim_id = $3 RETURNING ref",
+        [org, ref, claimId],
+      );
+      return rows.length > 0;
     },
 
     async addCredentialIntake(row: CredentialIntakeRow) {
