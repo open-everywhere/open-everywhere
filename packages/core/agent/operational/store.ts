@@ -249,7 +249,7 @@ export interface OperationalStore {
   getChannelSession(org: string, surfaceKey: string): Promise<ChannelSessionRow | null>;
   rotateChannelSession(org: string, surfaceKey: string, newToken: string, at: string, handoffNote?: string): Promise<ChannelSessionRow>;
   touchChannelSession(org: string, surfaceKey: string, at: string): Promise<void>;
-  bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<void>;
+  bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<number>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
   putDomainSkill(org: string, domain: string, name: string, content: string, updatedBy: string | undefined, updatedAt: string): Promise<void>;

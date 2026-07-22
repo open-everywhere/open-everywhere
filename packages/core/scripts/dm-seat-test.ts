@@ -68,8 +68,9 @@ function makeStore(seed?: Partial<ChannelSessionRow> & { surfaceKey: string }): 
     },
     async bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number) {
       const row = rows.get(`${org}:${surfaceKey}`);
-      if (!row || row.token !== token) return;
+      if (!row || row.token !== token) return 0;
       rows.set(`${org}:${surfaceKey}`, { ...row, inputTokensTotal: (row.inputTokensTotal ?? 0) + delta });
+      return 1;
     },
   };
   return store as unknown as OperationalStore & { rows: Map<string, ChannelSessionRow> };

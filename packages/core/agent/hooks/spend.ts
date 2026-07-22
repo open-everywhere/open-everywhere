@@ -62,18 +62,25 @@ export default defineHook({
           const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
           const windowId = unifiedWindowFromToken(token);
           const registryKey = windowId !== undefined ? unifiedDomainSessionKey(windowId) : domainKeyOf(p);
-          if (delta > 0) await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
+          if (delta > 0) {
+            const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
+            if (matched === 0) console.warn(`[open-everywhere:spend] supervisor counter bump matched no row (org=${p.org} key=${registryKey} token=${token})`);
+          }
         } catch (err) {
           console.warn(`[open-everywhere:spend] supervisor token counter bump skipped: ${String(err)}`);
         }
       }
 
       const dmSeat = parseDmSeatToken(token);
+      if (!dmSeat && turnKind(ctx, token) === "dm") {
+        console.warn(`[open-everywhere:spend] dm turn carried a non-seat token (token=${JSON.stringify(token)}) — dm-seat counter not bumped`);
+      }
       if (dmSeat) {
         try {
           const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
           if (delta > 0) {
-            await getOperationalStore().bumpChannelSessionUsage(p.org, dmSeatRegistryKey(dmSeat.channelId), token as string, delta);
+            const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, dmSeatRegistryKey(dmSeat.channelId), token as string, delta);
+            if (matched === 0) console.warn(`[open-everywhere:spend] dm-seat counter bump matched no row (org=${p.org} key=${dmSeatRegistryKey(dmSeat.channelId)} token=${token})`);
           }
         } catch (err) {
           console.warn(`[open-everywhere:spend] dm-seat token counter bump skipped: ${String(err)}`);

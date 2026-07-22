@@ -1025,10 +1025,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
-      await client.query(
-        "UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + $4 WHERE org_id = $1 AND surface_key = $2 AND token = $3",
+      const { rows } = await client.query(
+        "UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + $4 WHERE org_id = $1 AND surface_key = $2 AND token = $3 RETURNING surface_key",
         [org, surfaceKey, token, delta],
       );
+      return rows.length;
     },
 
     async listDomainSkills(org, domain) {

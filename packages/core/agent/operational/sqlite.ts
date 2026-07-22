@@ -748,9 +748,10 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async bumpChannelSessionUsage(org, surfaceKey, token, delta) {
-    getDb()
+    const res = getDb()
       .prepare("UPDATE channel_session SET input_tokens_total = COALESCE(input_tokens_total, 0) + ? WHERE org_id = ? AND surface_key = ? AND token = ?")
       .run(delta, org, surfaceKey, token);
+    return Number(res.changes ?? 0);
   },
 
   async listDomainSkills(org, domain) {
