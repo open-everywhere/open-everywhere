@@ -1,4 +1,4 @@
-import { assertProvidersValid, type Provider } from "../agent/access/providers.js";
+import { assertProvidersValid, executorHomeOf, vercelConnectorHome, vercelConnectorOf, type Provider } from "../agent/access/providers.js";
 import {
   applyBindingOverride,
   applyOverridesToProviders,
@@ -87,7 +87,7 @@ const notion: Provider = {
   allows: ["api-key", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-    { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
+    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
   ],
 };
 {
@@ -96,7 +96,7 @@ const notion: Provider = {
   const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
   ok(cred.broker === "db" && cred.secretRef === "db:notion:team-key", "overlay: team-key re-stamped env → db");
   ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay: base set is NOT mutated (pure)");
-  ok(merged[0].credentials.find((c) => c.id === "user-oauth")!.vercelConnector === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
+  ok(vercelConnectorOf(merged[0].credentials.find((c) => c.id === "user-oauth")!) === "mcp.notion.com/notion-mcp", "overlay: untouched credential unchanged");
   assertProvidersValid(merged);
   ok(true, "overlay: merged provider set passes assertProvidersValid");
 
@@ -142,7 +142,7 @@ const EXEC_OV: CredentialBindingOverride = {
   const base = [notion];
   const merged = applyOverridesToProviders(base, [EXEC_OV]);
   const cred = merged[0].credentials.find((c) => c.id === "team-key")!;
-  ok(cred.executor?.connection === "oe-notion-team-key", "overlay(exec): team-key re-homed to the Executor connection");
+  ok(executorHomeOf(cred)?.connection === "oe-notion-team-key", "overlay(exec): team-key re-homed to the Executor connection");
   ok(cred.broker === undefined && cred.secretRef === undefined, "overlay(exec): the broker/secretRef stamps are STRIPPED (one home, mutual exclusivity)");
   ok(base[0].credentials.find((c) => c.id === "team-key")!.broker === "env", "overlay(exec): base set NOT mutated (pure)");
   assertProvidersValid(merged);

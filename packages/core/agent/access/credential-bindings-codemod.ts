@@ -1,4 +1,5 @@
 import type { Provider, ProviderCredential } from "./providers.js";
+import { executorHome } from "./providers.js";
 
 export interface CredentialBindingExecutorHome {
   readonly integration: string;
@@ -70,7 +71,10 @@ function registerCoreOverlayHomes(): void {
     },
     serialize: (o) => ({ broker: o.broker, secretRef: o.secretRef }),
     sameHome: (a, b) => a.broker === b.broker && a.secretRef === b.secretRef,
-    apply: (c, ov) => ({ ...c, broker: ov.broker, secretRef: ov.secretRef }),
+    apply: (c, ov) => {
+      const { home: _h, ...rest } = c;
+      return { ...rest, broker: ov.broker, secretRef: ov.secretRef };
+    },
   });
   registerOverlayHome({
     kind: "executor",
@@ -101,8 +105,8 @@ function registerCoreOverlayHomes(): void {
       a.executor.owner === b.executor.owner &&
       a.executor.connection === b.executor.connection,
     apply: (c, ov) => {
-      const { secretRef: _s, broker: _b, vercelConnector: _v, ...rest } = c;
-      return { ...rest, executor: ov.executor };
+      const { secretRef: _s, broker: _b, home: _h, ...rest } = c;
+      return { ...rest, home: executorHome(ov.executor!) };
     },
   });
 }

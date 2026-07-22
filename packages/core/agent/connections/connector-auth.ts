@@ -13,6 +13,7 @@ import {
   boundConnectorCredential,
   surfaceContextFromAuth,
 } from "../access/connector-scope.js";
+import { vercelConnectorOf } from "../access/providers.js";
 import { classifyConnectorOp, isConnectorOpTool } from "../access/consequence.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
@@ -90,9 +91,10 @@ async function resolveAppTokenFromCred(
     return { token: await getSecretVia(cred.broker, cred.secretRef) };
   }
   if (cred.type === "service-oauth") {
-    if (!cred.vercelConnector)
-      throw new Error(`connection "${opts.connector}": service-oauth credential has no vercelConnector`);
-    return requireUserAuthFlow(opts.connector).mintServiceToken(cred.vercelConnector, o);
+    const connector = vercelConnectorOf(cred);
+    if (!connector)
+      throw new Error(`connection "${opts.connector}": service-oauth credential has no vercel-connect home`);
+    return requireUserAuthFlow(opts.connector).mintServiceToken(connector, o);
   }
   throw new Error(
     `connection "${opts.connector}": credential type "${cred.type}" is not valid on an app connection ` +
@@ -203,10 +205,11 @@ export function userAwareProviderToken(
               `resolvable user identity (principalId). Fail closed.`,
           );
         }
-        if (!cred.vercelConnector)
-          throw new Error(`connection "${opts.connector}": user-oauth credential has no vercelConnector`);
+        const connector = vercelConnectorOf(cred);
+        if (!connector)
+          throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
         try {
-          const minted = await mintUser(cred.vercelConnector, { subject: { type: "user", id: principalId } });
+          const minted = await mintUser(connector, { subject: { type: "user", id: principalId } });
           await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok" });
           return minted;
         } catch (e) {
@@ -220,13 +223,13 @@ export function userAwareProviderToken(
           if (authRequired) {
             let url: string | undefined;
             try {
-              url = (await startAuth(cred.vercelConnector, { subject: { type: "user", id: principalId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+              url = (await startAuth(connector, { subject: { type: "user", id: principalId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
             } catch {
             }
             markConnectorAuthRequired(opts.connector, url);
             const authorizeClause = url
               ? personalAuthUrlClause(url)
-              : `Authorize it in your browser (connector "${cred.vercelConnector}"), then ask again. `;
+              : `Authorize it in your browser (connector "${connector}"), then ask again. `;
             throw new Error(connectorAuthRequiredUserMessage(opts.connector, authorizeClause));
           }
           throw e;

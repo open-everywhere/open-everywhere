@@ -95,36 +95,44 @@ const ok = (cond: boolean, label: string) => {
   ];
 
   registerExclusiveCredentialHome({
-    name: "toolhive",
-    declares: (c) => (c as { toolhive?: unknown }).toolhive !== undefined,
-    validateShape: (c, where) => {
-      const t = (c as { toolhive?: { server?: string } }).toolhive;
-      if (!t?.server) throw new Error(`${where}: toolhive home needs a server`);
+    name: "vaultx",
+    validFor: ["api-key"],
+    validateConfig: (config, where) => {
+      if (typeof (config as { server?: unknown }).server !== "string" || !(config as { server?: string }).server) {
+        throw new Error(`${where}: vaultx home needs a server`);
+      }
     },
   });
 
-  assertProvidersValid(provider({ id: "k", type: "api-key", toolhive: { server: "acme" } }) as never);
-  ok(true, "exclusive-home registry: a toolhive-homed api-key (no stamps) validates — no edit to assertProvidersValid");
+  assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never);
+  ok(true, "exclusive-home registry: a vaultx-homed api-key (no stamps) validates — ZERO edits to ProviderCredential's type or assertProvidersValid");
 
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", toolhive: { server: "acme" }, broker: "db" }) as never),
+    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } }, broker: "db" }) as never),
     /must NOT carry a broker/,
-    "exclusive-home registry: toolhive + broker is rejected (mutual exclusivity)",
+    "exclusive-home registry: vaultx + broker is rejected (mutual exclusivity)",
   );
   n++;
 
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", toolhive: { server: "" } }) as never),
-    /toolhive home needs a server/,
-    "exclusive-home registry: a malformed toolhive home is rejected by its validateShape",
+    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "" } } }) as never),
+    /vaultx home needs a server/,
+    "exclusive-home registry: a malformed vaultx home is rejected by its validateConfig",
+  );
+  n++;
+
+  assert.throws(
+    () => assertProvidersValid([{ name: "acme", connection: "acme", allows: ["user-oauth"], credentials: [{ id: "k", type: "user-oauth", home: { kind: "vaultx", config: { server: "acme" } } }] }] as never),
+    /cannot be homed at "vaultx"/,
+    "exclusive-home registry: a vaultx home on a disallowed type is rejected (validFor)",
   );
   n++;
 
   resetExclusiveCredentialHomes();
   assert.throws(
-    () => assertProvidersValid(provider({ id: "k", type: "api-key", toolhive: { server: "acme" } }) as never),
-    /api-key needs a secretRef/,
-    "resetExclusiveCredentialHomes: the vendor home is forgotten (the core executor home remains)",
+    () => assertProvidersValid(provider({ id: "k", type: "api-key", home: { kind: "vaultx", config: { server: "acme" } } }) as never),
+    /unknown credential home kind "vaultx"/,
+    "resetExclusiveCredentialHomes: the vendor home is forgotten (the core executor + vercel-connect homes remain)",
   );
   n++;
 }

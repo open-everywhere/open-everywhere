@@ -12,14 +12,39 @@ export interface ExecutorConnectionRef {
   readonly template?: string;
 }
 
+export interface CredentialHomeRef {
+  readonly kind: string;
+  readonly config: Readonly<Record<string, unknown>>;
+}
+
+export const EXECUTOR_HOME_KIND = "executor";
+export const VERCEL_CONNECT_HOME_KIND = "vercel-connect";
+
+export function executorHome(config: ExecutorConnectionRef): CredentialHomeRef {
+  return { kind: EXECUTOR_HOME_KIND, config: config as unknown as Readonly<Record<string, unknown>> };
+}
+
+export function vercelConnectorHome(connector: string): CredentialHomeRef {
+  return { kind: VERCEL_CONNECT_HOME_KIND, config: { connector } };
+}
+
+export function executorHomeOf(cred: { readonly home?: CredentialHomeRef }): ExecutorConnectionRef | undefined {
+  return cred.home?.kind === EXECUTOR_HOME_KIND ? (cred.home.config as unknown as ExecutorConnectionRef) : undefined;
+}
+
+export function vercelConnectorOf(cred: { readonly home?: CredentialHomeRef }): string | undefined {
+  if (cred.home?.kind !== VERCEL_CONNECT_HOME_KIND) return undefined;
+  const c = cred.home.config.connector;
+  return typeof c === "string" ? c : undefined;
+}
+
 export interface ProviderCredential {
   readonly id: string;
   readonly type: ProviderCredentialType;
   readonly secretRef?: string;
   readonly broker?: string;
   readonly intake?: boolean;
-  readonly vercelConnector?: string;
-  readonly executor?: ExecutorConnectionRef;
+  readonly home?: CredentialHomeRef;
   readonly dashboardUrl?: string;
 }
 
@@ -45,8 +70,7 @@ export interface ResolvedConnectorCredential {
   readonly principal: "app" | "user";
   readonly secretRef?: string;
   readonly broker?: string;
-  readonly vercelConnector?: string;
-  readonly executor?: ExecutorConnectionRef;
+  readonly home?: CredentialHomeRef;
 }
 
 export function defineProvider(p: Provider): Provider {
@@ -55,8 +79,8 @@ export function defineProvider(p: Provider): Provider {
 
 export interface ExclusiveCredentialHome {
   readonly name: string;
-  declares(cred: ProviderCredential): boolean;
-  validateShape(cred: ProviderCredential, where: string): void;
+  readonly validFor: readonly ProviderCredentialType[];
+  validateConfig(config: Readonly<Record<string, unknown>>, where: string): void;
 }
 
 const EXCLUSIVE_HOMES = new Map<string, ExclusiveCredentialHome>();
@@ -70,14 +94,27 @@ export function resetExclusiveCredentialHomes(): void {
   registerCoreExclusiveHomes();
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 function registerCoreExclusiveHomes(): void {
   registerExclusiveCredentialHome({
-    name: "executor",
-    declares: (c) => c.executor !== undefined,
-    validateShape: (c, where) => {
-      const e = c.executor!;
-      if (!e.integration || !e.owner || !e.connection) {
+    name: EXECUTOR_HOME_KIND,
+    validFor: ["api-key", "service-oauth", "user-oauth"],
+    validateConfig: (config, where) => {
+      const e = config as Partial<ExecutorConnectionRef>;
+      if (!isRecord(config) || !e.integration || !e.owner || !e.connection) {
         throw new Error(`${where}: executor binding needs non-empty { integration, owner, connection }`);
+      }
+    },
+  });
+  registerExclusiveCredentialHome({
+    name: VERCEL_CONNECT_HOME_KIND,
+    validFor: ["service-oauth", "user-oauth"],
+    validateConfig: (config, where) => {
+      if (!isRecord(config) || typeof config.connector !== "string" || !config.connector) {
+        throw new Error(`${where}: vercel-connect home needs a non-empty { connector }`);
       }
     },
   });
@@ -98,23 +135,24 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
       credIds.add(c.id);
       const where = `provider "${p.name}" credential "${c.id}"`;
 
-      const declared = [...EXCLUSIVE_HOMES.values()].filter((h) => h.declares(c));
-      if (declared.length > 1) {
-        throw new Error(`${where}: declares more than one exclusive home (${declared.map((h) => h.name).join(", ")}) — a credential has exactly one home`);
-      }
-      if (declared.length === 1) {
-        const h = declared[0];
-        h.validateShape(c, where);
-        if (c.secretRef) throw new Error(`${where}: an ${h.name}-homed credential must NOT carry a secretRef — its secret lives inside ${h.name}, not on a broker (one home; mutual exclusivity)`);
-        if (c.broker) throw new Error(`${where}: an ${h.name}-homed credential must NOT carry a broker — the exclusive home is the connector-plane transport, not a token-vending broker (mutual exclusivity)`);
-        if (c.vercelConnector) throw new Error(`${where}: an ${h.name}-homed credential must NOT carry a vercelConnector — its OAuth is minted + held inside ${h.name} (mutual exclusivity)`);
+      if (c.home) {
+        const h = EXCLUSIVE_HOMES.get(c.home.kind);
+        if (!h) {
+          throw new Error(`${where}: unknown credential home kind "${c.home.kind}" — no ExclusiveCredentialHome is registered for it (register one; a new home vendor is registration-only)`);
+        }
+        if (!h.validFor.includes(c.type)) {
+          throw new Error(`${where}: a ${c.type} credential cannot be homed at "${h.name}" (valid for: ${h.validFor.join(", ")})`);
+        }
+        h.validateConfig(c.home.config, where);
+        if (c.secretRef) throw new Error(`${where}: a ${h.name}-homed credential must NOT carry a secretRef — its secret lives at the ${h.name} home, not on a broker (one home; mutual exclusivity)`);
+        if (c.broker) throw new Error(`${where}: a ${h.name}-homed credential must NOT carry a broker — the home is the connector-plane transport, not a token-vending broker (mutual exclusivity)`);
       } else {
         if (c.type === "api-key" && !c.secretRef) throw new Error(`${where}: api-key needs a secretRef`);
         if (c.type === "api-key" && !c.broker) {
           throw new Error(`${where}: api-key needs an explicit broker stamp ("env" | "db" | ...) — a credential has exactly one home; unstamped-follows-selection is not allowed`);
         }
-        if ((c.type === "service-oauth" || c.type === "user-oauth") && !c.vercelConnector) {
-          throw new Error(`${where}: ${c.type} needs a vercelConnector`);
+        if (c.type === "service-oauth" || c.type === "user-oauth") {
+          throw new Error(`${where}: ${c.type} needs a home — a vercel-connect connector (vercelConnectorHome) or an exclusive vendor home (e.g. executorHome)`);
         }
       }
 
@@ -171,8 +209,7 @@ export function expandProviderGrant(
       principal,
       secretRef: cred.secretRef,
       broker: cred.broker,
-      vercelConnector: cred.vercelConnector,
-      executor: cred.executor,
+      home: cred.home,
     },
     warnings: [],
   };

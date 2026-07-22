@@ -1,5 +1,5 @@
 import type { Provider, ProviderCredential, ProviderCredentialType } from "../access/providers.js";
-import { principalOf } from "../access/providers.js";
+import { principalOf, vercelConnectorOf } from "../access/providers.js";
 import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome } from "../credentials/home.js";
 
 export interface SurfaceIntakeCapability {
@@ -116,7 +116,7 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
       principal,
       credentialId: cred.id,
       ...(cred.secretRef ? { secretRef: cred.secretRef } : {}),
-      ...(cred.vercelConnector ? { vercelConnector: cred.vercelConnector } : {}),
+      ...(vercelConnectorOf(cred) ? { vercelConnector: vercelConnectorOf(cred) } : {}),
       ...(cred.dashboardUrl ? { dashboardUrl: cred.dashboardUrl } : {}),
       route,
     });

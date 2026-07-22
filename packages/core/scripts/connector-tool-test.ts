@@ -23,6 +23,7 @@ const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 type Provider = import("../agent/access/providers.js").Provider;
+const { vercelConnectorHome, executorHome } = await import("../agent/access/providers.js");
 type ConnectorOption = import("../agent/connections/connector-offer.js").ConnectorOption;
 type Domain = import("../agent/memory/domain.js").Domain;
 
@@ -42,8 +43,8 @@ const NOTION: Provider = {
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
-    { id: "team-oauth", type: "service-oauth", vercelConnector: "notion.so/open-everywhere", dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
-    { id: "user-oauth", type: "user-oauth", vercelConnector: "notion.so/open-everywhere" },
+    { id: "team-oauth", type: "service-oauth", home: vercelConnectorHome("notion.so/open-everywhere"), dashboardUrl: "https://vercel.com/team-x/~/connect/scl_TEST" },
+    { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("notion.so/open-everywhere") },
   ],
 };
 
@@ -249,7 +250,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
     name: "notion",
     connection: "notion",
     allows: ["api-key"],
-    credentials: [{ id: "team-key", type: "api-key", executor: { integration: "notion-mcp", owner: "org", connection: "oe-notion-team-key" } }],
+    credentials: [{ id: "team-key", type: "api-key", home: executorHome({ integration: "notion-mcp", owner: "org", connection: "oe-notion-team-key" }) }],
   };
   const intakeCalls4: Array<Record<string, unknown>> = [];
   const requestIntake4 = async (input: Record<string, unknown>) => (intakeCalls4.push(input), { id: "e" });

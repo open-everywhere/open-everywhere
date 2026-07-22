@@ -12,7 +12,7 @@ process.env.NOTION_API_KEY = "STATIC-TEAM-KEY";
 
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
-const { defineProvider } = await import("../agent/access/providers.js");
+const { defineProvider, vercelConnectorHome } = await import("../agent/access/providers.js");
 
 registerConfig({
   loadProviders: () => [
@@ -20,7 +20,7 @@ registerConfig({
       name: "notion",
       connection: "notion",
       allows: ["api-key", "service-oauth", "user-oauth"],
-      credentials: [{ id: "mine", type: "user-oauth", vercelConnector: "oauth/notion-user" }],
+      credentials: [{ id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") }],
     }),
   ],
   loadBundles: () => [

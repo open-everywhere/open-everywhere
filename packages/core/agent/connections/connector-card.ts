@@ -5,6 +5,7 @@ import { roleForBinding } from "../access/roles.js";
 import { slackMode, type SurfaceBinding } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import type { Provider, ProviderCredentialType } from "../access/providers.js";
+import { executorHomeOf, vercelConnectorOf } from "../access/providers.js";
 import {
   AUTH_URL_TTL_MS,
   defaultConnectorAuthStarter,
@@ -176,12 +177,13 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "Connecting your *personal* account only works in a DM with me — message me directly and try again.");
         return true;
       }
-      if (!cred.vercelConnector) {
+      const userConnector = vercelConnectorOf(cred);
+      if (!userConnector) {
         await ephemeral(post, channelId, clickerId, "This provider isn't configured for personal OAuth (no connector id). Ask an operator.");
         return true;
       }
       return await mintAndDeliverOAuth(post, startAuth, {
-        org, teamId, channelId, clickerId, providerName, vercelConnector: cred.vercelConnector,
+        org, teamId, channelId, clickerId, providerName, vercelConnector: userConnector,
         subject: { type: "user", id: clickerId }, subjectLabel: "user",
       });
     }
@@ -215,7 +217,8 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "Setting an *org* API key is admin-only — your id isn't listed as an admin for this workspace/domain.");
         return true;
       }
-      if (!cred.secretRef && !cred.executor) {
+      const execHome = executorHomeOf(cred);
+      if (!cred.secretRef && !execHome) {
         await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no configured storage ref. Ask an operator.");
         return true;
       }
@@ -223,7 +226,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       const ref = deriveCredentialRef({
         provider: providerName,
         credentialId: cred.id,
-        ...(cred.executor ? { executor: cred.executor } : {}),
+        ...(execHome ? { executor: execHome } : {}),
       });
       if (!ref) {
         await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no resolvable storage home. Ask an operator.");

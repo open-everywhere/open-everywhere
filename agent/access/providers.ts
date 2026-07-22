@@ -1,6 +1,8 @@
 import {
   assertProvidersValid,
   defineProvider,
+  executorHome,
+  vercelConnectorHome,
   type Provider,
 } from "@open-everywhere/core/agent/access/providers.js";
 import { applyOverridesToProviders } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
@@ -15,17 +17,17 @@ const providers: Provider[] = [
     credentials: [
       { id: "team-key", type: "api-key", secretRef: "NOTION_API_KEY", broker: "env" },
       { id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false },
-      { id: "user-oauth", type: "user-oauth", vercelConnector: "mcp.notion.com/notion-mcp" },
+      { id: "user-oauth", type: "user-oauth", home: vercelConnectorHome("mcp.notion.com/notion-mcp") },
       {
         id: "user-oauth-executor",
         type: "user-oauth",
-        executor: {
+        home: executorHome({
           integration: "notion-mcp",
           owner: "user",
           connection: "personal",
           client: "dcr-mcp-notion-com",
           template: "notion-mcp",
-        },
+        }),
       },
     ],
   }),
@@ -37,7 +39,7 @@ const providers: Provider[] = [
     allows: ["api-key", "service-oauth"],
     credentials: [
       { id: "e2e-key", type: "api-key", secretRef: "OE_E2E_INTAKE_KEY", broker: "env" },
-      { id: "e2e-oauth", type: "service-oauth", vercelConnector: "example.com/e2e-intake" },
+      { id: "e2e-oauth", type: "service-oauth", home: vercelConnectorHome("example.com/e2e-intake") },
     ],
   }),
 ];

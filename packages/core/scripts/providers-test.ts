@@ -3,6 +3,8 @@ import {
   defineProvider,
   expandProviderGrant,
   principalOf,
+  vercelConnectorHome,
+  vercelConnectorOf,
   type Provider,
 } from "../agent/access/providers.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
@@ -32,8 +34,8 @@ const notion: Provider = defineProvider({
   allows: ["api-key", "service-oauth", "user-oauth"],
   credentials: [
     { id: "team-key", type: "api-key", secretRef: "NOTION_TEAM", broker: "env" },
-    { id: "team-oauth", type: "service-oauth", vercelConnector: "oauth/notion-app" },
-    { id: "mine", type: "user-oauth", vercelConnector: "oauth/notion-user" },
+    { id: "team-oauth", type: "service-oauth", home: vercelConnectorHome("oauth/notion-app") },
+    { id: "mine", type: "user-oauth", home: vercelConnectorHome("oauth/notion-user") },
   ],
 });
 
@@ -80,7 +82,7 @@ throws(
 }
 {
   const r = expandProviderGrant({ provider: "notion", credential: "team-oauth" }, notion, { dm: false });
-  ok(r.resolved?.vercelConnector === "oauth/notion-app" && r.resolved?.principal === "app", "service-oauth carries the connect connector");
+  ok(r.resolved !== null && vercelConnectorOf(r.resolved) === "oauth/notion-app" && r.resolved?.principal === "app", "service-oauth carries the connect connector");
 }
 {
   const restrictive: Provider = { ...notion, allows: ["service-oauth"] };
