@@ -3,6 +3,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { getAppInfo } from "../commands/core.js";
 import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
+import { onVercel } from "../access/platform.js";
 
 export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "oe.instance.first_boot": Object.freeze([]),
@@ -350,7 +351,7 @@ function resourceAttributes(): Record<string, string | number | boolean> {
     "service.version": appInfo.version,
     "service.instance.id": cachedInstance?.id ?? "unknown",
     "deployment.environment.name": environmentName(),
-    "oe.host": process.env.VERCEL ? "vercel" : "node",
+    "oe.host": onVercel() ? "vercel" : "node",
     "oe.node.major": nodeMajorVersion(),
   };
   if (cachedInstance?.ephemeral) attrs["oe.instance.ephemeral"] = true;

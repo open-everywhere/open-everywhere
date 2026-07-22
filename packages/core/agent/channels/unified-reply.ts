@@ -10,6 +10,7 @@ import { deploymentOrg } from "../identity/binding.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import { isTrustedTeamsServiceUrl } from "./unified-window.js";
 import { auditReplyPost, type ReplyAudit } from "./reply-post.js";
+import { onVercel } from "../access/platform.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
@@ -36,7 +37,7 @@ export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, 
 
 async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a unified ${origin.platform} reply (${text.length}c)`);
     return `spoof-unified-${origin.platform}-${Date.now()}`;
   }

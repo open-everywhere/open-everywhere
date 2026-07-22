@@ -1,6 +1,7 @@
 import { bindFrom, channelPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
+import { onVercel } from "../access/platform.js";
 import { slackForm } from "./slack-events.js";
 import { discordPostMessage, splitForDiscord } from "./discord-post.js";
 import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
@@ -94,7 +95,7 @@ export async function postReply(target: ReplyTarget, text: string, audit?: Reply
 
 async function dispatchReply(target: ReplyTarget, text: string): Promise<string> {
   if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed a ${target.platform} reply (${text.length}c)`);
     return `spoof-${target.platform}-${Date.now()}`;
   }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
+import { onVercel } from "../access/platform.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { slackForm } from "../channels/slack-events.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -117,7 +118,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   if (deps.postCard) {
     messageTs = await deps.postCard(row, summaryLines);
   } else if (process.env.OE_EGRESS_SPOOF === "1") {
-    if (process.env.VERCEL) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
+    if (onVercel()) throw new Error("OE_EGRESS_SPOOF is a local-eval flag — refusing on Vercel.");
     console.warn(`[oe] OE_EGRESS_SPOOF: swallowed an approval-card post for "${input.kind}" (${input.scopeKey})`);
     messageTs = `spoof-card-${Date.now()}`;
   } else {

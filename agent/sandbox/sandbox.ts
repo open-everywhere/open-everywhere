@@ -6,6 +6,7 @@ import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/iden
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
+import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import "../lib/register-config.js";
 
 function intFromEnv(name: string, fallback: number): number {
@@ -18,7 +19,7 @@ function intFromEnv(name: string, fallback: number): number {
 const TIMEOUT_MS = intFromEnv("OE_SANDBOX_TIMEOUT_MS", 30 * 60 * 1000);
 const SNAPSHOT_EXPIRATION_MS = intFromEnv("OE_SANDBOX_SNAPSHOT_EXPIRATION_MS", 7 * 24 * 60 * 60 * 1000);
 
-const ON_VERCEL = !!process.env.VERCEL;
+const ON_VERCEL = onVercel();
 
 function selfHostBackend() {
   const kind = (process.env.OE_SANDBOX_BACKEND ?? "justbash").trim().toLowerCase();

@@ -2,6 +2,7 @@ import type { Partition } from "./partition.js";
 import type { MemorySilo } from "./silo.js";
 import { sqliteProvider } from "./sqlite.js";
 import { makePostgresProvider, type PgClient } from "./postgres.js";
+import { onVercel } from "../access/platform.js";
 import {
   deleteTier as gitDeleteTier,
   deleteFile as gitDeleteFile,
@@ -96,7 +97,7 @@ export function providerById(id: string | undefined): MemoryProvider {
 
 export function dbProviderId(): string {
   if (process.env.OE_MEMORY_PROVIDER === "postgres" && REGISTRY["postgres"]) return "postgres";
-  if (process.env.VERCEL && process.env.OE_ALLOW_EPHEMERAL_MEMORY !== "1") {
+  if (onVercel() && process.env.OE_ALLOW_EPHEMERAL_MEMORY !== "1") {
     throw new Error(
       "DM/personal memory has no durable backing on Vercel — sqlite is per-instance and ephemeral " +
         "(a `remember` would report success but be lost on the next cold start). Set " +

@@ -1,6 +1,7 @@
 import { sqliteOperationalStore } from "./sqlite.js";
 import { makeOperationalPostgresStore, type PgClient } from "./postgres.js";
 import type { OperationalStore } from "./store.js";
+import { onVercel } from "../access/platform.js";
 
 const REGISTRY: Record<string, OperationalStore> = {
   sqlite: sqliteOperationalStore,
@@ -12,7 +13,7 @@ export function getOperationalStore(): OperationalStore {
   if (active) return active;
   const id = process.env.OE_OPERATIONAL_PROVIDER ?? "sqlite";
 
-  if (id === "sqlite" && process.env.VERCEL && process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL !== "1") {
+  if (id === "sqlite" && onVercel() && process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL !== "1") {
     throw new Error(
       "operational store is sqlite on Vercel — audit, spend caps, and break-glass revocations " +
         "would be per-instance and ephemeral (a revoke would report success but never take effect). " +

@@ -1,8 +1,7 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 
-export function onVercel(): boolean {
-  return !!process.env.VERCEL;
-}
+import { onVercel } from "./platform.js";
+export { onVercel };
 
 export function egressProxyUrl(): string | undefined {
   const raw = process.env.OE_EGRESS_PROXY_URL?.trim();
