@@ -7,6 +7,7 @@ import {
   parseDmSeatToken,
   isDmSeatToken,
   dmSeatRegistryKey,
+  bareTokenFromEveContext,
   type SessionId,
 } from "../agent/channels/window-key.js";
 
@@ -233,6 +234,28 @@ expectKind("x:oe-sup:g", "native", "native", "no-digit suffix");
   eq(dmSeatRegistryKey("D0EXDMCH001"), "oe-dm-seat::D0EXDMCH001", "dmSeatRegistryKey shape");
   ok(formatDmSeatToken("D0EXDMCH001", 7) !== formatDmSeatToken("D0EXDMCH001", 8), "generation bump ⇒ different token");
   ok(parseDmSeatToken("unified:D9:oe-dm:g2")?.generation === 2, "parseDmSeatToken strips unified: prefix");
+}
+
+{
+  eq(bareTokenFromEveContext("slack:D0EXDMCH001:oe-dm:g2"), "D0EXDMCH001:oe-dm:g2", "OPE-92: slack-namespaced dm-seat token bares to the row token");
+  eq(
+    bareTokenFromEveContext("unified:oe-dom:e2e-connector:win:slack/T0EXAMPLE/C0EXGENRL:oe-sup:g2"),
+    "oe-dom:e2e-connector:win:slack/T0EXAMPLE/C0EXGENRL:oe-sup:g2",
+    "OPE-92: unified-namespaced solo window token bares to the row token",
+  );
+  eq(bareTokenFromEveContext("slack:C0EXCHAN005:oe-sup:g1"), "C0EXCHAN005:oe-sup:g1", "OPE-92: slack-namespaced per-container supervisor bares");
+  eq(
+    bareTokenFromEveContext("notion:notion:394cb5e7-aaaa:oe-sup:g1"),
+    "notion:394cb5e7-aaaa:oe-sup:g1",
+    "OPE-92: doubled platform prefix strips exactly ONE segment",
+  );
+  eq(bareTokenFromEveContext("D0EXDMCH001:oe-dm:g2"), "D0EXDMCH001:oe-dm:g2", "bare dm-seat token passes through");
+  eq(bareTokenFromEveContext("oe-dom:payments:oe-sup:g3"), "oe-dom:payments:oe-sup:g3", "bare legacy window token passes through (NOT stripped to a container form)");
+  eq(bareTokenFromEveContext("oe-dom:d:win:x:oe-sup:g1"), "oe-dom:d:win:x:oe-sup:g1", "bare explicit window token passes through");
+  eq(bareTokenFromEveContext("slack:D0EXDMCH001:1720000000.001"), undefined, "namespaced native DM thread token → undefined");
+  eq(bareTokenFromEveContext("cse_abc123"), undefined, "eve-native session token → undefined");
+  eq(bareTokenFromEveContext(""), undefined, "empty string → undefined (eve seeds missing tokens to '')");
+  eq(bareTokenFromEveContext(undefined), undefined, "non-string → undefined");
 }
 
 console.log(`session-id-codec-test: ${n} assertions passed (corpus size ${CORPUS.length})`);

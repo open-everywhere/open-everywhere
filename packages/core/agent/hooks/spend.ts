@@ -8,7 +8,7 @@ import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { unifiedWindowFromToken, unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
-import { parseDmSeatToken, dmSeatRegistryKey } from "../channels/window-key.js";
+import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext } from "../channels/window-key.js";
 
 function isSupervisorToken(token: unknown): token is string {
   return typeof token === "string" && token.includes(":oe-sup:g");
@@ -32,6 +32,7 @@ export default defineHook({
       const usage = event.data?.usage as Usage | undefined;
       if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return;
       const p = resolvePartition(ctx);
+      const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
 
       try {
         await recordUsage(p, periodOf(new Date().toISOString()), usage);
@@ -45,7 +46,7 @@ export default defineHook({
           surfaceKey: domainKeyOf(p),
           sessionId: ctx.session.id,
           principalId: bindFrom(ctx).principalId,
-          kind: turnKind(ctx, ctx.channel?.continuationToken),
+          kind: turnKind(ctx, token),
           model: readModelStamp() ?? undefined,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
@@ -56,7 +57,6 @@ export default defineHook({
         console.warn(`[open-everywhere:usage] event append skipped: ${String(err)}`);
       }
 
-      const token = ctx.channel?.continuationToken;
       if (isSupervisorToken(token)) {
         try {
           const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);

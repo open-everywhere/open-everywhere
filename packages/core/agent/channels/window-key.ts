@@ -144,6 +144,21 @@ export function classifySessionId(token: unknown): SessionId {
   return { kind: "native", grain: "native" };
 }
 
+export function bareTokenFromEveContext(token: unknown): string | undefined {
+  if (typeof token !== "string" || token.length === 0) return undefined;
+  const anchored = (t: string): boolean => {
+    if (parseWindowToken(t)) return true;
+    const dm = parseDmSeatToken(t);
+    return dm !== undefined && !dm.channelId.includes(":");
+  };
+  if (anchored(token)) return token;
+  const i = token.indexOf(":");
+  const stripped = i > 0 ? token.slice(i + 1) : undefined;
+  if (stripped && (anchored(stripped) || SUPERVISOR_SUFFIX_RE.test(stripped))) return stripped;
+  if (SUPERVISOR_SUFFIX_RE.test(token)) return token;
+  return undefined;
+}
+
 export function isSupervisorShapedToken(token: unknown): boolean {
   const k = classifySessionId(token).kind;
   return k === "window" || k === "task" || k === "thread-seat" || k === "container-supervisor";
