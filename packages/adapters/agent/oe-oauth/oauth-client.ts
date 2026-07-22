@@ -20,6 +20,12 @@ function trimSlash(u: string): string {
   return u.replace(/\/+$/, "");
 }
 
+function wellKnownUrl(base: string, suffix: string): string {
+  const u = new URL(base);
+  const path = trimSlash(u.pathname) === "" ? "" : trimSlash(u.pathname);
+  return `${u.origin}/.well-known/${suffix}${path}`;
+}
+
 async function readError(res: Response): Promise<{ oauthError?: string }> {
   try {
     const body = (await res.json()) as { error?: unknown };
@@ -31,14 +37,20 @@ async function readError(res: Response): Promise<{ oauthError?: string }> {
 
 export async function discoverEndpoints(resource: string, fetchImpl: OAuthFetch): Promise<DiscoveredEndpoints> {
   const base = trimSlash(resource);
-  const prMeta = await fetchImpl(`${base}/.well-known/oauth-protected-resource`, { headers: { accept: "application/json" } });
+  let prMeta = await fetchImpl(wellKnownUrl(base, "oauth-protected-resource"), { headers: { accept: "application/json" } });
+  if (!prMeta.ok) {
+    const rootForm = `${new URL(base).origin}/.well-known/oauth-protected-resource`;
+    if (wellKnownUrl(base, "oauth-protected-resource") !== rootForm) {
+      prMeta = await fetchImpl(rootForm, { headers: { accept: "application/json" } });
+    }
+  }
   if (!prMeta.ok) throw new OeOauthError(`protected-resource discovery failed for ${base}`, { httpStatus: prMeta.status, ...(await readError(prMeta)) });
   const pr = (await prMeta.json().catch(() => ({}))) as { authorization_servers?: unknown };
   const authServer = Array.isArray(pr.authorization_servers) && typeof pr.authorization_servers[0] === "string" ? (pr.authorization_servers[0] as string) : undefined;
   if (!authServer) throw new OeOauthError(`protected-resource metadata for ${base} names no authorization_servers`);
 
   const asBase = trimSlash(authServer);
-  const asMeta = await fetchImpl(`${asBase}/.well-known/oauth-authorization-server`, { headers: { accept: "application/json" } });
+  const asMeta = await fetchImpl(wellKnownUrl(asBase, "oauth-authorization-server"), { headers: { accept: "application/json" } });
   if (!asMeta.ok) throw new OeOauthError(`authorization-server discovery failed for ${asBase}`, { httpStatus: asMeta.status, ...(await readError(asMeta)) });
   const as = (await asMeta.json().catch(() => ({}))) as {
     authorization_endpoint?: unknown;

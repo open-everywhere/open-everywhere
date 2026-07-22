@@ -358,4 +358,45 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   ok(JSON.parse((await rv.read(CREF))!).accessToken === "AT", "real-store: claim/release never touch the stored value");
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, typed errors)`);
+{
+  const { discoverEndpoints } = await import("../agent/oe-oauth/oauth-client.js");
+  const AS_META = { authorization_endpoint: `${AS}/authorize`, token_endpoint: TOKEN_URL, registration_endpoint: REG_URL };
+
+  {
+    const fetched: string[] = [];
+    const eps = await discoverEndpoints("https://mcp.test/mcp", async (url: string) => {
+      fetched.push(url);
+      if (url === "https://mcp.test/.well-known/oauth-protected-resource/mcp") return json({ authorization_servers: [AS] });
+      if (url === `${AS}/.well-known/oauth-authorization-server`) return json(AS_META);
+      return json({ error: "unauthorized" }, 401);
+    });
+    ok(eps.registrationEndpoint === REG_URL, "path-bearing resource: discovery resolves endpoints via the RFC 9728 form");
+    ok(fetched[0] === "https://mcp.test/.well-known/oauth-protected-resource/mcp", "path-bearing resource: first fetch is the origin-inserted, path-suffixed form");
+    ok(!fetched.some((u) => u.includes("/mcp/.well-known/")), "path-bearing resource: the naive appended form is never fetched");
+  }
+
+  {
+    const fetched: string[] = [];
+    const eps = await discoverEndpoints("https://mcp.test/mcp", async (url: string) => {
+      fetched.push(url);
+      if (url === "https://mcp.test/.well-known/oauth-protected-resource") return json({ authorization_servers: [AS] });
+      if (url === `${AS}/.well-known/oauth-authorization-server`) return json(AS_META);
+      return json({}, 404);
+    });
+    ok(eps.tokenEndpoint === TOKEN_URL, "root-only server: discovery falls back to the origin-root form");
+    ok(fetched[0] === "https://mcp.test/.well-known/oauth-protected-resource/mcp" && fetched[1] === "https://mcp.test/.well-known/oauth-protected-resource", "root-only server: RFC form tried first, root form second");
+  }
+
+  {
+    const fetched: string[] = [];
+    await discoverEndpoints("https://mcp.test", async (url: string) => {
+      fetched.push(url);
+      if (url === "https://mcp.test/.well-known/oauth-protected-resource") return json({ authorization_servers: [AS] });
+      if (url === `${AS}/.well-known/oauth-authorization-server`) return json(AS_META);
+      return json({}, 404);
+    });
+    ok(fetched[0] === "https://mcp.test/.well-known/oauth-protected-resource" && fetched.length === 2, "pathless resource: single origin-root PR fetch, unchanged behaviour");
+  }
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, typed errors)`);
