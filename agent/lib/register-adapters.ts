@@ -1,4 +1,5 @@
 import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentials/vercel-connect.js";
+import { registerConnectUserAuthFlow } from "@open-everywhere/adapters/agent/connect/register.js";
 import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
 import { executorEnabled, loadExecutorConfig } from "@open-everywhere/adapters/agent/executor/config.js";
 import { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "@open-everywhere/core/agent/credentials/db-broker.js";
@@ -12,6 +13,8 @@ import { emitTelemetry } from "@open-everywhere/core/agent/observability/telemet
 import { loadBundles } from "../access/bundles.js";
 
 registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
+
+registerConnectUserAuthFlow();
 
 if (process.env[CREDENTIAL_KEY_ENV]) {
   registerDbCredentialBroker();
