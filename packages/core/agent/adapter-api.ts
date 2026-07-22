@@ -18,6 +18,12 @@ export type { ExclusiveCredentialHome, CredentialHomeRef, ExecutorConnectionRef,
 
 export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "./credentials/db-broker.js";
 
+export { encryptedKvVault } from "./credentials/kv-vault.js";
+export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
+
+export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
+export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
+
 export type { Connection, CredentialAuthorizationDetail } from "./access/bundle.js";
 
 export { registerUserAuthFlow } from "./connections/user-auth-flow.js";
