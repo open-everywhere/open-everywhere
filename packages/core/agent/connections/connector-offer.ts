@@ -37,6 +37,10 @@ export function hostWriteBrokerAvailable(registeredBrokers: Iterable<string>): b
   return false;
 }
 
+export function hostWriteHomeAvailable(registeredBrokers: Iterable<string>, executorArmed: boolean): boolean {
+  return executorArmed || hostWriteBrokerAvailable(registeredBrokers);
+}
+
 export type ConnectRouteKind = "modal" | "url" | "text-degrade" | "unavailable";
 
 export interface ConnectRoute {

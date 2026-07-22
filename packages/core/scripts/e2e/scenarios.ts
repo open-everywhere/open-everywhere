@@ -2055,7 +2055,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: "S-APIKEY-INTAKE",
     title:
-      "API-key intake, live: under the db broker a 'connect notion with an API key' ask offers 'Set API key' → a forged admin oe_connect click opens the host intake → a forged view_submission stores a FAKE key ENCRYPTED (asserted via credential.intake_requested + credential.stored audit rows; the value is never read back and never appears in any audit row)",
+      "API-key intake, live: under the db broker (or, with E2E_APIKEY_INTAKE_VIA=executor + E2E_EXECUTOR_URL, an Executor connection) a 'connect notion with an API key' ask offers 'Set API key' → a forged admin oe_connect click opens the host intake → a forged view_submission stores a FAKE key (asserted via credential.intake_requested + credential.stored audit rows; the value is never read back and never appears in any audit row)",
     requires: ["slack", "synthetic", "connectorWrite"],
     surface: "notion",
     suite: "extended",
@@ -2063,7 +2063,13 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 600_000,
     judged: true,
     run: async (ctx) => {
-      if (process.env.E2E_CREDENTIAL_BROKER_DB?.trim() !== "1")
+      const intakeVia = (process.env.E2E_APIKEY_INTAKE_VIA?.trim().toLowerCase() || "db") as "db" | "executor";
+      if (intakeVia === "executor" && !process.env.E2E_EXECUTOR_URL?.trim())
+        ctx.skip(
+          "E2E_APIKEY_INTAKE_VIA=executor needs a reachable Executor layer — set E2E_EXECUTOR_URL (+ arm OE_EXECUTOR_ENABLED and the executor config in prod). Unset ⇒ the executor intake variant self-skips (README-db-broker-flip.md §Executor intake variant).",
+        );
+
+      if (intakeVia === "db" && process.env.E2E_CREDENTIAL_BROKER_DB?.trim() !== "1")
         ctx.skip(
           "needs the db broker CONFIGURED (OE_CREDENTIAL_ENCRYPTION_KEY armed ⇒ db registered) — set E2E_CREDENTIAL_BROKER_DB=1 once it is (packages/core/scripts/e2e/README-db-broker-flip.md). With no host-write broker the card correctly OMITS the api-key option, so this path can't arm.",
         );
@@ -2116,9 +2122,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const intakeId = typeof intakeDetail?.id === "string" ? intakeDetail.id : undefined;
       const intakeRef = typeof intakeDetail?.ref === "string" ? intakeDetail.ref : undefined;
       ctx.gate(!!intakeId && !!intakeRef, "forge: the intake_requested audit carries the intake id + ref (labels only, never a value)");
+      const expectPrefix = intakeVia === "executor" ? "executor:" : "db:e2e-intake:";
       ctx.gate(
-        intakeRef!.startsWith("db:e2e-intake:") && intakeRef !== "NOTION_API_KEY" && !intakeRef!.includes("notion"),
-        "safety: the e2e intake targets the isolated db:e2e-intake:… ref, NEVER a live provider ref",
+        intakeRef!.startsWith(expectPrefix) && intakeRef !== "NOTION_API_KEY" && !intakeRef!.includes("notion"),
+        `safety: the e2e intake targets the isolated ${expectPrefix}… ref, NEVER a live provider ref`,
       );
 
       const FAKE_KEY = `oe-e2e-fake-secret-${Date.now().toString(36)}`;

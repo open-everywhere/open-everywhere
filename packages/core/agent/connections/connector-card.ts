@@ -11,7 +11,7 @@ import {
   type ConnectorAuthorizationStarter,
 } from "./connector-auth.js";
 import { requestCredentialIntake, type CredentialIntakeDeps } from "../credentials/intake.js";
-import { dbCredentialRef } from "../credentials/ref.js";
+import { dbCredentialRef, executorCredentialRef } from "../credentials/ref.js";
 import { offerableCredential, optionLabel, type ConnectMode, type ConnectorOption } from "./connector-offer.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
@@ -215,16 +215,19 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         await ephemeral(post, channelId, clickerId, "Setting an *org* API key is admin-only — your id isn't listed as an admin for this workspace/domain.");
         return true;
       }
-      if (!cred.secretRef) {
+      if (!cred.secretRef && !cred.executor) {
         await ephemeral(post, channelId, clickerId, "This provider's API-key credential has no configured storage ref. Ask an operator.");
         return true;
       }
       const requestIntake = deps.requestIntake ?? requestCredentialIntake;
+      const ref = cred.executor
+        ? executorCredentialRef(cred.executor.integration, cred.executor.owner, cred.executor.connection)
+        : dbCredentialRef(providerName, cred.id);
       await requestIntake({
         org,
         provider: providerName,
         ...(role.domain ? { domain: role.domain } : {}),
-        ref: dbCredentialRef(providerName, cred.id),
+        ref,
         requestedBy: clickerId,
         channelId,
         ...(teamId ? { teamId } : {}),

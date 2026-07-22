@@ -20,3 +20,30 @@ export function parseDbCredentialRef(ref: string): { provider: string; credentia
   if (!provider || !credentialId || credentialId.includes(":")) return null;
   return { provider, credentialId };
 }
+
+export const EXECUTOR_REF_PREFIX = "executor:";
+
+export function executorCredentialRef(integration: string, owner: string, connection: string): string {
+  if (!integration || !owner || !connection) {
+    throw new Error(
+      `executorCredentialRef needs non-empty integration/owner/connection (got "${integration}"/"${owner}"/"${connection}")`,
+    );
+  }
+  if (integration.includes(":") || owner.includes(":") || connection.includes(":")) {
+    throw new Error(
+      `executorCredentialRef: no segment may contain ":" — it is the ref delimiter (got ` +
+        `"${integration}"/"${owner}"/"${connection}")`,
+    );
+  }
+  return `${EXECUTOR_REF_PREFIX}${integration}:${owner}:${connection}`;
+}
+
+export function parseExecutorCredentialRef(ref: string): { integration: string; owner: string; connection: string } | null {
+  if (typeof ref !== "string" || !ref.startsWith(EXECUTOR_REF_PREFIX)) return null;
+  const rest = ref.slice(EXECUTOR_REF_PREFIX.length);
+  const parts = rest.split(":");
+  if (parts.length !== 3) return null;
+  const [integration, owner, connection] = parts;
+  if (!integration || !owner || !connection) return null;
+  return { integration, owner, connection };
+}

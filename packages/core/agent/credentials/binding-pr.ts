@@ -17,6 +17,7 @@ import { getGitHubApp } from "../scm/provider.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { DB_BROKER } from "./db-broker.js";
+import { parseExecutorCredentialRef } from "./ref.js";
 
 export interface BindingAuditWhere {
   readonly org: string;
@@ -68,12 +69,12 @@ async function resolveWriteToken(repo: string): Promise<string> {
   return pat;
 }
 
-function bindingPrBody(args: StageCredentialBindingPrArgs, broker: string): string {
+function bindingPrBody(args: StageCredentialBindingPrArgs, home: string): string {
   return [
-    `Re-stamp credential **${args.provider} / ${args.credential}** custody to \`broker: "${broker}"\`, resolving via ref \`${args.storedRef}\`.`,
+    `Re-stamp credential **${args.provider} / ${args.credential}** custody to ${home}, resolving via ref \`${args.storedRef}\`.`,
     "",
     `This binds the value pasted through the "Set API key" intake (audit \`credential.stored\` id \`${args.credentialAuditId}\`), so`,
-    "egress and host paths resolve it from the db broker instead of an env var. **The pasted secret is NOT in this diff** —",
+    "egress and host paths resolve it from the new custody home instead of an env var. **The pasted secret is NOT in this diff** —",
     `only the custody reference. Requested by \`${args.requestedBy}\`.`,
     "",
     "> ⚠️ The previous env var may still have OTHER consumers (e.g. a channel-plumbing path reading the same key). Merging",
@@ -149,8 +150,14 @@ export async function stageCredentialBindingPr(
   const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
-  const broker = DB_BROKER;
-  const override: CredentialBindingOverride = { provider: args.provider, credential: args.credential, broker, secretRef: args.storedRef };
+  const executorHome = parseExecutorCredentialRef(args.storedRef);
+  const override: CredentialBindingOverride = executorHome
+    ? { provider: args.provider, credential: args.credential, executor: executorHome }
+    : { provider: args.provider, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };
+  const home = executorHome ? "executor" : DB_BROKER;
+  const homePrBody = executorHome
+    ? `an **Executor** connection (\`${executorHome.integration}/${executorHome.owner}/${executorHome.connection}\`)`
+    : `\`broker: "${DB_BROKER}"\``;
   const branch = `credential-binding/${args.provider}-${args.credential}`;
   if (!isSafeBranchName(branch)) {
     throw new Error(`unsafe credential-binding branch name "${branch}"`);
@@ -167,7 +174,7 @@ export async function stageCredentialBindingPr(
     provider: args.provider,
     credential: args.credential,
     storedRef: args.storedRef,
-    broker,
+    broker: home,
     repo,
     branch,
     ...extra,
@@ -216,7 +223,7 @@ export async function stageCredentialBindingPr(
       repo,
       bindingsPath,
       stringifyCredentialBindings(applied.file),
-      `credential binding: ${args.provider}/${args.credential} → db broker`,
+      `credential binding: ${args.provider}/${args.credential} → ${home}`,
       branch,
       token,
       committer,
@@ -225,7 +232,7 @@ export async function stageCredentialBindingPr(
   }
 
   const pr = await openOrReopenBindingPr(
-    { repo, head: branch, base, title: `Bind credential: ${args.provider}/${args.credential} → db broker`, body: bindingPrBody(args, broker), token },
+    { repo, head: branch, base, title: `Bind credential: ${args.provider}/${args.credential} → ${home}`, body: bindingPrBody(args, homePrBody), token },
     fetchFn,
     apiBase,
   );

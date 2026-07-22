@@ -240,5 +240,45 @@ function ghDeps(state: FakeGh) {
   ok(opened.length === 1 && (opened[0].detail as Record<string, unknown>).reopened === true, "re-paste(closed): binding_opened reopened:true");
 }
 
+const EXEC_STORED_REF = "executor:acme-mcp:org:oe-acme-key";
+const execArgs = { ...baseArgs, storedRef: EXEC_STORED_REF };
+
+{
+  let touched = false;
+  const contents = {
+    getFile: async () => {
+      touched = true;
+      return null;
+    },
+    putFile: async () => {
+      touched = true;
+      return "sha";
+    },
+  };
+  const res = await stageCredentialBindingPr({ ...execArgs, credentialAuditId: "intake-exec-dry" }, { config: cfg(), dryRun: true, contents });
+  ok(res.staged === true && res.dryRun === true && res.url === undefined, "exec dry-run: staged, no url");
+  ok(touched === false, "exec dry-run: no GitHub network");
+  const proposed = await rowsFor("credential.binding_proposed", "intake-exec-dry");
+  ok(proposed.length === 1, "exec dry-run: one binding_proposed audit row");
+  const d = proposed[0].detail as Record<string, unknown>;
+  ok(d.dryRun === true && d.broker === "executor" && d.storedRef === EXEC_STORED_REF && d.provider === "acme" && d.credential === "key", "exec dry-run: audit carries broker:'executor' + the executor storedRef (references only)");
+}
+
+{
+  const state = fakeGh("new");
+  const res = await stageCredentialBindingPr({ ...execArgs, credentialAuditId: "intake-exec-live" }, ghDeps(state));
+  ok(res.staged && !res.dryRun && res.url === "https://github.com/acme/config/pull/11", "exec live: opened PR, url returned");
+  ok(state.puts.length === 1, "exec live: exactly one overlay commit");
+  const expectedBytes = stringifyCredentialBindings(
+    applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", executor: { integration: "acme-mcp", owner: "org", connection: "oe-acme-key" } }).file,
+  );
+  ok(state.puts[0] === expectedBytes, "exec live: committed bytes are EXACTLY the deterministic executor-override codemod output");
+  const body = state.prPost[0].body;
+  ok(body.includes("oe-acme-key") && body.includes("Executor") && body.includes(EXEC_STORED_REF), "exec live: PR body names the Executor connection + the executor storedRef (references only)");
+  ok(!body.includes(FAKE_SECRET), "exec live: PR body carries NO secret value");
+  const opened = await rowsFor("credential.binding_opened", "intake-exec-live");
+  ok(opened.length === 1 && (opened[0].detail as Record<string, unknown>).broker === "executor", "exec live: binding_opened records the executor home");
+}
+
 assert.ok(passed > 0);
 console.log(`✓ binding-pr: ${passed} assertions passed`);

@@ -9,7 +9,8 @@ import { appendAudit } from "../audit/audit.js";
 import { slackForm } from "../channels/slack-events.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
-import { resolveConnectorOptions, optionLabel, hostWriteBrokerAvailable, type ConnectMode } from "../connections/connector-offer.js";
+import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, type ConnectMode } from "../connections/connector-offer.js";
+import { executorConnectionStore } from "../credentials/executor-store.js";
 import { buildConnectCard, renderNonSlackConnect } from "../connections/connector-card.js";
 
 function connectModeOf(mode: string): ConnectMode {
@@ -47,7 +48,7 @@ const connectorEntry = defineTool({
     const platform = binding.platform;
     const mode = connectModeOf(binding.mode);
     const isAdmin = resolveRole(ctx as BindableContext).isDomainAdmin;
-    const hostWriteBroker = hostWriteBrokerAvailable(registeredBrokerNames());
+    const hostWriteBroker = hostWriteHomeAvailable(registeredBrokerNames(), executorConnectionStore() !== undefined);
     const providers = getConfig().loadProviders?.() ?? [];
 
     if (!input.provider) {
