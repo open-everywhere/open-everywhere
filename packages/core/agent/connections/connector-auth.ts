@@ -29,6 +29,8 @@ import {
   connectorAuthUrlThisTurn,
   markConnectorAuthRequired,
   connectorAuthRequiredError,
+  clearConnectorAuthRequired,
+  freshGrantConfirmed,
 } from "./auth-retry-memo.js";
 
 export function appStaticToken(opts: {
@@ -176,6 +178,24 @@ function classifyUserAuthRequired(e: unknown): boolean {
   return flow ? flow.isUserAuthRequired(e) : userAuthRequiredSignal(e);
 }
 
+async function memoSelfHealsUserGrant(
+  connector: string,
+  auth: import("eve/context").SessionAuth,
+): Promise<boolean> {
+  const flow = userAuthFlowProvider();
+  if (!flow?.hasFreshGrant) return false;
+  const cred = await boundConnectorCredential(connector, auth);
+  if (cred?.type !== "user-oauth") return false;
+  const providerRef = vercelConnectorOf(cred);
+  if (!providerRef) return false;
+  const { mode, principalId } = await resolveDmPrincipal(auth);
+  if (mode !== "dm" || !principalId) return false;
+  const probe = flow.hasFreshGrant.bind(flow);
+  if (!(await freshGrantConfirmed(() => probe(providerRef, { type: "user", id: principalId })))) return false;
+  clearConnectorAuthRequired(connector);
+  return true;
+}
+
 export function userAwareProviderToken(
   opts: { readonly connector: string; readonly fallbackSecretRef?: string; readonly fallbackBroker?: string },
   deps: { readonly mintUser?: ConnectUserTokenMinter; readonly startAuth?: ConnectAuthorizationStarter } = {},
@@ -186,7 +206,7 @@ export function userAwareProviderToken(
   return async (ctx: SessionContext): Promise<ConnectionAuthProvider> => ({
     principalType: "app",
     async getToken(o) {
-      if (connectorAuthRequiredThisTurn(opts.connector))
+      if (connectorAuthRequiredThisTurn(opts.connector) && !(await memoSelfHealsUserGrant(opts.connector, ctx.session.auth)))
         throw connectorAuthRequiredError(opts.connector, connectorAuthUrlThisTurn(opts.connector));
       await assertConnectorGranted(opts.connector, ctx.session.auth);
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);

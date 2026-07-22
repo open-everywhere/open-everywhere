@@ -20,6 +20,7 @@ export interface UserAuthFlowProvider {
   ): Promise<{ url: string }>;
   isUserAuthRequired(error: unknown): boolean;
   environmentClaim(): Promise<string>;
+  hasFreshGrant?(providerRef: string, subject: UserAuthSubject): Promise<boolean>;
 }
 
 let registeredFlow: UserAuthFlowProvider | undefined;

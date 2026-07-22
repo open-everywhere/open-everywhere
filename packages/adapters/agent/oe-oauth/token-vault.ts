@@ -164,6 +164,10 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
   return {
     subjectKey,
 
+    async hasToken(providerRef: string, subject: OeOauthSubject): Promise<boolean> {
+      return (await readJson<TokenRecord>(tokRef(providerRef, subject))) !== null;
+    },
+
     async startAuthorization(providerRef: string, subject: OeOauthSubject, options: { readonly expiresInMs?: number }): Promise<{ url: string }> {
       const client = await ensureDcrClient(providerRef);
       const redirectUri = redirectUriOf();

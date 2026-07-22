@@ -30,6 +30,13 @@ export function makeOeOauth(
     async environmentClaim(): Promise<string> {
       return "self";
     },
+    async hasFreshGrant(providerRef: string, subject: UserAuthSubject): Promise<boolean> {
+      try {
+        return await vault.hasToken(providerRef, toVaultSubject(subject));
+      } catch {
+        return false;
+      }
+    },
   };
 
   const completer: OeOauthCallbackCompleter = async ({ state, code }) => {

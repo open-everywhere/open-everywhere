@@ -399,4 +399,35 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   }
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, typed errors)`);
+{
+  const v = memVault();
+  await v.write(tokRef, JSON.stringify({ accessToken: "AT", refreshToken: "RT", expiresAt: 1, obtainedAt: 0 }));
+  const { flow } = makeOeOauth(providers, { vault: v, fetch: makeMockFetch({ registrations: 0, exchanges: 0, refreshCount: 0, access: "", validRefresh: "", seq: 0, exchangeExpiresIn: 1 }), now: () => 9_999_999_999 });
+  ok((await flow.hasFreshGrant!("notion", { type: "user", id: "U1" })) === true, "hasFreshGrant: a stored (even expired) token row for the subject ⇒ true");
+  ok((await flow.hasFreshGrant!("notion", { type: "user", id: "U2" })) === false, "hasFreshGrant: no token row for the subject ⇒ false");
+
+  const throwingVault: EncryptedKvVault = {
+    async read() {
+      throw new Error("vault backing unavailable");
+    },
+    async write() {},
+    async withLock(_k, fn) {
+      return fn();
+    },
+    async claim() {
+      return true;
+    },
+    async releaseClaim() {},
+  };
+  const { flow: flowThrows } = makeOeOauth(providers, { vault: throwingVault });
+  let threw = false;
+  let result: boolean | undefined;
+  try {
+    result = await flowThrows.hasFreshGrant!("notion", { type: "user", id: "U1" });
+  } catch {
+    threw = true;
+  }
+  ok(!threw && result === false, "hasFreshGrant: a vault read that throws is caught ⇒ false (never crashes the resume)");
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, typed errors)`);

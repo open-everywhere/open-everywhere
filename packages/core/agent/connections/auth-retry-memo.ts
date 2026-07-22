@@ -8,6 +8,19 @@ export function hasInSet(set: Set<string>, connector: string): boolean {
   return set.has(connector);
 }
 
+export function clearFromSet(set: Set<string>, connector: string): void {
+  set.delete(connector);
+}
+
+export async function freshGrantConfirmed(probe: (() => Promise<boolean>) | undefined): Promise<boolean> {
+  if (!probe) return false;
+  try {
+    return await probe();
+  } catch {
+    return false;
+  }
+}
+
 export function connectorAuthRequiredError(connector: string, url?: string): Error {
   return new Error(
     `connection "${connector}": authorization is required and already failed this turn — not ` +
@@ -56,6 +69,22 @@ export function resetConnectorAuthMemo(): void {
   try {
     slot.update(() => new Set<string>());
     urlSlot.update(() => new Map<string, string>());
+  } catch {
+  }
+}
+
+export function clearConnectorAuthRequired(connector: string): void {
+  try {
+    const set = slot.get();
+    if (set) {
+      clearFromSet(set, connector);
+      slot.update(() => set);
+    }
+    const map = urlSlot.get();
+    if (map) {
+      map.delete(connector);
+      urlSlot.update(() => map);
+    }
   } catch {
   }
 }
