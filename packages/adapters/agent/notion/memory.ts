@@ -1,11 +1,16 @@
-import type { MemoryProvider } from "@open-everywhere/core/agent/memory/provider.js";
-import { registerProvider } from "@open-everywhere/core/agent/memory/provider.js";
-import { getSecretVia } from "@open-everywhere/core/agent/access/credentials.js";
-import { safeName } from "@open-everywhere/core/agent/memory/layout.js";
-import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
-import type { MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
-import { makeSelector, normalizeSelection, type Selector } from "@open-everywhere/core/agent/memory/selection.js";
-import type { Tier, MemoryFiles } from "@open-everywhere/core/agent/memory/store.js";
+import {
+  type MemoryProvider,
+  registerProvider,
+  getSecretVia,
+  safeName,
+  type Partition,
+  type MemorySilo,
+  makeSelector,
+  normalizeSelection,
+  type Selector,
+  type Tier,
+  type MemoryFiles,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { posix } from "node:path";
 import { renderBlocks, pageTitle, PAGE_BLOCK_TYPES, type BlockNode, type LinkResolver, type LinkTarget } from "./blocks.js";
 

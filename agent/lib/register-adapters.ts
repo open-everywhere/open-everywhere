@@ -2,14 +2,17 @@ import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentia
 import { registerConnectUserAuthFlow } from "@open-everywhere/adapters/agent/connect/register.js";
 import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
 import { executorEnabled, loadExecutorConfig } from "@open-everywhere/adapters/agent/executor/config.js";
-import { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "@open-everywhere/core/agent/credentials/db-broker.js";
-import { registerGitHubMemory } from "@open-everywhere/core/agent/memory/github.js";
+import {
+  registerDbCredentialBroker,
+  CREDENTIAL_KEY_ENV,
+  registerGitHubMemory,
+  setBlobPutter,
+  registerAuditDropCounter,
+  emitTelemetry,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
-import { setBlobPutter } from "@open-everywhere/core/agent/blob/hosting.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
-import { registerAuditDropCounter } from "@open-everywhere/core/agent/audit/audit.js";
-import { emitTelemetry } from "@open-everywhere/core/agent/observability/telemetry.js";
 import { loadBundles } from "../access/bundles.js";
 
 registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));

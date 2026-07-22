@@ -1,7 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { domainKeyOf, resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
-import { appendUsageEvent } from "@open-everywhere/core/agent/spend/usage-events.js";
+import { domainKeyOf, resolvePartition, appendUsageEvent } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);

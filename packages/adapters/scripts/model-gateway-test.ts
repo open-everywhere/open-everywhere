@@ -1,5 +1,5 @@
 import { applyGatewayOptions, gatewayModelBackend } from "../agent/model/gateway.js";
-import type { RoutedCallOptions } from "@open-everywhere/core/agent/model/routing.js";
+import type { RoutedCallOptions } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

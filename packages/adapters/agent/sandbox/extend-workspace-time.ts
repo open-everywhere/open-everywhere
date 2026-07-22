@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { Sandbox } from "@vercel/sandbox";
-import { auditToolAction } from "@open-everywhere/core/agent/audit/tool-action.js";
+import { auditToolAction } from "@open-everywhere/core/agent/adapter-api.js";
 import { shouldStop } from "./vercel-lifecycle.js";
 
 const DEFAULT_MAX_MINUTES = 120;

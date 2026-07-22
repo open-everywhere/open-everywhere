@@ -1,12 +1,18 @@
 import { gateway, generateText } from "ai";
-import type { ModelRoute } from "@open-everywhere/core/agent/memory/domain.js";
-import { modelRouteFor, memoryRefs } from "@open-everywhere/core/agent/memory/domain.js";
-import { getConfig } from "@open-everywhere/core/agent/access/config.js";
-import type { DreamCompletion, DreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
-import { judgeFromCompletion, registerDreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
-import { facetJudgeFromCompletion, registerFailureFacetJudge } from "@open-everywhere/core/agent/memory/dream/mode3.js";
-import { registerHandoffCompletion } from "@open-everywhere/core/agent/model/rotation-handoff.js";
-import { stampModelCall } from "@open-everywhere/core/agent/model/model-stamp.js";
+import {
+  type ModelRoute,
+  modelRouteFor,
+  memoryRefs,
+  getConfig,
+  type DreamCompletion,
+  type DreamJudge,
+  judgeFromCompletion,
+  registerDreamJudge,
+  facetJudgeFromCompletion,
+  registerFailureFacetJudge,
+  registerHandoffCompletion,
+  stampModelCall,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 
 export function utilityRouteForScope(scope: string): ModelRoute {

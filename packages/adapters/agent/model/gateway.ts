@@ -1,8 +1,13 @@
 import { gateway } from "ai";
-import type { ModelRoute } from "@open-everywhere/core/agent/memory/domain.js";
-import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
-import type { ModelBackend, RoutedCallOptions } from "@open-everywhere/core/agent/model/routing.js";
-import { createRoutedCompactionModel, liveIdentity, resolvePrimaryModel } from "@open-everywhere/core/agent/model/routing.js";
+import {
+  type ModelRoute,
+  type BindableContext,
+  type ModelBackend,
+  type RoutedCallOptions,
+  createRoutedCompactionModel,
+  liveIdentity,
+  resolvePrimaryModel,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 type GatewayModel = ReturnType<typeof gateway>;
 

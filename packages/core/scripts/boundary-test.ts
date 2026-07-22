@@ -15,6 +15,8 @@ const VENDOR_SDK = /^(@vercel\/|@neondatabase\/|pg$|pg-pool$|mysql2?$|better-sql
 const ADAPTERS_PKG = /^@open-everywhere\/adapters(\/|$)/;
 const CORE_PKG = /^@open-everywhere\/core(\/|$)/;
 
+const CORE_ADAPTER_BARREL = /^@open-everywhere\/core\/agent\/adapter-api\.(js|ts)$/;
+
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -71,6 +73,25 @@ const rel = (f: string) => f.slice(REPO_ROOT.length + 1);
       const climbsIntoCore = /\.\.\/.*\/(memory|operational|access)\//.test(spec) && !CORE_PKG.test(spec);
       ok(!climbsIntoCore, `adapters reach core via package name: ${rel(f)} imports "${spec}"`);
       ok(!/(^|\/)agent\/(tools|channels|hooks)\//.test(spec), `adapters do not import the app: ${rel(f)} imports "${spec}"`);
+    }
+  }
+}
+
+{
+  const files = [
+    ...tsFiles(join(REPO_ROOT, "packages/adapters/agent")),
+    ...tsFiles(join(REPO_ROOT, "packages/adapters/scripts")),
+    join(REPO_ROOT, "agent/lib/register-adapters.ts"),
+  ];
+  ok(files.length > 10, `scanned adapter surface for barrel-only core imports (${files.length} files)`);
+
+  for (const f of files) {
+    for (const spec of specifiers(f)) {
+      if (!CORE_PKG.test(spec)) continue;
+      ok(
+        CORE_ADAPTER_BARREL.test(spec),
+        `adapters import core ONLY via the adapter-api barrel: ${rel(f)} imports "${spec}"`,
+      );
     }
   }
 }

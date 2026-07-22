@@ -1,7 +1,6 @@
 import { defineInstrumentation } from "eve/instrumentation";
 import { registerOTel } from "@vercel/otel";
-import { installLogShipping } from "@open-everywhere/core/agent/observability/ship.js";
-import { initTelemetry } from "@open-everywhere/core/agent/observability/telemetry.js";
+import { installLogShipping, initTelemetry } from "@open-everywhere/core/agent/adapter-api.js";
 
 function collectorConfigured(): boolean {
   return Boolean(

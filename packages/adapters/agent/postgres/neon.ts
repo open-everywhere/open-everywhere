@@ -1,16 +1,10 @@
 import {
   registerPostgres,
-} from "@open-everywhere/core/agent/memory/provider.js";
-import {
   registerOperationalPostgres,
-} from "@open-everywhere/core/agent/operational/provider.js";
-import {
   initPostgresSchema,
   type PgClient,
-} from "@open-everywhere/core/agent/memory/postgres.js";
-import {
   initOperationalSchema,
-} from "@open-everywhere/core/agent/operational/postgres.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export async function registerNeon(connectionString = process.env.DATABASE_URL): Promise<PgClient> {
   if (!connectionString) {

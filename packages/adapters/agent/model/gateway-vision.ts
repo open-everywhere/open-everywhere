@@ -1,6 +1,10 @@
 import { gateway, generateText } from "ai";
-import type { ImageDescribeRequest, ImageDescribeResult, ImageDescriber } from "@open-everywhere/core/agent/model/vision.js";
-import { registerImageDescriber } from "@open-everywhere/core/agent/model/vision.js";
+import {
+  type ImageDescribeRequest,
+  type ImageDescribeResult,
+  type ImageDescriber,
+  registerImageDescriber,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface GatewayVisionDefaults {
   readonly id: string;

@@ -2,10 +2,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { utilityRouteForScope, dreamCallSettings, resolvedDreamCallSettings, gatewayDreamJudge, registerGatewayDreamJudge } from "../agent/model/dream-judge.js";
-import { dreamJudge } from "@open-everywhere/core/agent/memory/dream/judge.js";
-import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
-import { defineDomain } from "@open-everywhere/core/agent/memory/domain.js";
-import { readModelStamp } from "@open-everywhere/core/agent/model/model-stamp.js";
+import { dreamJudge, registerConfig, defineDomain, readModelStamp } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
