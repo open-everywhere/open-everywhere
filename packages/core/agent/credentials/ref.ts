@@ -47,3 +47,40 @@ export function parseExecutorCredentialRef(ref: string): { integration: string; 
   if (!integration || !owner || !connection) return null;
   return { integration, owner, connection };
 }
+
+export interface RefCodec {
+  readonly home: string;
+  parse(ref: string): Readonly<Record<string, string>> | null;
+}
+
+export const DB_HOME = "db";
+export const EXECUTOR_HOME = "executor";
+
+const REF_CODECS = new Map<string, RefCodec>();
+
+export function registerRefCodec(codec: RefCodec): void {
+  REF_CODECS.set(codec.home, codec);
+}
+
+export function resetRefCodecs(): void {
+  REF_CODECS.clear();
+  registerCoreRefCodecs();
+}
+
+export type ParsedCredentialRef = { readonly home: string } & Readonly<Record<string, string>>;
+
+export function parseCredentialRef(ref: string): ParsedCredentialRef | null {
+  if (typeof ref !== "string") return null;
+  for (const codec of REF_CODECS.values()) {
+    const fields = codec.parse(ref);
+    if (fields) return { home: codec.home, ...fields };
+  }
+  return null;
+}
+
+function registerCoreRefCodecs(): void {
+  registerRefCodec({ home: DB_HOME, parse: parseDbCredentialRef });
+  registerRefCodec({ home: EXECUTOR_HOME, parse: parseExecutorCredentialRef });
+}
+
+registerCoreRefCodecs();

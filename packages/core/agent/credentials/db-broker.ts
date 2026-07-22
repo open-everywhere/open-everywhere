@@ -1,7 +1,8 @@
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
-import { CredentialError, registerBroker, type CredentialBroker } from "../access/credentials.js";
+import { CredentialError, registerBroker, registeredBrokerNames, type CredentialBroker } from "../access/credentials.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg } from "../identity/binding.js";
+import { registerCredentialHome } from "./home.js";
 
 export const DB_BROKER = "db";
 
@@ -103,3 +104,18 @@ export function makeDbCredentialBroker(): CredentialBroker {
 export function registerDbCredentialBroker(): void {
   registerBroker(DB_BROKER, makeDbCredentialBroker());
 }
+
+registerCredentialHome({
+  name: DB_BROKER,
+  hostWriteAvailable: () => registeredBrokerNames().includes(DB_BROKER),
+  async store(input) {
+    await storeDbSecret({
+      org: input.org,
+      ref: input.ref,
+      plaintext: input.plaintext,
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.domain ? { domain: input.domain } : {}),
+      createdBy: input.createdBy,
+    });
+  },
+});

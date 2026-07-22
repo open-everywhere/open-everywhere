@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { slackForm } from "../channels/slack-events.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { storeDbSecret } from "./db-broker.js";
-import { parseDbCredentialRef, parseExecutorCredentialRef } from "./ref.js";
-import { storeExecutorSecret, executorConnectionStore, type ExecutorConnectionStore } from "./executor-store.js";
+import { DB_BROKER } from "./db-broker.js";
+import { parseDbCredentialRef, parseCredentialRef } from "./ref.js";
+import { credentialHome } from "./home.js";
+import { type ExecutorConnectionStore } from "./executor-store.js";
 import { stageCredentialBindingPr } from "./binding-pr.js";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
@@ -242,33 +243,27 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
       return inputError("This credential request was already used.");
     }
 
-    const executorTarget = parseExecutorCredentialRef(intake.ref);
-    if (executorTarget) {
-      const store = deps.executorStore ?? executorConnectionStore();
-      if (!store) {
-        console.error(`[open-everywhere:credentials] executor-homed intake for ref "${intake.ref}" but no executor layer is registered`);
-        return inputError("Could not store the credential — the Executor layer isn’t configured on this deployment. Ask an operator.");
-      }
-      try {
-        await storeExecutorSecret({ ref: executorTarget, plaintext: value }, { store });
-      } catch (err) {
-        console.error(`[open-everywhere:credentials] failed to store executor credential for ref "${intake.ref}": ${String(err)}`);
-        return inputError("Could not store the credential in the Executor layer. Ask an operator.");
-      }
-    } else {
-      try {
-        await storeDbSecret({
-          org,
-          ref: intake.ref,
-          plaintext: value,
-          provider: intake.provider,
-          ...(intake.domain ? { domain: intake.domain } : {}),
-          createdBy: clickerId,
-        });
-      } catch (err) {
-        console.error(`[open-everywhere:credentials] failed to store credential for ref "${intake.ref}": ${String(err)}`);
-        return inputError("Could not store the credential — the server encryption key is missing or invalid. Ask an operator.");
-      }
+    const parsed = parseCredentialRef(intake.ref);
+    const homeName = parsed?.home ?? DB_BROKER;
+    const home = credentialHome(homeName);
+    if (!home) {
+      console.error(`[open-everywhere:credentials] no credential home "${homeName}" registered for ref "${intake.ref}"`);
+      return inputError("Could not store the credential — its storage home isn’t configured on this deployment. Ask an operator.");
+    }
+    try {
+      await home.store({
+        org,
+        ref: intake.ref,
+        plaintext: value,
+        provider: intake.provider,
+        ...(intake.domain ? { domain: intake.domain } : {}),
+        createdBy: clickerId,
+        parsed: parsed ?? {},
+        ...(deps.executorStore ? { deps: { executorStore: deps.executorStore } } : {}),
+      });
+    } catch (err) {
+      console.error(`[open-everywhere:credentials] failed to store credential for ref "${intake.ref}": ${String(err)}`);
+      return inputError("Could not store the credential — its storage home isn’t configured on this deployment. Ask an operator.");
     }
 
     await appendAudit({

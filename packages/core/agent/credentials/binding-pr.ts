@@ -17,7 +17,7 @@ import { getGitHubApp } from "../scm/provider.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { DB_BROKER } from "./db-broker.js";
-import { parseExecutorCredentialRef } from "./ref.js";
+import { parseCredentialRef, EXECUTOR_HOME } from "./ref.js";
 
 export interface BindingAuditWhere {
   readonly org: string;
@@ -150,7 +150,11 @@ export async function stageCredentialBindingPr(
   const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
-  const executorHome = parseExecutorCredentialRef(args.storedRef);
+  const parsedStored = parseCredentialRef(args.storedRef);
+  const executorHome =
+    parsedStored?.home === EXECUTOR_HOME
+      ? { integration: parsedStored.integration, owner: parsedStored.owner, connection: parsedStored.connection }
+      : null;
   const override: CredentialBindingOverride = executorHome
     ? { provider: args.provider, credential: args.credential, executor: executorHome }
     : { provider: args.provider, credential: args.credential, broker: DB_BROKER, secretRef: args.storedRef };

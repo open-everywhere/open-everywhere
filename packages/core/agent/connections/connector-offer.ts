@@ -1,5 +1,6 @@
 import type { Provider, ProviderCredential, ProviderCredentialType } from "../access/providers.js";
 import { principalOf } from "../access/providers.js";
+import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome } from "../credentials/home.js";
 
 export interface SurfaceIntakeCapability {
   readonly secretModal?: boolean;
@@ -37,8 +38,8 @@ export function hostWriteBrokerAvailable(registeredBrokers: Iterable<string>): b
   return false;
 }
 
-export function hostWriteHomeAvailable(registeredBrokers: Iterable<string>, executorArmed: boolean): boolean {
-  return executorArmed || hostWriteBrokerAvailable(registeredBrokers);
+export function hostWriteHomeAvailable(homes: Iterable<CredentialHome>): boolean {
+  return homesHostWriteAvailable(homes);
 }
 
 export type ConnectRouteKind = "modal" | "url" | "text-degrade" | "unavailable";

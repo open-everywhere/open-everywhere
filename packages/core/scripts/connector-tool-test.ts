@@ -16,6 +16,8 @@ const {
   hostWriteBrokerAvailable,
   hostWriteHomeAvailable,
 } = await import("../agent/connections/connector-offer.js");
+type CredentialHome = import("../agent/credentials/home.js").CredentialHome;
+const fakeHome = (name: string, hw: boolean): CredentialHome => ({ name, hostWriteAvailable: () => hw, store: async () => {} });
 const { executorCredentialRef } = await import("../agent/credentials/ref.js");
 const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
@@ -92,10 +94,10 @@ console.log("1. resolver matrix:");
   ok(hostWriteBrokerAvailable(["env", "db"]) === true, "hostWriteBrokerAvailable: db registered ⇒ host-write available");
   ok(hostWriteBrokerAvailable([]) === false, "hostWriteBrokerAvailable: nothing registered ⇒ false (fail closed)");
 
-  ok(hostWriteHomeAvailable(["env"], false) === false, "hostWriteHomeAvailable: env only + executor OFF ⇒ no host-write home");
-  ok(hostWriteHomeAvailable(["env"], true) === true, "hostWriteHomeAvailable: executor ARMED (no db broker) ⇒ host-write home available");
-  ok(hostWriteHomeAvailable(["env", "db"], false) === true, "hostWriteHomeAvailable: db broker registered (executor off) ⇒ available");
-  ok(hostWriteHomeAvailable([], false) === false, "hostWriteHomeAvailable: nothing ⇒ false (fail closed)");
+  ok(hostWriteHomeAvailable([fakeHome("db", false), fakeHome("env", false)]) === false, "hostWriteHomeAvailable: only non-host-write homes ⇒ no host-write home");
+  ok(hostWriteHomeAvailable([fakeHome("executor", true)]) === true, "hostWriteHomeAvailable: an executor home reporting host-write ⇒ available");
+  ok(hostWriteHomeAvailable([fakeHome("db", true), fakeHome("env", false)]) === true, "hostWriteHomeAvailable: the db home reporting host-write ⇒ available");
+  ok(hostWriteHomeAvailable([]) === false, "hostWriteHomeAvailable: no homes ⇒ false (fail closed)");
 
   eq(kinds(R({ mode: "channel", isAdmin: true, hostWriteBroker: true })), ["Connect org account:url", "Set API key:modal"], "executor-armed (hostWriteBroker true via executor) ⇒ api-key offered as a modal, no db broker needed");
 }
