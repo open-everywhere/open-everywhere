@@ -91,16 +91,16 @@ firesWith(
 );
 
 firesWith(
-  checkWindowGateManifest([{ name: "browser_qa", source: unwrapped("browser_qa") }], new Map([["browser_qa", ""]]), [], g({ browser_qa: FULL_KIT }), u()),
-  'does not wrap its export in windowGated("browser_qa"',
+  checkWindowGateManifest([{ name: "post_file", source: unwrapped("post_file") }], new Map([["post_file", ""]]), [], g({ post_file: FULL_KIT }), u()),
+  'does not wrap its export in windowGated("post_file"',
   "a gated authored tool that dropped its windowGated wrapper FAILS (silent static re-introduction)",
 );
 {
   const problems = checkWindowGateManifest(
-    [{ name: "browser_qa", source: wrapped("browser_qa") }],
-    new Map([["browser_qa", ""]]),
+    [{ name: "post_file", source: wrapped("post_file") }],
+    new Map([["post_file", ""]]),
     [],
-    g({ browser_qa: FULL_KIT }),
+    g({ post_file: FULL_KIT }),
     u(),
   );
   ok(problems.length === 0, "the correctly-wrapped gated tool is clean");

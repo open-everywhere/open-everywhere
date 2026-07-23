@@ -1266,7 +1266,37 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       if (process.env.E2E_BROWSER_QA !== "1") {
-        ctx.log("browser_qa leg skipped — set E2E_BROWSER_QA=1 to run the (expensive, sandbox-only) self-screenshot leg");
+        ctx.log("browser-QA leg skipped — set E2E_BROWSER_QA=1 (and arm OE_AGENT_BROWSER + OE_AGENT_BROWSER_DOMAINS=…,localhost) to run the expensive sandbox-only agent-browser loop");
+      } else {
+        const browserStart = new Date(Date.now() - 60_000).toISOString();
+        const { ts: qaTs } = await slack.post(
+          slack.mention(
+            "In a sandbox worker, run this end to end: (1) start a tiny static web server on localhost port 8000 that serves exactly " +
+              "the HTML `<h1>OPE43-OK</h1>` — run it in the background, e.g. " +
+              "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' &`; " +
+              "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to capture the page; " +
+              "(4) use describe_image with { sandboxPath: <the screenshot file path> } to read the screenshot. " +
+              "Then reply with the exact heading text you saw on the page.",
+          ),
+        );
+        const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: FILE_REPLY_WAIT });
+        await ctx.judgePass(
+          closedQA("Does the reply report the page heading text OPE43-OK, read from the screenshot (no browser/vision error)?", {
+            mustMatch: [/OPE43-OK/i],
+            mustNotMatch: [/could ?n.?t (?:navigate|screenshot|read|open)/i, /no vision model/i, /not armed|capability is not|not available/i],
+          }),
+          qaReply.text,
+          "browser-QA loop: navigate → screenshot → describe_image({ sandboxPath }) reports the page heading (OPE43-OK)",
+        );
+        if (ctx.auditRead) {
+          const rows = await ctx.auditRead({ sinceIso: browserStart, actions: ["browser.navigate", "browser.screenshot", "describe_image"] });
+          const has = (action: string) => rows.some((r) => r.action === action);
+          ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
+          ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
+          ctx.gate(has("describe_image"), "browser-QA loop: a describe_image audit row landed (the { sandboxPath } vision read)");
+        } else {
+          ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — asserting the judged reply only for the browser-QA leg");
+        }
       }
     },
   },

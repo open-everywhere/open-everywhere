@@ -84,7 +84,6 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   connector: open(
     "posts connect OPTIONS (a Block Kit card on Slack, links on other surfaces) for a provider — same class as a reply. It stores no secret and grants nothing itself; the CONSEQUENTIAL acts (minting an org-level OAuth URL, opening the api-key intake) happen host-side at the CLICK, where standing is re-verified (connections/connector-card.ts) — the model is never in that loop, and org-level/personal options a requester can't use are OMITTED from the card, not shown-and-refused. resolveRole is read only to omit, never to refuse, so no in-tool gate",
   ),
-  browser_qa: open("screenshots the agent's own workspace UI and posts them into the asking thread"),
   browser_tools: open(
     "the resolver FILE that mounts the flag-gated agent-browser tool family (access/browser-toolkit.ts, OPE-43); mounts nothing under its own name. The injected browser_* tools are a runtime-injected family (the connector-op precedent): each is open on the bash rationale — in-sandbox execution whose reach is bounded by the OPERATOR's OE_AGENT_BROWSER_DOMAINS allowlist enforced twice (agent-browser containment + the egress firewall), never by this table",
   ),

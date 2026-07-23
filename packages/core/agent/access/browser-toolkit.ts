@@ -2,6 +2,7 @@ import { defineTool, type ToolDefinition } from "eve/tools";
 import type { WindowGrain } from "../identity/binding.js";
 import { preRegisterDynamicEntry, grainBackstopAtExecute, FULL_KIT } from "./window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
+import { auditToolAction } from "../audit/tool-action.js";
 
 export interface BrowserToolEntry {
   readonly description: string;
@@ -51,11 +52,14 @@ export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserT
     if ((entry as { approval?: unknown }).approval !== undefined) {
       throw new Error(`registerBrowserToolkit: "${name}" carries an approval policy — browser toolkit entries must be approval-less`);
     }
+    const auditAction = `browser.${name.slice("browser_".length)}`;
     const backstopped = defineTool({
       ...entry,
       execute: async (input: unknown, ctx: unknown) => {
         await grainBackstopAtExecute(name, FULL_KIT, ctx as BindableContext);
-        return entry.execute(input, ctx);
+        const result = await entry.execute(input, ctx);
+        await auditToolAction(ctx as BindableContext, auditAction);
+        return result;
       },
     } as unknown as ToolDefinition) as unknown as BrowserToolEntry;
     preRegisterDynamicEntry(BROWSER_TOOLS_SLUG, name, backstopped);

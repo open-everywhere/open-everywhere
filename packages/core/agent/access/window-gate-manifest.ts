@@ -15,7 +15,6 @@ export const WINDOW_GATED_TOOLS: Readonly<Record<string, readonly WindowGrain[]>
   checkout_repo: FULL_KIT,
   open_pull_request: FULL_KIT,
   post_file: FULL_KIT,
-  browser_qa: FULL_KIT,
   create_skill: FULL_KIT,
   delete_skill: FULL_KIT,
   agent: ["standing", "thread"],

@@ -39,7 +39,7 @@ const withWindowEnv = <T>(fn: () => T): T => {
   }
 };
 
-const FULL_CAPABILITY_TOOLS = ["checkout_repo", "bash", "web_fetch", "write_file", "open_pull_request", "post_file", "browser_qa", "create_skill", "create_routine"] as const;
+const FULL_CAPABILITY_TOOLS = ["checkout_repo", "bash", "web_fetch", "write_file", "open_pull_request", "post_file", "create_skill", "create_routine"] as const;
 
 const isMountedTier = (t: ConsequenceTier) => t === "open" || t === "gate:member";
 
@@ -49,7 +49,6 @@ const gatedModules: Record<string, unknown> = {
   checkout_repo: (await import("../agent/tools/checkout_repo.js")).default,
   open_pull_request: (await import("../agent/tools/open_pull_request.js")).default,
   post_file: (await import("../agent/tools/post_file.js")).default,
-  browser_qa: (await import("../agent/tools/browser_qa.js")).default,
   create_skill: (await import("../agent/tools/create_skill.js")).default,
   delete_skill: (await import("../agent/tools/delete_skill.js")).default,
   spawn_task: (await import("../agent/tools/spawn_task.js")).default,
@@ -97,12 +96,12 @@ async function mountedGatedNames(grain: "standing" | "task" | "native"): Promise
   eq([...standing].sort(), ["spawn_task"], "[P0-a] the standing seat's gated-kit residue is EXACTLY spawn_task (all wide hands gone)");
   eq(
     [...task].sort(),
-    [...SANDBOX_SIX, "browser_qa", "checkout_repo", "complete_task", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    [...SANDBOX_SIX, "checkout_repo", "complete_task", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
     "[P0-a] the task worker mounts the FULL wide-hands kit + complete_task, minus spawn_task",
   );
   eq(
     [...native].sort(),
-    [...SANDBOX_SIX, "browser_qa", "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
+    [...SANDBOX_SIX, "checkout_repo", "create_skill", "delete_skill", "open_pull_request", "post_file"].sort(),
     "[P0-a] the native mention keeps the FULL wide-hands kit (over-narrowing a native seat is the F8 failure mode)",
   );
   eq(TOOL_CONSEQUENCE.checkout_repo?.tier, "open", "[P0-a] checkout_repo stays `open` in the registry — the narrowing is the GRAIN gate, not a tier change");
@@ -214,7 +213,6 @@ const NATIVE_DM_CAPABILITY_GOLDEN: Readonly<Record<string, ConsequenceTier>> = {
   web_fetch: "open",
   write_file: "open",
   post_file: "open",
-  browser_qa: "open",
   open_pull_request: "gate:member",
   create_skill: "gate:member",
   create_routine: "gate:member",
@@ -286,7 +284,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   ] as const;
   const STANDING_WITHHELD = [
     "checkout_repo", "bash", "glob", "grep", "read_file", "write_file",
-    "web_fetch", "open_pull_request", "post_file", "browser_qa",
+    "web_fetch", "open_pull_request", "post_file",
     "create_skill", "delete_skill",
   ] as const;
   for (const name of [...STANDING_KEPT, ...STANDING_WITHHELD]) {
@@ -300,7 +298,7 @@ console.log("P0-f — per-channel STANDING seat is NARROWED (Stage C flip):");
   for (const name of STANDING_WITHHELD) {
     eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `[P0-f] withheld tool "${name}" is grain-gated to task+native (absent on standing)`);
   }
-  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task", "complete_thread", "return_result"].sort(), "[P0-f] a standing seat withholds EXACTLY the 12 wide-hands tools + complete_task + complete_thread + return_result (thread-lifecycle + one-shot, task/thread-only)");
+  eq([...withheldFromGrain("standing")].sort(), [...STANDING_WITHHELD, "complete_task", "complete_thread", "return_result"].sort(), "[P0-f] a standing seat withholds EXACTLY the 11 wide-hands tools + complete_task + complete_thread + return_result (thread-lifecycle + one-shot, task/thread-only)");
 
   ok(TOOL_CONSEQUENCE.spawn_task?.tier === "open", "[P0-f] spawn_task stays `open` — delegation is the standing seat's job");
   eq(WINDOW_GATED_TOOLS.spawn_task, ["standing"], "[P0-f] spawn_task is grain-gated STANDING-only (no recursive spawn)");

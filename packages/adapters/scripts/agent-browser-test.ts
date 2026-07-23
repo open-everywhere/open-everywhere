@@ -164,7 +164,7 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "flag on but no allowlist ⇒ no bake (fail closed)");
 
   setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost", OE_PLATFORM: "self-host" });
-  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the browser_qa MVP posture)");
+  ok(Object.keys(agentBrowserSandboxHooks()).length === 0, "armed but off-Vercel ⇒ no bake (self-host image has no Chromium — the Browser-QA MVP posture)");
 
   setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost", OE_PLATFORM: "vercel" });
   const installed: string[] = [];

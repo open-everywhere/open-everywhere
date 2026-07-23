@@ -21,7 +21,7 @@ export function agentBrowserSandboxHooks(
   if (!onVercel()) {
     console.error(
       "[open-everywhere:agent-browser] OE_AGENT_BROWSER=1 but this is not the Vercel Sandbox backend — " +
-        "NOT baking the browser (the self-host image has no Chromium; same MVP posture as browser_qa).",
+        "NOT baking the browser (the self-host image has no Chromium; the Browser-QA MVP posture).",
     );
     return {};
   }
