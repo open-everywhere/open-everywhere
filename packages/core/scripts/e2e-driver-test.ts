@@ -58,7 +58,8 @@ const {
   SETKEY_INPUT_ACTION,
 } = await import("./e2e/synthetic.js");
 const { signWebhookBody } = await import("./e2e/webhook.js");
-const { runFallbackCheck, FallbackJudge, judge3 } = await import("./e2e/judge.js");
+const { runFallbackCheck, FallbackJudge, judge3, LlmJudge, buildJudgePrompt, parseJudgeResponse, judgeBannerTag } =
+  await import("./e2e/judge.js");
 const { SCENARIOS, skipReason, ScenarioSkip } = await import("./e2e/scenarios.js");
 const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
 const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
@@ -828,7 +829,11 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const rubric = { kind: "closedQA" as const, criteria: "Does it give 391?", atLeast: 1, fallback: { mustMatch: ["391"] } };
   const verdict = await judge.grade(rubric, "391 it is");
   ok(verdict.pass && verdict.score === 1, "FallbackJudge passes a matching reply with score 1");
-  ok(verdict.detail.startsWith("[fallback]"), "FallbackJudge labels its verdicts honestly as fallback");
+  ok(verdict.detail.startsWith("[fallback ("), "FallbackJudge labels its verdicts honestly as fallback, with the reason");
+  ok(verdict.judge === "fallback", "FallbackJudge tags its verdict judge:\"fallback\"");
+  const named = new FallbackJudge("no AI_GATEWAY_API_KEY reachable");
+  ok(named.name.includes("no AI_GATEWAY_API_KEY reachable"), "FallbackJudge name carries the disable reason (surfaced in the run banner)");
+  ok((await named.grade(rubric, "391")).fallbackReason === "no AI_GATEWAY_API_KEY reachable", "FallbackJudge propagates its reason onto the verdict");
 
   const scripted = (outcomes: boolean[]) => {
     let i = 0;
@@ -844,6 +849,65 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(!(await judge3(scripted([true, false, false]), rubric, "x")).pass, "judge3: 1/3 passes → fail");
   const v = await judge3(scripted([true, true, true]), rubric, "x");
   ok(v.score === 1 && v.detail.includes("3/3"), "judge3 reports the vote count");
+}
+
+{
+  const closed = { kind: "closedQA" as const, criteria: "Does the reply list the user's Notion pages?", atLeast: 1, fallback: { mustNotMatch: [/error/i] } };
+  const factual = { kind: "factuality" as const, expected: "Thursday", criteria: "Does the reply say Thursday?", atLeast: 0.6, fallback: { mustMatch: ["thursday"] } };
+
+  const p = buildJudgePrompt(closed, "here are your pages: Roadmap, Notes");
+  ok(/GROUNDING/i.test(p.system) && /connect an account/i.test(p.system), "judge prompt tells the grader a defer-to-auth reply FAILS a real-answer criteria (grounding rule)");
+  ok(/INCIDENTAL/i.test(p.system) && /traceback/i.test(p.system), "judge prompt tells the grader an incidental \"error\"/\"traceback\" word is NOT a failure");
+  ok(/STRICT JSON/i.test(p.system) && p.system.includes('{"pass"'), "judge prompt pins the strict-JSON {pass,reason} output contract");
+  ok(p.user.includes("Does the reply list the user's Notion pages?") && p.user.includes("here are your pages"), "judge user message carries the criteria + the reply");
+  ok(!p.user.includes("EXPECTED FACT") && !p.user.includes("CONTEXT"), "closedQA with no context/expected omits the EXPECTED FACT + CONTEXT sections");
+  const pf = buildJudgePrompt(factual, "we deploy on thursday");
+  ok(pf.user.includes("EXPECTED FACT") && pf.user.includes("Thursday"), "factuality rubric injects the EXPECTED FACT section");
+  const pc = buildJudgePrompt({ ...closed, context: "the fixture workspace has a page titled Roadmap" }, "x");
+  ok(pc.user.includes("CONTEXT") && pc.user.includes("titled Roadmap"), "a rubric with context threads it into the CONTEXT section");
+  ok(buildJudgePrompt(closed, "").user.includes("(empty)"), "an empty reply renders as (empty) so the grader still sees a REPLY block");
+
+  ok(parseJudgeResponse('{"pass": true, "reason": "lists Roadmap + Notes"}')?.pass === true, "parseJudgeResponse reads pass=true");
+  ok(parseJudgeResponse('{"pass": false, "reason": "deferred to auth"}')?.pass === false, "parseJudgeResponse reads pass=false");
+  ok(parseJudgeResponse('Sure!\n```json\n{"pass": true, "reason": "ok"}\n```')?.reason === "ok", "parseJudgeResponse extracts the object from surrounding prose/fences");
+  ok(parseJudgeResponse("no json here at all") === null, "parseJudgeResponse → null on no object (→ fallback)");
+  ok(parseJudgeResponse("{not valid json}") === null, "parseJudgeResponse → null on unparseable JSON (→ fallback)");
+  ok(parseJudgeResponse('{"pass": "yes"}') === null, "parseJudgeResponse → null when pass is not a boolean (→ fallback, never a coerced green)");
+  ok(parseJudgeResponse('{"reason": "forgot pass"}') === null, "parseJudgeResponse → null when pass is missing");
+  ok(parseJudgeResponse('{"pass": true}')?.reason === "", "parseJudgeResponse tolerates a missing reason (empty string)");
+
+  const okJudge = new LlmJudge(async () => '{"pass": true, "reason": "names Roadmap + Notes"}', "test/model");
+  const okV = await okJudge.grade(closed, "here are your pages: Roadmap, Notes");
+  ok(okV.pass && okV.score === 1 && okV.judge === "llm" && okV.detail.startsWith("[llm]"), "LlmJudge returns an llm-tagged pass verdict on valid output");
+  ok(okJudge.name.includes("test/model") && okJudge.name.includes("temp 0"), "LlmJudge name names the model + temperature (shown in the run banner)");
+  const failV = await okJudge.grade({ ...closed }, "x");
+  ok(failV.pass && failV.judge === "llm", "LlmJudge grades on the model verdict, not the reply's surface tokens");
+
+  const groundJudge = new LlmJudge(async () => '{"pass": false, "reason": "reply says connect your account first — not grounded"}', "test/model");
+  const gV = await groundJudge.grade(closed, "You'll need to connect your Notion account first before I can list pages.");
+  ok(!gV.pass && gV.judge === "llm", "LlmJudge FAILS a 'connect your account first' reply on a real-answer criteria (fixes the false green)");
+  ok(runFallbackCheck(closed.fallback, "You'll need to connect your Notion account first before I can list pages.").pass, "…and the regex fallback ALONE would have (wrongly) passed that same reply — why the LLM judge is needed");
+
+  const garbageJudge = new LlmJudge(async () => "the model rambled with no json", "test/model");
+  const gg = await garbageJudge.grade(closed, "here are your pages: Roadmap, Notes");
+  ok(gg.judge === "fallback" && gg.fallbackReason === "judge output unparseable", "unparseable judge output → fallback verdict (tagged, with reason)");
+  ok(gg.pass === true, "…and the fallback regex (no forbidden token) decides the verdict — not a blanket pass");
+  const ggRed = await garbageJudge.grade(closed, "this reply mentions an error somewhere");
+  ok(ggRed.judge === "fallback" && ggRed.pass === false, "…a reply the fallback forbids still FAILS under fallback — infra failure never fabricates a green");
+  const throwJudge = new LlmJudge(async () => { throw new Error("HTTP 503"); }, "test/model");
+  const tv = await throwJudge.grade(closed, "clean grounded answer");
+  ok(tv.judge === "fallback" && /judge call failed: HTTP 503/.test(tv.fallbackReason ?? ""), "a thrown transport → fallback verdict carrying the failure reason (no key value could ever appear here)");
+
+  const j3llm = await judge3(new LlmJudge(async () => '{"pass": true, "reason": "ok"}', "m"), closed, "x");
+  ok(j3llm.judge === "llm", "judge3 over three llm grades tags the combined verdict llm");
+  const j3mixed = await judge3(new LlmJudge(async () => "garbage", "m"), closed, "clean, no error");
+  ok(j3mixed.judge === "fallback" && (j3mixed.fallbackReason ?? "").includes("unparseable"), "judge3 tags fallback (with reason) when any sub-grade fell back");
+
+  ok(judgeBannerTag({ llm: 0, fallback: 0, reasons: [] }) === "", "no judged gate → empty banner tag");
+  ok(judgeBannerTag({ llm: 2, fallback: 0, reasons: [] }) === ", judge: llm", "all-llm → 'judge: llm'");
+  ok(judgeBannerTag({ llm: 0, fallback: 1, reasons: ["judge output unparseable"] }) === ", judge: fallback (judge output unparseable)", "all-fallback → 'judge: fallback (<reason>)'");
+  ok(judgeBannerTag({ llm: 1, fallback: 1, reasons: ["HTTP 503"] }).startsWith(", judge: mixed"), "some-of-each → 'judge: mixed …'");
+  ok(judgeBannerTag({ llm: 0, fallback: 2, reasons: ["a", "b"] }).includes("a; b"), "multiple distinct fallback reasons are joined");
 }
 
 {

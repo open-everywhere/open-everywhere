@@ -27,7 +27,7 @@ import { NotionDriver } from "./notion-driver.js";
 import { PrApi } from "./pr-api.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
 import { WebhookDriver } from "./webhook.js";
-import { judge3, resolveJudge, type Rubric } from "./judge.js";
+import { judge3, judgeBannerTag, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
@@ -190,6 +190,17 @@ async function main(): Promise<void> {
 
     let gates = 0;
     let judgedCount = 0;
+    let judgedLlm = 0;
+    let judgedFallback = 0;
+    const fallbackReasons = new Set<string>();
+    const recordJudge = (v: { judge?: "llm" | "fallback"; fallbackReason?: string }): void => {
+      if (v.judge === "fallback") {
+        judgedFallback++;
+        if (v.fallbackReason) fallbackReasons.add(v.fallbackReason);
+      } else if (v.judge === "llm") {
+        judgedLlm++;
+      }
+    };
     const ctx: ScenarioContext = {
       slack: slackDriver,
       discord: discordDriver,
@@ -223,12 +234,14 @@ async function main(): Promise<void> {
       },
       async judgePass(rubric: Rubric, reply: string, label: string): Promise<void> {
         const verdict = await judge.grade(rubric, reply);
+        recordJudge(verdict);
         if (verdict.score < rubric.atLeast)
           throw new GateFailure(`${label} — judge: ${verdict.detail}${replyTail(reply)}`);
         judgedCount++;
       },
       async judgePass3(rubric: Rubric, reply: string, label: string): Promise<void> {
         const verdict = await judge3(judge, rubric, reply);
+        recordJudge(verdict);
         if (!verdict.pass) throw new GateFailure(`${label} — ${verdict.detail}${replyTail(reply)}`);
         judgedCount++;
       },
@@ -245,7 +258,8 @@ async function main(): Promise<void> {
     try {
       await withTimeout(scenario.run(ctx), scenario.timeoutMs);
       passed++;
-      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged, ${secs()})`);
+      const judgeTag = judgeBannerTag({ llm: judgedLlm, fallback: judgedFallback, reasons: [...fallbackReasons] });
+      console.log(`✓ ${scenario.id} ${scenario.title}: passed (${gates} gates, ${judgedCount} judged${judgeTag}, ${secs()})`);
     } catch (err) {
       if (err instanceof ScenarioSkip) {
         skipped++;
