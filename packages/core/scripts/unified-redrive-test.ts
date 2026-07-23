@@ -7,6 +7,7 @@ import type { RedriveReinject } from "../agent/channels/unified-redrive.js";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-redrive-")), "ops.sqlite3");
 delete process.env.OE_ORG;
 delete process.env.OE_UNIFIED_REDRIVE;
+delete process.env.OE_SPAWN_DISPATCH_SECRET;
 
 const { registerUnifiedWakeTarget } = await import("../agent/channels/unified-window.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
@@ -148,4 +149,45 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
   ok(again.status === "skip-loop-guard" && injected.length === 0, "throw: the guard WAS burned by the failed attempt — no infinite re-injection loop");
 }
 
-console.log(`✓ unified-redrive: ${n} assertions passed (flag default-on/off + corrective-wake render/re-stamp + fire-once/loop-guard/skips/fail-soft/throw over a real sqlite guard)`);
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { unifiedSupervisorToken } = await import("../agent/channels/unified-supervisor.js");
+  const { buildRedriveReinject, divertToUnifiedWindow } = await import("../agent/channels/unified.js");
+  const { mintWakeId } = await import("../agent/channels/unified-window.js");
+
+  process.env.OE_WINDOW_TOPOLOGY = "1";
+  const PAY_SLACK = "slack/T_PAY/C_PAY";
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "payments", channels: [PAY_SLACK], ambientSupervisor: true, mode: "unified" })],
+    loadSilos: () => [],
+    domainsForSurface: ({ surface }) => (surface === "C_PAY" ? ["payments"] : []),
+  });
+
+  const rawToken = unifiedSupervisorToken("payments", 1);
+
+  ok(buildRedriveReinject("payments", rawToken, {}) === null, "reinject: NULL when no cross-process dispatch is reachable (fail-soft source of skip-no-reinject)");
+
+  interface Landed { message: string; token: string; wakeId: string; origin: UnifiedWakeOrigin }
+  const landed: Landed[] = [];
+  const captureReceive = (async (_ch: unknown, o: { message: string; target: { token: string; wakeId: string; origin: UnifiedWakeOrigin } }) => {
+    landed.push({ message: o.message, token: o.target.token, wakeId: o.target.wakeId, origin: o.target.origin });
+    return {} as never;
+  }) as unknown as Parameters<typeof divertToUnifiedWindow>[0];
+  await divertToUnifiedWindow(captureReceive, { message: "prime", token: rawToken, window: { wakeId: mintWakeId(), origin: SLACK_ORIGIN }, surfaceKey: PAY_SLACK, auth: { attributes: {} } });
+  landed.length = 0;
+
+  const reinject = buildRedriveReinject("payments", rawToken, { some: "attr" });
+  ok(reinject !== null, "reinject: non-null once a receive is captured (warm in-process path)");
+  await reinject!(SLACK_ORIGIN, "CORRECTIVE-BODY-XYZ", "wake-warm-1");
+  ok(landed.length === 1, "reinject warm: dispatched exactly once through the captured receive");
+  ok(landed[0].token === rawToken && landed[0].wakeId === "wake-warm-1", "reinject warm: dispatched on the window token, re-stamped with the ORIGINAL wake-id");
+  ok(JSON.stringify(landed[0].origin) === JSON.stringify(SLACK_ORIGIN), "reinject warm: carries the ORIGINAL origin (reply lands in the original conversation)");
+  ok(landed[0].message.includes("CORRECTIVE-BODY-XYZ"), "reinject warm: the corrective body rides through as the wake message");
+}
+
+console.log(`✓ unified-redrive: ${n} assertions passed (flag default-on/off + corrective-wake render/re-stamp + fire-once/loop-guard/skips/fail-soft/throw over a real sqlite guard + buildRedriveReinject unavailable/warm arms)`);
