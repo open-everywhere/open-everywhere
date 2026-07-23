@@ -59,6 +59,7 @@ const bundles: Bundle[] = [
         id: "e2e-fixture",
         credentialType: "bearer",
         secretRef: "OE_E2E_FIXTURE_TOKEN",
+        broker: "env",
         allowedWebsites: ["raw.githubusercontent.com"],
         methods: ["GET"],
       },
