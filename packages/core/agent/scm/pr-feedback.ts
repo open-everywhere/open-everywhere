@@ -1,0 +1,172 @@
+import { prApiHeaders, type PrFetchFn } from "./pr.js";
+import { fetchCheckRuns, summarizeChecks, type CheckRun, type PrChecksSummary } from "./pr-status.js";
+
+export const MAX_REVIEWS = 30;
+export const MAX_REVIEW_COMMENTS = 50;
+export const MAX_ISSUE_COMMENTS = 50;
+export const MAX_CHECKS = 50;
+export const MAX_BODY_CHARS = 2000;
+
+export interface PrFeedbackReview {
+  readonly author: string;
+  readonly state: string;
+  readonly body: string;
+}
+
+export interface PrFeedbackReviewComment {
+  readonly path: string;
+  readonly line: number | null;
+  readonly author: string;
+  readonly body: string;
+}
+
+export interface PrFeedbackIssueComment {
+  readonly author: string;
+  readonly body: string;
+}
+
+export interface PrFeedbackCheck {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly summary: string;
+}
+
+export interface PrFeedbackTruncation {
+  readonly truncated: boolean;
+  readonly reviewsDropped: number;
+  readonly reviewCommentsDropped: number;
+  readonly issueCommentsDropped: number;
+  readonly checksDropped: number;
+  readonly bodiesClipped: number;
+  readonly maxBodyChars: number;
+}
+
+export interface PrFeedbackDigest {
+  readonly repo: string;
+  readonly number: number;
+  readonly reviews: readonly PrFeedbackReview[];
+  readonly reviewComments: readonly PrFeedbackReviewComment[];
+  readonly issueComments: readonly PrFeedbackIssueComment[];
+  readonly checks: readonly PrFeedbackCheck[];
+  readonly checksSummary: PrChecksSummary;
+  readonly truncation: PrFeedbackTruncation;
+}
+
+interface RawUser {
+  login?: string;
+}
+interface RawReview {
+  user?: RawUser;
+  state?: string;
+  body?: string;
+}
+interface RawReviewComment {
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+  user?: RawUser;
+  body?: string;
+}
+interface RawIssueComment {
+  user?: RawUser;
+  body?: string;
+}
+
+function clip(text: string | undefined, counter: { n: number }): string {
+  const t = (text ?? "").trim();
+  if (t.length <= MAX_BODY_CHARS) return t;
+  counter.n += 1;
+  return `${t.slice(0, MAX_BODY_CHARS)}… [clipped, ${t.length} chars total]`;
+}
+
+async function getJson<T>(fetchFn: PrFetchFn, url: string, token: string): Promise<T> {
+  const res = await fetchFn(url, { method: "GET", headers: prApiHeaders(token) });
+  if (!res.ok) {
+    throw new Error(`GitHub feedback read failed for ${url}: ${res.status} ${await res.text()}`);
+  }
+  return (await res.json()) as T;
+}
+
+export async function fetchPrFeedback(opts: {
+  repo: string;
+  number: number;
+  token: string;
+  fetchFn?: PrFetchFn;
+  apiBase?: string;
+}): Promise<PrFeedbackDigest> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const { repo, number, token } = opts;
+  const bodies = { n: 0 };
+
+  const pr = await getJson<{ head?: { sha?: string } }>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}`, token);
+  const [rawReviews, rawReviewComments, rawIssueComments] = await Promise.all([
+    getJson<RawReview[]>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}/reviews?per_page=100`, token),
+    getJson<RawReviewComment[]>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}/comments?per_page=100`, token),
+    getJson<RawIssueComment[]>(fetchFn, `${apiBase}/repos/${repo}/issues/${number}/comments?per_page=100`, token),
+  ]);
+
+  const reviewsAll = (rawReviews ?? []).filter((r) => {
+    const state = (r.state ?? "").toUpperCase();
+    if (state === "PENDING") return false;
+    if (state === "COMMENTED" && !(r.body ?? "").trim()) return false;
+    return true;
+  });
+  const reviews = mostRecent(reviewsAll, MAX_REVIEWS).map((r) => ({
+    author: r.user?.login ?? "(unknown)",
+    state: (r.state ?? "COMMENTED").toUpperCase(),
+    body: clip(r.body, bodies),
+  }));
+
+  const reviewComments = mostRecent(rawReviewComments ?? [], MAX_REVIEW_COMMENTS).map((c) => ({
+    path: c.path ?? "(unknown)",
+    line: c.line ?? c.original_line ?? null,
+    author: c.user?.login ?? "(unknown)",
+    body: clip(c.body, bodies),
+  }));
+
+  const issueComments = mostRecent(rawIssueComments ?? [], MAX_ISSUE_COMMENTS).map((c) => ({
+    author: c.user?.login ?? "(unknown)",
+    body: clip(c.body, bodies),
+  }));
+
+  let runs: CheckRun[] = [];
+  const headSha = pr.head?.sha;
+  if (headSha) {
+    try {
+      runs = await fetchCheckRuns({ repo, ref: headSha, token, fetchFn, apiBase });
+    } catch {
+      runs = [];
+    }
+  }
+  const checksSummary = summarizeChecks(runs);
+  const failingNames = new Set(checksSummary.failing);
+  const checks = runs.slice(0, MAX_CHECKS).map((r) => ({
+    name: r.name,
+    status: r.status,
+    conclusion: r.conclusion,
+    summary: failingNames.has(r.name) ? clip(r.summary, bodies) : "",
+  }));
+
+  const reviewCommentsDropped = Math.max(0, (rawReviewComments ?? []).length - MAX_REVIEW_COMMENTS);
+  const issueCommentsDropped = Math.max(0, (rawIssueComments ?? []).length - MAX_ISSUE_COMMENTS);
+  const reviewsDropped = Math.max(0, reviewsAll.length - MAX_REVIEWS);
+  const checksDropped = Math.max(0, runs.length - MAX_CHECKS);
+
+  const truncation: PrFeedbackTruncation = {
+    truncated: bodies.n > 0 || reviewsDropped > 0 || reviewCommentsDropped > 0 || issueCommentsDropped > 0 || checksDropped > 0,
+    reviewsDropped,
+    reviewCommentsDropped,
+    issueCommentsDropped,
+    checksDropped,
+    bodiesClipped: bodies.n,
+    maxBodyChars: MAX_BODY_CHARS,
+  };
+
+  return { repo, number, reviews, reviewComments, issueComments, checks, checksSummary, truncation };
+}
+
+function mostRecent<T>(items: readonly T[], max: number): T[] {
+  return items.length <= max ? [...items] : items.slice(items.length - max);
+}

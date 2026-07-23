@@ -58,6 +58,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
 
   check_pr_status: open("read of a PR's state"),
+  get_pr_feedback: open("read of a PR's reviews/comments/check runs via the read-scoped credential; disclosure is bounded by the channel's repo grant (membership is the ACL), and the digest is size-capped"),
   checkout_repo: open("read into the sandbox with a read-only credential; the write path is open_pull_request"),
   describe_image: open("read/vision over an attachment already in the room"),
   list_repos: open("read of this channel's own grant"),

@@ -4,6 +4,16 @@ import { jwtVerify } from "jose";
 import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
 import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, stagePushCommand, parseStagedSha, PENDING_REF_PREFIX, STAGED_SHA_MARKER, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
 import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
+import {
+  fetchPullRequestStatus,
+  describePrStatus,
+  fetchCheckRuns,
+  summarizeChecks,
+  describeChecks,
+  MAX_FAILING_CHECK_NAMES,
+  type CheckRun,
+} from "../agent/scm/pr-status.js";
+import { fetchPrFeedback, MAX_REVIEW_COMMENTS, MAX_REVIEWS, MAX_BODY_CHARS } from "../agent/scm/pr-feedback.js";
 import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
 import { GitHubApp } from "../agent/scm/app.js";
@@ -400,4 +410,178 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress)\n`);
+{
+  const runs: CheckRun[] = [
+    { name: "build", status: "completed", conclusion: "failure", summary: "boom" },
+    { name: "lint", status: "completed", conclusion: "success", summary: "" },
+    { name: "typecheck", status: "completed", conclusion: "success", summary: "" },
+    { name: "flaky", status: "completed", conclusion: "timed_out", summary: "too slow" },
+    { name: "e2e", status: "in_progress", conclusion: null, summary: "" },
+    { name: "skip-me", status: "completed", conclusion: "skipped", summary: "" },
+  ];
+  const sum = summarizeChecks(runs);
+  ok(sum.total === 6, "summarizeChecks totals every run");
+  ok(sum.byConclusion.success === 2 && sum.byConclusion.failure === 1 && sum.byConclusion.timed_out === 1 && sum.byConclusion.skipped === 1, "byConclusion buckets each conclusion");
+  ok(sum.byConclusion.pending === 1, "a still-running run buckets as pending");
+  ok(sum.pending === 1, "pending counts queued/in-progress runs");
+  ok(sum.failing.length === 2 && sum.failing.includes("build") && sum.failing.includes("flaky"), "failing names cover the failure-class conclusions (failure + timed_out)");
+  ok(!sum.failing.includes("skip-me") && !sum.failing.includes("lint"), "success/skipped are NOT failing");
+  ok(sum.failingTruncated === false, "failing not truncated under the cap");
+
+  const many: CheckRun[] = Array.from({ length: MAX_FAILING_CHECK_NAMES + 5 }, (_, i) => ({ name: `chk${i}`, status: "completed", conclusion: "failure", summary: "" }));
+  const capped = summarizeChecks(many);
+  ok(capped.failing.length === MAX_FAILING_CHECK_NAMES && capped.failingTruncated === true, "failing names cap at MAX_FAILING_CHECK_NAMES with a truncation flag");
+  ok(capped.byConclusion.failure === MAX_FAILING_CHECK_NAMES + 5, "the failure COUNT stays exact even when the name list is capped");
+
+  const note = describeChecks(sum);
+  ok(note.startsWith("checks:") && note.includes("failing (build, flaky)") && note.includes("pending") && note.includes("ok"), "describeChecks renders a compact ok/failing(names)/pending line");
+
+  const runsFetch: PrFetchFn = async (url) => {
+    ok(url.includes("/commits/deadbeef/check-runs"), "fetchCheckRuns hits the commit check-runs endpoint for the ref");
+    return {
+      ok: true,
+      status: 200,
+      text: async () => "",
+      json: async () => ({
+        check_runs: [
+          { name: "build", status: "completed", conclusion: "failure", output: { title: "t", summary: "detailed why" } },
+          { name: "lint", status: "completed", conclusion: "success", output: { title: "all good" } },
+          { status: "queued", conclusion: null },
+        ],
+      }),
+    };
+  };
+  const parsed = await fetchCheckRuns({ repo: "acme/web", ref: "deadbeef", token: "ghs_r", fetchFn: runsFetch });
+  ok(parsed.length === 3 && parsed[0].summary === "detailed why", "fetchCheckRuns reads output.summary");
+  ok(parsed[1].summary === "all good", "fetchCheckRuns falls back to output.title when summary is absent");
+  ok(parsed[2].name === "(unnamed)" && parsed[2].conclusion === null, "a nameless/incomplete run parses safely");
+
+  const boom: PrFetchFn = async () => ({ ok: false, status: 403, text: async () => "forbidden", json: async () => ({}) });
+  await assert.rejects(fetchCheckRuns({ repo: "acme/web", ref: "x", token: "t", fetchFn: boom }), /check-runs lookup failed.*403 forbidden/);
+  n++;
+}
+
+{
+  const withChecks: PrFetchFn = async (url) => {
+    if (url.includes("/check-runs")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => "",
+        json: async () => ({
+          check_runs: [
+            { name: "build", status: "completed", conclusion: "failure", output: { summary: "compile error" } },
+            { name: "lint", status: "completed", conclusion: "success" },
+            { name: "e2e", status: "in_progress", conclusion: null },
+          ],
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      text: async () => "",
+      json: async () => ({ html_url: "https://github.com/acme/web/pull/42", title: "Add widget", state: "open", merged: false, draft: false, updated_at: "2026-07-08T10:00:00Z", head: { sha: "abc123" } }),
+    };
+  };
+  const s = await fetchPullRequestStatus({ repo: "acme/web", number: 42, token: "ghs_r", fetchFn: withChecks });
+  ok(s.checks?.total === 3 && s.checks?.failing.join() === "build" && s.checks?.pending === 1, "fetchPullRequestStatus attaches a checks summary from the head's runs");
+  ok(describePrStatus(s).includes("checks: 1 ok, 1 failing (build), 1 pending"), "describePrStatus appends the compact checks note when checks are present");
+
+  const checksBoom: PrFetchFn = async (url) => {
+    if (url.includes("/check-runs")) return { ok: false, status: 403, text: async () => "forbidden", json: async () => ({}) };
+    return { ok: true, status: 200, text: async () => "", json: async () => ({ html_url: "https://github.com/acme/web/pull/42", title: "Add widget", state: "open", merged: false, draft: false, updated_at: "2026-07-08T10:00:00Z", head: { sha: "abc123" } }) };
+  };
+  const s2 = await fetchPullRequestStatus({ repo: "acme/web", number: 42, token: "ghs_r", fetchFn: checksBoom });
+  ok(s2.checks === undefined, "a failing check-runs read leaves checks off the snapshot (best-effort), never throws");
+  ok(describePrStatus(s2) === 'OPEN — "Add widget" (updated 2026-07-08T10:00:00Z) https://github.com/acme/web/pull/42', "describePrStatus adds no checks note when the summary is absent (subscribe_pr baseline unchanged)");
+
+  let calls = 0;
+  const noHead: PrFetchFn = async () => {
+    calls++;
+    return { ok: true, status: 200, text: async () => "", json: async () => ({ html_url: "https://github.com/acme/web/pull/42", title: "Add widget", state: "open", merged: false, draft: false, updated_at: "2026-07-08T10:00:00Z" }) };
+  };
+  const s3 = await fetchPullRequestStatus({ repo: "acme/web", number: 42, token: "ghs_r", fetchFn: noHead });
+  ok(calls === 1 && s3.checks === undefined, "no head sha → the checks fetch is skipped entirely (one call, no checks)");
+}
+
+{
+  const feedbackFetch = (data: {
+    reviews?: unknown[];
+    reviewComments?: unknown[];
+    issueComments?: unknown[];
+    checkRuns?: unknown[];
+    headSha?: string | null;
+  }): { fn: PrFetchFn; seen: string[] } => {
+    const seen: string[] = [];
+    const fn: PrFetchFn = async (url, init) => {
+      seen.push(url);
+      ok(init.method === "GET", "every feedback read is a GET");
+      const json = url.endsWith("/reviews?per_page=100")
+        ? data.reviews ?? []
+        : url.includes("/pulls/") && url.endsWith("/comments?per_page=100")
+          ? data.reviewComments ?? []
+          : url.includes("/issues/") && url.endsWith("/comments?per_page=100")
+            ? data.issueComments ?? []
+            : url.includes("/check-runs")
+              ? { check_runs: data.checkRuns ?? [] }
+              : { head: data.headSha === null ? undefined : { sha: data.headSha ?? "deadbeef" } };
+      return { ok: true, status: 200, text: async () => "", json: async () => json };
+    };
+    return { fn, seen };
+  };
+
+  const { fn, seen } = feedbackFetch({
+    reviews: [
+      { user: { login: "alice" }, state: "CHANGES_REQUESTED", body: "Please rename this." },
+      { user: { login: "bob" }, state: "APPROVED", body: "" },
+      { user: { login: "carol" }, state: "COMMENTED", body: "" },
+      { user: { login: "dave" }, state: "PENDING", body: "draft, not submitted" },
+    ],
+    reviewComments: [
+      { path: "src/a.ts", line: 12, user: { login: "alice" }, body: "off-by-one here" },
+      { path: "src/b.ts", line: null, original_line: 40, user: { login: "alice" }, body: "outdated anchor" },
+    ],
+    issueComments: [{ user: { login: "eve" }, body: "CI is red on main too." }],
+    checkRuns: [
+      { name: "build", status: "completed", conclusion: "failure", output: { summary: "TS2345 at a.ts:12" } },
+      { name: "lint", status: "completed", conclusion: "success", output: { summary: "clean" } },
+    ],
+  });
+  const dg = await fetchPrFeedback({ repo: "acme/web", number: 42, token: "ghs_r", fetchFn: fn });
+  ok(seen.some((u) => u.endsWith("/repos/acme/web/pulls/42")) && seen.some((u) => u.includes("/issues/42/comments")), "the digest reads the pull, its reviews/comments, and the issue thread");
+  ok(dg.reviews.length === 2 && dg.reviews[0].author === "alice" && dg.reviews[0].state === "CHANGES_REQUESTED", "reviews keep CHANGES_REQUESTED + APPROVED, drop empty-COMMENTED and PENDING");
+  ok(dg.reviews.some((r) => r.state === "APPROVED" && r.author === "bob"), "an empty-bodied APPROVED review is kept (state is the signal)");
+  ok(dg.reviewComments.length === 2 && dg.reviewComments[0].path === "src/a.ts" && dg.reviewComments[0].line === 12, "review comments carry path + line");
+  ok(dg.reviewComments[1].line === 40, "a null line falls back to original_line");
+  ok(dg.issueComments.length === 1 && dg.issueComments[0].author === "eve", "issue-thread comments are read");
+  ok(dg.checksSummary.total === 2 && dg.checksSummary.failing.join() === "build", "checksSummary rolls up the runs exactly");
+  ok(dg.checks.find((c) => c.name === "build")?.summary === "TS2345 at a.ts:12", "a FAILING check carries its output excerpt");
+  ok(dg.checks.find((c) => c.name === "lint")?.summary === "", "a passing check carries NO excerpt (green output isn't worth context)");
+  ok(dg.truncation.truncated === false, "a small PR reports no truncation");
+
+  const bigBody = "x".repeat(MAX_BODY_CHARS + 500);
+  const overflow = feedbackFetch({
+    reviewComments: Array.from({ length: MAX_REVIEW_COMMENTS + 10 }, (_, i) => ({ path: "f.ts", line: i, user: { login: "u" }, body: i === 0 ? bigBody : "ok" })),
+  });
+  const dg2 = await fetchPrFeedback({ repo: "acme/web", number: 7, token: "ghs_r", fetchFn: overflow.fn });
+  ok(dg2.reviewComments.length === MAX_REVIEW_COMMENTS, "review comments are capped at MAX_REVIEW_COMMENTS");
+  ok(dg2.truncation.reviewCommentsDropped === 10 && dg2.truncation.truncated === true, "the digest reports how many comments were dropped");
+  const clipCase = feedbackFetch({ issueComments: [{ user: { login: "u" }, body: bigBody }] });
+  const dg3 = await fetchPrFeedback({ repo: "acme/web", number: 8, token: "ghs_r", fetchFn: clipCase.fn });
+  ok(dg3.issueComments[0].body.length < bigBody.length && dg3.issueComments[0].body.includes("[clipped"), "an over-long body is clipped with an honest marker");
+  ok(dg3.truncation.bodiesClipped === 1 && dg3.truncation.maxBodyChars === MAX_BODY_CHARS, "the digest reports bodiesClipped + the char cap");
+
+  const checksBoom: PrFetchFn = async (url) => {
+    if (url.includes("/check-runs")) return { ok: false, status: 500, text: async () => "boom", json: async () => ({}) };
+    const json = url.includes("/reviews") ? [] : url.includes("/comments") ? [] : { head: { sha: "abc" } };
+    return { ok: true, status: 200, text: async () => "", json: async () => json };
+  };
+  const dg4 = await fetchPrFeedback({ repo: "acme/web", number: 9, token: "ghs_r", fetchFn: checksBoom });
+  ok(dg4.checks.length === 0 && dg4.checksSummary.total === 0, "a failing check-runs read leaves the checks section empty (best-effort), digest still returns");
+
+  ok(!repoAllowed("acme/secret", ["acme/web"]), "get_pr_feedback's repoAllowed gate rejects an ungranted repo before any GitHub read");
+  ok(repoAllowed("acme/web", ["acme/web"]), "get_pr_feedback's repoAllowed gate admits a granted repo");
+}
+
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress, PR checks summary, PR feedback digest)\n`);

@@ -12,6 +12,78 @@ export interface PrStatusSnapshot {
   readonly merged: boolean;
   readonly draft: boolean;
   readonly updatedAt: string;
+  readonly checks?: PrChecksSummary;
+}
+
+export interface CheckRun {
+  readonly name: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly summary: string;
+}
+
+export interface PrChecksSummary {
+  readonly total: number;
+  readonly byConclusion: Readonly<Record<string, number>>;
+  readonly failing: readonly string[];
+  readonly failingTruncated: boolean;
+  readonly pending: number;
+}
+
+export const CHECK_FAILURE_CONCLUSIONS: ReadonlySet<string> = new Set([
+  "failure",
+  "timed_out",
+  "action_required",
+  "cancelled",
+  "stale",
+]);
+
+export const MAX_FAILING_CHECK_NAMES = 20;
+
+export function summarizeChecks(runs: readonly CheckRun[]): PrChecksSummary {
+  const byConclusion: Record<string, number> = {};
+  const failing: string[] = [];
+  let pending = 0;
+  for (const r of runs) {
+    const bucket = r.conclusion ?? (r.status === "completed" ? "neutral" : "pending");
+    byConclusion[bucket] = (byConclusion[bucket] ?? 0) + 1;
+    if (r.conclusion !== null && CHECK_FAILURE_CONCLUSIONS.has(r.conclusion)) failing.push(r.name);
+    if (r.conclusion === null && r.status !== "completed") pending++;
+  }
+  return {
+    total: runs.length,
+    byConclusion,
+    failing: failing.slice(0, MAX_FAILING_CHECK_NAMES),
+    failingTruncated: failing.length > MAX_FAILING_CHECK_NAMES,
+    pending,
+  };
+}
+
+export async function fetchCheckRuns(opts: {
+  repo: string;
+  ref: string;
+  token: string;
+  fetchFn?: PrFetchFn;
+  apiBase?: string;
+}): Promise<CheckRun[]> {
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const res = await fetchFn(`${apiBase}/repos/${opts.repo}/commits/${opts.ref}/check-runs?per_page=100`, {
+    method: "GET",
+    headers: prApiHeaders(opts.token),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub check-runs lookup failed for ${opts.repo}@${opts.ref}: ${res.status} ${await res.text()}`);
+  }
+  const body = (await res.json()) as {
+    check_runs?: { name?: string; status?: string; conclusion?: string | null; output?: { title?: string; summary?: string } }[];
+  };
+  return (body.check_runs ?? []).map((c) => ({
+    name: c.name ?? "(unnamed)",
+    status: c.status ?? "unknown",
+    conclusion: c.conclusion ?? null,
+    summary: (c.output?.summary ?? c.output?.title ?? "").trim(),
+  }));
 }
 
 export async function fetchPullRequestStatus(opts: {
@@ -37,8 +109,9 @@ export async function fetchPullRequestStatus(opts: {
     merged: boolean;
     draft: boolean;
     updated_at: string;
+    head?: { sha?: string };
   };
-  return {
+  const base: PrStatusSnapshot = {
     repo: opts.repo,
     number: opts.number,
     url: pr.html_url,
@@ -48,11 +121,34 @@ export async function fetchPullRequestStatus(opts: {
     draft: Boolean(pr.draft),
     updatedAt: pr.updated_at,
   };
+  const headSha = pr.head?.sha;
+  if (!headSha) return base;
+  try {
+    const runs = await fetchCheckRuns({ repo: opts.repo, ref: headSha, token: opts.token, fetchFn, apiBase });
+    if (runs.length === 0) return base;
+    return { ...base, checks: summarizeChecks(runs) };
+  } catch {
+    return base;
+  }
+}
+
+export function describeChecks(c: PrChecksSummary): string {
+  const parts: string[] = [];
+  const ok = (c.byConclusion.success ?? 0) + (c.byConclusion.neutral ?? 0) + (c.byConclusion.skipped ?? 0);
+  if (ok > 0) parts.push(`${ok} ok`);
+  if (c.failing.length > 0 || c.failingTruncated) {
+    const names = c.failing.length > 0 ? ` (${c.failing.join(", ")}${c.failingTruncated ? ", …" : ""})` : "";
+    const failCount = c.total - ok - c.pending;
+    parts.push(`${failCount} failing${names}`);
+  }
+  if (c.pending > 0) parts.push(`${c.pending} pending`);
+  return `checks: ${parts.length > 0 ? parts.join(", ") : `${c.total} run(s)`}`;
 }
 
 export function describePrStatus(s: PrStatusSnapshot): string {
   const label = s.merged ? "MERGED" : s.state === "closed" ? "CLOSED (not merged)" : s.draft ? "OPEN (draft)" : "OPEN";
-  return `${label} — "${s.title}" (updated ${s.updatedAt}) ${s.url}`;
+  const checks = s.checks ? ` — ${describeChecks(s.checks)}` : "";
+  return `${label} — "${s.title}" (updated ${s.updatedAt}) ${s.url}${checks}`;
 }
 
 export function prIsSettled(s: PrStatusSnapshot): boolean {
