@@ -1289,9 +1289,14 @@ export const SCENARIOS: readonly Scenario[] = [
             "In a sandbox worker, run this end to end: (1) start a tiny static web server on localhost port 8000 that serves exactly " +
               "the HTML `<h1>OPE43-OK</h1>` — run it in the background, e.g. " +
               "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' &`; " +
-              "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to capture the page; " +
-              "(4) use describe_image with { path: <the screenshot file path> } to read the screenshot. " +
-              "Then reply with the exact heading text you saw on the page.",
+              "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to SAVE the page to a file in your CURRENT WORKING " +
+              "DIRECTORY using a RELATIVE path — save it as `ope43-shot.png` (NOT /tmp, NOT an absolute path: describe_image can only read files inside " +
+              "your workspace, and /tmp is outside it); (4) use describe_image with { path: \"ope43-shot.png\" } to VISION-READ the heading from the " +
+              "screenshot IMAGE. " +
+              "CRITICAL: obtain the heading text ONLY by vision-reading the screenshot via describe_image — do NOT read the page text or DOM " +
+              "with browser_get, browser_evaluate, browser_snapshot, or any HTML/text extraction; the whole point is to vision-verify the " +
+              "rendered screenshot, so describe_image on the screenshot file is mandatory. " +
+              "Then reply with the exact heading text that describe_image read from the screenshot.",
           ),
         );
         const qaReply = await slack.awaitThreadReply(qaTs, { timeoutMs: BROWSER_QA_WAIT, skip: (m) => isFillerAck(m.text) });
@@ -1300,7 +1305,10 @@ export const SCENARIOS: readonly Scenario[] = [
           const has = (action: string) => rows.some((r) => r.action === action);
           ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
           ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
-          ctx.gate(has("describe_image"), "browser-QA loop: a describe_image audit row landed (the { path } vision read)");
+          ctx.gate(
+            rows.some((r) => r.action === "describe_image" && (r.detail as { ok?: unknown } | undefined)?.ok === true),
+            "browser-QA loop: a describe_image audit row with ok:true landed (the { path } vision read of the screenshot succeeded)",
+          );
         } else {
           ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — asserting the judged reply only for the browser-QA leg");
         }
