@@ -1,5 +1,3 @@
-import { registerVercelConnect } from "@open-everywhere/adapters/agent/credentials/vercel-connect.js";
-import { registerConnectUserAuthFlow } from "@open-everywhere/adapters/agent/connect/register.js";
 import { registerOeOauth } from "@open-everywhere/adapters/agent/oe-oauth/register.js";
 import { oeOauthEnabled, loadOeOauthConfig } from "@open-everywhere/adapters/agent/oe-oauth/config.js";
 import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
@@ -15,16 +13,11 @@ import {
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
-import { loadBundles } from "../access/bundles.js";
-
-registerVercelConnect(loadBundles().flatMap((b) => b.connections ?? []));
 
 {
   const oeOauthCfg = oeOauthEnabled() ? loadOeOauthConfig() : undefined;
   if (oeOauthCfg) {
     registerOeOauth({ providers: oeOauthCfg });
-  } else {
-    registerConnectUserAuthFlow();
   }
 }
 

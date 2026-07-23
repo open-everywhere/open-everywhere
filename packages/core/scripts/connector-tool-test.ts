@@ -91,7 +91,7 @@ console.log("1. resolver matrix:");
 
   ok(BROKER_INTAKE_CAPS.db.hostWrite === true && BROKER_INTAKE_CAPS.env.hostWrite === false, "broker declarations: only db can host-write today");
 
-  ok(hostWriteBrokerAvailable(["env", "vercel-connect"]) === false, "hostWriteBrokerAvailable: env+vercel-connect only ⇒ no host-write broker");
+  ok(hostWriteBrokerAvailable(["env", "some-vault"]) === false, "hostWriteBrokerAvailable: env + a non-hostWrite broker ⇒ no host-write broker");
   ok(hostWriteBrokerAvailable(["env", "db"]) === true, "hostWriteBrokerAvailable: db registered ⇒ host-write available");
   ok(hostWriteBrokerAvailable([]) === false, "hostWriteBrokerAvailable: nothing registered ⇒ false (fail closed)");
 

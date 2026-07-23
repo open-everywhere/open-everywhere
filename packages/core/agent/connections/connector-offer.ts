@@ -25,7 +25,6 @@ export interface BrokerIntakeRoute {
 
 export const BROKER_INTAKE_CAPS: Readonly<Record<string, BrokerIntakeRoute>> = {
   db: { hostWrite: true },
-  "vercel-connect": { hostWrite: false },
   env: { hostWrite: false, operatorOnly: true },
 };
 

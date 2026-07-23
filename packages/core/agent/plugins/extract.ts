@@ -101,7 +101,7 @@ function connectionFile(slug: string, server: ParsedMcpServer): string {
 // agent/connections/notion.ts. \`auth\` is the resolver form (eve#299): Eve hands the
 // caller's session context to the resolver once per execution step, so the gate reads
 // the caller identity straight off \`ctx.session.auth\` — no ALS reach needed. Swap
-// getToken for Vercel Connect in a real deployment.
+// getToken for a real credential source in a real deployment.
 import { defineMcpClientConnection } from "eve/connections";
 import { once } from "eve/tools/approval";
 import type { SessionContext } from "eve/context";

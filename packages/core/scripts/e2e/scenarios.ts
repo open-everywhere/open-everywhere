@@ -1835,7 +1835,7 @@ export const SCENARIOS: readonly Scenario[] = [
     judged: true,
     run: async (ctx) => {
       if (process.env.E2E_CONNECTOR_OAUTH?.trim() !== "1")
-        ctx.skip("needs an OAuth-armed Notion connector (hosted MCP rejects API keys — task #93); set E2E_CONNECTOR_OAUTH=1 once Vercel Connect is provisioned");
+        ctx.skip("needs an OAuth-armed Notion connector (hosted MCP rejects API keys — task #93); set E2E_CONNECTOR_OAUTH=1 once the own-rolled OAuth flow (oe-oauth) is armed");
       const connector = ctx.connectorWrite!;
       const rToken = factToken("ctread");
       const { ts: readTs } = await connector.post(
@@ -1937,12 +1937,12 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const forge = ctx.syntheticDm!;
       const synthetic = ctx.synthetic!;
-      const dmNotionVia = (process.env.E2E_DM_NOTION_VIA ?? "connect").trim().toLowerCase();
+      const dmNotionVia = (process.env.E2E_DM_NOTION_VIA ?? "oe-oauth").trim().toLowerCase();
       if (dmNotionVia === "executor" && !process.env.E2E_EXECUTOR_URL?.trim())
         ctx.skip("E2E_DM_NOTION_VIA=executor but no E2E_EXECUTOR_URL — arm the Executor layer (OE_EXECUTOR_ENABLED + config) and set E2E_EXECUTOR_URL to run the DM-Notion journey through Executor DCR");
       if (dmNotionVia === "oe-oauth" && process.env.E2E_OE_OAUTH_ARMED?.trim() !== "1")
         ctx.skip("E2E_DM_NOTION_VIA=oe-oauth but E2E_OE_OAUTH_ARMED != 1 — arm the deployment (OE_OAUTH_ENABLED + provider config + one-time consent click, runbook on OPE-88), then set E2E_OE_OAUTH_ARMED=1 to assert it");
-      ctx.log(`S-DM-NOTION transport = ${dmNotionVia} (default connect; E2E_DM_NOTION_VIA=executor|oe-oauth for the alternate credential paths)`);
+      ctx.log(`S-DM-NOTION transport = ${dmNotionVia} (default oe-oauth; E2E_DM_NOTION_VIA=executor for the Executor DCR path)`);
       const { userId, teamId } = await ctx.slack!.identity();
       const ask = "can you list the pages in my Notion workspace?";
       const { ts: anchorTs } = await dm.post(ask);
@@ -2097,7 +2097,7 @@ export const SCENARIOS: readonly Scenario[] = [
         )
         .catch(() => undefined);
       if (offerCard)
-        ctx.gate(true, "offer: the connector card OFFERS notion 'Set API key' (api-key) — the db broker's hostWrite route is live (vercel-connect/env would omit it)");
+        ctx.gate(true, "offer: the connector card OFFERS notion 'Set API key' (api-key) — the db broker's hostWrite route is live (the env broker would omit it)");
       else
         ctx.log(
           "offer: no notion api-key card observed (the model may not have posted it, or notion isn't granted to this channel) — proceeding to the deterministic host-intake forge, which needs no card",

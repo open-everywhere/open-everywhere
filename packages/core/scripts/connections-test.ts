@@ -57,15 +57,15 @@ const principal = { principal: { type: "app" as const }, connection: { url: noti
 
   let failedClosed = false;
   try {
-    brokerFor("vercel-connect");
+    brokerFor("acme-vault");
   } catch (e) {
     failedClosed = e instanceof CredentialError;
   }
-  ok(failedClosed, "brokerFor('vercel-connect') fails closed when the adapter isn't registered (no fallback)");
+  ok(failedClosed, "brokerFor('acme-vault') fails closed when the adapter isn't registered (no fallback)");
 
   const sentinel = { async getSecret() { return "sentinel"; } };
-  registerBroker("vercel-connect", sentinel);
-  ok(brokerFor("vercel-connect") === sentinel, "a registered vendor broker resolves by its name");
+  registerBroker("acme-vault", sentinel);
+  ok(brokerFor("acme-vault") === sentinel, "a registered vendor broker resolves by its name");
   resetBrokers();
 
   let noDefault = false;

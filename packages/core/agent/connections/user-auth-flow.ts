@@ -41,7 +41,7 @@ export function requireUserAuthFlow(connector: string): UserAuthFlowProvider {
   if (!registeredFlow) {
     throw new Error(
       `connection "${connector}": no user-auth-flow provider is registered — the connector-OAuth adapter ` +
-        `(Vercel Connect / own-rolled OAuth) is not wired. Register it at boot (register-adapters.ts), or ` +
+        `(own-rolled OAuth) is not wired. Register it at boot (register-adapters.ts), or ` +
         `use a fixed-key credential.`,
     );
   }

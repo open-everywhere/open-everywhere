@@ -76,7 +76,7 @@ export async function renderNonSlackConnect(
       lines.push(
         o.dashboardUrl
           ? `• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`
-          : `• *${optionLabel(o)}* — an operator authorizes the org account on the Vercel dashboard (\`vercel connect open\`).`,
+          : `• *${optionLabel(o)}* — an operator authorizes the org account on the provider's admin dashboard.`,
       );
       continue;
     }
@@ -200,7 +200,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
         clickerId,
         dash
           ? `Connecting the *org* ${providerName} account is completed on the Vercel dashboard (needs a Vercel team member): ${dash} — authorize there, then ask me again.`
-          : `Connecting the *org* ${providerName} account is done by an operator on the Vercel dashboard (\`vercel connect open\`) — no self-serve link is configured for it here.`,
+          : `Connecting the *org* ${providerName} account is done by an operator on the provider's admin dashboard — no self-serve link is configured for it here.`,
       );
       await appendAudit({
         ...connectWhere(org, teamId, channelId),
