@@ -2,6 +2,8 @@ import { registerOeOauth } from "@open-everywhere/adapters/agent/oe-oauth/regist
 import { oeOauthEnabled, loadOeOauthConfig } from "@open-everywhere/adapters/agent/oe-oauth/config.js";
 import { registerExecutor } from "@open-everywhere/adapters/agent/executor/register.js";
 import { executorEnabled, loadExecutorConfig } from "@open-everywhere/adapters/agent/executor/config.js";
+import { registerAgentBrowser } from "@open-everywhere/adapters/agent/browser/register.js";
+import { agentBrowserEnabled, loadAgentBrowserConfig } from "@open-everywhere/adapters/agent/browser/config.js";
 import {
   registerDbCredentialBroker,
   CREDENTIAL_KEY_ENV,
@@ -29,6 +31,13 @@ if (process.env[CREDENTIAL_KEY_ENV]) {
   const executorCfg = executorEnabled() ? loadExecutorConfig() : undefined;
   if (executorCfg) {
     registerExecutor(executorCfg);
+  }
+}
+
+{
+  const browserCfg = agentBrowserEnabled() ? loadAgentBrowserConfig() : undefined;
+  if (browserCfg) {
+    registerAgentBrowser(browserCfg);
   }
 }
 

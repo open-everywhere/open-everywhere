@@ -49,6 +49,11 @@ export type { ActionKind, PendingActionRow } from "./approvals/types.js";
 
 export { platformName, onVercel } from "./access/platform.js";
 
+export { registerBrowserToolkit, registeredBrowserToolkit, resetBrowserToolkitForTest, resolveBrowserKit, BROWSER_TOOL_NAMES } from "./access/browser-toolkit.js";
+export type { BrowserToolEntry } from "./access/browser-toolkit.js";
+
+export { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTest } from "./access/extra-hosts.js";
+
 export { setBlobPutter } from "./blob/hosting.js";
 export type { BlobPutter } from "./blob/hosting.js";
 

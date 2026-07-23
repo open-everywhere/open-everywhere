@@ -119,4 +119,33 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   ok(!!degraded.enforceError && degraded.enforceError.includes("backend rejected"), "degraded result records the enforcement error");
 }
 
-console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure)\n`);
+{
+  const { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTest } = await import("../agent/access/extra-hosts.js");
+  const headers = async () => ({ authorization: "Bearer x" });
+
+  resetExtraEgressHostsForTest();
+  const denied = await compileNetworkPolicy(access([]), headers);
+  ok(denied === "deny-all", "empty extra-hosts registry: nothing reachable still compiles deny-all (byte-identical flag-off)");
+
+  registerExtraEgressHosts("agent-browser", ["qa.example.com", "Preview.Example.com "]);
+  const withExtras = await compileNetworkPolicy(access([]), headers);
+  ok(typeof withExtras === "object", "extra hosts lift an otherwise-empty policy off deny-all (an armed browser session can reach its targets)");
+  ok(rulesFor(withExtras, "qa.example.com").length === 0, "extra host compiles to a bare allow (empty rule array — the credential-less shape)");
+  const allowKeys = typeof withExtras === "object" ? Object.keys((withExtras as { allow: Record<string, unknown> }).allow) : [];
+  ok(allowKeys.includes("preview.example.com"), "extra hosts are normalized (trim + lowercase) before merging");
+
+  const credentialed = await compileNetworkPolicy(
+    access([{ host: "qa.example.com", viaConnection: "acme", methods: ["GET"] }], [conn("acme")]),
+    headers,
+  );
+  const credRules = rulesFor(credentialed, "qa.example.com");
+  ok(credRules.length === 1 && credRules[0].match?.method?.[0] === "GET", "a bundle-declared host keeps its narrowed/credentialed rules (extras never replace an existing entry)");
+
+  registerExtraEgressHosts("agent-browser", ["qa.example.com"]);
+  ok(extraEgressHosts().length === 1 && extraEgressHosts()[0] === "qa.example.com", "re-registration replaces the source's host set (boot idempotence)");
+  resetExtraEgressHostsForTest();
+  ok(extraEgressHosts().length === 0, "reset empties the registry");
+  ok((await compileNetworkPolicy(access([]), headers)) === "deny-all", "after reset the empty-access policy is deny-all again");
+}
+
+console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge)\n`);

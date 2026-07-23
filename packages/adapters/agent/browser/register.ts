@@ -1,0 +1,53 @@
+import { releaseAmbientExtensionScope } from "./scope-bind.js";
+import browserExtension from "@agent-browser/eve";
+import * as vendorTools from "@agent-browser/eve/tools";
+import { registerBrowserToolkit, registerExtraEgressHosts, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
+import { isLoopbackBrowseHost, type AgentBrowserConfig } from "./config.js";
+
+releaseAmbientExtensionScope();
+
+interface BoundBrowserConfig {
+  readonly allowedDomains?: readonly string[];
+  readonly autoInstall: boolean;
+  readonly contentBoundaries: boolean;
+  readonly inlineScreenshots: boolean;
+}
+
+export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
+  browserExtension({
+    allowedDomains: [...cfg.domains],
+    autoInstall: false,
+    contentBoundaries: true,
+    inlineScreenshots: false,
+  });
+
+  const bound = browserExtension.config as unknown as BoundBrowserConfig;
+  const domainsBound =
+    Array.isArray(bound.allowedDomains) &&
+    bound.allowedDomains.length === cfg.domains.length &&
+    cfg.domains.every((d, i) => bound.allowedDomains![i] === d);
+  if (bound.autoInstall !== false || !domainsBound) {
+    console.error(
+      "[open-everywhere:agent-browser] extension config binding FAILED (ambient scope not captured — eve seam moved?) — " +
+        "REFUSING to arm the browser toolkit: unbound tools would run with vendor defaults (auto-install on, no domain containment).",
+    );
+    return false;
+  }
+
+  const entries: Record<string, BrowserToolEntry> = {};
+  for (const [name, tool] of Object.entries(vendorTools)) {
+    const t = tool as Partial<BrowserToolEntry> | undefined;
+    if (t && typeof t.execute === "function" && typeof t.description === "string") {
+      entries[`browser_${name}`] = t as BrowserToolEntry;
+    }
+  }
+  registerBrowserToolkit(entries);
+
+  registerExtraEgressHosts("agent-browser", cfg.domains.filter((d) => !isLoopbackBrowseHost(d)));
+
+  console.log(
+    `[open-everywhere:agent-browser] armed: ${Object.keys(entries).length} browser tools, ` +
+      `domains [${cfg.domains.join(", ")}] (containment: agent-browser allowed-domains + egress firewall)`,
+  );
+  return true;
+}

@@ -11,6 +11,12 @@ delete process.env.OE_GENERIC_READ_VERBS;
 delete process.env.OE_SOURCE_SCOPED_TOOLS;
 
 import { replayStepNames } from "../agent/access/window-gated.js";
+import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
+
+registerBrowserToolkit({
+  browser_navigate: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
+  browser_screenshot: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
+});
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -48,6 +54,8 @@ const CASES: readonly ToolCase[] = [
   { slug: "forget", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_spend_limit", entryKey: "_single", ctx: slackCtx },
+  { slug: "browser_tools", entryKey: "browser_navigate", ctx: slackCtx },
+  { slug: "browser_tools", entryKey: "browser_screenshot", ctx: slackCtx },
 ];
 const SLUGS = [...new Set(CASES.map((c) => c.slug))];
 
@@ -102,7 +110,11 @@ for (const c of CASES) {
     process.env[k] = v;
   }
   try {
-    const entry = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
+    const resolved = (await resolvers.get(c.slug)!({}, c.ctx)) as Record<string, unknown> | null;
+    const entry =
+      resolved !== null && typeof resolved.execute !== "function" && c.entryKey in resolved
+        ? (resolved[c.entryKey] as Record<string, unknown>)
+        : resolved;
     ok(entry !== null && typeof entry.execute === "function", `${c.slug}:${c.entryKey} arms on its happy-path session`);
     const names = replayStepNames(c.slug, c.entryKey);
     eq((entry!.__executeStepFn as { stepId?: string } | undefined)?.stepId, names.execute, `${c.slug}:${c.entryKey} resolver returns the STAMPED entry (durable metadata will name the module-load step)`);

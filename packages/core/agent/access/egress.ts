@@ -1,6 +1,7 @@
 import type { SandboxNetworkPolicy } from "eve/sandbox";
 import type { EffectiveAccess, ReachableHost } from "./resolver.js";
 import type { Connection } from "./bundle.js";
+import { extraEgressHosts } from "./extra-hosts.js";
 
 export type ResolveHeaders = (connection: Connection) => Promise<Record<string, string>>;
 
@@ -46,6 +47,10 @@ export async function compileNetworkPolicy(
       headers = conn ? await resolveHeaders(conn) : null;
     }
     allow[host.host] = ruleForHost(host, headers);
+  }
+
+  for (const host of extraEgressHosts()) {
+    if (!(host in allow)) allow[host] = [];
   }
 
   if (access.repos.length > 0 && !allow["github.com"]) allow["github.com"] = [];

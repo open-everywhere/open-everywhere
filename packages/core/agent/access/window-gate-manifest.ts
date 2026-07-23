@@ -64,6 +64,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "memory_admin_read",
   "sandbox_tools",
   "delegation_tools",
+  "browser_tools",
   "web_search",
   "ask_question",
   "todo",
