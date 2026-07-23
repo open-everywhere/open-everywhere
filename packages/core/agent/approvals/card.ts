@@ -26,30 +26,35 @@ function contextBlock(text: string): SlackBlock {
 
 export function pendingCardBlocks(row: PendingActionRow, summaryLines: readonly string[]): RenderedCard {
   const requestedContext = `Requested by <@${row.requestedBy}> · expires ${row.expiresAt}`;
+  const elements: SlackBlock[] = [
+    {
+      type: "button",
+      style: "primary",
+      text: { type: "plain_text", text: "Approve", emoji: true },
+      action_id: `${APPROVAL_PREFIX}approve:${row.id}`,
+      value: row.org,
+    },
+  ];
+  if (row.kind === "pr.open") {
+    elements.push({
+      type: "button",
+      text: { type: "plain_text", text: "Approve for session", emoji: true },
+      action_id: `${APPROVAL_PREFIX}approve_session:${row.id}`,
+      value: row.org,
+    });
+  }
+  elements.push({
+    type: "button",
+    style: "danger",
+    text: { type: "plain_text", text: "Reject", emoji: true },
+    action_id: `${APPROVAL_PREFIX}reject:${row.id}`,
+    value: row.org,
+  });
   const blocks: SlackBlock[] = [
     headerBlock(row.kind),
     summarySection(summaryLines),
     contextBlock(requestedContext),
-    {
-      type: "actions",
-      block_id: `oe_approval_actions:${row.id}`,
-      elements: [
-        {
-          type: "button",
-          style: "primary",
-          text: { type: "plain_text", text: "Approve", emoji: true },
-          action_id: `${APPROVAL_PREFIX}approve:${row.id}`,
-          value: row.org,
-        },
-        {
-          type: "button",
-          style: "danger",
-          text: { type: "plain_text", text: "Reject", emoji: true },
-          action_id: `${APPROVAL_PREFIX}reject:${row.id}`,
-          value: row.org,
-        },
-      ],
-    },
+    { type: "actions", block_id: `oe_approval_actions:${row.id}`, elements },
   ];
   return { blocks, text: `Approval requested: ${row.kind}\n${summaryLines.join(" · ")}\n${requestedContext}` };
 }

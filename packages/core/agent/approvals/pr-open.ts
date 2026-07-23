@@ -18,6 +18,7 @@ export interface PrOpenArgs {
   readonly headSha: string;
   readonly requestedBy: string;
   readonly tainted?: boolean;
+  readonly sessionId?: string;
 }
 
 const CARD_BODY_MAX = 1200;
@@ -44,7 +45,7 @@ async function resolveWriteToken(repo: string): Promise<string> {
   return pat;
 }
 
-export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: PrOpenExecuteDeps = {}): Promise<string> {
+export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: PrOpenExecuteDeps = {}, opts: { sessionApproved?: boolean } = {}): Promise<string> {
   const token = await (deps.resolveToken ?? resolveWriteToken)(args.repo);
 
   const current = await (deps.getBranchSha ?? getBranchSha)({ repo: args.repo, branch: args.head, token });
@@ -81,6 +82,7 @@ export async function executePrOpen(args: PrOpenArgs, decidedBy: string, deps: P
       url: pr.url,
       requestedBy: args.requestedBy,
       tainted: Boolean(args.tainted),
+      ...(opts.sessionApproved ? { sessionApproved: true } : {}),
     },
   });
   emitTelemetry("oe.feature.used", { "oe.feature": "pr_opened", "oe.outcome": "ok" });

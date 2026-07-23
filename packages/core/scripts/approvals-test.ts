@@ -86,6 +86,7 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(OE_APPROVAL_PREFIX === "oe_approval:", "OE_APPROVAL_PREFIX is the documented literal");
   ok(JSON.stringify(parseApprovalAction("oe_approval:approve:p-1")) === JSON.stringify({ decision: "approve", id: "p-1" }), "parses an approve action_id");
   ok(JSON.stringify(parseApprovalAction("oe_approval:reject:p-1")) === JSON.stringify({ decision: "reject", id: "p-1" }), "parses a reject action_id");
+  ok(JSON.stringify(parseApprovalAction("oe_approval:approve_session:p-1")) === JSON.stringify({ decision: "approve_session", id: "p-1" }), "parses an approve_session action_id (OPE-53)");
   ok(parseApprovalAction("eve_input:something") === null, "rejects a foreign prefix (Eve's own HITL buttons)");
   ok(parseApprovalAction("oe_approval:maybe:p-1") === null, "rejects an unrecognised decision segment");
   ok(parseApprovalAction("oe_approval:approve:") === null, "rejects a missing id");
@@ -103,6 +104,15 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(ids.includes(`${OE_APPROVAL_PREFIX}reject:p-1`), "pendingCardBlocks' reject button carries the id-scoped action_id");
   ok(parseApprovalAction(ids[0]) !== null && parseApprovalAction(ids[1]) !== null, "both card action_ids round-trip through parseApprovalAction");
   ok(actionsBlock!.elements.every((e) => e.value === "default"), "both buttons carry the org as their value");
+  ok(ids.length === 2 && !ids.some((i) => i.includes("approve_session")), "a non-pr.open card has NO 'Approve for session' button (session skip is pr.open-only)");
+
+  const prCard = pendingCardBlocks(row({ id: "p-pr", kind: "pr.open" }), ["open PR"]);
+  const prActions = prCard.blocks.find((b) => b.type === "actions") as unknown as { elements: { action_id: string; text: { text: string } }[] } | undefined;
+  const prIds = prActions!.elements.map((e) => e.action_id);
+  ok(prIds.length === 3, "a pr.open card renders three buttons");
+  ok(prIds.includes(`${OE_APPROVAL_PREFIX}approve_session:p-pr`), "a pr.open card carries the id-scoped approve_session action_id");
+  ok(parseApprovalAction(prIds.find((i) => i.includes("approve_session"))!) !== null, "the pr.open approve_session action_id round-trips through parseApprovalAction");
+  ok(prActions!.elements.some((e) => e.text.text === "Approve for session"), "the middle button is labelled 'Approve for session'");
   ok(text.includes("<@U_REQUESTER>") || blocks.some((b) => JSON.stringify(b).includes("<@U_REQUESTER>")), "the requester is @-mentioned somewhere on the card");
   ok(JSON.stringify(blocks).includes(`expires ${r.expiresAt}`), "the card shows the expiry timestamp");
 
@@ -113,6 +123,39 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
   ok(JSON.stringify(rejected.blocks).includes("❌ Rejected by <@U_ORG_ADMIN>"), "decidedCardBlocks renders the rejected context line");
   const expired = decidedCardBlocks({ ...r, status: "expired", decidedBy: "system" }, ["line one"], "n/a");
   ok(JSON.stringify(expired.blocks).includes("⏰ Expired"), "decidedCardBlocks renders the expired context line");
+}
+
+{
+  delete process.env.GITHUB_TOKEN;
+  const store = getOperationalStore();
+  const now = new Date().toISOString();
+  const future = new Date(Date.now() + 3_600_000).toISOString();
+
+  await store.setSessionApproval({ org: "default", sessionId: "sess-A", kind: "pr.open", grantedBy: "U_ORG_ADMIN", createdAt: now, expiresAt: future });
+  ok((await store.getSessionApproval("default", "sess-A", "pr.open", now))?.grantedBy === "U_ORG_ADMIN", "setSessionApproval → getSessionApproval returns the live memo");
+  ok((await store.getSessionApproval("default", "sess-B", "pr.open", now)) === null, "a different session misses the memo (session-scoped)");
+  ok((await store.getSessionApproval("default", "sess-A", "create_skill", now)) === null, "a different kind misses the memo (kind-scoped)");
+  await store.setSessionApproval({ org: "default", sessionId: "sess-exp", kind: "pr.open", grantedBy: "U_ORG_ADMIN", createdAt: "2000-01-01T00:00:00Z", expiresAt: "2000-01-01T01:00:00Z" });
+  ok((await store.getSessionApproval("default", "sess-exp", "pr.open", now)) === null, "an expired memo reads as null");
+
+  const post = async () => ({ ok: true, ts: "1.1" });
+  const sid = "oe-dom:eng:oe-sup:g7";
+  await store.addPendingAction(row({
+    id: "p-prsess",
+    kind: "pr.open",
+    domain: null,
+    argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C1", repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", headSha: "a".repeat(40), requestedBy: "U_REQUESTER", sessionId: sid }),
+  }));
+  ok((await handleApprovalPayload(payloadFor("oe_approval:approve_session:p-prsess"), { post })) === true, "approve_session click is owned by the handler");
+  ok((await store.getSessionApproval("default", sid, "pr.open", new Date().toISOString()))?.grantedBy === "U_ORG_ADMIN", "approve_session on a pr.open card sets the session memo, attributed to the clicker");
+  ok((await readAudit({ org: "default", action: "approval.session_granted" })).some((e) => e.detail?.id === "p-prsess"), "the session grant is audited (approval.session_granted)");
+
+  const beforeExec = memberExecuted.length;
+  await store.addPendingAction(row({ id: "p-membersess", kind: "test.member", domain: null, argsJson: JSON.stringify({ sessionId: "sess-member" }) }));
+  await handleApprovalPayload(payloadFor("oe_approval:approve_session:p-membersess", { user: "U_ORG_ADMIN" }), { post });
+  ok((await store.getSessionApproval("default", "sess-member", "test.member", new Date().toISOString())) === null, "approve_session on a non-pr.open kind sets NO memo (kind-scoped enforcement)");
+  ok((await store.getSessionApproval("default", "sess-member", "pr.open", new Date().toISOString())) === null, "…and none under pr.open either");
+  ok(memberExecuted.length > beforeExec, "the non-pr.open kind still EXECUTED as an ordinary one-off approve");
 }
 
 {

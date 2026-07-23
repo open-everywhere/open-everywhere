@@ -122,6 +122,14 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
 }
 
 {
+  const { deps } = fakeDeps({ currentSha: null });
+  await executePrOpen(args(), "U_GRANTER", deps, { sessionApproved: true });
+  const audit = await readAudit({ org: "default", limit: 3 });
+  const entry = audit.find((a) => a.action === "pr.open" && (a.detail as Record<string, unknown>).sessionApproved === true);
+  ok(entry !== undefined && entry!.principalId === "U_GRANTER", "a session-approved publish stamps sessionApproved:true, attributed to the memo-granting member");
+}
+
+{
   const { deps, calls } = fakeDeps({ currentSha: "b".repeat(40), prUpdated: true });
   const outcome = await executePrOpen(args(), "U_APPROVER", deps);
   ok(calls.includes(`updateRef:heads/fix/issue-9@${SHA.slice(0, 6)}:force=false`), "existing branch fast-forwards to the frozen sha — force is NEVER set");

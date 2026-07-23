@@ -149,6 +149,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      used_at      text,
      PRIMARY KEY (org_id, id)
    )`,
+  `CREATE TABLE IF NOT EXISTS pr_session_approval (
+     org_id     text NOT NULL,
+     session_id text NOT NULL,
+     kind       text NOT NULL,
+     granted_by text NOT NULL,
+     created_at text NOT NULL,
+     expires_at text NOT NULL,
+     PRIMARY KEY (org_id, session_id, kind)
+   )`,
   `CREATE TABLE IF NOT EXISTS pending_actions (
      org_id       text NOT NULL,
      id           text NOT NULL,
@@ -245,6 +254,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE pr_session_approval ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
@@ -267,6 +277,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
   `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
+  `DROP POLICY IF EXISTS pr_session_approval_org_isolation ON pr_session_approval`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -317,6 +328,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY usage_events_select ON usage_events FOR SELECT USING (true)`,
   `CREATE POLICY usage_events_insert ON usage_events FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY pending_actions_org_isolation ON pending_actions
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY pr_session_approval_org_isolation ON pr_session_approval
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -1455,6 +1469,25 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [status, decidedBy, decidedAt, org, id],
       );
       return rows.length > 0;
+    },
+
+    async setSessionApproval(row) {
+      await client.query("DELETE FROM pr_session_approval WHERE org_id = $1 AND expires_at <= $2", [row.org, row.createdAt]);
+      await client.query(
+        `INSERT INTO pr_session_approval (org_id, session_id, kind, granted_by, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (org_id, session_id, kind) DO UPDATE SET granted_by = excluded.granted_by, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+        [row.org, row.sessionId, row.kind, row.grantedBy, row.createdAt, row.expiresAt],
+      );
+    },
+
+    async getSessionApproval(org, sessionId, kind, nowIso) {
+      const { rows } = await client.query(
+        "SELECT session_id, kind, granted_by, created_at, expires_at FROM pr_session_approval WHERE org_id = $1 AND session_id = $2 AND kind = $3 AND expires_at > $4",
+        [org, sessionId, kind, nowIso],
+      );
+      const r = (rows as { session_id: string; kind: string; granted_by: string; created_at: string; expires_at: string }[])[0];
+      return r ? { org, sessionId: r.session_id, kind: r.kind, grantedBy: r.granted_by, createdAt: r.created_at, expiresAt: r.expires_at } : null;
     },
 
     async getMeta(key) {

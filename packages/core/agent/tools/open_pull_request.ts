@@ -15,7 +15,13 @@ import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
-import type { PrOpenArgs } from "../approvals/pr-open.js";
+import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
+import { getOperationalStore } from "../operational/provider.js";
+import { bareTokenFromEveContext } from "../channels/window-key.js";
+import { currentWindowToken } from "../identity/binding.js";
+import { markCardPostedThisTurn } from "../approvals/card-signal.js";
+import { slackForm } from "../channels/slack-events.js";
+import { discordPostMessage } from "../channels/discord-post.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -29,6 +35,24 @@ async function resolvePrToken(repo: string): Promise<string> {
   }
   return pat;
 }
+
+function proposingSessionId(ctx: unknown): string | undefined {
+  const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
+  return bareTokenFromEveContext(raw) ?? currentWindowToken(ctx as never);
+}
+
+async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {
+  if (platform === "discord") {
+    await discordPostMessage(channelId, text).catch(() => {});
+    return;
+  }
+  const body = new URLSearchParams();
+  body.set("channel", channelId);
+  if (threadTs) body.set("thread_ts", threadTs);
+  body.set("text", text);
+  await slackForm("chat.postMessage", body.toString()).catch(() => {});
+}
+
 export default windowGated("open_pull_request", defineTool({
   description:
     "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first. This does NOT open the PR: your commits are parked on a hidden staging ref and an approval card posts with the exact repo, branches, commit and description — the branch and PR publish only when a human in the channel approves. Write a clear body: what changed, why, how you verified it, and link the request that prompted it. If a PR is already open for that branch, approval updates it with your new commits instead. The posted card IS the reply — do not add narration after this call.",
@@ -130,6 +154,7 @@ export default windowGated("open_pull_request", defineTool({
 
     const p = resolvePartition(ctx);
     const tainted = untrustedIngestedThisTurn();
+    const sessionId = proposingSessionId(ctx);
     const args: PrOpenArgs = {
       org: p.org,
       scopeKey: p.surfaceKey,
@@ -141,7 +166,25 @@ export default windowGated("open_pull_request", defineTool({
       headSha,
       requestedBy,
       tainted,
+      ...(sessionId ? { sessionId } : {}),
     };
+
+    const store = getOperationalStore();
+    const memo =
+      sessionId && !tainted ? await store.getSessionApproval(p.org, sessionId, "pr.open", new Date().toISOString()).catch(() => null) : null;
+    if (memo) {
+      const outcome = await executePrOpen(args, memo.grantedBy, {}, { sessionApproved: true });
+      await postSessionNote(binding.platform, channelId, binding.threadTs ?? null, `${outcome}\n-# session-approved by <@${memo.grantedBy}>`);
+      markCardPostedThisTurn();
+      return {
+        ok: true,
+        repo: input.repo,
+        head: input.head,
+        pending: false,
+        message: `session-approved (by ${memo.grantedBy}) — published without a card: ${outcome}`,
+      };
+    }
+
     const posted = await requestApproval(
       {
         org: p.org,

@@ -168,6 +168,18 @@ function getDb(): DatabaseSync {
       used_at      TEXT,                      -- ISO-8601 when consumed; NULL = still open (single-use)
       PRIMARY KEY (org_id, id)
     );
+    -- pr_session_approval (OPE-53): the "Approve for session" grant on a pr.open card. Keyed by the
+    -- bare session/window token (embeds the generation ⇒ the memo dies with the session). Scoped to
+    -- kind="pr.open" by the callers. NEVER holds PR content — only who granted the skip + when.
+    CREATE TABLE IF NOT EXISTS pr_session_approval (
+      org_id     TEXT NOT NULL,
+      session_id TEXT NOT NULL,               -- the bare session/window token of the granting turn
+      kind       TEXT NOT NULL,               -- always "pr.open" (the only session-skippable kind)
+      granted_by TEXT NOT NULL,               -- the member who clicked "Approve for session"
+      created_at TEXT NOT NULL,               -- ISO-8601
+      expires_at TEXT NOT NULL,               -- ISO-8601 GC bound (prune-on-write); death is via session_id
+      PRIMARY KEY (org_id, session_id, kind)
+    );
     CREATE TABLE IF NOT EXISTS pending_actions (
       org_id       TEXT NOT NULL,
       id           TEXT NOT NULL,
@@ -1155,6 +1167,24 @@ export const sqliteOperationalStore: OperationalStore = {
       .prepare("UPDATE pending_actions SET status = ?, decided_by = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status = 'pending'")
       .run(status, decidedBy, decidedAt, org, id);
     return info.changes > 0;
+  },
+
+  async setSessionApproval(row) {
+    const db = getDb();
+    db.prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND expires_at <= ?").run(row.org, row.createdAt);
+    db.prepare(
+      `INSERT INTO pr_session_approval (org_id, session_id, kind, granted_by, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(org_id, session_id, kind) DO UPDATE SET granted_by = excluded.granted_by, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+    ).run(row.org, row.sessionId, row.kind, row.grantedBy, row.createdAt, row.expiresAt);
+  },
+
+  async getSessionApproval(org, sessionId, kind, nowIso) {
+    const row = getDb()
+      .prepare("SELECT session_id, kind, granted_by, created_at, expires_at FROM pr_session_approval WHERE org_id = ? AND session_id = ? AND kind = ? AND expires_at > ?")
+      .get(org, sessionId, kind, nowIso) as { session_id: string; kind: string; granted_by: string; created_at: string; expires_at: string } | undefined;
+    if (!row) return null;
+    return { org, sessionId: row.session_id, kind: row.kind, grantedBy: row.granted_by, createdAt: row.created_at, expiresAt: row.expires_at };
   },
 
   async getMeta(key) {

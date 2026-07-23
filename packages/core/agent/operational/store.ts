@@ -207,6 +207,15 @@ export interface CredentialIntakeRow {
   readonly usedAt?: string;
 }
 
+export interface SessionApprovalRow {
+  readonly org: string;
+  readonly sessionId: string;
+  readonly kind: string;
+  readonly grantedBy: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -285,6 +294,9 @@ export interface OperationalStore {
   listExpiredPendingActions(org: string, nowIso: string): Promise<readonly PendingActionRow[]>;
   setPendingActionMessage(org: string, id: string, messageTs: string): Promise<void>;
   decidePendingAction(org: string, id: string, status: "approved" | "rejected" | "expired", decidedBy: string, decidedAt: string): Promise<boolean>;
+
+  setSessionApproval(row: SessionApprovalRow): Promise<void>;
+  getSessionApproval(org: string, sessionId: string, kind: string, nowIso: string): Promise<SessionApprovalRow | null>;
 
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;

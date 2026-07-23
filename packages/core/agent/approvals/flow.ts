@@ -29,15 +29,31 @@ export const OE_APPROVAL_PREFIX = "oe_approval:";
 
 type PostFn = (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
 
-export function parseApprovalAction(actionId: string): { decision: "approve" | "reject"; id: string } | null {
+export type ApprovalDecision = "approve" | "reject" | "approve_session";
+
+export function parseApprovalAction(actionId: string): { decision: ApprovalDecision; id: string } | null {
   if (!actionId.startsWith(OE_APPROVAL_PREFIX)) return null;
   const rest = actionId.slice(OE_APPROVAL_PREFIX.length);
   const sep = rest.indexOf(":");
   if (sep < 0) return null;
   const decision = rest.slice(0, sep);
   const id = rest.slice(sep + 1);
-  if ((decision !== "approve" && decision !== "reject") || id.length === 0) return null;
+  if ((decision !== "approve" && decision !== "reject" && decision !== "approve_session") || id.length === 0) return null;
   return { decision, id };
+}
+
+function sessionApprovalTtlHours(): number {
+  const raw = Number(process.env.OE_PR_SESSION_APPROVAL_TTL_HOURS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 24;
+}
+
+function sessionIdFromFrozenArgs(argsJson: string): string | undefined {
+  try {
+    const parsed = JSON.parse(argsJson) as { sessionId?: unknown };
+    return typeof parsed.sessionId === "string" && parsed.sessionId.length > 0 ? parsed.sessionId : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function approvalTtlHours(): number {
@@ -249,7 +265,7 @@ export type ApprovalClickResolution =
 export interface ResolveApprovalClickInput {
   readonly org: string;
   readonly id: string;
-  readonly decision: "approve" | "reject";
+  readonly decision: ApprovalDecision;
   readonly clickerId: string;
   readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
 }
@@ -286,7 +302,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "denied", row };
   }
 
-  const status = input.decision === "approve" ? "approved" : "rejected";
+  const status = input.decision === "reject" ? "rejected" : "approved";
   const cas = await store.decidePendingAction(input.org, row.id, status, input.clickerId, nowIso);
   if (!cas) return { outcome: "lost-race" };
 
@@ -297,6 +313,15 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.rejected", detail: { id: row.id, kind: row.kind } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "rejected" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
+  }
+
+  if (input.decision === "approve_session" && row.kind === "pr.open") {
+    const sessionId = sessionIdFromFrozenArgs(row.argsJson);
+    if (sessionId) {
+      const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
+      await store.setSessionApproval({ org: input.org, sessionId, kind: "pr.open", grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
+      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind } }).catch(() => undefined);
+    }
   }
 
   try {

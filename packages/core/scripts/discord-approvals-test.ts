@@ -127,6 +127,8 @@ function clickPayload(
     "parse round-trips the approve custom_id",
   );
   ok(parseDiscordApprovalCustomId(rejectId)?.decision === "reject", "parse round-trips the reject custom_id");
+  const sessionId = buildDiscordApprovalCustomId(r, "approve_session");
+  ok(parseDiscordApprovalCustomId(sessionId)?.decision === "approve_session", "parse round-trips the approve_session custom_id (OPE-53)");
   ok(parseDiscordApprovalCustomId("eve_input:something") === null, "rejects a foreign prefix (eve's HITL buttons)");
   ok(parseDiscordApprovalCustomId("oe-approval:id-only") === null, "rejects a missing verb/org");
   ok(parseDiscordApprovalCustomId("oe-approval:id:maybe:org") === null, "rejects an unrecognised decision segment");
@@ -152,9 +154,15 @@ function clickPayload(
   ok(card.content.length < 2000, "pending card content is under Discord's 2000-char message cap");
   ok(card.components.length === 1 && card.components[0].type === 1, "pending card has ONE action row");
   const buttons = (card.components[0] as unknown as { components: { type: number; style: number; label: string; custom_id: string }[] }).components;
-  ok(buttons.length === 2 && buttons.every((b) => b.type === 2), "the action row holds two buttons");
+  ok(buttons.length === 2 && buttons.every((b) => b.type === 2), "a non-pr.open action row holds two buttons (no 'Approve for session')");
   ok(buttons[0].label === "Approve" && buttons[0].style === 3, "Approve is a green (success) button");
   ok(buttons[1].label === "Reject" && buttons[1].style === 4, "Reject is a red (danger) button");
+  ok(!buttons.some((b) => b.label === "Approve for session"), "a non-pr.open card has NO 'Approve for session' button (session skip is pr.open-only)");
+
+  const prButtons = ((pendingDiscordCard(row({ kind: "pr.open" }), ["open PR"]).components[0]) as unknown as { components: { style: number; label: string; custom_id: string }[] }).components;
+  ok(prButtons.length === 3, "a pr.open card holds three buttons");
+  ok(prButtons[1].label === "Approve for session" && prButtons[1].style === 2, "the middle button is a grey (secondary) 'Approve for session'");
+  ok(parseDiscordApprovalCustomId(prButtons[1].custom_id)?.decision === "approve_session", "the middle button's custom_id round-trips as approve_session");
   ok(
     buttons.every((b) => parseDiscordApprovalCustomId(b.custom_id) !== null),
     "both button custom_ids round-trip through the parser",
