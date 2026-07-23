@@ -12,8 +12,14 @@ import {
   persistSlackAttachment,
   resolveSlackAttachmentDurable,
   registerSlackAttachment,
+  registerSlackAttachmentResolver,
   _resetSlackAttachmentsForTest,
 } from "../agent/channels/slack-attachments.js";
+import {
+  registerAttachmentResolver,
+  _resetAttachmentPlaneForTest,
+  AttachmentOversizeError,
+} from "../agent/channels/attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -81,22 +87,23 @@ ok(classifyTextUpload("text/markdown", "notes.md").ok === true, "classify: markd
   ok((await resolveSlackAttachmentDurable("F_NOPE")) === undefined, "durable: an unknown id resolves to undefined (→ fail closed)");
 }
 
+registerSlackAttachmentResolver();
 {
   _resetSlackAttachmentsForTest();
-  const out = await tool.execute({ slackFileId: "F_UNSEEN" }, ctx);
+  const out = await tool.execute({ attachmentId: "F_UNSEEN" }, ctx);
   ok(out.ok === false && /no upload with id "F_UNSEEN"/.test(out.message ?? ""), "unknown id → fail-closed (no fetch, no token), never a guessed read");
 }
 
 {
   _resetSlackAttachmentsForTest();
   registerSlackAttachment("F_PDF", { urlPrivate: "https://files.slack.com/files-pri/T/F_PDF/report.pdf", mimeType: "application/pdf", name: "report.pdf", teamId: "T_RF" });
-  const out = await tool.execute({ slackFileId: "F_PDF" }, ctx);
+  const out = await tool.execute({ attachmentId: "F_PDF" }, ctx);
   ok(out.ok === false && /PDF text extraction isn't supported/.test(out.message ?? ""), "PDF → fail-closed with the 'ask for a text export' message (no binary dump, no fetch)");
 }
 {
   _resetSlackAttachmentsForTest();
   registerSlackAttachment("F_BIN", { urlPrivate: "https://files.slack.com/files-pri/T/F_BIN/a.bin", mimeType: "application/octet-stream", name: "a.bin", teamId: "T_RF" });
-  const out = await tool.execute({ slackFileId: "F_BIN" }, ctx);
+  const out = await tool.execute({ attachmentId: "F_BIN" }, ctx);
   ok(out.ok === false && /unsupported type/.test(out.message ?? ""), "binary → fail-closed 'unsupported type' (no fetch)");
 }
 
@@ -127,5 +134,71 @@ ok(classifyTextUpload("text/markdown", "notes.md").ok === true, "classify: markd
   });
 }
 
+{
+  _resetAttachmentPlaneForTest();
+  const enc = new TextEncoder();
+  let bodyReadFor: string | undefined;
+
+  registerAttachmentResolver({
+    platform: "fake",
+    resolve: async () => undefined,
+    resolveGuarded: async (id) => {
+      if (id === "FAKE_OK") {
+        return {
+          ref: `fake:${id}`,
+          mimeType: "text/csv",
+          name: "data.csv",
+          async pull({ maxBytes }) {
+            const bytes = enc.encode("col_a,col_b\n1,2\n");
+            if (bytes.byteLength > maxBytes) throw new AttachmentOversizeError(bytes.byteLength, "actual", maxBytes);
+            bodyReadFor = id;
+            return bytes;
+          },
+        };
+      }
+      if (id === "FAKE_BIG") {
+        const declared = 10 * 1024 * 1024;
+        return {
+          ref: `fake:${id}`,
+          mimeType: "text/csv",
+          name: "huge.csv",
+          async pull({ maxBytes }) {
+            if (declared > maxBytes) throw new AttachmentOversizeError(declared, "declared", maxBytes);
+            bodyReadFor = id;
+            return enc.encode("never reached");
+          },
+        };
+      }
+      return undefined;
+    },
+  });
+
+  const okOut = await tool.execute({ attachmentId: "FAKE_OK" }, ctx);
+  ok(okOut.ok === true && (okOut.content ?? "").includes("col_a,col_b"), "plane: a fake resolveGuarded's known id within budget → read (attachmentId arm, no platform in the contract)");
+  ok(okOut.name === "data.csv" && okOut.mimeType === "text/csv", "plane: the resolver-supplied name/mime reach the tool output");
+  ok(bodyReadFor === "FAKE_OK", "plane: the happy read DID pull the body");
+
+  bodyReadFor = undefined;
+  const bigOut = await tool.execute({ attachmentId: "FAKE_BIG" }, ctx);
+  ok(bigOut.ok === false && /too large \(10485760 bytes; max/.test(bigOut.message ?? ""), "plane: an oversize declared Content-Length → fail-closed 'too large' (rejected at the pre-check)");
+  ok(bodyReadFor === undefined, "plane: the oversize upload was rejected BEFORE its body was read (pre-download guard, not post)");
+
+  const unknownOut = await tool.execute({ attachmentId: "FAKE_UNKNOWN" }, ctx);
+  ok(unknownOut.ok === false && /no upload with id "FAKE_UNKNOWN"/.test(unknownOut.message ?? ""), "plane: an unclaimed id → fail-closed 'no upload with id …' (no fetch)");
+
+  _resetAttachmentPlaneForTest();
+  registerAttachmentResolver({
+    platform: "discord",
+    resolve: async () => undefined,
+    resolveGuarded: async (id) =>
+      id === "DISCORD_1"
+        ? { ref: `discord:${id}`, mimeType: "text/plain", name: "notes.txt", pull: async () => enc.encode("from discord") }
+        : undefined,
+  });
+  const discordOut = await tool.execute({ attachmentId: "DISCORD_1" }, ctx);
+  ok(discordOut.ok === true && (discordOut.content ?? "").includes("from discord"), "plane: a DISCORD id resolves through the same { attachmentId } arm — no per-platform union variant");
+  _resetAttachmentPlaneForTest();
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint)`);
+console.log(`✓ read-file-upload: ${n} assertions passed (durable cross-process resolve · allowlist/pdf/binary fail-closed · untrusted wrap+defang+taint · size-guarded plane: pre-check reject/happy/unknown/2nd-platform)`);

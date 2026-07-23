@@ -3,7 +3,7 @@ import { deploymentOrg } from "../identity/binding.js";
 import type { SlackAttachmentRow } from "../operational/store.js";
 import { fetchSlackAttachment } from "../access/slack-attachment-fetch.js";
 import { resolvePartition } from "../memory/partition.js";
-import { registerAttachmentResolver } from "./attachments.js";
+import { registerAttachmentResolver, AttachmentOversizeError } from "./attachments.js";
 
 export interface SlackAttachmentRecord {
   readonly urlPrivate: string;
@@ -69,6 +69,24 @@ export function registerSlackAttachmentResolver(): void {
       const res = await fetchSlackAttachment(ctx, { urlPrivate: rec.urlPrivate, id: attachmentId });
       if (!res.ok) throw new Error(`fetching Slack attachment "${attachmentId}" failed (HTTP ${res.status})`);
       return { bytes: new Uint8Array(await res.arrayBuffer()), ref: `slack-file:${attachmentId}`, mimeType: rec.mimeType };
+    },
+    async resolveGuarded(attachmentId, ctx) {
+      const rec = await resolveSlackAttachmentDurable(attachmentId, resolvePartition(ctx).org);
+      if (!rec) return undefined;
+      return {
+        ref: `slack-file:${attachmentId}`,
+        mimeType: rec.mimeType,
+        name: rec.name,
+        async pull({ maxBytes }) {
+          const res = await fetchSlackAttachment(ctx, { urlPrivate: rec.urlPrivate, id: attachmentId });
+          if (!res.ok) throw new Error(`fetching the upload failed (HTTP ${res.status})`);
+          const declared = Number.parseInt(res.headers.get("content-length") ?? "", 10);
+          if (Number.isFinite(declared) && declared > maxBytes) throw new AttachmentOversizeError(declared, "declared", maxBytes);
+          const bytes = new Uint8Array(await res.arrayBuffer());
+          if (bytes.byteLength > maxBytes) throw new AttachmentOversizeError(bytes.byteLength, "actual", maxBytes);
+          return bytes;
+        },
+      };
     },
   });
 }
