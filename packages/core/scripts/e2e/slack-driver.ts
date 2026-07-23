@@ -206,11 +206,17 @@ export class SlackDriver {
     return m.userId === this.cfg.botUserId || (m.botId !== undefined && m.userId === undefined);
   }
 
-  async awaitThreadReply(rootTs: string, opts: { afterTs?: string; timeoutMs: number }): Promise<SlackMessage> {
+  async awaitThreadReply(
+    rootTs: string,
+    opts: { afterTs?: string; timeoutMs: number; skip?: (m: SlackMessage) => boolean },
+  ): Promise<SlackMessage> {
     const floor = opts.afterTs ?? rootTs;
     return pollUntil(
-      async () => (await this.replies(rootTs)).find((m) => this.isBotReply(m) && tsAfter(m.ts, floor)),
-      { timeoutMs: opts.timeoutMs, what: `a bot reply in thread ${rootTs}` },
+      async () =>
+        (await this.replies(rootTs)).find(
+          (m) => this.isBotReply(m) && tsAfter(m.ts, floor) && !(opts.skip?.(m) ?? false),
+        ),
+      { timeoutMs: opts.timeoutMs, what: `a substantive bot reply in thread ${rootTs}` },
     );
   }
 
