@@ -8,6 +8,7 @@ import { sandboxPresetFor } from "@open-everywhere/core/agent/roles/role.js";
 import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { agentBrowserSandboxHooks } from "@open-everywhere/adapters/agent/browser/sandbox.js";
+import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
 import "../lib/register-config.js";
 
 function intFromEnv(name: string, fallback: number): number {
@@ -25,12 +26,13 @@ const ON_VERCEL = onVercel();
 const AGENT_BROWSER_BAKE = agentBrowserSandboxHooks();
 
 function selfHostBackend() {
-  const kind = (process.env.OE_SANDBOX_BACKEND ?? "justbash").trim().toLowerCase();
-  if (kind === "docker") {
-    const image = process.env.OE_SANDBOX_IMAGE?.trim();
-    return docker(image ? { image } : {});
-  }
-  return justbash();
+  const kind = resolveSelfHostBackendKind();
+  const bootLog = selfHostBackendBootLog(kind);
+  if (bootLog.warn !== undefined) console.warn(bootLog.warn);
+  console.info(bootLog.info);
+  if (kind === "justbash") return justbash();
+  const image = process.env.OE_SANDBOX_IMAGE?.trim();
+  return docker(image ? { image } : {});
 }
 
 export default defineSandbox({
