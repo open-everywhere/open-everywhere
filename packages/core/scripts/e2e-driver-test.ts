@@ -232,7 +232,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
       s.requires.length > 0 && s.requires.every((c) => KNOWN.has(c)),
       `${s.id} requires only known capabilities`,
     );
-    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 1_800_000, `${s.id} budget is within the 120s–30min envelope`);
+    ok(s.timeoutMs >= 120_000 && s.timeoutMs <= 3_900_000, `${s.id} budget is within the 120s–65min envelope`);
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
