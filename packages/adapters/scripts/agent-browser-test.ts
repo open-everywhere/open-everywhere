@@ -1,3 +1,5 @@
+import browserExtension from "@agent-browser/eve";
+
 import assert from "node:assert/strict";
 import {
   agentBrowserEnabled,
@@ -9,7 +11,6 @@ import {
 import { registerAgentBrowser } from "../agent/browser/register.js";
 import { agentBrowserSandboxHooks, type BakeableSandbox } from "../agent/browser/sandbox.js";
 import { installAgentBrowser } from "@agent-browser/eve/sandbox";
-import browserExtension from "@agent-browser/eve";
 import {
   registeredBrowserToolkit,
   resetBrowserToolkitForTest,
@@ -80,13 +81,6 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
 }
 
 {
-  ok(
-    (globalThis as Record<symbol, unknown>)[Symbol.for("eve.ext-config-scope")] === undefined,
-    "the ambient extension-config scope is released after import (no later defineExtension can capture it)",
-  );
-}
-
-{
   resetBrowserToolkitForTest();
   resetExtraEgressHostsForTest();
   setEnv({ OE_AGENT_BROWSER: "1", OE_AGENT_BROWSER_DOMAINS: "localhost,qa.example.com,preview.vercel.app" });
@@ -120,6 +114,34 @@ function setEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>): voi
   const hosts = extraEgressHosts();
   ok(hosts.includes("qa.example.com") && hosts.includes("preview.vercel.app"), "non-loopback domains ride the extra-egress seam (outer containment wall armed)");
   ok(!hosts.includes("localhost"), "loopback stays OFF the egress allowlist (it never leaves the sandbox VM)");
+}
+
+{
+  const kit = registeredBrowserToolkit();
+  ok(kit !== undefined, "kit still registered for the real-path run");
+  const nav = kit!["browser_navigate"];
+  const commands: string[] = [];
+  const fakeSandbox = {
+    id: "qa-vm",
+    run: async ({ command }: { command: string }) => {
+      commands.push(command);
+      return { exitCode: 0, stdout: JSON.stringify({ success: true, data: { url: "https://qa.example.com/" } }), stderr: "" };
+    },
+  };
+  const taskCtx = {
+    session: { auth: { current: { attributes: { oe_grain: "task" } } } },
+    getSandbox: async () => fakeSandbox,
+  };
+  const out = (await (nav.execute as (i: unknown, c: unknown) => Promise<unknown>)({ action: "goto", url: "https://qa.example.com/" }, taskCtx)) as {
+    url?: string;
+  } | null;
+  ok(commands.length === 1, `navigate issues exactly ONE CLI command — no auto-install probe (got ${commands.length}: ${commands.join(" | ")})`);
+  const cmd = commands[0] ?? "";
+  ok(cmd.includes("--allowed-domains localhost,qa.example.com,preview.vercel.app"), `the ISSUED command carries the operator allowlist (inner wall armed): ${cmd}`);
+  ok(cmd.includes("--content-boundaries"), "the issued command wraps page output in boundary markers (untrusted input)");
+  ok(cmd.includes("--session"), "the issued command pins the per-sandbox browser session");
+  ok(cmd.includes("--json"), "the issued command requests the structured envelope");
+  ok(out !== null && out.url === "https://qa.example.com/", "the parsed --json envelope data flows back as the tool result");
 }
 
 {

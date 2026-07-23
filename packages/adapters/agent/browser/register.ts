@@ -1,10 +1,7 @@
-import { releaseAmbientExtensionScope } from "./scope-bind.js";
 import browserExtension from "@agent-browser/eve";
 import * as vendorTools from "@agent-browser/eve/tools";
 import { registerBrowserToolkit, registerExtraEgressHosts, type BrowserToolEntry } from "@open-everywhere/core/agent/adapter-api.js";
 import { isLoopbackBrowseHost, type AgentBrowserConfig } from "./config.js";
-
-releaseAmbientExtensionScope();
 
 interface BoundBrowserConfig {
   readonly allowedDomains?: readonly string[];
@@ -28,7 +25,7 @@ export function registerAgentBrowser(cfg: AgentBrowserConfig): boolean {
     cfg.domains.every((d, i) => bound.allowedDomains![i] === d);
   if (bound.autoInstall !== false || !domainsBound) {
     console.error(
-      "[open-everywhere:agent-browser] extension config binding FAILED (ambient scope not captured — eve seam moved?) — " +
+      "[open-everywhere:agent-browser] extension config binding FAILED (namespace patch missing? see patches/@agent-browser+eve+*.patch) — " +
         "REFUSING to arm the browser toolkit: unbound tools would run with vendor defaults (auto-install on, no domain containment).",
     );
     return false;

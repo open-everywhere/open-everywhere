@@ -1,0 +1,11 @@
+diff --git a/node_modules/@agent-browser/eve/dist/extension/extension.mjs b/node_modules/@agent-browser/eve/dist/extension/extension.mjs
+index 8ecb25c..9c29e81 100644
+--- a/node_modules/@agent-browser/eve/dist/extension/extension.mjs
++++ b/node_modules/@agent-browser/eve/dist/extension/extension.mjs
+@@ -18,5 +18,5 @@ var extension_default = defineExtension({ config: z.object({
+ 	proxy: z.string().optional(),
+ 	session: z.string().optional(),
+ 	sessionPrefix: z.string().default("eve")
+-}) });
++}) }, "oe-agent-browser");
+ export { extension_default as default };
