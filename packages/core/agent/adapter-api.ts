@@ -54,6 +54,9 @@ export type { BrowserToolEntry } from "./access/browser-toolkit.js";
 
 export { registerExtraEgressHosts, extraEgressHosts, resetExtraEgressHostsForTest } from "./access/extra-hosts.js";
 
+export { registerAttachmentResolver, resolveAttachment } from "./channels/attachments.js";
+export type { AttachmentResolver, ResolvedAttachment } from "./channels/attachments.js";
+
 export { setBlobPutter } from "./blob/hosting.js";
 export type { BlobPutter } from "./blob/hosting.js";
 

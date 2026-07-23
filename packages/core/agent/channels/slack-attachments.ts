@@ -1,12 +1,16 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg } from "../identity/binding.js";
 import type { SlackAttachmentRow } from "../operational/store.js";
+import { fetchSlackAttachment } from "../access/slack-attachment-fetch.js";
+import { resolvePartition } from "../memory/partition.js";
+import { registerAttachmentResolver } from "./attachments.js";
 
 export interface SlackAttachmentRecord {
   readonly urlPrivate: string;
   readonly mimeType?: string;
   readonly name?: string;
   readonly teamId?: string;
+  readonly platform?: "slack";
 }
 
 export const SLACK_ATTACHMENT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -17,7 +21,7 @@ const registry = new Map<string, SlackAttachmentRecord>();
 export function registerSlackAttachment(fileId: string | undefined, rec: SlackAttachmentRecord): void {
   if (!fileId || !rec.urlPrivate) return;
   if (registry.has(fileId)) registry.delete(fileId);
-  registry.set(fileId, rec);
+  registry.set(fileId, { ...rec, platform: "slack" });
   while (registry.size > MAX_ENTRIES) {
     const oldest = registry.keys().next().value;
     if (oldest === undefined) break;
@@ -49,12 +53,27 @@ export async function resolveSlackAttachmentDurable(fileId: string, org?: string
   if (local) return local;
   try {
     const row = await getOperationalStore().getSlackAttachment(org ?? deploymentOrg(), fileId);
-    return row ?? undefined;
+    return row ? { ...row, platform: "slack" } : undefined;
   } catch (err) {
     console.warn(`[open-everywhere:slack-attachments] durable attachment lookup for "${fileId}" failed: ${String(err)}`);
     return undefined;
   }
 }
+
+export function registerSlackAttachmentResolver(): void {
+  registerAttachmentResolver({
+    platform: "slack",
+    async resolve(attachmentId, ctx) {
+      const rec = await resolveSlackAttachmentDurable(attachmentId, resolvePartition(ctx).org);
+      if (!rec) return undefined;
+      const res = await fetchSlackAttachment(ctx, { urlPrivate: rec.urlPrivate, id: attachmentId });
+      if (!res.ok) throw new Error(`fetching Slack attachment "${attachmentId}" failed (HTTP ${res.status})`);
+      return { bytes: new Uint8Array(await res.arrayBuffer()), ref: `slack-file:${attachmentId}`, mimeType: rec.mimeType };
+    },
+  });
+}
+
+registerSlackAttachmentResolver();
 
 export function _resetSlackAttachmentsForTest(): void {
   registry.clear();

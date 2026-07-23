@@ -1281,7 +1281,7 @@ export const SCENARIOS: readonly Scenario[] = [
               "the HTML `<h1>OPE43-OK</h1>` — run it in the background, e.g. " +
               "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' &`; " +
               "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to capture the page; " +
-              "(4) use describe_image with { sandboxPath: <the screenshot file path> } to read the screenshot. " +
+              "(4) use describe_image with { path: <the screenshot file path> } to read the screenshot. " +
               "Then reply with the exact heading text you saw on the page.",
           ),
         );
@@ -1291,7 +1291,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const has = (action: string) => rows.some((r) => r.action === action);
           ctx.gate(has("browser.navigate"), "browser-QA loop: a browser.navigate audit row landed (agent-browser op audited)");
           ctx.gate(has("browser.screenshot"), "browser-QA loop: a browser.screenshot audit row landed");
-          ctx.gate(has("describe_image"), "browser-QA loop: a describe_image audit row landed (the { sandboxPath } vision read)");
+          ctx.gate(has("describe_image"), "browser-QA loop: a describe_image audit row landed (the { path } vision read)");
         } else {
           ctx.log("audit read not wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — asserting the judged reply only for the browser-QA leg");
         }
@@ -1301,7 +1301,7 @@ export const SCENARIOS: readonly Scenario[] = [
             mustNotMatch: [/could ?n.?t (?:navigate|screenshot|read|open)/i, /no vision model/i, /not armed|capability is not|not available/i],
           }),
           qaReply.text,
-          "browser-QA loop: navigate → screenshot → describe_image({ sandboxPath }) reports the page heading (OPE43)",
+          "browser-QA loop: navigate → screenshot → describe_image({ path }) reports the page heading (OPE43)",
         );
       }
     },
