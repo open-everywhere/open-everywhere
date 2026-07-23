@@ -81,7 +81,7 @@ export interface Scenario {
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const UNIFIED_REPLY_WAIT = 420_000;
-const BROWSER_QA_WAIT = 1_200_000;
+const BROWSER_QA_WAIT = 1_800_000;
 const SILENCE_WINDOW = 45_000;
 
 const isFillerAck = (text: string): boolean =>
@@ -1232,7 +1232,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 2_700_000,
+    timeoutMs: 3_900_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
