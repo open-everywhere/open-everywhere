@@ -6,7 +6,7 @@ export type ResolveHeaders = (connection: Connection) => Promise<Record<string, 
 
 export type EgressRule = {
   match?: { method?: string[]; path?: { startsWith?: string } };
-  transform?: { headers?: Record<string, string> }[];
+  transform: { headers?: Record<string, string> }[];
 };
 
 function ruleForHost(
@@ -16,21 +16,19 @@ function ruleForHost(
   if (host.viaConnection === null) return [];
 
   const method = host.methods && host.methods.length > 0 ? [...host.methods] : undefined;
-  const transform = headers && Object.keys(headers).length > 0 ? [{ headers }] : undefined;
+  const transform = headers && Object.keys(headers).length > 0 ? [{ headers }] : [];
 
   const prefixes = host.pathPrefixes ?? [];
   if (prefixes.length > 0) {
     return prefixes.map((prefix) => {
-      const rule: EgressRule = { match: { path: { startsWith: prefix } } };
+      const rule: EgressRule = { match: { path: { startsWith: prefix } }, transform };
       if (method) rule.match!.method = method;
-      if (transform) rule.transform = transform;
       return rule;
     });
   }
 
-  const rule: EgressRule = {};
+  const rule: EgressRule = { transform };
   if (method) rule.match = { method };
-  if (transform) rule.transform = transform;
   return [rule];
 }
 
