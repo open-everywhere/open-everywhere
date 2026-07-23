@@ -20,7 +20,7 @@ import { statusVerbsFor } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, supervisorTextDelivery, isSupervisorProseLeak, type SupervisorReplyTarget } from "./slack-events.js";
+import { finalMessageActionForTurn, turnEffectsFor, botDisplayName, isBareStop, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, supervisorTextDelivery, isSupervisorProseLeak, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
 import { consumeReactedThisTurn } from "./react-signal.js";
@@ -59,9 +59,34 @@ function statusVerb(state: { channelId?: string | null; teamId?: string | null }
 
 async function refreshTypingStatus(channel: SlackEventContext): Promise<void> {
   try {
-    await channel.thread.startTyping(statusVerb(channel.state));
+    await setWakeTyping(channel, statusVerb(channel.state));
   } catch {
   }
+}
+
+async function setWakeTyping(channel: SlackEventContext, status?: string): Promise<void> {
+  const override = dmWakeThreadOverride(channel.state);
+  const channelId = channel.state.channelId ?? undefined;
+  if (override && channelId) {
+    try {
+      const body = new URLSearchParams({ channel_id: channelId, thread_ts: override, status: status ?? "" });
+      await slackForm("assistant.threads.setStatus", body.toString());
+    } catch {
+    }
+    return;
+  }
+  await channel.thread.startTyping(status);
+}
+
+async function postWakeText(channel: SlackEventContext, text: string): Promise<void> {
+  const override = dmWakeThreadOverride(channel.state);
+  const channelId = channel.state.channelId ?? undefined;
+  if (override && channelId) {
+    const body = new URLSearchParams({ channel: channelId, text, thread_ts: override });
+    await slackForm("chat.postMessage", body.toString());
+    return;
+  }
+  await channel.thread.post(text);
 }
 
 function isUninvited(state: unknown): boolean {
@@ -93,9 +118,9 @@ async function recordQuietFailure(
   }
 }
 
-async function setStatusReaction(slack: SlackHandle, state: ReactionState | "none"): Promise<void> {
+async function setStatusReaction(slack: SlackHandle, state: ReactionState | "none", threadTsOverride?: string): Promise<void> {
   const channel = slack.channelId;
-  const timestamp = slack.threadTs;
+  const timestamp = threadTsOverride ?? slack.threadTs;
   if (!channel || !timestamp) return;
   for (const [s, name] of Object.entries(STATUS_REACTION)) {
     try {
@@ -330,10 +355,17 @@ const slackMentionChannel = slackChannel({
           ? ({ channelId, threadTs } satisfies SupervisorReplyTarget)
           : undefined;
       }
+      {
+        const attrs = ctx?.session?.auth?.current?.attributes as Record<string, unknown> | undefined;
+        if (attrs?.channel_type === "im") {
+          (channel.state as unknown as Record<string, unknown>).oeWakeThreadTs =
+            typeof attrs.thread_ts === "string" ? attrs.thread_ts : undefined;
+        }
+      }
       channel.state.pendingToolCallMessage = null;
       channel.state.lastReasoningTypingAtMs = null;
       channel.state.lastReasoningTypingStatus = null;
-      await channel.thread.startTyping("Working...");
+      await setWakeTyping(channel, "Working...");
     },
     "reasoning.appended": async (_data, channel) => {
       const now = Date.now();
@@ -406,7 +438,7 @@ const slackMentionChannel = slackChannel({
           console.warn(`[open-everywhere:slack] warm silent-streak bookkeeping failed: ${String(err)}`);
         }
         try {
-          await channel.thread.startTyping();
+          await setWakeTyping(channel);
         } catch {
         }
         return;
@@ -487,8 +519,9 @@ const slackMentionChannel = slackChannel({
             channel: { kind: "slack" },
             session: { auth: { current: { attributes: { team_id: channel.state.teamId ?? "", channel_id: channelId }, principalId: "", principalType: "slack-user" } } },
           });
+          const replyThreadTs = replyThreadTsForState(channel.state);
           await postTerminalProse(
-            { platform: "slack", channelId, ...(channel.state.threadTs ? { threadTs: channel.state.threadTs } : {}) },
+            { platform: "slack", channelId, ...(replyThreadTs ? { threadTs: replyThreadTs } : {}) },
             action.text,
             { org: p.org, platform: p.platform, workspace: p.workspace, surface: p.surface, ...(sessionId ? { sessionId } : {}), route: "terminal" },
           );
@@ -501,7 +534,7 @@ const slackMentionChannel = slackChannel({
         );
       }
       (channel.state as unknown as Record<string, unknown>).oeUninvited = false;
-      await setStatusReaction(channel.slack, "none");
+      await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
       try {
         const { channelId, teamId, threadTs } = channel.state;
         if (channelId && threadTs) {
@@ -516,22 +549,23 @@ const slackMentionChannel = slackChannel({
     },
     "session.completed": async (_data, channel) => {
       if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn !== true) {
-        await setStatusReaction(channel.slack, "none");
+        await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
       }
       await syncPinnedStatus(channel);
     },
     "session.waiting": async (_data, channel) => {
       if ((channel.state as unknown as Record<string, unknown>).oeSilentTurn === true) return;
-      await setStatusReaction(channel.slack, "none");
+      await setStatusReaction(channel.slack, "none", dmWakeThreadOverride(channel.state));
     },
     "turn.failed": async (data, channel) => {
       if (isUninvited(channel.state)) {
         await recordQuietFailure(channel.state, "turn.failed", data.message);
         return;
       }
-      await setStatusReaction(channel.slack, "blocked");
+      await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
       try {
-        await channel.thread.post(
+        await postWakeText(
+          channel,
           `:octagonal_sign: I hit an error while handling your request (${data.message}). Please try again or rephrase.`,
         );
       } catch {
@@ -542,9 +576,9 @@ const slackMentionChannel = slackChannel({
         await recordQuietFailure(channel.state, "session.failed", data.message);
         return;
       }
-      await setStatusReaction(channel.slack, "blocked");
+      await setStatusReaction(channel.slack, "blocked", dmWakeThreadOverride(channel.state));
       try {
-        await channel.thread.post(`:octagonal_sign: Task failed: ${data.message}`);
+        await postWakeText(channel, `:octagonal_sign: Task failed: ${data.message}`);
       } catch {
       }
       await syncPinnedStatus(channel);

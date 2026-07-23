@@ -1131,6 +1131,19 @@ export function isSupervisorReplyTurn(state: unknown): boolean {
   return (state as Record<string, unknown> | undefined)?.oeSupervisor === true;
 }
 
+export function dmWakeThreadOverride(state: unknown): string | undefined {
+  const s = state as Record<string, unknown> | undefined;
+  const wake = typeof s?.oeWakeThreadTs === "string" && s.oeWakeThreadTs.length > 0 ? s.oeWakeThreadTs : undefined;
+  const stateThread = typeof s?.threadTs === "string" && s.threadTs.length > 0 ? s.threadTs : undefined;
+  return wake && wake !== stateThread ? wake : undefined;
+}
+
+export function replyThreadTsForState(state: unknown): string | undefined {
+  const s = state as Record<string, unknown> | undefined;
+  const stateThread = typeof s?.threadTs === "string" && s.threadTs.length > 0 ? s.threadTs : undefined;
+  return dmWakeThreadOverride(state) ?? stateThread;
+}
+
 export interface SupervisorTextDelivery {
   readonly postText: boolean;
   readonly droppedProse: boolean;
