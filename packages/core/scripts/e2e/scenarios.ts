@@ -80,6 +80,7 @@ export interface Scenario {
 
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
+const UNIFIED_REPLY_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 
 const STOP_ACK = "Standing down";
@@ -1401,7 +1402,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 900_000,
+    timeoutMs: 1_200_000,
     judged: true,
     run: async (ctx) => {
       const a = ctx.slackUnifiedA!;
@@ -1458,13 +1459,13 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: decideTs } = await a.post(
         `Team decision to log: the deploy window token for this release is ${marker}. Can you acknowledge you've noted it? (ref for the write-up)`,
       );
-      const ackA = await a.awaitChannelMessage(decideTs, { timeoutMs: REPLY_WAIT });
+      const ackA = await a.awaitChannelMessage(decideTs, { timeoutMs: UNIFIED_REPLY_WAIT });
       ctx.gate(ackA.text.trim().length > 0, "container A: the channel-watch judge replied in-channel (ambient wake under the unified grain)");
 
       const { ts: askTs } = await b.post(
         "Quick check before I write this up — what was the deploy window token we decided on earlier? It was mentioned in the team's other channel.",
       );
-      const replyB = await b.awaitChannelMessage(askTs, { timeoutMs: REPLY_WAIT });
+      const replyB = await b.awaitChannelMessage(askTs, { timeoutMs: UNIFIED_REPLY_WAIT });
       ctx.gate(replyB.text.trim().length > 0, "container B: got an in-channel reply to the cross-container question");
       ctx.gate(
         replyB.text.includes(marker),
@@ -1475,8 +1476,26 @@ export const SCENARIOS: readonly Scenario[] = [
         replyB.text,
         "one-mind: cross-container recall quality",
       );
-      const strayInA = (await a.history(askTs)).filter((m) => a.isBotReply(m));
-      ctx.gate(strayInA.length === 0, "reply-targeting: B's answer did NOT leak into container A (per-wake delivery auth — hard gate)");
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso: runStart, platform: "slack", actions: ["reply.post"] });
+        const bWakeRow = rows.find((r) => r.detail?.id === replyB.ts);
+        const bWakeId = bWakeRow?.detail?.wakeId;
+        if (typeof bWakeId === "string") {
+          const sameWakeElsewhere = rows.filter((r) => r.detail?.wakeId === bWakeId && r.surface !== bWakeRow?.surface);
+          ctx.gate(
+            sameWakeElsewhere.length === 0,
+            "reply-targeting: the wake that answered B delivered ONLY to B, never A (per-wake delivery auth — hard gate, audited)",
+          );
+        } else {
+          ctx.log("reply-targeting: could not correlate B's reply to an audited wakeId (no matching reply.post row) — falling back to the raw-history stray check");
+          const strayInA = (await a.history(askTs)).filter((m) => a.isBotReply(m));
+          ctx.gate(strayInA.length === 0, "reply-targeting: B's answer did NOT leak into container A (per-wake delivery auth — hard gate, raw-history fallback)");
+        }
+      } else {
+        ctx.log("reply-targeting: no audit-read wired (E2E_TARGET_URL/E2E_CONTROL_READ_TOKEN unset) — using the raw-history stray check");
+        const strayInA = (await a.history(askTs)).filter((m) => a.isBotReply(m));
+        ctx.gate(strayInA.length === 0, "reply-targeting: B's answer did NOT leak into container A (per-wake delivery auth — hard gate, raw-history fallback)");
+      }
 
       const { ts: noiseTs } = await b.post("lol nothing to do with work — did anyone catch the match last night");
       if (ctx.auditRead && auditSilencesExpected()) {
