@@ -96,6 +96,15 @@ const rawDomains: Domain[] = [
     models: { primary: { id: "deepseek/deepseek-v4-flash" } },
   }),
 
+  defineDomain({
+    name: "e2e-supervisor",
+    channels: ["slack/T0EXAMPLE/C0EXCHAN006"],
+    memory: "e2e-brain",
+    ambientSupervisor: true,
+    engagementTier: "neutral",
+    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+  }),
+
 ];
 
 const domains: Domain[] = applyRoleDefaults(rawDomains, loadRoles());
