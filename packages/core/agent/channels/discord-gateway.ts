@@ -319,6 +319,10 @@ async function postDiscordReply(channelId: string, text: string): Promise<void> 
 const lastTypingAt = new Map<string, number>();
 const TYPING_REFRESH_MS = 7_000;
 
+export function clearTypingThrottleForTest(): void {
+  lastTypingAt.clear();
+}
+
 export function typingRefreshDue(
   channelId: string,
   nowMs: number = Date.now(),

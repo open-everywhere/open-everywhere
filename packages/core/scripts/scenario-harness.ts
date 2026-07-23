@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
+import { clearTypingThrottleForTest } from "../agent/channels/discord-gateway.js";
 
 export class Timeline {
   private readonly lines: string[] = [];
@@ -437,6 +438,7 @@ export class ScenarioRunner {
     const rest = installFakeDiscordRest(driver.timeline, script);
     const restoreNow = stubMonotonicNow();
     clearDiscordInfoCacheForTest();
+    clearTypingThrottleForTest();
     try {
       await body(driver, rest.capture);
     } catch (err) {
