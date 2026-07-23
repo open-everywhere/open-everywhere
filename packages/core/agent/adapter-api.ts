@@ -67,7 +67,7 @@ export type { MemoryProvider } from "./memory/provider.js";
 export { registerGitHubMemory } from "./memory/github.js";
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
-export { registerOperationalPostgres } from "./operational/provider.js";
+export { registerOperationalPostgres, getOperationalStore } from "./operational/provider.js";
 export { initOperationalSchema } from "./operational/postgres.js";
 
 export { safeName } from "./memory/layout.js";
@@ -97,6 +97,7 @@ export { initTelemetry, emitTelemetry } from "./observability/telemetry.js";
 
 export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter } from "./audit/audit.js";
+export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
 export { appendUsageEvent } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";

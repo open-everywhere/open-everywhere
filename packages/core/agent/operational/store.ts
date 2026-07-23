@@ -16,6 +16,19 @@ export interface AuditEntry {
 
 export type AuditInput = Omit<AuditEntry, "ts"> & { readonly ts?: string };
 
+export interface AuditChainRow {
+  readonly seq: number;
+  readonly ts: string;
+  readonly org: string;
+  readonly platform: string;
+  readonly workspace: string;
+  readonly surface?: string;
+  readonly principalId?: string;
+  readonly action: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly prevSha: string | null;
+}
+
 export interface AuditFilter {
   readonly org?: string;
   readonly platform?: string;
@@ -233,6 +246,8 @@ export interface OperationalStore {
 
   appendAudit(entry: AuditEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditEntry[]>;
+  listAuditOrgs(): Promise<string[]>;
+  readAuditChain(org: string, opts?: { readonly tailLimit?: number }): Promise<AuditChainRow[]>;
 
   setSpendLimit(org: string, scopeKey: string, level: CapLevel, limit: SpendLimitAmount, meta?: OverrideMeta): Promise<void>;
   clearSpendLimit(org: string, scopeKey: string, level: CapLevel): Promise<boolean>;

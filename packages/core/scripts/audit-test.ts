@@ -111,5 +111,62 @@ ok(!("deleteAudit" in await import("../agent/audit/audit.js")), "no delete API e
   ok(__queueLengthForTest() === before + 1, "appendAudit: a dropped line emits exactly one oe.audit.dropped telemetry event");
 }
 
+{
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { findChainBreak, auditRowSha, bootVerifyAuditChainTail } = await import("../agent/audit/chain.js");
+  const { DatabaseSync } = await import("node:sqlite");
+  const store = getOperationalStore();
+
+  const CO = "chainorg";
+  await appendAudit({ ts: "2026-07-01T00:00:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.one", detail: { n: 1 } });
+  await appendAudit({ ts: "2026-07-01T00:01:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.two", detail: { n: 2 } });
+  await appendAudit({ ts: "2026-07-01T00:02:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.three", detail: { n: 3 } });
+
+  const chain = await store.readAuditChain(CO);
+  ok(chain.length === 3 && chain[0].ts === "2026-07-01T00:00:00Z" && chain[2].ts === "2026-07-01T00:02:00Z", "chain: readAuditChain returns all rows oldest-first");
+  ok(chain[0].prevSha === null, "chain: genesis row has null prev_sha");
+  ok(chain[1].prevSha === auditRowSha(chain[0], null) && chain[2].prevSha === auditRowSha(chain[1], chain[1].prevSha), "chain: each row's prev_sha = sha(previous row)");
+  ok(findChainBreak(chain, { expectGenesis: true }) === null, "chain: an intact chain verifies clean");
+
+  await appendAudit({ ts: "2026-07-01T00:00:00Z", org: "chainorg2", platform: "discord", workspace: "G1", action: "b.one" });
+  const other = await store.readAuditChain("chainorg2");
+  ok(other.length === 1 && other[0].prevSha === null, "chain: a second org starts its own genesis (no interleave)");
+  ok((await store.readAuditChain(CO)).length === 3, "chain: the first org's chain is unchanged by the second org's append");
+
+  const tail = await store.readAuditChain(CO, { tailLimit: 2 });
+  ok(tail.length === 2 && tail[0].ts === "2026-07-01T00:01:00Z" && findChainBreak(tail, { expectGenesis: false }) === null, "chain: tailLimit returns the last N oldest-first, sound");
+
+  const raw = new DatabaseSync(dbFile);
+  raw.prepare("UPDATE audit_entry SET detail = ? WHERE org_id = ? AND action = ?").run(JSON.stringify({ n: 999 }), CO, "a.two");
+  const tampered = await store.readAuditChain(CO);
+  ok(findChainBreak(tampered, { expectGenesis: true })?.action === "a.three", "chain: a mutated middle row is detected at its successor");
+
+  const warns: string[] = [];
+  const origWarn = console.warn;
+  console.warn = (...a: unknown[]) => {
+    warns.push(a.map(String).join(" "));
+  };
+  let threw = false;
+  try {
+    await bootVerifyAuditChainTail(store);
+  } catch {
+    threw = true;
+  } finally {
+    console.warn = origWarn;
+  }
+  ok(!threw, "chain: bootVerifyAuditChainTail never throws on a break");
+  ok(warns.some((w) => w.includes("AUDIT CHAIN BREAK") && w.includes(CO)), "chain: the boot tail-check logs a loud warn naming the tampered org");
+
+  const CD = "delorg";
+  await appendAudit({ ts: "2026-07-02T00:00:00Z", org: CD, platform: "slack", workspace: "T1", action: "d.one" });
+  await appendAudit({ ts: "2026-07-02T00:01:00Z", org: CD, platform: "slack", workspace: "T1", action: "d.two" });
+  await appendAudit({ ts: "2026-07-02T00:02:00Z", org: CD, platform: "slack", workspace: "T1", action: "d.three" });
+  raw.prepare("DELETE FROM audit_entry WHERE org_id = ? AND action = ?").run(CD, "d.two");
+  raw.close();
+  const afterDel = await store.readAuditChain(CD);
+  ok(afterDel.length === 2, "chain: the middle row is gone (sqlite raw delete)");
+  ok(findChainBreak(afterDel, { expectGenesis: true })?.action === "d.three", "chain: a deleted middle row is detected at the next surviving row");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(`✓ audit: ${passed} assertions passed`);

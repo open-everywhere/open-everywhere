@@ -11,6 +11,8 @@ import {
   setBlobPutter,
   registerAuditDropCounter,
   emitTelemetry,
+  getOperationalStore,
+  bootVerifyAuditChainTail,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
@@ -55,3 +57,8 @@ if (
 registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
 
 setBlobPutter(vercelBlobPutter);
+
+try {
+  await bootVerifyAuditChainTail(getOperationalStore());
+} catch {
+}

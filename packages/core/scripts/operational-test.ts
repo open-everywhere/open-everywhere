@@ -105,6 +105,38 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const { findChainBreak, auditRowSha, verifyAuditChainTail } = await import("../agent/audit/chain.js");
+  const CO = "chainacme";
+  await store.appendAudit({ ts: "2026-07-01T00:00:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.one", detail: { n: 1 } });
+  await store.appendAudit({ ts: "2026-07-01T00:01:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.two", detail: { n: 2 } });
+  await store.appendAudit({ ts: "2026-07-01T00:02:00Z", org: CO, platform: "slack", workspace: "T1", action: "a.three", detail: { n: 3 } });
+
+  const chain = await store.readAuditChain(CO);
+  ok(chain.length === 3 && chain[0].ts === "2026-07-01T00:00:00Z" && chain[2].ts === "2026-07-01T00:02:00Z", "chain(pg): readAuditChain returns all rows oldest-first");
+  ok(chain[0].prevSha === null, "chain(pg): genesis row has null prev_sha");
+  ok(chain[1].prevSha === auditRowSha(chain[0], null) && chain[2].prevSha === auditRowSha(chain[1], chain[1].prevSha), "chain(pg): each row's prev_sha = sha(previous row)");
+  ok(findChainBreak(chain, { expectGenesis: true }) === null, "chain(pg): an intact chain verifies clean");
+
+  const mutated = chain.map((r, i) => (i === 1 ? { ...r, detail: { n: 999 } } : r));
+  ok(findChainBreak(mutated, { expectGenesis: true })?.action === "a.three", "chain(pg): a mutated middle row is detected at its successor");
+  const deleted = [chain[0], chain[2]];
+  ok(findChainBreak(deleted, { expectGenesis: true })?.action === "a.three", "chain(pg): a deleted middle row is detected at the next surviving row");
+
+  await store.appendAudit({ ts: "2026-07-01T00:00:00Z", org: "chainglobex", platform: "discord", workspace: "G1", action: "b.one" });
+  const other = await store.readAuditChain("chainglobex");
+  ok(other.length === 1 && other[0].prevSha === null, "chain(pg): a second org starts its own genesis (no interleave)");
+  ok((await store.readAuditChain(CO)).length === 3, "chain(pg): the first org's chain is unchanged by the second org's append");
+
+  const tail = await store.readAuditChain(CO, { tailLimit: 2 });
+  ok(tail.length === 2 && tail[0].ts === "2026-07-01T00:01:00Z" && findChainBreak(tail, { expectGenesis: false }) === null, "chain(pg): tailLimit returns the last N oldest-first, sound");
+
+  const orgs = await store.listAuditOrgs();
+  ok(orgs.includes(CO) && orgs.includes("chainglobex"), "chain(pg): listAuditOrgs enumerates the chained orgs");
+  const mine = (await verifyAuditChainTail(store)).filter((r) => r.org === CO || r.org === "chainglobex");
+  ok(mine.length === 2 && mine.every((r) => r.break === null && !r.error), "chain(pg): verifyAuditChainTail reports both chained orgs intact");
+}
+
+{
   const base = { org: "acme", surfaceKey: "slack/T1/C1", sessionId: "sess-1", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   await store.appendUsageEvent({ ...base, ts: "2026-06-24T10:00:00Z", principalId: "U1", kind: "channel", inputTokens: 100, outputTokens: 50 });
   await store.appendUsageEvent({ ...base, ts: "2026-06-24T10:05:00Z", principalId: "U1", kind: "channel", inputTokens: 10, outputTokens: 5 });

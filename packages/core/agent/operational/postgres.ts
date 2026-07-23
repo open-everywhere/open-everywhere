@@ -1,9 +1,10 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
+import { auditRowSha } from "../audit/chain.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -38,7 +39,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      surface      text,
      principal_id text,
      action       text NOT NULL,
-     detail       text
+     detail       text,
+     prev_sha     text                        -- sha256 of the org's previous row (OPE-52 hash chain); NULL = genesis
    )`,
   `CREATE INDEX IF NOT EXISTS audit_org_ts ON audit_entry (org_id, ts)`,
   `CREATE TABLE IF NOT EXISTS spend_limit (
@@ -236,6 +238,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
+  `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -516,15 +519,47 @@ async function recordAuditIntegrity(
   if (heal && (heal.droppedPolicies.length || heal.droppedTriggers.length || heal.revokedGrants.length)) {
     detail.healed_artifacts = heal;
   }
+  const org = process.env.OE_ORG?.trim() || "default";
+  const ts = new Date().toISOString();
   try {
+    let prevSha: string | null = null;
+    try {
+      prevSha = await nextAuditPrevSha(client, org);
+    } catch {
+    }
     await client.query(
-      `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail)
-       VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3)`,
-      [new Date().toISOString(), process.env.OE_ORG?.trim() || "default", JSON.stringify(detail)],
+      `INSERT INTO audit_entry (ts, org_id, platform, workspace, action, detail, prev_sha)
+       VALUES ($1, $2, 'db', 'postgres', 'audit.integrity', $3, $4)`,
+      [ts, org, JSON.stringify(detail), prevSha],
     );
   } catch (err) {
     console.error(`[open-everywhere:operational] could not record audit.integrity row: ${String(err)}`);
   }
+}
+
+async function nextAuditPrevSha(client: PgClient, org: string): Promise<string | null> {
+  const { rows } = await client.query(
+    `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+     FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT 1`,
+    [org],
+  );
+  const last = rows[0] as
+    | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
+    | undefined;
+  if (!last) return null;
+  return auditRowSha(
+    {
+      org: last.org_id,
+      ts: last.ts,
+      platform: last.platform,
+      workspace: last.workspace,
+      ...(last.surface ? { surface: last.surface } : {}),
+      ...(last.principal_id ? { principalId: last.principal_id } : {}),
+      action: last.action,
+      ...(last.detail ? { detail: JSON.parse(last.detail) as Record<string, unknown> } : {}),
+    },
+    last.prev_sha,
+  );
 }
 
 export async function initOperationalSchema(client: PgClient): Promise<void> {
@@ -722,9 +757,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async appendAudit(entry: AuditEntry) {
+      const prevSha = await nextAuditPrevSha(client, entry.org);
       await client.query(
-        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           entry.ts,
           entry.org,
@@ -734,6 +770,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           entry.principalId ?? null,
           entry.action,
           entry.detail ? JSON.stringify(entry.detail) : null,
+          prevSha,
         ],
       );
     },
@@ -787,6 +824,48 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         action: r.action,
         ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
       }));
+    },
+
+    async listAuditOrgs() {
+      const { rows } = await client.query("SELECT DISTINCT org_id FROM audit_entry ORDER BY org_id");
+      return (rows as { org_id: string }[]).map((r) => r.org_id);
+    },
+
+    async readAuditChain(org, opts) {
+      const tail = opts?.tailLimit;
+      const cols = "seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha";
+      const sql =
+        tail && tail > 0
+          ? `SELECT ${cols} FROM (
+               SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq DESC LIMIT $2
+             ) sub ORDER BY seq ASC`
+          : `SELECT ${cols} FROM audit_entry WHERE org_id = $1 ORDER BY seq ASC`;
+      const { rows } = await client.query(sql, tail && tail > 0 ? [org, tail] : [org]);
+      return (rows as {
+        seq: number | string;
+        ts: string;
+        org_id: string;
+        platform: string;
+        workspace: string;
+        surface: string | null;
+        principal_id: string | null;
+        action: string;
+        detail: string | null;
+        prev_sha: string | null;
+      }[]).map(
+        (r): AuditChainRow => ({
+          seq: Number(r.seq),
+          ts: r.ts,
+          org: r.org_id,
+          platform: r.platform,
+          workspace: r.workspace,
+          ...(r.surface ? { surface: r.surface } : {}),
+          ...(r.principal_id ? { principalId: r.principal_id } : {}),
+          action: r.action,
+          ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
+          prevSha: r.prev_sha,
+        }),
+      );
     },
 
     async setSpendLimit(org, scopeKey, level, limit, meta) {

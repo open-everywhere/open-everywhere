@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
+import { auditRowSha } from "../audit/chain.js";
 
 function dbPath(): string {
   if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
@@ -52,7 +53,8 @@ function getDb(): DatabaseSync {
       surface      TEXT,
       principal_id TEXT,
       action       TEXT NOT NULL,
-      detail       TEXT                       -- JSON
+      detail       TEXT,                      -- JSON
+      prev_sha     TEXT                       -- sha256 of the org's previous row (OPE-52 hash chain); NULL = genesis
     );
     CREATE INDEX IF NOT EXISTS audit_org_ts ON audit_entry (org_id, ts);
     CREATE TABLE IF NOT EXISTS spend_limit (
@@ -268,6 +270,8 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE stored_credential ADD COLUMN claim_id TEXT",
     "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
+
+    "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -448,10 +452,34 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async appendAudit(entry: AuditEntry) {
-    getDb()
+    const handle = getDb();
+    const last = handle
       .prepare(
-        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `SELECT ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+         FROM audit_entry WHERE org_id = ? ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(entry.org) as
+      | { ts: string; org_id: string; platform: string; workspace: string; surface: string | null; principal_id: string | null; action: string; detail: string | null; prev_sha: string | null }
+      | undefined;
+    const prevSha = last
+      ? auditRowSha(
+          {
+            org: last.org_id,
+            ts: last.ts,
+            platform: last.platform,
+            workspace: last.workspace,
+            ...(last.surface ? { surface: last.surface } : {}),
+            ...(last.principal_id ? { principalId: last.principal_id } : {}),
+            action: last.action,
+            ...(last.detail ? { detail: JSON.parse(last.detail) as Record<string, unknown> } : {}),
+          },
+          last.prev_sha,
+        )
+      : null;
+    handle
+      .prepare(
+        `INSERT INTO audit_entry (ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.ts,
@@ -462,6 +490,7 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.principalId ?? null,
         entry.action,
         entry.detail ? JSON.stringify(entry.detail) : null,
+        prevSha,
       );
   },
 
@@ -511,6 +540,51 @@ export const sqliteOperationalStore: OperationalStore = {
       action: r.action,
       ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
     }));
+  },
+
+  async listAuditOrgs() {
+    const rows = getDb().prepare("SELECT DISTINCT org_id FROM audit_entry ORDER BY org_id").all() as { org_id: string }[];
+    return rows.map((r) => r.org_id);
+  },
+
+  async readAuditChain(org, opts) {
+    const tail = opts?.tailLimit;
+    const sql =
+      tail && tail > 0
+        ? `SELECT * FROM (
+             SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+             FROM audit_entry WHERE org_id = ? ORDER BY seq DESC LIMIT ?
+           ) ORDER BY seq ASC`
+        : `SELECT seq, ts, org_id, platform, workspace, surface, principal_id, action, detail, prev_sha
+           FROM audit_entry WHERE org_id = ? ORDER BY seq ASC`;
+    const rows = getDb()
+      .prepare(sql)
+      .all(...(tail && tail > 0 ? [org, tail] : [org])) as {
+      seq: number;
+      ts: string;
+      org_id: string;
+      platform: string;
+      workspace: string;
+      surface: string | null;
+      principal_id: string | null;
+      action: string;
+      detail: string | null;
+      prev_sha: string | null;
+    }[];
+    return rows.map(
+      (r): AuditChainRow => ({
+        seq: Number(r.seq),
+        ts: r.ts,
+        org: r.org_id,
+        platform: r.platform,
+        workspace: r.workspace,
+        ...(r.surface ? { surface: r.surface } : {}),
+        ...(r.principal_id ? { principalId: r.principal_id } : {}),
+        action: r.action,
+        ...(r.detail ? { detail: JSON.parse(r.detail) as Record<string, unknown> } : {}),
+        prevSha: r.prev_sha,
+      }),
+    );
   },
 
   async setSpendLimit(org, scopeKey, level, limit, meta) {
