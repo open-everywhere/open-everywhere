@@ -108,10 +108,13 @@ export default defineTool({
     const cls = classifyTextUpload(rec.mimeType, rec.name);
     if (!cls.ok) {
       await auditToolAction(ctx, "read_file_upload", { ok: false, reason: cls.reason, id, mimeType: rec.mimeType });
+      const isImage = (rec.mimeType ?? "").toLowerCase().startsWith("image/");
       const msg =
         cls.reason === "pdf"
           ? `file could not be read: PDF text extraction isn't supported — ask the uploader for a text/CSV/markdown export.`
-          : `file could not be read: unsupported type (${rec.mimeType ?? rec.name ?? "unknown"}) — supported: plain text, CSV, TSV, JSON, markdown, log, XML, YAML.`;
+          : isImage
+            ? `file could not be read: "${rec.mimeType ?? rec.name ?? "this file"}" is an IMAGE, not a text file — use describe_image with { attachmentId: "${id}" } to SEE it instead of read_file_upload.`
+            : `file could not be read: unsupported type (${rec.mimeType ?? rec.name ?? "unknown"}) — supported: plain text, CSV, TSV, JSON, markdown, log, XML, YAML.`;
       return { ok: false, message: msg };
     }
 
