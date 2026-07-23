@@ -171,12 +171,20 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
 }
 
 {
-  const mkFetch = (post: { status: number; body?: string; json?: unknown }, list?: unknown): { fn: PrFetchFn; seen: { url: string; method: string; body?: string }[] } => {
+  const mkFetch = (
+    post: { status: number; body?: string; json?: unknown },
+    list?: unknown,
+    patch?: { status: number; body?: string; json?: unknown },
+  ): { fn: PrFetchFn; seen: { url: string; method: string; body?: string }[] } => {
     const seen: { url: string; method: string; body?: string }[] = [];
     const fn: PrFetchFn = async (url, init) => {
       seen.push({ url, method: init.method, body: init.body });
       if (init.method === "POST") {
         return { ok: post.status < 300, status: post.status, text: async () => post.body ?? "", json: async () => post.json ?? {} };
+      }
+      if (init.method === "PATCH") {
+        const p = patch ?? { status: 200, json: { html_url: "https://github.com/acme/web/pull/3", number: 3 } };
+        return { ok: p.status < 300, status: p.status, text: async () => p.body ?? "", json: async () => p.json ?? {} };
       }
       return { ok: true, status: 200, text: async () => "", json: async () => list ?? [] };
     };
@@ -193,9 +201,22 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
     { status: 422, body: 'Validation Failed: {"message":"A pull request already exists for acme:fix/x."}' },
     [{ html_url: "https://github.com/acme/web/pull/3", number: 3 }],
   );
-  const updatedPr = await createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: existing.fn });
+  const updatedPr = await createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "new title", body: "new body", token: "ghs_w", fetchFn: existing.fn });
   ok(updatedPr.number === 3 && updatedPr.updated === true, "422 already-exists resolves to the existing open PR (updated: true)");
   ok(existing.seen[1].method === "GET" && existing.seen[1].url.includes(`head=${encodeURIComponent("acme:fix/x")}`) && existing.seen[1].url.includes("state=open"), "existing PR is looked up by owner:branch head, open only");
+  ok(existing.seen[2]?.method === "PATCH" && existing.seen[2].url.endsWith("/repos/acme/web/pulls/3"), "update PATCHes the resolved PR by number");
+  ok(JSON.parse(existing.seen[2].body!).title === "new title" && JSON.parse(existing.seen[2].body!).body === "new body", "PATCH carries the frozen (approved-card) title AND body — the copy the human approved");
+
+  const patchDenied = mkFetch(
+    { status: 422, body: "A pull request already exists" },
+    [{ html_url: "https://github.com/acme/web/pull/3", number: 3 }],
+    { status: 403, body: "forbidden" },
+  );
+  await assert.rejects(
+    createOrUpdatePullRequest({ repo: "acme/web", head: "fix/x", base: "main", title: "t", body: "b", token: "ghs_w", fetchFn: patchDenied.fn }),
+    /PR update failed: 403 forbidden/,
+  );
+  n++;
 
   const ghost = mkFetch({ status: 422, body: "A pull request already exists" }, []);
   await assert.rejects(

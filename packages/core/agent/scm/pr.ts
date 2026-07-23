@@ -49,7 +49,17 @@ export async function createOrUpdatePullRequest(opts: {
     );
     if (q.ok) {
       const list = (await q.json()) as { html_url: string; number: number }[];
-      if (list.length) return { url: list[0].html_url, number: list[0].number, updated: true };
+      if (list.length) {
+        const number = list[0].number;
+        const patch = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls/${number}`, {
+          method: "PATCH",
+          headers: prApiHeaders(opts.token),
+          body: JSON.stringify({ title: opts.title, body: opts.body }),
+        });
+        if (!patch.ok) throw new Error(`GitHub PR update failed: ${patch.status} ${await patch.text()}`);
+        const pr = (await patch.json()) as { html_url: string; number: number };
+        return { url: pr.html_url, number: pr.number, updated: true };
+      }
     }
   }
   throw new Error(`GitHub PR creation failed: ${res.status} ${text}`);
