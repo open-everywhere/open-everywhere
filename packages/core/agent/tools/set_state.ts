@@ -9,6 +9,7 @@ import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketSetStateArgs } from "../approvals/ticket-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
@@ -49,6 +50,7 @@ export const setStateEntry = defineTool({
   }),
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
+    await requireSessionContinuation(bctx, "set_state");
     const { ref } = resolveEntityAction(bctx, "setState", input.ref, safeDomains());
 
     const binding = bindFrom(ctx);

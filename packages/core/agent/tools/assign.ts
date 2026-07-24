@@ -8,6 +8,7 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import type { TicketAssignArgs } from "../approvals/ticket-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -54,6 +55,7 @@ export const assignEntry = defineTool({
   }),
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
+    await requireSessionContinuation(bctx, "assign");
     const { ref } = resolveEntityAction(bctx, "assign", input.ref, safeDomains());
 
     const binding = bindFrom(ctx);
