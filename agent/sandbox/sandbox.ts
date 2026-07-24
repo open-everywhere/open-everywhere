@@ -9,6 +9,7 @@ import { getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { onVercel } from "@open-everywhere/core/agent/access/platform.js";
 import { agentBrowserSandboxHooks } from "@open-everywhere/adapters/agent/browser/sandbox.js";
 import { resolveSelfHostBackendKind, selfHostBackendBootLog } from "./backend-select.js";
+import { selfHostEgressBootLog } from "@open-everywhere/core/agent/access/self-host-egress.js";
 import "../lib/register-config.js";
 
 function intFromEnv(name: string, fallback: number): number {
@@ -30,6 +31,9 @@ function selfHostBackend() {
   const bootLog = selfHostBackendBootLog(kind);
   if (bootLog.warn !== undefined) console.warn(bootLog.warn);
   console.info(bootLog.info);
+  const egressLog = selfHostEgressBootLog();
+  if (egressLog.warn !== undefined) console.warn(egressLog.warn);
+  console.info(egressLog.info);
   if (kind === "justbash") return justbash();
   const image = process.env.OE_SANDBOX_IMAGE?.trim();
   return docker(image ? { image } : {});

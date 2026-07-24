@@ -12,6 +12,35 @@ export function useSelfHostEgress(): boolean {
   return !onVercel() && egressProxyUrl() !== undefined;
 }
 
+export interface EgressBootLog {
+  readonly warn?: string;
+  readonly info: string;
+}
+
+export function selfHostEgressBootLog(env: NodeJS.ProcessEnv = process.env): EgressBootLog {
+  const proxy = (env.OE_EGRESS_PROXY_URL ?? "").trim();
+  const allowUnenforced = env.OE_ALLOW_UNENFORCED_EGRESS === "1";
+  if (proxy) {
+    return {
+      info: "[open-everywhere:egress] self-host egress ENFORCED via proxy sidecar (OE_EGRESS_PROXY_URL set) — the compiled policy is pushed to the proxy natively; OE_ALLOW_UNENFORCED_EGRESS is not needed.",
+    };
+  }
+  if (allowUnenforced) {
+    return {
+      warn:
+        "[open-everywhere:egress] ⚠ UNENFORCED egress — no OE_EGRESS_PROXY_URL and OE_ALLOW_UNENFORCED_EGRESS=1: the agent runs WITHOUT a network firewall " +
+        "(default-deny egress + at-boundary credential injection are OFF). Dev/testing ONLY — wire the egress-proxy sidecar (docker-compose.yml) for real deployments.",
+      info: "[open-everywhere:egress] self-host egress posture = unenforced (OE_ALLOW_UNENFORCED_EGRESS=1)",
+    };
+  }
+  return {
+    warn:
+      "[open-everywhere:egress] ⚠ egress NOT enforceable — no OE_EGRESS_PROXY_URL configured and OE_ALLOW_UNENFORCED_EGRESS is unset: EVERY session will ABORT at session.started (fail-closed). " +
+      "Wire the egress-proxy sidecar (docker-compose.yml / docs/deploy/platforms/self-host-egress.md), or set OE_ALLOW_UNENFORCED_EGRESS=1 to run unenforced in dev.",
+    info: "[open-everywhere:egress] self-host egress posture = none (sessions fail-closed until a proxy is wired or OE_ALLOW_UNENFORCED_EGRESS=1)",
+  };
+}
+
 export interface PushPolicyBody {
   readonly policy: SandboxNetworkPolicy;
   readonly sourceIp?: string;

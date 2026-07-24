@@ -4,6 +4,7 @@ import {
   onVercel,
   egressProxyUrl,
   postPolicy,
+  selfHostEgressBootLog,
   type FetchLike,
   type PushPolicyBody,
 } from "../agent/access/self-host-egress.js";
@@ -108,4 +109,24 @@ function fakeFetch(res: { ok: boolean; status: number; text?: string }): {
   ok(threw2 instanceof Error && threw2.message.includes("network"), "a network error THROWS (fail-closed), not swallowed");
 }
 
-console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure)\n`);
+{
+  const enforced = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080" } as NodeJS.ProcessEnv);
+  ok(enforced.warn === undefined, "proxy configured → no boot warning");
+  ok(enforced.info.includes("ENFORCED"), "proxy configured → info says egress ENFORCED");
+
+  const unenforced = selfHostEgressBootLog({ OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
+  ok(unenforced.warn !== undefined && unenforced.warn.includes("UNENFORCED"), "no proxy + hatch → loud UNENFORCED warn");
+  ok(unenforced.info.includes("unenforced"), "no proxy + hatch → info says unenforced");
+
+  const willAbort = selfHostEgressBootLog({} as NodeJS.ProcessEnv);
+  ok(willAbort.warn !== undefined && willAbort.warn.includes("ABORT"), "no proxy, no hatch → warn that sessions will ABORT");
+  ok(willAbort.info.includes("none"), "no proxy, no hatch → info says posture = none");
+
+  const blankProxy = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "   " } as NodeJS.ProcessEnv);
+  ok(blankProxy.warn !== undefined, "blank OE_EGRESS_PROXY_URL is treated as no proxy");
+
+  const both = selfHostEgressBootLog({ OE_EGRESS_PROXY_URL: "http://proxy:8080", OE_ALLOW_UNENFORCED_EGRESS: "1" } as NodeJS.ProcessEnv);
+  ok(both.warn === undefined && both.info.includes("ENFORCED"), "proxy + hatch → still ENFORCED (proxy wins, no warn)");
+}
+
+console.log(`\n✓ self-host-egress: ${n} assertions passed (switch + push serialisation + fail-closed on push failure + boot posture)\n`);
