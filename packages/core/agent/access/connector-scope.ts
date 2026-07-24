@@ -67,7 +67,20 @@ export async function whenEveChannelReachSettled(): Promise<EveChannelReachStatu
   return bootStatus;
 }
 
-let internalsPromise: Promise<EveInternals | null> = resolveEveInternalsFrom(defaultEveRoot());
+export async function resolveEveInternalsSafe(
+  rootFn: () => string,
+): Promise<EveInternals | null> {
+  let root: string;
+  try {
+    root = rootFn();
+  } catch (err) {
+    internalsLoadError = String(err);
+    return null;
+  }
+  return resolveEveInternalsFrom(root);
+}
+
+let internalsPromise: Promise<EveInternals | null> = resolveEveInternalsSafe(defaultEveRoot);
 internalsPromise = internalsPromise.then((eve) => {
   bootStatus = eve ? "available" : "unavailable";
   console.warn(

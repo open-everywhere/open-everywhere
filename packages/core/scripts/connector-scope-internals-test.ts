@@ -53,6 +53,15 @@ ok(bootLines[0]?.includes("unavailable") !== true, "the boot line for a working 
 }
 
 {
+  const thrown = await scope.resolveEveInternalsSafe(() => {
+    throw new Error("Cannot find module 'eve/package.json' (simulated hosted bundle)");
+  });
+  ok(thrown === null, "a throwing root resolver resolves null via resolveEveInternalsSafe (not a process crash)");
+  const safeReal = await scope.resolveEveInternalsSafe(scope.defaultEveRoot);
+  ok(safeReal !== null, "resolveEveInternalsSafe(defaultEveRoot) still resolves against a real installed eve");
+}
+
+{
   const real = await scope.resolveEveInternalsFrom(scope.defaultEveRoot());
   ok(real !== null, "resolveEveInternalsFrom(defaultEveRoot()) resolves against the installed eve (not null)");
   ok(typeof real?.contextStorage.getStore === "function", "the resolved internals still expose contextStorage.getStore");
