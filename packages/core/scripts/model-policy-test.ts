@@ -6,6 +6,7 @@ import {
   clampReasoning,
   isModelUsable,
   isProviderDenied,
+  isModelDenied,
   pickTierModel,
   safeFallbackModel,
   reasoningRank,
@@ -48,6 +49,8 @@ throws(() => assertModelPolicyValid({ allow: [{ id: "a/b", tier: "mega" as never
 throws(() => assertModelPolicyValid({ reasoningCeiling: "ludicrous" as never }), "validator: bad reasoningCeiling throws");
 throws(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], providerDeny: ["zai"] }), "validator: allow-listed model whose own vendor is denied throws (contradiction)");
 throws(() => assertModelPolicyValid({ allow: [{ id: "  ", tier: "low" }] }), "validator: blank id throws");
+throws(() => assertModelPolicyValid({ allow: [{ id: "zai/glm-5.2", tier: "high" }], deny: ["zai/glm-5.2"] }), "validator: a model both allow-listed AND denied throws (contradiction)");
+throws(() => assertModelPolicyValid({ deny: ["  "] }), "validator: blank deny id throws");
 
 ok(isModelUsable("zai/glm-5.2", POLICY), "usable: allow-listed id passes");
 ok(!isModelUsable("openai/gpt-6", POLICY), "usable: non-allow-listed id fails");
@@ -56,6 +59,22 @@ const DENY: ModelPolicy = defineModelPolicy({ allow: [{ id: "deepseek/deepseek-v
 ok(isProviderDenied("zai/glm-5.2", DENY), "deny: vendor prefix matched");
 ok(!isProviderDenied("deepseek/deepseek-v4-flash", DENY), "deny: non-denied vendor passes");
 ok(!isModelUsable("zai/glm-5.2", DENY), "usable: denied-vendor model is unusable even if it were allow-listed");
+{
+  const MODEL_DENY: ModelPolicy = defineModelPolicy({ allow: [{ id: "zai/glm-5.2", tier: "high" }, { id: "deepseek/deepseek-v4-flash", tier: "low" }], deny: ["zai/glm-5.2"] });
+  ok(isModelDenied("zai/glm-5.2", MODEL_DENY), "model-deny: the exact id is on the deny list");
+  ok(!isModelDenied("deepseek/deepseek-v4-flash", MODEL_DENY), "model-deny: a non-denied id passes");
+  ok(!isModelDenied("zai/glm-5.2", POLICY), "model-deny: no deny list → nothing denied");
+  ok(!isModelUsable("zai/glm-5.2", MODEL_DENY), "model-deny: deny WINS over allow-list membership (an allow-listed id that's also denied is unusable)");
+  ok(isModelUsable("deepseek/deepseek-v4-flash", MODEL_DENY), "model-deny: a still-allowed sibling stays usable");
+  const NO_ALLOW_DENY: ModelPolicy = defineModelPolicy({ deny: ["zai/glm-5.2"] });
+  ok(!isModelUsable("zai/glm-5.2", NO_ALLOW_DENY), "model-deny: blocks a specific id even with no allow-list");
+  ok(isModelUsable("zai/glm-4.5-air", NO_ALLOW_DENY), "model-deny: a sibling from the SAME vendor stays usable (deny is per-id, not per-vendor)");
+  const DENIED_LOW: ModelPolicy = { allow: [{ id: "deepseek/deepseek-v4-flash", tier: "low" }, { id: "zai/glm-4.5-air", tier: "medium" }], deny: ["deepseek/deepseek-v4-flash"] };
+  ok(pickTierModel("low", DENIED_LOW) === undefined, "model-deny: pickTierModel skips a denied allow entry");
+  ok(safeFallbackModel(DENIED_LOW, "def/model") === "zai/glm-4.5-air", "model-deny: safeFallbackModel skips the denied low entry and returns the next usable one");
+  const r = applyModelPolicyToRoute({ id: "zai/glm-5.2" }, MODEL_DENY, "def/model");
+  ok(r.id === "deepseek/deepseek-v4-flash" && r.warnings.length === 1, "model-deny: envelope fails a denied id soft to a safe allow-listed model + warns");
+}
 ok(pickTierModel("high", POLICY) === "zai/glm-5.2", "tier: high → the high-tier allow entry");
 ok(pickTierModel("low", POLICY) === "deepseek/deepseek-v4-flash", "tier: low → the low-tier allow entry");
 ok(safeFallbackModel(POLICY, "fallback/default") === "deepseek/deepseek-v4-flash", "fallback: cheapest usable allow entry (low tier first)");
@@ -120,6 +139,9 @@ ok(clampReasoning("high", "xhigh") === "high", "clamp: request at/under a raised
   passed++;
   const badRole: NamedKnobLayer[] = [{ name: "r", models: { primary: { id: "openai/gpt-6" } } }];
   throws(() => assertRoutesWithinPolicy([], badRole, POLICY), "routes: a ROLE naming a non-allow-listed model throws too");
+  const denyPolicy: ModelPolicy = defineModelPolicy({ deny: ["zai/glm-5.2"] });
+  const denied: Domain[] = [defineDomain({ name: "d", channels: ["slack/T1/Cd"], models: { primary: { id: "zai/glm-5.2" } } })];
+  throws(() => assertRoutesWithinPolicy(denied, [], denyPolicy), "routes: a domain naming a per-model-denied id throws at config load");
 }
 
 console.log(`model-policy: ${passed} assertions passed`);

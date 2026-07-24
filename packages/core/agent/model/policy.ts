@@ -9,6 +9,7 @@ export interface ModelPolicy {
   readonly allow?: readonly ModelPolicyAllowEntry[];
   readonly reasoningCeiling?: ModelReasoning;
   readonly providerDeny?: readonly string[];
+  readonly deny?: readonly string[];
 }
 
 export function defineModelPolicy(policy: ModelPolicy): ModelPolicy {
@@ -47,15 +48,21 @@ export function isProviderDenied(id: string, policy: ModelPolicy | undefined): b
   return policy.providerDeny.includes(modelProviderOf(id));
 }
 
+export function isModelDenied(id: string, policy: ModelPolicy | undefined): boolean {
+  if (!policy?.deny?.length) return false;
+  return policy.deny.includes(id);
+}
+
 export function isModelUsable(id: string, policy: ModelPolicy | undefined): boolean {
   if (!policy) return true;
   if (isProviderDenied(id, policy)) return false;
+  if (isModelDenied(id, policy)) return false;
   if (!policy.allow?.length) return true;
   return policy.allow.some((a) => a.id === id);
 }
 
 export function pickTierModel(tier: ModelTier, policy: ModelPolicy): string | undefined {
-  const entry = policy.allow?.find((a) => a.tier === tier && !isProviderDenied(a.id, policy));
+  const entry = policy.allow?.find((a) => a.tier === tier && !isProviderDenied(a.id, policy) && !isModelDenied(a.id, policy));
   return entry?.id;
 }
 
@@ -134,6 +141,9 @@ export function assertModelPolicyValid(policy: ModelPolicy): void {
     if (policy.providerDeny?.includes(modelProviderOf(id))) {
       bad.push(`  model "${id}" is allow-listed but its vendor ("${modelProviderOf(id)}") is also in providerDeny — contradictory`);
     }
+    if (policy.deny?.includes(id)) {
+      bad.push(`  model "${id}" is both allow-listed and in deny — contradictory (remove it from one)`);
+    }
   }
   if (policy.reasoningCeiling !== undefined && reasoningRank(policy.reasoningCeiling) === -1) {
     bad.push(`  reasoningCeiling "${String(policy.reasoningCeiling)}" is not a known reasoning level (${REASONING_ORDER.join(" | ")})`);
@@ -141,6 +151,11 @@ export function assertModelPolicyValid(policy: ModelPolicy): void {
   for (const p of policy.providerDeny ?? []) {
     if (typeof p !== "string" || p.trim().length === 0) {
       bad.push(`  providerDeny has a blank/missing vendor name`);
+    }
+  }
+  for (const d of policy.deny ?? []) {
+    if (typeof d !== "string" || d.trim().length === 0) {
+      bad.push(`  deny has a blank/missing model id`);
     }
   }
   if (bad.length > 0) {
@@ -157,6 +172,8 @@ export function assertRoutesWithinPolicy(domains: readonly Domain[], roles: read
     if (route.id !== undefined) {
       if (isProviderDenied(route.id, policy)) {
         bad.push(`  ${where}: model "${route.id}" is provider-denied by policy`);
+      } else if (isModelDenied(route.id, policy)) {
+        bad.push(`  ${where}: model "${route.id}" is on the org deny list`);
       } else if (hasAllowList && !policy.allow!.some((a) => a.id === route.id)) {
         bad.push(`  ${where}: model "${route.id}" is not in the org allow-list`);
       }
