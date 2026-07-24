@@ -5,6 +5,7 @@ import { assertSpendLimitAmount, assertDomainModelPick, type AuditChainRow, type
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
+import { assembleAnalyticsSql } from "../analytics/compile.js";
 
 export type { PgClient } from "../memory/postgres.js";
 export { setOrgContext } from "../memory/postgres.js";
@@ -1264,6 +1265,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async pruneUsageEvents() {
       return 0;
+    },
+
+    async runAnalyticsQuery(compiled) {
+      const { sql, params } = assembleAnalyticsSql(compiled, "dollar");
+      const { rows } = await client.query(sql, params as unknown[]);
+      return rows as Record<string, unknown>[];
     },
 
     async markEventSeen(org, key, at, ttlMs) {

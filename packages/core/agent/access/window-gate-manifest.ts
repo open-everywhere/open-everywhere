@@ -50,6 +50,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "session_cost",
   "spend_report",
   "usage_report",
+  "query_analytics",
   "remember",
   "forget",
   "request_access",

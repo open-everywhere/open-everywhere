@@ -7,6 +7,7 @@ import { assertSpendLimitAmount, assertDomainModelPick, type AuditChainRow, type
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
+import { assembleAnalyticsSql } from "../analytics/compile.js";
 
 function dbPath(): string {
   if (process.env.OE_SQLITE_PATH) return process.env.OE_SQLITE_PATH;
@@ -955,6 +956,11 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async pruneUsageEvents(org, olderThanTs) {
     return Number(getDb().prepare("DELETE FROM usage_events WHERE org_id = ? AND ts < ?").run(org, olderThanTs).changes);
+  },
+
+  async runAnalyticsQuery(compiled) {
+    const { sql, params } = assembleAnalyticsSql(compiled, "qmark");
+    return getDb().prepare(sql).all(...(params as (string | number | null)[])) as Record<string, unknown>[];
   },
 
   async markEventSeen(org, key, at, ttlMs) {

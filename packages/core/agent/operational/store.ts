@@ -158,6 +158,16 @@ export interface UsageSummaryRow {
   readonly sessions: number;
 }
 
+export interface CompiledAnalyticsQuery {
+  readonly table: "audit_entry" | "usage_events" | "spend_ledger";
+  readonly select: readonly { readonly expr: string; readonly alias: string }[];
+  readonly groupBy: readonly string[];
+  readonly where: readonly string[];
+  readonly params: readonly unknown[];
+  readonly orderBy: { readonly expr: string; readonly dir: "ASC" | "DESC" } | null;
+  readonly limit: number;
+}
+
 export interface EngagementRow {
   readonly org: string;
   readonly surfaceKey: string;
@@ -283,6 +293,8 @@ export interface OperationalStore {
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;
   usageSummary(org: string, filter?: UsageSummaryFilter): Promise<UsageSummaryRow[]>;
   pruneUsageEvents(org: string, olderThanTs: string): Promise<number>;
+
+  runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 

@@ -76,6 +76,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   session_cost: open("read of this session's own spend"),
   spend_report: open("aggregate read; the org-wide scope additionally requires org-admin inside spend/reporting.ts's resolveReportScope"),
   usage_report: open("aggregate read; same shared resolveReportScope gate as spend_report for org scope"),
+  query_analytics: open(
+    "constrained analytics read (OPE-66): the model forms a structured query object (never SQL) over a fixed schema; org scope + rows mode are gated inside via access/analytics-scope.ts's resolveAnalyticsScope, and tainted/ambient turns degrade to aggregates — same in-tool-gating shape as spend_report. Every call + refusal is audited (analytics.query / analytics.refused)",
+  ),
   web_fetch: open("read via the egress allowlist; default-deny hosts bound what it can reach"),
 
   no_reply: open("ends the turn silently; posts nothing"),
