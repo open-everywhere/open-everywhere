@@ -18,7 +18,7 @@ import { isVouchedInternal } from "../identity/trust.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
-import { ingestUntrusted } from "../access/untrusted.js";
+import { type ContextLine } from "./context-render.js";
 
 export { splitForDiscord };
 import {
@@ -30,7 +30,7 @@ import {
   markThreadEngaged,
   WARM_SILENT_LIMIT,
 } from "./engagement.js";
-import { fetchDiscordBackscroll } from "./discord-backscroll.js";
+import { fetchDiscordBackscroll, fetchDiscordBackscrollLines } from "./discord-backscroll.js";
 import { scopeOverBudget } from "../spend/check.js";
 import { capBypassFor } from "../spend/bypass.js";
 import { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "../approvals/card-signal.js";
@@ -250,35 +250,6 @@ export function nameDropEligible(input: {
   if (t !== "0" && t !== "5" && t !== "10" && t !== "11" && t !== "12") return false;
   if (!input.botName) return false;
   return nameDropPattern(input.botName).test(input.content);
-}
-
-export function renderTurn(direct: boolean, content: string): string {
-  if (direct) return content;
-  return [
-    `[thread-follow] You were not mentioned — this message reached you because you're following ` +
-      `this Discord channel. Reply only if it warrants a response from you: it's addressed to you, ` +
-      `asks you something, or moves the task you're working on. If the humans are talking among ` +
-      `themselves and your reply would be noise, output exactly ${NO_REPLY_SENTINEL} and nothing ` +
-      `else — nothing will be posted.`,
-    "",
-    ingestUntrusted(content, { source: "discord-message" }),
-  ].join("\n");
-}
-
-export function renderNameDropTurn(content: string, botName: string, followsThread = false): string {
-  const followUps = followsThread
-    ? `You are now following this thread — later messages here will reach you for the same ` +
-      `judged treatment, and the humans can say "stop" to end that.`
-    : `If you do reply, note that you are NOT following this channel: tell the humans to ` +
-      `@mention you (or say your name again) for follow-ups.`;
-  return [
-    `[name-drop] A channel message said your name ("${botName}") without @mentioning you. ` +
-      `You were NOT invited into this conversation — reply only if the message is clearly asking ` +
-      `for you or requesting something you can directly do. When in doubt, stay out: output exactly ` +
-      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. ${followUps}`,
-    "",
-    ingestUntrusted(content, { source: "discord-message" }),
-  ].join("\n");
 }
 
 function botAuthHeaders(token: string): Record<string, string> {
@@ -645,6 +616,57 @@ export function buildDiscordUnifiedWake(input: DiscordUnifiedWakeInput): Normali
   };
 }
 
+export interface DiscordNativeWakeInput {
+  readonly channelId: string;
+  readonly parentChannelId?: string;
+  readonly isThread: boolean;
+  readonly isDm: boolean;
+  readonly addressing: "direct" | "thread-follow" | "name-drop";
+  readonly botName?: string;
+  readonly contextLines?: readonly ContextLine[];
+  readonly contextSource?: string;
+  readonly trigger: {
+    readonly id: string;
+    readonly author: string;
+    readonly authorId: string;
+    readonly sentAt: string;
+    readonly text: string;
+    readonly trust?: WakeTrust;
+  };
+}
+
+export function discordNativeWake(input: DiscordNativeWakeInput): NormalizedWake {
+  const direct = input.addressing === "direct";
+  return {
+    platform: "discord",
+    reason: direct ? (input.isDm ? "dm" : "mention") : input.isThread ? "thread-activity" : "channel-activity",
+    addressing: input.addressing,
+    locus: {
+      channel: { id: input.parentChannelId ?? input.channelId },
+      ...(input.isThread ? { thread: { ts: input.channelId } } : {}),
+    },
+    ...(input.addressing === "name-drop" && input.botName
+      ? {
+          nameDrop: {
+            botName: input.botName,
+            followUp: input.isThread ? ("thread-engaged" as const) : ("channel-not-following" as const),
+          },
+        }
+      : {}),
+    ...(input.contextLines ? { contextLines: input.contextLines, contextSource: input.contextSource } : {}),
+    trigger: mkMessageTrigger({
+      from: "human",
+      author: input.trigger.author,
+      authorId: input.trigger.authorId,
+      id: input.trigger.id,
+      sentAt: input.trigger.sentAt,
+      trust: input.trigger.trust ?? (direct ? "principal" : "peer"),
+      mention: undefined,
+      body: input.trigger.text,
+    }),
+  };
+}
+
 async function divertDiscordWakeToUnifiedWindow(input: {
   readonly msg: DiscordRelayMessage;
   readonly auth: OpenEverywhereDiscordAuth;
@@ -922,22 +944,49 @@ export async function dispatchTurn(
     }
   }
 
-  const turnText =
-    nameDrop && msg.botName
-      ? renderNameDropTurn(msg.content, msg.botName, isThreadChannelType(msg.channelType))
-      : renderTurn(msg.mentionsBot || isDm, msg.content);
+  const isThread = isThreadChannelType(msg.channelType);
+  const addressing: "direct" | "thread-follow" | "name-drop" =
+    nameDrop && msg.botName ? "name-drop" : msg.mentionsBot || isDm ? "direct" : "thread-follow";
 
-  const context = !isDm && (nameDrop || msg.mentionsBot)
-    ? await fetchDiscordBackscroll({
-        channelId: msg.channelId,
-        triggerMessageId: msg.id,
-        isThread: isThreadChannelType(msg.channelType),
-        botId: msg.botId,
-      }).catch(() => [])
-    : [];
+  const trust = resolveWakeTrustFromContext(
+    ctxFromAuth(surface.auth),
+    { id: msg.author.id, isBot: msg.author.bot },
+    { principalFallback: addressing === "direct" },
+  );
+
+  const backscroll =
+    !isDm && (nameDrop || msg.mentionsBot)
+      ? await fetchDiscordBackscrollLines({
+          channelId: msg.channelId,
+          triggerMessageId: msg.id,
+          isThread,
+          botId: msg.botId,
+        }).catch(() => undefined)
+      : undefined;
+
+  const rendered = renderWake(
+    discordNativeWake({
+      channelId: msg.channelId,
+      parentChannelId: str(surface.auth.attributes.parent_channel_id),
+      isThread,
+      isDm,
+      addressing,
+      botName: msg.botName,
+      contextLines: backscroll?.lines,
+      contextSource: backscroll?.source,
+      trigger: {
+        id: msg.id || "unknown",
+        author: msg.author.username ?? msg.author.id,
+        authorId: msg.author.id,
+        sentAt: new Date().toISOString(),
+        text: msg.content,
+        trust,
+      },
+    }),
+  );
 
   await send(
-    context.length ? { message: turnText, context } : turnText,
+    rendered.context && rendered.context.length ? { message: rendered.message, context: rendered.context } : rendered.message,
     {
       auth: surface.auth,
       continuationToken: surface.continuationToken,

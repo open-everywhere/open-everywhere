@@ -8,7 +8,7 @@ import { parseDriverAllowlist, isAllowedDriver, isAllowedSlackDriver } from "../
 import {
   shouldDispatchDiscord,
   isDmChannel,
-  renderTurn,
+  discordNativeWake,
   takeTurnStatus,
   splitForDiscord,
   shouldAutoThread,
@@ -25,10 +25,10 @@ import {
   typingGateFeed,
   isThreadChannelType,
   nameDropEligible,
-  renderNameDropTurn,
   stripLeadingMention,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
+import { renderWake } from "../agent/channels/normalized-wake.js";
 import { discordPostMessage } from "../agent/channels/discord-post.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
@@ -172,10 +172,13 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 }
 
 {
-  ok(renderTurn(true, "do the thing") === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input)");
-  const woke = renderTurn(false, "chatter");
+  const nativeTrig = (text: string, extra: Record<string, unknown> = {}) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text, ...extra });
+  const direct = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "direct", trigger: nativeTrig("do the thing", { trust: "principal" }) })).message;
+  ok(direct === "do the thing", "render: direct address (mention/DM) passes straight through (trusted user input, W4)");
+  const woke = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "thread-follow", trigger: nativeTrig("chatter") })).message;
   ok(woke.includes(NO_REPLY_SENTINEL), "render: non-direct wake carries the NO_REPLY judge preamble");
   ok(woke.includes("<untrusted_external_data") && woke.includes("chatter"), "render: non-direct wake FENCES the untrusted body (P0-3), never raw pass-through");
+  ok(woke.includes("<wake reason=") && woke.startsWith("[thread-follow]"), "render: non-direct wake now carries the FULL wake envelope + canonical preamble (commit 3 convergence)");
 }
 
 {
@@ -615,12 +618,13 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(nameDropEligible({ ...base, content: "test slack bot lowercase works" }) === true, "name-drop: the name match is case-insensitive");
   ok(nameDropEligible({ ...base, content: "ATestSlackBotX" }) === false, "name-drop: the name must be a standalone phrase, not a substring");
 
-  const turn = renderNameDropTurn("Test Slack Bot help", "Test Slack Bot");
+  const ndTrig = (text: string) => ({ id: "m1", author: "u", authorId: "U1", sentAt: "2026-07-10T10:00:00.000Z", text });
+  const turn = renderWake(discordNativeWake({ channelId: "c1", isThread: false, isDm: false, addressing: "name-drop", botName: "Test Slack Bot", trigger: ndTrig("Test Slack Bot help") })).message;
   ok(turn.includes("[name-drop]") && turn.includes('"Test Slack Bot"'), "name-drop turn: preamble names the trigger");
   ok(turn.includes(NO_REPLY_SENTINEL), "name-drop turn: carries the NO_REPLY escape");
   ok(turn.includes("NOT following this channel"), "name-drop turn (base channel): honest that a reply does not engage");
   ok(turn.includes("Test Slack Bot help") && turn.includes("<untrusted_external_data"), "name-drop turn: the body rides FENCED as untrusted data (P0-3)");
-  const threadTurn = renderNameDropTurn("help", "Bot", true);
+  const threadTurn = renderWake(discordNativeWake({ channelId: "t1", parentChannelId: "c1", isThread: true, isDm: false, addressing: "name-drop", botName: "Bot", trigger: ndTrig("help") })).message;
   ok(threadTurn.includes("now following this thread"), "name-drop turn (thread): says the thread IS followed (engaged at dispatch)");
   ok(threadTurn.includes('"stop"'), "name-drop turn (thread): names the stop verb as the undo");
   ok(!threadTurn.includes("NOT following"), "name-drop turn (thread): no contradictory not-following note");

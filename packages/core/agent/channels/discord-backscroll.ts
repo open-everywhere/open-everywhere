@@ -59,23 +59,33 @@ function extractDiscordMessages(res: unknown): Array<Record<string, unknown>> | 
   return res as Array<Record<string, unknown>>;
 }
 
-export async function fetchDiscordBackscroll(input: DiscordBackscrollInput, deps: DiscordBackscrollDeps = liveDeps): Promise<string[]> {
+export async function fetchDiscordBackscrollLines(
+  input: DiscordBackscrollInput,
+  deps: DiscordBackscrollDeps = liveDeps,
+): Promise<{ readonly lines: ContextLine[]; readonly source: string } | undefined> {
   try {
     const res = await deps.request(input.channelId, {
       limit: String(WAKE_BACKSCROLL_MAX),
       before: input.triggerMessageId,
     });
     const raw = extractDiscordMessages(res);
-    if (!raw) return [];
+    if (!raw) return undefined;
     const ordered = [...raw].reverse();
     let lines = linesFromDiscordMessages(ordered, input.botId);
     if (input.isThread) lines = sinceLastAgentReply(lines);
     const capped = lines.slice(-WAKE_BACKSCROLL_MAX);
-    const entry = renderContext(capped, `discord ${input.isThread ? "thread" : "channel"} ${input.channelId}`);
-    return entry ? [entry] : [];
+    if (capped.length === 0) return undefined;
+    return { lines: capped, source: `discord ${input.isThread ? "thread" : "channel"} ${input.channelId}` };
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+export async function fetchDiscordBackscroll(input: DiscordBackscrollInput, deps: DiscordBackscrollDeps = liveDeps): Promise<string[]> {
+  const res = await fetchDiscordBackscrollLines(input, deps);
+  if (!res) return [];
+  const entry = renderContext(res.lines, res.source);
+  return entry ? [entry] : [];
 }
 
 export const DISCORD_RAW_FETCH_REACHBACK_HOURS = Number(process.env.OE_SUPERVISOR_BACKSCROLL_REACHBACK_HOURS) || 168;
