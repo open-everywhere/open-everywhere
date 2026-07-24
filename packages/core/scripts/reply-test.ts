@@ -396,4 +396,22 @@ restoreHttp();
   ok(renderSupervisorPersona({ channel: { kind: "discord" } } as never) === "", "persona: renders nothing for a non-supervisor session on another surface");
 }
 
-console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona)\n`);
+{
+  const { registerPostArm, postArm } = await import("../agent/channels/post-arms.js");
+  const { postReply } = await import("../agent/channels/reply-post.js");
+  type ReplyTargetT = Parameters<typeof postReply>[0];
+  let fakeGot: string | undefined;
+  registerPostArm({ platform: "fake-surface", dispatchReply: async (_t, text) => { fakeGot = text; return `fake-${text.length}`; } });
+  ok(postArm("fake-surface") !== undefined, "post-arms: a registered fake arm is retrievable by platform key");
+  const fakeId = await postReply({ platform: "fake-surface" } as unknown as ReplyTargetT, "hi");
+  ok(fakeId === "fake-2" && fakeGot === "hi", "post-arms: postReply dispatches a mid-turn reply to the registered fake arm (returns its id)");
+  let threw = false;
+  try {
+    await postReply({ platform: "no-such-surface" } as unknown as ReplyTargetT, "x");
+  } catch {
+    threw = true;
+  }
+  ok(threw, "post-arms: an UNREGISTERED platform refuses (throws) — never a silent/mis-routed post");
+}
+
+console.log(`\n✓ reply: ${n} assertions passed (gate, target, signal, reply on all wired surfaces, dual-mode, persona, post-arm registry)\n`);

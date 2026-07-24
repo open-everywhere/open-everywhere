@@ -6,6 +6,7 @@ import {
   type UnifiedWakeOrigin,
   type UnifiedWakeTargetStore,
 } from "./unified-window.js";
+import { postArm } from "./post-arms.js";
 
 export const REDRIVE_ACTION = "unified.turn.redrive";
 
@@ -23,37 +24,19 @@ export function redriveGuardKey(wakeId: string): string {
 }
 
 export function describeRedriveTarget(origin: UnifiedWakeOrigin): string {
-  switch (origin.platform) {
-    case "slack":
-      return `slack ${origin.threadTs ? `thread in ${origin.channelId}` : `channel ${origin.channelId}`}`;
-    case "github":
-      return `github ${origin.owner}/${origin.repo}#${origin.issueNumber}`;
-    case "linear":
-      return origin.ambient ? `linear issue ${origin.issueId}` : `linear session on issue ${origin.issueId}`;
-    case "notion":
-      return `notion discussion ${origin.discussionId}`;
-    case "discord":
-      return `discord channel ${origin.channelId}`;
-    case "teams":
-      return `teams conversation ${origin.conversationId}`;
+  const arm = postArm(origin.platform);
+  if (!arm?.describeRedriveTarget) {
+    throw new Error(`redrive: no post arm describes a "${origin.platform}" target.`);
   }
+  return arm.describeRedriveTarget(origin);
 }
 
 function originContainerId(origin: UnifiedWakeOrigin): string {
-  switch (origin.platform) {
-    case "slack":
-      return origin.channelId;
-    case "github":
-      return `${origin.owner}/${origin.repo}`;
-    case "linear":
-      return origin.issueId;
-    case "notion":
-      return origin.discussionId;
-    case "discord":
-      return origin.channelId;
-    case "teams":
-      return origin.conversationId;
+  const arm = postArm(origin.platform);
+  if (!arm?.redriveContainerId) {
+    throw new Error(`redrive: no post arm resolves a container id for "${origin.platform}".`);
   }
+  return arm.redriveContainerId(origin);
 }
 
 export function redriveCorrectiveText(chars: number, originalWakeId: string, origin: UnifiedWakeOrigin): string {
