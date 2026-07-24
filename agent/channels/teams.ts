@@ -1,1 +1,1 @@
-export { default } from "@open-everywhere/core/agent/channels/teams.js";
+export { default } from "@open-everywhere/provider-teams/agent/channels/teams.js";

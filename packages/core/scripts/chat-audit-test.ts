@@ -97,23 +97,5 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok((await readAudit({ action: "discord.no_reply" })).length === 0, "discord gateway: an ambient judged silence writes NO discord.no_reply row (actions-only)");
 }
 
-{
-  const teamsChannel = (await import("../agent/channels/teams.js")).default as unknown as AdapterChannel;
-  const completed = (message: string | null, ctx: unknown) => inSession(() => teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
-  const posts: string[] = [];
-  const ctx = {
-    state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.test.local", replyToActivityId: "act-root-1" },
-    thread: { post: async (t: string) => void posts.push(t) },
-  };
-
-  await completed(NO_REPLY_SENTINEL, ctx);
-  ok((await readAudit({ action: "teams.no_reply" })).length === 0, "teams: a judged silence writes NO teams.no_reply row (actions-only)");
-
-  await completed("done — deployed", ctx);
-  const tp = await replyPosts("teams");
-  ok(tp.length === 1 && tp[0]!.detail?.route === "terminal" && tp[0]!.detail?.chars === "done — deployed".length, "teams: a terminal-prose reply writes ONE reply.post row (route:terminal, choke point via serviceUrl+replyToActivityId)");
-  ok((await readAudit({ action: "teams.replied" })).length === 0, "teams: the legacy teams.replied row is GONE");
-}
-
 rmSync(tmp, { recursive: true, force: true });
 console.log(`chat-audit tests passed (${passed})`);

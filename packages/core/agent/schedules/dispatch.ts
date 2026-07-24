@@ -1,10 +1,9 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import slack from "../channels/slack.js";
 import discord from "../channels/discord.js";
-import teams from "../channels/teams.js";
 import { confirmChannelInternal, slackForm } from "../channels/slack-events.js";
-import { teamsMode } from "../channels/teams-identity.js";
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
+import { resolveRegisteredRoutineDispatch, type DispatchTarget } from "./routine-dispatch.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
@@ -25,13 +24,6 @@ function routineMaxConcurrency(): number {
   if (raw === undefined) return DEFAULT_MAX_CONCURRENCY;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CONCURRENCY;
-}
-
-export interface DispatchTarget {
-  readonly channel: unknown;
-  readonly target: Readonly<Record<string, unknown>>;
-  readonly mode: SessionMode;
-  readonly attributes: Readonly<Record<string, string>>;
 }
 
 function storedString(t: Routine["target"], key: string): string | undefined {
@@ -72,54 +64,16 @@ function resolveDiscordTarget(r: Routine): DispatchTarget | null {
   };
 }
 
-function resolveTeamsTarget(r: Routine): DispatchTarget | null {
-  const serviceUrl = storedString(r.target, "serviceUrl");
-  const conversationId = storedString(r.target, "conversationId");
-  if (!serviceUrl || !conversationId) return null;
-  const conversationType = storedString(r.target, "conversationType");
-  const channelId = storedString(r.target, "channelId");
-  const teamId = storedString(r.target, "teamId");
-  const tenantId = storedString(r.target, "tenantId") ?? r.surfaceKey.split("/")[1] ?? "";
-  const mode = teamsMode(conversationType);
-  return {
-    channel: teams,
-    target: {
-      serviceUrl,
-      conversationId,
-      ...(conversationType ? { conversationType } : {}),
-      ...(channelId ? { channelId } : {}),
-      ...(teamId ? { teamId } : {}),
-      ...(tenantId ? { tenantId } : {}),
-    },
-    mode,
-    attributes: {
-      conversation_id: conversationId,
-      service_url: serviceUrl,
-      ...(tenantId ? { tenant_id: tenantId } : {}),
-      ...(channelId ? { channel_id: channelId } : {}),
-      ...(teamId ? { team_id: teamId } : {}),
-      ...(conversationType ? { scope: conversationType } : {}),
-    },
-  };
-}
-
-const ROUTINE_DISPATCH_RESOLVERS: Record<string, (r: Routine) => DispatchTarget | null> = {};
-
-export function registerRoutineDispatchTarget(platform: string, resolve: (r: Routine) => DispatchTarget | null): void {
-  ROUTINE_DISPATCH_RESOLVERS[platform] = resolve;
-}
-
 function resolveTarget(routine: Routine): DispatchTarget | null {
   const platform = routine.surfaceKey.split("/")[0];
-  const registered = platform !== undefined ? ROUTINE_DISPATCH_RESOLVERS[platform] : undefined;
-  if (registered) return registered(routine);
+  if (platform === undefined) return null;
+  const provider = resolveRegisteredRoutineDispatch(platform);
+  if (provider) return provider.resolveTarget(routine);
   switch (platform) {
     case "slack":
       return resolveSlackTarget(routine);
     case "discord":
       return resolveDiscordTarget(routine);
-    case "teams":
-      return resolveTeamsTarget(routine);
     default:
       return null;
   }
@@ -233,7 +187,9 @@ export async function dispatchTick(
         }
       }
       const slackChannelId =
-        dest.channel === slack && "channelId" in dest.target && typeof dest.target.channelId === "string" ? dest.target.channelId : undefined;
+        dest.channel === slack && typeof (dest.target as { channelId?: unknown }).channelId === "string"
+          ? (dest.target as { channelId: string }).channelId
+          : undefined;
       const internal =
         slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
       const markedAuth = {

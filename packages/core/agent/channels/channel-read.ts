@@ -16,9 +16,6 @@ import {
   type RenderedMessage,
 } from "./slack-read.js";
 import { linesFromDiscordMessages } from "./discord-backscroll.js";
-import { teamsReadAdapter } from "./teams-read.js";
-
-export { teamsReadAdapter } from "./teams-read.js";
 
 export interface RenderedLine {
   readonly author: string;
@@ -144,11 +141,14 @@ export function registerReadAdapter(adapter: ReadAdapter): void {
 
 registerReadAdapter(slackReadAdapter);
 registerReadAdapter(discordReadAdapter);
-registerReadAdapter(teamsReadAdapter);
 
 export const READ_ADAPTERS: Readonly<Record<string, ReadAdapter>> = READ_ADAPTER_REGISTRY;
 
 export const SUPPORTED_READ_PLATFORMS: readonly string[] = Object.keys(READ_ADAPTER_REGISTRY);
+
+export function supportedReadPlatforms(): readonly string[] {
+  return Object.keys(READ_ADAPTER_REGISTRY);
+}
 
 export function resolveReadAdapter(
   ctx: BindableContext,

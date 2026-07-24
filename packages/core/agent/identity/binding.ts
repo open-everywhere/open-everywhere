@@ -1,7 +1,6 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
-import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
 import { isVouchedInternal } from "./trust.js";
 import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
@@ -174,30 +173,6 @@ const bindLinear: Mapper = (ctx) => {
   };
 };
 
-const bindTeams: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const scope = attr(a, ["scope"]);
-  const membershipType = attr(a, ["membership_type", "membershipType"]);
-  const userType = attr(a, ["user_type", "userType"]);
-  const mode = teamsMode(scope);
-  const conversationId = attr(a, ["conversation_id", "conversationId"]);
-  const serviceUrl = attr(a, ["service_url", "serviceUrl"]);
-  const tenantId = attr(a, ["tenant_id", "tenantId"]);
-  return {
-    workspace: tenantId,
-    surface: conversationId,
-    domainSurface: attr(a, ["channel_id", "channelId"]),
-    mode,
-    visibility: teamsVisibility(scope, membershipType, mode),
-    trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
-    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
-    target:
-      conversationId && serviceUrl
-        ? { serviceUrl, conversationId, tenantId, channelId: attr(a, ["channel_id", "channelId"]), teamId: attr(a, ["team_id", "teamId"]), conversationType: scope }
-        : undefined,
-  };
-};
-
 const bindDiscord: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -243,7 +218,6 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
 
 registerIdentityMapper("slack", bindSlack);
 registerIdentityMapper("linear", bindLinear);
-registerIdentityMapper("teams", bindTeams);
 registerIdentityMapper("discord", bindDiscord);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {

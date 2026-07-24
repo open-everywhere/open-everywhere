@@ -21,7 +21,7 @@ function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): v
 
 eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack");
 eq(capabilitiesForPlatform("discord"), { midTurnPost: true, reactions: false }, "discord");
-eq(capabilitiesForPlatform("teams"), { midTurnPost: true, reactions: false }, "teams");
+eq(capabilitiesForPlatform("teams"), { midTurnPost: false, reactions: false }, "teams (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: true, reactions: false }, "linear");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
 eq(capabilitiesForPlatform("notion"), { midTurnPost: false, reactions: false }, "notion (unregistered in core alone → NONE)");
@@ -36,7 +36,7 @@ ok(capabilitiesFor(ctxFor("slack")).reactions === true, "capabilitiesFor: bare '
 ok(capabilitiesFor(ctxFor("channel:slack")).reactions === true, "capabilitiesFor: namespaced 'channel:slack' resolves the slack manifest");
 ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "capabilitiesFor: namespaced 'channel:discord' resolves the discord manifest");
 ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
-ok(capabilitiesFor(ctxFor("teams")).midTurnPost === true, "capabilitiesFor: teams honours mid-turn post (sendTeamsActivity)");
+ok(capabilitiesFor(ctxFor("teams")).midTurnPost === false, "capabilitiesFor: teams resolves NONE in core alone (bundle-registered manifest — asserted in the teams integration test)");
 ok(capabilitiesFor(ctxFor("github")).midTurnPost === false, "capabilitiesFor: github honours no optional verb (no public proactive comment seam)");
 
 registerCapabilityManifest("regtest", { midTurnPost: true, reactions: true });

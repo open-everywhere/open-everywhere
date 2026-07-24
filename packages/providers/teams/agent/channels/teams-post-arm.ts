@@ -1,9 +1,6 @@
 import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText } from "eve/channels/teams";
-import { isTrustedTeamsServiceUrl } from "./unified-window.js";
-import type { PostArm, TargetResolveBag } from "./post-arms.js";
-import type { ReplyTarget } from "./reply-post.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
-import type { UnifiedReplyDeps } from "./unified-reply.js";
+import { isTrustedTeamsServiceUrl } from "./teams-origin-codec.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 type TeamsTarget = Extract<ReplyTarget, { platform: "teams" }>;
 type TeamsOrigin = Extract<UnifiedWakeOrigin, { platform: "teams" }>;

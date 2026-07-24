@@ -1,5 +1,5 @@
-import type { SessionMode } from "../access/resolver.js";
-import { rootDmGrainAttrs } from "./unified-window.js";
+import type { SessionMode, BindableContext, IdentityMapper, RawIdentity } from "@open-everywhere/core/agent/adapter-api.js";
+import { rootDmGrainAttrs } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface OpenEverywhereTeamsAuth {
   readonly authenticator: string;
@@ -96,3 +96,48 @@ export function teamsTrust(
 
 type Visibility = "public" | "private";
 type Trust = "internal" | "external";
+
+type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
+
+function teamsAuthOf(ctx: BindableContext): { attributes?: AuthAttrs; principalId?: string } | null {
+  return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
+}
+
+function teamsAttr(a: AuthAttrs, keys: readonly string[]): string | undefined {
+  if (!a) return undefined;
+  for (const k of keys) {
+    const v = a[k];
+    if (typeof v === "string" && v.length > 0) return v;
+    if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  }
+  return undefined;
+}
+
+function teamsAuthPrincipalId(ctx: BindableContext): string | undefined {
+  const pid = teamsAuthOf(ctx)?.principalId;
+  return pid && pid.length > 0 ? pid : undefined;
+}
+
+export const bindTeams: IdentityMapper = (ctx): RawIdentity => {
+  const a = teamsAuthOf(ctx)?.attributes;
+  const scope = teamsAttr(a, ["scope"]);
+  const membershipType = teamsAttr(a, ["membership_type", "membershipType"]);
+  const userType = teamsAttr(a, ["user_type", "userType"]);
+  const mode = teamsMode(scope);
+  const conversationId = teamsAttr(a, ["conversation_id", "conversationId"]);
+  const serviceUrl = teamsAttr(a, ["service_url", "serviceUrl"]);
+  const tenantId = teamsAttr(a, ["tenant_id", "tenantId"]);
+  return {
+    workspace: tenantId,
+    surface: conversationId,
+    domainSurface: teamsAttr(a, ["channel_id", "channelId"]),
+    mode,
+    visibility: teamsVisibility(scope, membershipType, mode),
+    trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
+    principalId: teamsAuthPrincipalId(ctx) ?? teamsAttr(a, ["user_id", "userId"]),
+    target:
+      conversationId && serviceUrl
+        ? { serviceUrl, conversationId, tenantId, channelId: teamsAttr(a, ["channel_id", "channelId"]), teamId: teamsAttr(a, ["team_id", "teamId"]), conversationType: scope }
+        : undefined,
+  };
+};

@@ -149,16 +149,16 @@ ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a 
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
 ok(armReply(reply, { channel: { kind: "notion" } }) === null, "reply is hidden on notion in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on telegram in core alone (bundle-registered manifest — fail-closed NONE default)");
-ok(armReply(reply, { channel: { kind: "teams" } }) !== null, "reply arms on a Teams session (mid-turn post via sendTeamsActivity)");
+ok(armReply(reply, { channel: { kind: "teams" } }) === null, "reply is hidden on teams in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
 ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
 {
-  const teamsArmed = armReply(reply, { channel: { kind: "teams" } });
+  const linearArmed = armReply(reply, { channel: { kind: "linear" } });
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(teamsArmed !== null && /FINAL/.test(teamsArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
-  ok(slackArmed !== null && slackArmed.description === teamsArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
-  ok(!/update_reply/.test(teamsArmed!.description), "reply: description never mentions the dropped update_reply verb");
+  ok(linearArmed !== null && /FINAL/.test(linearArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(slackArmed !== null && slackArmed.description === linearArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
+  ok(!/update_reply/.test(linearArmed!.description), "reply: description never mentions the dropped update_reply verb");
 }
 
 {
@@ -171,10 +171,7 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
   ok(resolveReplyTarget({ channel: { kind: "notion" } } as never) === null, "resolveReplyTarget: notion → null in core alone (arm is bundle-registered)");
   ok(resolveReplyTarget({ channel: { kind: "telegram" } } as never) === null, "resolveReplyTarget: telegram → null in core alone (arm is bundle-registered)");
 
-  const teamsTarget = resolveReplyTarget(teamsCtx("conv-1") as never);
-  ok(teamsTarget?.platform === "teams" && (teamsTarget as { conversationId: string }).conversationId === "conv-1" && (teamsTarget as { serviceUrl: string }).serviceUrl === TEAMS_SERVICE_URL, "resolveReplyTarget: teams carries the serviceUrl + conversation id (the captured reference)");
-  ok(resolveReplyTarget(teamsCtx("conv-1", null) as never) === null, "resolveReplyTarget: a teams ctx with no serviceUrl → null (can't cold-address)");
-  ok(resolveReplyTarget(teamsCtx(undefined) as never) === null, "resolveReplyTarget: a conversation-less teams ctx → null");
+  ok(resolveReplyTarget(teamsCtx("conv-1") as never) === null, "resolveReplyTarget: teams → null in core alone (arm is bundle-registered)");
 
   ok(resolveReplyTarget({ channel: { kind: "github" } } as never) === null, "resolveReplyTarget: github → null (midTurnPost gate is false)");
 
@@ -235,23 +232,6 @@ await inSession(async () => {
   ok(res.posted === true && res.id === "d-42", "reply: on Discord returns the created message id");
   ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("/channels/D1/messages"), "reply: on Discord POSTs to /channels/{id}/messages");
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
-});
-restoreHttp();
-
-calls = [];
-teamsResponse = { status: 200, body: { id: "teams-activity-1" } };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(reply, teamsCtx("conv-1"))!;
-  const res = await armed.execute({ text: "teams answer" }, teamsCtx("conv-1"));
-  ok(res.posted === true && res.id === "teams-activity-1", "reply: on Teams returns the sent activity id");
-  const activityCall = calls.find((c) => c.url.includes("smba.test.local") && c.url.includes("/v3/conversations/") && c.url.includes("/activities"));
-  ok(activityCall !== undefined && activityCall.method === "POST", "reply: on Teams POSTs a message activity to the captured conversation reference");
-  ok(activityCall!.url.includes("conv-1"), "reply: on Teams posts into the SAME conversation it was woken on");
-  const payload = JSON.parse(activityCall!.body) as { type?: string; text?: string };
-  ok(payload.type === "message" && payload.text === "teams answer", "reply: on Teams sends a message activity carrying the model text");
-  const audit = await readAudit({ org: "default", action: "reply.post" });
-  ok(audit.some((r) => r.detail?.platform === "teams" && r.detail?.id === "teams-activity-1"), "reply: audits a reply.post row stamped platform=teams");
 });
 restoreHttp();
 

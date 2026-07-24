@@ -1,7 +1,6 @@
 import { bindFrom, bindBridged, registerIdentityMapper, slackMode, slackVisibility, slackTrust, linearVisibility, linearTrust, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
-import { teamsTrust } from "../agent/channels/teams-identity.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import {
   buildSlackAuth,
@@ -214,13 +213,6 @@ ok(channelFactsFromInfo({ channel: { is_channel: true, is_org_shared: true } }).
 ok(channelFactsFromInfo({ channel: { is_channel: true } }).isExternal === false, "factsFromInfo: no shared flags -> isExternal false");
 ok(channelFactsFromInfo({ channel: { is_channel: true } }).trustChecked === true, "factsFromInfo: successful fetch -> trustChecked true");
 ok(channelFactsFromInfo(null).trustChecked === undefined, "factsFromInfo: empty info -> trustChecked undefined (fetch failed)");
-
-ok(teamsTrust("channel", "shared", "channel", "TEN") === "external", "teamsTrust: shared channel -> external");
-ok(teamsTrust("channel", "standard", "channel", "TEN") === "internal", "teamsTrust: standard channel + tenant -> internal");
-ok(teamsTrust("channel", "private", "channel", "TEN") === "internal", "teamsTrust: private channel + tenant -> internal");
-ok(teamsTrust("channel", undefined, "channel", "TEN") === undefined, "teamsTrust: FAIL-CLOSED unknown membership -> no verdict (binds external)");
-ok(teamsTrust("channel", "standard", "channel", undefined) === undefined, "teamsTrust: FAIL-CLOSED missing tenant -> no verdict (binds external)");
-ok(teamsTrust("personal", undefined, "dm", "TEN") === "internal", "teamsTrust: personal chat -> internal (gate N/A; bindFrom's DM-partner gate still applies)");
 
 const trExt = bindFrom(slackCtx({ team_id: "T", channel_id: "CEXT", channel_type: "channel", is_ext_shared: "true", trust_checked: "true" }));
 ok(trExt.trust === "external", "bindFrom: slack ext-shared channel binds external");

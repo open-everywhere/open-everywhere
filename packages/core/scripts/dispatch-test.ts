@@ -323,7 +323,6 @@ ok(
 );
 
 const discordChannel = (await import("../agent/channels/discord.js")).default;
-const teamsChannel = (await import("../agent/channels/teams.js")).default;
 
 interface CapturedFire {
   readonly channel: unknown;
@@ -391,46 +390,6 @@ await seed({ id: "r-dc-legacy", surfaceKey: "discord/G2/CH2", target: { channelI
   ok(legacy.attributes["guild_id"] === "G2", "discord: legacy fire recovers guild_id from the surfaceKey's workspace segment");
   const b = bindFrom({ channel: { kind: "discord" }, session: { auth: { current: { attributes: legacy.attributes } as never } } });
   ok(b.workspace === "G2" && b.surface === "CH2", "discord: legacy fire still attributes to the routine's real partition");
-}
-
-await seed({
-  id: "r-teams-ch",
-  surfaceKey: "teams/TEN1/19-eng-thread.tacv2",
-  target: {
-    serviceUrl: "https://smba.trafficmanager.net/uk/",
-    conversationId: "19:eng@thread.tacv2",
-    tenantId: "TEN1",
-    channelId: "19:eng@thread.tacv2",
-    teamId: "19:team@thread.tacv2",
-    conversationType: "channel",
-  },
-});
-await seed({
-  id: "r-teams-dm",
-  surfaceKey: "teams/TEN1/a-1user",
-  target: { serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "a:1user", conversationType: "personal" },
-});
-{
-  const started = await tickCapture();
-  ok(started.includes("r-teams-ch") && started.includes("r-teams-dm"), "teams: routines with a stored conversation reference fire");
-  const ch = fires["r-teams-ch"];
-  ok(ch.channel === teamsChannel, "teams: fires into the teams channel module");
-  ok(
-    ch.target["serviceUrl"] === "https://smba.trafficmanager.net/uk/" &&
-      ch.target["conversationId"] === "19:eng@thread.tacv2" &&
-      ch.target["conversationType"] === "channel" &&
-      ch.target["tenantId"] === "TEN1",
-    "teams: receive target carries the full conversation reference (serviceUrl/conversationId/scope/tenant)",
-  );
-  ok(ch.attributes["conversation_id"] === "19:eng@thread.tacv2" && ch.attributes["service_url"] === "https://smba.trafficmanager.net/uk/" && ch.attributes["tenant_id"] === "TEN1" && ch.attributes["scope"] === "channel", "teams: fire stamps conversation/service/tenant/scope for bindTeams");
-  ok(ch.attributes["membership_type"] === undefined, "teams: NO membership_type is invented at fire time (trust fails closed to external)");
-  const chBinding = bindFrom({ channel: { kind: "teams" }, session: { auth: { current: { attributes: ch.attributes } as never } } });
-  ok(chBinding.workspace === "TEN1" && chBinding.surface === "19-eng-thread.tacv2", "teams: bindFrom re-derives the routine's REAL tenant/conversation partition (sanitized surface matches the surfaceKey)");
-  ok(chBinding.mode === "channel" && chBinding.trust === "external", "teams: an unverified channel fire binds channel/external (fail-closed)");
-
-  const dm = fires["r-teams-dm"];
-  const dmBinding = bindFrom({ channel: { kind: "teams" }, session: { auth: { current: { attributes: dm.attributes } as never } } });
-  ok(dmBinding.mode === "dm", "teams: a personal-chat fire binds dm mode (stored scope honoured)");
 }
 
 await seed({ id: "r-teams-noref", surfaceKey: "teams/TEN1/19-x", target: { conversationId: "19:x@thread.tacv2" } });

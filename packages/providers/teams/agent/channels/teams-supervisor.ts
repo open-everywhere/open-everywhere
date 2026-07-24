@@ -1,7 +1,15 @@
-import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
-import type { WakeTrust } from "./wake-envelope.js";
-import { classifySessionSendError } from "./session-death.js";
-import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
+import {
+  renderWake,
+  mkMessageTrigger,
+  classifySessionSendError,
+  mintWakeId,
+  singleWindowMentionPolicy,
+  type NormalizedWake,
+  type WakeEngagementTier,
+  type WakeTrust,
+  type SingleWindowMentionPolicy,
+  type UnifiedWindowWake,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereTeamsAuth } from "./teams-identity.js";
 
 export function teamsSupervisorSentinel(generation: number): string {

@@ -1,9 +1,14 @@
 import { resolveTeamsAppId, resolveTeamsAppPassword, resolveTeamsTenantId } from "eve/channels/teams";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { resolvePartition, domainKeyOf } from "../memory/partition.js";
-import { domainForChannel, type Domain } from "../memory/domain.js";
-import { getConfig } from "../access/config.js";
-import { ChannelScopeError } from "./slack-read.js";
+import {
+  bindFrom,
+  resolvePartition,
+  domainKeyOf,
+  domainForChannel,
+  getConfig,
+  ChannelScopeError,
+  type BindableContext,
+  type Domain,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const GRAPH_TOKEN_SCOPE = "https://graph.microsoft.com/.default";

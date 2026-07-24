@@ -86,6 +86,9 @@ export type { Partition } from "./memory/partition.js";
 export type { MemorySilo } from "./memory/silo.js";
 export { makeSelector, normalizeSelection } from "./memory/selection.js";
 export type { Selector } from "./memory/selection.js";
+export { resolveMemoryPlan } from "./memory/resolve.js";
+export type { MemoryResolveConfig } from "./memory/resolve.js";
+export { defineMemorySilo } from "./memory/silo.js";
 export { siloTier } from "./memory/store.js";
 export type { Tier, MemoryFiles } from "./memory/store.js";
 
@@ -147,16 +150,16 @@ export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";
 
 export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
 export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
-export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy } from "./channels/unified-window.js";
-export type { UnifiedWakeOrigin, UnifiedWindowWake } from "./channels/unified-window.js";
-
-export { rootDmGrainAttrs, OE_GRAIN_ATTR } from "./channels/unified-window.js";
+export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy, rootDmGrainAttrs, OE_GRAIN_ATTR } from "./channels/unified-window.js";
+export type { UnifiedWakeOrigin, UnifiedWindowWake, SingleWindowMentionPolicy } from "./channels/unified-window.js";
 
 export { windowGrainOf } from "./identity/binding.js";
 export type { WindowGrain } from "./identity/binding.js";
 
-export { registerReadAdapter } from "./channels/channel-read.js";
+export { registerReadAdapter, resolveReadAdapter, READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, supportedReadPlatforms } from "./channels/channel-read.js";
 export type { ReadAdapter } from "./channels/channel-read.js";
+export { ChannelScopeError } from "./channels/slack-read.js";
+export { EventDedupe, ThreadFifo } from "./channels/slack-front.js";
 
 export { registerReactionSurface, isRegisteredReactionSurface } from "./channels/reaction-ingest.js";
 
@@ -190,10 +193,10 @@ export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 export { classifySessionSendError } from "./channels/session-death.js";
 
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
-export { isVouchedInternal } from "./identity/trust.js";
+export { isVouchedInternal, isVouchedSurface } from "./identity/trust.js";
 
-export { ambientSupervisorEnabled, engagementTierFor } from "./memory/domain.js";
-export type { EngagementTier } from "./memory/domain.js";
+export { ambientSupervisorEnabled, engagementTierFor, domainForChannel } from "./memory/domain.js";
+export type { EngagementTier, Domain } from "./memory/domain.js";
 
 export type { ContextLine } from "./channels/context-render.js";
 
@@ -201,15 +204,15 @@ export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
-export { registerRoutineDispatchTarget } from "./schedules/dispatch.js";
-export type { DispatchTarget } from "./schedules/dispatch.js";
-export type { Routine } from "./routines/routine.js";
-
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
 
 export { gateGithubDelivery } from "./routines/events.js";
 export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
+
+export { registerRoutineDispatch } from "./schedules/routine-dispatch.js";
+export type { RoutineDispatchProvider, DispatchTarget } from "./schedules/routine-dispatch.js";
+export type { Routine } from "./routines/routine.js";
 
 export { appendUsageEvent } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";

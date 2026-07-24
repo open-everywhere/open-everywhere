@@ -55,8 +55,6 @@ console.log("1. unifiedThreadRef derivation:");
 eq(unifiedThreadRef({ platform: "slack", channelId: "C1", threadTs: "170.5" }), { channelKey: "slack/C1", threadKey: "170.5" }, "slack: threaded ⇒ threadKey is the threadTs");
 eq(unifiedThreadRef({ platform: "slack", channelId: "C1" }), { channelKey: "slack/C1", threadKey: "C1" }, "slack: top-level ⇒ threadKey falls back to the channel id");
 eq(unifiedThreadRef({ platform: "linear", issueId: "iss_1", ambient: true }), { channelKey: "linear/iss_1", threadKey: "iss_1" }, "linear ambient: threadKey falls back to the issue id");
-const teamsRef = unifiedThreadRef({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19:abc@thread.v2", replyToActivityId: "act:1" });
-ok(!teamsRef.channelKey.includes(":") && !teamsRef.threadKey.includes(":"), "teams: colons in the conversation/activity ids are folded (task windowId is [^:]+)");
 
 const ref = unifiedThreadRef({ platform: "slack", channelId: "C_SPNA", threadTs: "1720000000.001" });
 const taskToken = formatWindowToken({ domain: "payments", windowId: taskWindowId(ref.channelKey, ref.threadKey), generation: 6 });

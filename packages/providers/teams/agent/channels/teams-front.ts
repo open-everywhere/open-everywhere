@@ -8,19 +8,28 @@ import {
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
 } from "./teams-supervisor.js";
-import { shouldRotate } from "./turn-delivery.js";
-import { EventDedupe, ThreadFifo } from "./slack-front.js";
-import { divertToUnifiedWindow } from "./unified.js";
-import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
-import type { UnifiedWindowWake } from "./unified-window.js";
-import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
-import { engagementTierFor } from "../memory/domain.js";
-import { getConfig } from "../access/config.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { isVouchedSurface } from "../identity/trust.js";
-import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
-import { deploymentOrg, type BindableContext } from "../identity/binding.js";
-import { appendAudit } from "../audit/audit.js";
+import {
+  shouldRotate,
+  EventDedupe,
+  ThreadFifo,
+  divertToUnifiedWindow,
+  supervisorGrainFor,
+  mintRotationToken,
+  grainUsesUnifiedWindow,
+  resolvePartition,
+  domainKeyOf,
+  engagementTierFor,
+  getConfig,
+  getOperationalStore,
+  isVouchedSurface,
+  resolveWakeTrustFromContext,
+  deploymentOrg,
+  appendAudit,
+  type SupervisorGrain,
+  type UnifiedWindowWake,
+  type Partition,
+  type BindableContext,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 

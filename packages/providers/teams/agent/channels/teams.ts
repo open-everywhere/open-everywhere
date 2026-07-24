@@ -1,11 +1,14 @@
 import { teamsChannel, splitTeamsMessageText, type TeamsHandle } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType, teamsUserTypeFromMember } from "./teams-identity.js";
-import { finalMessageActionForTurn, isBareStop } from "./turn-delivery.js";
-import { type ChatAuditPartition } from "./chat-turn-audit.js";
-import { postTerminalProse } from "./reply-post.js";
-import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { resolvePartition } from "../memory/partition.js";
+import {
+  finalMessageActionForTurn,
+  isBareStop,
+  postTerminalProse,
+  consumeRepliedThisTurn,
+  resolvePartition,
+  type ChatAuditPartition,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 function auditPartitionForState(state: {
   conversationId: string | null;

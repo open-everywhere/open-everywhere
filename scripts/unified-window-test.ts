@@ -77,9 +77,10 @@ import {
   planTeamsSingleWindow,
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
-} from "@open-everywhere/core/agent/channels/teams-supervisor.js";
-import { buildTeamsAuth } from "@open-everywhere/core/agent/channels/teams-identity.js";
-import { isTrustedTeamsServiceUrl } from "@open-everywhere/core/agent/channels/unified-window.js";
+} from "@open-everywhere/provider-teams/agent/channels/teams-supervisor.js";
+import { buildTeamsAuth } from "@open-everywhere/provider-teams/agent/channels/teams-identity.js";
+import { isTrustedTeamsServiceUrl } from "@open-everywhere/provider-teams/agent/channels/teams-origin-codec.js";
+import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import replyTool from "@open-everywhere/core/agent/tools/reply.js";
 import readSlackChannel from "@open-everywhere/core/agent/tools/read_slack_channel.js";
@@ -101,6 +102,7 @@ const noThrow = (fn: () => unknown, label: string) => {
 
 registerNotionProvider();
 registerGithubProvider();
+registerTeamsProvider();
 {
   const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
     slack: true,
@@ -126,6 +128,20 @@ registerGithubProvider();
     "github: the issue IS the thread (registered codec)",
   );
   n += 3;
+  n++;
+  ok(
+    isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x", replyToActivityId: "act1" }),
+    "teams: replyToActivityId present ⇒ the reply chain is the thread (registered codec)",
+  );
+  ok(
+    !isThreadScopedWakeOrigin({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19_x" }),
+    "teams: no reply-chain root ⇒ a plain conversation send, top-level (registered codec)",
+  );
+  {
+    const teamsRef = unifiedThreadRef({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19:abc@thread.v2", replyToActivityId: "act:1" });
+    ok(!teamsRef.channelKey.includes(":") && !teamsRef.threadKey.includes(":"), "teams: colons in the conversation/activity ids are folded (task windowId is [^:]+) (registered codec)");
+  }
+  n++;
 }
 
 const withGate = async <T>(on: boolean, fn: () => T | Promise<T>): Promise<T> => {

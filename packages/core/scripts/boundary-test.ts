@@ -64,7 +64,7 @@ const PROVIDER_VENDOR_STRINGS: Record<string, string[]> = {
   slack: ["SLACK_SIGNING_SECRET", "SLACK_BOT_TOKEN"],
   discord: ["discord.com/api"],
   github: ["x-hub-signature-256"],
-  teams: ["graph.microsoft.com"],
+  teams: ["graph.microsoft.com", "smba.trafficmanager.net"],
   telegram: ["api.telegram.org", "TELEGRAM_BOT_TOKEN"],
 };
 

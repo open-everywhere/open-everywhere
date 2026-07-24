@@ -8,11 +8,19 @@ import {
   type OpenEverywhereTeamsAuth,
   type TeamsIdentityInput,
 } from "../agent/channels/teams-identity.js";
-import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
-import { resolvePartition } from "../agent/memory/partition.js";
-import { resolveMemoryPlan, type MemoryResolveConfig } from "../agent/memory/resolve.js";
-import { defineDomain } from "../agent/memory/domain.js";
-import { defineMemorySilo } from "../agent/memory/silo.js";
+import { registerTeamsProvider } from "../agent/register.js";
+import {
+  bindFrom,
+  resolvePartition,
+  resolveMemoryPlan,
+  defineDomain,
+  defineMemorySilo,
+  OE_GRAIN_ATTR,
+  type BindableContext,
+  type MemoryResolveConfig,
+} from "@open-everywhere/core/agent/adapter-api.js";
+
+registerTeamsProvider();
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -60,6 +68,15 @@ ok(teamsTrust("channel", "standard", "channel", "TEN", "guest") === "external", 
 ok(teamsTrust("personal", undefined, "dm", "TEN", "guest") === "external", "guest 1:1 partner -> external (demote wins over personal-silo internal, mirrors Slack)");
 ok(teamsTrust("channel", "standard", "channel", "TEN", "member") === "internal", "member in a standard channel -> internal (unchanged)");
 ok(teamsTrust("channel", "standard", "channel", "TEN", undefined) === "internal", "unavailable userType in a standard channel -> internal (channel verdict stands, like Slack's channel path)");
+
+{
+  const teamsDm = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "personal" });
+  const teamsChan = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "channel", channelId: "ch1", teamId: "team1" });
+  const teamsGroup = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "groupChat" });
+  ok(teamsDm.attributes[OE_GRAIN_ATTR] === "standing", "buildTeamsAuth(personal) stamps oe_grain=standing");
+  ok(!(OE_GRAIN_ATTR in teamsChan.attributes), "buildTeamsAuth(channel) does NOT stamp a grain");
+  ok(teamsGroup.attributes[OE_GRAIN_ATTR] === "standing", "buildTeamsAuth(groupChat ⇒ mpim) stamps oe_grain=standing (widened)");
+}
 
 ok(teamsMembershipType({ channel: { membershipType: "standard" } }) === "standard", "membershipType read from channelData.channel");
 ok(teamsMembershipType({ channel: {} }) === undefined, "membershipType absent -> undefined");

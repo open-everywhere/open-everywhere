@@ -114,8 +114,6 @@ export async function resolveDelegatedReplyTarget(
   return { ok: true, origin: echoedOrigin };
 }
 
-export { isTrustedTeamsServiceUrl } from "./wake-origin-codecs.js";
-
 export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return false;
@@ -205,4 +203,3 @@ import { wakeOriginCodecs } from "./wake-origin-codecs.js";
 registerWakeOriginCodec("slack", wakeOriginCodecs.slack);
 registerWakeOriginCodec("linear", wakeOriginCodecs.linear);
 registerWakeOriginCodec("discord", wakeOriginCodecs.discord);
-registerWakeOriginCodec("teams", wakeOriginCodecs.teams);

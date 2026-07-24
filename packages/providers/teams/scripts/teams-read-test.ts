@@ -7,11 +7,18 @@ import {
   teamsReadAdapter,
   type TeamsGraphRequester,
 } from "../agent/channels/teams-read.js";
-import { READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, resolveReadAdapter, teamsReadAdapter as teamsFromRegistry } from "../agent/channels/channel-read.js";
+import { registerTeamsProvider } from "../agent/register.js";
+import {
+  READ_ADAPTERS,
+  supportedReadPlatforms,
+  resolveReadAdapter,
+  registerConfig,
+  defineDomain,
+  type BindableContext,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, type TeamsIdentityInput } from "../agent/channels/teams-identity.js";
-import type { BindableContext } from "../agent/identity/binding.js";
-import { registerConfig } from "../agent/access/config.js";
-import { defineDomain } from "../agent/memory/domain.js";
+
+registerTeamsProvider();
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -183,9 +190,8 @@ const engCtx = teamsCtx({
 }
 
 {
-  ok(READ_ADAPTERS["teams"] === teamsReadAdapter, "registry: READ_ADAPTERS.teams is the Microsoft Graph adapter");
-  ok(teamsFromRegistry === teamsReadAdapter, "registry: channel-read.ts re-exports the SAME adapter instance (one import point)");
-  ok(SUPPORTED_READ_PLATFORMS.includes("teams"), "registry: teams is in the supported-platforms list");
+  ok(READ_ADAPTERS["teams"] === teamsReadAdapter, "registry: READ_ADAPTERS.teams is the Microsoft Graph adapter (registered by the bundle)");
+  ok(supportedReadPlatforms().includes("teams"), "registry: teams is in the LIVE supported-platforms list once the bundle registered it");
   const mk = (kind: string, attrs: Record<string, string>): BindableContext =>
     ({ channel: { kind }, session: { auth: { current: { attributes: attrs, principalId: "U1", principalType: "teams-user" } } } }) as unknown as BindableContext;
   const uniTeams = mk("unified", { oe_platform: "teams", oe_sources: "teams" });

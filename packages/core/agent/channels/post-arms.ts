@@ -37,10 +37,8 @@ export function registeredPostArmPlatforms(): readonly string[] {
 
 import { slackPostArm } from "./slack-post-arm.js";
 import { discordPostArm } from "./discord-post-arm.js";
-import { teamsPostArm } from "./teams-post-arm.js";
 import { linearPostArm } from "./linear-post-arm.js";
 
 registerPostArm(slackPostArm);
 registerPostArm(discordPostArm);
-registerPostArm(teamsPostArm);
 registerPostArm(linearPostArm);

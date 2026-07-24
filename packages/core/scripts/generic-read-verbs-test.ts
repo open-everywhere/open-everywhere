@@ -12,7 +12,6 @@ import {
   allowedSurfaceIdsFrom,
   slackReadAdapter,
   discordReadAdapter,
-  teamsReadAdapter,
   registerReadAdapter,
   READ_ADAPTERS,
   SUPPORTED_READ_PLATFORMS,
@@ -80,15 +79,16 @@ const MSGS = [
   n++;
 
   const uniTeams = mk("unified", { oe_platform: "teams", oe_sources: "teams" });
-  const r3 = resolveReadAdapter(uniTeams, undefined, []);
-  ok(r3.platform === "teams" && r3.adapter === teamsReadAdapter, "gate: a teams read routes to the Teams adapter (no longer unsupported)");
+  assert.throws(() => resolveReadAdapter(uniTeams, undefined, []), /not supported yet \(supported: slack, discord\)/u, "gate: teams is UNSUPPORTED in core alone (bundle-registered adapter) — fails loud");
+  n++;
 
   const uniLinear = mk("unified", { oe_platform: "linear", oe_sources: "linear" });
-  assert.throws(() => resolveReadAdapter(uniLinear, undefined, []), /not supported yet \(supported: slack, discord, teams\)/u, "gate: an unsupported surface (linear) fails loud with the supported list");
+  assert.throws(() => resolveReadAdapter(uniLinear, undefined, []), /not supported yet \(supported: slack, discord\)/u, "gate: an unsupported surface (linear) fails loud with the supported list");
   n++;
 
   ok(!SUPPORTED_READ_PLATFORMS.includes("linear") && READ_ADAPTERS["linear"] === undefined, "linear is declared unsupported (absent from READ_ADAPTERS), not faked");
-  ok(SUPPORTED_READ_PLATFORMS.includes("slack") && SUPPORTED_READ_PLATFORMS.includes("discord") && SUPPORTED_READ_PLATFORMS.includes("teams"), "slack + discord + teams are the wired read adapters");
+  ok(!SUPPORTED_READ_PLATFORMS.includes("teams") && READ_ADAPTERS["teams"] === undefined, "teams is unregistered in core alone (bundle-registered), absent from READ_ADAPTERS");
+  ok(SUPPORTED_READ_PLATFORMS.includes("slack") && SUPPORTED_READ_PLATFORMS.includes("discord"), "slack + discord are the core-wired read adapters");
 
   const fakeReadAdapter: ReadAdapter = {
     platform: "fake-test-platform",
@@ -104,8 +104,8 @@ const MSGS = [
   const uniStillUnknown = mk("unified", { oe_platform: "still-unknown", oe_sources: "still-unknown" });
   assert.throws(
     () => resolveReadAdapter(uniStillUnknown, undefined, []),
-    /not supported yet \(supported: slack, discord, teams\)/u,
-    "registry: an unregistered platform still fails loud with today's exact refusal text, unaffected by the fake registration above",
+    /not supported yet \(supported: slack, discord\)/u,
+    "registry: an unregistered platform still fails loud with today's exact refusal text (load-time snapshot: slack, discord — teams is bundle-registered), unaffected by the fake registration above",
   );
   n++;
 }
