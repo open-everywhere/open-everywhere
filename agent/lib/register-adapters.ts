@@ -15,6 +15,8 @@ import {
   getOperationalStore,
   bootVerifyAuditChainTail,
   registerSlackGovernanceMembers,
+  registerOperationalPglite,
+  onVercel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionMemory } from "@open-everywhere/adapters/agent/notion/memory.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
@@ -56,6 +58,14 @@ if (
   process.env.DATABASE_URL
 ) {
   await registerNeon();
+}
+
+if (
+  !process.env.OE_OPERATIONAL_PROVIDER &&
+  !process.env.DATABASE_URL &&
+  (!onVercel() || process.env.OE_ALLOW_EPHEMERAL_OPERATIONAL === "1")
+) {
+  await registerOperationalPglite();
 }
 
 registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
