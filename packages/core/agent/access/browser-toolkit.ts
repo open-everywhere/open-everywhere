@@ -3,6 +3,7 @@ import type { WindowGrain } from "../identity/binding.js";
 import { preRegisterDynamicEntry, grainBackstopAtExecute, FULL_KIT } from "./window-gated.js";
 import type { BindableContext } from "../identity/binding.js";
 import { auditToolAction } from "../audit/tool-action.js";
+import { ingestUntrustedModelOutput } from "./untrusted.js";
 
 export interface BrowserToolEntry {
   readonly description: string;
@@ -38,6 +39,34 @@ export const BROWSER_TOOL_NAMES = [
   "browser_close",
 ] as const;
 
+export const BROWSER_UNFENCED_OPS: ReadonlySet<string> = new Set(["browser_screenshot", "browser_close"]);
+
+function browserDomainOf(output: unknown): string | undefined {
+  const host = (u: unknown): string | undefined => {
+    if (typeof u !== "string") return undefined;
+    try {
+      return new URL(u).host || undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  if (output !== null && typeof output === "object") {
+    const o = output as Record<string, unknown>;
+    const direct = host(o.url) ?? host(o.href);
+    if (direct !== undefined) return direct;
+  }
+  const text = typeof output === "string" ? output : JSON.stringify(output ?? null);
+  const m = text.match(/https?:\/\/[^\s"'<>)]+/);
+  return m ? host(m[0]) : undefined;
+}
+
+export function browserContentModelOutput(name: string, output: unknown): { type: "text"; value: string } {
+  const op = name.startsWith("browser_") ? name.slice("browser_".length) : name;
+  const domain = browserDomainOf(output);
+  const text = typeof output === "string" ? output : JSON.stringify(output ?? null);
+  return ingestUntrustedModelOutput(text, { source: domain ? `browser ${op} ${domain}` : `browser ${op}` });
+}
+
 let registered: Readonly<Record<string, BrowserToolEntry>> | undefined;
 
 export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserToolEntry>>): void {
@@ -53,6 +82,7 @@ export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserT
       throw new Error(`registerBrowserToolkit: "${name}" carries an approval policy — browser toolkit entries must be approval-less`);
     }
     const auditAction = `browser.${name.slice("browser_".length)}`;
+    const fenced = !BROWSER_UNFENCED_OPS.has(name);
     const backstopped = defineTool({
       ...entry,
       execute: async (input: unknown, ctx: unknown) => {
@@ -61,6 +91,7 @@ export function registerBrowserToolkit(entries: Readonly<Record<string, BrowserT
         await auditToolAction(ctx as BindableContext, auditAction);
         return result;
       },
+      ...(fenced ? { toModelOutput: (output: unknown) => browserContentModelOutput(name, output) } : {}),
     } as unknown as ToolDefinition) as unknown as BrowserToolEntry;
     preRegisterDynamicEntry(BROWSER_TOOLS_SLUG, name, backstopped);
     armed[name] = backstopped;

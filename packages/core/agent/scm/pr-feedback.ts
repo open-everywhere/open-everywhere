@@ -1,5 +1,6 @@
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
 import { fetchCheckRuns, summarizeChecks, type CheckRun, type PrChecksSummary } from "./pr-status.js";
+import { ingestUntrusted } from "../access/untrusted.js";
 
 export const MAX_REVIEWS = 30;
 export const MAX_REVIEW_COMMENTS = 50;
@@ -169,4 +170,60 @@ export async function fetchPrFeedback(opts: {
 
 function mostRecent<T>(items: readonly T[], max: number): T[] {
   return items.length <= max ? [...items] : items.slice(items.length - max);
+}
+
+function truncNote(n: number, unit: string): string {
+  return n > 0 ? `, ${n} older ${unit} dropped` : "";
+}
+
+export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
+  const out: string[] = [`PR feedback for ${d.repo}#${d.number}`];
+
+  out.push("", `Reviews (${d.reviews.length}${truncNote(d.truncation.reviewsDropped, "reviews")}):`);
+  if (d.reviews.length === 0) out.push("  (none)");
+  d.reviews.forEach((r, i) => {
+    const head = `  [${i + 1}] ${r.author} — ${r.state}`;
+    if (r.body.trim()) out.push(`${head}:`, ingestUntrusted(r.body, { source: `pr review by ${r.author}` }));
+    else out.push(`${head} (no comment)`);
+  });
+
+  out.push("", `Inline review comments (${d.reviewComments.length}${truncNote(d.truncation.reviewCommentsDropped, "comments")}):`);
+  if (d.reviewComments.length === 0) out.push("  (none)");
+  d.reviewComments.forEach((c, i) => {
+    const loc = `${c.path}:${c.line ?? "?"}`;
+    const head = `  [${i + 1}] ${loc} — ${c.author}`;
+    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr review comment by ${c.author} on ${loc}` }));
+    else out.push(`${head} (no body)`);
+  });
+
+  out.push("", `Issue-thread comments (${d.issueComments.length}${truncNote(d.truncation.issueCommentsDropped, "comments")}):`);
+  if (d.issueComments.length === 0) out.push("  (none)");
+  d.issueComments.forEach((c, i) => {
+    const head = `  [${i + 1}] ${c.author}`;
+    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr comment by ${c.author}` }));
+    else out.push(`${head} (empty)`);
+  });
+
+  const s = d.checksSummary;
+  const byConclusion = Object.entries(s.byConclusion).map(([k, v]) => `${k}:${v}`).join(", ") || "none";
+  out.push(
+    "",
+    `Checks: ${s.total} total (${byConclusion})${s.pending ? `, ${s.pending} pending` : ""}` +
+      `${s.failing.length ? `; failing: ${s.failing.join(", ")}${s.failingTruncated ? " (…more)" : ""}` : ""}`,
+  );
+  d.checks.forEach((c) => {
+    const head = `  - ${c.name}: ${c.status}${c.conclusion ? `/${c.conclusion}` : ""}`;
+    if (c.summary.trim()) out.push(`${head} —`, ingestUntrusted(c.summary, { source: `pr check ${c.name}` }));
+    else out.push(head);
+  });
+
+  if (d.truncation.truncated) {
+    out.push(
+      "",
+      `Note: this digest was truncated (bodies clipped at ${d.truncation.maxBodyChars} chars${
+        d.truncation.checksDropped ? `; ${d.truncation.checksDropped} checks dropped` : ""
+      }). Re-read a specific item on GitHub if you need the full text.`,
+    );
+  }
+  return out.join("\n");
 }

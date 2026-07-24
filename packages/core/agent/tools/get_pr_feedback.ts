@@ -4,7 +4,32 @@ import { z } from "zod";
 import { resolveAccessFor } from "../access/request.js";
 import { repoAllowed } from "../scm/provider.js";
 import { resolveReadToken } from "../scm/pr-status.js";
-import { fetchPrFeedback } from "../scm/pr-feedback.js";
+import { fetchPrFeedback, renderPrFeedbackForModel, type PrFeedbackDigest } from "../scm/pr-feedback.js";
+
+const prFeedbackOutputSchema = z.object({
+  repo: z.string(),
+  number: z.number(),
+  reviews: z.array(z.object({ author: z.string(), state: z.string(), body: z.string() })),
+  reviewComments: z.array(z.object({ path: z.string(), line: z.number().nullable(), author: z.string(), body: z.string() })),
+  issueComments: z.array(z.object({ author: z.string(), body: z.string() })),
+  checks: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable(), summary: z.string() })),
+  checksSummary: z.object({
+    total: z.number(),
+    byConclusion: z.record(z.string(), z.number()),
+    failing: z.array(z.string()),
+    failingTruncated: z.boolean(),
+    pending: z.number(),
+  }),
+  truncation: z.object({
+    truncated: z.boolean(),
+    reviewsDropped: z.number(),
+    reviewCommentsDropped: z.number(),
+    issueCommentsDropped: z.number(),
+    checksDropped: z.number(),
+    bodiesClipped: z.number(),
+    maxBodyChars: z.number(),
+  }),
+});
 
 export default defineTool({
   description:
@@ -13,30 +38,7 @@ export default defineTool({
     repo: z.string().describe("Repository as 'owner/repo'."),
     number: z.number().int().positive().describe("PR number."),
   }),
-  outputSchema: z.object({
-    repo: z.string(),
-    number: z.number(),
-    reviews: z.array(z.object({ author: z.string(), state: z.string(), body: z.string() })),
-    reviewComments: z.array(z.object({ path: z.string(), line: z.number().nullable(), author: z.string(), body: z.string() })),
-    issueComments: z.array(z.object({ author: z.string(), body: z.string() })),
-    checks: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullable(), summary: z.string() })),
-    checksSummary: z.object({
-      total: z.number(),
-      byConclusion: z.record(z.string(), z.number()),
-      failing: z.array(z.string()),
-      failingTruncated: z.boolean(),
-      pending: z.number(),
-    }),
-    truncation: z.object({
-      truncated: z.boolean(),
-      reviewsDropped: z.number(),
-      reviewCommentsDropped: z.number(),
-      issueCommentsDropped: z.number(),
-      checksDropped: z.number(),
-      bodiesClipped: z.number(),
-      maxBodyChars: z.number(),
-    }),
-  }),
+  outputSchema: prFeedbackOutputSchema,
   approval: never(),
   async execute(input, ctx) {
     const access = resolveAccessFor(ctx);
@@ -47,6 +49,9 @@ export default defineTool({
       );
     }
     const token = await resolveReadToken(input.repo);
-    return fetchPrFeedback({ repo: input.repo, number: input.number, token });
+    return (await fetchPrFeedback({ repo: input.repo, number: input.number, token })) as unknown as z.infer<typeof prFeedbackOutputSchema>;
+  },
+  toModelOutput(output) {
+    return { type: "text" as const, value: renderPrFeedbackForModel(output as unknown as PrFeedbackDigest) };
   },
 });
