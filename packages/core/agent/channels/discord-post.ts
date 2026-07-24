@@ -14,25 +14,85 @@ function botToken(): string {
 
 export function splitForDiscord(text: string, max = 2000): string[] {
   if (text.length <= max) return [text];
-  const chunks: string[] = [];
-  let rest = text;
-  while (rest.length > max) {
-    let cut = rest.lastIndexOf("\n", max);
-    if (cut <= 0) cut = max;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n/, "");
+  const bare = splitRespectingFences(text, max);
+  if (bare.length <= 2) return bare;
+  const numbered = splitRespectingFences(text, max - NUMBER_HEADER_RESERVE);
+  const n = numbered.length;
+  return numbered.map((part, i) => `[${i + 1}/${n}]\n${part}`);
+}
+
+const NUMBER_HEADER_RESERVE = 12;
+const FENCE_CLOSE = "\n```";
+const FENCE_LINE = /^\s*```/;
+
+function fenceStateAfter(start: string | null, body: string): string | null {
+  let opener = start;
+  for (const line of body.split("\n")) {
+    if (FENCE_LINE.test(line)) opener = opener === null ? line.trim() : null;
   }
-  if (rest.length > 0) chunks.push(rest);
-  return chunks;
+  return opener;
+}
+
+function chooseCut(text: string, from: number, hardEnd: number): { end: number; drop: number } {
+  if (hardEnd >= text.length) return { end: text.length, drop: 0 };
+  const nl = text.lastIndexOf("\n", hardEnd);
+  if (nl > from) return { end: nl, drop: 1 };
+  let sentence = -1;
+  for (const sep of [". ", "! ", "? "]) {
+    const i = text.lastIndexOf(sep, hardEnd - 1);
+    if (i > from && i + 1 < hardEnd) sentence = Math.max(sentence, i + 1);
+  }
+  if (sentence > from) return { end: sentence, drop: 1 };
+  const sp = text.lastIndexOf(" ", hardEnd);
+  if (sp > from) return { end: sp, drop: 1 };
+  return { end: hardEnd, drop: 0 };
+}
+
+function splitRespectingFences(text: string, renderBudget: number): string[] {
+  const parts: string[] = [];
+  let carried: string | null = null;
+  let pos = 0;
+  while (pos < text.length) {
+    const reopen = carried !== null ? `${carried}\n` : "";
+    const avail = Math.max(1, renderBudget - reopen.length);
+    let cut = chooseCut(text, pos, Math.min(pos + avail, text.length));
+    let body = text.slice(pos, cut.end);
+    let endOpener = fenceStateAfter(carried, body);
+    let suffix = endOpener !== null ? FENCE_CLOSE : "";
+    if (reopen.length + body.length + suffix.length > renderBudget && body.length > 1) {
+      cut = chooseCut(text, pos, Math.min(pos + avail - suffix.length, text.length));
+      body = text.slice(pos, cut.end);
+      endOpener = fenceStateAfter(carried, body);
+      suffix = endOpener !== null ? FENCE_CLOSE : "";
+    }
+    parts.push(`${reopen}${body}${suffix}`);
+    carried = endOpener;
+    pos = cut.end + cut.drop;
+  }
+  return parts;
 }
 
 export async function discordPostMessage(channelId: string, content: string, opts?: { replyToMessageId?: string }): Promise<string> {
+  const parts = splitForDiscord(content);
+  let firstId: string | undefined;
+  for (const part of parts) {
+    if (!part.trim()) continue;
+    const id = await discordPostOne(channelId, part, firstId === undefined ? opts?.replyToMessageId : undefined);
+    firstId ??= id;
+  }
+  if (firstId === undefined) {
+    throw new Error(`Discord create-message had no content to post for channel ${channelId}`);
+  }
+  return firstId;
+}
+
+async function discordPostOne(channelId: string, content: string, replyToMessageId?: string): Promise<string> {
   const res = await fetch(`${API}/channels/${channelId}/messages`, {
     method: "POST",
     headers: botHeaders(botToken()),
     body: JSON.stringify({
       content,
-      ...(opts?.replyToMessageId ? { message_reference: { message_id: opts.replyToMessageId, fail_if_not_exists: false } } : {}),
+      ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     }),
   });
   if (!res.ok) throw new Error(`Discord create-message failed (${res.status}) for channel ${channelId}`);

@@ -29,6 +29,7 @@ import {
   stripLeadingMention,
   type DiscordRelayMessage,
 } from "../agent/channels/discord-gateway.js";
+import { discordPostMessage } from "../agent/channels/discord-post.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "../agent/memory/partition.js";
@@ -178,16 +179,86 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
 }
 
 {
+  const stripNum = (p: string): string => p.replace(/^\[\d+\/\d+\]\n/, "");
+  const numbered = (p: string): boolean => /^\[\d+\/\d+\]\n/.test(p);
+  const fenceCount = (p: string): number => p.split("\n").filter((l) => /^\s*```/.test(l)).length;
+
   ok(splitForDiscord("short").length === 1, "split: short text is one chunk");
+  ok(splitForDiscord("a".repeat(2000)).length === 1, "split: exactly 2000 chars is one chunk (no split)");
+  const p2001 = splitForDiscord("a".repeat(2001));
+  ok(p2001.length === 2, "split: 2001 chars → exactly two parts");
+  ok(p2001.every((p) => p.length <= 2000), "split: both parts within the 2000 cap");
+  ok(!numbered(p2001[0]), "split: a two-part reply is NOT numbered");
 
   const long = "a".repeat(4100);
   const parts = splitForDiscord(long);
   ok(parts.every((p) => p.length <= 2000), "split: no chunk exceeds 2000 chars");
-  ok(parts.join("") === long, "split: hard-split loses no content");
+  ok(parts.map(stripNum).join("") === long, "split: hard-split loses no content");
 
   const nl = "x".repeat(1500) + "\n" + "y".repeat(1500);
   const p2 = splitForDiscord(nl);
-  ok(p2.length === 2 && p2[0] === "x".repeat(1500) && p2[1] === "y".repeat(1500), "split: prefers the newline boundary");
+  ok(p2.length === 2 && p2[0] === "x".repeat(1500) && p2[1] === "y".repeat(1500), "split: prefers the newline boundary (boundary char dropped)");
+
+  const big = "a".repeat(5000);
+  const bp = splitForDiscord(big);
+  ok(bp.length >= 3, "split: 5000 chars → 3+ parts");
+  ok(bp.every(numbered), "split: 3+ parts each carry a [i/N] header");
+  ok(bp[0].startsWith("[1/" + bp.length + "]\n"), "split: header numbers from 1 and knows the total");
+  ok(bp.every((p) => p.length <= 2000), "split: numbered parts still fit the cap (header reserved)");
+  ok(bp.map(stripNum).join("") === big, "split: numbered split preserves every content char");
+
+  const prose = "Hello there. ".repeat(200);
+  const sp = splitForDiscord(prose);
+  ok(sp.length === 2, "split: prose (no newlines) splits into two");
+  ok(stripNum(sp[0]).trimEnd().endsWith("."), "split: prose cuts on a sentence boundary, keeping the period");
+
+  const code = "```ts\n" + "const x = 1;\n".repeat(220) + "```";
+  const cp = splitForDiscord(code);
+  ok(cp.length >= 2, "split: an over-cap fenced block spans multiple parts");
+  ok(cp.every((p) => p.length <= 2000), "split: fenced parts fit the cap");
+  ok(cp.every((p) => fenceCount(p) % 2 === 0), "split: every part has BALANCED fences (never a dangling ```)");
+  ok(cp.slice(1).every((p) => stripNum(p).startsWith("```ts")), "split: continuation parts RE-OPEN the fence with its language");
+  const codeLines = cp.map((p) => (p.match(/const x = 1;/g) ?? []).length).reduce((a, b) => a + b, 0);
+  ok(codeLines === 220, "split: no code line is lost across the fence seams");
+
+  const bigParts = splitForDiscord("w".repeat(6100));
+  const smallParts = splitForDiscord("w".repeat(2500));
+  ok(smallParts.length < bigParts.length, "split: shorter text → fewer parts (an update trims the tail parts)");
+  ok(splitForDiscord("w".repeat(1900)).length === 1, "split: an update that shrinks under the cap collapses to one part");
+}
+
+{
+  const origFetch = globalThis.fetch;
+  const origToken = process.env.DISCORD_BOT_TOKEN;
+  process.env.DISCORD_BOT_TOKEN = "test-token";
+  const bodies: Array<{ content: string; message_reference?: { message_id: string } }> = [];
+  let seq = 0;
+  globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
+    bodies.push(JSON.parse(init.body));
+    seq += 1;
+    return { ok: true, json: async () => ({ id: `msg-${seq}` }) };
+  }) as unknown as typeof fetch;
+  try {
+    const oneId = await discordPostMessage("chan", "hello", { replyToMessageId: "trigger" });
+    ok(bodies.length === 1, "post: within-cap content posts exactly once");
+    ok(oneId === "msg-1", "post: returns the posted message id");
+    ok(bodies[0].message_reference?.message_id === "trigger", "post: anchors the reply to the trigger");
+
+    bodies.length = 0;
+    seq = 0;
+    const bigReply = "b".repeat(5000);
+    const firstId = await discordPostMessage("chan", bigReply, { replyToMessageId: "trigger" });
+    const expectedParts = splitForDiscord(bigReply).length;
+    ok(bodies.length === expectedParts, `post: over-cap reply posts all ${expectedParts} parts`);
+    ok(firstId === "msg-1", "post: returns the FIRST part's id (the audit/output anchor)");
+    ok(bodies[0].message_reference?.message_id === "trigger", "post: only the first part carries the reply anchor");
+    ok(bodies.slice(1).every((b) => b.message_reference === undefined), "post: continuation parts carry NO anchor");
+    ok(bodies.every((b) => b.content.length <= 2000), "post: every posted part is within Discord's cap");
+  } finally {
+    globalThis.fetch = origFetch;
+    if (origToken === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = origToken;
+  }
 }
 
 {
