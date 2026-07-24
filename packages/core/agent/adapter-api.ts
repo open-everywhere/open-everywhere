@@ -7,6 +7,8 @@ export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./
 export { registerCredentialHome, hostWriteHomeAvailable } from "./credentials/home.js";
 export type { CredentialHome, CredentialHomeStoreInput } from "./credentials/home.js";
 
+export { findProviderCredential } from "./access/providers.js";
+export type { ProviderCredential } from "./access/providers.js";
 export {
   registerExclusiveCredentialHome,
   executorHome,
@@ -101,13 +103,15 @@ export { installLogShipping } from "./observability/ship.js";
 export { initTelemetry, emitTelemetry } from "./observability/telemetry.js";
 
 export { auditToolAction } from "./audit/tool-action.js";
-export { registerAuditDropCounter } from "./audit/audit.js";
+export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
+export type { AuditInput } from "./audit/audit.js";
 export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
 export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
 
 export { registerIdentityMapper, deploymentOrg } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility } from "./identity/binding.js";
+export type { SessionMode } from "./access/resolver.js";
 
 export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/capabilities.js";
 export type { CapabilityManifest } from "./identity/capabilities.js";
