@@ -1,5 +1,5 @@
 import { windowedDomainFor, windowModeFor, type Domain } from "../memory/domain.js";
-import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain } from "./window-key.js";
+import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain, saltSupervisorGeneration } from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
 
@@ -73,4 +73,8 @@ export function supervisorTokenForGrain(grain: SupervisorGrain, generation: numb
     return formatWindowToken({ domain: grain.domainName, windowId: grain.windowId ?? grain.domainName, generation });
   }
   return perContainer();
+}
+
+export function mintRotationToken(grain: SupervisorGrain, generation: number, perContainer: () => string): string {
+  return saltSupervisorGeneration(supervisorTokenForGrain(grain, generation, perContainer));
 }

@@ -437,6 +437,34 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const sk = "slack/T/CATOMIC";
+  let queryCalls = 0;
+  const countingClient: PgClient = {
+    query: (text, params) => {
+      queryCalls++;
+      return client.query(text, params);
+    },
+  };
+  const atomicStore = makeOperationalPostgresStore(countingClient);
+
+  queryCalls = 0;
+  const row1 = await atomicStore.rotateChannelSession("acme", sk, "AT:oe-sup:g1-aaa111", "2026-07-24T00:00:00Z");
+  ok(queryCalls === 1, "pg OPE-58: rotateChannelSession's FIRST mint issues exactly ONE query (atomic upsert, no separate read)");
+  ok(row1.generation === 1, "pg OPE-58: atomic rotate still mints generation 1 on a fresh row");
+
+  queryCalls = 0;
+  const row2 = await atomicStore.rotateChannelSession("acme", sk, "AT:oe-sup:g2-bbb222", "2026-07-24T00:01:00Z");
+  ok(queryCalls === 1, "pg OPE-58: a SUBSEQUENT rotation ALSO issues exactly ONE query");
+  ok(row2.generation === 2, "pg OPE-58: the atomic upsert computes generation FROM THE ROW (existing+1) inside the one statement");
+
+  queryCalls = 0;
+  const row3 = await atomicStore.rotateChannelSession("acme", sk, "AT:oe-sup:g3-ccc333", "2026-07-24T00:02:00Z");
+  ok(queryCalls === 1 && row3.generation === 3, "pg OPE-58: generation keeps incrementing correctly across repeated single-statement rotations");
+
+  ok(row3.token === "AT:oe-sup:g3-ccc333", "pg OPE-58: the store persists the caller's token unchanged (salt is a caller concern)");
+}
+
+{
   const oldDb = new PGlite();
   const oldClient: PgClient = { query: (text, params) => oldDb.query(text, params ? [...params] : undefined) };
   await oldClient.query(

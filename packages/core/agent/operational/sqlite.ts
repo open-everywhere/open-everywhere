@@ -804,26 +804,24 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
     const handle = getDb();
-    const existing = handle.prepare("SELECT generation FROM channel_session WHERE org_id = ? AND surface_key = ?").get(org, surfaceKey) as
-      | { generation: number }
-      | undefined;
-    const generation = (existing?.generation ?? 0) + 1;
     const note = handoffNote ?? null;
-    handle
+    const row = handle
       .prepare(
         `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL, ?)
+         VALUES (?, ?, ?, 1, ?, ?, 0, 0, NULL, ?)
          ON CONFLICT(org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
-           generation         = excluded.generation,
+           generation         = generation + 1,
            created_at         = excluded.created_at,
            last_wake_at       = excluded.last_wake_at,
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           handoff_note       = excluded.handoff_note`,
+           handoff_note       = excluded.handoff_note
+         RETURNING generation`,
       )
-      .run(org, surfaceKey, newToken, generation, at, at, note);
+      .get(org, surfaceKey, newToken, at, at, note) as { generation: number };
+    const generation = row.generation;
     return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
   },
 

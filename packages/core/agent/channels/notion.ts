@@ -23,7 +23,7 @@ import {
   type NotionSupervisorDispatch,
   type NotionWakeMessage,
 } from "./notion-supervisor.js";
-import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { divertToUnifiedWindow } from "./unified.js";
 
 const ROUTE = "/eve/v1/notion";
@@ -83,12 +83,12 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: Ro
       const grain = notionGrainFor(surfaceKey);
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => notionSupervisorToken(pageId, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
         const gen = existing.generation + 1;
-        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       const fresh = existing.firstWakeAt == null;
@@ -99,7 +99,7 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: Ro
       const grain = notionGrainFor(surfaceKey);
       const existing = await store.getChannelSession(org, grain.registryKey);
       const gen = (existing?.generation ?? 0) + 1;
-      const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
+      const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) =>

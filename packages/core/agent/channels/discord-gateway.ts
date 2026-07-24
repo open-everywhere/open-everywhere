@@ -6,7 +6,7 @@ import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, shouldRotate, t
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 import type { WakeTrust } from "./wake-envelope.js";
 import { classifySessionSendError } from "./session-death.js";
-import { supervisorGrainFor, unifiedSupervisorToken, grainUsesUnifiedWindow, supervisorTokenForGrain, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, unifiedSupervisorToken, grainUsesUnifiedWindow, mintRotationToken, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { divertToUnifiedWindow } from "./unified.js";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
@@ -685,7 +685,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
     await markThreadEngaged(input.partition, msg.channelId, atIso, { participating: true });
   }
   const domainName = grain.domainName ?? "unknown";
-  const tokenFor = (gen: number) => supervisorTokenForGrain(grain, gen, () => unifiedSupervisorToken(domainName, gen));
+  const tokenFor = (gen: number) => mintRotationToken(grain, gen, () => unifiedSupervisorToken(domainName, gen));
 
   const existing = await store.getChannelSession(org, grain.registryKey);
   let session: { token: string; generation: number; fresh: boolean; handoffNote?: string | null };

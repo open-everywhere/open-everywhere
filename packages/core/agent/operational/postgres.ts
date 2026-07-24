@@ -1086,27 +1086,23 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async rotateChannelSession(org, surfaceKey, newToken, at, handoffNote) {
-      const { rows: existingRows } = await client.query(
-        "SELECT generation FROM channel_session WHERE org_id = $1 AND surface_key = $2",
-        [org, surfaceKey],
-      );
-      const existing = (existingRows as { generation: number }[])[0];
-      const generation = (existing ? Number(existing.generation) : 0) + 1;
       const note = handoffNote ?? null;
-      await client.query(
+      const { rows } = await client.query(
         `INSERT INTO channel_session (org_id, surface_key, token, generation, created_at, last_wake_at, turn_count, input_tokens_total, first_wake_at, handoff_note)
-         VALUES ($1, $2, $3, $4, $5, $6, 0, 0, NULL, $7)
+         VALUES ($1, $2, $3, 1, $4, $5, 0, 0, NULL, $6)
          ON CONFLICT (org_id, surface_key) DO UPDATE SET
            token              = excluded.token,
-           generation         = excluded.generation,
+           generation         = channel_session.generation + 1,
            created_at         = excluded.created_at,
            last_wake_at       = excluded.last_wake_at,
            turn_count         = 0,
            input_tokens_total = 0,
            first_wake_at      = NULL,
-           handoff_note       = excluded.handoff_note`,
-        [org, surfaceKey, newToken, generation, at, at, note],
+           handoff_note       = excluded.handoff_note
+         RETURNING generation`,
+        [org, surfaceKey, newToken, at, at, note],
       );
+      const generation = Number((rows as { generation: number | string }[])[0].generation);
       return { org, surfaceKey, token: newToken, generation, createdAt: at, lastWakeAt: at, turnCount: 0, inputTokensTotal: 0, firstWakeAt: null, handoffNote: note };
     },
 

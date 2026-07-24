@@ -18,8 +18,10 @@ import {
   domainFromSessionKey,
   supervisorGrainFor,
   supervisorTokenForGrain,
+  mintRotationToken,
   grainUsesUnifiedWindow,
 } from "../agent/channels/unified-supervisor.js";
+import { classifySessionId } from "../agent/channels/window-key.js";
 import { githubSupervisorToken } from "../agent/channels/github-supervisor.js";
 import { linearSupervisorToken } from "../agent/channels/linear-supervisor.js";
 import { notionSupervisorToken } from "../agent/channels/notion-supervisor.js";
@@ -272,5 +274,32 @@ ok(!plain.includes("Cross-surface disclosure"), "channel-watch WITHOUT unifiedDi
 ok(disclosed.includes("Cross-surface disclosure:"), "unifiedDisclosure appends the P5 advisory sentence");
 ok(disclosed.includes("paraphrase-and-point"), "the disclosure sentence carries the paraphrase-and-point guidance");
 ok(disclosed.startsWith("[channel-watch]"), "the disclosure sentence never replaces the channel-watch framing (still leads with it)");
+
+withEnv("1", () => {
+  const ghGrain = supervisorGrainFor(GH, [payments, orgNoGate]);
+  const bare = unifiedSupervisorToken("payments", 4);
+  const minted = mintRotationToken(ghGrain, 4, () => githubSupervisorToken("acme", "payments-api", 4));
+
+  ok(minted !== bare, "mintRotationToken output is NOT byte-identical to the bare supervisorTokenForGrain output (it's salted)");
+  ok(minted.startsWith(`${bare}-`), "mintRotationToken appends -<salt> after the bare token");
+  ok(/^oe-dom:payments:oe-sup:g4-[0-9a-f]{6}$/.test(minted), `mintRotationToken (unified branch) shape: ${JSON.stringify(minted)}`);
+
+  const sid = classifySessionId(minted);
+  ok(sid.kind === "window" && sid.key.domain === "payments" && sid.key.generation === 4, "mintRotationToken's output still classifies to domain=payments, generation=4");
+  ok(isUnifiedSupervisorToken(minted), "mintRotationToken's output is still recognised as a window supervisor token");
+
+  const mintedAgain = mintRotationToken(ghGrain, 4, () => githubSupervisorToken("acme", "payments-api", 4));
+  ok(minted !== mintedAgain, "mintRotationToken: two mints at the SAME generation (simulated counter reset) produce DIFFERENT tokens");
+  const sidAgain = classifySessionId(mintedAgain);
+  ok(sidAgain.kind === "window" && sidAgain.key.domain === "payments" && sidAgain.key.generation === 4, "the re-mint parses to the SAME logical generation too");
+
+  withEnv(undefined, () => {
+    const off = supervisorGrainFor(GH, [payments, orgNoGate]);
+    const mintedOff = mintRotationToken(off, 2, () => githubSupervisorToken("acme", "payments-api", 2));
+    ok(/^github:acme\/payments-api:oe-sup:g2-[0-9a-f]{6}$/.test(mintedOff), `mintRotationToken (per-container branch) shape: ${JSON.stringify(mintedOff)}`);
+    const sidOff = classifySessionId(mintedOff);
+    ok(sidOff.kind === "container-supervisor" && sidOff.containerKey === "github:acme/payments-api" && sidOff.generation === 2, "per-container mint still classifies with the right containerKey + generation");
+  });
+});
 
 console.log(`unified-supervisor-test: ${n} assertions passed`);

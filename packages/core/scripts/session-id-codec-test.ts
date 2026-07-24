@@ -8,6 +8,10 @@ import {
   isDmSeatToken,
   dmSeatRegistryKey,
   bareTokenFromEveContext,
+  formatWindowToken,
+  parseWindowToken,
+  mintGenerationSalt,
+  saltSupervisorGeneration,
   type SessionId,
 } from "../agent/channels/window-key.js";
 
@@ -256,6 +260,65 @@ expectKind("x:oe-sup:g", "native", "native", "no-digit suffix");
   eq(bareTokenFromEveContext("cse_abc123"), undefined, "eve-native session token → undefined");
   eq(bareTokenFromEveContext(""), undefined, "empty string → undefined (eve seeds missing tokens to '')");
   eq(bareTokenFromEveContext(undefined), undefined, "non-string → undefined");
+}
+
+{
+  const s1 = mintGenerationSalt();
+  const s2 = mintGenerationSalt();
+  ok(/^[0-9a-f]{6}$/.test(s1), `mintGenerationSalt shape: ${JSON.stringify(s1)} is 6 lowercase hex chars`);
+  ok(/^[0-9a-f]{6}$/.test(s2), `mintGenerationSalt shape: ${JSON.stringify(s2)} is 6 lowercase hex chars`);
+  ok(s1 !== s2, "mintGenerationSalt: two consecutive calls mint DIFFERENT salts");
+
+  const bareWindow = "oe-dom:payments:oe-sup:g4";
+  const salted = saltSupervisorGeneration(bareWindow);
+  ok(salted.startsWith(`${bareWindow}-`), "saltSupervisorGeneration appends -<salt> after the bare token");
+  ok(/^oe-dom:payments:oe-sup:g4-[0-9a-f]{6}$/.test(salted), `salted window token shape: ${JSON.stringify(salted)}`);
+  ok(saltSupervisorGeneration(bareWindow) !== saltSupervisorGeneration(bareWindow), "saltSupervisorGeneration: re-salting the SAME bare token twice yields DIFFERENT full tokens (reset→reuse defeated)");
+
+  const saltedCases: ReadonlyArray<{ readonly bare: string; readonly note: string }> = [
+    { bare: "oe-dom:payments:oe-sup:g4", note: "degenerate window (LEGACY_WINDOW_TOKEN_RE)" },
+    { bare: "oe-dom:payments:win:solo-C_PAY:oe-sup:g7", note: "explicit window (EXPLICIT_WINDOW_TOKEN_RE)" },
+    { bare: "github:acme/widgets:oe-sup:g5", note: "per-container (SUPERVISOR_SUFFIX_RE)" },
+    { bare: "linear:TEAM123:oe-sup:g5", note: "per-container linear" },
+    { bare: `oe-dom:payments:win:t/${CK}/${TS}:oe-sup:g4`, note: "task window (windowId carries t/ prefix)" },
+    { bare: `oe-dom:payments:win:s/${CK}/${TS}:oe-sup:g4`, note: "thread-seat window (windowId carries s/ prefix)" },
+  ];
+  for (const { bare, note } of saltedCases) {
+    const salted2 = saltSupervisorGeneration(bare);
+    const bareSid = classifySessionId(bare);
+    const saltedSid = classifySessionId(salted2);
+    eq(saltedSid.kind, bareSid.kind, `salted ${note}: kind unchanged (${JSON.stringify(salted2)})`);
+    eq(saltedSid.grain, bareSid.grain, `salted ${note}: grain unchanged`);
+    if (bareSid.kind === "window" || bareSid.kind === "task" || bareSid.kind === "thread-seat") {
+      ok(saltedSid.kind === bareSid.kind && "key" in saltedSid, `salted ${note}: still a window-shaped kind`);
+      if ("key" in saltedSid && "key" in bareSid) {
+        eq(saltedSid.key.generation, bareSid.key.generation, `salted ${note}: generation recovered unchanged`);
+        eq(saltedSid.key.domain, bareSid.key.domain, `salted ${note}: domain recovered unchanged`);
+        eq(saltedSid.key.windowId, bareSid.key.windowId, `salted ${note}: windowId recovered unchanged`);
+      }
+    } else if (bareSid.kind === "container-supervisor" && saltedSid.kind === "container-supervisor") {
+      eq(saltedSid.generation, bareSid.generation, `salted ${note}: generation recovered unchanged`);
+      eq(saltedSid.containerKey, bareSid.containerKey, `salted ${note}: containerKey recovered unchanged`);
+    }
+    ok(isSupervisorShapedToken(salted2), `salted ${note}: isSupervisorShapedToken still true`);
+    ok(oldIsSupervisorTokenSpend(salted2), `salted ${note}: spend's bare substring test still matches (inert to the salt)`);
+    if (bareSid.kind === "window" || bareSid.kind === "task" || bareSid.kind === "thread-seat") {
+      const parsed = parseWindowToken(salted2);
+      ok(parsed !== undefined, `salted ${note}: parseWindowToken accepts the salted form`);
+    }
+
+    ok(!oldIsSupervisorSession(salted2), `salted ${note}: OLD routing oracle (\\d+$ anchored) rejects the salt — EXPECTED divergence`);
+    ok(oldClassifyTokenGrain(salted2) === "native", `salted ${note}: OLD grain oracle sees a salted token as native — EXPECTED divergence`);
+  }
+
+  expectKind("oe-dom:payments:oe-sup:g4-", "native", "native", "trailing bare dash, no hex chars → rejected");
+  expectKind("oe-dom:payments:oe-sup:g4-ABCDEF", "native", "native", "uppercase hex → rejected (lowercase-only salt)");
+  expectKind("oe-dom:payments:oe-sup:g4-xyz123", "native", "native", "non-hex chars in the salt → rejected");
+  expectKind("oe-dom:payments:oe-sup:g4-abc-def", "native", "native", "double-dash salt → rejected (not tail-anchored)");
+
+  const wt = formatWindowToken({ domain: "payments", windowId: "payments", generation: 9 });
+  eq(wt, "oe-dom:payments:oe-sup:g9", "formatWindowToken stays unsalted (pure function of the key)");
+  eq(formatWindowToken({ domain: "payments", windowId: "payments", generation: 9 }), wt, "formatWindowToken is deterministic — no accidental salt leaking in");
 }
 
 console.log(`session-id-codec-test: ${n} assertions passed (corpus size ${CORPUS.length})`);

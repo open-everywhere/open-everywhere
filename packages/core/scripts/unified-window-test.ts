@@ -459,6 +459,8 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
     "discord: an UN-VOUCHED guild channel takes the NATIVE path (auto-thread attempted, base send used, NOTHING diverted) — the privacy floor fails closed",
   );
 
+  await getOperationalStore().rotateChannelSession("default", unifiedDomainSessionKey("payments"), RAW_TOKEN, new Date().toISOString());
+
   registerTrustedSurfaces(["discord/G_WIN"]);
   discordBaseSends.length = 0;
   discordThreadAttempts = 0;

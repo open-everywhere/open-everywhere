@@ -1,12 +1,14 @@
+import { randomBytes } from "node:crypto";
+
 export interface WindowKey {
   readonly domain: string;
   readonly windowId: string;
   readonly generation: number;
 }
 
-const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)$/;
+const EXPLICIT_WINDOW_TOKEN_RE = /^oe-dom:(.+):win:([^:]+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
-const LEGACY_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)$/;
+const LEGACY_WINDOW_TOKEN_RE = /^oe-dom:(.+):oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 export function formatWindowToken(key: WindowKey): string {
   if (key.windowId === key.domain) {
@@ -108,9 +110,17 @@ export function dmSeatRegistryKey(dmChannelId: string): string {
   return `oe-dm-seat::${dmChannelId}`;
 }
 
-const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)$/;
+const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 const UNIFIED_SEND_PREFIX = "unified:";
+
+export function mintGenerationSalt(): string {
+  return randomBytes(3).toString("hex");
+}
+
+export function saltSupervisorGeneration(token: string): string {
+  return `${token}-${mintGenerationSalt()}`;
+}
 
 export type SessionId =
   | { kind: "window"; grain: "standing"; key: WindowKey }

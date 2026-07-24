@@ -10,6 +10,8 @@ import {
   threadSeatWindowId,
   isThreadSeatWindowId,
   isThreadSeatWindowToken,
+  mintGenerationSalt,
+  saltSupervisorGeneration,
   type WindowKey,
 } from "../agent/channels/window-key.js";
 
@@ -119,5 +121,39 @@ assert.throws(() => threadSeatWindowId("teams/T/19:meeting@thread.v2", "act1"), 
 n++;
 assert.throws(() => threadSeatWindowId("c", ""), /non-empty/, "threadSeatWindowId throws on an empty threadTs");
 n++;
+
+ok(/^[0-9a-f]{6}$/.test(mintGenerationSalt()), "mintGenerationSalt: 6 lowercase hex chars");
+ok(mintGenerationSalt() !== mintGenerationSalt(), "mintGenerationSalt: two calls mint different salts");
+
+{
+  const saltedDegen = saltSupervisorGeneration(formatWindowToken(degen));
+  ok(/^oe-dom:payments:oe-sup:g3-[0-9a-f]{6}$/.test(saltedDegen), `salted degenerate token shape: ${JSON.stringify(saltedDegen)}`);
+  eq(parseWindowToken(saltedDegen), degen, "salted degenerate token parses back to the SAME key (salt invisible to the generation/domain/windowId consumer)");
+
+  const saltedExplicit = saltSupervisorGeneration(formatWindowToken(explicit));
+  ok(/^oe-dom:payments:win:chan-hr:oe-sup:g5-[0-9a-f]{6}$/.test(saltedExplicit), `salted explicit token shape: ${JSON.stringify(saltedExplicit)}`);
+  eq(parseWindowToken(saltedExplicit), explicit, "salted explicit token parses back to the SAME key");
+
+  const saltedTask = saltSupervisorGeneration(taskToken);
+  eq(parseWindowToken(saltedTask), taskKey, "salted task token parses back to the SAME key (windowId's t/ prefix unaffected)");
+  ok(isTaskWindowToken(saltedTask), "salted task token still classifies as a task window token");
+
+  const saltedSeat = saltSupervisorGeneration(seatToken);
+  eq(parseWindowToken(saltedSeat), seatKey, "salted thread-seat token parses back to the SAME key");
+  ok(isThreadSeatWindowToken(saltedSeat), "salted thread-seat token still classifies as a thread-seat window token");
+
+  ok(isWindowToken(saltedDegen), "isWindowToken true for a salted degenerate token");
+  ok(isWindowToken(saltedExplicit), "isWindowToken true for a salted explicit token");
+
+  const mintA = saltSupervisorGeneration(formatWindowToken(degen));
+  const mintB = saltSupervisorGeneration(formatWindowToken(degen));
+  ok(mintA !== mintB, "re-minting the SAME generation (simulated counter reset) never reproduces the same token");
+  eq(parseWindowToken(mintA), degen, "mintA parses to generation 3");
+  eq(parseWindowToken(mintB), degen, "mintB ALSO parses to generation 3 (same logical generation, different wire token)");
+}
+
+eq(parseWindowToken("oe-dom:payments:oe-sup:g3-"), undefined, "trailing bare dash, no hex → not a window token");
+eq(parseWindowToken("oe-dom:payments:oe-sup:g3-ABCDEF"), undefined, "uppercase hex salt → not a window token (lowercase-only)");
+eq(parseWindowToken("oe-dom:payments:oe-sup:g3-zz"), undefined, "non-hex salt chars → not a window token");
 
 console.log(`window-key-test: ${n} assertions passed`);

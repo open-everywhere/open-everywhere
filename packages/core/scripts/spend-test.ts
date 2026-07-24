@@ -535,6 +535,9 @@ rmSync(dir, { recursive: true, force: true });
   ok(turnKind(chanCtx) === "channel", "no continuationToken → falls back to the surface mode (channel)");
   ok(turnKind(dmCtx, "D:1720000000.1234") === "dm", "a DM token → kind 'dm' (unchanged)");
   ok(turnKind(chanCtx, undefined) === "channel", "undefined token → channel (no false supervisor tag)");
+
+  ok(turnKind(chanCtx, "C:oe-sup:g3-ab12cd") === "supervisor", "OPE-58: a salted supervisor token (g<n>-<sha>) STILL tags kind 'supervisor'");
+  ok(turnKind(chanCtx, "oe-dom:payments:oe-sup:g1-000000") === "supervisor", "OPE-58: a salted DOMAIN window token still tags kind 'supervisor'");
 }
 
 console.log(`✓ spend: ${passed} assertions passed`);

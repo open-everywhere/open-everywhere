@@ -219,6 +219,13 @@ registerConfig({
   ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: sanity — no row for an untouched surface");
   await store.touchChannelSession("orgS", "slack/T_ENG/C_NOSUP", "2026-03-25T21:52:00Z");
   ok((await store.getChannelSession("orgS", "slack/T_ENG/C_NOSUP")) === null, "sqlite: touchChannelSession on a surface with no session is a no-op");
+
+  const atomicSk = "slack/T_ENG/C_ATOMIC";
+  const a1 = await store.rotateChannelSession("orgS", atomicSk, "AT:oe-sup:g1-aaa111", "2026-07-24T00:00:00Z");
+  const a2 = await store.rotateChannelSession("orgS", atomicSk, "AT:oe-sup:g2-bbb222", "2026-07-24T00:01:00Z");
+  const a3 = await store.rotateChannelSession("orgS", atomicSk, "AT:oe-sup:g3-ccc333", "2026-07-24T00:02:00Z");
+  ok(a1.generation === 1 && a2.generation === 2 && a3.generation === 3, "sqlite OPE-58: the atomic single-statement upsert increments generation correctly across repeated rotations (1, 2, 3 — no lost update, no duplicate)");
+  ok(a3.token === "AT:oe-sup:g3-ccc333", "sqlite OPE-58: the store persists the caller's (already-salted) token unchanged");
 }
 
 {
@@ -1290,6 +1297,7 @@ registerConfig({
   ok(cCostModel(1500) >= WALL, `1500 (the old default) FAILS the wall (C=${Math.round(cCostModel(1500))} ≥ 40M)`);
 }
 
+const mintedAt = (actual: string, bare: string): boolean => actual === bare || (actual.startsWith(`${bare}-`) && /^[0-9a-f]+$/.test(actual.slice(bare.length + 1)));
 {
   const store = getOperationalStore();
   const org = "org-rot-test";
@@ -1298,32 +1306,32 @@ registerConfig({
   const rotDeps = liveSupervisorDeps(async () => ({}));
 
   let s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:00:00Z");
-  ok(s.generation === 1 && s.freshGeneration === true && s.token === supervisorToken(channelId, 1), "no existing row → mints generation 1, freshGeneration true");
+  ok(s.generation === 1 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 1)), "no existing row → mints generation 1, freshGeneration true");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:04:00Z");
   ok(s.generation === 1 && s.freshGeneration === true, "resume BEFORE any delivered wake (first_wake_at NULL) → still freshGeneration true (H7c self-heal)");
 
   await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:04:30Z");
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:05:00Z");
-  ok(s.generation === 1 && s.freshGeneration === false && s.token === supervisorToken(channelId, 1), "resumed within budget/gap after a delivered wake → same generation, freshGeneration false");
+  ok(s.generation === 1 && s.freshGeneration === false && mintedAt(s.token, supervisorToken(channelId, 1)), "resumed within budget/gap after a delivered wake → same generation, freshGeneration false");
 
   for (let i = 0; i <= SUPERVISOR_ROTATE_TURN_BUDGET; i++) {
     await store.touchChannelSession(org, surfaceKey, "2026-07-01T00:06:00Z");
   }
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-01T00:07:00Z");
-  ok(s.generation === 2 && s.freshGeneration === true && s.token === supervisorToken(channelId, 2), "turn backstop exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
+  ok(s.generation === 2 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 2)), "turn backstop exceeded → rotates to generation 2, freshGeneration true, new sentinel token");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:00Z");
-  ok(s.generation === 3 && s.freshGeneration === true && s.token === supervisorToken(channelId, 3), "quiet gap over 24h → rotates again to generation 3");
+  ok(s.generation === 3 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 3)), "quiet gap over 24h → rotates again to generation 3");
 
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:00:01Z");
   ok(s.generation === 3 && s.freshGeneration === true, "resuming the just-rotated generation before its first delivered wake → freshGeneration true (H7c)");
 
   await store.touchChannelSession(org, surfaceKey, "2026-07-03T00:00:02Z");
-  const gen3Token = supervisorToken(channelId, 3);
+  const gen3Token = s.token;
   await store.bumpChannelSessionUsage(org, surfaceKey, gen3Token, SUPERVISOR_ROTATE_TOKEN_BUDGET);
   s = await rotDeps.getOrCreateSession(org, surfaceKey, channelId, "2026-07-03T00:05:00Z");
-  ok(s.generation === 4 && s.freshGeneration === true && s.token === supervisorToken(channelId, 4), "token budget exceeded → rotates to generation 4 (primary trigger), fresh counter reset to 0");
+  ok(s.generation === 4 && s.freshGeneration === true && mintedAt(s.token, supervisorToken(channelId, 4)), "token budget exceeded → rotates to generation 4 (primary trigger), fresh counter reset to 0");
   const gen4Row = await store.getChannelSession(org, surfaceKey);
   ok(gen4Row !== null && gen4Row.inputTokensTotal === 0 && gen4Row.firstWakeAt === null, "rotation resets input_tokens_total to 0 and first_wake_at to NULL");
 

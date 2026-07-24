@@ -11,7 +11,7 @@ import {
 import { shouldRotate } from "./slack-events.js";
 import { EventDedupe, ThreadFifo } from "./slack-front.js";
 import { divertToUnifiedWindow } from "./unified.js";
-import { supervisorGrainFor, supervisorTokenForGrain, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
+import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import type { UnifiedWindowWake } from "./unified-window.js";
 import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
 import { engagementTierFor } from "../memory/domain.js";
@@ -89,12 +89,12 @@ function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, receive: RouteHandlerArgs
     async getOrCreateSession(_surfaceKey, channelId, atIso) {
       const existing = await store.getChannelSession(org, grain.registryKey);
       if (!existing) {
-        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, 1, () => teamsSupervisorToken(channelId, 1)), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, 1, () => teamsSupervisorToken(channelId, 1)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       if (shouldRotate(existing, atIso)) {
         const gen = existing.generation + 1;
-        const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => teamsSupervisorToken(channelId, gen)), atIso);
+        const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => teamsSupervisorToken(channelId, gen)), atIso);
         return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
       }
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
@@ -103,7 +103,7 @@ function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, receive: RouteHandlerArgs
     async forceRotate(_surfaceKey, channelId, atIso) {
       const existing = await store.getChannelSession(org, grain.registryKey);
       const gen = (existing?.generation ?? 0) + 1;
-      const row = await store.rotateChannelSession(org, grain.registryKey, supervisorTokenForGrain(grain, gen, () => teamsSupervisorToken(channelId, gen)), atIso);
+      const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => teamsSupervisorToken(channelId, gen)), atIso);
       return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
     },
     audit: (action, detail) =>
