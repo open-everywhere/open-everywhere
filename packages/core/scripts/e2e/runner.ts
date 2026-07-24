@@ -8,8 +8,10 @@ import {
   resolveNotionAmbient,
   resolvePr,
   resolveSlack,
+  resolveSlackCapFixture,
   resolveSlackChannelB,
   resolveSlackPrivate,
+  resolveSlackSecondary,
   resolveSlackSupervisor,
   resolveSlackUnified,
   resolveSlackUser2,
@@ -73,9 +75,11 @@ async function main(): Promise<void> {
 
   const slackPrivate = resolveSlackPrivate();
   const slackChannelB = resolveSlackChannelB();
+  const slackCapFixture = resolveSlackCapFixture();
   const slackSupervisor = resolveSlackSupervisor();
   const syntheticDm = resolveSyntheticDm();
   const slackUser2 = resolveSlackUser2();
+  const slackSecondary = resolveSlackSecondary();
   const webhook = resolveWebhook();
   const notion = resolveNotion();
   const github = resolveGithub();
@@ -101,6 +105,7 @@ async function main(): Promise<void> {
   const syntheticSlack = synthetic.ok ? new SyntheticSlack(synthetic.cfg) : undefined;
   const slackPrivateDriver = slackDriver && slackPrivate.ok ? slackDriver.withChannel(slackPrivate.cfg.channel) : undefined;
   const slackBDriver = slackDriver && slackChannelB.ok ? slackDriver.withChannel(slackChannelB.cfg.channel) : undefined;
+  const slackCapFixtureDriver = slackDriver && slackCapFixture.ok ? slackDriver.withChannel(slackCapFixture.cfg.channel) : undefined;
   const slackSupervisorDriver = slackDriver && slackSupervisor.ok ? slackDriver.withChannel(slackSupervisor.cfg.channel) : undefined;
   const slackUnifiedADriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelA) : undefined;
   const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
@@ -109,6 +114,8 @@ async function main(): Promise<void> {
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
+  const slackSecondaryDriver =
+    slack.ok && slackSecondary.ok ? new SlackDriver({ token: slackSecondary.cfg.token, channel: slack.cfg.channel, botUserId: slack.cfg.botUserId }) : undefined;
 
   console.log(`e2e driver pack — ${SCENARIOS.length} scenarios; capabilities live: ${
     report.available.size > 0 ? [...report.available].join(", ") : "none (dry mode)"
@@ -208,10 +215,13 @@ async function main(): Promise<void> {
       synthetic: syntheticSlack,
       slackPrivate: slackPrivateDriver,
       slackB: slackBDriver,
+      slackCapFixture: slackCapFixtureDriver,
       slackSupervisor: slackSupervisorDriver,
       syntheticDm: syntheticDmForge,
       dm: dmDriver,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
+      slackSecondary: slackSecondaryDriver,
+      slackSecondaryUserId: slackSecondary.ok ? slackSecondary.cfg.userId : undefined,
       webhook: webhookDriver,
       notion: notionDriver,
       notionQuery: notion.ok ? notion.cfg.query : undefined,

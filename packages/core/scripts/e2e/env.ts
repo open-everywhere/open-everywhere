@@ -10,6 +10,8 @@ export const ENV = {
   slackChannelB: "E2E_SLACK_CHANNEL_B",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
   slackUser2Id: "E2E_SLACK_USER2_ID",
+  slackSecondaryToken: "E2E_SLACK_SECONDARY_TOKEN",
+  slackSecondaryUserId: "E2E_SLACK_SECONDARY_USER_ID",
   org: "E2E_ORG",
   targetUrl: "E2E_TARGET_URL",
   slackSigningSecret: "SLACK_SIGNING_SECRET",
@@ -18,6 +20,7 @@ export const ENV = {
   webhookSecret: "E2E_WEBHOOK_SECRET",
   webhookHookId: "E2E_WEBHOOK_HOOK_ID",
   slackSupervisorChannel: "E2E_SLACK_SUPERVISOR_CHANNEL",
+  slackCapChannel: "E2E_SLACK_CAP_CHANNEL",
   accessAllowSend: "E2E_ACCESS_ALLOW_SEND",
   notionChannel: "E2E_NOTION_CHANNEL",
   notionQuery: "E2E_NOTION_QUERY",
@@ -71,8 +74,10 @@ export type Capability =
   | "synthetic"
   | "slackPrivate"
   | "slackChannelB"
+  | "slackCapFixture"
   | "syntheticDm"
   | "slackUser2"
+  | "slackSecondary"
   | "webhook"
   | "notion"
   | "slackSupervisor"
@@ -119,6 +124,11 @@ export interface SlackExtraChannelConfig {
 }
 
 export interface SlackUser2Config {
+  readonly userId: string;
+}
+
+export interface SlackSecondaryConfig {
+  readonly token: string;
   readonly userId: string;
 }
 
@@ -257,6 +267,12 @@ export function resolveSlackChannelB(env: Env = process.env): Resolved<SlackExtr
   return { ok: true, cfg: { channel: values[0] } };
 }
 
+export function resolveSlackCapFixture(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
+  const { values, missing } = need(env, [ENV.slackCapChannel]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { channel: values[0] } };
+}
+
 export function resolveSlackSupervisor(env: Env = process.env): Resolved<SlackExtraChannelConfig> {
   const { values, missing } = need(env, [ENV.slackSupervisorChannel]);
   if (missing.length > 0) return { ok: false, missing };
@@ -267,6 +283,12 @@ export function resolveSlackUser2(env: Env = process.env): Resolved<SlackUser2Co
   const { values, missing } = need(env, [ENV.slackUser2Id]);
   if (missing.length > 0) return { ok: false, missing };
   return { ok: true, cfg: { userId: values[0] } };
+}
+
+export function resolveSlackSecondary(env: Env = process.env): Resolved<SlackSecondaryConfig> {
+  const { values, missing } = need(env, [ENV.slackSecondaryToken, ENV.slackSecondaryUserId]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { token: values[0], userId: values[1] } };
 }
 
 export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDmConfig> {
@@ -362,9 +384,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const synthetic = resolveSynthetic(env);
   const slackPrivate = resolveSlackPrivate(env);
   const slackChannelB = resolveSlackChannelB(env);
+  const slackCapFixture = resolveSlackCapFixture(env);
   const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
   const slackUser2 = resolveSlackUser2(env);
+  const slackSecondary = resolveSlackSecondary(env);
   const webhook = resolveWebhook(env);
   const notion = resolveNotion(env);
   const github = resolveGithub(env);
@@ -380,9 +404,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (synthetic.ok) available.add("synthetic");
   if (slackPrivate.ok) available.add("slackPrivate");
   if (slackChannelB.ok) available.add("slackChannelB");
+  if (slackCapFixture.ok) available.add("slackCapFixture");
   if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");
   if (slackUser2.ok) available.add("slackUser2");
+  if (slackSecondary.ok) available.add("slackSecondary");
   if (webhook.ok) available.add("webhook");
   if (notion.ok) available.add("notion");
   if (github.ok) available.add("github");
@@ -400,9 +426,11 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       synthetic: synthetic.ok ? [] : synthetic.missing,
       slackPrivate: slackPrivate.ok ? [] : slackPrivate.missing,
       slackChannelB: slackChannelB.ok ? [] : slackChannelB.missing,
+      slackCapFixture: slackCapFixture.ok ? [] : slackCapFixture.missing,
       slackSupervisor: slackSupervisor.ok ? [] : slackSupervisor.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
+      slackSecondary: slackSecondary.ok ? [] : slackSecondary.missing,
       webhook: webhook.ok ? [] : webhook.missing,
       notion: notion.ok ? [] : notion.missing,
       github: github.ok ? [] : github.missing,

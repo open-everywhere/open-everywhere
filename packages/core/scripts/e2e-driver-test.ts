@@ -23,8 +23,10 @@ const {
   resolveSynthetic,
   resolveSlackPrivate,
   resolveSlackChannelB,
+  resolveSlackCapFixture,
   resolveSyntheticDm,
   resolveSlackUser2,
+  resolveSlackSecondary,
   resolveWebhook,
   resolveNotion,
   resolveGithub,
@@ -90,10 +92,22 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(!slackPriv.ok && slackPriv.missing.join(",") === ENV.slackPrivateChannel, "private-channel add-on misses exactly E2E_SLACK_PRIVATE_CHANNEL");
   const slackB = resolveSlackChannelB(empty);
   ok(!slackB.ok && slackB.missing.join(",") === ENV.slackChannelB, "channel-B add-on misses exactly E2E_SLACK_CHANNEL_B");
+  const slackCap = resolveSlackCapFixture(empty);
+  ok(!slackCap.ok && slackCap.missing.join(",") === ENV.slackCapChannel, "S10 cap-fixture add-on misses exactly E2E_SLACK_CAP_CHANNEL");
   const synDm = resolveSyntheticDm(empty);
   ok(!synDm.ok && synDm.missing.includes(ENV.slackDmChannel) && synDm.missing.includes(ENV.targetUrl), "synthetic-DM half misses E2E_SLACK_DM_CHANNEL + E2E_TARGET_URL");
   const user2Miss = resolveSlackUser2(empty);
   ok(!user2Miss.ok && user2Miss.missing.join(",") === ENV.slackUser2Id, "user2 add-on misses exactly E2E_SLACK_USER2_ID");
+  const secondaryMiss = resolveSlackSecondary(empty);
+  ok(
+    !secondaryMiss.ok && secondaryMiss.missing.join(",") === `${ENV.slackSecondaryToken},${ENV.slackSecondaryUserId}`,
+    "secondary-identity add-on misses BOTH E2E_SLACK_SECONDARY_TOKEN + E2E_SLACK_SECONDARY_USER_ID in an empty env",
+  );
+  const secondaryTokenOnly = resolveSlackSecondary({ [ENV.slackSecondaryToken]: "xoxp-secondary" });
+  ok(
+    !secondaryTokenOnly.ok && secondaryTokenOnly.missing.join(",") === ENV.slackSecondaryUserId,
+    "secondary-identity add-on with only the token set still misses exactly E2E_SLACK_SECONDARY_USER_ID (both required together)",
+  );
   const webhookMiss = resolveWebhook(empty);
   ok(
     !webhookMiss.ok && webhookMiss.missing.includes(ENV.webhookSecret) && webhookMiss.missing.includes(ENV.targetUrl),
@@ -127,18 +141,23 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(
     capsBase.missing.slackPrivate.join(",") === ENV.slackPrivateChannel &&
       capsBase.missing.slackChannelB.join(",") === ENV.slackChannelB &&
+      capsBase.missing.slackCapFixture.join(",") === ENV.slackCapChannel &&
       capsBase.missing.syntheticDm.join(",") === ENV.slackDmChannel &&
       capsBase.missing.slackUser2.join(",") === ENV.slackUser2Id &&
+      capsBase.missing.slackSecondary.join(",") === `${ENV.slackSecondaryToken},${ENV.slackSecondaryUserId}` &&
       capsBase.missing.webhook.join(",") === ENV.webhookSecret &&
       capsBase.missing.notion.join(",") === ENV.notionChannel,
-    "base env: each add-on capability names only ITS missing var (base vars not repeated)",
+    "base env: each add-on capability names only ITS missing var(s) (base vars not repeated)",
   );
   const full = {
     ...base,
     [ENV.slackPrivateChannel]: "C0PRIV",
     [ENV.slackChannelB]: "C0BBB",
+    [ENV.slackCapChannel]: "C0CAP",
     [ENV.slackDmChannel]: "D0DM",
     [ENV.slackUser2Id]: "U2NONADMIN",
+    [ENV.slackSecondaryToken]: "xoxp-secondary",
+    [ENV.slackSecondaryUserId]: "U3MEMBER",
     [ENV.webhookSecret]: "hook-secret",
     [ENV.notionChannel]: "C0NOTION",
     [ENV.teamsTenantId]: "tenant-1",
@@ -151,7 +170,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     [ENV.slackUnifiedChannelB]: "C0UNIB",
   };
   const capsFull = resolveCapabilities(full);
-  ok(capsFull.available.size === 11, "full env: all eleven capabilities live");
+  ok(capsFull.available.size === 13, "full env: all thirteen capabilities live");
+  const capFixtureCfg = resolveSlackCapFixture(full);
+  ok(capFixtureCfg.ok && capFixtureCfg.cfg.channel === "C0CAP", "S10 cap-fixture cfg carries the dedicated throwaway channel");
+  const secondaryCfg = resolveSlackSecondary(full);
+  ok(
+    secondaryCfg.ok && secondaryCfg.cfg.token === "xoxp-secondary" && secondaryCfg.cfg.userId === "U3MEMBER",
+    "secondary-identity cfg carries the token + its user id",
+  );
   const uniCfg = resolveSlackUnified(full);
   ok(
     uniCfg.ok && uniCfg.cfg.channelA === "C0UNIA" && uniCfg.cfg.channelB === "C0UNIB" && uniCfg.cfg.domain === "e2e-unified",
@@ -224,7 +250,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
     `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed)`,
   );
-  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
+  const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
     ok(s.title.trim().length > 0, `${s.id} has a title`);
     ok(typeof s.run === "function", `${s.id} has a run body`);
@@ -279,16 +305,18 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 }
 
 {
-  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite">();
+  const none = new Set<"slack" | "discord" | "synthetic" | "slackPrivate" | "slackChannelB" | "slackCapFixture" | "slackSupervisor" | "syntheticDm" | "slackUser2" | "slackSecondary" | "webhook" | "notion" | "teams" | "github" | "linear" | "notionAmbient" | "slackUnified" | "pr" | "connectorWrite">();
   const missing = {
     slack: [ENV.slackUserToken, ENV.slackChannel, ENV.slackBotUserId],
     discord: [ENV.discordDriverToken, ENV.discordChannel, ENV.discordBotUserId],
     synthetic: [ENV.targetUrl, ENV.slackSigningSecret, ENV.slackAdminUserId, ENV.slackChannel],
     slackPrivate: [ENV.slackPrivateChannel],
     slackChannelB: [ENV.slackChannelB],
+    slackCapFixture: [ENV.slackCapChannel],
     slackSupervisor: [ENV.slackSupervisorChannel],
     syntheticDm: [ENV.slackDmChannel],
     slackUser2: [ENV.slackUser2Id],
+    slackSecondary: [ENV.slackSecondaryToken, ENV.slackSecondaryUserId],
     webhook: [ENV.webhookSecret],
     notion: [ENV.notionChannel],
     teams: [ENV.teamsTenantId, ENV.teamsClientId, ENV.teamsRefreshToken, ENV.teamsTeamId, ENV.teamsChannelId, ENV.teamsBotAppId],
@@ -304,16 +332,18 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
     ok(reason !== undefined, `${s.id} skips in dry mode`);
     ok(/E2E_|SLACK_SIGNING_SECRET/.test(reason ?? ""), `${s.id} dry-skip names the env vars to set`);
   }
-  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackSupervisor", "syntheticDm", "slackUser2", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"] as const);
+  const all = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"] as const);
   const noneMissing = {
     slack: [],
     discord: [],
     synthetic: [],
     slackPrivate: [],
     slackChannelB: [],
+    slackCapFixture: [],
     slackSupervisor: [],
     syntheticDm: [],
     slackUser2: [],
+    slackSecondary: [],
     webhook: [],
     notion: [],
     teams: [],
@@ -496,8 +526,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
 
   const baseOnly = new Set(["slack"] as const);
   const cwMissing = {
-    slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackSupervisor: [],
-    syntheticDm: [], slackUser2: [], webhook: [], notion: [], teams: [], github: [], linear: [],
+    slack: [], discord: [], synthetic: [], slackPrivate: [], slackChannelB: [], slackCapFixture: [], slackSupervisor: [],
+    syntheticDm: [], slackUser2: [], slackSecondary: [], webhook: [], notion: [], teams: [], github: [], linear: [],
     notionAmbient: [], slackUnified: [], pr: [], connectorWrite: [ENV.notionChannel, ENV.connectorWrite],
   } as const;
   for (const id of ["S-NOTION-WRITE", "S-CONNECTOR-TIER"]) {

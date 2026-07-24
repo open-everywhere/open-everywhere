@@ -34,10 +34,13 @@ export interface ScenarioContext {
   readonly synthetic?: SyntheticSlack;
   readonly slackPrivate?: SlackDriver;
   readonly slackB?: SlackDriver;
+  readonly slackCapFixture?: SlackDriver;
   readonly slackSupervisor?: SlackDriver;
   readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
   readonly slackUser2?: SlackUser2Config;
+  readonly slackSecondary?: SlackDriver;
+  readonly slackSecondaryUserId?: string;
   readonly webhook?: WebhookDriver;
   readonly notion?: SlackDriver;
   readonly notionQuery?: string;
@@ -205,6 +208,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const b = ctx.slackB!;
       const colour = factToken("topaz");
 
+      const teach1Start = new Date().toISOString();
       const { ts: teachTs } = await a.post(a.mention("remember: our deploy day is Thursday"));
       const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
@@ -212,6 +216,16 @@ export const SCENARIOS: readonly Scenario[] = [
         ack1.text,
         "remember: deploy-day stored (was S4)",
       );
+      if (ctx.auditRead) {
+        const claimsSaved = /remember|stored|noted|got it|saved/i.test(ack1.text);
+        const writes = await ctx.auditRead({ sinceIso: teach1Start, platform: "slack", actions: ["memory.write"] });
+        ctx.gate(
+          !claimsSaved || writes.length > 0,
+          `grounding: the ack claims the fact was stored ⇒ a real memory.write audit row exists (found ${writes.length}) — no false save-claim`,
+        );
+      } else {
+        ctx.log("grounding check skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN so J2 can assert the ack's save-claim against a real memory.write audit row");
+      }
       const { ts: teach2Ts } = await a.post(`also remember: the deploy token colour is ${colour}`, teachTs);
       const ack2 = await a.awaitThreadReply(teachTs, { afterTs: teach2Ts, timeoutMs: REPLY_WAIT });
       await ctx.judgePass(
@@ -506,7 +520,22 @@ export const SCENARIOS: readonly Scenario[] = [
     timeoutMs: 660_000,
     judged: false,
     run: async (ctx) => {
-      const slack = ctx.slack!;
+      const channel = ctx.slackCapFixture?.channelId ?? ctx.slack!.channelId;
+      const slack = ctx.slackSecondary ? ctx.slackSecondary.withChannel(channel) : (ctx.slackCapFixture ?? ctx.slack!);
+      if (!ctx.slackCapFixture) {
+        ctx.log(
+          "S10: E2E_SLACK_CAP_CHANNEL not set — running the cap drive against the SHARED slack channel " +
+            "(this entangles the main scope's spend ledger with S10's cap-refusal churn; set a dedicated " +
+            "throwaway-scope channel with its own tiny perSurface cap to isolate it)",
+        );
+      }
+      if (!ctx.slackSecondary) {
+        ctx.log(
+          "S10: E2E_SLACK_SECONDARY_TOKEN/E2E_SLACK_SECONDARY_USER_ID not set — driving the cap-check as the " +
+            "ADMIN user (admin cap-refusal behaviour may differ from a real member's; set a non-admin " +
+            "secondary identity to test the member-level path)",
+        );
+      }
       for (let i = 0; i < 5; i++) {
         const { ts } = await slack.post(slack.mention(`cap check ${i + 1}: summarise the last message`));
         const reply = await slack.awaitThreadReply(ts, { timeoutMs: REPLY_WAIT });
