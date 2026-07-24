@@ -9,6 +9,8 @@ import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 const EMOJI_NAME_PATTERN = /^[a-z0-9_+-]{1,100}$/;
 
+export const REACT_REASONS = ["ack", "noise"] as const;
+
 const reactEntry = defineTool({
         description:
           'React to a message with a Slack emoji, instead of (or as) your reply. In a busy or ' +
@@ -29,6 +31,14 @@ const reactEntry = defineTool({
             })
             .describe('Bare Slack emoji name, no colons — e.g. "eyes", "thumbsup", "white_check_mark".'),
           ts: z.string().min(1).optional().describe("The message ts to react to. Defaults to the message that triggered this turn."),
+          reason: z
+            .enum(REACT_REASONS)
+            .optional()
+            .describe(
+              'Why a react is your whole response (default "ack"): "ack" — a bare acknowledgement ' +
+                '("got it"/"on it"/done), the react says everything a reply would; "noise" — a busy/noisy ' +
+                "thread where a low-content text reply would just add another line.",
+            ),
         }),
         outputSchema: z.object({ reacted: z.boolean(), emoji: z.string(), ts: z.string(), note: z.string() }),
         async execute(input, ctx) {
@@ -62,7 +72,7 @@ const reactEntry = defineTool({
             }
           }
           markReactedThisTurn();
-          await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts });
+          await auditToolAction(ctx, "slack.react", { emoji: input.emoji, ts, reason: input.reason ?? "ack" });
           return {
             reacted: true,
             emoji: input.emoji,

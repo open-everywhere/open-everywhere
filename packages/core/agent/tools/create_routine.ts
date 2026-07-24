@@ -6,6 +6,7 @@ import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { describeTrigger, type RoutineTrigger } from "../routines/routine.js";
+import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
@@ -28,7 +29,8 @@ const trigger = z.discriminatedUnion("kind", [
           "(kept for audit/list visibility, not deleted). Tag-style check-in: \"check back on the PR in an " +
           "hour\" -> create a `once` routine for now+1h; if nothing's changed when it fires, just create " +
           "another one-shot to check again later — there's no re-arm state to manage. `postPolicy` is " +
-          "ignored when `at` is set (a single fire has no repeat to diff against).",
+          "ignored when `at` is set (a single fire has no repeat to diff against). " +
+          CHECK_IN_DOCTRINE,
       ),
     postPolicy: z
       .enum(["every-run", "only-on-change"])

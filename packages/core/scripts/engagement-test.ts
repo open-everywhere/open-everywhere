@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { registerConfig, getConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
-import { isStopRequest, shouldDeliverReply } from "../agent/channels/engagement.js";
+import { isStopRequest, shouldDeliverReply, classifyParticipation, type ParticipationSignals } from "../agent/channels/engagement.js";
 import {
   parseMessageEvent,
   routeMessageEvent,
@@ -1891,4 +1891,65 @@ registerConfig({
   _resetOperationalDbForTest();
 }
 
-console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + supervisor stop+suppression + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro)`);
+{
+  const sig = (o: Partial<ParticipationSignals>): ParticipationSignals => ({
+    mention: false,
+    reason: "channel-activity",
+    trust: "peer",
+    senderKind: "human",
+    ...o,
+  });
+
+  {
+    const d = classifyParticipation(sig({ mention: true, reason: "channel-activity" }));
+    ok(d.status === "addressed" && !d.conservative, "participation: an @mention is addressed (not conservative) even on ambient reason");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "dm" }));
+    ok(d.status === "addressed" && !d.conservative, "participation: a DM is addressed");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "dispatch", trust: "relay", senderKind: "system" }));
+    ok(d.status === "addressed" && !d.conservative, "participation: a harness dispatch (owed work) is addressed despite relay/system author");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "spawn", trust: "relay", senderKind: "system" }));
+    ok(d.status === "addressed" && !d.conservative, "participation: a spawn (owed work) is addressed despite relay/system author");
+  }
+
+  {
+    const d = classifyParticipation(sig({ reason: "thread-activity" }));
+    ok(d.status === "participating" && !d.conservative, "participation: an engaged thread-activity reply is participating");
+  }
+
+  {
+    const d = classifyParticipation(sig({ reason: "channel-activity" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: ambient channel-activity is uncertain → conservative");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "reactions", senderKind: "human" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: a batched reactions observation is uncertain → conservative");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "message-edited" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: an unaddressed edit is uncertain → conservative");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "channel-activity", trust: "unauth" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: an unvouched (unauth) author, not addressed, is uncertain");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "channel-activity", senderKind: "bot" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: a foreign-bot post, not addressed, is uncertain");
+  }
+  {
+    const d = classifyParticipation(sig({ mention: true, trust: "unauth", senderKind: "bot" }));
+    ok(d.status === "addressed" && !d.conservative, "participation: an @mention wins over an unauth/foreign-bot author");
+  }
+  {
+    const d = classifyParticipation(sig({ reason: "thread-activity", senderKind: "bot" }));
+    ok(d.status === "uncertain" && d.conservative, "participation: a foreign-bot thread reply is uncertain, not participating");
+  }
+}
+
+console.log(`✓ engagement: ${n} assertions passed (registry + warm-on-wake participating/streak + ownership routing (ownerToken/kind) + durable stopped marker + channel supervisor sessions (get/rotate/touch) + migration + stop-verb + supervisor stop+suppression + delivery policy + event parse/route + domain read gate + fronting-route classify/verify/dedupe/FIFO/in-thread-branch + judged-reply sentinel + name-drop wake + channel-join intro + participation-certainty classifier)`);

@@ -127,6 +127,7 @@ export default windowGated("spawn_thread_session", defineTool({
       workspace: own.domain,
       action: "thread_seat.spawned",
       detail: {
+        reason: "spawn" as const,
         seatId: seatToken,
         windowId: threadSeatWindowId(ref.channelKey, threadKey),
         channelKey: ref.channelKey,

@@ -6,6 +6,8 @@ export type WakeReason =
   | "mention"
   | "dm"
   | "dispatch"
+  | "spawn"
+  | "reactions"
   | "message-edited";
 
 export type WakeTrust = "principal" | "peer" | "relay" | "unauth";

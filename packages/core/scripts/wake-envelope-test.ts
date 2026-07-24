@@ -443,6 +443,24 @@ const countOccurrences = (haystack: string, needle: string): number =>
   n++;
 }
 
+{
+  const spawnWake = renderWakeEnvelope({
+    reason: "spawn",
+    currentTime: "2026-04-04T15:01:00Z",
+    channel: { id: "C_SPAWN", type: "channel", memberCount: 3 },
+    messages: [{ from: "system", author: "open-everywhere", id: "s1", sentAt: "2026-04-04T15:01:00Z", trust: "relay", trigger: true, body: "You are a thread seat: own this thread." }],
+  });
+  ok(spawnWake.startsWith(`<wake reason="spawn" current-time="2026-04-04T15:01:00Z">`), "spawn reason: renders reason=spawn");
+
+  const reactionsWake = renderWakeEnvelope({
+    reason: "reactions",
+    currentTime: "2026-04-04T15:02:00Z",
+    channel: { id: "C_REACT", type: "channel", memberCount: 3 },
+    messages: [{ from: "human", author: "Rowan", id: "r1", sentAt: "2026-04-04T15:02:00Z", trust: "peer", trigger: true, body: "(reactions batched here)" }],
+  });
+  ok(reactionsWake.startsWith(`<wake reason="reactions" current-time="2026-04-04T15:02:00Z">`), "reactions reason: renders reason=reactions");
+}
+
 console.log(
-  `✓ wake-envelope: ${n} assertions passed (peer + principal + edited + relay(thread-nested) + batched + backscroll + attachments + participants/self/system/thread-activity/name+handle + hostile-name escaping (security) + unauth system-note (per-wake + spoof-proof) + untrusted-wrap/escaping + structural invariants)`,
+  `✓ wake-envelope: ${n} assertions passed (peer + principal + edited + relay(thread-nested) + batched + backscroll + attachments + participants/self/system/thread-activity/name+handle + spawn+reactions reason codes + hostile-name escaping (security) + unauth system-note (per-wake + spoof-proof) + untrusted-wrap/escaping + structural invariants)`,
 );

@@ -31,7 +31,7 @@ const ok = (cond: boolean, label: string) => {
 interface ArmedTool {
   readonly description: string;
   readonly inputSchema: { safeParse: (v: unknown) => { success: boolean; error?: { issues: { message: string }[] } } };
-  readonly execute: (input: { emoji: string; ts?: string }, ctx: unknown) => Promise<{ reacted: boolean; emoji: string; ts: string }>;
+  readonly execute: (input: { emoji: string; ts?: string; reason?: "ack" | "noise" }, ctx: unknown) => Promise<{ reacted: boolean; emoji: string; ts: string }>;
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 const armEvent = (react as unknown as { events: Record<string, Handler> }).events["session.started"];
@@ -58,6 +58,10 @@ ok(!armed.inputSchema.safeParse({ emoji: ":thumbsup:" }).success, "colon-wrapped
 ok(!armed.inputSchema.safeParse({ emoji: "ThumbsUp" }).success, "uppercase emoji name rejected");
 ok(!armed.inputSchema.safeParse({ emoji: "" }).success, "empty emoji name rejected");
 ok(!armed.inputSchema.safeParse({ emoji: "thumbs up" }).success, "emoji name with a space rejected");
+ok(armed.inputSchema.safeParse({ emoji: "thumbsup", reason: "ack" }).success, "react reason=ack accepted");
+ok(armed.inputSchema.safeParse({ emoji: "thumbsup", reason: "noise" }).success, "react reason=noise accepted");
+ok(armed.inputSchema.safeParse({ emoji: "thumbsup" }).success, "react reason omitted accepted (optional)");
+ok(!armed.inputSchema.safeParse({ emoji: "thumbsup", reason: "bogus" }).success, "out-of-vocabulary react reason rejected by the enum");
 {
   const res = armed.inputSchema.safeParse({ emoji: ":x:" });
   ok(!res.success && (res.error?.issues[0]?.message.includes("no colons") ?? false), "rejection message names the colon rule");
@@ -151,6 +155,19 @@ await inSession(async () => {
   const audit = await readAudit({ org: "default", action: "slack.react" });
   ok(audit.length === 1, "react: audits exactly one slack.react row");
   ok(audit[0]?.detail?.emoji === "eyes" && audit[0]?.detail?.ts === "111.222", "react: audit row carries the emoji + ts");
+  ok(audit[0]?.detail?.reason === "ack", "react: audit row carries the decision reason, defaulting to ack when omitted (OPE-40)");
+});
+restoreFetch();
+
+calls = [];
+nextResponse = { ok: true };
+fakeSlack();
+await inSession(async () => {
+  const before = (await readAudit({ org: "default", action: "slack.react" })).length;
+  await armed.execute({ emoji: "eyes", reason: "noise" }, slackCtx("C1", "111.222"));
+  const audit = await readAudit({ org: "default", action: "slack.react" });
+  ok(audit.length === before + 1, "react: an explicit-reason react audits one new row");
+  ok(audit.some((r) => r?.detail?.reason === "noise"), "react: an explicit reason=noise is carried into the audit detail");
 });
 restoreFetch();
 
