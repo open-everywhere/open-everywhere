@@ -13,13 +13,18 @@ import {
   type NotionSupervisorSession,
   type NotionWakeMessage,
 } from "../agent/channels/notion-supervisor.js";
-import { singleWindowMentionPolicy, type UnifiedWindowWake } from "../agent/channels/unified-window.js";
-import { registerTrustedSurfaces, isVouchedInternal, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import {
+  singleWindowMentionPolicy,
+  registerTrustedSurfaces,
+  isVouchedInternal,
+  _resetTrustedSurfacesForTest,
+  renderWake,
+  UNTRUSTED_OPEN,
+  type UnifiedWindowWake,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { notionWorkspaceKey } from "../agent/channels/notion-identity.js";
-import { renderWake } from "../agent/channels/normalized-wake.js";
 import type { NotionComment } from "../agent/channels/notion-api.js";
 import type { OpenEverywhereNotionAuth } from "../agent/channels/notion-identity.js";
-import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -262,6 +267,21 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
   };
   await assert.rejects(() => handleNotionSupervisorDispatch(dispatch(), deps), /transient network blip/, "a transient (non-terminal) wake error propagates");
   passed++;
+}
+
+{
+  const notionWake = buildNotionSupervisorWake({
+    addressing: "channel-watch", pageId: "P1", discussionId: "D1",
+    trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
+    threadComments: [{ from: "human", id: "c8", authorId: "n-admin", sentAt: "2026-07-11T00:00:00Z", text: "earlier", trust: "principal" }],
+  });
+  ok(notionWake.trigger.kind === "message" && notionWake.trigger.message.trust === "relay", "wake-trust: resolved trigger trust rides in (direct-addressing no longer implies principal)");
+  ok(notionWake.backscroll?.[0]?.trust === "principal", "wake-trust: resolved sibling trust rides into the backscroll");
+  const notionDirectDefault = buildNotionSupervisorWake({
+    addressing: "direct", pageId: "P1", discussionId: "D1",
+    trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm" },
+  });
+  ok(notionDirectDefault.trigger.kind === "message" && notionDirectDefault.trigger.message.trust === "principal", "wake-trust: unset trust keeps the legacy direct→principal default (pure callers)");
 }
 
 console.log(`\n✓ notion-supervisor: ${passed} assertions passed`);

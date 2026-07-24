@@ -1,5 +1,5 @@
-import { renderBlocks, pageTitle, type BlockNode } from "../agent/notion/blocks.js";
-import { NotionClient, makeNotionProvider, type HttpFetch } from "../agent/notion/memory.js";
+import { renderBlocks, pageTitle, type BlockNode } from "../agent/memory/blocks.js";
+import { NotionClient, makeNotionProvider, type HttpFetch } from "../agent/memory/memory.js";
 import type { Partition } from "@open-everywhere/core/agent/adapter-api.js";
 import { siloTier } from "@open-everywhere/core/agent/adapter-api.js";
 const TIER = siloTier("baseline");

@@ -1,11 +1,15 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionComments, resolveNotionApiKey, type NotionCommentSummary } from "../channels/notion-api.js";
-import { ingestUntrustedModelOutput } from "../access/untrusted.js";
-import { assertTurnSurface, bindFrom, type BindableContext } from "../identity/binding.js";
-import { sourceScopedMount } from "../access/source-scoped-mount.js";
-import { getConfig } from "../access/config.js";
-import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import {
+  ingestUntrustedModelOutput,
+  assertTurnSurface,
+  bindFrom,
+  sourceScopedMount,
+  getConfig,
+  preRegisterDynamicEntry,
+  type BindableContext,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 const MAX_COMMENTS = 100;
 const MAX_BLOCK_SCANS = 80;

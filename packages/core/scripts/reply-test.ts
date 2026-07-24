@@ -11,21 +11,10 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
-process.env.NOTION_CHANNEL_API_KEY = "ntn-test-key";
 process.env.TELEGRAM_BOT_TOKEN = "telegram-test-token";
 process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
-
-const { setRegisteredProviders } = await import("../agent/access/providers.js");
-setRegisteredProviders([
-  {
-    name: "notion",
-    connection: "notion",
-    allows: ["api-key"],
-    credentials: [{ id: "channel-key", type: "api-key", secretRef: "NOTION_CHANNEL_API_KEY", broker: "env", intake: false }],
-  },
-]);
 
 const reply = (await import("../agent/tools/reply.js")).default;
 const { resolveReplyTarget } = await import("../agent/channels/reply-post.js");
@@ -55,7 +44,6 @@ const TEAMS_SERVICE_URL = "https://smba.test.local";
 let calls: FetchCall[] = [];
 let slackResponse: Record<string, unknown> = { ok: true, ts: "9999.0001" };
 let discordResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "d-9001" } };
-let notionResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "notion-comment-1" } };
 let telegramResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { ok: true, result: { message_id: 0, chat: { id: 0, type: "supergroup" } } } };
 let teamsResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "" } };
 let linearResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "" } } } } };
@@ -68,7 +56,6 @@ function fakeHttp(): void {
     const body = init?.body instanceof URLSearchParams ? init.body.toString() : String(init?.body ?? "");
     calls.push({ url: u, method: init?.method ?? "GET", body });
     if (u.includes("discord.com")) return resp(discordResponse.status, discordResponse.body);
-    if (u.includes("api.notion.com")) return resp(notionResponse.status, notionResponse.body);
     if (u.includes("api.telegram.org")) return resp(telegramResponse.status, telegramResponse.body);
     if (u.includes("login.microsoftonline.com")) return resp(200, { token_type: "Bearer", expires_in: 3600, access_token: "teams-connector-token" });
     if (u.includes("smba.test.local")) return resp(teamsResponse.status, teamsResponse.body);
@@ -108,24 +95,6 @@ function discordCtx(channelId: string | undefined) {
           attributes: { guild_id: "G1", ...(channelId ? { channel_id: channelId } : {}), channel_type: "0" },
           principalId: "U2",
           principalType: "discord-user",
-        },
-      },
-    },
-  };
-}
-function notionCtx(discussionId: string | undefined) {
-  return {
-    channel: { kind: "notion" },
-    session: {
-      auth: {
-        current: {
-          attributes: {
-            workspace_id: "W1",
-            page_id: "P1",
-            ...(discussionId ? { discussion_id: discussionId } : {}),
-          },
-          principalId: "U3",
-          principalType: "notion-user",
         },
       },
     },
@@ -199,18 +168,18 @@ const armReply = (react: unknown, ctx: unknown): ArmedTool | null =>
 ok(armReply(reply, { channel: { kind: "slack" } }) !== null, "reply arms on a Slack session");
 ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a Discord session");
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
-ok(armReply(reply, { channel: { kind: "notion" } }) !== null, "reply arms on a Notion session (mid-turn post via createCommentReply)");
+ok(armReply(reply, { channel: { kind: "notion" } }) === null, "reply is hidden on notion in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "telegram" } }) !== null, "reply arms on a Telegram session (mid-turn post via sendTelegramMessage)");
 ok(armReply(reply, { channel: { kind: "teams" } }) !== null, "reply arms on a Teams session (mid-turn post via sendTeamsActivity)");
 ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
 ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
 {
-  const notionArmed = armReply(reply, { channel: { kind: "notion" } });
+  const telegramArmed = armReply(reply, { channel: { kind: "telegram" } });
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(notionArmed !== null && /FINAL/.test(notionArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
-  ok(slackArmed !== null && slackArmed.description === notionArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
-  ok(!/update_reply/.test(notionArmed!.description), "reply: description never mentions the dropped update_reply verb");
+  ok(telegramArmed !== null && /FINAL/.test(telegramArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(slackArmed !== null && slackArmed.description === telegramArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
+  ok(!/update_reply/.test(telegramArmed!.description), "reply: description never mentions the dropped update_reply verb");
 }
 
 {
@@ -220,9 +189,7 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
   ok(slackTop?.platform === "slack" && slackTop.threadTs === undefined, "resolveReplyTarget: a top-level slack trigger has no threadTs (posts top-level)");
   const discordTarget = resolveReplyTarget(discordCtx("D1") as never);
   ok(discordTarget?.platform === "discord" && discordTarget.channelId === "D1" && (discordTarget as { threadTs?: string }).threadTs === undefined, "resolveReplyTarget: discord carries channel, never a threadTs");
-  const notionTarget = resolveReplyTarget(notionCtx("disc-1") as never);
-  ok(notionTarget?.platform === "notion" && (notionTarget as { discussionId: string }).discussionId === "disc-1", "resolveReplyTarget: notion carries the discussion id (the reply anchor)");
-  ok(resolveReplyTarget(notionCtx(undefined) as never) === null, "resolveReplyTarget: a discussion-less notion ctx → null (no anchor to post to)");
+  ok(resolveReplyTarget({ channel: { kind: "notion" } } as never) === null, "resolveReplyTarget: notion → null in core alone (arm is bundle-registered)");
 
   const tgTarget = resolveReplyTarget(telegramCtx("-100123", 7) as never);
   ok(tgTarget?.platform === "telegram" && (tgTarget as { chatId: string }).chatId === "-100123" && (tgTarget as { messageThreadId?: number }).messageThreadId === 7, "resolveReplyTarget: telegram carries the RAW chat id + forum topic");
@@ -296,28 +263,6 @@ await inSession(async () => {
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
 });
 restoreHttp();
-
-calls = [];
-notionResponse = { status: 200, body: { id: "notion-comment-42" } };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(reply, notionCtx("disc-1"))!;
-  const res = await armed.execute({ text: "notion answer" }, notionCtx("disc-1"));
-  ok(res.posted === true && res.id === "notion-comment-42", "reply: on Notion returns the created comment id");
-  ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("api.notion.com") && calls[0].url.endsWith("/v1/comments"), "reply: on Notion POSTs to /v1/comments");
-  const payload = JSON.parse(calls[0].body) as { discussion_id?: string; rich_text?: Array<{ text?: { content?: string } }> };
-  ok(payload.discussion_id === "disc-1", "reply: on Notion posts into the SAME discussion (the thread it was woken on)");
-  ok(payload.rich_text?.[0]?.text?.content === "notion answer", "reply: on Notion carries the model text as rich text");
-  const audit = await readAudit({ org: "default", action: "reply.post" });
-  ok(audit.some((r) => r.detail?.platform === "notion" && r.detail?.id === "notion-comment-42"), "reply: audits a reply.post row stamped platform=notion");
-});
-restoreHttp();
-
-await inSession(async () => {
-  const armed = armReply(reply, notionCtx(undefined))!;
-  await assert.rejects(() => armed.execute({ text: "x" }, notionCtx(undefined)), /couldn't resolve/, "reply: a Notion ctx with no discussion id throws an honest error");
-  n++;
-});
 
 calls = [];
 telegramResponse = { status: 200, body: { ok: true, result: { message_id: 555, chat: { id: -100123, type: "supergroup" } } } };

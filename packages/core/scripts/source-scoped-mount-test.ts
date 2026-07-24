@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sourceScopedMount, OE_SOURCE_SCOPED_TOOLS_ENV } from "../agent/access/source-scoped-mount.js";
@@ -175,13 +175,23 @@ ok(
 
 {
   const here = dirname(fileURLToPath(import.meta.url));
-  const coreDir = join(here, "../agent/tools");
-  const coreTools: SourceToolFile[] = readdirSync(coreDir)
-    .filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
-    .map((f) => ({ name: f.replace(/\.ts$/u, ""), source: readFileSync(join(coreDir, f), "utf8") }));
+  const dirs = [join(here, "../agent/tools")];
+  const providersRoot = join(here, "../../providers");
+  if (existsSync(providersRoot)) {
+    for (const e of readdirSync(providersRoot, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith(".")) continue;
+      const d = join(providersRoot, e.name, "agent", "tools");
+      if (existsSync(d)) dirs.push(d);
+    }
+  }
+  const coreTools: SourceToolFile[] = dirs.flatMap((dir) =>
+    readdirSync(dir)
+      .filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
+      .map((f) => ({ name: f.replace(/\.ts$/u, ""), source: readFileSync(join(dir, f), "utf8") })),
+  );
   const problems = checkSourceGate(coreTools);
-  ok(problems.length === 0, `the REAL core tool surface carries a clean source-gate manifest (problems: ${JSON.stringify(problems)})`);
-  ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
+  ok(problems.length === 0, `the REAL authored tool surface carries a clean source-gate manifest (problems: ${JSON.stringify(problems)})`);
+  ok(coreTools.length >= 37, `the real scan actually covered the tools dirs (saw ${coreTools.length})`);
 }
 
 console.log(`✓ ${n} source-scoped-mount assertions passed`);

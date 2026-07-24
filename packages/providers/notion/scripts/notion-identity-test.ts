@@ -5,8 +5,16 @@ import {
   notionWorkspaceKey,
   type OpenEverywhereNotionAuth,
 } from "../agent/channels/notion-identity.js";
-import { bindFrom, type BindableContext, type SurfaceBinding } from "../agent/identity/binding.js";
-import { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import {
+  bindFrom,
+  registerTrustedSurfaces,
+  _resetTrustedSurfacesForTest,
+  type BindableContext,
+  type SurfaceBinding,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { registerNotionProvider } from "../agent/register.js";
+
+registerNotionProvider();
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

@@ -1,6 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { getSecretVia, CredentialError } from "../access/credentials.js";
-import { findProviderCredential } from "../access/providers.js";
+import { getSecretVia, CredentialError, findProviderCredential } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const NOTION_API_BASE = "https://api.notion.com";
 export function notionVersion(): string {

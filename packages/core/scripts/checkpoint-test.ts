@@ -222,7 +222,7 @@ passed++;
 {
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools");
   const guarded = ["open_pull_request", "create_skill", "create_routine", "remember", "forget", "request_access", "cancel_routine", "delete_skill"];
-  const reads = ["reply", "react", "no_reply", "read_slack_channel", "read_slack_thread", "read_notion_page", "session_cost", "spend_report", "check_pr_status"];
+  const reads = ["reply", "react", "no_reply", "read_slack_channel", "read_slack_thread", "session_cost", "spend_report", "check_pr_status"];
   const has = (name: string) => readFileSync(join(toolsDir, `${name}.ts`), "utf8").includes("requireSessionContinuation(");
   for (const t of guarded) ok(has(t), `checkpoint guard is wired into the consequential tool ${t}`);
   for (const t of reads) ok(!has(t), `checkpoint guard is NOT wired into the read/reply tool ${t} (reads stay unaffected)`);

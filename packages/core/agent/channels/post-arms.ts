@@ -37,7 +37,6 @@ export function registeredPostArmPlatforms(): readonly string[] {
 
 import { slackPostArm } from "./slack-post-arm.js";
 import { discordPostArm } from "./discord-post-arm.js";
-import { notionPostArm } from "./notion-post-arm.js";
 import { telegramPostArm } from "./telegram-post-arm.js";
 import { teamsPostArm } from "./teams-post-arm.js";
 import { linearPostArm } from "./linear-post-arm.js";
@@ -45,7 +44,6 @@ import { githubPostArm } from "./github-post-arm.js";
 
 registerPostArm(slackPostArm);
 registerPostArm(discordPostArm);
-registerPostArm(notionPostArm);
 registerPostArm(telegramPostArm);
 registerPostArm(teamsPostArm);
 registerPostArm(linearPostArm);

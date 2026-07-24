@@ -56,7 +56,6 @@ eq(unifiedThreadRef({ platform: "slack", channelId: "C1", threadTs: "170.5" }), 
 eq(unifiedThreadRef({ platform: "slack", channelId: "C1" }), { channelKey: "slack/C1", threadKey: "C1" }, "slack: top-level ⇒ threadKey falls back to the channel id");
 eq(unifiedThreadRef({ platform: "github", owner: "acme", repo: "web", issueNumber: 7 }), { channelKey: "github/acme/web", threadKey: "7" }, "github: the issue IS the thread");
 eq(unifiedThreadRef({ platform: "linear", issueId: "iss_1", ambient: true }), { channelKey: "linear/iss_1", threadKey: "iss_1" }, "linear ambient: threadKey falls back to the issue id");
-eq(unifiedThreadRef({ platform: "notion", discussionId: "d1", pageId: "p1" }), { channelKey: "notion/p1", threadKey: "d1" }, "notion: channel is the page, thread is the discussion");
 const teamsRef = unifiedThreadRef({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19:abc@thread.v2", replyToActivityId: "act:1" });
 ok(!teamsRef.channelKey.includes(":") && !teamsRef.threadKey.includes(":"), "teams: colons in the conversation/activity ids are folded (task windowId is [^:]+)");
 

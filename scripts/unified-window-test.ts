@@ -7,14 +7,14 @@ import { join } from "node:path";
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-window-")), "ops.sqlite3");
 delete process.env.OE_ORG;
 
-import { registerConfig } from "../agent/access/config.js";
+import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import {
   defineDomain,
   windowedSupervisorEnabled,
   windowModeFor,
   assertUnifiedDomainTrust,
   type Domain,
-} from "../agent/memory/domain.js";
+} from "@open-everywhere/core/agent/memory/domain.js";
 import {
   supervisorGrainFor,
   supervisorTokenForGrain,
@@ -22,7 +22,7 @@ import {
   unifiedDomainSessionKey,
   effectiveEveToken,
   UNIFIED_CHANNEL_NAME,
-} from "../agent/channels/unified-supervisor.js";
+} from "@open-everywhere/core/agent/channels/unified-supervisor.js";
 import {
   mintWakeId,
   registerUnifiedWakeTarget,
@@ -39,25 +39,28 @@ import {
   OE_ADDRESSING_ATTR,
   OE_SOURCES_ATTR,
   type UnifiedWakeOrigin,
-} from "../agent/channels/unified-window.js";
-import { decodeSources } from "../agent/channels/window-sources.js";
-import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
-import { postUnifiedReply, completeLinearSessionSilently } from "../agent/channels/unified-reply.js";
-import { getOperationalStore } from "../agent/operational/provider.js";
+} from "@open-everywhere/core/agent/channels/unified-window.js";
+import { decodeSources } from "@open-everywhere/core/agent/channels/window-sources.js";
+import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
+import { postUnifiedReply, completeLinearSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
+import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import {
   parseMessageEvent,
   routeSupervisorEvent,
   supervisorToken,
   liveSupervisorDeps,
   type SupervisorRouteDeps,
-} from "../agent/channels/slack-events.js";
-import { withSingleWindowDiversion } from "../agent/channels/slack-front.js";
-import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "../agent/channels/github-supervisor.js";
-import { buildGitHubAuth } from "../agent/channels/github-identity.js";
-import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "../agent/channels/linear-supervisor.js";
-import { buildLinearAuth } from "../agent/channels/linear-identity.js";
-import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "../agent/channels/notion-supervisor.js";
-import { buildNotionAuth } from "../agent/channels/notion-identity.js";
+} from "@open-everywhere/core/agent/channels/slack-events.js";
+import { withSingleWindowDiversion } from "@open-everywhere/core/agent/channels/slack-front.js";
+import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/core/agent/channels/github-supervisor.js";
+import { buildGitHubAuth } from "@open-everywhere/core/agent/channels/github-identity.js";
+import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/core/agent/channels/linear-supervisor.js";
+import { buildLinearAuth } from "@open-everywhere/core/agent/channels/linear-identity.js";
+import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "@open-everywhere/provider-notion/agent/channels/notion-supervisor.js";
+import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
+import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
+import { unifiedThreadRef, isThreadScopedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
 import {
   dispatchTurn,
   authForRelayMessage,
@@ -65,20 +68,20 @@ import {
   discordSingleWindowPrivacyOk,
   type DiscordRelayMessage,
   type DiscordGatewaySend,
-} from "../agent/channels/discord-gateway.js";
-import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+} from "@open-everywhere/core/agent/channels/discord-gateway.js";
+import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "@open-everywhere/core/agent/identity/trust.js";
 import {
   handleTeamsSingleWindowDispatch,
   teamsSingleWindowPrivacyOk,
   planTeamsSingleWindow,
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
-} from "../agent/channels/teams-supervisor.js";
-import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
-import { isTrustedTeamsServiceUrl } from "../agent/channels/unified-window.js";
-import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "../agent/identity/binding.js";
-import replyTool from "../agent/tools/reply.js";
-import readSlackChannel from "../agent/tools/read_slack_channel.js";
+} from "@open-everywhere/core/agent/channels/teams-supervisor.js";
+import { buildTeamsAuth } from "@open-everywhere/core/agent/channels/teams-identity.js";
+import { isTrustedTeamsServiceUrl } from "@open-everywhere/core/agent/channels/unified-window.js";
+import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import replyTool from "@open-everywhere/core/agent/tools/reply.js";
+import readSlackChannel from "@open-everywhere/core/agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 let n = 0;
@@ -94,6 +97,28 @@ const noThrow = (fn: () => unknown, label: string) => {
   assert.doesNotThrow(fn, label);
   n++;
 };
+
+registerNotionProvider();
+{
+  const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
+    slack: true,
+    github: true,
+    linear: true,
+    notion: true,
+    discord: true,
+    teams: true,
+  };
+  for (const platform of Object.keys(ALL_ORIGIN_PLATFORMS)) {
+    ok(wakeOriginCodec(platform) !== undefined, `wake-origin codec completeness: "${platform}" has a registered codec once boot wiring runs`);
+  }
+  ok(isThreadScopedWakeOrigin({ platform: "notion", discussionId: "d1" }), "notion: a discussion IS its own thread (registered codec)");
+  assert.deepStrictEqual(
+    unifiedThreadRef({ platform: "notion", discussionId: "d1", pageId: "p1" }),
+    { channelKey: "notion/p1", threadKey: "d1" },
+    "notion: channel is the page, thread is the discussion (registered codec)",
+  );
+  n++;
+}
 
 const withGate = async <T>(on: boolean, fn: () => T | Promise<T>): Promise<T> => {
   const prev = process.env.OE_WINDOW_TOPOLOGY;

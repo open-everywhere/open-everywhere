@@ -28,6 +28,14 @@ const { unifiedDomainSessionKey, unifiedSupervisorToken, supervisorGrainFor } = 
 const { formatWindowToken } = await import("../agent/channels/window-key.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 
+const { registerWakeOriginCodec } = await import("../agent/channels/wake-origin-codec.js");
+registerWakeOriginCodec("notion", {
+  validate: (o) => typeof o.discussionId === "string" && o.discussionId.length > 0,
+  threadRef: (origin) => ({ channelKey: `notion/${origin.pageId ?? origin.discussionId}`, threadKey: origin.discussionId }),
+  isThreadScoped: () => true,
+  containerId: (origin) => origin.discussionId,
+});
+
 const DOMAIN = "e2e-unified";
 const ORG = "acme";
 const SURFACE = "slack/T1/C1";

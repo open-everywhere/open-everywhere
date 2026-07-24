@@ -1,8 +1,5 @@
 import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
-import type { PostArm, TargetResolveBag } from "./post-arms.js";
-import type { ReplyTarget } from "./reply-post.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
-import type { UnifiedReplyDeps } from "./unified-reply.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 type NotionTarget = Extract<ReplyTarget, { platform: "notion" }>;
 type NotionOrigin = Extract<UnifiedWakeOrigin, { platform: "notion" }>;

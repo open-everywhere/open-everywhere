@@ -14,7 +14,6 @@ import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import { buildGitHubSupervisorWake } from "../agent/channels/github-supervisor.js";
 import { buildLinearSupervisorWake } from "../agent/channels/linear-supervisor.js";
-import { buildNotionSupervisorWake } from "../agent/channels/notion-supervisor.js";
 import { slackChannelWatchWake, slackThreadFollowWake, type ParsedMessageEvent } from "../agent/channels/slack-events.js";
 import { clusterBackscroll, type NormalizedMessage } from "../agent/channels/backscroll-cluster.js";
 
@@ -103,19 +102,6 @@ const linWake = buildLinearSupervisorWake({
   trigger: { id: "c1", authorId: "u1", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
 });
 ok(linWake.trigger.kind === "message" && linWake.trigger.message.trust === "relay", "linear builder: a resolved trigger trust rides into the wake");
-
-const notionWake = buildNotionSupervisorWake({
-  addressing: "channel-watch", pageId: "P1", discussionId: "D1",
-  trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
-  threadComments: [{ from: "human", id: "c8", authorId: "n-admin", sentAt: "2026-07-11T00:00:00Z", text: "earlier", trust: "principal" }],
-});
-ok(notionWake.trigger.kind === "message" && notionWake.trigger.message.trust === "relay", "notion builder: resolved trigger trust rides in (direct-addressing no longer implies principal)");
-ok(notionWake.backscroll?.[0]?.trust === "principal", "notion builder: resolved sibling trust rides into the backscroll");
-const notionDirectDefault = buildNotionSupervisorWake({
-  addressing: "direct", pageId: "P1", discussionId: "D1",
-  trigger: { from: "human", id: "c9", authorId: "n-user", sentAt: "2026-07-11T00:00:00Z", text: "hm" },
-});
-ok(notionDirectDefault.trigger.kind === "message" && notionDirectDefault.trigger.message.trust === "principal", "notion builder: unset trust keeps the legacy direct→principal default (pure callers)");
 
 const ev: ParsedMessageEvent = {
   channelId: "C_ENG", teamId: "T1", ts: "1752501000.000100", threadTs: undefined,

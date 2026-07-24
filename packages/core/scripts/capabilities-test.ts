@@ -25,7 +25,7 @@ eq(capabilitiesForPlatform("teams"), { midTurnPost: true, reactions: false }, "t
 eq(capabilitiesForPlatform("telegram"), { midTurnPost: true, reactions: false }, "telegram");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: true, reactions: false }, "linear");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
-eq(capabilitiesForPlatform("notion"), { midTurnPost: true, reactions: false }, "notion");
+eq(capabilitiesForPlatform("notion"), { midTurnPost: false, reactions: false }, "notion (unregistered in core alone → NONE)");
 
 eq(capabilitiesForPlatform("local"), { midTurnPost: false, reactions: false }, "local → NONE");
 eq(capabilitiesForPlatform("nope"), { midTurnPost: false, reactions: false }, "unknown platform → NONE");

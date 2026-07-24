@@ -28,8 +28,11 @@ for (const f of readdirSync(appToolsDir).filter((f) => f.endsWith(".ts") && !f.s
   const name = f.replace(/\.ts$/u, "");
   if (tools.has(name)) continue;
   let source = readFileSync(join(appToolsDir, f), "utf8");
-  const m = source.match(/export \{ default \} from "@open-everywhere\/(\w+)\/(.+)\.js"/u);
-  if (m) source = readFileSync(join(root, "packages", m[1], `${m[2]}.ts`), "utf8");
+  const m = source.match(/export \{ default \} from "@open-everywhere\/([\w-]+)\/(.+)\.js"/u);
+  if (m) {
+    const pkgDir = m[1].startsWith("provider-") ? join("providers", m[1].slice("provider-".length)) : m[1];
+    source = readFileSync(join(root, "packages", pkgDir, `${m[2]}.ts`), "utf8");
+  }
   tools.set(name, { name, source });
 }
 

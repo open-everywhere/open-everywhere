@@ -33,7 +33,9 @@ function teamsServiceHostAllowlist(): readonly string[] {
   return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;
 }
 
-export const wakeOriginCodecs: { readonly [P in UnifiedWakeOrigin["platform"]]: WakeOriginCodec<OriginArm<P>> } = {
+type CoreCodecPlatform = Exclude<UnifiedWakeOrigin["platform"], "notion">;
+
+export const wakeOriginCodecs: { readonly [P in CoreCodecPlatform]: WakeOriginCodec<OriginArm<P>> } = {
   slack: {
     validate: (o) =>
       typeof o.channelId === "string" &&
@@ -69,16 +71,6 @@ export const wakeOriginCodecs: { readonly [P in UnifiedWakeOrigin["platform"]]: 
     threadRef: (origin) => ({ channelKey: noColon(`linear/${origin.issueId}`), threadKey: noColon(origin.parentId ?? origin.issueId) }),
     isThreadScoped: () => true,
     containerId: (origin) => origin.issueId,
-  },
-  notion: {
-    validate: (o) =>
-      typeof o.discussionId === "string" &&
-      o.discussionId.length > 0 &&
-      (o.pageId === undefined || typeof o.pageId === "string") &&
-      (o.workspaceId === undefined || typeof o.workspaceId === "string"),
-    threadRef: (origin) => ({ channelKey: noColon(`notion/${origin.pageId ?? origin.discussionId}`), threadKey: noColon(origin.discussionId) }),
-    isThreadScoped: () => true,
-    containerId: (origin) => origin.discussionId,
   },
   discord: {
     validate: (o) =>

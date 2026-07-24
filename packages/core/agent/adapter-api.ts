@@ -109,9 +109,25 @@ export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
 export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
 
-export { registerIdentityMapper, deploymentOrg } from "./identity/binding.js";
-export type { IdentityMapper, RawIdentity, Visibility } from "./identity/binding.js";
+export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface } from "./identity/binding.js";
+export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
+
+export { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "./identity/trust.js";
+
+export { setRegisteredProviders, resetRegisteredProviders } from "./access/providers.js";
+
+export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
+
+export { sourceScopedMount } from "./access/source-scoped-mount.js";
+
+export { preRegisterDynamicEntry, replayStepNames } from "./access/window-gated.js";
+export type { ReplayableToolEntry } from "./access/window-gated.js";
+
+export { markRepliedThisTurn } from "./channels/reply-signal.js";
+export { markNoReplyThisTurn } from "./channels/no-reply-signal.js";
+
+export { readAudit } from "./audit/audit.js";
 
 export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/capabilities.js";
 export type { CapabilityManifest } from "./identity/capabilities.js";

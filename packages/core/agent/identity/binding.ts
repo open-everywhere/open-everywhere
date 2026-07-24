@@ -5,7 +5,6 @@ import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identi
 import { githubVisibility, githubTrust } from "../channels/github-identity.js";
 import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
-import { notionMode, notionVisibility } from "../channels/notion-identity.js";
 import { isVouchedInternal } from "./trust.js";
 import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -268,26 +267,6 @@ const bindTelegram: Mapper = (ctx) => {
   };
 };
 
-const bindNotion: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const workspaceId = attr(a, ["workspace_id", "workspaceId"]);
-  const surface =
-    attr(a, ["page_id", "pageId"]) ??
-    attr(a, ["discussion_id", "discussionId"]) ??
-    attr(a, ["comment_id", "commentId"]);
-  const discussionId = attr(a, ["discussion_id", "discussionId"]);
-  const pageId = attr(a, ["page_id", "pageId"]);
-  return {
-    workspace: workspaceId,
-    surface,
-    mode: notionMode(),
-    visibility: notionVisibility(),
-    trust: undefined,
-    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
-    target: discussionId ? { discussionId, ...(pageId ? { pageId } : {}) } : undefined,
-  };
-};
-
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -317,7 +296,6 @@ registerIdentityMapper("teams", bindTeams);
 registerIdentityMapper("github", bindGitHub);
 registerIdentityMapper("discord", bindDiscord);
 registerIdentityMapper("telegram", bindTelegram);
-registerIdentityMapper("notion", bindNotion);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);

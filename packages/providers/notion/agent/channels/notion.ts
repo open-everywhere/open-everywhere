@@ -1,18 +1,26 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
-import { appendAudit } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
-import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
-import { finalMessageActionForTurn } from "./turn-delivery.js";
-import { completeSupervisorTurn } from "./supervisor-complete.js";
-import { getConfig } from "../access/config.js";
-import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";
-import { liveMemoryDeltaDep } from "../memory/wake-delta.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { capabilitiesForPlatform } from "../identity/capabilities.js";
-import { consumeRepliedThisTurn } from "./reply-signal.js";
+import {
+  appendAudit,
+  deploymentOrg,
+  resolveWakeTrustFromContext,
+  finalMessageActionForTurn,
+  completeSupervisorTurn,
+  getConfig,
+  ambientSupervisorEnabled,
+  engagementTierFor,
+  liveMemoryDeltaDep,
+  getOperationalStore,
+  capabilitiesForPlatform,
+  consumeRepliedThisTurn,
+  isVouchedInternal,
+  supervisorGrainFor,
+  mintRotationToken,
+  grainUsesUnifiedWindow,
+  divertToUnifiedWindow,
+  type SupervisorGrain,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
-import { isVouchedInternal } from "../identity/trust.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
 import {
   handleNotionSupervisorDispatch,
@@ -23,8 +31,6 @@ import {
   type NotionSupervisorDispatch,
   type NotionWakeMessage,
 } from "./notion-supervisor.js";
-import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
-import { divertToUnifiedWindow } from "./unified.js";
 
 const ROUTE = "/eve/v1/notion";
 

@@ -603,14 +603,10 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(bc.rich_text?.[0]?.text?.content === "hi there", "buildBlockCommentBody carries the comment text as one rich-text item");
 
   const { signNotionBody, buildCommentCreatedEvent } = await import("./e2e/notion-driver.js");
-  const { verifyNotionSignature } = await import("../agent/channels/notion-api.js");
   const secret = "notion-verif-token";
   const raw = JSON.stringify(buildCommentCreatedEvent({ workspaceId: "ws", commentId: "c1", pageId: "p1" }));
   const sig = signNotionBody(secret, raw);
   ok(sig.startsWith("sha256="), 'notion signature carries the "sha256=" prefix');
-  ok(verifyNotionSignature(secret, raw, sig), "a signed notion forge body verifies against the real verifyNotionSignature");
-  ok(!verifyNotionSignature(secret, raw + "x", sig), "a tampered notion body fails verification");
-  ok(!verifyNotionSignature("wrong", raw, sig), "the wrong notion secret fails verification");
   const ev = buildCommentCreatedEvent({ workspaceId: "ws9", commentId: "cX", pageId: "pY" });
   ok(ev.type === "comment.created" && (ev.entity as { id?: string }).id === "cX" && (ev.data as { page_id?: string }).page_id === "pY", "forged comment.created is signal-only (entity.id + data.page_id, no text/author)");
 }

@@ -35,7 +35,6 @@ interface ToolCase {
   readonly env?: Readonly<Record<string, string>>;
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
-const notionCtx = { channel: { kind: "notion" }, session: { auth: { current: { attributes: {} } } } };
 const linearCtx = { channel: { kind: "linear" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const CASES: readonly ToolCase[] = [
@@ -46,8 +45,6 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_thread", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
   { slug: "read_slack_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_slack_thread", entryKey: "_single", ctx: slackCtx },
-  { slug: "read_notion_page", entryKey: "_single", ctx: notionCtx },
-  { slug: "read_notion_comments", entryKey: "_single", ctx: notionCtx },
   { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
   { slug: "add_label", entryKey: "_single", ctx: linearCtx },
   { slug: "set_state", entryKey: "_single", ctx: linearCtx },

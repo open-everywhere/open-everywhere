@@ -1,9 +1,17 @@
-import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
-import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
-import { shouldRotate } from "./turn-delivery.js";
-import { classifySessionSendError } from "./session-death.js";
+import {
+  renderWake,
+  mkMessageTrigger,
+  shouldRotate,
+  classifySessionSendError,
+  mintWakeId,
+  singleWindowMentionPolicy,
+  type NormalizedWake,
+  type WakeEngagementTier,
+  type WakeMessageInput,
+  type WakeTrust,
+  type UnifiedWindowWake,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
-import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
 import type { OpenEverywhereNotionAuth } from "./notion-identity.js";
 import type { NotionSessionState } from "./notion-webhook.js";
 

@@ -186,8 +186,9 @@ firesWith(
   const tools: ToolSource[] = readdirSync(toolsDir)
     .filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
     .map((f) => ({ name: f.replace(/\.ts$/u, ""), source: readFileSync(join(toolsDir, f), "utf8") }));
+  const NON_CORE_TOOL_ROWS = new Set(["extend_workspace_time", "read_notion_page", "read_notion_comments"]);
   const coreToolNames = new Set(tools.map((t) => t.name));
-  const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || name !== "extend_workspace_time"));
+  const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || !NON_CORE_TOOL_ROWS.has(name)));
   const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry);
   ok(problems.length === 0, `the REAL tool set + framework tools match the registry (problems: ${JSON.stringify(problems)})`);
   ok(tools.length >= 37, `the real scan actually covered the tools dir (saw ${tools.length})`);

@@ -100,7 +100,7 @@ function bundleForeignImportViolation(spec: string, bundleName: string): boolean
   const m = PROVIDER_PKG.exec(spec);
   if (m && m[1] !== bundleName) return true;
   if (ADAPTERS_PKG.test(spec)) return true;
-  if (/(^|\/)agent\/(tools|channels|hooks)\//.test(spec)) return true;
+  if (!spec.startsWith(".") && /(^|\/)agent\/(tools|channels|hooks)\//.test(spec)) return true;
   return false;
 }
 
@@ -281,6 +281,19 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
     ok(
       !bundleForeignImportViolation(`@open-everywhere/provider-${bundleName}/agent/z.js`, bundleName),
       "self-test: rule 5 permits an intra-bundle package specifier",
+    );
+    ok(
+      !bundleForeignImportViolation("../agent/channels/x.js", bundleName),
+      "self-test: rule 5 exempts relative specifiers (intra-bundle agent/channels layout)",
+    );
+    const scriptsFile = join(bundleRoot, "scripts", "some-test.ts");
+    ok(
+      !bundleCoreImportViolation(scriptsFile, "../agent/channels/x.js", bundleRoot),
+      "self-test: rule 4 permits a relative import that stays inside the bundle",
+    );
+    ok(
+      bundleCoreImportViolation(scriptsFile, "../../../../agent/channels/x.js", bundleRoot),
+      "self-test: rule 4 still flags a relative agent-tree reach that climbs out of the bundle",
     );
 
     ok(

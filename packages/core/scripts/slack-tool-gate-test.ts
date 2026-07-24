@@ -1,6 +1,5 @@
 import readSlackChannel from "../agent/tools/read_slack_channel.js";
 import readSlackThread from "../agent/tools/read_slack_thread.js";
-import readNotionPage from "../agent/tools/read_notion_page.js";
 import clearConnectorOverride from "../agent/tools/clear_connector_override.js";
 import clearSpendLimit from "../agent/tools/clear_spend_limit.js";
 import forget from "../agent/tools/forget.js";
@@ -75,13 +74,5 @@ await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend
 await assertGate("forget", forget, "PROPOSE forgetting one remembered fact");
 await assertGate("request_access", requestAccess, "PROPOSE widening THIS channel's access");
 await assertGate("react", react, "React to a message with a Slack emoji");
-
-await assertGate(
-  "read_notion_page",
-  readNotionPage,
-  "Read the text of a Notion page",
-  ["notion", "channel:notion"],
-  ["slack", "channel:slack", "discord", "teams", "telegram", "linear", "local", "channel:discord"],
-);
 
 console.log(`✓ ${passed} slack-tool-gate assertions passed`);
