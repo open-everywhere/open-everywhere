@@ -11,6 +11,7 @@ export interface GatedToolEntry {
 import { windowGrainOf, currentWakeId, deploymentOrg, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
+import { registerReplayModelProjection } from "./untrusted-projection.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
@@ -120,6 +121,7 @@ export function replayStepNames(slug: string, entryKey: string): { execute: stri
 export interface ReplayableToolEntry {
   execute(input: any, ctx: any): any;
   approval?(ctx: any): any;
+  toModelOutput?(output: any): any;
 }
 
 export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: ReplayableToolEntry): void {
@@ -132,6 +134,10 @@ export function preRegisterDynamicEntry(slug: string, entryKey: string, entry: R
   }
   (entry as unknown as Record<string, unknown>).__executeStepFn = { stepId: names.execute };
   (entry as unknown as Record<string, unknown>).__closureVars = {};
+  if (typeof entry.toModelOutput === "function") {
+    const mountedName = entryKey.startsWith("_") ? slug : entryKey;
+    registerReplayModelProjection(mountedName, entry.toModelOutput.bind(entry));
+  }
 }
 
 function armEntry(name: string, entry: GatedToolEntry): GatedToolEntry {
