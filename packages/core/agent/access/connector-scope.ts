@@ -28,32 +28,60 @@ interface EveInternals {
   ChannelKey: unknown;
 }
 
-let internalsPromise: Promise<EveInternals | null> | undefined;
-function loadEveInternals(): Promise<EveInternals | null> {
-  if (internalsPromise) return internalsPromise;
-  internalsPromise = (async () => {
-    try {
-      const require = createRequire(import.meta.url);
-      const root = dirname(require.resolve("eve/package.json"));
-      const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
-      const [container, runtimeKeys] = await Promise.all([
-        import(abs("dist/src/context/container.js")),
-        import(abs("dist/src/runtime/sessions/runtime-context-keys.js")),
-      ]);
-      if (!container?.contextStorage || !runtimeKeys?.ChannelKey) {
-        internalsLoadError = "internal modules loaded but expected exports are missing";
-        return null;
-      }
-      return { contextStorage: container.contextStorage, ChannelKey: runtimeKeys.ChannelKey };
-    } catch (err) {
-      internalsLoadError = String(err);
+const EVE_INTERNAL_CONTAINER_REL = "dist/src/context/container.js";
+const EVE_INTERNAL_RUNTIME_KEYS_REL = "dist/src/runtime/sessions/runtime-context-keys.js";
+
+export function defaultEveRoot(): string {
+  const req = createRequire(import.meta.url);
+  return dirname(req.resolve("eve/package.json"));
+}
+
+export async function resolveEveInternalsFrom(root: string): Promise<EveInternals | null> {
+  try {
+    const abs = (rel: string) => pathToFileURL(join(root, rel)).href;
+    const [container, runtimeKeys] = await Promise.all([
+      import(abs(EVE_INTERNAL_CONTAINER_REL)),
+      import(abs(EVE_INTERNAL_RUNTIME_KEYS_REL)),
+    ]);
+    if (!container?.contextStorage || !runtimeKeys?.ChannelKey) {
+      internalsLoadError = "internal modules loaded but expected exports are missing";
       return null;
     }
-  })();
-  return internalsPromise;
+    return { contextStorage: container.contextStorage, ChannelKey: runtimeKeys.ChannelKey };
+  } catch (err) {
+    internalsLoadError = String(err);
+    return null;
+  }
 }
 
 let internalsLoadError: string | undefined;
+
+export type EveChannelReachStatus = "pending" | "available" | "unavailable";
+let bootStatus: EveChannelReachStatus = "pending";
+export function eveChannelReachStatus(): EveChannelReachStatus {
+  return bootStatus;
+}
+
+export async function whenEveChannelReachSettled(): Promise<EveChannelReachStatus> {
+  await internalsPromise;
+  return bootStatus;
+}
+
+let internalsPromise: Promise<EveInternals | null> = resolveEveInternalsFrom(defaultEveRoot());
+internalsPromise = internalsPromise.then((eve) => {
+  bootStatus = eve ? "available" : "unavailable";
+  console.warn(
+    `[open-everywhere:connector-scope:boot] channel-kind ALS reach: ${bootStatus}` +
+      (eve
+        ? ""
+        : ` — permanently falling back to inert channel-kind resolution for this process ` +
+          `(${internalsLoadError ?? "unknown reason"}). This does NOT open the connector gate: ` +
+          `assertConnectorGranted still fails closed on a missing auth identity; only the ` +
+          `best-effort surface.channel.kind hint is unavailable (expected on some hosted builds — ` +
+          `see this file's header).`),
+  );
+  return eve;
+});
 
 const loggedReasons = new Set<string>();
 function logOnce(reason: string): void {
@@ -64,11 +92,8 @@ function logOnce(reason: string): void {
 }
 
 async function readChannelKind(): Promise<string | undefined> {
-  const eve = await loadEveInternals();
-  if (!eve) {
-    logOnce(`channel kind unresolvable: eve internals failed to load: ${internalsLoadError ?? "(unknown)"}`);
-    return undefined;
-  }
+  const eve = await internalsPromise;
+  if (!eve) return undefined;
   const store = eve.contextStorage.getStore();
   if (!store) {
     logOnce("channel kind unresolvable: no ALS store — outside an eve session scope (expected on a hosted build)");
