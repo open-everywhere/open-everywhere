@@ -34,7 +34,7 @@ registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_D
 
 registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
-const VISION_MODEL = "alibaba/qwen3-vl-instruct";
+const VISION_MODEL = "alibaba/qwen3.5-flash";
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   throw new Error(
     `open-everywhere: vision model "${VISION_MODEL}" is not allowed by the org model policy — ` +
