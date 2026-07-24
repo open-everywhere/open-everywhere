@@ -343,6 +343,18 @@ export function currentTurnIssue(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["issue_id", "issueId", "issue_identifier", "issueIdentifier"]);
 }
 
+export function currentTurnGithubTarget(ctx: BindableContext): { owner: string; repo: string; number: number; isPr: boolean } | undefined {
+  const binding = bindFrom(ctx);
+  if (binding.platform !== "github") return undefined;
+  const t = binding.target as { owner?: unknown; repo?: unknown; issueNumber?: unknown; pullRequestNumber?: unknown } | undefined;
+  const owner = typeof t?.owner === "string" ? t.owner : undefined;
+  const repo = typeof t?.repo === "string" ? t.repo : undefined;
+  if (!owner || !repo) return undefined;
+  if (typeof t?.pullRequestNumber === "number") return { owner, repo, number: t.pullRequestNumber, isPr: true };
+  if (typeof t?.issueNumber === "number") return { owner, repo, number: t.issueNumber, isPr: false };
+  return undefined;
+}
+
 export function assertTurnSurface(ctx: BindableContext, surface: string): void {
   if (!isUnifiedWindowContext(ctx)) return;
   const origin = channelPlatform(ctx);

@@ -68,6 +68,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_notion_page: open("granted read; disclosure is bounded by the room-level grant (membership is the ACL)"),
   read_notion_comments: open("granted read of page comments/inline discussions; bounded by the room-level grant (membership is the ACL)"),
   read_linear_issue: open("granted read of an issue's body + comment thread via the workspace token; bounded by what that token is shared into (membership is the ACL)"),
+  add_label: open("trivially reversible (react-class — un-label is one more add_label call away); entity-gated to ticketing surfaces (Linear/GitHub), audited per call"),
   read_channel: open("generic channel read (Stage 2): a read of a channel the domain grants, into that conversation; per-platform gated by X ∈ sources in execute"),
   read_thread: open("generic thread read (Stage 2): same-surface thread read of a domain-granted channel; per-platform gated in execute"),
   read_slack_channel: open("read of a channel the bot is already in, into that conversation"),
@@ -142,6 +143,8 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   ),
   request_access: member("access.request", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
+  set_state: member("ticket.set_state", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
+  assign: member("ticket.assign", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
 
   set_spend_limit: admin("spend.set", "self-modification + money: changes what the org will spend"),
   clear_spend_limit: admin("spend.clear", "reverts a spend control — same bar as setting one"),
