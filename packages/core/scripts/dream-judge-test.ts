@@ -16,6 +16,7 @@ import {
 import { tidySiloJudged } from "../agent/memory/dream/tidy.js";
 import { isSafe, SAFE_KINDS } from "../agent/memory/dream/ops.js";
 import { safeDistill, enrichmentBullets } from "../agent/memory/dream/learn.js";
+import { stampHumanEdit } from "../agent/memory/provenance.js";
 import type { MemoryFiles } from "../agent/memory/store.js";
 
 let passed = 0;
@@ -112,6 +113,14 @@ function fakeJudge(verdictFor: (c: CandidateCluster) => JudgeVerdict | null): Dr
   ok(selectCandidates(noisy, { now }).length <= DEFAULT_CANDIDATE_CAP, "narrow: default cap bounds an unconfigured run");
 
   eq(selectCandidates({ "data.json": "- a\n- a b\n" }, { now }).length, 0, "narrow: non-markdown files are ignored");
+
+  const excludeFixture: MemoryFiles = {
+    "human.md": "- Adams owns the [[billing]] rota\n- Erin holds primary pager duty for [[billing]]\n",
+    "agent.md": "- payments deploys run staging before production checks\n- payments deploys run staging before production checks every friday morning\n",
+  };
+  const excluded = selectCandidates(excludeFixture, { now, exclude: new Set(["human.md"]) });
+  ok(!excluded.some((c) => c.file === "human.md"), "narrow: excluded file contributes no candidates");
+  ok(excluded.some((c) => c.file === "agent.md"), "narrow: a non-excluded sibling file's candidates are unaffected");
 }
 
 const messy: MemoryFiles = {
@@ -170,6 +179,22 @@ const NOW = new Date("2026-07-01T00:00:00Z");
   };
   await tidySiloJudged(noisy, "test-brain", judge, { now: NOW, maxCandidates: 4 });
   eq(judge.calls.length, 4, "judged: the cap bounds judge CALLS, not just proposals");
+}
+
+{
+  const humanFile = stampHumanEdit(
+    "- the deployment pipeline runs staging before production\n- the deployment pipeline always runs staging before production first\n",
+    new Date("2026-06-30T00:00:00Z"),
+  );
+  const mixed: MemoryFiles = {
+    "human.md": humanFile,
+    "agent.md": "- the billing service handles refunds automatically\n- the billing service handles refunds automatically every single time\n",
+  };
+  const judge = fakeJudge((c) => ({ confirm: true, keep: c.bullets[1], note: `confirmed ${c.kind}` }));
+  const r = await tidySiloJudged(mixed, "test-brain", judge, { now: NOW });
+  ok(!judge.calls.some((c) => c.file === "human.md"), "judged: the judge is never even CALLED about a human-edited file's bullets");
+  ok(!r.proposals.some((o) => o.file === "human.md"), "judged: no proposal ever names the human-edited file");
+  ok(r.proposals.some((o) => o.file === "agent.md"), "judged: the unmarked sibling file still gets judged and proposed");
 }
 
 {

@@ -87,6 +87,16 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
       for (const [rel, sha] of entries) h.update(`${rel}\n${sha}\n`);
       return h.digest("hex");
     },
+    deleteFile: async (p, tier, relPath, siloArg) => {
+      const silo = requireSilo(siloArg);
+      const repo = silo.container!;
+      const path = `${repoPath(silo, p, tier)}/${relPath}`;
+      const token = await deps.mintToken(repo);
+      const existing = await deps.contents.getFile(repo, path, branch, token);
+      if (!existing) return null;
+      const committer = deps.committer();
+      return deps.contents.deleteFile(repo, path, existing.sha, `delete ${relPath} from ${tier.kind} memory`, branch, token, committer);
+    },
     deleteTier: async (p, tier, siloArg) => {
       const silo = requireSilo(siloArg);
       const repo = silo.container!;

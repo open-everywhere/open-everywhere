@@ -109,13 +109,15 @@ export class GitHubContents {
     return body.commit?.sha ?? body.content?.sha ?? null;
   }
 
-  async deleteFile(repo: string, path: string, sha: string, message: string, branch: string, token: string, committer: CommitId): Promise<void> {
+  async deleteFile(repo: string, path: string, sha: string, message: string, branch: string, token: string, committer: CommitId): Promise<string | null> {
     const res = await this.fetchFn(this.url(repo, path), {
       method: "DELETE",
       headers: this.headers(token),
       body: JSON.stringify({ message, sha, branch, committer }),
     });
-    if (res.status === 404) return;
+    if (res.status === 404) return null;
     if (!res.ok) throw new Error(`github delete ${repo}/${path}: ${res.status} ${await res.text()}`);
+    const body = (await res.json()) as WriteResponse;
+    return body.commit?.sha ?? null;
   }
 }

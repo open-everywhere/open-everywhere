@@ -20,6 +20,7 @@ const { providerById, registerProvider } = await import("../agent/memory/provide
 const { siloTier } = await import("../agent/memory/store.js");
 const { controlPartition } = await import("../agent/memory/partition.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { isHumanEdited } = await import("../agent/memory/provenance.js");
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -159,12 +160,17 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
   const write = await callJson(client, "memory_write_file", { org, silo: "eng-silo", relPath: "notes.md", content: "# Notes\n- new note\n" });
   ok("memory_write_file: creates a new file", write.body.ok === true);
   const read = await callJson(client, "memory_read", { org, silo: "eng-silo", relPath: "notes.md" });
-  ok("memory_write_file: the new content round-trips", read.body.content === "# Notes\n- new note\n");
+  ok("memory_write_file: the new content round-trips (modulo the human-edit marker)", read.body.content.endsWith("# Notes\n- new note\n"));
+  ok("memory_write_file: stamps the human-edit marker (OPE-64)", isHumanEdited(read.body.content));
 
   const overwritten = await callJson(client, "memory_write_file", { org, silo: "eng-silo", relPath: "notes.md", content: "# Notes\n- replaced\n" });
   ok("memory_write_file: a second call fully replaces (not appends)", overwritten.body.ok === true);
   const read2 = await callJson(client, "memory_read", { org, silo: "eng-silo", relPath: "notes.md" });
-  ok("memory_write_file: replace really replaced (no leftover 'new note')", read2.body.content === "# Notes\n- replaced\n" && !read2.body.content.includes("new note"));
+  ok("memory_write_file: replace really replaced (no leftover 'new note')", read2.body.content.endsWith("# Notes\n- replaced\n") && !read2.body.content.includes("new note"));
+  ok("memory_write_file: re-stamps rather than stacking a second marker", read2.body.content.match(/<!-- oe:human-edit/g)?.length === 1);
+
+  const seededRead = await callJson(client, "memory_read", { org, silo: "eng-silo", relPath: "MEMORY.md" });
+  ok("memory_write_file: an AGENT-path write (seed, not through memory_write_file) is NOT marked human-edited", !isHumanEdited(seededRead.body.content));
 
   const badExt = await client.callTool({ name: "memory_write_file", arguments: { org, silo: "eng-silo", relPath: "notes.json", content: "{}" } });
   ok("memory_write_file: refuses a non-.md/.txt extension", badExt.isError === true);
@@ -229,6 +235,55 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-bra
   ok("memory_delete_file: a backend without deleteFile FAILS LOUD (never a silent, falsely-successful no-op)", res.isError === true);
   const text = (res.content as { type: string; text: string }[])[0].text;
   ok("memory_delete_file: the error names the unsupported backend", text.includes("no-delete-backend"));
+  await client.close();
+}
+
+{
+  registerProvider({
+    id: "throwing-delete-backend",
+    async readTier() {
+      return { "MEMORY.md": "# x\n" };
+    },
+    async ensureTier() {
+      return { "MEMORY.md": "# x\n" };
+    },
+    async writeTier() {
+      return "v1";
+    },
+    async deleteTier() {
+    },
+    async deleteFile() {
+      throw new Error("mock transport failure: 403 insufficient_scope");
+    },
+  });
+  const throwingSilo = { name: "throwing-delete-silo", provider: "throwing-delete-backend" };
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [...domains, defineDomain({ name: "throwsdelete", channels: ["slack/T1/C_TD"], memory: "throwing-delete-silo" })],
+    loadSilos: () => [engSilo, orgSilo, throwingSilo],
+    domainsForSurface: () => [],
+  });
+
+  const server = buildControlServer({ includeWrites: true, actor: "admin@example.com", roles: ["admin"] });
+  const [c, s] = InMemoryTransport.createLinkedPair();
+  await server.connect(s);
+  const client = new Client({ name: "throwing-delete", version: "0" });
+  await client.connect(c);
+  const res = await client.callTool({ name: "memory_delete_file", arguments: { org, silo: "throwing-delete-silo", relPath: "MEMORY.md" } });
+  ok("memory_delete_file: a backend deleteFile THROW fails LOUD to the caller", res.isError === true);
+  const text = (res.content as { type: string; text: string }[])[0].text;
+  ok("memory_delete_file: the error surfaces the backend's failure message", text.includes("insufficient_scope"));
+
+  const audit = await readAudit({ org });
+  const failureRow = audit.find((e) => e.action === "memory.delete" && e.detail?.silo === "throwing-delete-silo");
+  ok("memory_delete_file: a FAILED delete attempt still lands an audit row (never a silent, un-audited failure)", failureRow !== undefined);
+  ok("memory_delete_file: the failure row reports deleted:false", failureRow?.detail?.deleted === false);
+  ok("memory_delete_file: the failure row carries an error, not the file's content", typeof failureRow?.detail?.error === "string" && (failureRow.detail.error as string).includes("insufficient_scope"));
+  ok("memory_delete_file: the failure row's detail is metadata-only (silo/relPath/deleted/error — no file content key)", Object.keys(failureRow?.detail ?? {}).sort().join(",") === "deleted,error,relPath,silo");
+
   await client.close();
 }
 

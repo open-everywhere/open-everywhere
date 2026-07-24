@@ -18,6 +18,7 @@ export interface CandidateOptions {
   readonly overlapThreshold?: number;
   readonly subjectThreshold?: number;
   readonly maxCandidates?: number;
+  readonly exclude?: ReadonlySet<string>;
 }
 
 export const DEFAULT_CANDIDATE_CAP = 10;
@@ -61,6 +62,7 @@ export function selectCandidates(files: MemoryFiles, opts: CandidateOptions = {}
   const overlapThreshold = opts.overlapThreshold ?? 0.5;
   const subjectThreshold = opts.subjectThreshold ?? 0.25;
   const cap = opts.maxCandidates ?? DEFAULT_CANDIDATE_CAP;
+  const exclude = opts.exclude;
   const horizon = now.getTime() - staleDays * 24 * 60 * 60 * 1000;
 
   const graph = buildGraph(files);
@@ -68,6 +70,7 @@ export function selectCandidates(files: MemoryFiles, opts: CandidateOptions = {}
 
   for (const [file, content] of Object.entries(files)) {
     if (!isMd(file)) continue;
+    if (exclude?.has(file)) continue;
     const refs = refsFor(content, graph);
 
     for (let i = 0; i < refs.length; i++) {

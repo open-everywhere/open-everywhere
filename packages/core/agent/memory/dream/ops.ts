@@ -160,10 +160,11 @@ export function contentWords(line: string): Set<string> {
   return new Set(words);
 }
 
-function bulletRefs(files: MemoryFiles): BulletRef[] {
+function bulletRefs(files: MemoryFiles, exclude?: ReadonlySet<string>): BulletRef[] {
   const refs: BulletRef[] = [];
   for (const [file, content] of Object.entries(files)) {
     if (!isMd(file)) continue;
+    if (exclude?.has(file)) continue;
     for (const line of content.split("\n")) {
       if (!isBullet(line)) continue;
       refs.push({ file, line, words: contentWords(line), negated: NEGATION.test(line) });
@@ -179,8 +180,8 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter);
 }
 
-export function detectConsolidations(files: MemoryFiles, threshold = 0.7): MemoryOp[] {
-  const refs = bulletRefs(files);
+export function detectConsolidations(files: MemoryFiles, threshold = 0.7, exclude?: ReadonlySet<string>): MemoryOp[] {
+  const refs = bulletRefs(files, exclude);
   const ops: MemoryOp[] = [];
   for (let i = 0; i < refs.length; i++) {
     for (let j = i + 1; j < refs.length; j++) {
@@ -199,8 +200,8 @@ export function detectConsolidations(files: MemoryFiles, threshold = 0.7): Memor
   return ops;
 }
 
-export function detectContradictions(files: MemoryFiles, subjectThreshold = 0.34): MemoryOp[] {
-  const refs = bulletRefs(files);
+export function detectContradictions(files: MemoryFiles, subjectThreshold = 0.34, exclude?: ReadonlySet<string>): MemoryOp[] {
+  const refs = bulletRefs(files, exclude);
   const ops: MemoryOp[] = [];
   for (let i = 0; i < refs.length; i++) {
     for (let j = i + 1; j < refs.length; j++) {
@@ -215,11 +216,12 @@ export function detectContradictions(files: MemoryFiles, subjectThreshold = 0.34
   return ops;
 }
 
-export function detectStale(files: MemoryFiles, now: Date, staleDays = 180): MemoryOp[] {
+export function detectStale(files: MemoryFiles, now: Date, staleDays = 180, exclude?: ReadonlySet<string>): MemoryOp[] {
   const horizon = now.getTime() - staleDays * 24 * 60 * 60 * 1000;
   const ops: MemoryOp[] = [];
   for (const [file, content] of Object.entries(files)) {
     if (!isMd(file)) continue;
+    if (exclude?.has(file)) continue;
     for (const line of content.split("\n")) {
       const m = line.match(DATE_PREFIX);
       if (!m) continue;

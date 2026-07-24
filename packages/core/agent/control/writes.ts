@@ -11,6 +11,7 @@ import { controlPartition } from "../memory/partition.js";
 import { deleteDomainSkill } from "../skills/domain-skills.js";
 import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
+import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
 import { whereFromScope as approvalWhereFromScope } from "../approvals/actions.js";
 
@@ -336,7 +337,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Write a memory file (full-file replace)",
       description:
-        "Full-file replace of one file inside one memory silo (creates it if absent). ADMIN ONLY (v1) — an org admin IS the approver here, unlike the dream cycle's propose-only gate for the untrusted-autonomous agent. `.md`/`.txt` only, 64KB cap, refuses a `_`-prefixed operational marker (e.g. `_onboarded`). Audited (`memory.write`) and committed with a `control-plane edit by <subject>` message.",
+        "Full-file replace of one file inside one memory silo (creates it if absent). ADMIN ONLY (v1) — an org admin IS the approver here, unlike the dream cycle's propose-only gate for the untrusted-autonomous agent. `.md`/`.txt` only, 64KB cap, refuses a `_`-prefixed operational marker (e.g. `_onboarded`). Stamps an in-file human-edit marker (edited_by/edited_at) so the dream cycle never treats this write as agent drift. Audited (`memory.write`) and committed with a `control-plane edit by <subject>` message.",
       inputSchema: { org: z.string().min(1), silo: z.string().min(1), relPath: z.string().min(1), content: z.string() },
     },
     async (a) => {
@@ -353,7 +354,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         const p = controlPartition(a.org);
         const tier = siloTier(silo.name);
         const files = await provider.readTier(p, tier, silo);
-        files[a.relPath] = a.content;
+        files[a.relPath] = stampHumanEdit(a.content);
         const commit = await provider.writeTier(p, tier, files, `control-plane edit by ${actor}`, silo);
         await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.write", detail: { silo: a.silo, relPath: a.relPath, bytes: Buffer.byteLength(a.content, "utf-8"), commit } });
         return jsonResult({ ok: true, org: a.org, silo: a.silo, relPath: a.relPath, commit });
@@ -385,7 +386,21 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         if (!provider.deleteFile) {
           return errorResult(`memory_delete_file failed: the "${provider.id}" memory backend doesn't support single-file deletion yet (silo "${a.silo}").`);
         }
-        const commit = await provider.deleteFile(controlPartition(a.org), siloTier(silo.name), a.relPath, silo);
+        let commit: string | null;
+        try {
+          commit = await provider.deleteFile(controlPartition(a.org), siloTier(silo.name), a.relPath, silo);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          await appendAudit({
+            org: a.org,
+            platform: "control",
+            workspace: "control",
+            principalId: actor,
+            action: "memory.delete",
+            detail: { silo: a.silo, relPath: a.relPath, deleted: false, error: message },
+          });
+          return errorResult(`memory_delete_file failed: ${message}`);
+        }
         const deleted = commit !== null;
         await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "memory.delete", detail: { silo: a.silo, relPath: a.relPath, deleted, ...(commit ? { commit } : {}) } });
         return jsonResult({ ok: true, deleted, org: a.org, silo: a.silo, relPath: a.relPath, commit });

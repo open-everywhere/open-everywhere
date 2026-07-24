@@ -12,6 +12,7 @@ import {
 import { salienceScores, type NodeSalience } from "./salience.js";
 import { selectCandidates, type CandidateOptions } from "./candidates.js";
 import type { DreamJudge } from "./judge.js";
+import { humanEditedFiles } from "../provenance.js";
 
 export interface TidyOptions {
   readonly now?: Date;
@@ -48,11 +49,13 @@ function applySafeOps(input: MemoryFiles): { files: MemoryFiles; applied: Memory
 export function tidySilo(input: MemoryFiles, opts: TidyOptions = {}): TidyResult {
   const { files, applied } = applySafeOps(input);
 
+  const humanEdited = humanEditedFiles(input);
+
   const now = opts.now ?? new Date();
   const proposals = [
-    ...detectConsolidations(files, opts.consolidateThreshold ?? 0.7),
-    ...detectContradictions(files),
-    ...detectStale(files, now, opts.staleDays ?? 180),
+    ...detectConsolidations(files, opts.consolidateThreshold ?? 0.7, humanEdited),
+    ...detectContradictions(files, undefined, humanEdited),
+    ...detectStale(files, now, opts.staleDays ?? 180, humanEdited),
   ];
 
   const salience = salienceScores(buildGraph(files));
@@ -68,7 +71,9 @@ export async function tidySiloJudged(
 ): Promise<JudgedTidyResult> {
   const { files, applied } = applySafeOps(input);
 
-  const candidates = selectCandidates(files, opts);
+  const humanEdited = humanEditedFiles(input);
+  const exclude = opts.exclude ? new Set([...opts.exclude, ...humanEdited]) : humanEdited;
+  const candidates = selectCandidates(files, { ...opts, exclude });
   const proposals: MemoryOp[] = [];
   let rejected = 0;
   let failed = 0;

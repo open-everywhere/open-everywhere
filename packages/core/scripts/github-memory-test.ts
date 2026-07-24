@@ -149,6 +149,37 @@ ok(typeof dAfter === "string" && dAfter !== dBefore, "tierVersion advances on a 
 const other = partition("org-b");
 ok(Object.keys(await provider.readTier(other, tier, silo)).length === 0, "org-b can't see org-a's tier");
 
+const delToken = await provider.deleteFile!(p, tier, "people.md", silo);
+ok(typeof delToken === "string" && delToken.length > 0, "deleteFile: returns a commit token");
+ok(!repoFiles("acme/brain").has("memory/default/@silos/txn/people.md"), "deleteFile: the repo file is actually gone");
+ok(!("people.md" in (await provider.readTier(p, tier, silo))), "deleteFile: the tier read no longer sees it");
+ok((await provider.readTier(p, tier, silo))["MEMORY.md"] === "# changed\n", "deleteFile: sibling file (MEMORY.md) untouched");
+
+const delAgain = await provider.deleteFile!(p, tier, "people.md", silo);
+ok(delAgain === null, "deleteFile: deleting an already-absent file is idempotent (null, not an error)");
+
+let forceDeleteFail = false;
+const flakyFetch: HttpFetch = async (url, init) => {
+  if (init.method === "DELETE" && forceDeleteFail) return res(403, { message: "insufficient_scope" });
+  return fakeFetch(url, init);
+};
+const flakyProvider = makeGitHubProvider({
+  contents: new GitHubContents(flakyFetch, "https://api.github.com"),
+  mintToken: async () => "fake-token",
+  committer: () => ({ name: "open-everywhere[bot]", email: "bot@users.noreply.github.com" }),
+  branch: "main",
+});
+await flakyProvider.writeTier(p, tier, { "flaky.md": "x\n" }, "seed flaky", silo);
+forceDeleteFail = true;
+try {
+  await flakyProvider.deleteFile!(p, tier, "flaky.md", silo);
+  ok(false, "deleteFile: a transport failure should have thrown");
+} catch (e) {
+  ok(e instanceof Error && e.message.includes("insufficient_scope"), "deleteFile: a non-404 transport failure THROWS (never a silent no-op reporting success)");
+}
+forceDeleteFail = false;
+await flakyProvider.deleteFile!(p, tier, "flaky.md", silo);
+
 await provider.deleteTier(p, tier, silo);
 ok(Object.keys(await provider.readTier(p, tier, silo)).length === 0, "deleteTier erases the tier");
 ok(!repoFiles("acme/brain").has("memory/default/@silos/txn/MEMORY.md"), "delete removed the repo files");

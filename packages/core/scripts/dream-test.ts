@@ -18,6 +18,7 @@ import {
 import { tidySilo } from "../agent/memory/dream/tidy.js";
 import { workflowSignature, inMemoryLedger, auditRecurrenceLedger } from "../agent/memory/dream/recurrence.js";
 import { learnFromSession } from "../agent/memory/dream/learn.js";
+import { stampHumanEdit, isHumanEdited, humanEditedAt, humanEditedFiles } from "../agent/memory/provenance.js";
 import type { MemoryFiles } from "../agent/memory/store.js";
 
 let passed = 0;
@@ -119,6 +120,29 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
   const stale = detectStale(dated, now, 180);
   ok(stale.length === 1 && (stale[0].before?.includes("2020-01-01") ?? false), "stale: only the past-horizon dated bullet flagged (clock injected)");
   eq(detectStale(dated, now, 180).every((o) => !isSafe(o.kind)), true, "stale: destructive (propose-only)");
+
+  eq(detectContradictions(contradiction, undefined, new Set(["m.md"])).length, 0, "contradiction: excluded file produces no ops");
+  eq(detectConsolidations(nearDup, undefined, new Set(["m.md"])).length, 0, "consolidate: excluded file produces no ops");
+  eq(detectStale(dated, now, 180, new Set(["m.md"])).length, 0, "stale: excluded file produces no ops");
+  const twoFiles: MemoryFiles = { ...contradiction, "other.md": "- 2020-01-01: another old fact\n" };
+  ok(detectStale(twoFiles, now, 180, new Set(["m.md"])).some((o) => o.file === "other.md"), "stale: excluding one file leaves another file's detection untouched");
+}
+
+{
+  const stamped = stampHumanEdit("# Notes\n- a fact\n", new Date("2026-07-18T12:00:00.000Z"));
+  ok(stamped.startsWith('<!-- oe:human-edit edited_by="human" edited_at="2026-07-18T12:00:00.000Z" -->\n'), "provenance: stampHumanEdit prepends the marker");
+  ok(stamped.endsWith("# Notes\n- a fact\n"), "provenance: stampHumanEdit preserves the original content verbatim after the marker");
+  ok(isHumanEdited(stamped), "provenance: isHumanEdited true once stamped");
+  eq(humanEditedAt(stamped), "2026-07-18T12:00:00.000Z", "provenance: humanEditedAt reads the stamped timestamp back");
+  ok(!isHumanEdited("# Notes\n- a fact\n"), "provenance: an unstamped file is NOT human-edited");
+  eq(humanEditedAt("# Notes\n- a fact\n"), null, "provenance: humanEditedAt is null when no marker");
+
+  const restamped = stampHumanEdit(stamped, new Date("2026-07-25T09:00:00.000Z"));
+  eq((restamped.match(/<!-- oe:human-edit/g) ?? []).length, 1, "provenance: re-stamping doesn't stack a second marker");
+  eq(humanEditedAt(restamped), "2026-07-25T09:00:00.000Z", "provenance: re-stamping refreshes the timestamp");
+
+  const files: MemoryFiles = { "human.md": stamped, "agent.md": "# Notes\n- another\n" };
+  eq([...humanEditedFiles(files)], ["human.md"], "provenance: humanEditedFiles picks out exactly the marked file(s)");
 }
 
 {
@@ -148,6 +172,23 @@ const has = (ops: readonly MemoryOp[], kind: string) => ops.some((o) => o.kind =
 
   const second = tidySilo(r.files, { now });
   eq(second.changed, false, "tidy: safe applies converge (idempotent — second pass changes nothing)");
+}
+
+{
+  const now = new Date("2026-07-01T00:00:00Z");
+  const humanFile = stampHumanEdit(
+    ["## Notes", "- 2019-01-01: very old note", "- The deployment pipeline runs staging before production", "- The deployment pipeline runs staging before production always"].join("\n"),
+    new Date("2026-06-30T00:00:00Z"),
+  );
+  const input: MemoryFiles = {
+    "human.md": humanFile,
+    "agent.md": ["- 2019-01-01: another very old note", "- The billing service handles refunds automatically", "- The billing service handles refunds automatically every time"].join("\n"),
+  };
+  const r = tidySilo(input, { now });
+  ok(!r.proposals.some((o) => o.file === "human.md"), "tidy: a human-edit-marked file gets NO destructive proposals (stale/consolidate skipped)");
+  ok(r.proposals.some((o) => o.file === "agent.md" && o.kind === "stale"), "tidy: the unmarked sibling file still gets staleness proposed");
+  ok(r.proposals.some((o) => o.file === "agent.md" && o.kind === "consolidate"), "tidy: the unmarked sibling file still gets consolidation proposed");
+  ok(isHumanEdited(r.files["human.md"]), "tidy: the marker itself survives the safe-op pass untouched");
 }
 
 {
