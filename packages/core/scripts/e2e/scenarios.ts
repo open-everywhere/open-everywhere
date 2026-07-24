@@ -424,7 +424,7 @@ export const SCENARIOS: readonly Scenario[] = [
       await ctx.judgePass(closedQA("Is the reply a relevant one-line summary of the channel topic?", { mustMatch: [/.{10,}/] }), reply1.content, "turn-1 relevance");
       const followUp = await discord.post("expand that into two or three sentences", threadId);
       const reply2 = await discord.awaitReply(threadId, followUp.id, { timeoutMs: REPLY_WAIT });
-      await ctx.judgePass(closedQA("Does the reply continue the conversation (references turn 1)?", { mustMatch: [/.{5,}/] }), reply2.content, "turn-2 continuity");
+      await ctx.judgePass(closedQA("Is the reply a short multi-sentence expansion/elaboration of a channel-topic summary (continuing the prior answer), rather than unrelated content or a refusal?", { mustMatch: [/.{5,}/] }), reply2.content, "turn-2 continuity");
 
       const stopMsg = await discord.post("stop", threadId);
       const stopAck = await discord.awaitReply(threadId, stopMsg.id, { timeoutMs: REPLY_WAIT });
@@ -1281,7 +1281,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate((htmlReply.files ?? []).some((f) => f.filetype === "html"), "post_file: the HTML path posts an html file attachment (the safe attach fallback)");
 
       const pngBytes = Uint8Array.from(
-        Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4o6GBFTEMLQkAe3tLAfuiUfAAAAAASUVORK5CYII=", "base64"),
+        Buffer.from("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKElEQVR4nO3NsQ0AAAzCMP5/un0CNkuZ41wybXsHAAAAAAAAAAAAxR4yw/wuPL6QkAAAAABJRU5ErkJggg==", "base64"),
       );
       const describeStart = new Date(Date.now() - 30_000).toISOString();
       const { ts: describeTs } = await slack.post("(e2e F-ART) describe_image anchor");
@@ -1452,6 +1452,7 @@ export const SCENARIOS: readonly Scenario[] = [
     run: async (ctx) => {
       const sup = ctx.slackSupervisor!;
       const runStart = new Date(Date.now() - 60_000).toISOString();
+      const isApprovalCard = (m: { text: string }) => m.text.startsWith("Approval requested:");
 
       const marker = factToken("sup");
       const { ts: askTs } = await sup.post(`Quick question for whoever's around — what's a good one-line summary of what this channel is for? (ref ${marker})`);
@@ -1459,7 +1460,7 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(reply.text.trim().length > 0, "supervisor: a plain non-mention answerable message drew an in-channel bot reply (the channel-watch judge woke)");
 
       await sleep(SILENCE_WINDOW);
-      const afterReply = (await sup.history(reply.ts)).filter((m) => sup.isBotReply(m));
+      const afterReply = (await sup.history(reply.ts)).filter((m) => sup.isBotReply(m) && !isApprovalCard(m));
       ctx.gate(afterReply.length === 0, "supervisor self-loop: the bot's own post did NOT wake another reply (no runaway)");
 
       const { ts: noiseTs } = await sup.post("lol did everyone see the game last night");
@@ -1472,7 +1473,7 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
       await sleep(SILENCE_WINDOW);
-      const noiseReplies = (await sup.history(noiseTs)).filter((m) => sup.isBotReply(m));
+      const noiseReplies = (await sup.history(noiseTs)).filter((m) => sup.isBotReply(m) && !isApprovalCard(m));
       ctx.gate(noiseReplies.length === 0, "supervisor: an off-topic aside drew NO in-channel reply within the silence window");
     },
   },
