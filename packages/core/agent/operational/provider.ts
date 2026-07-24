@@ -8,6 +8,23 @@ const REGISTRY: Record<string, OperationalStore> = {
 };
 
 let active: OperationalStore | null = null;
+let floorNagged = false;
+
+export function operationalSqliteFloorWarning(): string {
+  return (
+    "[open-everywhere:operational] ⚠ operational store is SQLite — the zero-wiring floor for dev / a tiny " +
+    "single-instance self-host: NO managed durability, backups, or replication (one file on one box). " +
+    "For production org data (audit log, spend ledger, break-glass revocations) set DATABASE_URL to hosted " +
+    "Postgres + OE_OPERATIONAL_PROVIDER=postgres, then graduate the data with the migration " +
+    "(from packages/core: `DATABASE_URL=… npx tsx scripts/migrate-operational.ts`; docs/deploy/database-graduation.md)."
+  );
+}
+
+function nagOperationalFloorOnce(id: string): void {
+  if (floorNagged || id !== "sqlite") return;
+  floorNagged = true;
+  console.warn(operationalSqliteFloorWarning());
+}
 
 export function getOperationalStore(): OperationalStore {
   if (active) return active;
@@ -33,6 +50,7 @@ export function getOperationalStore(): OperationalStore {
     throw new Error(`unknown OE_OPERATIONAL_PROVIDER "${id}" (have: ${Object.keys(REGISTRY).join(", ")})`);
   }
   active = store;
+  nagOperationalFloorOnce(id);
   return store;
 }
 
@@ -48,4 +66,8 @@ export function registerOperationalStore(store: OperationalStore): void {
 
 export function resetOperationalStore(): void {
   active = null;
+}
+
+export function _resetFloorNagForTest(): void {
+  floorNagged = false;
 }

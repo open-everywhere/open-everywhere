@@ -284,6 +284,17 @@ function getDb(): DatabaseSync {
   return handle;
 }
 
+export function sqliteOperationalDbPath(): string {
+  return dbPath();
+}
+
+export function sqliteOperationalTableNames(): string[] {
+  const rows = getDb()
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('memory_file', 'memory_tier') ORDER BY name")
+    .all() as { name: string }[];
+  return rows.map((r) => r.name);
+}
+
 export function _resetOperationalDbForTest(): void {
   if (db) db.close();
   db = null;

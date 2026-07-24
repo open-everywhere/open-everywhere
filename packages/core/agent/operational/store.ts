@@ -3,6 +3,29 @@ import type { Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 
+export const OPERATIONAL_TABLES = [
+  "spend_ledger",
+  "routine",
+  "audit_entry",
+  "spend_limit",
+  "connector_override",
+  "thread_engagement",
+  "channel_session",
+  "event_dedupe",
+  "unified_wake_target",
+  "thread_ownership",
+  "task_result",
+  "slack_attachment",
+  "stored_credential",
+  "credential_intake",
+  "pr_session_approval",
+  "pending_actions",
+  "domain_skill",
+  "domain_model",
+  "usage_events",
+  "instance_meta",
+] as const;
+
 export interface AuditEntry {
   readonly ts: string;
   readonly org: string;
