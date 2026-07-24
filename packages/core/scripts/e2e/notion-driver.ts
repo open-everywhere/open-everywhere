@@ -67,6 +67,19 @@ export class NotionDriver {
     return (await res.json()) as Record<string, unknown>;
   }
 
+  private async apiAllPages(path: string): Promise<Record<string, unknown>[]> {
+    const sep = path.includes("?") ? "&" : "?";
+    const all: Record<string, unknown>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const json = await this.api(`${path}${sep}page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ""}`);
+      if (Array.isArray(json.results)) all.push(...(json.results as Record<string, unknown>[]));
+      if (json.has_more !== true || typeof json.next_cursor !== "string") break;
+      cursor = json.next_cursor;
+    }
+    return all;
+  }
+
   private static mapComments(json: Record<string, unknown>): readonly NotionComment[] {
     const results = Array.isArray(json.results) ? (json.results as Record<string, unknown>[]) : [];
     return results.map((c) => {
@@ -83,11 +96,11 @@ export class NotionDriver {
   }
 
   async pageComments(): Promise<readonly NotionComment[]> {
-    return NotionDriver.mapComments(await this.api(`/comments?block_id=${encodeURIComponent(this.cfg.pageId)}`));
+    return NotionDriver.mapComments({ results: await this.apiAllPages(`/comments?block_id=${encodeURIComponent(this.cfg.pageId)}`) });
   }
 
   async blockComments(blockId: string): Promise<readonly NotionComment[]> {
-    return NotionDriver.mapComments(await this.api(`/comments?block_id=${encodeURIComponent(blockId)}`));
+    return NotionDriver.mapComments({ results: await this.apiAllPages(`/comments?block_id=${encodeURIComponent(blockId)}`) });
   }
 
   private blockIdsCache: readonly string[] | undefined;
