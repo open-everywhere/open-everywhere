@@ -178,13 +178,13 @@ const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++
   const T = buildTopology({ seed: 1, size: "small" });
   const battery = buildBattery(T);
   const ms = new Set(battery.map((p) => p.m));
-  ok(["M1", "M2", "M3", "M4", "M5", "M6", "M7"].every((m) => ms.has(m as never)), "buildBattery: all seven axes represented");
+  ok(["M1", "M2", "M3", "M4", "M5", "M7"].every((m) => ms.has(m as never)), "buildBattery: all six live axes represented");
+  ok(!ms.has("M6" as never) && battery.every((p) => p.m !== ("M6" as never)), "buildBattery: M6 forget is fully dropped — no probe carries it");
   const m1 = battery.filter((p) => p.m === "M1");
   ok(m1.length === T.facts.length + 1, "buildBattery: one M1 probe per fact + the absent probe");
   ok(battery.some((p) => p.id === "M1-ABSENT" && p.expected.includes("ABSTAIN")), "buildBattery: the absent-fact abstention probe is present");
   ok(battery.find((p) => p.m === "M5")!.trust === "relay", "buildBattery: the M5 poison probe rides the UNTRUSTED (relay) tier");
   ok(battery.find((p) => p.m === "M4")!.platform === "notion", "buildBattery: M4 recalls a slack-seeded fact from a NON-slack (notion) surface");
-  ok(battery.filter((p) => p.m === "M6").length === 2, "buildBattery: M6 is a forget + a leading-recall pair");
   ok(battery.find((p) => p.m === "M2")!.messages !== undefined, "buildBattery: M2 is a coalesced conversation");
   ok(battery.every((p) => p.text?.includes("open everywhere") || p.messages !== undefined), "buildBattery: addressed probes namedrop the agent");
 }
