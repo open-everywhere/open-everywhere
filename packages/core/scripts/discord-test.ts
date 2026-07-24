@@ -2,6 +2,8 @@ import {
   buildDiscordAuth,
   discordMode,
   discordVisibility,
+  discordMemberPendingFromRaw,
+  discordTrust,
   threadParentFromRawChannel,
   type OpenEverywhereDiscordAuth,
 } from "../agent/channels/discord-identity.js";
@@ -37,6 +39,14 @@ ok(discordVisibility(undefined, "channel") === "private", "FAIL-CLOSED: guild ch
 ok(discordVisibility("true", "channel") === "public", "explicit @everyone-readable guild channel -> public");
 ok(discordVisibility("true", "dm") === "private", "a DM stays private even if a public flag leaks in");
 
+ok(discordMemberPendingFromRaw({ member: { pending: true } }) === true, "member.pending true read from raw");
+ok(discordMemberPendingFromRaw({ member: { pending: false } }) === false, "member.pending false read from raw");
+ok(discordMemberPendingFromRaw({ member: {} }) === undefined, "member without pending -> undefined (no verdict)");
+ok(discordMemberPendingFromRaw({}) === undefined, "no member (DM / older payload) -> undefined");
+ok(discordTrust("true") === "external", "pending member -> external (demote, wins over vouch)");
+ok(discordTrust("false") === undefined, "non-pending member -> no verdict (a guild member is not proof of internal)");
+ok(discordTrust(undefined) === undefined, "unknown pending -> no verdict (fail toward existing tier)");
+
 function ctxFromAuth(auth: OpenEverywhereDiscordAuth): BindableContext {
   return { channel: { kind: "discord" }, session: { auth: { current: auth } } };
 }
@@ -53,6 +63,7 @@ function dispatch(input: {
   channelType?: string;
   everyoneCanView?: boolean;
   parentChannelId?: string;
+  memberPending?: boolean;
 }): Resolved {
   const auth = buildDiscordAuth(input);
   const ctx = ctxFromAuth(auth);
@@ -135,6 +146,17 @@ function dispatch(input: {
   ok(threadParentFromRawChannel({ channel: { type: 11 } }) === undefined, "G: thread with no parent_id → undefined (fail-open)");
   ok(threadParentFromRawChannel({ channel: { type: 11, parent_id: 42 } }) === undefined, "G: non-string parent_id → undefined (defensive)");
   ok(threadParentFromRawChannel({}) === undefined, "G: no channel partial → undefined");
+}
+
+{
+  process.env.OE_TRUST = "internal";
+  const pending = dispatch({ userId: "U_eve", guildId: "G_ACME", channelId: "C_ENG", channelType: "0", memberPending: true });
+  ok(pending.binding.trust === "external", "H: PENDING member -> external (screening incomplete; demotion overrides OE_TRUST=internal)");
+  const member = dispatch({ userId: "U_frank", guildId: "G_ACME", channelId: "C_ENG", channelType: "0", memberPending: false });
+  ok(member.binding.trust === "internal", "H: non-pending member -> internal (rides the vouch, unchanged)");
+  const unknown = dispatch({ userId: "U_grace", guildId: "G_ACME", channelId: "C_ENG", channelType: "0" });
+  ok(unknown.binding.trust === "internal", "H: no pending signal -> vouch stands (fail toward the existing tier, like Slack's channel path)");
+  delete process.env.OE_TRUST;
 }
 
 console.log(`✓ discord: ${passed} assertions passed (interaction fields → identity + memory; fail-closed + DM isolation + thread→parent grain)`);

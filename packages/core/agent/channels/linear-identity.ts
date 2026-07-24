@@ -12,6 +12,7 @@ export interface LinearIdentityInput {
   readonly issueIdentifier?: string;
   readonly agentSessionId?: string;
   readonly principalId?: string;
+  readonly guest?: boolean;
   readonly isPrivate?: boolean;
   readonly commentId?: string;
   readonly parentCommentId?: string;
@@ -28,6 +29,12 @@ export function teamFactsFromTeam(data: unknown): LinearTeamFacts {
   return { isPrivate };
 }
 
+export function userGuestFromUser(user: unknown): { readonly guest?: boolean } {
+  if (!user || typeof user !== "object") return {};
+  const g = (user as Record<string, unknown>)["guest"];
+  return { guest: typeof g === "boolean" ? g : undefined };
+}
+
 export function buildLinearAuth(input: LinearIdentityInput): OpenEverywhereLinearAuth {
   const attributes: Record<string, string> = {};
   if (input.agentSessionId) attributes.agent_session_id = input.agentSessionId;
@@ -35,6 +42,7 @@ export function buildLinearAuth(input: LinearIdentityInput): OpenEverywhereLinea
   if (input.teamId) attributes.team_id = input.teamId;
   if (input.issueId) attributes.issue_id = input.issueId;
   if (input.issueIdentifier) attributes.issue_identifier = input.issueIdentifier;
+  if (typeof input.guest === "boolean") attributes.guest = String(input.guest);
   if (typeof input.isPrivate === "boolean") attributes.is_private = String(input.isPrivate);
   if (input.commentId) attributes.comment_id = input.commentId;
   if (input.parentCommentId) attributes.parent_comment_id = input.parentCommentId;

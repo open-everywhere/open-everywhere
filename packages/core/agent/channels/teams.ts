@@ -1,6 +1,6 @@
-import { teamsChannel, splitTeamsMessageText } from "eve/channels/teams";
+import { teamsChannel, splitTeamsMessageText, type TeamsHandle } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
-import { buildTeamsAuth, teamsMembershipType } from "./teams-identity.js";
+import { buildTeamsAuth, teamsMembershipType, teamsUserTypeFromMember } from "./teams-identity.js";
 import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
 import { type ChatAuditPartition } from "./chat-turn-audit.js";
 import { postTerminalProse } from "./reply-post.js";
@@ -36,10 +36,43 @@ function auditPartitionForState(state: {
   }
 }
 
+const TEAMS_TRUST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
+const teamsUserTypeCache = new Map<string, { userType: "guest" | "member"; at: number }>();
+
+async function resolveTeamsUserType(
+  teams: Pick<TeamsHandle, "request">,
+  conversationId: string | undefined,
+  userId: string | undefined,
+): Promise<"guest" | "member" | undefined> {
+  if (!conversationId || !userId) return undefined;
+  const key = `${conversationId}:${userId}`;
+  const hit = teamsUserTypeCache.get(key);
+  if (hit && Date.now() - hit.at < TEAMS_TRUST_TTL) return hit.userType;
+  try {
+    const res = await teams.request(
+      `v3/conversations/${encodeURIComponent(conversationId)}/members/${encodeURIComponent(userId)}`,
+      {},
+      { method: "GET" },
+    );
+    if (!res.ok) return undefined;
+    const userType = teamsUserTypeFromMember(res.body);
+    if (userType) teamsUserTypeCache.set(key, { userType, at: Date.now() });
+    return userType;
+  } catch {
+    return undefined;
+  }
+}
+
+export function _resetTeamsUserTypeCacheForTest(): void {
+  teamsUserTypeCache.clear();
+}
+
 const native = teamsChannel({
   route: INTERNAL_TEAMS_ROUTE,
-  onMessage: (_ctx, message) => {
+  onMessage: async (ctx, message) => {
     if (message.scope !== "personal" && !message.isBotMentioned) return null;
+
+    const userType = await resolveTeamsUserType(ctx.teams, message.conversation.id, message.from.id);
 
     const auth = buildTeamsAuth({
       userId: message.from.id,
@@ -52,6 +85,7 @@ const native = teamsChannel({
       serviceUrl: message.serviceUrl,
       scope: message.scope,
       membershipType: teamsMembershipType(message.channelData),
+      userType,
     });
     return { auth };
   },

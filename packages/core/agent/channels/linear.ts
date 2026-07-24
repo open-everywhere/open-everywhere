@@ -10,7 +10,7 @@ import {
   type LinearChannelState,
 } from "eve/channels/linear";
 import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
-import { buildLinearAuth, teamFactsFromTeam } from "./linear-identity.js";
+import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials } from "./linear-credentials.js";
 import {
   classifyLinearAmbientComment,
@@ -99,6 +99,36 @@ export async function enrichIssueTeam(
   }
 }
 
+const LINEAR_GUEST_TTL = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
+const linearGuestCache = new Map<string, { guest: boolean; at: number }>();
+
+export async function enrichUserGuest(
+  userId: string | undefined,
+  opts?: { readonly api?: LinearApiOptions; readonly credentials?: LinearChannelCredentials },
+): Promise<boolean | undefined> {
+  if (!userId) return undefined;
+  const hit = linearGuestCache.get(userId);
+  if (hit && Date.now() - hit.at < LINEAR_GUEST_TTL) return hit.guest;
+  try {
+    const d = await callLinearGraphQL<{ user?: { guest?: boolean } }>({
+      api: opts?.api,
+      credentials: opts?.credentials,
+      query: "query OeUserGuest($id: String!) { user(id: $id) { guest } }",
+      queryName: "OeUserGuest",
+      variables: { id: userId },
+    });
+    const guest = userGuestFromUser(d.user).guest;
+    if (typeof guest === "boolean") linearGuestCache.set(userId, { guest, at: Date.now() });
+    return guest;
+  } catch {
+    return undefined;
+  }
+}
+
+export function _resetLinearGuestCache(): void {
+  linearGuestCache.clear();
+}
+
 let viewerCache: Promise<{ id?: string; name?: string }> | undefined;
 function resolveViewer(): Promise<{ id?: string; name?: string }> {
   if (!viewerCache) {
@@ -131,6 +161,7 @@ interface EnrichedLinearComment {
   readonly createdAt?: string;
   readonly authorId?: string;
   readonly authorName?: string;
+  readonly authorGuest?: boolean;
   readonly parentId?: string;
   readonly parentAuthorId?: string;
   readonly issueId?: string;
@@ -147,7 +178,7 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
         id?: string;
         body?: string;
         createdAt?: string;
-        user?: { id?: string; name?: string; displayName?: string };
+        user?: { id?: string; name?: string; displayName?: string; guest?: boolean };
         parent?: { id?: string; user?: { id?: string } };
         issue?: { id?: string; identifier?: string; title?: string; team?: { id?: string; private?: boolean } };
       };
@@ -155,7 +186,7 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
       credentials: linearAppActorCredentials,
       query:
         "query OeAmbientComment($id: String!) { comment(id: $id) { id body createdAt " +
-        "user { id name displayName } parent { id user { id } } " +
+        "user { id name displayName guest } parent { id user { id } } " +
         "issue { id identifier title team { id private } } } }",
       queryName: "OeAmbientComment",
       variables: { id: commentId },
@@ -168,6 +199,7 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
       createdAt: str(c.createdAt),
       authorId: str(c.user?.id),
       authorName: str(c.user?.displayName) ?? str(c.user?.name),
+      authorGuest: userGuestFromUser(c.user).guest,
       parentId: str(c.parent?.id),
       parentAuthorId: str(c.parent?.user?.id),
       issueId: str(c.issue?.id),
@@ -310,6 +342,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     issueId: c.issueId,
     issueIdentifier: c.issueIdentifier,
     principalId: c.authorId,
+    guest: c.authorGuest,
     isPrivate: c.teamPrivate,
     commentId: c.id,
     parentCommentId: c.parentId,
@@ -464,6 +497,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
       issueId: c.issueId,
       issueIdentifier: c.issueIdentifier,
       principalId: c.authorId,
+      guest: c.authorGuest,
       isPrivate: c.teamPrivate,
       commentId: c.id,
       parentCommentId: c.parentId,
@@ -545,13 +579,17 @@ const native: LinearChannel = linearChannel({
 
     const isPrivate = verdict.isPrivate ?? (await enrichTeamPrivacy(teamId));
 
+    const creatorId = s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined;
+    const guest = await enrichUserGuest(creatorId);
+
     const auth = buildLinearAuth({
       agentSessionId,
       organizationId: event.organizationId ?? s.organizationId ?? undefined,
       teamId,
       issueId: s.issueId ?? s.issue?.id ?? undefined,
       issueIdentifier: s.issue?.identifier ?? undefined,
-      principalId: s.creator?.id ?? s.creatorId ?? event.appUserId ?? undefined,
+      principalId: creatorId,
+      guest,
       isPrivate,
     });
     return { auth };

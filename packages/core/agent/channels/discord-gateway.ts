@@ -73,6 +73,7 @@ export interface DiscordRelayMessage {
   readonly referencedMessageId?: string;
   readonly botName?: string;
   readonly botId?: string;
+  readonly memberPending?: boolean;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -97,6 +98,7 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
   const authorId = author ? str(author["id"]) : undefined;
   if (!channelId || !authorId) return null;
   const bot = isObject(m["bot"]) ? (m["bot"] as Record<string, unknown>) : undefined;
+  const member = isObject(m["member"]) ? (m["member"] as Record<string, unknown>) : undefined;
   return {
     id: str(m["id"]) ?? "",
     content: typeof m["content"] === "string" ? (m["content"] as string) : "",
@@ -106,6 +108,7 @@ export function parseRelayPayload(raw: unknown): DiscordRelayMessage | null {
     author: { id: authorId, username: str(author!["username"]), bot: author!["bot"] === true },
     mentionsBot: m["mentionsBot"] === true,
     referencedMessageId: str(m["referencedMessageId"]),
+    memberPending: member && typeof member["pending"] === "boolean" ? (member["pending"] as boolean) : undefined,
     botName: bot ? str(bot["name"]) : undefined,
     botId: bot ? str(bot["id"]) : undefined,
   };
@@ -204,6 +207,7 @@ export function authForRelayMessage(msg: DiscordRelayMessage): OpenEverywhereDis
     guildId: msg.guildId,
     channelId: msg.channelId,
     channelType: msg.channelType,
+    memberPending: msg.memberPending,
   });
 }
 

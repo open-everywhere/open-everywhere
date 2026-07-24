@@ -3,7 +3,7 @@ import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./bindi
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { githubVisibility, githubTrust } from "../channels/github-identity.js";
-import { discordMode, discordVisibility } from "../channels/discord-identity.js";
+import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
 import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { notionMode, notionVisibility } from "../channels/notion-identity.js";
 import { isVouchedInternal } from "./trust.js";
@@ -152,6 +152,11 @@ export function linearVisibility(isPrivate: string | undefined): Visibility {
   return "private";
 }
 
+export function linearTrust(guest: string | undefined): Trust | undefined {
+  if (guest === "true") return "external";
+  return undefined;
+}
+
 const bindLinear: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const surface =
@@ -165,7 +170,7 @@ const bindLinear: Mapper = (ctx) => {
     surface,
     mode: "channel",
     visibility: linearVisibility(attr(a, ["is_private", "isPrivate"])),
-    trust: undefined,
+    trust: linearTrust(attr(a, ["guest"])),
     principalId: authPrincipalId(ctx) ?? attr(a, ["creator_id", "creatorId", "user_id", "userId"]),
     target: agentSessionId ? { agentSessionId } : undefined,
   };
@@ -175,6 +180,7 @@ const bindTeams: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const scope = attr(a, ["scope"]);
   const membershipType = attr(a, ["membership_type", "membershipType"]);
+  const userType = attr(a, ["user_type", "userType"]);
   const mode = teamsMode(scope);
   const conversationId = attr(a, ["conversation_id", "conversationId"]);
   const serviceUrl = attr(a, ["service_url", "serviceUrl"]);
@@ -185,7 +191,7 @@ const bindTeams: Mapper = (ctx) => {
     domainSurface: attr(a, ["channel_id", "channelId"]),
     mode,
     visibility: teamsVisibility(scope, membershipType, mode),
-    trust: teamsTrust(scope, membershipType, mode, tenantId),
+    trust: teamsTrust(scope, membershipType, mode, tenantId, userType),
     principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
     target:
       conversationId && serviceUrl
@@ -236,7 +242,7 @@ const bindDiscord: Mapper = (ctx) => {
     domainSurface: attr(a, ["parent_channel_id", "parentChannelId"]),
     mode,
     visibility: discordVisibility(everyoneCanView, mode),
-    trust: undefined,
+    trust: discordTrust(attr(a, ["member_pending", "memberPending"])),
     principalId: authPrincipalId(ctx) ?? userId,
     target: channelId ? { channelId, ...(guildId ? { guildId } : {}), ...(channelType ? { channelType } : {}) } : undefined,
   };

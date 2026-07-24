@@ -3,6 +3,7 @@ import {
   teamsMembershipType,
   teamsMode,
   teamsTrust,
+  teamsUserTypeFromMember,
   teamsVisibility,
   type OpenEverywhereTeamsAuth,
   type TeamsIdentityInput,
@@ -47,6 +48,18 @@ ok(teamsTrust("channel", "shared", "channel", "TEN") === "external", "shared cha
 ok(teamsTrust("channel", "standard", "channel", "TEN") === "internal", "standard channel + tenant -> internal");
 ok(teamsTrust("channel", undefined, "channel", "TEN") === undefined, "FAIL-CLOSED: unknown membership -> no verdict");
 ok(teamsTrust("channel", "standard", "channel", undefined) === undefined, "FAIL-CLOSED: missing tenant -> no verdict");
+
+ok(teamsUserTypeFromMember({ userType: "Guest" }) === "guest", "userType Guest (Graph) -> guest");
+ok(teamsUserTypeFromMember({ userRole: "guest" }) === "guest", "userRole guest (Bot roster) -> guest");
+ok(teamsUserTypeFromMember({ userType: "Member" }) === "member", "userType Member -> member");
+ok(teamsUserTypeFromMember({ userRole: "owner" }) === "member", "userRole owner -> member");
+ok(teamsUserTypeFromMember({ userRole: "" }) === undefined, "empty role -> no verdict (fail toward existing tier)");
+ok(teamsUserTypeFromMember({}) === undefined, "no role field -> no verdict");
+ok(teamsUserTypeFromMember(null) === undefined, "lookup failed (null body) -> no verdict (fail closed, like a Slack users.info error)");
+ok(teamsTrust("channel", "standard", "channel", "TEN", "guest") === "external", "guest in a standard channel -> external (demote wins over channel-internal)");
+ok(teamsTrust("personal", undefined, "dm", "TEN", "guest") === "external", "guest 1:1 partner -> external (demote wins over personal-silo internal, mirrors Slack)");
+ok(teamsTrust("channel", "standard", "channel", "TEN", "member") === "internal", "member in a standard channel -> internal (unchanged)");
+ok(teamsTrust("channel", "standard", "channel", "TEN", undefined) === "internal", "unavailable userType in a standard channel -> internal (channel verdict stands, like Slack's channel path)");
 
 ok(teamsMembershipType({ channel: { membershipType: "standard" } }) === "standard", "membershipType read from channelData.channel");
 ok(teamsMembershipType({ channel: {} }) === undefined, "membershipType absent -> undefined");
@@ -195,6 +208,18 @@ const memCfg: MemoryResolveConfig = {
   ok(binding.visibility === "private", "D: a group chat is never public (even with membershipType=standard)");
   const plan = resolveMemoryPlan(binding, partition, memCfg);
   ok(plan.reads.length === 0 && plan.writes.length === 0, "D: group chat is execution-only (no memory)");
+}
+
+{
+  const base = { tenantId: "TENANT_ACME", conversationId: "19:standard@thread.v2", channelId: "19:team-chan", teamId: "TEAM_ENG", serviceUrl: "https://smba.trafficmanager.net/uk/", scope: "channel", membershipType: "standard" } as const;
+  const guest = dispatch({ userId: "29:guest-eve", ...base, userType: "guest" });
+  ok(guest.auth.attributes.user_type === "guest", "E: buildTeamsAuth stows user_type");
+  ok(guest.binding.trust === "external", "E: GUEST in a standard channel -> demoted to external (wins over channel-internal)");
+  ok(guest.binding.visibility === "public", "E: guest demotion is trust-only — visibility of a standard channel is unchanged");
+  const member = dispatch({ userId: "29:member-frank", ...base, userType: "member" });
+  ok(member.binding.trust === "internal", "E: MEMBER in a standard channel -> internal (unchanged)");
+  const unknown = dispatch({ userId: "29:user-grace", ...base });
+  ok(unknown.binding.trust === "internal", "E: UNAVAILABLE signal -> channel verdict stands (internal), matching Slack's channel path");
 }
 
 console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust)`);

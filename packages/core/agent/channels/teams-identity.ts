@@ -19,6 +19,7 @@ export interface TeamsIdentityInput {
   readonly serviceUrl?: string;
   readonly scope?: string;
   readonly membershipType?: string;
+  readonly userType?: string;
 }
 
 export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAuth {
@@ -34,6 +35,7 @@ export function buildTeamsAuth(input: TeamsIdentityInput): OpenEverywhereTeamsAu
   if (input.serviceUrl) attributes.service_url = input.serviceUrl;
   if (input.scope) attributes.scope = input.scope;
   if (input.membershipType) attributes.membership_type = input.membershipType;
+  if (input.userType) attributes.user_type = input.userType;
   const teamsScopeMode = teamsMode(input.scope);
   Object.assign(attributes, rootDmGrainAttrs(teamsScopeMode === "dm" || teamsScopeMode === "mpim"));
   return { authenticator: "teams", principalId: input.userId, principalType: "teams-user", attributes };
@@ -44,6 +46,17 @@ export function teamsMembershipType(channelData: Record<string, unknown> | undef
   if (!ch || typeof ch !== "object") return undefined;
   const mt = ch["membershipType"];
   return typeof mt === "string" && mt.length > 0 ? mt : undefined;
+}
+
+export function teamsUserTypeFromMember(info: unknown): "guest" | "member" | undefined {
+  if (!info || typeof info !== "object") return undefined;
+  const o = info as Record<string, unknown>;
+  const raw = o["userType"] ?? o["userRole"];
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  const v = raw.toLowerCase();
+  if (v === "guest") return "guest";
+  if (v === "member" || v === "user" || v === "owner" || v === "admin" || v === "organizer") return "member";
+  return undefined;
 }
 
 export function teamsMode(scope: string | undefined): SessionMode {
@@ -69,7 +82,9 @@ export function teamsTrust(
   membershipType: string | undefined,
   mode: SessionMode,
   tenantId?: string,
+  userType?: string,
 ): Trust | undefined {
+  if (userType === "guest") return "external";
   if (mode === "dm" || mode === "mpim") return "internal";
   if (scope === "personal" || scope === "groupChat") return "internal";
   if (membershipType === "shared") return "external";

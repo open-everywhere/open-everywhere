@@ -1,5 +1,5 @@
 import type { SessionMode } from "../access/resolver.js";
-import type { Visibility } from "../identity/binding.js";
+import type { Visibility, Trust } from "../identity/binding.js";
 import { rootDmGrainAttrs } from "./unified-window.js";
 
 export interface OpenEverywhereDiscordAuth {
@@ -19,6 +19,7 @@ export interface DiscordIdentityInput {
   readonly channelType?: string;
   readonly everyoneCanView?: boolean;
   readonly parentChannelId?: string;
+  readonly memberPending?: boolean;
 }
 
 export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDiscordAuth {
@@ -30,6 +31,7 @@ export function buildDiscordAuth(input: DiscordIdentityInput): OpenEverywhereDis
   if (input.channelType) attributes.channel_type = input.channelType;
   if (typeof input.everyoneCanView === "boolean") attributes.everyone_can_view = String(input.everyoneCanView);
   if (input.parentChannelId) attributes.parent_channel_id = input.parentChannelId;
+  if (typeof input.memberPending === "boolean") attributes.member_pending = String(input.memberPending);
   const dmMode = discordMode(input.channelType, input.guildId);
   Object.assign(attributes, rootDmGrainAttrs(dmMode === "dm" || dmMode === "mpim"));
   return { authenticator: "discord", principalId: input.userId, principalType: "discord-user", attributes };
@@ -57,4 +59,18 @@ export function discordVisibility(everyoneCanView: string | undefined, mode: Ses
   if (mode === "dm" || mode === "mpim") return "private";
   if (everyoneCanView === "true") return "public";
   return "private";
+}
+
+export function discordMemberPendingFromRaw(raw: Record<string, unknown>): boolean | undefined {
+  const m = raw["member"];
+  if (m && typeof m === "object") {
+    const p = (m as Record<string, unknown>)["pending"];
+    if (typeof p === "boolean") return p;
+  }
+  return undefined;
+}
+
+export function discordTrust(memberPending: string | undefined): Trust | undefined {
+  if (memberPending === "true") return "external";
+  return undefined;
 }

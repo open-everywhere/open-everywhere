@@ -1,4 +1,4 @@
-import { bindFrom, bindBridged, slackMode, slackVisibility, slackTrust, linearVisibility, type BindableContext } from "../agent/identity/binding.js";
+import { bindFrom, bindBridged, slackMode, slackVisibility, slackTrust, linearVisibility, linearTrust, type BindableContext } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { teamsTrust } from "../agent/channels/teams-identity.js";
@@ -9,7 +9,7 @@ import {
   channelFactsFromRaw,
   partnerFactsFromInfo,
 } from "../agent/channels/slack-identity.js";
-import { buildLinearAuth, teamFactsFromTeam } from "../agent/channels/linear-identity.js";
+import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "../agent/channels/linear-identity.js";
 import { enrichTeamPrivacy } from "../agent/channels/linear.js";
 import { buildGitHubAuth, githubBotMentioned, githubVisibility, githubTrust } from "../agent/channels/github-identity.js";
 
@@ -163,6 +163,24 @@ ok(linNoIssue.surface === "AS3", "linear: surface falls back to agent session id
 
 const linPub = bindFrom(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", is_private: "false", agent_session_id: "AS1" }));
 ok(linPub.visibility === "public", "linear: explicit team-visible issue -> public");
+
+ok(userGuestFromUser({ guest: true }).guest === true, "userGuestFromUser: guest true");
+ok(userGuestFromUser({ guest: false }).guest === false, "userGuestFromUser: guest false (a member)");
+ok(userGuestFromUser({}).guest === undefined, "userGuestFromUser: absent guest -> undefined");
+ok(userGuestFromUser(null).guest === undefined, "userGuestFromUser: defensive on null (lookup failed)");
+ok(linearTrust("true") === "external", "linearTrust: guest -> external (demote, wins over vouch)");
+ok(linearTrust("false") === undefined, "linearTrust: member -> no verdict (membership alone isn't internal)");
+ok(linearTrust(undefined) === undefined, "linearTrust: unknown -> no verdict (fail toward existing tier)");
+process.env.OE_TRUST = "internal";
+const linGuest = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", guest: "true", agent_session_id: "AS1", creator_id: "LU3" }));
+ok(linGuest.trust === "external", "linear: GUEST creator -> demoted to external (overrides OE_TRUST=internal vouch)");
+const linMember = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", guest: "false", agent_session_id: "AS1", creator_id: "LU3" }));
+ok(linMember.trust === "internal", "linear: MEMBER creator -> internal (rides the vouch, unchanged)");
+const linUnknownGuest = bindFrom(linearCtx({ organization_id: "ORG1", team_id: "TEAM5", issue_id: "ISS9", agent_session_id: "AS1", creator_id: "LU3" }));
+ok(linUnknownGuest.trust === "internal", "linear: UNAVAILABLE guest signal -> vouch stands (fail toward existing tier)");
+delete process.env.OE_TRUST;
+ok(buildLinearAuth({ agentSessionId: "AS1", principalId: "LU3", guest: true }).attributes.guest === "true", "buildLinearAuth: guest captured as string");
+ok(buildLinearAuth({ agentSessionId: "AS1", principalId: "LU3" }).attributes.guest === undefined, "buildLinearAuth: omits guest when unknown");
 
 const linPart = resolvePartition(linearCtx({ organization_id: "ORG1", issue_id: "ISS9", agent_session_id: "AS1" }));
 ok(linPart.surfaceKey === "linear/ORG1/ISS9", "linear: partition surfaceKey = platform/org/issue");
