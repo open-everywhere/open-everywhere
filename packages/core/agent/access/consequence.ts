@@ -100,6 +100,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
 
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
+  record_job_state: open("writes a durable-job's progress ledger onto the calling job's OWN row (OPE-55), located via the dispatcher-stamped marker; cap-bounded, aims at nobody else"),
+  complete_job: open(
+    "a durable job declaring ITSELF done and retiring (OPE-55) — flips its OWN row (marker-located, never a supplied id) to the terminal `done` status; reaching a job's intended done-state from inside its own run, not a guardrail removal (cancel_routine is that). Reversible by re-creating the job; audited (routine.complete)",
+  ),
   subscribe_pr: open(
     "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; cancellable with cancel_routine",
   ),

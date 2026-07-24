@@ -15,6 +15,7 @@ export interface RoutineCreateArgs {
   readonly prompt: string;
   readonly createdBy?: string;
   readonly tainted?: boolean;
+  readonly sessionMode?: "job";
 }
 
 const routineCreate: ActionKind<RoutineCreateArgs> = {
@@ -22,7 +23,8 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
   policy: "member",
   summarize(args) {
     return [
-      `Create routine — ${describeTrigger(args.trigger)} — fires WITHOUT a fresh @-mention`,
+      `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger)} — fires WITHOUT a fresh @-mention`,
+      ...(args.sessionMode === "job" ? ["↻ keeps ONE persistent session across fires (accumulates context) until it calls complete_job"] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       `> ${args.prompt}`,
       `Target: ${args.surfaceKey}`,
@@ -43,6 +45,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       status: "active",
       nextRunAt: next ? next.toISOString() : null,
       consecutiveFailures: 0,
+      ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
     };
     await addRoutine(args.partition, routine);
     await appendAudit({
@@ -52,7 +55,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       surface: args.partition.surface,
       principalId: decidedBy,
       action: "routine.create",
-      detail: { id: routine.id, trigger: describeTrigger(args.trigger), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted) },
+      detail: { id: routine.id, trigger: describeTrigger(args.trigger), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}) },
     });
     return `routine ${routine.id} armed — ${describeTrigger(args.trigger)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}.`;
   },

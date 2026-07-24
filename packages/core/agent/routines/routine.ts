@@ -9,8 +9,10 @@ export type RoutineTrigger =
       readonly match?: Readonly<Record<string, string>>;
     };
 
-export type RoutineStatus = "active" | "disabled";
+export type RoutineStatus = "active" | "disabled" | "done";
 export type RunOutcome = "ok" | "failed" | "skipped";
+
+export const JOB_STATE_MAX_BYTES = 16 * 1024;
 
 export interface Routine {
   readonly id: string;
@@ -29,6 +31,16 @@ export interface Routine {
   lastOutcome?: RunOutcome;
   consecutiveFailures: number;
   lastStateHash?: string;
+
+  sessionMode?: "job";
+  jobSessionAnchor?: string;
+  jobState?: string;
+  completedAt?: string;
+  completedReason?: string;
+}
+
+export function isJobRoutine(r: Pick<Routine, "sessionMode">): boolean {
+  return r.sessionMode === "job";
 }
 
 export function isClockScheduled(t: RoutineTrigger): boolean {

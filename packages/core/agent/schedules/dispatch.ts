@@ -6,13 +6,14 @@ import slack from "../channels/slack.js";
 import telegram from "../channels/telegram.js";
 import discord from "../channels/discord.js";
 import teams from "../channels/teams.js";
-import { confirmChannelInternal } from "../channels/slack-events.js";
+import { confirmChannelInternal, slackForm } from "../channels/slack-events.js";
 import { teamsMode } from "../channels/teams-identity.js";
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
-import { isClockScheduled, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
+import { isClockScheduled, isJobRoutine, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
 import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
+import { renderJobMessage } from "../routines/job.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
@@ -151,15 +152,32 @@ function partitionOf(r: Routine): Partition {
   return { org: r.org, platform, workspace, surface: rest.join("/"), workspaceKey, surfaceKey: r.surfaceKey, key: r.surfaceKey };
 }
 
+async function liveJobKickoff(channelId: string, text: string): Promise<string | undefined> {
+  try {
+    const body = new URLSearchParams({ channel: channelId, text });
+    const res = await slackForm("chat.postMessage", body.toString());
+    const ts = (res as { ts?: unknown } | undefined)?.ts;
+    return typeof ts === "string" && ts.length > 0 ? ts : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function jobKickoffText(r: Routine): string {
+  return `🔄 Starting job — I'll keep this thread as my working context and update it as I go.\n> ${r.prompt.slice(0, 240)}`;
+}
+
 export async function dispatchTick(
   args: ScheduleHandlerArgs & {
     readonly now?: Date;
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
+    readonly postJobKickoff?: (channelId: string, text: string) => Promise<string | undefined>;
   },
 ): Promise<void> {
   const { receive, waitUntil, appAuth } = args;
   const now = args.now ?? new Date();
   const confirmInternal = args.confirmInternal ?? confirmChannelInternal;
+  const postJobKickoff = args.postJobKickoff ?? liveJobKickoff;
   let all: Routine[];
   try {
     all = await listAllRoutines();
@@ -213,6 +231,24 @@ export async function dispatchTick(
         lastOutcome: undefined,
         ...onceDisablePatch(r, now, "fired"),
       });
+      let fireTarget = dest.target;
+      let jobAnchor = r.jobSessionAnchor;
+      if (isJobRoutine(r)) {
+        if (dest.channel === slack && "channelId" in dest.target && typeof dest.target.channelId === "string") {
+          const channelId: string = dest.target.channelId;
+          if (!jobAnchor) {
+            jobAnchor = await postJobKickoff(channelId, jobKickoffText(r));
+            if (jobAnchor) {
+              await updateRoutine(r.org, r.surfaceKey, r.id, { jobSessionAnchor: jobAnchor });
+            } else {
+              log(`job ${r.id}: kickoff post failed — firing fresh this tick (no session join)`);
+            }
+          }
+          if (jobAnchor) fireTarget = { channelId, threadTs: jobAnchor };
+        } else {
+          log(`job ${r.id} on ${r.surfaceKey}: durable-job session-join is Slack-only in v1 — firing with ledger continuity only`);
+        }
+      }
       const slackChannelId = dest.channel === slack && "channelId" in dest.target ? dest.target.channelId : undefined;
       const internal =
         slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
@@ -230,8 +266,12 @@ export async function dispatchTick(
       };
       waitUntil(
         receive(dest.channel, {
-          message: r.trigger.kind === "watch" ? renderWatchMessage(r) : renderScheduledMessage(r),
-          target: dest.target,
+          message: isJobRoutine(r)
+            ? renderJobMessage(r)
+            : r.trigger.kind === "watch"
+              ? renderWatchMessage(r)
+              : renderScheduledMessage(r),
+          target: fireTarget,
           auth: markedAuth,
         }).catch((err: unknown) => log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`)),
       );

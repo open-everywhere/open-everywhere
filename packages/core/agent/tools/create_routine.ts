@@ -76,8 +76,19 @@ export default defineTool({
   description:
     "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/everyMinutes, with a required post policy — every run, or only when something changed), a ONE-SHOT (`at`, an ISO 8601 UTC instant — fires exactly once, then disables itself; e.g. 'check back on this in an hour' -> create a once routine for now+1h, and just create another one-shot to check again if nothing's changed — no re-arm state to manage), or an event subscription. Use this when the user asks for recurring, scheduled, one-time-later, or 'let me know when…' work. When talking to users, describe the policy in plain words ('I'll check every hour and only post when something changes', or 'I'll check back in an hour'), never internal jargon. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
   inputSchema: z.object({
-    prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (the firing session has no prior thread context)."),
+    prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (an ordinary fire has no prior thread context; a durable job — see `job` — DOES, and accumulates it)."),
     trigger,
+    job: z
+      .boolean()
+      .optional()
+      .describe(
+        "DURABLE JOB: make this routine keep ONE persistent session across fires so multi-step work " +
+          "('chase this PR until it merges', 'drive this migration to done') ACCUMULATES context instead " +
+          "of starting cold each time — the fires all live in one thread, and the job runs until its own " +
+          "session calls complete_job (not just until one request is answered). Use for open-ended, " +
+          "multi-fire objectives; leave off for a plain recurring post (a daily summary). Slack-only, and " +
+          "scheduled triggers only (not `event`).",
+      ),
   }),
   outputSchema: z.object({
     created: z.boolean(),
@@ -118,6 +129,14 @@ export default defineTool({
     if (!hasApprovalCardPath(binding.platform)) {
       throw new Error(`create_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and arm the routine before it can fire unattended.`);
     }
+    if (input.job) {
+      if (binding.platform !== "slack") {
+        throw new Error(`Durable jobs are Slack-only for now — this is "${binding.platform}". Create a plain routine here, or a job from Slack.`);
+      }
+      if (t.kind === "event") {
+        throw new Error("A durable job fires on a schedule (cron / everyMinutes / a one-shot), not on an external event — drop `job`, or use a scheduled trigger.");
+      }
+    }
     const createdBy = principalIdOf(ctx);
     if (!createdBy) {
       throw new Error("create_routine needs a verified sender to gate the write — no principal id resolved, so there's no requester to show on the approval card.");
@@ -133,7 +152,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,
@@ -150,7 +169,7 @@ export default defineTool({
       pendingId: posted.id,
       trigger: describeTrigger(t),
       nextRunAt: next ? next.toISOString() : null,
-      message: `card posted — routine ${describeTrigger(t)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
+      message: `card posted — ${input.job ? "durable job" : "routine"} ${describeTrigger(t)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },
 });

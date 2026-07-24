@@ -54,6 +54,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "cancel_routine",
   "create_routine",
   "record_watch_state",
+  "record_job_state",
+  "complete_job",
   "subscribe_pr",
   "extend_workspace_time",
   "set_spend_limit",

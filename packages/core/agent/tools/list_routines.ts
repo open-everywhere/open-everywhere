@@ -9,7 +9,7 @@ export default defineTool({
   description:
     "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status and next run time. Use when asked what proactive/recurring work is configured here.",
   inputSchema: z.object({
-    includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines (e.g. ones that failed repeatedly)."),
+    includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
   }),
   outputSchema: z.object({
     routines: z.array(
@@ -18,6 +18,7 @@ export default defineTool({
         trigger: z.string(),
         prompt: z.string(),
         status: z.string(),
+        job: z.boolean(),
         createdAt: z.string(),
         nextRunAt: z.string().nullable(),
         lastRunAt: z.string().nullable(),
@@ -37,11 +38,12 @@ export default defineTool({
         trigger: describeTrigger(r.trigger),
         prompt: r.prompt,
         status: r.status,
+        job: r.sessionMode === "job",
         createdAt: r.createdAt,
         nextRunAt: r.nextRunAt ?? null,
         lastRunAt: r.lastRunAt ?? null,
         lastOutcome: r.lastOutcome ?? null,
-        note: r.disabledReason ?? null,
+        note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       }));
     return { routines };
   },
