@@ -1,0 +1,189 @@
+import assert from "node:assert/strict";
+import {
+  attributeOutcomes,
+  outcomeFor,
+  summarize,
+  type Injection,
+  type Attribution,
+  type TurnResult,
+  type Expected,
+} from "./eval/ambient-eval.js";
+import type { AuditWireEntry } from "./e2e/audit-read.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string): void => { assert.ok(cond, label); n++; };
+
+const REPLY_POST = "reply.post";
+const PROSE_DELIVERED = "turn.direct_mention_prose_delivered";
+const PROSE_DROPPED = "turn.supervisor_prose_dropped";
+const NO_REPLY = "unified.no_reply";
+const BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
+const REDRIVE = "unified.turn.redrive";
+
+let clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+const nextTs = (): string => { clock += 1000; return new Date(clock).toISOString(); };
+
+function inj(over: Partial<Injection> & Pick<Injection, "wakeId">): Injection {
+  return {
+    injectedAt: nextTs(),
+    kind: "probe",
+    turn: 1,
+    addressing: "direct-mention",
+    platform: "slack",
+    text: "probe text",
+    ...over,
+  };
+}
+
+function completion(action: string, over: Record<string, unknown> = {}): AuditWireEntry {
+  return { ts: nextTs(), org: "acme", platform: "unified", workspace: "w", action, detail: { sessionId: "SESS", ...over } };
+}
+function replyPost(wakeId: string, over: Record<string, unknown> = {}): AuditWireEntry {
+  return { ts: nextTs(), org: "acme", platform: "unified", workspace: "w", action: REPLY_POST, detail: { wakeId, platform: "slack", id: "1700000000.0001", ...over } };
+}
+function redriveRow(originalWakeId: string): AuditWireEntry {
+  return { ts: nextTs(), org: "acme", platform: "unified", workspace: "w", action: REDRIVE, detail: { originalWakeId, sessionId: "SESS" } };
+}
+
+function attr(over: Partial<Attribution> = {}): Attribution {
+  return {
+    completionOf: new Map(),
+    replyPostsOf: new Map(),
+    sessionId: "SESS",
+    completions: [],
+    redrivenWakeIds: new Set(),
+    notes: [],
+    ...over,
+  };
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "W1" });
+  const rows = [replyPost("W1"), replyPost("W1", { route: "bridge", id: "1700000000.0002" })];
+  const a = attributeOutcomes([i1], rows);
+  ok((a.replyPostsOf.get("W1") ?? []).length === 2, "reply.post rows join their injection EXACTLY by detail.wakeId (2 posts on W1)");
+  ok(!a.replyPostsOf.has("W2"), "no phantom join for an un-posted wakeId");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "A1", turn: 1 });
+  const i2 = inj({ wakeId: "A2", turn: 2, addressing: "channel-watch" });
+  const c1 = completion(NO_REPLY, { reason: "judged" });
+  const c2 = completion(PROSE_DROPPED, { chars: 40, replied: false });
+  const a = attributeOutcomes([i1, i2], [c1, c2]);
+  ok(a.completionOf.get("A1") === c1, "FIFO pairs the 1st completion to the 1st injection");
+  ok(a.completionOf.get("A2") === c2, "FIFO pairs the 2nd completion to the 2nd injection");
+  ok(!a.notes.some((s) => s.includes("FIFO 1:1 broke")), "clean 1:1 emits no FIFO-break note");
+  ok(a.sessionId === "SESS", "sessionId is the majority of the completion rows");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "B1" });
+  const mine = completion(NO_REPLY, { reason: "judged", sessionId: "SESS" });
+  const mine2 = completion(NO_REPLY, { reason: "judged", sessionId: "SESS" });
+  const foreign = completion(PROSE_DROPPED, { chars: 9, replied: false, sessionId: "OTHER" });
+  const i2 = inj({ wakeId: "B2" });
+  const a = attributeOutcomes([i1, i2], [mine, foreign, mine2]);
+  ok(a.sessionId === "SESS", "majority sessionId wins (2 SESS vs 1 OTHER)");
+  ok(a.completions.every((c) => (c.detail?.sessionId ?? "SESS") === "SESS"), "foreign-session completion excluded from the pool");
+  ok(a.notes.some((s) => s.includes("other session")), "an exclusion note is recorded");
+  ok(a.completionOf.get("B1") === mine && a.completionOf.get("B2") === mine2, "the two SESS completions pair to the two injections in order");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "W1" });
+  const drop = completion(PROSE_DROPPED, { chars: 30, replied: false });
+  const rd = redriveRow("W1");
+  const corrective = completion(NO_REPLY, { reason: "redriven-still-silent" });
+  const a = attributeOutcomes([i1], [drop, rd, corrective]);
+  ok(a.redrivenWakeIds.has("W1"), "the ORIGINAL wakeId is marked redriven (detail.originalWakeId)");
+  ok(a.completionOf.get("W1") === drop, "W1 pairs to the ORIGINAL drop, not the corrective completion");
+  ok(a.notes.some((s) => s.includes("auto-redrive")), "a redrive-accounting note is recorded");
+  ok(!a.notes.some((s) => s.includes("FIFO 1:1 broke")), "after pulling the corrective completion, FIFO stays 1:1");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const iBridge = inj({ wakeId: "M1", addressing: "direct-mention", turn: 1 });
+  const iAmbient = inj({ wakeId: "M2", addressing: "channel-watch", turn: 2 });
+  const bridgePost = replyPost("M1", { route: "bridge" });
+  const ambientDrop = completion(PROSE_DROPPED, { chars: 12, replied: false });
+  const a = attributeOutcomes([iBridge, iAmbient], [bridgePost, ambientDrop]);
+  ok((a.replyPostsOf.get("M1") ?? []).some((p) => p.detail?.route === "bridge"), "the bridge post joins M1");
+  ok(a.completionOf.get("M2") === ambientDrop, "with M1 pulled, the lone completion pairs to the ambient injection M2");
+  ok(!a.completionOf.has("M1"), "the bridged injection owns no completion row");
+  ok(!a.notes.some((s) => s.includes("FIFO 1:1 broke")), "pulling the bridge injection keeps the pairing 1:1");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "C1", addressing: "direct-mention" });
+  const i2 = inj({ wakeId: "C2", addressing: "channel-watch" });
+  const only = completion(NO_REPLY, { reason: "judged" });
+  const a = attributeOutcomes([i1, i2], [only]);
+  ok(a.notes.some((s) => s.includes("FIFO 1:1 broke")), "a count mismatch records the FIFO-break / semantic-fallback note");
+}
+
+const LANDED: Expected = "LANDED";
+const SILENT: Expected = "SILENT_OK";
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i = inj({ wakeId: "P1" });
+
+  ok(outcomeFor(i, LANDED, attr({ replyPostsOf: new Map([["P1", [replyPost("P1")]]]) })).outcome === "LANDED_VIA_REPLY_TOOL", "reply.post + LANDED → LANDED_VIA_REPLY_TOOL");
+
+  ok(outcomeFor(i, LANDED, attr({ replyPostsOf: new Map([["P1", [replyPost("P1", { route: "bridge" })]]]) })).outcome === "LANDED_VIA_BRIDGE", "reply.post route:bridge + LANDED → LANDED_VIA_BRIDGE");
+
+  ok(outcomeFor(i, LANDED, attr({ replyPostsOf: new Map([["P1", [replyPost("P1")]]]), redrivenWakeIds: new Set(["P1"]) })).outcome === "LANDED_VIA_REDRIVE", "reply.post on a redriven wake + LANDED → LANDED_VIA_REDRIVE");
+
+  ok(outcomeFor(i, SILENT, attr({ replyPostsOf: new Map([["P1", [replyPost("P1")]]]) })).outcome === "OVER_REPLY", "reply.post + SILENT_OK → OVER_REPLY (it spoke when it should have stayed quiet)");
+
+  ok(outcomeFor(i, LANDED, attr()).outcome === "NO_ACTION", "no post + no completion → NO_ACTION");
+
+  ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(NO_REPLY, { reason: "judged" })]]) })).outcome === "JUDGED_SILENT", "no_reply + LANDED → JUDGED_SILENT");
+
+  ok(outcomeFor(i, SILENT, attr({ completionOf: new Map([["P1", completion(NO_REPLY, { reason: "judged" })]]) })).outcome === "SILENT_OK", "no_reply + SILENT_OK → SILENT_OK");
+
+  ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(PROSE_DROPPED, { chars: 50, replied: false })]]) })).outcome === "DROP", "prose_dropped + LANDED → DROP (the prose-drop failure axis)");
+
+  ok(outcomeFor(i, SILENT, attr({ completionOf: new Map([["P1", completion(PROSE_DROPPED, { chars: 50, replied: false })]]) })).outcome === "SILENT_OK", "prose_dropped + SILENT_OK → SILENT_OK (gated drop, silence held)");
+
+  ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(BRIDGE_UNRESOLVED, { chars: 20 })]]) })).outcome === "DROP", "bridge_unresolved + LANDED → DROP (owed and lost)");
+
+  ok(outcomeFor(i, LANDED, attr({ completionOf: new Map([["P1", completion(PROSE_DELIVERED, { chars: 20, platform: "slack" })]]) })).outcome === "LANDED_VIA_BRIDGE", "legacy prose_delivered + LANDED → LANDED_VIA_BRIDGE");
+}
+
+{
+  const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
+    label: "", probe: null, state: null, latencyMs: null, recall: null, matchedRows: [], notes: "", ...over,
+  });
+  const turns: TurnResult[] = [
+    mkTurn({ turn: 1, scenario: "S1", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", recall: { code: true, date: true, ref: true } }),
+    mkTurn({ turn: 2, scenario: "S2", expected: "LANDED", outcome: "DROP" }),
+    mkTurn({ turn: 3, scenario: "S3", expected: "SILENT_OK", outcome: "SILENT_OK" }),
+    mkTurn({ turn: 4, scenario: "S5", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL" }),
+    mkTurn({ turn: 5, scenario: "S4", expected: "LANDED", outcome: "JUDGED_SILENT" }),
+  ];
+  const allRows: AuditWireEntry[] = [
+    completion(PROSE_DROPPED, { chars: 10, replied: false, sessionId: "SESS" }),
+    completion(PROSE_DROPPED, { chars: 10, replied: true, sessionId: "SESS" }),
+    completion(PROSE_DROPPED, { chars: 10, replied: false, sessionId: "OTHER" }),
+  ];
+  const s = summarize(turns, allRows, "SESS");
+
+  ok(s.reply_landed_rate.of === 3, "reply_landed_rate denominator excludes the soft S5 turn (S1,S2,S4)");
+  ok(s.reply_landed_rate.landed === 1 && s.reply_landed_rate.rate === 0.333, "reply_landed_rate = 1/3 (only S1 landed)");
+  ok(s.reply_tool_adherence.via_reply_tool === 1, "reply_tool_adherence counts the first-try reply-tool landing");
+  ok(s.soft_reply_rate.of === 1 && s.soft_reply_rate.landed === 1 && s.soft_reply_rate.rate === 1, "soft_reply_rate = 1/1 for the S5 soft turn");
+  ok(s.silence_precision.of === 1 && s.silence_precision.silent === 1 && s.silence_precision.rate === 1, "silence_precision = 1/1 (S3 held silence)");
+  ok(s.prose_drop_count.total === 2, "prose_drop_count is session-filtered (foreign-session drop excluded)");
+  ok(s.prose_drop_count.repliedFalse === 1 && s.prose_drop_count.repliedTrue === 1, "prose_drop_count splits replied=false (real leak) vs replied=true (benign wrap-up)");
+  ok(s.recall_accuracy.full === 1 && s.recall_accuracy.ofLandedRead === 1, "recall_accuracy = 1/1 (S1 recalled all three needles)");
+  ok(s.judged_silent_count === 1, "judged_silent_count counts the S4 reply-warranted turn that chose silence");
+}
+
+console.log(`\n✓ ambient-eval scoring: ${n} assertions passed (FIFO pairing + session filter + redrive/bridge pull-out + outcome mapping + soft-bucket summary)\n`);

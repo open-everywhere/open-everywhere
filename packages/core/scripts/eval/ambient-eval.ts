@@ -63,9 +63,9 @@ function parseCli(argv: readonly string[]): Cli {
   };
 }
 
-type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5";
-type Expected = "LANDED" | "SILENT_OK";
-type Outcome =
+export type ScenarioId = "S1" | "S2" | "S3" | "S4" | "S5";
+export type Expected = "LANDED" | "SILENT_OK";
+export type Outcome =
   | "LANDED_VIA_REPLY_TOOL"
   | "LANDED_VIA_REDRIVE"
   | "LANDED_VIA_BRIDGE"
@@ -76,20 +76,20 @@ type Outcome =
   | "NO_ACTION"
   | "SKIP";
 
-type FailureClass = "ANSWER_NO_TOOL" | "DELIBERATE_SILENCE" | "RECALL_MISS" | "OTHER" | "unjudged" | "n/a";
+export type FailureClass = "ANSWER_NO_TOOL" | "DELIBERATE_SILENCE" | "RECALL_MISS" | "OTHER" | "unjudged" | "n/a";
 
-interface ScenarioSpec {
+export interface ScenarioSpec {
   id: ScenarioId; label: string; expected: Expected; needs: readonly ("slack" | "notion")[];
   soft?: boolean;
 }
-const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
+export const SCENARIOS: Record<ScenarioId, ScenarioSpec> = {
   S1: { id: "S1", label: "reply @mention (Slack direct-mention; fact stated ambient on Slack)", expected: "LANDED", needs: ["slack"] },
   S2: { id: "S2", label: "namedrop recall (Notion direct-mention — Notion's addressed path, matches real namedrop ingest)", expected: "LANDED", needs: ["notion"] },
   S3: { id: "S3", label: "silence (Slack human↔human chatter, not addressed)", expected: "SILENT_OK", needs: ["slack"] },
   S4: { id: "S4", label: "cross-surface recall (fact on Notion → recalled on Slack @mention)", expected: "LANDED", needs: ["slack", "notion"] },
   S5: { id: "S5", label: "TRUE ambient step-in (Notion channel-watch, no namedrop; reply helpful, silence defensible)", expected: "LANDED", soft: true, needs: ["slack", "notion"] },
 };
-const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
+export const SERIES_PATTERN: readonly ScenarioId[] = ["S4", "S2", "S3", "S2", "S1", "S5", "S2", "S3", "S2", "S5"];
 const seriesOf = (n: number): ScenarioId[] => Array.from({ length: n }, (_, i) => SERIES_PATTERN[i % SERIES_PATTERN.length]);
 
 const ADJ = ["SCARLET", "COBALT", "AMBER", "JADE", "CRIMSON", "AZURE", "IVORY", "ONYX", "SABLE", "TOPAZ"];
@@ -103,8 +103,8 @@ function recallHit(body: string, m: { code: string; date: string; ref: string })
   return { code: b.includes(m.code.toLowerCase()), date: b.includes(m.date), ref: b.includes(m.ref.toLowerCase()) };
 }
 
-type InjectionKind = "state" | "probe" | "chatter" | "filler";
-interface Injection {
+export type InjectionKind = "state" | "probe" | "chatter" | "filler";
+export interface Injection {
   readonly wakeId: string;
   readonly injectedAt: string;
   readonly kind: InjectionKind;
@@ -255,7 +255,7 @@ const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detai
 const dB = (e: AuditWireEntry, k: string): boolean | undefined => (typeof e.detail?.[k] === "boolean" ? (e.detail![k] as boolean) : undefined);
 const dN = (e: AuditWireEntry, k: string): number | undefined => (typeof e.detail?.[k] === "number" ? (e.detail![k] as number) : undefined);
 
-interface Attribution {
+export interface Attribution {
   readonly completionOf: ReadonlyMap<string, AuditWireEntry>;
   readonly replyPostsOf: ReadonlyMap<string, readonly AuditWireEntry[]>;
   readonly sessionId: string | null;
@@ -264,7 +264,7 @@ interface Attribution {
   readonly notes: readonly string[];
 }
 
-function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireEntry[]): Attribution {
+export function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireEntry[]): Attribution {
   const notes: string[] = [];
   const asc = rows.slice().sort((a, b) => a.ts.localeCompare(b.ts));
 
@@ -356,7 +356,7 @@ function attributeOutcomes(injs: readonly Injection[], rows: readonly AuditWireE
   return { completionOf, replyPostsOf, sessionId, completions, redrivenWakeIds, notes };
 }
 
-function outcomeFor(
+export function outcomeFor(
   inj: Injection,
   expected: Expected,
   attribution: Attribution,
@@ -407,7 +407,7 @@ function outcomeFor(
   }
 }
 
-interface TurnResult {
+export interface TurnResult {
   turn: number;
   scenario: ScenarioId;
   label: string;
@@ -425,7 +425,7 @@ interface TurnResult {
   reasoningSlice?: string | null;
 }
 
-function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
+export function summarize(turns: readonly TurnResult[], allRows: readonly AuditWireEntry[], sessionId: string | null) {
   const isSoft = (t: TurnResult): boolean => SCENARIOS[t.scenario].soft === true;
   const softTurns = turns.filter((t) => isSoft(t) && t.outcome !== "SKIP");
   const rExp = turns.filter((t) => t.expected === "LANDED" && t.outcome !== "SKIP" && !isSoft(t));
@@ -1104,4 +1104,5 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error("AMBIENT-EVAL FAILED:", e); process.exit(1); });
+const invokedDirectly = process.argv[1]?.endsWith("ambient-eval.ts") || process.argv[1]?.endsWith("ambient-eval.js");
+if (invokedDirectly) main().catch((e) => { console.error("AMBIENT-EVAL FAILED:", e); process.exit(1); });
