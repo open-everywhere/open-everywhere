@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ToolContext, ToolDefinition } from "eve/tools";
 import {
-  STALL_THRESHOLD,
+  DEFAULT_STALL_THRESHOLD,
+  RESULT_HASH_CAP_BYTES,
+  stallThreshold,
   isGuardedTool,
   signatureOf,
   inputKeyOf,
@@ -67,16 +69,36 @@ function fakeTool(): ToolDefinition {
 }
 
 let callSeq = 0;
-async function simulateCall(wrapped: ToolDefinition, toolName: string, input: unknown, output: unknown): Promise<{ tripped: boolean; message?: string }> {
+async function simulateCall(
+  wrapped: ToolDefinition,
+  turnId: string,
+  toolName: string,
+  input: unknown,
+  output: unknown,
+): Promise<{ tripped: boolean; message?: string }> {
   const callId = `call-${callSeq++}`;
+  recordActionRequest(turnId, callId, toolName, input);
   try {
     await wrapped.execute(input, fakeCtx);
   } catch (err) {
     return { tripped: true, message: (err as Error).message };
   }
-  recordActionRequest(callId, toolName, input);
-  recordActionResult(callId, toolName, output);
+  recordActionResult(turnId, callId, toolName, output);
   return { tripped: false };
+}
+
+{
+  delete process.env.OE_STALL_REPEAT_THRESHOLD;
+  ok(stallThreshold() === DEFAULT_STALL_THRESHOLD && DEFAULT_STALL_THRESHOLD === 3, "config: default threshold is 3");
+  process.env.OE_STALL_REPEAT_THRESHOLD = "5";
+  ok(stallThreshold() === 5, "config: OE_STALL_REPEAT_THRESHOLD overrides the default");
+  process.env.OE_STALL_REPEAT_THRESHOLD = "0";
+  ok(stallThreshold() === 0, "config: 0 disables");
+  process.env.OE_STALL_REPEAT_THRESHOLD = "off";
+  ok(stallThreshold() === 0, "config: off disables");
+  process.env.OE_STALL_REPEAT_THRESHOLD = "garbage";
+  ok(stallThreshold() === DEFAULT_STALL_THRESHOLD, "config: unparseable falls back to the default (fail-safe on)");
+  delete process.env.OE_STALL_REPEAT_THRESHOLD;
 }
 
 {
@@ -85,51 +107,98 @@ async function simulateCall(wrapped: ToolDefinition, toolName: string, input: un
   ok(signatureOf("bash", args, "x") === signatureOf("bash", args, "x"), "signature: identical (tool,args,result) -> stable signature");
   ok(signatureOf("bash", inputKeyOf({ a: 1, b: 2 }), "x") === signatureOf("bash", inputKeyOf({ b: 2, a: 1 }), "x"), "signature: arg key order is normalised away");
   ok(isGuardedTool("bash") && !isGuardedTool("reply") && !isGuardedTool("agent"), "allow-list: bash guarded; reply/agent not");
+
+  const base = "a".repeat(RESULT_HASH_CAP_BYTES * 2);
+  const beyond = `${base.slice(0, RESULT_HASH_CAP_BYTES * 2 - 5)}bbbbb`;
+  const within = `a${"c"}${"a".repeat(RESULT_HASH_CAP_BYTES * 2)}`;
+  ok(signatureOf("bash", args, base) === signatureOf("bash", args, beyond), "cap: differences BEYOND the cap don't change the signature");
+  ok(signatureOf("bash", args, base) !== signatureOf("bash", args, within), "cap: differences WITHIN the cap still change the signature");
 }
 
 await inSession(async () => {
+  const N = stallThreshold();
   const wrapped = withStallGuard("bash", fakeTool());
   const identical = { cmd: "vercel inspect deploy-123" };
 
   const results: { tripped: boolean; message?: string }[] = [];
-  for (let i = 0; i < STALL_THRESHOLD + 1; i++) results.push(await simulateCall(wrapped, "bash", identical, "still building..."));
+  for (let i = 0; i < N + 1; i++) results.push(await simulateCall(wrapped, "t1", "bash", identical, "still building..."));
 
-  ok(results.slice(0, STALL_THRESHOLD).every((r) => !r.tripped), `first ${STALL_THRESHOLD} identical calls execute (no trip)`);
-  ok(results[STALL_THRESHOLD].tripped, `the ${STALL_THRESHOLD + 1}th identical call is nudged`);
-  ok(results[STALL_THRESHOLD].message === stallNudge("bash"), "the nudge carries the guard's message");
-  ok(/isn't making progress/.test(results[STALL_THRESHOLD].message ?? ""), "nudge tells the model to stop repeating");
+  ok(results.slice(0, N).every((r) => !r.tripped), `first ${N} identical calls execute (no trip)`);
+  ok(results[N].tripped, `the ${N + 1}th identical call is nudged`);
+  ok(results[N].message === stallNudge("bash", 1), "the nudge carries the guard's strike-1 message");
+  ok(/isn't making progress/.test(results[N].message ?? ""), "nudge tells the model to stop repeating");
 
-  const afterTrip = await simulateCall(wrapped, "bash", identical, "still building...");
+  const afterTrip = await simulateCall(wrapped, "t1", "bash", identical, "still building...");
   ok(!afterTrip.tripped, "after firing, the very next identical call is NOT nudged (counter reset)");
-  const rearm: { tripped: boolean }[] = [];
-  for (let i = 0; i < STALL_THRESHOLD; i++) rearm.push(await simulateCall(wrapped, "bash", identical, "still building..."));
-  ok(!rearm.slice(0, STALL_THRESHOLD - 1).some((r) => r.tripped), "re-arm: intermediate identical calls run");
-  ok(rearm[STALL_THRESHOLD - 1].tripped, "re-arm: a fresh run of N identical calls trips again");
 });
 
 await inSession(async () => {
+  const N = stallThreshold();
   const wrapped = withStallGuard("bash", fakeTool());
   const identical = { cmd: "vercel inspect deploy-123" };
   let tripped = false;
-  for (let i = 0; i < STALL_THRESHOLD * 3; i++) {
-    const r = await simulateCall(wrapped, "bash", identical, `progress-${i}`);
+  for (let i = 0; i < N * 3; i++) {
+    const r = await simulateCall(wrapped, "t1", "bash", identical, `progress-${i}`);
     tripped ||= r.tripped;
   }
   ok(!tripped, "polling: identical args with a changing result never trips");
 });
 
 await inSession(async () => {
+  const N = stallThreshold();
   const wrapped = withStallGuard("react", fakeTool());
   ok(wrapped === undefined ? false : true, "allow-listed wrap returns a tool");
   let tripped = false;
-  for (let i = 0; i < STALL_THRESHOLD * 2; i++) {
-    const r = await simulateCall(wrapped, "react", { emoji: "eyes" }, { ok: true });
+  for (let i = 0; i < N * 2; i++) {
+    const r = await simulateCall(wrapped, "t1", "react", { emoji: "eyes" }, { ok: true });
     tripped ||= r.tripped;
   }
   ok(!tripped, "allow-listed react: identical calls never trip");
 });
 
 await inSession(async () => {
+  const N = stallThreshold();
+  const wrapped = withStallGuard("bash", fakeTool());
+  const identical = { cmd: "still stuck" };
+  const nudges: string[] = [];
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < N + 1; i++) {
+      const r = await simulateCall(wrapped, "t1", "bash", identical, "no change");
+      if (r.tripped && r.message) nudges.push(r.message);
+    }
+  }
+  ok(nudges.length === 3, "escalation: a persistent loop trips once per re-arm");
+  ok(nudges[0] === stallNudge("bash", 1) && /isn't making progress/.test(nudges[0]), "escalation: first nudge is strike-1 wording");
+  ok(nudges[1] === stallNudge("bash", 2) && nudges[1] !== nudges[0] && /STILL looping/.test(nudges[1]), "escalation: second nudge escalates");
+  ok(nudges[2] === stallNudge("bash", 3) && /stuck in a loop/.test(nudges[2]), "escalation: third nudge is the strongest");
+});
+
+await inSession(async () => {
+  const N = stallThreshold();
+  const wrapped = withStallGuard("bash", fakeTool());
+  const identical = { cmd: "carry?" };
+  for (let i = 0; i < N; i++) await simulateCall(wrapped, "t1", "bash", identical, "same");
+  const first = await simulateCall(wrapped, "t2", "bash", identical, "same");
+  ok(!first.tripped, "turn reset: the armed counter does not carry into a new turn");
+  const rearm: { tripped: boolean }[] = [];
+  for (let i = 0; i < N; i++) rearm.push(await simulateCall(wrapped, "t2", "bash", identical, "same"));
+  ok(rearm[N - 1].tripped, "turn reset: a fresh run of N identical calls trips within the new turn");
+});
+
+await inSession(async () => {
+  process.env.OE_STALL_REPEAT_THRESHOLD = "0";
+  const wrapped = withStallGuard("bash", fakeTool());
+  let tripped = false;
+  for (let i = 0; i < 10; i++) {
+    const r = await simulateCall(wrapped, "t1", "bash", { cmd: "disabled" }, "same");
+    tripped ||= r.tripped;
+  }
+  ok(!tripped, "disabled: identical calls never trip when the threshold is 0");
+  delete process.env.OE_STALL_REPEAT_THRESHOLD;
+});
+
+await inSession(async () => {
+  const N = stallThreshold();
   const calls: Record<string, unknown>[] = [];
   const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
     calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
@@ -144,7 +213,7 @@ await inSession(async () => {
 
   const wrapped = withStallGuard("bash", fakeTool());
   const identical = { cmd: "vercel inspect deploy-123" };
-  for (let i = 0; i < STALL_THRESHOLD + 1; i++) await simulateCall(wrapped, "bash", identical, "still building...");
+  for (let i = 0; i < N + 1; i++) await simulateCall(wrapped, "t1", "bash", identical, "still building...");
   await flushTelemetry();
 
   const eventNames = calls.flatMap((body) => {
