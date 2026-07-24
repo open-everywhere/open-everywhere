@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { loadConversationContext, _resetBotIdentityCache } from "../agent/channels/slack-context.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

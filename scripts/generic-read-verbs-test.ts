@@ -9,7 +9,6 @@ import {
   renderThreadBody,
   threadReadSource,
   allowedSurfaceIdsFrom,
-  slackReadAdapter,
   registerReadAdapter,
   READ_ADAPTERS,
   supportedReadPlatforms,
@@ -48,6 +47,18 @@ const MSGS = [
 ];
 
 {
+  const uniNoSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack" });
+  assert.throws(() => resolveReadAdapter(uniNoSlack, undefined, []), /not supported yet/u, "UNREGISTERED slack (core alone): resolveReadAdapter fails loud, never fakes a read");
+  n++;
+}
+const fakeSlackAdapter: ReadAdapter = {
+  platform: "slack",
+  readChannel: async () => MSGS,
+  readThread: async () => MSGS,
+};
+registerReadAdapter(fakeSlackAdapter);
+
+{
   const chan: ChannelReadResult = { platform: "slack", channel: "C0ABC", count: 2, messages: MSGS };
   const oldChannelBody = `Recent messages in C0ABC (oldest first):\n[U1] hello there\n[U2] hi back`;
   const oldChannelSource = `slack channel C0ABC`;
@@ -70,7 +81,7 @@ const MSGS = [
 {
   const uniSlack = mk("unified", { oe_platform: "slack", oe_sources: "slack,discord" });
   const r1 = resolveReadAdapter(uniSlack, undefined, []);
-  ok(r1.platform === "slack" && r1.adapter === slackReadAdapter, "gate: target.platform omitted ⇒ defaults to the turn origin (slack) → Slack adapter");
+  ok(r1.platform === "slack" && r1.adapter === fakeSlackAdapter, "gate: target.platform omitted ⇒ defaults to the turn origin (slack) → Slack adapter");
 
   const uniDiscord = mk("unified", { oe_platform: "discord", oe_sources: "slack,discord" });
   const r2 = resolveReadAdapter(uniDiscord, "discord", []);
@@ -84,7 +95,7 @@ const MSGS = [
   n++;
 
   const uniLinear = mk("unified", { oe_platform: "linear", oe_sources: "linear" });
-  assert.throws(() => resolveReadAdapter(uniLinear, undefined, []), /not supported yet \(supported: slack, teams, discord\)/u, "gate: an unsupported surface (linear) fails loud with the supported list");
+  assert.throws(() => resolveReadAdapter(uniLinear, undefined, []), /not supported yet \(supported: teams, discord, slack\)/u, "gate: an unsupported surface (linear) fails loud with the supported list");
   n++;
 
   ok(!supportedReadPlatforms().includes("linear") && READ_ADAPTERS["linear"] === undefined, "linear is declared unsupported (absent from READ_ADAPTERS), not faked");
@@ -104,7 +115,7 @@ const MSGS = [
   const uniStillUnknown = mk("unified", { oe_platform: "still-unknown", oe_sources: "still-unknown" });
   assert.throws(
     () => resolveReadAdapter(uniStillUnknown, undefined, []),
-    /not supported yet \(supported: slack, teams, discord, fake-test-platform\)/u,
+    /not supported yet \(supported: teams, discord, slack, fake-test-platform\)/u,
     "registry: an unregistered platform still fails loud, and the LIVE supported list now includes the fake registration above",
   );
   n++;
@@ -145,8 +156,9 @@ const MSGS = [
   delete process.env[OE_GENERIC_READ_VERBS_ENV];
 
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/core/agent/tools");
-  const slackChanSrc = readFileSync(join(toolsDir, "read_slack_channel.ts"), "utf8");
-  const slackThreadSrc = readFileSync(join(toolsDir, "read_slack_thread.ts"), "utf8");
+  const slackToolsDir = join(dirname(fileURLToPath(import.meta.url)), "../packages/providers/slack/agent/tools");
+  const slackChanSrc = readFileSync(join(slackToolsDir, "read_slack_channel.ts"), "utf8");
+  const slackThreadSrc = readFileSync(join(slackToolsDir, "read_slack_thread.ts"), "utf8");
   ok(/if \(genericReadVerbsEnabled\(\)\) return null;/u.test(slackChanSrc), "wiring: read_slack_channel retires when the flag is ON (returns null)");
   ok(/if \(genericReadVerbsEnabled\(\)\) return null;/u.test(slackThreadSrc), "wiring: read_slack_thread retires when the flag is ON");
   ok(slackChanSrc.indexOf("genericReadVerbsEnabled()") < slackChanSrc.indexOf("sourceScopedMount("), "wiring: the retire guard precedes the Stage-1 mount (flag-OFF path unchanged)");

@@ -183,10 +183,8 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
 }
 
 {
-  await import("../agent/tools/read_slack_thread.js");
   await import("../agent/tools/sandbox_tools.js");
   const names = registeredProjectionNames();
-  ok(names.includes("read_slack_thread"), "read_slack_thread's untrusted envelope is registered at module load");
   ok(names.includes("web_fetch"), "sandbox web_fetch's untrusted envelope is registered at module load");
 
   const toolset = buildSet([

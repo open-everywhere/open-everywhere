@@ -17,6 +17,11 @@ import { deploymentOrg } from "../agent/identity/binding.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
+import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixtureCodec();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => { assert.ok(cond, label); n++; };
 const eq = (a: unknown, b: unknown, label: string) => { assert.deepStrictEqual(a, b, label); n++; };

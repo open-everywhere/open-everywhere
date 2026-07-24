@@ -1,4 +1,4 @@
-import { fetchChannelDisplayName } from "../channels/slack-events.js";
+import { bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 
 function parseScopeKey(scopeKey: string): { platform: string; workspace: string; surface?: string } | null {
   const parts = scopeKey.split("/");
@@ -19,7 +19,7 @@ export async function friendlyScopeLabel(scopeKey: string): Promise<string | und
     const parsed = parseScopeKey(scopeKey);
     if (!parsed) return undefined;
     if (parsed.platform === "slack" && parsed.surface) {
-      const name = await fetchChannelDisplayName(parsed.surface);
+      const name = await bridgeFetchChannelDisplayName(parsed.surface);
       return name ? `#${name}` : undefined;
     }
     const resolver = SCOPE_LABEL_RESOLVERS.get(parsed.platform);

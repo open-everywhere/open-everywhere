@@ -20,6 +20,10 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
 delete process.env.OE_TEST_WAKE;
 delete process.env.OE_CONTROL_READ_TOKENS;
 
+const __slackStubs = await import("./_slack-test-stubs.js");
+__slackStubs.registerSlackFixtureCodec();
+__slackStubs.registerSlackFixtureMapper();
+
 const { handleTestWakeInjection, CONTROL_TEST_WAKE_PATH, testWakeEnabled } = await import("../agent/control/test-route.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");

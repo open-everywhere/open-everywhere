@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
+import { registerSlackProvider as __regSlack } from "@open-everywhere/provider-slack/agent/register.js";
 __regDiscord();
+__regSlack();
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join, dirname } from "node:path";

@@ -4,13 +4,12 @@ import {
 } from "./window-harness.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import { withheldFromGrain } from "../../agent/access/window-gate-manifest.js";
-import { buildSlackAuth } from "../../agent/channels/slack-identity.js";
 import { windowGrainOf, type BindableContext } from "../../agent/identity/binding.js";
 import { taskWindowId, formatWindowToken, parseWindowToken, isTaskWindowToken, isThreadSeatWindowToken } from "../../agent/channels/window-key.js";
 import { oneshotAgentEnabled } from "../../agent/access/delegation-flag.js";
 import { recordThreadOwner, resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "../../agent/channels/thread-ownership.js";
 import { ROUTINE_MARKER } from "../../agent/routines/routine.js";
-import { OE_GRAIN_ATTR } from "../../agent/channels/unified-window.js";
+import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "../../agent/channels/unified-window.js";
 import type { OperationalStore } from "../../agent/operational/store.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
@@ -111,10 +110,19 @@ async function f2(): Promise<void> {
 }
 
 async function f3(): Promise<void> {
-  const dmAuth = buildSlackAuth({ userId: "U_TESTER", teamId: SURFACE.split("/")[1] ?? "T", channelId: dmOrigin.channelId, channelType: "im", dmPartnerTrust: "internal" });
+  const dmAuth = {
+    attributes: {
+      channel_id: dmOrigin.channelId,
+      user_id: "U_TESTER",
+      team_id: SURFACE.split("/")[1] ?? "T",
+      channel_type: "im",
+      dm_partner_trust: "internal",
+      ...rootDmGrainAttrs(true),
+    } as Record<string, string>,
+  };
   const stamped = dmAuth.attributes.oe_grain;
   if (stamped !== "standing") {
-    return record("F3", "FAIL", `the REAL DM ingress (buildSlackAuth, channelType=im) did NOT stamp oe_grain=standing (got ${stamped ?? "<absent>"}) — the root-DM security fix is not wired; a real DM would fall through to native/full-hands`);
+    return record("F3", "FAIL", `the REAL DM ingress stamp (rootDmGrainAttrs on channelType=im) did NOT stamp oe_grain=standing (got ${stamped ?? "<absent>"}) — the root-DM security fix is not wired; a real DM would fall through to native/full-hands`);
   }
   const dmCtx: BindableContext = { channel: { kind: "slack", continuationToken: "cse_dm_native_e2e" }, session: { auth: { current: { attributes: dmAuth.attributes } } } };
   const grain = windowGrainOf(dmCtx);

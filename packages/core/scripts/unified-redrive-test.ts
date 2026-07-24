@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
 import type { RedriveReinject } from "../agent/channels/unified-redrive.js";
+
+import { registerSlackFixtureMapper, registerSlackFixturePostArm, registerSlackFixtureCodec, registerSlackTestBridge } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixturePostArm();
+registerSlackFixtureCodec();
+registerSlackTestBridge();
+
 process.env.OE_SQLITE_PATH = join(mkdtempSync(join(tmpdir(), "oe-unified-redrive-")), "ops.sqlite3");
 delete process.env.OE_ORG;
 delete process.env.OE_UNIFIED_REDRIVE;

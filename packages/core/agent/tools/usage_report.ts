@@ -5,7 +5,7 @@ import { usageSummary } from "../spend/usage-events.js";
 import { getConfig } from "../access/config.js";
 import { resolveReportScope, filterToDomain, approxConversationCount, aggregateByUser, aggregateBySurface, resolveSlackLabels, maskDmSurfaceKey } from "../spend/reporting.js";
 import { requirePaneVenue } from "../access/pane-venue.js";
-import { fetchUserDisplayName, fetchChannelDisplayName } from "../channels/slack-events.js";
+import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 
 function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -49,7 +49,7 @@ export default defineTool({
     const labels = await resolveSlackLabels(
       users.map((u) => u.principalId),
       surfaces.map((s) => s.surfaceKey),
-      { userName: fetchUserDisplayName, channelName: fetchChannelDisplayName },
+      { userName: bridgeFetchUserDisplayName, channelName: bridgeFetchChannelDisplayName },
     );
     const byUser = users.map((u) => ({ ...u, ...(labels.users.has(u.principalId) ? { name: labels.users.get(u.principalId)! } : {}) }));
     const busiestSurfaces = surfaces.map((s) => ({ ...s, ...(labels.channels.has(s.surfaceKey) ? { channel: labels.channels.get(s.surfaceKey)! } : {}) }));

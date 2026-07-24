@@ -9,7 +9,7 @@ import {
   finalMessageAction,
   supervisorTextDelivery,
   isSupervisorProseLeak,
-} from "../agent/channels/turn-delivery.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

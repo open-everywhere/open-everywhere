@@ -8,13 +8,9 @@ import type { Domain } from "../memory/domain.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import {
-  assertChannelAllowed,
-  callSlackRead,
-  renderMessages,
-  ChannelScopeError,
-  type RenderedMessage,
-} from "./slack-read.js";
+
+import { ChannelScopeError } from "./read-scope-error.js";
+export { ChannelScopeError };
 
 export interface RenderedLine {
   readonly author: string;
@@ -42,25 +38,6 @@ export interface ReadAdapter {
   readChannel(ctx: BindableContext, channel: string, limit?: number): Promise<readonly RenderedLine[]>;
   readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number): Promise<readonly RenderedLine[]>;
 }
-
-const SLACK_CHANNEL_DEFAULT_LIMIT = 50;
-const SLACK_THREAD_DEFAULT_LIMIT = 100;
-
-export type SlackReadCall = typeof callSlackRead;
-
-export const slackReadAdapter = {
-  platform: "slack" as const,
-  async readChannel(ctx: BindableContext, channel: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
-    assertChannelAllowed(ctx, channel);
-    const res = await call("conversations.history", { channel, limit: limit ?? SLACK_CHANNEL_DEFAULT_LIMIT, inclusive: true });
-    return renderMessages(res.messages, { oldestFirst: false }) as RenderedMessage[];
-  },
-  async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
-    assertChannelAllowed(ctx, channel);
-    const res = await call("conversations.replies", { channel, ts: threadTs, limit: limit ?? SLACK_THREAD_DEFAULT_LIMIT });
-    return renderMessages(res.messages, { oldestFirst: true }) as RenderedMessage[];
-  },
-};
 
 function surfaceIdFromKey(key: string, platform: string): string | null {
   const parts = key.split("/");
@@ -98,16 +75,16 @@ export function assertSurfaceAllowed(ctx: BindableContext, platform: string, sur
 }
 
 const READ_ADAPTER_REGISTRY: Record<string, ReadAdapter> = {};
+const SUPPORTED_PLATFORMS_LIVE: string[] = [];
 
 export function registerReadAdapter(adapter: ReadAdapter): void {
+  if (!(adapter.platform in READ_ADAPTER_REGISTRY)) SUPPORTED_PLATFORMS_LIVE.push(adapter.platform);
   READ_ADAPTER_REGISTRY[adapter.platform] = adapter;
 }
 
-registerReadAdapter(slackReadAdapter);
-
 export const READ_ADAPTERS: Readonly<Record<string, ReadAdapter>> = READ_ADAPTER_REGISTRY;
 
-export const SUPPORTED_READ_PLATFORMS: readonly string[] = Object.keys(READ_ADAPTER_REGISTRY);
+export const SUPPORTED_READ_PLATFORMS: readonly string[] = SUPPORTED_PLATFORMS_LIVE;
 
 export function supportedReadPlatforms(): readonly string[] {
   return Object.keys(READ_ADAPTER_REGISTRY);

@@ -9,7 +9,7 @@ import {
   type SlackRequester,
   type WakeBackscrollDeps,
 } from "../agent/channels/slack-wake-backscroll.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
+import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

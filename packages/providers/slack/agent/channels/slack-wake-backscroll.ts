@@ -1,10 +1,17 @@
 import { callSlackApi } from "eve/channels/slack";
 import { linesFromMessages, READ_MORE_HINT } from "./slack-context.js";
-import { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX, type ContextLine } from "./context-render.js";
-import { clusterBackscroll, type NormalizedMessage, type BackscrollTrustFor } from "./backscroll-cluster.js";
-import type { WakeMessageInput } from "./wake-envelope.js";
+import {
+  renderContext,
+  sinceLastAgentReply,
+  WAKE_BACKSCROLL_MAX,
+  clusterBackscroll,
+  type ContextLine,
+  type NormalizedMessage,
+  type BackscrollTrustFor,
+  type WakeMessageInput,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
-export { WAKE_BACKSCROLL_MAX } from "./context-render.js";
+export { WAKE_BACKSCROLL_MAX };
 
 export interface WakeBotIdentity {
   readonly userId?: string;

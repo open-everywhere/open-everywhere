@@ -46,36 +46,6 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
 }
 
 {
-  const slackChannel = (await import("@open-everywhere/core/agent/channels/slack.js")).default as unknown as AdapterChannel;
-  const completed = (message: string | null, ctx: unknown) => inSession(() => slackChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
-  const posts: string[] = [];
-  const fakeSlack = { channelId: "C_AUD", threadTs: "1752501000.000100", request: async () => ({}) };
-  const ctxFor = (state: Record<string, unknown>) => ({
-    state,
-    thread: { post: async (t: string) => void posts.push(t), startTyping: async () => undefined },
-    slack: fakeSlack,
-  });
-
-  await completed(NO_REPLY_SENTINEL, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "oe-sup:g1", oeSupervisor: true, oeUninvited: true }));
-  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a supervisor judged silence writes NO slack.no_reply row (actions-only)");
-  ok(posts.length === 0, "slack: the judged silence posts NOTHING (silence stays silence)");
-
-  await completed("here's the answer", ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
-  const sp = await replyPosts("slack");
-  ok(sp.length === 1, "slack: a terminal-prose reply writes exactly ONE reply.post row (choke point)");
-  ok(sp[0]!.detail?.route === "terminal" && sp[0]!.detail?.chars === "here's the answer".length, "slack: the reply.post row carries route:\"terminal\" + chars");
-  ok(sp[0]!.detail?.sessionId === "chat-audit-test", "slack: the reply.post row STAMPS the eve sessionId (audit→transcript join key)");
-  ok((await readAudit({ action: "slack.replied" })).length === 0, "slack: the legacy slack.replied row is GONE (folded into reply.post)");
-
-  await inSession(async () => {
-    markRepliedThisTurn();
-    await slackChannel.adapter["message.completed"]!({ finishReason: "stop", message: "" }, ctxFor({ channelId: "C_AUD", teamId: "T_AUD", threadTs: "1752501000.000100" }));
-  });
-  ok((await replyPosts("slack")).length === 1, "slack: a reply-tool turn's empty terminal writes NO terminal reply.post row");
-  ok((await readAudit({ action: "slack.no_reply" })).length === 0, "slack: a reply-tool turn's empty terminal writes NO slack.no_reply row");
-}
-
-{
   const discordChannel = (await import("@open-everywhere/provider-discord/agent/channels/discord.js")).default as unknown as AdapterChannel;
   const completed = (message: string | null, ctx: unknown) => inSession(() => discordChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
   const posts: string[] = [];

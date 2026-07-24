@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, isUnifiedWindowContext, channelPlatform, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor, capabilitiesForPlatform } from "../identity/capabilities.js";
-import { callSlackRead } from "../channels/slack-read.js";
+import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { markReactedThisTurn } from "../channels/react-signal.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -64,7 +64,7 @@ const reactEntry = defineTool({
             );
           }
           try {
-            await callSlackRead("reactions.add", { channel: channelId, name: input.emoji, timestamp: ts });
+            await bridgeSlackReadCall("reactions.add", { channel: channelId, name: input.emoji, timestamp: ts });
           } catch (err) {
             const msg = String(err instanceof Error ? err.message : err);
             if (!msg.includes("already_reacted")) {

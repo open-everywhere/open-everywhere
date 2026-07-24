@@ -85,64 +85,6 @@ export interface RawIdentity {
 export type IdentityMapper = (ctx: BindableContext) => RawIdentity;
 type Mapper = IdentityMapper;
 
-export function slackMode(channelType: string | undefined, channelId: string | undefined): SessionMode {
-  if (channelType === "im") return "dm";
-  if (channelType === "mpim") return "mpim";
-  if (channelType === "channel" || channelType === "group") return "channel";
-  if (channelId && channelId.startsWith("D")) return "dm";
-  return "channel";
-}
-
-export function slackVisibility(
-  channelType: string | undefined,
-  isPrivate: string | undefined,
-  mode: SessionMode,
-): Visibility {
-  if (isPrivate === "true") return "private";
-  if (isPrivate === "false") return "public";
-  if (mode === "dm" || mode === "mpim") return "private";
-  if (channelType === "channel") return "public";
-  return "private";
-}
-
-export function slackTrust(
-  isExternal: string | undefined,
-  trustChecked: string | undefined,
-  mode: SessionMode,
-): Trust {
-  if (mode === "dm" || mode === "mpim") return "internal";
-  if (isExternal === "true") return "external";
-  if (trustChecked !== "true") return "external";
-  return "internal";
-}
-
-function rawSlackPrincipal(pid: string | undefined): string | undefined {
-  if (!pid || !pid.startsWith("slack:")) return pid;
-  const last = pid.slice(pid.lastIndexOf(":") + 1);
-  return last.length > 0 ? last : undefined;
-}
-
-const bindSlack: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const channelId = attr(a, ["channel_id", "channelId"]);
-  const channelType = attr(a, ["channel_type", "channelType"]);
-  const isPrivate = attr(a, ["is_private", "isPrivate"]);
-  const mode = slackMode(channelType, channelId);
-  const dmRaw = attr(a, ["dm_partner_trust", "dmPartnerTrust"]);
-  const dmPartnerTrust: Trust | undefined = dmRaw === "internal" || dmRaw === "external" ? dmRaw : undefined;
-  return {
-    workspace: attr(a, ["team_id", "teamId"]),
-    surface: channelId,
-    mode,
-    visibility: slackVisibility(channelType, isPrivate, mode),
-    trust: mode === "dm" ? dmPartnerTrust : slackTrust(attr(a, ["is_ext_shared", "isExtShared"]), attr(a, ["trust_checked", "trustChecked"]), mode),
-    trustVerified: mode === "dm" ? dmPartnerTrust !== undefined : undefined,
-    principalId: rawSlackPrincipal(authPrincipalId(ctx)) ?? attr(a, ["user_id", "userId"]),
-    target: channelId ? { channelId } : undefined,
-    threadTs: attr(a, ["thread_ts", "threadTs"]) ?? attr(a, ["oe_reply_anchor", "oeReplyAnchor"]),
-  };
-};
-
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -165,8 +107,6 @@ const MAPPERS: Record<string, Mapper> = {};
 export function registerIdentityMapper(platform: string, mapper: IdentityMapper): void {
   MAPPERS[platform] = mapper;
 }
-
-registerIdentityMapper("slack", bindSlack);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);

@@ -3,7 +3,7 @@ import { getConfig } from "../access/config.js";
 import { readAudit, appendAudit } from "../audit/audit.js";
 import { DREAM_ACTOR } from "../memory/dream/proposal.js";
 import { buildMode3Report, formatMode3Report, type Mode3Report } from "../memory/dream/mode3.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { tidyOrgs } from "./tidy.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 
@@ -35,7 +35,7 @@ export async function mode3Tick(
   const now = opts.now ?? new Date();
   const windowStart = new Date(now.getTime() - WEEK_MS);
   const orgs = opts.orgs ?? tidyOrgs();
-  const post = opts.post ?? slackForm;
+  const post = opts.post ?? bridgeSlackForm;
   const channel = adminChannel();
 
   let reports = 0;

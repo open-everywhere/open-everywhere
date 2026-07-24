@@ -1,6 +1,5 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
-import slack from "../channels/slack.js";
-import { confirmChannelInternal, slackForm } from "../channels/slack-events.js";
+import { bridgeSlackChannel, bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { resolveRegisteredRoutineDispatch, type DispatchTarget } from "./routine-dispatch.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
@@ -33,9 +32,11 @@ function storedString(t: Routine["target"], key: string): string | undefined {
 function resolveSlackTarget(r: Routine): DispatchTarget | null {
   const channelId = storedString(r.target, "channelId");
   if (!channelId) return null;
+  const slackChannel = bridgeSlackChannel();
+  if (!slackChannel) return null;
   const mode: SessionMode = channelId.startsWith("D") ? "dm" : "channel";
   return {
-    channel: slack,
+    channel: slackChannel,
     target: { channelId },
     mode,
     attributes: {
@@ -72,7 +73,7 @@ function partitionOf(r: Routine): Partition {
 async function liveJobKickoff(channelId: string, text: string): Promise<string | undefined> {
   try {
     const body = new URLSearchParams({ channel: channelId, text });
-    const res = await slackForm("chat.postMessage", body.toString());
+    const res = await bridgeSlackForm("chat.postMessage", body.toString());
     const ts = (res as { ts?: unknown } | undefined)?.ts;
     return typeof ts === "string" && ts.length > 0 ? ts : undefined;
   } catch {
@@ -93,7 +94,7 @@ export async function dispatchTick(
 ): Promise<void> {
   const { receive, waitUntil, appAuth } = args;
   const now = args.now ?? new Date();
-  const confirmInternal = args.confirmInternal ?? confirmChannelInternal;
+  const confirmInternal = args.confirmInternal ?? bridgeConfirmChannelInternal;
   const postJobKickoff = args.postJobKickoff ?? liveJobKickoff;
   let all: Routine[];
   try {
@@ -115,6 +116,7 @@ export async function dispatchTick(
   let declined = 0;
   for (const r of due) {
     const dest = resolveTarget(r);
+    const firePlatform = r.surfaceKey.split("/")[0];
     if (!dest) {
       dryRun++;
       log(`DUE (dry-run, unresolvable channel/target): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
@@ -151,7 +153,7 @@ export async function dispatchTick(
       let fireTarget = dest.target;
       let jobAnchor = r.jobSessionAnchor;
       if (isJobRoutine(r)) {
-        if (dest.channel === slack && "channelId" in dest.target && typeof dest.target.channelId === "string") {
+        if (firePlatform === "slack" && "channelId" in dest.target && typeof dest.target.channelId === "string") {
           const channelId: string = dest.target.channelId;
           if (!jobAnchor) {
             jobAnchor = await postJobKickoff(channelId, jobKickoffText(r));
@@ -167,7 +169,7 @@ export async function dispatchTick(
         }
       }
       const slackChannelId =
-        dest.channel === slack && typeof (dest.target as { channelId?: unknown }).channelId === "string"
+        firePlatform === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
           ? (dest.target as { channelId: string }).channelId
           : undefined;
       const internal =

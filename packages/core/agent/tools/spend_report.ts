@@ -21,7 +21,7 @@ import {
   isDmSurface,
   dmBucketKey,
 } from "../spend/reporting.js";
-import { fetchUserDisplayName, fetchChannelDisplayName } from "../channels/slack-events.js";
+import { bridgeFetchUserDisplayName, bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 import { requirePaneVenue } from "../access/pane-venue.js";
 
 function isoDaysAgo(days: number): string {
@@ -246,7 +246,7 @@ export default defineTool({
     const labels = await resolveSlackLabels(
       [],
       [...bySurfaceAndKind.map((r) => r.surfaceKey), ...ledgerSurfaces.map((s) => s.surfaceKey), ...routinePredictions.map((p) => p.surfaceKey)],
-      { userName: fetchUserDisplayName, channelName: fetchChannelDisplayName },
+      { userName: bridgeFetchUserDisplayName, channelName: bridgeFetchChannelDisplayName },
     );
     const labelled = <T extends { surfaceKey: string }>(row: T): T & { channel?: string } => ({
       ...row,

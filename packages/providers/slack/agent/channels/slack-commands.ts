@@ -1,7 +1,6 @@
 import { defineChannel, POST } from "eve/channels";
 import { verifySlackSignature } from "./slack-front.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { runOeCommand, parseSlackCommandText } from "../commands/core.js";
+import { bindFrom, runOeCommand, parseSlackCommandText, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:slack-commands] ${msg}`);

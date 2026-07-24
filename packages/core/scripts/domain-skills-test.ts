@@ -26,6 +26,11 @@ import listSkillsTool from "../agent/tools/list_skills.js";
 import deleteSkillGated from "../agent/tools/delete_skill.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 
+import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackTestBridge();
+
+
 const FULL_GRAIN_TEST_CTX = { channel: { kind: "slack", continuationToken: "cse_test_native" }, session: { auth: { current: { attributes: {} } } } };
 type ExecTool = { execute(input: unknown, ctx: unknown): Promise<any> };
 const createSkillTool = (await resolveWindowGated(createSkillGated, FULL_GRAIN_TEST_CTX as never)) as ExecTool;

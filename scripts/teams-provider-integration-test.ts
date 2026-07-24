@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { registerTeamsProvider, resolveTeamsTarget } from "@open-everywhere/provider-teams/agent/register.js";
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels/teams-read.js";
 import {
   capabilitiesForPlatform,
@@ -26,6 +27,7 @@ process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 
 registerTeamsProvider();
+registerSlackProvider();
 
 const reply = (await import("@open-everywhere/core/agent/tools/reply.js")).default;
 const { resolveReplyTarget } = await import("@open-everywhere/core/agent/channels/reply-post.js");

@@ -1,8 +1,5 @@
 import { slackForm } from "./slack-events.js";
-import type { PostArm, TargetResolveBag } from "./post-arms.js";
-import type { ReplyTarget } from "./reply-post.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
-import type { UnifiedReplyDeps } from "./unified-reply.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 type SlackTarget = Extract<ReplyTarget, { platform: "slack" }>;
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;

@@ -38,9 +38,9 @@ const {
   auditSilencesExpected,
   resolveCapabilities,
   DEFAULT_TEAMS_REFRESH_SINK,
-} = await import("./e2e/env.js");
-const { readRefreshSidecar, writeRefreshSidecar } = await import("./e2e/teams-driver.js");
-const { backoffDelayMs, pollUntil, PollTimeout } = await import("./e2e/poll.js");
+} = await import("../packages/core/scripts/e2e/env.js");
+const { readRefreshSidecar, writeRefreshSidecar } = await import("../packages/core/scripts/e2e/teams-driver.js");
+const { backoffDelayMs, pollUntil, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
 const {
   signSlackRequest,
   buildApprovalClickPayload,
@@ -58,21 +58,21 @@ const {
   SETKEY_MODAL_CALLBACK,
   SETKEY_INPUT_BLOCK,
   SETKEY_INPUT_ACTION,
-} = await import("./e2e/synthetic.js");
-const { signWebhookBody } = await import("./e2e/webhook.js");
+} = await import("../packages/core/scripts/e2e/synthetic.js");
+const { signWebhookBody } = await import("../packages/core/scripts/e2e/webhook.js");
 const { runFallbackCheck, FallbackJudge, judge3, LlmJudge, buildJudgePrompt, parseJudgeResponse, judgeBannerTag } =
-  await import("./e2e/judge.js");
-const { SCENARIOS, skipReason, ScenarioSkip } = await import("./e2e/scenarios.js");
-const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("../agent/channels/slack-front.js");
-const { SLACK_COMMANDS_ROUTE } = await import("../agent/channels/slack-commands.js");
-const { OE_APPROVAL_PREFIX } = await import("../agent/approvals/flow.js");
-const { OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
+  await import("../packages/core/scripts/e2e/judge.js");
+const { SCENARIOS, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
+const { verifySlackSignature, classifyEnvelope, buildFrontHandler, PUBLIC_SLACK_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-front.js");
+const { SLACK_COMMANDS_ROUTE } = await import("@open-everywhere/provider-slack/agent/channels/slack-commands.js");
+const { OE_APPROVAL_PREFIX } = await import("@open-everywhere/core/agent/approvals/flow.js");
+const { OE_CONNECT_ACTION_PREFIX } = await import("@open-everywhere/core/agent/connections/connector-card.js");
 const {
   OE_SETKEY_MODAL_CALLBACK,
   SETKEY_INPUT_BLOCK: REAL_SETKEY_INPUT_BLOCK,
   SETKEY_INPUT_ACTION: REAL_SETKEY_INPUT_ACTION,
-} = await import("../agent/credentials/intake.js");
-const { verifyWebhookSignature } = await import("../agent/webhooks/gate.js");
+} = await import("@open-everywhere/core/agent/credentials/intake.js");
+const { verifyWebhookSignature } = await import("@open-everywhere/core/agent/webhooks/gate.js");
 const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
@@ -438,7 +438,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { factToken, approveButton, legGate } = await import("./e2e/journey.js");
+  const { factToken, approveButton, legGate } = await import("../packages/core/scripts/e2e/journey.js");
   ok(/^falcon-\d{1,5}$/.test(factToken("falcon")), "factToken appends a run-unique numeric suffix to the stem");
   ok(factToken("x") !== factToken("x") || true, "factToken is stem-scoped (suffix derives from the clock)");
   const card = { ts: "1.1", text: "raise cap?", actions: [{ actionId: "oe_approval:approve:row-9", value: "default" }] };
@@ -478,8 +478,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   });
   ok(ghForge.ok && ghForge.cfg.webhookSecret === "whsec" && ghForge.cfg.installationId === "12345", "github cfg carries the optional forge vars when present");
 
-  const { signGithubBody, buildIssueCommentEvent } = await import("./e2e/github-forge.js");
-  const { verifyGithubSignature } = await import("../agent/routines/events.js");
+  const { signGithubBody, buildIssueCommentEvent } = await import("../packages/core/scripts/e2e/github-forge.js");
+  const { verifyGithubSignature } = await import("@open-everywhere/core/agent/routines/events.js");
   const secret = "gh-e2e-secret";
   const payload = buildIssueCommentEvent({ commentId: 42, body: "@open-everywhere summarise", driverLogin: "e2e-user", issueNumber: 7, repoFullName: "acme/scratch", installationId: 99 });
   const raw = JSON.stringify(payload);
@@ -503,7 +503,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const prFull = resolvePr({ [ENV.prRepo]: "acme/e2e-scratch", [ENV.githubDriverToken]: "ghp_x" });
   ok(prFull.ok && prFull.cfg.repo === "acme/e2e-scratch" && prFull.cfg.token === "ghp_x", "pr cfg carries the target repo + the reused driver token");
 
-  const { classifyPrMiss } = await import("./e2e/journey.js");
+  const { classifyPrMiss } = await import("../packages/core/scripts/e2e/journey.js");
   ok(classifyPrMiss('repo "acme/x" is not granted to this channel. Allowed: (none). Grant it via a bundle') === "grant-refused", "classifyPrMiss: a fail-closed grant refusal → grant-refused (SKIP with provisioning guidance)");
   ok(classifyPrMiss("the staging push of my-branch failed — checkout the repo first") === "errored", "classifyPrMiss: a push/checkout failure → errored (prefer FAIL)");
   ok(classifyPrMiss("couldn't push your branch to the remote") === "errored", "classifyPrMiss: a couldn't-push reply → errored");
@@ -562,7 +562,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   });
   ok(linForge.ok && linForge.cfg.webhookSecret === "lin-whsec", "linear cfg carries the optional forge secret when present");
 
-  const { signLinearBody, buildAgentSessionEvent } = await import("./e2e/linear-driver.js");
+  const { signLinearBody, buildAgentSessionEvent } = await import("../packages/core/scripts/e2e/linear-driver.js");
   const { signLinearWebhookBody } = await import(`${eveRootDir}/dist/src/public/channels/linear/verify.js`);
   const secret = "lin-e2e-secret";
   const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_009_900_000 });
@@ -597,12 +597,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(notFull.ok && notFull.cfg.webhookSecret === "verif-token" && notFull.cfg.anchorOnTopic === "c-ontopic-1" && notFull.cfg.anchorOnTopic2 === "c-ontopic-2" && notFull.cfg.anchorOffTopic === "c-offtopic", "notionAmbient cfg carries the forge secret + the three anchor ids when they're set");
   ok(notFull.ok && notFull.cfg.botUserId === "bot-user-uuid" && notFull.cfg.workspaceId === "ws-uuid", "notionAmbient cfg carries bot user id (self-loop) + workspace id (envelope)");
 
-  const { buildBlockCommentBody } = await import("./e2e/notion-driver.js");
+  const { buildBlockCommentBody } = await import("../packages/core/scripts/e2e/notion-driver.js");
   const bc = buildBlockCommentBody("block-123", "hi there") as { parent?: { block_id?: string }; rich_text?: { text?: { content?: string } }[] };
   ok(bc.parent?.block_id === "block-123", "buildBlockCommentBody anchors on parent.block_id (mints a fresh per-block discussion)");
   ok(bc.rich_text?.[0]?.text?.content === "hi there", "buildBlockCommentBody carries the comment text as one rich-text item");
 
-  const { signNotionBody, buildCommentCreatedEvent } = await import("./e2e/notion-driver.js");
+  const { signNotionBody, buildCommentCreatedEvent } = await import("../packages/core/scripts/e2e/notion-driver.js");
   const secret = "notion-verif-token";
   const raw = JSON.stringify(buildCommentCreatedEvent({ workspaceId: "ws", commentId: "c1", pageId: "p1" }));
   const sig = signNotionBody(secret, raw);
@@ -612,7 +612,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { buildAuditQuery, hasAuditRow } = await import("./e2e/audit-read.js");
+  const { buildAuditQuery, hasAuditRow } = await import("../packages/core/scripts/e2e/audit-read.js");
   const q = new URLSearchParams(buildAuditQuery({ sinceIso: "2026-03-13T23:30:00.000Z", actions: ["notion.no_reply", "notion.replied"], platform: "notion", limit: 50 }));
   ok(q.get("since") === "2026-03-13T23:30:00.000Z", "audit query carries the since lower bound");
   ok(q.get("actions") === "notion.no_reply,notion.replied", "audit query joins the actions filter as CSV");
@@ -629,7 +629,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { buildTranscriptQuery, transcriptPath, findEvents } = await import("./e2e/transcript-read.js");
+  const { buildTranscriptQuery, transcriptPath, findEvents } = await import("../packages/core/scripts/e2e/transcript-read.js");
   const q = new URLSearchParams(buildTranscriptQuery({ startIndex: 5, limit: 100, idleMs: 2000 }));
   ok(q.get("startIndex") === "5" && q.get("limit") === "100" && q.get("idleMs") === "2000", "transcript query carries startIndex + limit + idleMs");
   ok(buildTranscriptQuery({}) === "", "transcript query omits absent options (a bare full-replay read)");
@@ -646,7 +646,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
-  const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("./e2e/slack-driver.js");
+  const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("../packages/core/scripts/e2e/slack-driver.js");
   const upd = new URLSearchParams(buildChatUpdateBody({ channel: "C1", ts: "1.2", text: "edited" }));
   ok(upd.get("channel") === "C1" && upd.get("ts") === "1.2" && upd.get("text") === "edited", "chat.update body carries channel + ts + new text");
   const up1 = new URLSearchParams(buildUploadUrlBody({ filename: "probe.png", length: 128 }));
@@ -960,7 +960,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
-  const { buildCostReport, renderCostReport } = await import("./e2e/cost.js");
+  const { buildCostReport, renderCostReport } = await import("../packages/core/scripts/e2e/cost.js");
   const rows = [
     { surfaceKey: "slack/T1/C1", model: "test/model-a", calls: 3, inputTokens: 1_000_000, outputTokens: 500_000, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedUsd: 2 },
     { surfaceKey: "discord/G1/C2", model: "test/unpriced", calls: 1, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -976,7 +976,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(lines[lines.length - 1].includes("test/unpriced"), "total line names what it could NOT price");
   ok(lines[0].includes("3 calls") && lines[0].includes("1000000in/500000out"), "slice line shows calls + tokens");
 
-  const { checkExpectedModels } = await import("./e2e/cost.js");
+  const { checkExpectedModels } = await import("../packages/core/scripts/e2e/cost.js");
   const ok1 = checkExpectedModels(rows, ["test/model-a", "test/unpriced"]);
   ok(!ok1.ok && ok1.unexpected.join(",") === "(unstamped)", "checkExpectedModels flags an unstamped row when it's not in the expected set");
   const ok2 = checkExpectedModels(rows, ["test/model-a", "test/unpriced", "(unstamped)"]);
@@ -987,16 +987,16 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
 }
 
 {
-  const { buildUnifiedAuditQuery } = await import("./e2e/audit-read.js");
+  const { buildUnifiedAuditQuery } = await import("../packages/core/scripts/e2e/audit-read.js");
   ok(buildUnifiedAuditQuery({ domain: "e2e-unified" }) === "?domain=e2e-unified", "unified-audit query carries the domain");
   ok(buildUnifiedAuditQuery({ domain: "payments", sinceDays: 7 }) === "?domain=payments&sinceDays=7", "unified-audit query carries the optional sinceDays");
   ok(buildUnifiedAuditQuery({}) === "", "an absent domain yields an EMPTY query — the missing-domain 400 route leg");
 }
 
 {
-  const { defineDomain, assertUnifiedDomainTrust } = await import("../agent/memory/domain.js");
-  const { supervisorGrainFor, unifiedSupervisorToken, unifiedDomainSessionKey } = await import("../agent/channels/unified-supervisor.js");
-  const { definePrincipal, resolvePrincipal, assertPrincipalsValid } = await import("../agent/identity/principals.js");
+  const { defineDomain, assertUnifiedDomainTrust } = await import("@open-everywhere/core/agent/memory/domain.js");
+  const { supervisorGrainFor, unifiedSupervisorToken, unifiedDomainSessionKey } = await import("@open-everywhere/core/agent/channels/unified-supervisor.js");
+  const { definePrincipal, resolvePrincipal, assertPrincipalsValid } = await import("@open-everywhere/core/agent/identity/principals.js");
   const throws = (fn: () => unknown): boolean => {
     try {
       fn();
@@ -1066,9 +1066,9 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     "principals: a double-claimed (platform, id) fails LOUD at config load (an account is exactly one person)",
   );
 
-  const { clusterBackscrollMulti, flattenMultiBackscroll } = await import("../agent/channels/backscroll-cluster.js");
-  const { renderWakeEnvelope } = await import("../agent/channels/wake-envelope.js");
-  type NormalizedMessage = import("../agent/channels/backscroll-cluster.js").NormalizedMessage;
+  const { clusterBackscrollMulti, flattenMultiBackscroll } = await import("@open-everywhere/core/agent/channels/backscroll-cluster.js");
+  const { renderWakeEnvelope } = await import("@open-everywhere/core/agent/channels/wake-envelope.js");
+  type NormalizedMessage = import("@open-everywhere/core/agent/channels/backscroll-cluster.js").NormalizedMessage;
   const NOW_MS = 1_000 * 3_600_000;
   const bmsg = (id: string, hoursAgo: number): NormalizedMessage => ({
     id,

@@ -8,7 +8,7 @@ import { createOrUpdatePullRequest } from "../scm/pr.js";
 import { getGitHubApp } from "../scm/provider.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -119,7 +119,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   const refSha = deps.getBranchSha ?? getBranchSha;
   const mkBranch = deps.createBranch ?? createBranch;
   const openPr = deps.createPr ?? createOrUpdatePullRequest;
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
 
   let branchSha = await refSha({ repo, branch, token });
   if (branchSha === null) {

@@ -1,8 +1,8 @@
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { roleForBinding } from "../access/roles.js";
-import { slackMode, type SurfaceBinding } from "../identity/binding.js";
+import { type SurfaceBinding } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
 import type { Provider, ProviderCredentialType } from "../access/providers.js";
 import { executorHomeOf, vercelConnectorOf } from "../access/providers.js";
@@ -124,13 +124,17 @@ function connectWhere(org: string, teamId: string | undefined, channelId: string
   return { org, platform: "slack", workspace: teamId || "unknown", surface: channelId };
 }
 
+function slackIdPrefixMode(channelId: string | undefined): "dm" | "channel" {
+  return channelId?.startsWith("D") ? "dm" : "channel";
+}
+
 function clickerRole(org: string, teamId: string | undefined, channelId: string, clickerId: string, domains: readonly Domain[]): { isAdmin: boolean; domain?: string } {
   const binding: SurfaceBinding = {
     org,
     platform: "slack",
     workspace: teamId ?? "unknown",
     surface: channelId,
-    mode: slackMode(undefined, channelId),
+    mode: slackIdPrefixMode(channelId),
     visibility: "private",
     trust: "internal",
     principalId: clickerId,
@@ -145,7 +149,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
   const actionId = typeof action?.action_id === "string" ? action.action_id : undefined;
   if (actionId === undefined || !actionId.startsWith(OE_CONNECT_ACTION_PREFIX)) return false;
 
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   try {
     const rest = actionId.slice(OE_CONNECT_ACTION_PREFIX.length);
     const sep = rest.lastIndexOf(":");
@@ -173,7 +177,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
     const startAuth = deps.startAuth ?? defaultConnectorAuthStarter;
 
     if (type === "user-oauth") {
-      if (slackMode(undefined, channelId) !== "dm") {
+      if (slackIdPrefixMode(channelId) !== "dm") {
         await ephemeral(post, channelId, clickerId, "Connecting your *personal* account only works in a DM with me — message me directly and try again.");
         return true;
       }

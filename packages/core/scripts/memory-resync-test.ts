@@ -10,6 +10,10 @@ import { resolvePartition, type Partition } from "../agent/memory/partition.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { HookContext } from "eve/hooks";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

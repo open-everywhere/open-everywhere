@@ -6,10 +6,18 @@ import {
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
 } from "../agent/channels/slack-identity.js";
-import { bindFrom, slackMode, type BindableContext } from "../agent/identity/binding.js";
-import { resolvePartition } from "../agent/memory/partition.js";
-import { resolveAccessFor } from "../agent/access/request.js";
-import { resolveAccess, type EffectiveAccess } from "../agent/access/resolver.js";
+import { slackMode, bindSlack } from "../agent/channels/slack-identity.js";
+import {
+  bindFrom,
+  resolvePartition,
+  resolveAccessFor,
+  resolveAccess,
+  registerIdentityMapper,
+  type BindableContext,
+  type EffectiveAccess,
+} from "@open-everywhere/core/agent/adapter-api.js";
+
+registerIdentityMapper("slack", bindSlack);
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

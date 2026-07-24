@@ -1,9 +1,12 @@
-import { getOperationalStore } from "../operational/provider.js";
-import { deploymentOrg } from "../identity/binding.js";
-import type { SlackAttachmentRow } from "../operational/store.js";
+import {
+  getOperationalStore,
+  deploymentOrg,
+  resolvePartition,
+  registerAttachmentResolver,
+  AttachmentOversizeError,
+  type SlackAttachmentRow,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import { fetchSlackAttachment } from "../access/slack-attachment-fetch.js";
-import { resolvePartition } from "../memory/partition.js";
-import { registerAttachmentResolver, AttachmentOversizeError } from "./attachments.js";
 
 export interface SlackAttachmentRecord {
   readonly urlPrivate: string;
@@ -90,8 +93,6 @@ export function registerSlackAttachmentResolver(): void {
     },
   });
 }
-
-registerSlackAttachmentResolver();
 
 export function _resetSlackAttachmentsForTest(): void {
   registry.clear();

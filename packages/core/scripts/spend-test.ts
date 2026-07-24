@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { periodOf, emptyWindow, addUsage, windowTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
 import type { SpendLimitRow } from "../agent/operational/store.js";
+
+const __slackStubs = await import("./_slack-test-stubs.js");
+__slackStubs.registerSlackFixtureMapper();
+
 import { turnKind } from "../agent/hooks/spend.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 

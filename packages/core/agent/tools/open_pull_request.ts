@@ -21,7 +21,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { currentWindowToken } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
@@ -52,7 +52,7 @@ async function postSessionNote(platform: string, channelId: string, threadTs: st
   body.set("channel", channelId);
   if (threadTs) body.set("thread_ts", threadTs);
   body.set("text", text);
-  await slackForm("chat.postMessage", body.toString()).catch(() => {});
+  await bridgeSlackForm("chat.postMessage", body.toString()).catch(() => {});
 }
 
 export default windowGated("open_pull_request", defineTool({

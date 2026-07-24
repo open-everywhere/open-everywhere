@@ -2,7 +2,6 @@ import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { type BindableContext } from "../identity/binding.js";
 import { resolveGuardedAttachment, AttachmentOversizeError } from "../channels/attachments.js";
-import "../channels/slack-attachments.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 import { capResult } from "../access/result-cap.js";

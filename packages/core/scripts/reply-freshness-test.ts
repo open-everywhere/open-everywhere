@@ -5,6 +5,13 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+import { registerSlackFixtureMapper, registerSlackFixtureManifest, registerSlackFixturePostArm, registerSlackTestBridge } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixtureManifest();
+registerSlackFixturePostArm();
+registerSlackTestBridge();
+
+
 const dir = join(tmpdir(), `open-everywhere-reply-freshness-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");

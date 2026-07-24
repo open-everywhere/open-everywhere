@@ -19,7 +19,10 @@ function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): v
   );
 }
 
-eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack");
+eq(capabilitiesForPlatform("slack"), { midTurnPost: false, reactions: false }, "slack (unregistered in core alone → NONE)");
+const { registerSlackFixtureManifest } = await import("./_slack-test-stubs.js");
+registerSlackFixtureManifest();
+eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack (fixture-registered row)");
 eq(capabilitiesForPlatform("discord"), { midTurnPost: false, reactions: false }, "discord (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("teams"), { midTurnPost: false, reactions: false }, "teams (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: false, reactions: false }, "linear (unregistered in core alone → NONE)");

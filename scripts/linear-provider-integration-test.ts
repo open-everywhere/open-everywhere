@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { capabilitiesForPlatform, readAudit, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 import {
   supportedEntityActionPlatforms,
@@ -19,6 +20,7 @@ delete process.env.OE_PLATFORM;
 process.env.LINEAR_API_KEY = "linear-test-key";
 
 registerLinearProvider();
+registerSlackProvider();
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

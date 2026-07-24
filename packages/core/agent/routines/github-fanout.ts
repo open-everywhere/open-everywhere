@@ -1,5 +1,5 @@
 import type { RouteHandlerArgs } from "eve/channels";
-import slack from "../channels/slack.js";
+import { bridgeSlackChannel } from "../channels/slack-bridge.js";
 import { listAllRoutines } from "./store.js";
 import { matchesEvent, normalizeGithubEvent, eventPrompt, type NormalizedEvent } from "./events.js";
 import { ROUTINE_MARKER } from "./routine.js";
@@ -14,7 +14,8 @@ async function fanOut(ev: NormalizedEvent, receive: RouteHandlerArgs["receive"])
   for (const r of matches) {
     const platform = r.surfaceKey.split("/")[0];
     const channelId = r.target?.["channelId"];
-    if (platform !== "slack" || typeof channelId !== "string") {
+    const slackChannel = bridgeSlackChannel();
+    if (platform !== "slack" || typeof channelId !== "string" || slackChannel === undefined) {
       log(`event ${ev.summary} matched ${r.id} but its surface has no wired channel — skipped`);
       continue;
     }
@@ -24,7 +25,7 @@ async function fanOut(ev: NormalizedEvent, receive: RouteHandlerArgs["receive"])
       principalId: "github:webhook",
       attributes: { [ROUTINE_MARKER.id]: r.id, [ROUTINE_MARKER.surface]: r.surfaceKey, [ROUTINE_MARKER.org]: r.org },
     };
-    await receive(slack, { message: eventPrompt(r, ev), target: { channelId }, auth });
+    await receive(slackChannel, { message: eventPrompt(r, ev), target: { channelId }, auth });
     fired++;
   }
   if (matches.length > 0) log(`event "${ev.summary}": ${matches.length} matched -> ${fired} fired`);

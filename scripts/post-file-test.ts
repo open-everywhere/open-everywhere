@@ -12,6 +12,11 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
+
+const { registerSlackTestBridge, registerSlackFixtureMapper, registerSlackFixtureManifest } = await import("../packages/core/scripts/_slack-test-stubs.js");
+registerSlackTestBridge();
+registerSlackFixtureMapper();
+registerSlackFixtureManifest();
 process.env.DISCORD_BOT_TOKEN = "test-bot-token";
 
 const { resolveWindowGated } = await import("@open-everywhere/core/agent/access/window-gated.js");

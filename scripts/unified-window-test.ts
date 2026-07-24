@@ -50,8 +50,8 @@ import {
   supervisorToken,
   liveSupervisorDeps,
   type SupervisorRouteDeps,
-} from "@open-everywhere/core/agent/channels/slack-events.js";
-import { withSingleWindowDiversion } from "@open-everywhere/core/agent/channels/slack-front.js";
+} from "@open-everywhere/provider-slack/agent/channels/slack-events.js";
+import { withSingleWindowDiversion } from "@open-everywhere/provider-slack/agent/channels/slack-front.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/provider-github/agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "@open-everywhere/provider-github/agent/channels/github-identity.js";
 import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/provider-linear/agent/channels/linear-supervisor.js";
@@ -62,6 +62,7 @@ import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
 import {
@@ -85,7 +86,7 @@ import { isTrustedTeamsServiceUrl } from "@open-everywhere/provider-teams/agent/
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import replyTool from "@open-everywhere/core/agent/tools/reply.js";
-import readSlackChannel from "@open-everywhere/core/agent/tools/read_slack_channel.js";
+import readSlackChannel from "@open-everywhere/provider-slack/agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
 let n = 0;
@@ -103,6 +104,7 @@ const noThrow = (fn: () => unknown, label: string) => {
 };
 
 registerNotionProvider();
+registerSlackProvider();
 registerGithubProvider();
 registerTeamsProvider();
 registerLinearProvider();

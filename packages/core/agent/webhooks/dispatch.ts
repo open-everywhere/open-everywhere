@@ -1,6 +1,5 @@
 import type { RouteHandlerArgs } from "eve/channels";
-import slack from "../channels/slack.js";
-import { confirmChannelInternal } from "../channels/slack-events.js";
+import { bridgeSlackChannel, bridgeConfirmChannelInternal } from "../channels/slack-bridge.js";
 import { NO_REPLY_SENTINEL } from "../channels/turn-delivery.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
@@ -39,7 +38,12 @@ export async function fireWebhook(
   },
 ): Promise<WebhookFireResult> {
   const now = args.now ?? new Date();
-  const confirmInternal = args.confirmInternal ?? confirmChannelInternal;
+  const confirmInternal = args.confirmInternal ?? bridgeConfirmChannelInternal;
+  const slackChannel = bridgeSlackChannel();
+  if (!slackChannel) {
+    emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "failed" });
+    return { fired: false, reason: "no Slack provider registered (registerSlackProvider) — webhook fires target Slack channels" };
+  }
   const [, teamId, channelId] = hook.target.split("/");
   const org = webhookOrg();
   const workspaceKey = `slack/${teamId}`;
@@ -71,7 +75,7 @@ export async function fireWebhook(
     },
   };
 
-  await args.receive(slack, { message: renderWebhookMessage(hook, rawBody), target: { channelId }, auth });
+  await args.receive(slackChannel, { message: renderWebhookMessage(hook, rawBody), target: { channelId }, auth });
   emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });
   return { fired: true };
 }

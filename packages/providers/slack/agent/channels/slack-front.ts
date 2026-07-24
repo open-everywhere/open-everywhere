@@ -25,34 +25,38 @@ import {
   type ParsedMessageEvent,
   type RouteOutcome,
 } from "./slack-events.js";
-import type { SingleWindowMentionPolicy } from "./unified-window.js";
 import {
+  EventDedupe,
+  ThreadFifo,
   getOrCreateDmSeat as liveGetOrCreateDmSeat,
   touchDmSeat as liveTouchDmSeat,
   dmSeatRotationEnabled,
   dmSeatThresholds,
-  type DmSeat,
-} from "./dm-seat.js";
-import { slackForm, transcriptFromHistory } from "./slack-events.js";
-import { generateHandoffNote } from "../model/rotation-handoff.js";
-import type { ChannelSessionRow } from "../operational/store.js";
-import { resolvePartition } from "../memory/partition.js";
-import { persistSlackAttachment } from "./slack-attachments.js";
-import { isThreadEngaged } from "./engagement.js";
-import { divertInboundToUnifiedWindow } from "./unified.js";
-import { ambientSupervisorEnabled } from "../memory/domain.js";
-import { getConfig } from "../access/config.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { OE_APPROVAL_PREFIX, handleApprovalPayload as liveHandleApprovalPayload } from "../approvals/flow.js";
-import {
+  generateHandoffNote,
+  resolvePartition,
+  isThreadEngaged,
+  divertInboundToUnifiedWindow,
+  ambientSupervisorEnabled,
+  getConfig,
+  getOperationalStore,
+  OE_APPROVAL_PREFIX,
+  handleApprovalPayload as liveHandleApprovalPayload,
   OE_SETKEY_ACTION_PREFIX,
   OE_SETKEY_MODAL_CALLBACK,
   handleSetKeyClick as liveHandleSetKeyClick,
   handleSetKeyViewSubmission as liveHandleSetKeyViewSubmission,
+  OE_CONNECT_ACTION_PREFIX,
+  handleConnectClick as liveHandleConnectClick,
+  buildRecord,
+  enqueue as enqueueLogRecord,
+  flushLogShip,
+  type SingleWindowMentionPolicy,
+  type DmSeat,
+  type ChannelSessionRow,
   type SetKeyViewResult,
-} from "../credentials/intake.js";
-import { OE_CONNECT_ACTION_PREFIX, handleConnectClick as liveHandleConnectClick } from "../connections/connector-card.js";
-import { buildRecord, enqueue as enqueueLogRecord, flushLogShip } from "../observability/ship.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { slackForm, transcriptFromHistory } from "./slack-events.js";
+import { persistSlackAttachment } from "./slack-attachments.js";
 
 type RouteHandler = (req: Request, args: RouteHandlerArgs) => Promise<Response>;
 
@@ -226,65 +230,7 @@ export function verifySlackSignature(
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export class EventDedupe {
-  private readonly seenAt = new Map<string, number>();
-  constructor(private readonly ttlMs = 10 * 60_000, private readonly max = 5_000) {}
-
-  seen(key: string, nowMs: number = Date.now()): boolean {
-    const at = this.seenAt.get(key);
-    if (at === undefined) return false;
-    if (nowMs - at > this.ttlMs) {
-      this.seenAt.delete(key);
-      return false;
-    }
-    return true;
-  }
-
-  mark(key: string, nowMs: number = Date.now()): void {
-    this.seenAt.set(key, nowMs);
-    if (this.seenAt.size > this.max) this.prune(nowMs);
-  }
-
-  private prune(nowMs: number): void {
-    for (const [k, t] of this.seenAt) if (nowMs - t > this.ttlMs) this.seenAt.delete(k);
-    if (this.seenAt.size > this.max) {
-      const drop = this.seenAt.size - this.max;
-      let i = 0;
-      for (const k of this.seenAt.keys()) {
-        if (i++ >= drop) break;
-        this.seenAt.delete(k);
-      }
-    }
-  }
-}
-
-export class ThreadFifo {
-  private readonly tails = new Map<string, Promise<void>>();
-
-  constructor(private readonly onFailure?: (key: string, err: unknown) => void) {}
-
-  enqueue(key: string, run: () => Promise<void>): Promise<void> {
-    const prev = this.tails.get(key) ?? Promise.resolve();
-    const next = prev
-      .then(() => run())
-      .catch((err) => {
-        console.warn(`[open-everywhere:slack-front] wake delivery failed (${key}): ${String(err)}`);
-        try {
-          this.onFailure?.(key, err);
-        } catch {
-        }
-      });
-    this.tails.set(key, next);
-    void next.finally(() => {
-      if (this.tails.get(key) === next) this.tails.delete(key);
-    });
-    return next;
-  }
-
-  get activeThreads(): number {
-    return this.tails.size;
-  }
-}
+export { EventDedupe, ThreadFifo };
 
 let botIdentityPromise: Promise<{ readonly userId?: string; readonly botId?: string }> | undefined;
 

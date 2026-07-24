@@ -13,6 +13,10 @@ delete process.env.OE_SOURCE_SCOPED_TOOLS;
 import { replayStepNames } from "../agent/access/window-gated.js";
 import { registerBrowserToolkit } from "../agent/access/browser-toolkit.js";
 
+import { registerSlackFixtureMapper, registerSlackFixtureManifest } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixtureManifest();
+
 registerBrowserToolkit({
   browser_navigate: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
   browser_screenshot: { description: "fake", inputSchema: {}, execute: () => ({ ok: true }) },
@@ -43,8 +47,6 @@ const CASES: readonly ToolCase[] = [
   { slug: "react", entryKey: "_single", ctx: slackCtx },
   { slug: "read_channel", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
   { slug: "read_thread", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
-  { slug: "read_slack_channel", entryKey: "_single", ctx: slackCtx },
-  { slug: "read_slack_thread", entryKey: "_single", ctx: slackCtx },
   { slug: "add_label", entryKey: "_single", ctx: githubCtx },
   { slug: "set_state", entryKey: "_single", ctx: githubCtx },
   { slug: "assign", entryKey: "_single", ctx: githubCtx },

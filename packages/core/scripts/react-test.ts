@@ -11,6 +11,11 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 
+const { registerSlackTestBridge, registerSlackFixtureMapper, registerSlackFixtureManifest } = await import("./_slack-test-stubs.js");
+registerSlackTestBridge();
+registerSlackFixtureMapper();
+registerSlackFixtureManifest();
+
 const react = (await import("../agent/tools/react.js")).default;
 const { readAudit } = await import("../agent/audit/audit.js");
 const { markReactedThisTurn, consumeReactedThisTurn } = await import("../agent/channels/react-signal.js");

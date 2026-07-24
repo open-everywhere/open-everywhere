@@ -242,6 +242,20 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
   await import("../agent/approvals/flow.js");
   const { default: cancelRoutineTool } = await import("../agent/tools/cancel_routine.js");
 
+  const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+  registerIdentityMapper("slack", (c) => {
+    const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+    const channelId = a["channel_id"];
+    return {
+      workspace: a["team_id"],
+      surface: channelId,
+      mode: "channel",
+      trust: "internal",
+      principalId: c.session?.auth?.current?.principalId || a["user_id"],
+      target: channelId ? { channelId } : undefined,
+    };
+  });
+
   const ctx = {
     channel: { kind: "slack" },
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1", principalType: "slack-user" } } },
@@ -254,9 +268,20 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
   try { await cancelRoutineTool.execute({ id: "r-nope" } as never, ctx); } catch { threwMissing = true; }
   ok(threwMissing, "cancel_routine: refuses a nonexistent id up front (no card wasted)");
 
-  process.env.SLACK_BOT_TOKEN = "xoxb-test";
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0003" }) })) as unknown as typeof fetch;
+  const { registerSlackBridge, _resetSlackBridgeForTest } = await import("../agent/channels/slack-bridge.js");
+  registerSlackBridge({
+    form: async () => ({ ok: true, ts: "1700000000.0003" }),
+    readCall: async () => {
+      throw new Error("not wired in this test");
+    },
+    fetchUserDisplayName: async () => undefined,
+    fetchChannelDisplayName: async () => undefined,
+    botDisplayName: async () => undefined,
+    confirmChannelInternal: async () => false,
+    partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
+    readableChannelList: () => [],
+    channel: {} as never,
+  });
   try {
     const proposed = (await cancelRoutineTool.execute({ id: cancelId } as never, ctx)) as { pending: boolean; id: string };
     ok(proposed.pending === true && proposed.id === cancelId, "cancel_routine: proposes (card posted, pending) instead of cancelling on the spot");
@@ -273,8 +298,7 @@ ok((await store.removeRoutine(p as never, made.id)) === false, "store: removing 
     const again = await kind.execute({ org: cp.org, partition: cp as never, surfaceKey: cp.surfaceKey, id: cancelId, description: "every 30 min" }, "U_CONFIRMER");
     ok(/nothing to cancel/.test(again), "routine.cancel execute: a target already gone reports cleanly (no throw)");
   } finally {
-    globalThis.fetch = realFetch;
-    delete process.env.SLACK_BOT_TOKEN;
+    _resetSlackBridgeForTest();
   }
 }
 

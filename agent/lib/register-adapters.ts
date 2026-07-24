@@ -14,7 +14,6 @@ import {
   emitTelemetry,
   getOperationalStore,
   bootVerifyAuditChainTail,
-  registerSlackGovernanceMembers,
   registerOperationalPglite,
   onVercel,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -24,6 +23,7 @@ import { registerGithubProvider } from "@open-everywhere/provider-github/agent/r
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
 
@@ -64,6 +64,7 @@ registerGithubProvider();
 registerTeamsProvider();
 registerLinearProvider();
 registerDiscordProvider();
+registerSlackProvider();
 
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&
@@ -81,8 +82,6 @@ if (
 }
 
 registerAuditDropCounter((action, platform) => emitTelemetry("oe.audit.dropped", { "oe.action": action, "oe.platform": platform }));
-
-registerSlackGovernanceMembers();
 
 setBlobPutter(vercelBlobPutter);
 

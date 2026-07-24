@@ -3,7 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import type { Approval } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { callSlackRead } from "../channels/slack-read.js";
+import { bridgeSlackReadCall } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
@@ -90,7 +90,7 @@ async function postTextToSlack(ctx: BindableContext, text: string): Promise<void
   }
   const body: Record<string, string> = { channel: channelId, text };
   if (binding.threadTs) body.thread_ts = binding.threadTs;
-  await callSlackRead("chat.postMessage", body);
+  await bridgeSlackReadCall("chat.postMessage", body);
 }
 
 async function postTextToDiscord(ctx: BindableContext, text: string): Promise<void> {
@@ -120,7 +120,7 @@ async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFi
   }
   const uploaded: Array<{ id: string; title: string }> = [];
   for (const file of files) {
-    const res = await callSlackRead("files.getUploadURLExternal", { filename: file.filename, length: file.bytes.byteLength });
+    const res = await bridgeSlackReadCall("files.getUploadURLExternal", { filename: file.filename, length: file.bytes.byteLength });
     const uploadUrl = typeof res.upload_url === "string" ? res.upload_url : undefined;
     const fileId = typeof res.file_id === "string" ? res.file_id : undefined;
     if (!uploadUrl || !fileId) {
@@ -140,7 +140,7 @@ async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFi
   };
   if (binding.threadTs) complete.thread_ts = binding.threadTs;
   if (comment) complete.initial_comment = comment;
-  await callSlackRead("files.completeUploadExternal", complete);
+  await bridgeSlackReadCall("files.completeUploadExternal", complete);
 }
 
 async function postFilesToDiscord(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<void> {

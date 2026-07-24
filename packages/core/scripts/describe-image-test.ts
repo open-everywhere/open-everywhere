@@ -9,13 +9,6 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 
 import describeImage, { inferImageMime, confineToWorkspacePath } from "../agent/tools/describe_image.js";
 import { registerImageDescriber, _resetImageDescriberForTest, type ImageDescriber } from "../agent/model/vision.js";
-import { parseSlackFiles } from "../agent/channels/slack-events.js";
-import {
-  registerSlackAttachment,
-  resolveSlackAttachment,
-  registerSlackAttachmentResolver,
-  _resetSlackAttachmentsForTest,
-} from "../agent/channels/slack-attachments.js";
 import { registerAttachmentResolver, _resetAttachmentPlaneForTest } from "../agent/channels/attachments.js";
 import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
@@ -69,19 +62,6 @@ ok(inferImageMime("a.JPG") === "image/jpeg", "inferImageMime: .JPG (case-insensi
 ok(inferImageMime("https://x.test/a.webp?v=1#frag") === "image/webp", "inferImageMime: strips query/fragment before the extension");
 ok(inferImageMime("doc.pdf") === undefined, "inferImageMime: .pdf → undefined (unsupported)");
 ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → undefined");
-
-{
-  const refs = parseSlackFiles([
-    { id: "F1", name: "a.png", mimetype: "image/png", url_private: "https://files.slack.test/F1" },
-    { id: "F2", name: "b.pdf", mimetype: "application/pdf", url_private: "https://files.slack.test/F2" },
-    { nothing: true },
-    "junk",
-  ]);
-  ok(refs.length === 2, "parseSlackFiles: keeps well-formed entries, drops empty/non-object");
-  ok(refs[0].kind === "image" && refs[0].id === "F1" && refs[0].url === "https://files.slack.test/F1", "parseSlackFiles: an image mimetype → kind image, with id/url");
-  ok(refs[1].kind === "file" && refs[1].mimeType === "application/pdf", "parseSlackFiles: a non-image mimetype → kind file");
-  ok(parseSlackFiles(undefined).length === 0 && parseSlackFiles("x").length === 0, "parseSlackFiles: non-array → []");
-}
 
 {
   const sb = { resolvePath: eveResolvePath };
@@ -172,23 +152,6 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
 }
 
 {
-  _resetSlackAttachmentsForTest();
-  _resetAttachmentPlaneForTest();
-  registerSlackAttachmentResolver();
-  registerSlackAttachment("F_KNOWN", { urlPrivate: "https://files.slack.com/files-pri/T/F_KNOWN/a.png", mimeType: "image/png", teamId: "T1" });
-  const rec = resolveSlackAttachment("F_KNOWN");
-  ok(rec?.urlPrivate === "https://files.slack.com/files-pri/T/F_KNOWN/a.png" && rec?.mimeType === "image/png", "registry: a registered file id resolves to its event url_private + mime");
-  ok(rec?.platform === "slack", "registry: the record is stamped platform 'slack' at ingest (attachment-plane provenance)");
-  ok(resolveSlackAttachment("F_NOPE") === undefined, "registry: an unregistered file id resolves to undefined (→ fail closed)");
-  registerImageDescriber({ describe: async () => ({ description: "should never run" }) });
-  const out = await tool.execute({ source: { attachmentId: "F_NOPE" } }, ctx);
-  ok(out.ok === false && /no attachment with id "F_NOPE"/.test(out.message ?? ""), "describe_image: unknown attachmentId → fail-closed (no fetch, no describe), never a guessed description");
-  _resetImageDescriberForTest();
-  _resetSlackAttachmentsForTest();
-  _resetAttachmentPlaneForTest();
-}
-
-{
   let captured: { bytes: Uint8Array; mimeType: string } | undefined;
   const capture: ImageDescriber = {
     describe: async ({ bytes, mimeType }) => {
@@ -221,4 +184,4 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   _resetImageDescriberForTest();
 }
 
-console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · parseSlackFiles/inferImageMime/confineToWorkspacePath)`);
+console.log(`✓ describe-image: ${n} assertions passed (untrusted wrap+defang+taint · ZDR fail-closed · no-describer/unsupported fail-closed · attachment-plane route+fail-closed+2nd-platform · path sandbox read+confine+fail-closed · inferImageMime/confineToWorkspacePath — slack legs in @open-everywhere/provider-slack)`);

@@ -4,6 +4,8 @@ import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { roleForBinding, resolveRole, requireOrgAdmin, requireDomainAdminOrOrg } from "../agent/access/roles.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

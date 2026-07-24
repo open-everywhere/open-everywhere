@@ -1,10 +1,14 @@
 import { callSlackApi } from "eve/channels/slack";
-import { getConfig } from "../access/config.js";
-import { domainForChannel } from "../memory/domain.js";
-import { resolvePartition } from "../memory/partition.js";
-import type { BindableContext } from "../identity/binding.js";
+import {
+  getConfig,
+  domainForChannel,
+  resolvePartition,
+  ChannelScopeError,
+  type BindableContext,
+  type RenderedLine,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
-export class ChannelScopeError extends Error {}
+export { ChannelScopeError };
 
 function channelIdFromKey(key: string): string | null {
   const parts = key.split("/");
@@ -74,3 +78,22 @@ export function renderMessages(raw: unknown, opts: { oldestFirst?: boolean } = {
   if (opts.oldestFirst === false) out.reverse();
   return out;
 }
+
+const SLACK_CHANNEL_DEFAULT_LIMIT = 50;
+const SLACK_THREAD_DEFAULT_LIMIT = 100;
+
+export type SlackReadCall = typeof callSlackRead;
+
+export const slackReadAdapter = {
+  platform: "slack" as const,
+  async readChannel(ctx: BindableContext, channel: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
+    assertChannelAllowed(ctx, channel);
+    const res = await call("conversations.history", { channel, limit: limit ?? SLACK_CHANNEL_DEFAULT_LIMIT, inclusive: true });
+    return renderMessages(res.messages, { oldestFirst: false });
+  },
+  async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, call: SlackReadCall = callSlackRead): Promise<readonly RenderedLine[]> {
+    assertChannelAllowed(ctx, channel);
+    const res = await call("conversations.replies", { channel, ts: threadTs, limit: limit ?? SLACK_THREAD_DEFAULT_LIMIT });
+    return renderMessages(res.messages, { oldestFirst: true });
+  },
+};

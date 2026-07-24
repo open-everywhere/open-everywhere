@@ -4,6 +4,10 @@ import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import { resolveAnalyticsScope, isAmbientNonAddressedTurn } from "../agent/access/analytics-scope.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

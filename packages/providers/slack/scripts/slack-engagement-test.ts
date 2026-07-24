@@ -1,10 +1,17 @@
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
-import { registerConfig, getConfig } from "../agent/access/config.js";
-import { defineDomain } from "../agent/memory/domain.js";
-import { getOperationalStore } from "../agent/operational/provider.js";
-import { isStopRequest, shouldDeliverReply, classifyParticipation, type ParticipationSignals } from "../agent/channels/engagement.js";
+import {
+  registerConfig,
+  getConfig,
+  defineDomain,
+  getOperationalStore,
+  registerIdentityMapper,
+  isStopRequest,
+  shouldDeliverReply,
+  classifyParticipation,
+  type ParticipationSignals,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import {
   parseMessageEvent,
   routeMessageEvent,
@@ -44,18 +51,21 @@ import {
   SUPERVISOR_ROTATE_QUIET_GAP_MS,
   SUPERVISOR_ROTATE_TURN_BUDGET,
   SUPERVISOR_ROTATE_TOKEN_BUDGET,
-} from "../agent/channels/turn-delivery.js";
-import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "@open-everywhere/core/agent/adapter-api.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";
-import { _resetOperationalDbForTest } from "../agent/operational/sqlite.js";
-import { resolvePartition } from "../agent/memory/partition.js";
-import { OE_APPROVAL_PREFIX } from "../agent/approvals/flow.js";
+import { _resetOperationalDbForTest } from "@open-everywhere/core/agent/adapter-api.js";
+import { resolvePartition } from "@open-everywhere/core/agent/adapter-api.js";
+import { OE_APPROVAL_PREFIX } from "@open-everywhere/core/agent/adapter-api.js";
 import { allowedChannelIds, assertChannelAllowed, ChannelScopeError, readableChannelList } from "../agent/channels/slack-read.js";
-import type { BindableContext } from "../agent/identity/binding.js";
-import type { WakeMessageInput } from "../agent/channels/wake-envelope.js";
-import { renderContext } from "../agent/channels/context-render.js";
+import { bindSlack } from "../agent/channels/slack-identity.js";
+import type { BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import type { WakeMessageInput } from "@open-everywhere/core/agent/adapter-api.js";
+import { renderContext } from "@open-everywhere/core/agent/adapter-api.js";
 import type { WakeBackscrollLines } from "../agent/channels/slack-wake-backscroll.js";
+
+registerIdentityMapper("slack", bindSlack);
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

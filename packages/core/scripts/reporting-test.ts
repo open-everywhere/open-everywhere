@@ -39,6 +39,10 @@ import sessionCostTool from "../agent/tools/session_cost.js";
 import spendReportTool from "../agent/tools/spend_report.js";
 import usageReportTool from "../agent/tools/usage_report.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

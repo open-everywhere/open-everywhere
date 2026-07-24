@@ -6,6 +6,7 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { setRegisteredProviders, capabilitiesForPlatform, readAudit } from "@open-everywhere/core/agent/adapter-api.js";
 
 const dir = join(tmpdir(), `open-everywhere-notion-integration-${process.pid}`);
@@ -15,6 +16,7 @@ delete process.env.OE_PLATFORM;
 process.env.NOTION_CHANNEL_API_KEY = "ntn-test-key";
 
 registerNotionProvider();
+registerSlackProvider();
 setRegisteredProviders([
   {
     name: "notion",

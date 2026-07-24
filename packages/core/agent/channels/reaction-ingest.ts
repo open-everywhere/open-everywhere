@@ -50,8 +50,6 @@ export function registeredReactionSurfaces(): readonly string[] {
   return [...REACTION_SURFACE_REGISTRY];
 }
 
-registerReactionSurface("slack" satisfies ReactionSurface);
-
 export interface IngestedReaction {
   readonly surface: ReactionSurface;
   readonly verb: ReactionVerb;

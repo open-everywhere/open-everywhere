@@ -6,10 +6,39 @@ __regDiscord();
 import { routineMarker, type Routine } from "@open-everywhere/core/agent/routines/routine.js";
 import { WATCH_SILENCE_SENTINEL, WATCH_STATE_TOOL } from "@open-everywhere/core/agent/routines/watch.js";
 import { NO_REPLY_SENTINEL } from "@open-everywhere/core/agent/channels/turn-delivery.js";
-import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { bindFrom, registerIdentityMapper, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
 import { registerConfig, getConfig } from "@open-everywhere/core/agent/access/config.js";
 import { defineDomain, domainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
+import { registerSlackBridge } from "@open-everywhere/core/agent/channels/slack-bridge.js";
+
+const SENTINEL_SLACK_CHANNEL = {} as never;
+registerSlackBridge({
+  form: async () => ({ ok: true, ts: "1700000000.0001" }),
+  readCall: async () => {
+    throw new Error("not wired in this test");
+  },
+  fetchUserDisplayName: async () => undefined,
+  fetchChannelDisplayName: async () => undefined,
+  botDisplayName: async () => undefined,
+  confirmChannelInternal: async () => false,
+  partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
+  readableChannelList: () => [],
+  channel: SENTINEL_SLACK_CHANNEL,
+});
+registerIdentityMapper("slack", (c) => {
+  const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+  const channelId = a["channel_id"];
+  const confirmedInternal = a["is_ext_shared"] === "false" && a["trust_checked"] === "true";
+  return {
+    workspace: a["team_id"],
+    surface: channelId,
+    mode: "channel",
+    trust: confirmedInternal ? "internal" : "external",
+    principalId: c.session?.auth?.current?.principalId || a["user_id"] || undefined,
+    target: channelId ? { channelId } : undefined,
+  };
+});
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

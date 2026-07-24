@@ -20,6 +20,10 @@ import { renderRolePrompt } from "../agent/instructions/access.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import type { Partition } from "../agent/memory/partition.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

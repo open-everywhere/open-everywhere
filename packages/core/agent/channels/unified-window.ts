@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { encodeSources } from "./window-sources.js";
-import { registerWakeOriginCodec, wakeOriginCodec } from "./wake-origin-codec.js";
+import { wakeOriginCodec } from "./wake-origin-codec.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -197,7 +197,3 @@ export interface UnifiedWindowWake {
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
 }
-
-import { wakeOriginCodecs } from "./wake-origin-codecs.js";
-
-registerWakeOriginCodec("slack", wakeOriginCodecs.slack);

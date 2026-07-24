@@ -19,6 +19,10 @@ import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
 import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
 import { renderSupervisorPersona } from "../agent/instructions/access.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

@@ -4,6 +4,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { SpendCheckpoints } from "../agent/spend/checkpoint.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {
@@ -222,10 +226,14 @@ passed++;
 {
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "tools");
   const guarded = ["open_pull_request", "create_skill", "create_routine", "remember", "forget", "request_access", "cancel_routine", "delete_skill"];
-  const reads = ["reply", "react", "no_reply", "read_slack_channel", "read_slack_thread", "session_cost", "spend_report", "check_pr_status"];
+  const reads = ["reply", "react", "no_reply", "session_cost", "spend_report", "check_pr_status"];
+  const slackToolsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "providers", "slack", "agent", "tools");
+  const slackReads = ["read_slack_channel", "read_slack_thread"];
   const has = (name: string) => readFileSync(join(toolsDir, `${name}.ts`), "utf8").includes("requireSessionContinuation(");
+  const hasSlack = (name: string) => readFileSync(join(slackToolsDir, `${name}.ts`), "utf8").includes("requireSessionContinuation(");
   for (const t of guarded) ok(has(t), `checkpoint guard is wired into the consequential tool ${t}`);
   for (const t of reads) ok(!has(t), `checkpoint guard is NOT wired into the read/reply tool ${t} (reads stay unaffected)`);
+  for (const t of slackReads) ok(!hasSlack(t), `checkpoint guard is NOT wired into the bundle read tool ${t} (reads stay unaffected)`);
   const consequenceSrc = readFileSync(join(toolsDir, "..", "access", "consequence.ts"), "utf8");
   const memberTools = [...consequenceSrc.matchAll(/^\s{2}(\w+):\s*member\(/gmu)].map((m) => m[1]);
   ok(memberTools.length >= 8, `consequence registry lists the gate:member tools (${memberTools.length})`);

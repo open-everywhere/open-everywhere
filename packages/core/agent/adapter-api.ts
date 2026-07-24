@@ -113,7 +113,8 @@ export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
 export type { AuditInput } from "./audit/audit.js";
 export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
-export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
+export { registerGovernanceMemberSupplier, _resetGovernanceMemberSupplierForTest } from "./access/audience-floor.js";
+export type { RoomRoster, GovernanceMemberSupplier } from "./access/audience-floor.js";
 
 export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, currentTurnIssue } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
@@ -158,8 +159,8 @@ export type { WindowGrain } from "./identity/binding.js";
 
 export { registerReadAdapter, resolveReadAdapter, READ_ADAPTERS, SUPPORTED_READ_PLATFORMS, supportedReadPlatforms } from "./channels/channel-read.js";
 export type { ReadAdapter } from "./channels/channel-read.js";
-export { ChannelScopeError } from "./channels/slack-read.js";
-export { EventDedupe, ThreadFifo } from "./channels/slack-front.js";
+export { ChannelScopeError } from "./channels/read-scope-error.js";
+export { EventDedupe, ThreadFifo } from "./channels/front-queue.js";
 
 export { registerReactionSurface, isRegisteredReactionSurface } from "./channels/reaction-ingest.js";
 
@@ -263,6 +264,93 @@ export { assertSurfaceAllowed } from "./channels/channel-read.js";
 export type { RenderedLine } from "./channels/channel-read.js";
 
 export type { Trust } from "./identity/binding.js";
+
+export { registerSlackBridge, _resetSlackBridgeForTest, slackBridge } from "./channels/slack-bridge.js";
+export type { SlackBridge, SlackFormFn, SlackReadCallFn } from "./channels/slack-bridge.js";
+
+export { markThreadStopped, shouldDeliverReply, classifyParticipation, STOP_ACK_COPY } from "./channels/engagement.js";
+export type { ReplyDecision, ParticipationSignals } from "./channels/engagement.js";
+
+export { resolveWakeTrust, backscrollTrustResolver } from "./identity/wake-trust.js";
+
+export { ingestUntrusted } from "./access/untrusted.js";
+export { genericReadVerbsEnabled } from "./access/source-scoped-mount.js";
+
+export { awarenessWakeEnabled, statusVerbsFor, DEFAULT_STATUS_VERBS } from "./memory/domain.js";
+
+export type { EngagementRow, ChannelSessionRow, SlackAttachmentRow } from "./operational/store.js";
+
+export {
+  isSurfaceOnboarded,
+  markSurfaceOnboarded,
+  extractPinnedInstructions,
+  introMessage,
+  instructionBullet,
+  ONBOARDED_MARKER,
+} from "./onboarding/onboarding.js";
+
+export { consumeNoReplyThisTurn } from "./channels/no-reply-signal.js";
+export { consumeReactedThisTurn } from "./channels/react-signal.js";
+
+export { MAX_MESSAGES } from "./channels/context-render.js";
+
+export { generateHandoffNote, handoffPrompt, clampHandoffNote, HANDOFF_NOTE_MAX_CHARS } from "./model/rotation-handoff.js";
+
+export type { WakeAttachment, WakeParticipant } from "./channels/wake-envelope.js";
+export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";
+
+export { registeredReactionSurfaces } from "./channels/reaction-ingest.js";
+export type { IngestedReaction } from "./channels/reaction-ingest.js";
+
+export { isAllowedSlackDriver, parseDriverAllowlist } from "./testing/driver-allowlist.js";
+
+export { STATUS_REACTION, renderPinned, isPinnedStatusMessage } from "./status/status.js";
+export type { ReactionState } from "./status/status.js";
+
+export { SURFACE, tierId } from "./memory/store.js";
+export { getProvider, providerById } from "./memory/provider.js";
+export { upsertUnderSection } from "./memory/markdown.js";
+export { planFor } from "./memory/resolve.js";
+
+export { getOrCreateDmSeat, touchDmSeat, dmSeatRotationEnabled, dmSeatThresholds } from "./channels/dm-seat.js";
+export type { DmSeat } from "./channels/dm-seat.js";
+
+export { divertInboundToUnifiedWindow } from "./channels/unified.js";
+
+export { OE_APPROVAL_PREFIX, handleApprovalPayload } from "./approvals/flow.js";
+export {
+  OE_SETKEY_ACTION_PREFIX,
+  OE_SETKEY_MODAL_CALLBACK,
+  handleSetKeyClick,
+  handleSetKeyViewSubmission,
+} from "./credentials/intake.js";
+export type { SetKeyViewResult } from "./credentials/intake.js";
+export { OE_CONNECT_ACTION_PREFIX, handleConnectClick } from "./connections/connector-card.js";
+
+export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
+
+export { parseSlackCommandText } from "./commands/core.js";
+
+export { assertSafeFetchUrl, setHostEgressLookup } from "./access/host-egress.js";
+
+export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
+
+export { registeredProjectionNames } from "./access/untrusted-projection.js";
+
+export { registerQuickstartSurfaceGoal } from "./ops/quickstart.js";
+export type { SurfaceGoalStep, PlanStep } from "./ops/quickstart.js";
+
+export { _resetOperationalDbForTest } from "./operational/sqlite.js";
+
+export { resolveAccessFor } from "./access/request.js";
+export { resolveAccess } from "./access/resolver.js";
+export type { EffectiveAccess } from "./access/resolver.js";
+export { defineBundle, defineBinding } from "./access/bundle.js";
+
+export { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TURN_BUDGET, SUPERVISOR_ROTATE_TOKEN_BUDGET } from "./channels/turn-delivery.js";
+
+export { bindBridged } from "./identity/binding.js";
+export { bridgedContext } from "./identity/binding-bridge.js";
 
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";

@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 const dir = join(tmpdir(), `open-everywhere-ticket-verbs-tools-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");

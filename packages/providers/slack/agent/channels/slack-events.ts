@@ -1,38 +1,74 @@
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
-import { resolvePartition, domainKeyOf, type Partition } from "../memory/partition.js";
-import { resolveWakeTrust, backscrollTrustResolver } from "../identity/wake-trust.js";
-import { bindFrom, slackMode, type BindableContext } from "../identity/binding.js";
-import { getConfig } from "../access/config.js";
-import { ingestUntrusted } from "../access/untrusted.js";
-import { nameDropWakeEnabled, engagementTierFor, ambientSupervisorEnabled } from "../memory/domain.js";
-import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
-import { mintWakeId, singleWindowMentionPolicy, type SingleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
-import { isThreadEngaged, markThreadEngaged, getThreadEngagement, disengageThread, markThreadStopped, isStopRequest, STOP_ACK_COPY, shouldDeliverReply, type ReplyDecision } from "./engagement.js";
-import type { EngagementRow, ChannelSessionRow } from "../operational/store.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { postOnce, outboundKey } from "../operational/post-once.js";
-import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
-import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
-import { registerGovernanceMemberSupplier, type RoomRoster } from "../access/audience-floor.js";
-import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
+import {
+  resolvePartition,
+  domainKeyOf,
+  resolveWakeTrust,
+  backscrollTrustResolver,
+  bindFrom,
+  getConfig,
+  ingestUntrusted,
+  nameDropWakeEnabled,
+  engagementTierFor,
+  ambientSupervisorEnabled,
+  supervisorGrainFor,
+  mintRotationToken,
+  grainUsesUnifiedWindow,
+  mintWakeId,
+  singleWindowMentionPolicy,
+  isThreadEngaged,
+  markThreadEngaged,
+  getThreadEngagement,
+  disengageThread,
+  markThreadStopped,
+  isStopRequest,
+  STOP_ACK_COPY,
+  shouldDeliverReply,
+  getOperationalStore,
+  postOnce,
+  outboundKey,
+  isSurfaceOnboarded,
+  markSurfaceOnboarded,
+  registerGovernanceMemberSupplier,
+  consumeNoReplyThisTurn,
+  classifySessionSendError,
+  generateHandoffNote,
+  renderWake,
+  mkMessageTrigger,
+  NO_REPLY_SENTINEL,
+  PREFER_NO_REPLY_TOOL,
+  type Partition,
+  type BindableContext,
+  type SupervisorGrain,
+  type SingleWindowMentionPolicy,
+  type UnifiedWindowWake,
+  type ReplyDecision,
+  type EngagementRow,
+  type ChannelSessionRow,
+  type RoomRoster,
+  type ContextLine,
+  type WakeAttachment,
+  type WakeMessageInput,
+  type WakeParticipant,
+  type WakeTrust,
+  type NormalizedWake,
+  type WakeEngagementTier,
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
-import type { ContextLine } from "./context-render.js";
-import { classifySessionSendError } from "./session-death.js";
-import { generateHandoffNote } from "../model/rotation-handoff.js";
-import { type WakeAttachment, type WakeMessageInput, type WakeParticipant, type WakeTrust } from "./wake-envelope.js";
-import { renderWake, mkMessageTrigger, NO_REPLY_SENTINEL, PREFER_NO_REPLY_TOOL, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
-import { nameDropPattern, shouldRotate, type FinalMessageAction } from "./turn-delivery.js";
 import {
+  nameDropPattern,
+  shouldRotate,
   buildIngestedReaction,
   ingestReaction,
   liveReactionSink,
+  isAllowedSlackDriver,
+  type FinalMessageAction,
   type ReactionSinkDeps,
   type ReactionIngestOutcome,
   type ReactionVerb,
-} from "./reaction-ingest.js";
-import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface SlackEventEnvelope {
   readonly type?: string;

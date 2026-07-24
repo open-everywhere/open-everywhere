@@ -10,39 +10,57 @@ import {
   channelFactsFromInfo,
   channelFactsFromRaw,
   partnerFactsFromInfo,
+  slackMode,
   type ChannelFacts,
   type OpenEverywhereSlackAuth,
 } from "./slack-identity.js";
-import { resolvePartition, type Partition } from "../memory/partition.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { postOnce, outboundKey } from "../operational/post-once.js";
-import { statusVerbsFor } from "../memory/domain.js";
-import { getConfig } from "../access/config.js";
-import { loadConversationContext } from "./slack-context.js";
-import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
-import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
-import { finalMessageActionForTurn, isBareStop, supervisorTextDelivery, isSupervisorProseLeak } from "./turn-delivery.js";
-import { capabilitiesForPlatform } from "../identity/capabilities.js";
-import { consumeCardPostedThisTurn } from "../approvals/card-signal.js";
-import { consumeReactedThisTurn } from "./react-signal.js";
-import { consumeRepliedThisTurn } from "./reply-signal.js";
-import { postTerminalProse } from "./reply-post.js";
-import { markThreadEngaged, disengageThread, getThreadEngagement, bumpThreadSilentStreak, isStopRequest, STOP_ACK_COPY, WARM_SILENT_LIMIT } from "./engagement.js";
-import { SURFACE, tierId } from "../memory/store.js";
-import { getProvider, providerById } from "../memory/provider.js";
-import { upsertUnderSection } from "../memory/markdown.js";
-import { slackMode, bindFrom, type BindableContext } from "../identity/binding.js";
-import { isAllowedSlackDriver } from "../testing/driver-allowlist.js";
-import { planFor } from "../memory/resolve.js";
-import { scopeOverBudget } from "../spend/check.js";
-import { capBypassFor } from "../spend/bypass.js";
-import { extractPinnedInstructions, introMessage, instructionBullet, ONBOARDED_MARKER } from "../onboarding/onboarding.js";
 import {
+  resolvePartition,
+  getOperationalStore,
+  postOnce,
+  outboundKey,
+  statusVerbsFor,
+  getConfig,
+  finalMessageActionForTurn,
+  isBareStop,
+  supervisorTextDelivery,
+  isSupervisorProseLeak,
+  capabilitiesForPlatform,
+  consumeCardPostedThisTurn,
+  consumeReactedThisTurn,
+  consumeRepliedThisTurn,
+  postTerminalProse,
+  markThreadEngaged,
+  disengageThread,
+  getThreadEngagement,
+  bumpThreadSilentStreak,
+  isStopRequest,
+  STOP_ACK_COPY,
+  WARM_SILENT_LIMIT,
+  SURFACE,
+  tierId,
+  getProvider,
+  providerById,
+  upsertUnderSection,
+  bindFrom,
+  isAllowedSlackDriver,
+  planFor,
+  scopeOverBudget,
+  capBypassFor,
+  extractPinnedInstructions,
+  introMessage,
+  instructionBullet,
+  ONBOARDED_MARKER,
   STATUS_REACTION,
   renderPinned,
   isPinnedStatusMessage,
+  type Partition,
+  type BindableContext,
   type ReactionState,
-} from "../status/status.js";
+} from "@open-everywhere/core/agent/adapter-api.js";
+import { loadConversationContext } from "./slack-context.js";
+import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
+import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 
 function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
   try {

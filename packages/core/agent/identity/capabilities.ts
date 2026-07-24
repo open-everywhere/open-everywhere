@@ -20,5 +20,3 @@ export function capabilitiesForPlatform(platform: string | undefined): Capabilit
 export function capabilitiesFor(ctx: BindableContext): CapabilityManifest {
   return capabilitiesForPlatform(channelPlatform(ctx));
 }
-
-registerCapabilityManifest("slack", { midTurnPost: true, reactions: true });

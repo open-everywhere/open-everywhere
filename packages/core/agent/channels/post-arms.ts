@@ -34,6 +34,3 @@ export function postArm(platform: string | undefined): PostArm | undefined {
 export function registeredPostArmPlatforms(): readonly string[] {
   return Object.keys(POST_ARMS);
 }
-
-import { slackPostArm } from "./slack-post-arm.js";
-registerPostArm(slackPostArm);

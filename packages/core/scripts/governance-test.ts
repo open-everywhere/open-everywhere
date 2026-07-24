@@ -33,6 +33,10 @@ import { classifyPaneVenue, requirePaneVenue, PaneRedirectError } from "../agent
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   if (!cond) {

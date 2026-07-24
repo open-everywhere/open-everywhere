@@ -21,6 +21,11 @@ import spawnTask from "../agent/tools/spawn_task.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import type { RouteHandlerArgs } from "eve/channels";
 
+import { registerSlackFixtureMapper, registerSlackFixtureCodec } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+registerSlackFixtureCodec();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

@@ -13,6 +13,10 @@ import checkPrStatusTool from "../agent/tools/check_pr_status.js";
 import subscribePrTool, { subscribePrPrompt, DEFAULT_CHECK_INTERVAL_MINUTES, MIN_CHECK_INTERVAL_MINUTES } from "../agent/tools/subscribe_pr.js";
 import type { PrFetchFn } from "../agent/scm/pr.js";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 let n = 0;
 const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);

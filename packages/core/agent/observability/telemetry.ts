@@ -261,7 +261,6 @@ export function registerSurfaceCredentialProbe(platform: string, probe: () => bo
 
 function surfacesWithCreds(): string[] {
   const present: string[] = [];
-  if (process.env.SLACK_BOT_TOKEN) present.push("slack");
   if (process.env.DISCORD_BOT_TOKEN) present.push("discord");
   if (process.env.MICROSOFT_APP_ID) present.push("teams");
   if (process.env.OE_GITHUB_APP_ID) present.push("github");

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { DB_BROKER } from "./db-broker.js";
@@ -43,7 +43,7 @@ export async function requestCredentialIntake(
   input: RequestCredentialIntakeInput,
   deps: CredentialIntakeDeps = {},
 ): Promise<{ id: string; messageTs?: string }> {
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   const now = (deps.now ?? (() => new Date()))();
   const id = (deps.mintId ?? randomUUID)();
   const createdAt = now.toISOString();
@@ -120,7 +120,7 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
   const actionId = typeof action?.action_id === "string" ? action.action_id : undefined;
   if (actionId === undefined || !actionId.startsWith(OE_SETKEY_ACTION_PREFIX)) return false;
 
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   try {
     const now = (deps.now ?? (() => new Date()))();
     const id = actionId.slice(OE_SETKEY_ACTION_PREFIX.length);
@@ -212,7 +212,7 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
   const view = p.view;
   if (!view || view.callback_id !== OE_SETKEY_MODAL_CALLBACK) return { handled: false };
 
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   try {
     const now = (deps.now ?? (() => new Date()))();
 

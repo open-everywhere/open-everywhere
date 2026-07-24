@@ -5,7 +5,7 @@ import { resolveRole } from "../access/roles.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import { appendAudit } from "../audit/audit.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, type ConnectMode } from "../connections/connector-offer.js";
@@ -110,7 +110,7 @@ const connectorEntry = defineTool({
       if (binding.threadTs) body.set("thread_ts", binding.threadTs);
       body.set("text", text);
       body.set("blocks", JSON.stringify(blocks));
-      const res = await slackForm("chat.postMessage", body.toString());
+      const res = await bridgeSlackForm("chat.postMessage", body.toString());
       if (res?.ok !== true) {
         throw new Error("connector couldn't post the connect card to Slack (check the bot token / scopes).");
       }

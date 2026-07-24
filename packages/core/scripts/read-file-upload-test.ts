@@ -9,13 +9,6 @@ process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 
 import readFileUpload, { classifyTextUpload } from "../agent/tools/read_file_upload.js";
 import {
-  persistSlackAttachment,
-  resolveSlackAttachmentDurable,
-  registerSlackAttachment,
-  registerSlackAttachmentResolver,
-  _resetSlackAttachmentsForTest,
-} from "../agent/channels/slack-attachments.js";
-import {
   registerAttachmentResolver,
   _resetAttachmentPlaneForTest,
   AttachmentOversizeError,
@@ -78,33 +71,43 @@ ok(classifyTextUpload("text/markdown", "notes.md").ok === true, "classify: markd
   ok(c.ok === true && (c as { mime: string }).mime === "text/plain", "classify: extension fallback (.log, no mime) → text/plain");
 }
 
-{
-  _resetSlackAttachmentsForTest();
-  await persistSlackAttachment("F_CSV", { urlPrivate: "https://files.slack.com/files-pri/T/F_CSV/data.csv", mimeType: "text/csv", name: "data.csv", teamId: "T_RF" });
-  _resetSlackAttachmentsForTest();
-  const rec = await resolveSlackAttachmentDurable("F_CSV");
-  ok(rec?.urlPrivate === "https://files.slack.com/files-pri/T/F_CSV/data.csv" && rec?.mimeType === "text/csv" && rec?.name === "data.csv", "durable: a persisted attachment resolves cross-process (in-memory cleared) from the store");
-  ok((await resolveSlackAttachmentDurable("F_NOPE")) === undefined, "durable: an unknown id resolves to undefined (→ fail closed)");
+function registerFakeGuarded(entries: Record<string, { mimeType?: string; name?: string }>): void {
+  registerAttachmentResolver({
+    platform: "fake",
+    resolve: async () => undefined,
+    resolveGuarded: async (id) => {
+      const meta = entries[id];
+      if (!meta) return undefined;
+      return {
+        ref: `fake:${id}`,
+        mimeType: meta.mimeType,
+        name: meta.name,
+        pull: async () => {
+          throw new Error("pull must not be reached for a refused type");
+        },
+      };
+    },
+  });
 }
 
-registerSlackAttachmentResolver();
 {
-  _resetSlackAttachmentsForTest();
+  _resetAttachmentPlaneForTest();
+  registerFakeGuarded({});
   const out = await tool.execute({ attachmentId: "F_UNSEEN" }, ctx);
-  ok(out.ok === false && /no upload with id "F_UNSEEN"/.test(out.message ?? ""), "unknown id → fail-closed (no fetch, no token), never a guessed read");
+  ok(out.ok === false && /no upload with id "F_UNSEEN"/.test(out.message ?? ""), "unknown id -> fail-closed (no fetch, no token), never a guessed read");
 }
 
 {
-  _resetSlackAttachmentsForTest();
-  registerSlackAttachment("F_PDF", { urlPrivate: "https://files.slack.com/files-pri/T/F_PDF/report.pdf", mimeType: "application/pdf", name: "report.pdf", teamId: "T_RF" });
+  _resetAttachmentPlaneForTest();
+  registerFakeGuarded({ F_PDF: { mimeType: "application/pdf", name: "report.pdf" } });
   const out = await tool.execute({ attachmentId: "F_PDF" }, ctx);
-  ok(out.ok === false && /PDF text extraction isn't supported/.test(out.message ?? ""), "PDF → fail-closed with the 'ask for a text export' message (no binary dump, no fetch)");
+  ok(out.ok === false && /PDF text extraction isn't supported/.test(out.message ?? ""), "PDF -> fail-closed with the 'ask for a text export' message (no binary dump, no fetch)");
 }
 {
-  _resetSlackAttachmentsForTest();
-  registerSlackAttachment("F_BIN", { urlPrivate: "https://files.slack.com/files-pri/T/F_BIN/a.bin", mimeType: "application/octet-stream", name: "a.bin", teamId: "T_RF" });
+  _resetAttachmentPlaneForTest();
+  registerFakeGuarded({ F_BIN: { mimeType: "application/octet-stream", name: "a.bin" } });
   const out = await tool.execute({ attachmentId: "F_BIN" }, ctx);
-  ok(out.ok === false && /unsupported type/.test(out.message ?? ""), "binary → fail-closed 'unsupported type' (no fetch)");
+  ok(out.ok === false && /unsupported type/.test(out.message ?? ""), "binary -> fail-closed 'unsupported type' (no fetch)");
 }
 
 {

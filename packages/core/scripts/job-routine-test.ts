@@ -13,6 +13,21 @@ import {
 } from "../agent/routines/job.js";
 import { isJobRoutine, routineMarker, ROUTINE_MARKER, JOB_STATE_MAX_BYTES, type Routine } from "../agent/routines/routine.js";
 import { classifySessionId } from "../agent/channels/window-key.js";
+import { registerSlackBridge } from "../agent/channels/slack-bridge.js";
+
+registerSlackBridge({
+  form: async () => undefined,
+  readCall: async () => {
+    throw new Error("not wired in this test");
+  },
+  fetchUserDisplayName: async () => undefined,
+  fetchChannelDisplayName: async () => undefined,
+  botDisplayName: async () => undefined,
+  confirmChannelInternal: async () => false,
+  partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
+  readableChannelList: () => [],
+  channel: {} as never,
+});
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {

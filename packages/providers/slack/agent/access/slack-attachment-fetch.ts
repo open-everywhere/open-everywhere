@@ -1,7 +1,5 @@
 import { Agent } from "undici";
-import { assertSafeFetchUrl } from "./host-egress.js";
-import type { BindableContext } from "../identity/binding.js";
-import { auditToolAction } from "../audit/tool-action.js";
+import { assertSafeFetchUrl, auditToolAction, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
 
 const SLACK_FILE_HOSTS: ReadonlySet<string> = new Set(["files.slack.com"]);
 

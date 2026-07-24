@@ -7,7 +7,7 @@ import { buildResolveRequest, principalIdOf, resolveAccessFor } from "../access/
 import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext } from "../access/delta.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -129,7 +129,7 @@ const requestAccessEntry = defineTool({
             const q = new URLSearchParams();
             q.set("channel", channelId);
             q.set("message_ts", binding.threadTs);
-            const res = await slackForm("chat.getPermalink", q.toString());
+            const res = await bridgeSlackForm("chat.getPermalink", q.toString());
             permalink = res?.ok === true && typeof res.permalink === "string" ? res.permalink : undefined;
           }
 

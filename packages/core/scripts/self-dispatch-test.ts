@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+
+const __slackStubs = await import("./_slack-test-stubs.js");
+__slackStubs.registerSlackFixtureCodec();
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

@@ -75,6 +75,14 @@ export interface PlanStep {
   readonly command?: string;
 }
 
+export type SurfaceGoalStep = (env: NodeJS.ProcessEnv) => PlanStep;
+
+const SURFACE_GOAL_STEPS: Record<string, SurfaceGoalStep> = {};
+
+export function registerQuickstartSurfaceGoal(goal: string, step: SurfaceGoalStep): void {
+  SURFACE_GOAL_STEPS[goal] = step;
+}
+
 export function quickstartPlan(goal: Goal, env: NodeJS.ProcessEnv = process.env): { goal: Goal; steps: PlanStep[]; readyToRun: boolean } {
   const set = (v: string | undefined) => v !== undefined && v !== "";
   const steps: PlanStep[] = [];
@@ -87,15 +95,9 @@ export function quickstartPlan(goal: Goal, env: NodeJS.ProcessEnv = process.env)
     command: set(env.AI_GATEWAY_API_KEY) ? undefined : "set AI_GATEWAY_API_KEY in .env.local (or `eve link`)",
   });
 
-  if (goal === "slack") {
-    const ok = set(env.SLACK_BOT_TOKEN) && set(env.SLACK_SIGNING_SECRET);
-    steps.push({
-      id: "slack",
-      title: "Slack app",
-      status: ok ? "done" : "todo",
-      detail: "Create a Slack app; subscribe to app_mention + message.im; copy the bot token + signing secret.",
-      command: ok ? undefined : "set SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET in .env.local",
-    });
+  const surfaceStep = SURFACE_GOAL_STEPS[goal];
+  if (surfaceStep) {
+    steps.push(surfaceStep(env));
   }
   if (goal === "github") {
     steps.push({

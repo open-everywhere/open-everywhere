@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { preflight, quickstartPlan, mergeEnv } from "../agent/ops/quickstart.js";
+import { preflight, quickstartPlan, mergeEnv, registerQuickstartSurfaceGoal } from "../agent/ops/quickstart.js";
 import { buildOpsServer, OPS_TOOL_NAMES } from "../agent/ops/server.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -31,8 +31,16 @@ const ok = (label: string, cond: boolean) => {
   ok("local plan ends at `npm run dev`", local.steps.some((s) => s.command === "npm run dev"));
   ok("a satisfied step is marked done", local.steps.find((s) => s.id === "model")?.status === "done");
 
+  const slackUnregistered = quickstartPlan("slack", { AI_GATEWAY_API_KEY: "k" });
+  ok("slack goal UNREGISTERED (core alone) contributes no surface step", !slackUnregistered.steps.some((s) => s.id === "slack"));
+  registerQuickstartSurfaceGoal("slack", (env) => ({
+    id: "slack",
+    title: "Fake surface",
+    status: env.FAKE_SURFACE_TOKEN ? "done" : "todo",
+    detail: "test-registered surface goal",
+  }));
   const slack = quickstartPlan("slack", { AI_GATEWAY_API_KEY: "k" });
-  ok("slack goal adds a Slack step", slack.steps.some((s) => s.id === "slack" && s.status === "todo"));
+  ok("a registered surface goal adds its step", slack.steps.some((s) => s.id === "slack" && s.status === "todo"));
 
   const deploy = quickstartPlan("deploy", { AI_GATEWAY_API_KEY: "k" });
   ok("deploy goal includes the Neon DB step", deploy.steps.some((s) => s.id === "db"));

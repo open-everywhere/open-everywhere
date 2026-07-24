@@ -3,6 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+registerSlackFixtureMapper();
+
+
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-connector-dm-"));
 process.env.OE_SQLITE_PATH = join(tmp, "ops.sqlite3");
 delete process.env.OE_CONNECTOR_DM_ONLY;

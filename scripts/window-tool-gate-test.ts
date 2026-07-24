@@ -13,7 +13,6 @@ import { formatWindowToken, taskWindowId, threadSeatWindowId } from "@open-every
 import { auditWindowToolGate } from "@open-everywhere/core/agent/audit/window-tool-gate.js";
 import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "@open-everywhere/core/agent/channels/unified-window.js";
-import { buildSlackAuth } from "@open-everywhere/core/agent/channels/slack-identity.js";
 import { buildDiscordAuth } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { withheldFromGrain, WINDOW_GATED_TOOLS } from "@open-everywhere/core/agent/access/window-gate-manifest.js";
 
@@ -82,21 +81,17 @@ const ctxWithAuth = (attributes: Record<string, string>, token: string | undefin
 eq(rootDmGrainAttrs(true), { [OE_GRAIN_ATTR]: "standing" }, "rootDmGrainAttrs(true) ⇒ { oe_grain: standing }");
 eq(rootDmGrainAttrs(false), {}, "rootDmGrainAttrs(false) ⇒ {} (a non-DM ingress stamps nothing — no over-narrowing)");
 
-const slackDm = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "D0001", channelType: "im", dmPartnerTrust: "internal" });
-const slackChan = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "C0001", channelType: "channel", isPrivate: false });
-const slackMpim = buildSlackAuth({ userId: "U1", teamId: "T1", channelId: "G0001", channelType: "mpim" });
 const discordDm = buildDiscordAuth({ userId: "U1", channelId: "D1", channelType: "1" });
 const discordChan = buildDiscordAuth({ userId: "U1", guildId: "G1", channelId: "C1", channelType: "0" });
 const discordGroupDm = buildDiscordAuth({ userId: "U1", channelId: "GD1", channelType: "3" });
 
-eq(slackDm.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(im) stamps oe_grain=standing");
-eq(slackDm.attributes.channel_id, "D0001", "buildSlackAuth(im) still captures the raw DM channel id (identity/memory unchanged)");
-ok(!(OE_GRAIN_ATTR in slackChan.attributes), "buildSlackAuth(channel) does NOT stamp a grain (native/full preserved)");
-eq(slackMpim.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(mpim/group-DM) stamps oe_grain=standing (widened: group DMs narrow too)");
 eq(discordDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(DM type 1) stamps oe_grain=standing");
 ok(!(OE_GRAIN_ATTR in discordChan.attributes), "buildDiscordAuth(guild channel) does NOT stamp");
 eq(discordGroupDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(group DM type 3 ⇒ mpim) stamps oe_grain=standing (widened)");
 
+const slackDm = { attributes: { channel_id: "D0001", user_id: "U1", team_id: "T1", channel_type: "im", dm_partner_trust: "internal", ...rootDmGrainAttrs(true) } };
+const slackMpim = { attributes: { channel_id: "G0001", user_id: "U1", team_id: "T1", channel_type: "mpim", ...rootDmGrainAttrs(true) } };
+const slackChan = { attributes: { channel_id: "C0001", user_id: "U1", team_id: "T1", channel_type: "channel", is_private: "false", ...rootDmGrainAttrs(false) } };
 const STAMPED_SEATS = [
   ["slack DM", slackDm],
   ["slack mpim", slackMpim],

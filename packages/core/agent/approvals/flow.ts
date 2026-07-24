@@ -4,7 +4,7 @@ import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
 import { criteriaDomain } from "../memory/domain.js";
-import { slackForm } from "../channels/slack-events.js";
+import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
@@ -103,7 +103,7 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);
   }
 
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   const store = getOperationalStore();
 
   const now = new Date();
@@ -360,7 +360,7 @@ async function sweepExpiryFeedback(row: PendingActionRow, deps: SweepFeedbackDep
   if (!row.postedTo) return;
   const [platform, workspace] = row.postedTo.split("/");
   if (!workspace) return;
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
   const postNotice =
     platform === "slack"
       ? (text: string) => postThreadNote(post, row.channelId, row.threadTs ?? row.messageTs ?? undefined, text)
@@ -522,7 +522,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
   const parsed = parseApprovalAction(actionId);
   if (!parsed) return false;
 
-  const post = deps.post ?? slackForm;
+  const post = deps.post ?? bridgeSlackForm;
 
   try {
     const org = typeof action?.value === "string" ? action.value : undefined;

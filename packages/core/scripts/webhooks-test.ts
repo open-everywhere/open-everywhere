@@ -19,6 +19,8 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
 
 const { defineWebhook, assertWebhooksValid, findWebhook } = await import("../agent/webhooks/config.js");
+const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
+registerSlackTestBridge();
 const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes } = await import("../agent/webhooks/gate.js");
 const { renderWebhookMessage, fireWebhook, webhookOrg } = await import("../agent/webhooks/dispatch.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
