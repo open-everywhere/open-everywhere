@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { encodeSources } from "./window-sources.js";
+import { registerWakeOriginCodec, wakeOriginCodec } from "./wake-origin-codec.js";
 
 export type UnifiedWakeOrigin =
   | {
@@ -113,92 +114,13 @@ export async function resolveDelegatedReplyTarget(
   return { ok: true, origin: echoedOrigin };
 }
 
-export function isTrustedTeamsServiceUrl(serviceUrl: unknown): boolean {
-  if (typeof serviceUrl !== "string") return false;
-  let host: string;
-  try {
-    const u = new URL(serviceUrl);
-    if (u.protocol !== "https:") return false;
-    host = u.hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  return teamsServiceHostAllowlist().some((h) => (h.startsWith(".") ? host.endsWith(h) : host === h));
-}
-
-const DEFAULT_TEAMS_SERVICE_HOSTS: readonly string[] = [
-  "smba.trafficmanager.net",
-  ".smba.trafficmanager.net",
-  "botframework.com",
-  ".botframework.com",
-];
-
-function teamsServiceHostAllowlist(): readonly string[] {
-  const extra = (process.env.OE_TEAMS_SERVICE_HOSTS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0);
-  return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;
-}
+export { isTrustedTeamsServiceUrl } from "./wake-origin-codecs.js";
 
 export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o !== "object") return false;
-  if (o.platform === "slack") {
-    return (
-      typeof o.channelId === "string" &&
-      o.channelId.length > 0 &&
-      (o.threadTs === undefined || typeof o.threadTs === "string") &&
-      (o.replyAnchorTs === undefined || typeof o.replyAnchorTs === "string")
-    );
-  }
-  if (o.platform === "github") {
-    return (
-      typeof o.owner === "string" &&
-      o.owner.length > 0 &&
-      typeof o.repo === "string" &&
-      o.repo.length > 0 &&
-      typeof o.issueNumber === "number" &&
-      Number.isFinite(o.issueNumber) &&
-      o.issueNumber > 0 &&
-      (o.installationId === undefined || typeof o.installationId === "number")
-    );
-  }
-  if (o.platform === "linear") {
-    if (typeof o.issueId !== "string" || o.issueId.length === 0) return false;
-    if (o.parentId !== undefined && typeof o.parentId !== "string") return false;
-    const isAmbient = o.ambient === true && o.agentSessionId === undefined;
-    const isMention = o.ambient === undefined && typeof o.agentSessionId === "string" && o.agentSessionId.length > 0;
-    return isAmbient || isMention;
-  }
-  if (o.platform === "notion") {
-    return (
-      typeof o.discussionId === "string" &&
-      o.discussionId.length > 0 &&
-      (o.pageId === undefined || typeof o.pageId === "string") &&
-      (o.workspaceId === undefined || typeof o.workspaceId === "string")
-    );
-  }
-  if (o.platform === "discord") {
-    return (
-      typeof o.channelId === "string" &&
-      o.channelId.length > 0 &&
-      typeof o.guildId === "string" &&
-      o.guildId.length > 0 &&
-      (o.messageId === undefined || typeof o.messageId === "string") &&
-      (o.autoThreadName === undefined || typeof o.autoThreadName === "string")
-    );
-  }
-  if (o.platform === "teams") {
-    return (
-      isTrustedTeamsServiceUrl(o.serviceUrl) &&
-      typeof o.conversationId === "string" &&
-      o.conversationId.length > 0 &&
-      (o.replyToActivityId === undefined || typeof o.replyToActivityId === "string") &&
-      (o.tenantId === undefined || typeof o.tenantId === "string")
-    );
-  }
-  return false;
+  const codec = typeof o.platform === "string" ? wakeOriginCodec(o.platform) : undefined;
+  return codec !== undefined && codec.validate(o);
 }
 
 export interface UnifiedThreadRef {
@@ -206,38 +128,16 @@ export interface UnifiedThreadRef {
   readonly threadKey: string;
 }
 
-const noColon = (s: string): string => s.replace(/:/g, "_");
-
 export function unifiedThreadRef(origin: UnifiedWakeOrigin): UnifiedThreadRef {
-  switch (origin.platform) {
-    case "slack":
-      return { channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) };
-    case "discord":
-      return { channelKey: noColon(`discord/${origin.guildId}/${origin.channelId}`), threadKey: noColon(origin.channelId) };
-    case "github":
-      return { channelKey: noColon(`github/${origin.owner}/${origin.repo}`), threadKey: String(origin.issueNumber) };
-    case "linear":
-      return { channelKey: noColon(`linear/${origin.issueId}`), threadKey: noColon(origin.parentId ?? origin.issueId) };
-    case "notion":
-      return { channelKey: noColon(`notion/${origin.pageId ?? origin.discussionId}`), threadKey: noColon(origin.discussionId) };
-    case "teams":
-      return { channelKey: noColon(`teams/${origin.conversationId}`), threadKey: noColon(origin.replyToActivityId ?? origin.conversationId) };
-  }
+  return wakeOriginCodec(origin.platform)?.threadRef(origin) as UnifiedThreadRef;
 }
 
 export function isThreadScopedWakeOrigin(origin: UnifiedWakeOrigin): boolean {
-  switch (origin.platform) {
-    case "slack":
-      return typeof origin.threadTs === "string" && origin.threadTs.length > 0;
-    case "teams":
-      return typeof origin.replyToActivityId === "string" && origin.replyToActivityId.length > 0;
-    case "github":
-    case "linear":
-    case "notion":
-      return true;
-    case "discord":
-      return false;
-  }
+  return wakeOriginCodec(origin.platform)?.isThreadScoped(origin) as boolean;
+}
+
+export function wakeOriginContainerId(origin: UnifiedWakeOrigin): string {
+  return wakeOriginCodec(origin.platform)?.containerId(origin) as string;
 }
 
 export const OE_PLATFORM_ATTR = "oe_platform";
@@ -299,3 +199,12 @@ export interface UnifiedWindowWake {
   readonly origin: UnifiedWakeOrigin;
   readonly addressing?: "direct-mention";
 }
+
+import { wakeOriginCodecs } from "./wake-origin-codecs.js";
+
+registerWakeOriginCodec("slack", wakeOriginCodecs.slack);
+registerWakeOriginCodec("github", wakeOriginCodecs.github);
+registerWakeOriginCodec("linear", wakeOriginCodecs.linear);
+registerWakeOriginCodec("notion", wakeOriginCodecs.notion);
+registerWakeOriginCodec("discord", wakeOriginCodecs.discord);
+registerWakeOriginCodec("teams", wakeOriginCodecs.teams);
