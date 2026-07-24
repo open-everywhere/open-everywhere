@@ -52,13 +52,14 @@ import {
   type SupervisorRouteDeps,
 } from "@open-everywhere/core/agent/channels/slack-events.js";
 import { withSingleWindowDiversion } from "@open-everywhere/core/agent/channels/slack-front.js";
-import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/core/agent/channels/github-supervisor.js";
-import { buildGitHubAuth } from "@open-everywhere/core/agent/channels/github-identity.js";
+import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/provider-github/agent/channels/github-supervisor.js";
+import { buildGitHubAuth } from "@open-everywhere/provider-github/agent/channels/github-identity.js";
 import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/core/agent/channels/linear-supervisor.js";
 import { buildLinearAuth } from "@open-everywhere/core/agent/channels/linear-identity.js";
 import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "@open-everywhere/provider-notion/agent/channels/notion-supervisor.js";
 import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
 import { unifiedThreadRef, isThreadScopedWakeOrigin } from "@open-everywhere/core/agent/channels/unified-window.js";
 import {
@@ -99,6 +100,7 @@ const noThrow = (fn: () => unknown, label: string) => {
 };
 
 registerNotionProvider();
+registerGithubProvider();
 {
   const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
     slack: true,
@@ -117,7 +119,13 @@ registerNotionProvider();
     { channelKey: "notion/p1", threadKey: "d1" },
     "notion: channel is the page, thread is the discussion (registered codec)",
   );
-  n++;
+  ok(isThreadScopedWakeOrigin({ platform: "github", owner: "o", repo: "r", issueNumber: 7 }), "github: an issue IS its own thread (registered codec)");
+  assert.deepStrictEqual(
+    unifiedThreadRef({ platform: "github", owner: "acme", repo: "web", issueNumber: 7 }),
+    { channelKey: "github/acme/web", threadKey: "7" },
+    "github: the issue IS the thread (registered codec)",
+  );
+  n += 3;
 }
 
 const withGate = async <T>(on: boolean, fn: () => T | Promise<T>): Promise<T> => {

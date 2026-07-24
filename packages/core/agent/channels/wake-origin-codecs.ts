@@ -33,7 +33,7 @@ function teamsServiceHostAllowlist(): readonly string[] {
   return extra.length > 0 ? [...DEFAULT_TEAMS_SERVICE_HOSTS, ...extra] : DEFAULT_TEAMS_SERVICE_HOSTS;
 }
 
-type CoreCodecPlatform = Exclude<UnifiedWakeOrigin["platform"], "notion">;
+type CoreCodecPlatform = Exclude<UnifiedWakeOrigin["platform"], "notion" | "github">;
 
 export const wakeOriginCodecs: { readonly [P in CoreCodecPlatform]: WakeOriginCodec<OriginArm<P>> } = {
   slack: {
@@ -45,20 +45,6 @@ export const wakeOriginCodecs: { readonly [P in CoreCodecPlatform]: WakeOriginCo
     threadRef: (origin) => ({ channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) }),
     isThreadScoped: (origin) => typeof origin.threadTs === "string" && origin.threadTs.length > 0,
     containerId: (origin) => origin.channelId,
-  },
-  github: {
-    validate: (o) =>
-      typeof o.owner === "string" &&
-      o.owner.length > 0 &&
-      typeof o.repo === "string" &&
-      o.repo.length > 0 &&
-      typeof o.issueNumber === "number" &&
-      Number.isFinite(o.issueNumber) &&
-      o.issueNumber > 0 &&
-      (o.installationId === undefined || typeof o.installationId === "number"),
-    threadRef: (origin) => ({ channelKey: noColon(`github/${origin.owner}/${origin.repo}`), threadKey: String(origin.issueNumber) }),
-    isThreadScoped: () => true,
-    containerId: (origin) => `${origin.owner}/${origin.repo}`,
   },
   linear: {
     validate: (o) => {

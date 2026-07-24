@@ -2,7 +2,6 @@ import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
-import { githubVisibility, githubTrust } from "../channels/github-identity.js";
 import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
 import { isVouchedInternal } from "./trust.js";
 import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
@@ -199,34 +198,6 @@ const bindTeams: Mapper = (ctx) => {
   };
 };
 
-const bindGitHub: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const owner = attr(a, ["owner"]);
-  const repo = attr(a, ["repo"]);
-  const repoPrivate = attr(a, ["repo_private", "repoPrivate"]);
-  const conversationKind = attr(a, ["conversation_kind", "conversationKind"]);
-  const issueNumber = attr(a, ["issue_number", "issueNumber"]);
-  const pullRequestNumber = attr(a, ["pull_request_number", "pullRequestNumber"]);
-  const isPr = conversationKind === "pull_request" || conversationKind === "review_thread";
-  const anchor =
-    isPr && pullRequestNumber
-      ? { pullRequestNumber: Number(pullRequestNumber) }
-      : issueNumber
-        ? { issueNumber: Number(issueNumber) }
-        : pullRequestNumber
-          ? { pullRequestNumber: Number(pullRequestNumber) }
-          : undefined;
-  return {
-    workspace: owner,
-    surface: repo,
-    mode: "channel",
-    visibility: githubVisibility(repoPrivate),
-    trust: githubTrust(repoPrivate, attr(a, ["author_association", "authorAssociation"])),
-    principalId: authPrincipalId(ctx) ?? attr(a, ["user_login", "userLogin", "user_id", "userId"]),
-    target: owner && repo && anchor ? { owner, repo, ...anchor } : undefined,
-  };
-};
-
 const bindDiscord: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -273,7 +244,6 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
 registerIdentityMapper("slack", bindSlack);
 registerIdentityMapper("linear", bindLinear);
 registerIdentityMapper("teams", bindTeams);
-registerIdentityMapper("github", bindGitHub);
 registerIdentityMapper("discord", bindDiscord);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
@@ -306,14 +276,18 @@ export function currentTurnIssue(ctx: BindableContext): string | undefined {
 }
 
 export function currentTurnGithubTarget(ctx: BindableContext): { owner: string; repo: string; number: number; isPr: boolean } | undefined {
-  const binding = bindFrom(ctx);
-  if (binding.platform !== "github") return undefined;
-  const t = binding.target as { owner?: unknown; repo?: unknown; issueNumber?: unknown; pullRequestNumber?: unknown } | undefined;
-  const owner = typeof t?.owner === "string" ? t.owner : undefined;
-  const repo = typeof t?.repo === "string" ? t.repo : undefined;
+  if (channelPlatform(ctx) !== "github") return undefined;
+  const a = authOf(ctx)?.attributes;
+  const owner = attr(a, ["owner"]);
+  const repo = attr(a, ["repo"]);
   if (!owner || !repo) return undefined;
-  if (typeof t?.pullRequestNumber === "number") return { owner, repo, number: t.pullRequestNumber, isPr: true };
-  if (typeof t?.issueNumber === "number") return { owner, repo, number: t.issueNumber, isPr: false };
+  const conversationKind = attr(a, ["conversation_kind", "conversationKind"]);
+  const issueNumber = attr(a, ["issue_number", "issueNumber"]);
+  const pullRequestNumber = attr(a, ["pull_request_number", "pullRequestNumber"]);
+  const isPrKind = conversationKind === "pull_request" || conversationKind === "review_thread";
+  if (isPrKind && pullRequestNumber) return { owner, repo, number: Number(pullRequestNumber), isPr: true };
+  if (issueNumber) return { owner, repo, number: Number(issueNumber), isPr: false };
+  if (pullRequestNumber) return { owner, repo, number: Number(pullRequestNumber), isPr: true };
   return undefined;
 }
 

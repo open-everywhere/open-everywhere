@@ -203,7 +203,6 @@ export interface UnifiedWindowWake {
 import { wakeOriginCodecs } from "./wake-origin-codecs.js";
 
 registerWakeOriginCodec("slack", wakeOriginCodecs.slack);
-registerWakeOriginCodec("github", wakeOriginCodecs.github);
 registerWakeOriginCodec("linear", wakeOriginCodecs.linear);
 registerWakeOriginCodec("discord", wakeOriginCodecs.discord);
 registerWakeOriginCodec("teams", wakeOriginCodecs.teams);

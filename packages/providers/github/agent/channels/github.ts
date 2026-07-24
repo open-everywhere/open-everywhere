@@ -1,6 +1,5 @@
 import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState } from "eve/channels/github";
-import slack from "./slack.js";
 import { buildGitHubAuth, githubBotMentioned } from "./github-identity.js";
 import {
   classifyGitHubAmbientComment,
@@ -11,23 +10,33 @@ import {
   type GitHubAmbientEvent,
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
-import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
-import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";
-import { isVouchedInternal } from "../identity/trust.js";
-import { divertToUnifiedWindow } from "./unified.js";
-import { finalMessageActionForTurn } from "./turn-delivery.js";
-import { completeSupervisorTurn, auditSupervisorFailure } from "./supervisor-complete.js";
-import { capabilitiesForPlatform } from "../identity/capabilities.js";
-import { appendAudit } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
-import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
-import { getConfig } from "../access/config.js";
-import { ambientSupervisorEnabled, engagementTierFor, type EngagementTier } from "../memory/domain.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { postOnce, outboundKey } from "../operational/post-once.js";
-import { listAllRoutines } from "../routines/store.js";
-import { matchesEvent, normalizeGithubEvent, eventPrompt, gateGithubDelivery, type NormalizedEvent } from "../routines/events.js";
-import { ROUTINE_MARKER } from "../routines/routine.js";
+import {
+  supervisorGrainFor,
+  mintRotationToken,
+  grainUsesUnifiedWindow,
+  mintWakeId,
+  singleWindowMentionPolicy,
+  isVouchedInternal,
+  divertToUnifiedWindow,
+  finalMessageActionForTurn,
+  completeSupervisorTurn,
+  auditSupervisorFailure,
+  capabilitiesForPlatform,
+  appendAudit,
+  deploymentOrg,
+  resolveWakeTrustFromContext,
+  getConfig,
+  ambientSupervisorEnabled,
+  engagementTierFor,
+  getOperationalStore,
+  postOnce,
+  outboundKey,
+  gateGithubDelivery,
+  fanOutGitHubDelivery,
+  type SupervisorGrain,
+  type UnifiedWindowWake,
+  type EngagementTier,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 const ROUTE = "/eve/v1/github";
 const BOT_NAME = process.env.GITHUB_APP_SLUG;
@@ -42,39 +51,6 @@ function slog(msg: string): void {
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-
-async function fanOut(ev: NormalizedEvent, receive: RouteHandlerArgs["receive"]): Promise<void> {
-  const matches = (await listAllRoutines()).filter((r) => r.status === "active" && matchesEvent(r, ev));
-  let fired = 0;
-  for (const r of matches) {
-    const platform = r.surfaceKey.split("/")[0];
-    const channelId = r.target?.["channelId"];
-    if (platform !== "slack" || typeof channelId !== "string") {
-      log(`event ${ev.summary} matched ${r.id} but its surface has no wired channel — skipped`);
-      continue;
-    }
-    const auth = {
-      authenticator: "github",
-      principalType: "service",
-      principalId: "github:webhook",
-      attributes: { [ROUTINE_MARKER.id]: r.id, [ROUTINE_MARKER.surface]: r.surfaceKey, [ROUTINE_MARKER.org]: r.org },
-    };
-    await receive(slack, { message: eventPrompt(r, ev), target: { channelId }, auth });
-    fired++;
-  }
-  if (matches.length > 0) log(`event "${ev.summary}": ${matches.length} matched -> ${fired} fired`);
-}
-
-async function fanOutDelivery(body: string, eventType: string, receive: RouteHandlerArgs["receive"]): Promise<void> {
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    return;
-  }
-  const ev = normalizeGithubEvent(eventType, payload);
-  if (ev) await fanOut(ev, receive);
 }
 
 type GitHubSupervisorSessionState = GitHubChannelState & {
@@ -421,7 +397,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       return new Response(rejection, { status: 401 });
     }
     const eventType = req.headers.get("x-github-event") ?? "";
-    args.waitUntil(fanOutDelivery(body, eventType, args.receive));
+    args.waitUntil(fanOutGitHubDelivery(body, eventType, args.receive));
     args.waitUntil(ambientDelivery(body, eventType, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);

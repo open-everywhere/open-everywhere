@@ -13,9 +13,8 @@ import {
   type GitHubSupervisorSession,
   type GitHubAmbientComment,
 } from "../agent/channels/github-supervisor.js";
-import { renderWake } from "../agent/channels/normalized-wake.js";
+import { renderWake, UNTRUSTED_OPEN } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereGitHubAuth } from "../agent/channels/github-identity.js";
-import { UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -335,7 +334,7 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
       await completed("NO_REPLY", { state, github });
     }, { owner: OWNER, repo: REPO, issue_number: "42" });
     ok(posts.length === 0, "NO_REPLY suppresses the supervisor reply");
-    const { readAudit } = await import("../agent/audit/audit.js");
+    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
     const silences = await readAudit({ action: "github.no_reply" });
     ok(silences.length >= 1, "judged silence writes a github.no_reply audit row (audited silence, Slack/Notion parity)");
   }
@@ -346,10 +345,20 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
     await inSession(() => githubChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state, github }));
     ok(posts.length === 0, "a failed supervisor turn posts NO error comment (reserved posture)");
-    const { readAudit } = await import("../agent/audit/audit.js");
+    const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
     const fails = await readAudit({ action: "github.supervisor_turn_failed" });
     ok(fails.length >= 1, "the failed supervisor turn is audited instead");
   }
+}
+
+{
+  const ghWake = buildGitHubSupervisorWake({
+    owner: OWNER, repo: REPO, issueNumber: 7,
+    trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "principal" },
+  });
+  ok(ghWake.trigger.kind === "message" && ghWake.trigger.message.trust === "principal", "github builder: a resolved trigger trust rides into the wake");
+  const ghDefault = buildGitHubSupervisorWake({ owner: OWNER, repo: REPO, issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
+  ok(ghDefault.trigger.kind === "message" && ghDefault.trigger.message.trust === "peer", "github builder: unset trust keeps the legacy peer (byte-compat for pure callers)");
 }
 
 console.log(`\n✓ github-supervisor: ${passed} assertions passed`);

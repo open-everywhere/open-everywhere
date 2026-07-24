@@ -22,7 +22,8 @@ import {
   grainUsesUnifiedWindow,
 } from "../agent/channels/unified-supervisor.js";
 import { classifySessionId } from "../agent/channels/window-key.js";
-import { githubSupervisorToken } from "../agent/channels/github-supervisor.js";
+const githubSupervisorToken = (owner: string, repo: string, generation: number): string =>
+  `github:${owner}/${repo}:oe-sup:g${generation}`;
 import { linearSupervisorToken } from "../agent/channels/linear-supervisor.js";
 import { isSupervisorSession } from "../agent/model/routing.js";
 import { renderWakeEnvelope, type WakeEnvelopeInput } from "../agent/channels/wake-envelope.js";

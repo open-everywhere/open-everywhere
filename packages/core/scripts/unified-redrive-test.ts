@@ -32,7 +32,6 @@ const ORG = "default";
 const store = getOperationalStore();
 
 const SLACK_ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: "C_PAY" };
-const GH_ORIGIN: UnifiedWakeOrigin = { platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55 };
 
 interface Captured { origin: UnifiedWakeOrigin; message: string; wakeId: string }
 function makeReinject(sink: Captured[]): RedriveReinject {
@@ -67,7 +66,6 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("DISCARDED by the message-tool-only gate"), "corrective text: states the drop plainly");
   ok(redriveCorrectiveText(10, "W9", SLACK_ORIGIN).includes("no_reply"), "corrective text: offers the no_reply escape (silence stays valid — never coerces a reply)");
-  ok(describeRedriveTarget(GH_ORIGIN) === "github acme/payments-api#55", "target description: github owner/repo#issue (token-free)");
   ok(describeRedriveTarget(SLACK_ORIGIN) === "slack channel C_PAY", "target description: slack channel");
 }
 
@@ -140,7 +138,7 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 
 {
   const W = "wake-throw";
-  await registerUnifiedWakeTarget(store, ORG, W, GH_ORIGIN, new Date().toISOString());
+  await registerUnifiedWakeTarget(store, ORG, W, SLACK_ORIGIN, new Date().toISOString());
   const throwing: RedriveReinject = async () => { throw new Error("post failed"); };
   const res = await maybeRedrive({ org: ORG, workspace: "p", wakeId: W, chars: 40, replied: false }, { store, reinject: throwing });
   ok(res.status === "reinject-failed", "throw: a re-injection that throws is treated as final (reinject-failed), never re-thrown");

@@ -12,7 +12,6 @@ import {
 } from "../agent/identity/wake-trust.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
-import { buildGitHubSupervisorWake } from "../agent/channels/github-supervisor.js";
 import { buildLinearSupervisorWake } from "../agent/channels/linear-supervisor.js";
 import { slackChannelWatchWake, slackThreadFollowWake, type ParsedMessageEvent } from "../agent/channels/slack-events.js";
 import { clusterBackscroll, type NormalizedMessage } from "../agent/channels/backscroll-cluster.js";
@@ -88,14 +87,6 @@ ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN" }, { doma
 const adminPrincipalCtx = slackCtx({ ...VERIFIED, user_id: "U_ORG_ADMIN" });
 ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { principalFallback: true, domains: DOMAINS }) === "principal", "ctx form: a TRIGGER (principalFallback on) with no explicit author id borrows the bound admin principal → principal");
 ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { domains: DOMAINS }) === "unauth", "ctx form: a SIBLING (no fallback) HUMAN with no author id does NOT borrow the principal → unauth, never the trigger author's principal tier (the notion-sibling escalation fix — floor is now the unvouched-human unauth, still below peer)");
-
-const ghWake = buildGitHubSupervisorWake({
-  owner: "acme", repo: "api", issueNumber: 7,
-  trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "principal" },
-});
-ok(ghWake.trigger.kind === "message" && ghWake.trigger.message.trust === "principal", "github builder: a resolved trigger trust rides into the wake");
-const ghDefault = buildGitHubSupervisorWake({ owner: "acme", repo: "api", issueNumber: 7, trigger: { id: "c1", authorLogin: "jo", sentAt: "2026-07-11T00:00:00Z", text: "hm" } });
-ok(ghDefault.trigger.kind === "message" && ghDefault.trigger.message.trust === "peer", "github builder: unset trust keeps the legacy peer (byte-compat for pure callers)");
 
 const linWake = buildLinearSupervisorWake({
   teamId: "TEAM", issueId: "I1",

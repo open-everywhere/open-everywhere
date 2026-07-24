@@ -24,6 +24,9 @@ export { registerConfigPrProvider } from "./credentials/config-pr.js";
 export type { ConfigPrProvider, ConfigPrOutcome, ConfigFileContent, CommitIdentity } from "./credentials/config-pr.js";
 export { registerGitHubConfigPrProvider, makeGitHubConfigPrProvider } from "./credentials/config-pr-github.js";
 
+export { parsePrivateKey, signAppJwt, mintInstallationToken } from "./scm/mint.js";
+export { loadGitHubAppConfig } from "./scm/config.js";
+
 export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
 
@@ -166,7 +169,7 @@ export { divertToUnifiedWindow } from "./channels/unified.js";
 export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
 export type { SupervisorGrain } from "./channels/unified-supervisor.js";
 
-export { completeSupervisorTurn } from "./channels/supervisor-complete.js";
+export { completeSupervisorTurn, auditSupervisorFailure } from "./channels/supervisor-complete.js";
 export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";
 
 export {
@@ -190,6 +193,11 @@ export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
 export { isVouchedInternal } from "./identity/trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor } from "./memory/domain.js";
+export type { EngagementTier } from "./memory/domain.js";
+
+export type { ContextLine } from "./channels/context-render.js";
+
+export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
@@ -199,6 +207,9 @@ export type { Routine } from "./routines/routine.js";
 
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
+
+export { gateGithubDelivery } from "./routines/events.js";
+export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
 
 export { appendUsageEvent } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";

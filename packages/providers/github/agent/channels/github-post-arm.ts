@@ -1,8 +1,12 @@
-import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
-import { loadGitHubAppConfig } from "../scm/config.js";
-import type { PostArm } from "./post-arms.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
-import type { UnifiedReplyDeps } from "./unified-reply.js";
+import {
+  parsePrivateKey,
+  signAppJwt,
+  mintInstallationToken,
+  loadGitHubAppConfig,
+  type PostArm,
+  type UnifiedWakeOrigin,
+  type UnifiedReplyDeps,
+} from "@open-everywhere/core/agent/adapter-api.js";
 
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 

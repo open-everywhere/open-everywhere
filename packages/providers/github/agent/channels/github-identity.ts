@@ -1,3 +1,5 @@
+import type { BindableContext, IdentityMapper, RawIdentity } from "@open-everywhere/core/agent/adapter-api.js";
+
 export interface OpenEverywhereGitHubAuth {
   readonly authenticator: string;
   readonly principalId: string;
@@ -72,3 +74,52 @@ export function githubTrust(repoPrivate: string | undefined, authorAssociation: 
 
 type Visibility = "public" | "private";
 type Trust = "internal" | "external";
+
+type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
+
+function githubAuthOf(ctx: BindableContext): { attributes?: AuthAttrs; principalId?: string } | null {
+  return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
+}
+
+function githubAttr(a: AuthAttrs, keys: readonly string[]): string | undefined {
+  if (!a) return undefined;
+  for (const k of keys) {
+    const v = a[k];
+    if (typeof v === "string" && v.length > 0) return v;
+    if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  }
+  return undefined;
+}
+
+function githubAuthPrincipalId(ctx: BindableContext): string | undefined {
+  const pid = githubAuthOf(ctx)?.principalId;
+  return pid && pid.length > 0 ? pid : undefined;
+}
+
+export const bindGitHub: IdentityMapper = (ctx): RawIdentity => {
+  const a = githubAuthOf(ctx)?.attributes;
+  const owner = githubAttr(a, ["owner"]);
+  const repo = githubAttr(a, ["repo"]);
+  const repoPrivate = githubAttr(a, ["repo_private", "repoPrivate"]);
+  const conversationKind = githubAttr(a, ["conversation_kind", "conversationKind"]);
+  const issueNumber = githubAttr(a, ["issue_number", "issueNumber"]);
+  const pullRequestNumber = githubAttr(a, ["pull_request_number", "pullRequestNumber"]);
+  const isPr = conversationKind === "pull_request" || conversationKind === "review_thread";
+  const anchor =
+    isPr && pullRequestNumber
+      ? { pullRequestNumber: Number(pullRequestNumber) }
+      : issueNumber
+        ? { issueNumber: Number(issueNumber) }
+        : pullRequestNumber
+          ? { pullRequestNumber: Number(pullRequestNumber) }
+          : undefined;
+  return {
+    workspace: owner,
+    surface: repo,
+    mode: "channel",
+    visibility: githubVisibility(repoPrivate),
+    trust: githubTrust(repoPrivate, githubAttr(a, ["author_association", "authorAssociation"])),
+    principalId: githubAuthPrincipalId(ctx) ?? githubAttr(a, ["user_login", "userLogin", "user_id", "userId"]),
+    target: owner && repo && anchor ? { owner, repo, ...anchor } : undefined,
+  };
+};

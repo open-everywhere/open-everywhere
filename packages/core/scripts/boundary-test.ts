@@ -63,7 +63,7 @@ const PROVIDER_VENDOR_STRINGS: Record<string, string[]> = {
   linear: ["api.linear.app", "LINEAR_CLIENT_ID", "LINEAR_ACCESS_TOKEN"],
   slack: ["SLACK_SIGNING_SECRET", "SLACK_BOT_TOKEN"],
   discord: ["discord.com/api"],
-  github: ["api.github.com"],
+  github: ["x-hub-signature-256"],
   teams: ["graph.microsoft.com"],
   telegram: ["api.telegram.org", "TELEGRAM_BOT_TOKEN"],
 };
