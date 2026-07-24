@@ -54,6 +54,7 @@ export const FEATURE_VALUES = Object.freeze([
   "skill_created",
   "memory_admin",
   "spend_cap_hit",
+  "spend_checkpoint",
 ] as const);
 export const OUTCOME_VALUES = Object.freeze(["ok", "failed", "approved", "rejected", "expired", "unverified"] as const);
 

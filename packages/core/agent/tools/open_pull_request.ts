@@ -14,6 +14,7 @@ import { isEnforced } from "../access/enforcement.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -73,6 +74,7 @@ export default windowGated("open_pull_request", defineTool({
     message: z.string(),
   }),
   async execute(input, ctx) {
+    await requireSessionContinuation(ctx, "open_pull_request");
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
       throw new Error(

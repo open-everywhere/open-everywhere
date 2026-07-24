@@ -8,6 +8,7 @@ import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 import {
   MAX_DOMAIN_SKILL_BYTES,
   domainSkillCap,
@@ -40,6 +41,7 @@ export default windowGated("create_skill", defineTool({
     message: z.string(),
   }),
   async execute(input, ctx) {
+    await requireSessionContinuation(ctx, "create_skill");
     const name = input.name.trim();
     if (!isSafeSkillName(name)) {
       throw new Error(`"${name}" isn't a valid skill name — use letters, digits, ".", "_", "-" only (no ":", no "..").`);

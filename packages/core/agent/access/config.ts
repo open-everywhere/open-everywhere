@@ -7,6 +7,7 @@ import type { MemorySilo } from "../memory/silo.js";
 import type { Role } from "../roles/role.js";
 import type { WebhookHook } from "../webhooks/config.js";
 import type { SpendBudgets } from "../spend/spend.js";
+import type { SpendCheckpoints } from "../spend/checkpoint.js";
 import type { ModelPolicy } from "../model/policy.js";
 import type { BlobHostingConfig } from "../blob/hosting.js";
 import type { Principal } from "../identity/principals.js";
@@ -34,6 +35,7 @@ export interface AppConfig {
   domainsForSurface(arg: { workspaceKey: string; surface: string }): readonly string[];
   loadWebhooks?(): readonly WebhookHook[];
   loadSpendBudgets?(): SpendBudgets;
+  loadSpendCheckpoints?(): SpendCheckpoints;
   loadAccessRequests?(): AccessRequestsConfig | null;
   loadModelPolicy?(): ModelPolicy | undefined;
   loadBlobHosting?(): BlobHostingConfig | undefined;

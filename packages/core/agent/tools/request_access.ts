@@ -10,6 +10,7 @@ import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { slackForm } from "../channels/slack-events.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export interface RequestAccessArgs {
   readonly org: string;
@@ -97,6 +98,7 @@ const requestAccessEntry = defineTool({
           note: z.string(),
         }),
         async execute(input, ctx) {
+          await requireSessionContinuation(ctx, "request_access");
           const binding = bindFrom(ctx);
           const partition = resolvePartition(ctx);
           const domain = resolveSkillDomain(ctx) ?? null;

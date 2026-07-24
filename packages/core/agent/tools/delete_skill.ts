@@ -7,6 +7,7 @@ import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed
 import { resolvePartition } from "../memory/partition.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default windowGated("delete_skill", defineTool({
   description:
@@ -22,6 +23,7 @@ export default windowGated("delete_skill", defineTool({
     message: z.string(),
   }),
   async execute(input, ctx) {
+    await requireSessionContinuation(ctx, "delete_skill");
     const resolved = resolveSkillDomainDetailed(ctx);
     if (resolved.domain === null) {
       throw new Error(domainSkillRefusalMessage(resolved.reason));

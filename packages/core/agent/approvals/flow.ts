@@ -25,6 +25,7 @@ import "./pr-open.js";
 import "./skill-delete.js";
 import "./routine-cancel.js";
 import "./ticket-actions.js";
+import "./session-checkpoint.js";
 
 export const OE_APPROVAL_PREFIX = "oe_approval:";
 

@@ -12,6 +12,7 @@ import { loadDomains, loadSilos, domainsForSurface } from "../memory/domains.js"
 import { loadRoles } from "../roles/roles.js";
 import { loadWebhooks } from "../webhooks/hooks.js";
 import { loadSpendBudgets } from "../spend/budgets.js";
+import { loadSpendCheckpoints } from "../spend/checkpoints.js";
 import { loadModelPolicy } from "../model/policy.js";
 import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
@@ -29,6 +30,7 @@ registerConfig({
   domainsForSurface,
   loadWebhooks,
   loadSpendBudgets,
+  loadSpendCheckpoints,
   loadAccessRequests,
   loadModelPolicy,
   loadBlobHosting,

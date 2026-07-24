@@ -8,6 +8,7 @@ import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
@@ -23,6 +24,7 @@ export default defineTool({
   }),
   approval: never(),
   async execute(input, ctx) {
+    await requireSessionContinuation(ctx, "cancel_routine");
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 

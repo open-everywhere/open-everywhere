@@ -10,6 +10,7 @@ import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 const trigger = z.discriminatedUnion("kind", [
   z.object({
@@ -102,6 +103,7 @@ export default defineTool({
   }),
   approval: never(),
   async execute(input, ctx) {
+    await requireSessionContinuation(ctx, "create_routine");
     const mode = resolveMode(ctx);
     if (mode === "mpim") {
       throw new Error("Group DMs are execution-only — create routines in a channel or DM instead.");
