@@ -206,6 +206,64 @@ export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
+export { registerSurfaceMessageOps, surfaceMessageOps } from "./channels/surface-message-ops.js";
+export type { SurfaceMessageOps, OutboundFile } from "./channels/surface-message-ops.js";
+
+export {
+  registerCardPoster,
+  cardPosterFor,
+  resolveApprovalClick,
+  deliverDecisionFeedback,
+  discordDecisionWakeTarget,
+  postDiscordDecisionNotice,
+} from "./approvals/flow.js";
+export type { CardPoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
+export type { ApprovalOutcome } from "./approvals/decision-wake.js";
+
+export { registerNativeAdminCheck } from "./access/native-admin.js";
+export type { NativeAdminCheck } from "./access/native-admin.js";
+
+export { registerScopeLabelResolver } from "./approvals/scope-label.js";
+export type { ScopeLabelResolver } from "./approvals/scope-label.js";
+
+export { OE_COMMAND_NAME, runOeCommand } from "./commands/core.js";
+export type { OeCommand } from "./commands/core.js";
+
+export { verifyWebhookSignature } from "./webhooks/gate.js";
+
+export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
+
+export { nameDropWakeEnabled } from "./memory/domain.js";
+
+export { renderContext, sinceLastAgentReply, WAKE_BACKSCROLL_MAX } from "./channels/context-render.js";
+export { clusterBackscroll } from "./channels/backscroll-cluster.js";
+export type { NormalizedMessage, BackscrollTrustFor } from "./channels/backscroll-cluster.js";
+
+export {
+  bumpThreadSilentStreak,
+  disengageThread,
+  getThreadEngagement,
+  isStopRequest,
+  isThreadEngaged,
+  markThreadEngaged,
+  WARM_SILENT_LIMIT,
+} from "./channels/engagement.js";
+
+export { scopeOverBudget } from "./spend/check.js";
+export { capBypassFor } from "./spend/bypass.js";
+
+export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
+
+export { isAllowedDriver } from "./testing/driver-allowlist.js";
+
+export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./channels/reaction-ingest.js";
+export type { ReactionSinkDeps, ReactionIngestOutcome, ReactionVerb } from "./channels/reaction-ingest.js";
+
+export { assertSurfaceAllowed } from "./channels/channel-read.js";
+export type { RenderedLine } from "./channels/channel-read.js";
+
+export type { Trust } from "./identity/binding.js";
+
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
 

@@ -215,7 +215,6 @@ console.log("10. isThreadScopedWakeOrigin predicate:");
 {
   eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1", threadTs: "170.5" }), true, "slack: threadTs present ⇒ thread-scoped");
   eq(isThreadScopedWakeOrigin({ platform: "slack", channelId: "C1" }), false, "slack: no threadTs ⇒ top-level (standing's domain)");
-  eq(isThreadScopedWakeOrigin({ platform: "discord", channelId: "CH1", guildId: "G1" }), false, "discord: no positive thread signal on the origin ⇒ never routes (an adopter must extend the origin first)");
 }
 
 console.log(`s2-ingress-test: ${n} assertions passed`);

@@ -59,6 +59,7 @@ import { buildLinearAuth } from "@open-everywhere/provider-linear/agent/channels
 import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "@open-everywhere/provider-notion/agent/channels/notion-supervisor.js";
 import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
+import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
 import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
 import { wakeOriginCodec } from "@open-everywhere/core/agent/channels/wake-origin-codec.js";
@@ -70,7 +71,7 @@ import {
   discordSingleWindowPrivacyOk,
   type DiscordRelayMessage,
   type DiscordGatewaySend,
-} from "@open-everywhere/core/agent/channels/discord-gateway.js";
+} from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
 import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "@open-everywhere/core/agent/identity/trust.js";
 import {
   handleTeamsSingleWindowDispatch,
@@ -105,6 +106,7 @@ registerNotionProvider();
 registerGithubProvider();
 registerTeamsProvider();
 registerLinearProvider();
+registerDiscordProvider();
 {
   const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
     slack: true,

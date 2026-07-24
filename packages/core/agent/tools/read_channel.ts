@@ -5,7 +5,7 @@ import { type BindableContext } from "../identity/binding.js";
 import { resolveWindowSources } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
-import { resolveReadAdapter, renderChannelBody, channelReadSource, SUPPORTED_READ_PLATFORMS } from "../channels/channel-read.js";
+import { resolveReadAdapter, renderChannelBody, channelReadSource, supportedReadPlatforms } from "../channels/channel-read.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -22,7 +22,7 @@ function safeDomains(): readonly Domain[] {
 const readChannelEntry = defineTool({
   description:
     "Read recent messages from a channel this window's memory domain grants — on any of the window's " +
-    `source surfaces (${SUPPORTED_READ_PLATFORMS.join(", ")}). Set target.platform (defaults to the ` +
+    `source surfaces (${supportedReadPlatforms().join(", ")}). Set target.platform (defaults to the ` +
     "surface this turn came from) and target.channel. You can only read channels your domain grants; others are refused.",
   inputSchema: z.object({
     target: z.object({
@@ -30,7 +30,7 @@ const readChannelEntry = defineTool({
         .string()
         .min(1)
         .optional()
-        .describe(`Which surface to read (${SUPPORTED_READ_PLATFORMS.join(", ")}). Defaults to the surface this turn came from.`),
+        .describe(`Which surface to read (${supportedReadPlatforms().join(", ")}). Defaults to the surface this turn came from.`),
       channel: z
         .string()
         .min(1)

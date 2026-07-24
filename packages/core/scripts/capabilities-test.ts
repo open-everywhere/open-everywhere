@@ -20,7 +20,7 @@ function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): v
 }
 
 eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack");
-eq(capabilitiesForPlatform("discord"), { midTurnPost: true, reactions: false }, "discord");
+eq(capabilitiesForPlatform("discord"), { midTurnPost: false, reactions: false }, "discord (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("teams"), { midTurnPost: false, reactions: false }, "teams (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: false, reactions: false }, "linear (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
@@ -34,9 +34,9 @@ eq(capabilitiesForPlatform(undefined), { midTurnPost: false, reactions: false },
 const ctxFor = (kind: string): BindableContext => ({ channel: { kind } });
 ok(capabilitiesFor(ctxFor("slack")).reactions === true, "capabilitiesFor: bare 'slack' kind resolves the slack manifest");
 ok(capabilitiesFor(ctxFor("channel:slack")).reactions === true, "capabilitiesFor: namespaced 'channel:slack' resolves the slack manifest");
-ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "capabilitiesFor: namespaced 'channel:discord' resolves the discord manifest");
-ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
-ok(capabilitiesFor(ctxFor("teams")).midTurnPost === false, "capabilitiesFor: teams resolves NONE in core alone (bundle-registered manifest — asserted in the teams integration test)");
+ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === false, "capabilitiesFor: namespaced 'channel:discord' → NONE in core alone (discord manifest is bundle-registered)");
+ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === false, "capabilitiesFor: 'discord-gateway' → NONE in core alone (aliases to the bundle-registered discord)");
+ok(capabilitiesFor(ctxFor("teams")).midTurnPost === false, "capabilitiesFor: teams → NONE in core alone (bundle-registered manifest — registered row asserted in the teams integration test)");
 ok(capabilitiesFor(ctxFor("github")).midTurnPost === false, "capabilitiesFor: github honours no optional verb (no public proactive comment seam)");
 
 registerCapabilityManifest("regtest", { midTurnPost: true, reactions: true });

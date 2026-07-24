@@ -1,7 +1,7 @@
 import { adminControlRoles } from "../access/roles.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel } from "../memory/domain.js";
-import { guildIdFromScopeKey, isGuildAdminViaRest } from "../approvals/discord-admin.js";
+import { nativeAdminCheck } from "../access/native-admin.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { whereFromScope } from "../approvals/actions.js";
 
@@ -32,8 +32,9 @@ export async function capBypassFor(input: {
     if (rosterStanding(roles, domainForChannel(input.surfaceKey, domains)?.name ?? null)) {
       standing = "roster";
     } else {
-      const guildId = guildIdFromScopeKey(input.surfaceKey);
-      if (guildId && (await isGuildAdminViaRest(guildId, input.principalId))) standing = "guild-admin";
+      const platform = input.surfaceKey.split("/")[0];
+      const check = nativeAdminCheck(platform);
+      if (check && (await check(input.surfaceKey, input.principalId))) standing = "guild-admin";
     }
     if (!standing) return null;
 

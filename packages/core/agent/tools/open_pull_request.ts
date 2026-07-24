@@ -22,7 +22,7 @@ import { bareTokenFromEveContext } from "../channels/window-key.js";
 import { currentWindowToken } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { slackForm } from "../channels/slack-events.js";
-import { discordPostMessage } from "../channels/discord-post.js";
+import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 
 async function resolvePrToken(repo: string): Promise<string> {
   const app = getGitHubApp();
@@ -43,8 +43,9 @@ function proposingSessionId(ctx: unknown): string | undefined {
 }
 
 async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {
-  if (platform === "discord") {
-    await discordPostMessage(channelId, text).catch(() => {});
+  const ops = surfaceMessageOps(platform);
+  if (ops) {
+    await ops.postText(channelId, text).catch(() => {});
     return;
   }
   const body = new URLSearchParams();

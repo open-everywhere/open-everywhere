@@ -199,8 +199,8 @@ const bridgedSlug = bindFrom(
     attributes: { guild_id: "G7", channel_id: "C7", channel_type: "0", user_id: "U_dg" },
   }),
 );
-ok(bridgedSlug.platform === "discord" && bridgedSlug.workspace === "G7" && bridgedSlug.surface === "C7",
-  "binding-bridge: a channel-slug platform stamp ('discord-gateway') normalizes to the discord mapper");
+ok(bridgedSlug.platform === "discord",
+  "binding-bridge: a channel-slug platform stamp ('discord-gateway') normalizes to the discord platform (mapper dispatch is app-tier — bundle-registered)");
 
 const uniHop = bindBridged({
   platform: "unified",

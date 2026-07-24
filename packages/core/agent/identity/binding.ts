@@ -1,7 +1,6 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
-import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
 import { isVouchedInternal } from "./trust.js";
 import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -144,26 +143,6 @@ const bindSlack: Mapper = (ctx) => {
   };
 };
 
-const bindDiscord: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const channelId = attr(a, ["channel_id", "channelId"]);
-  const guildId = attr(a, ["guild_id", "guildId"]);
-  const channelType = attr(a, ["channel_type", "channelType"]);
-  const everyoneCanView = attr(a, ["everyone_can_view", "everyoneCanView"]);
-  const userId = attr(a, ["user_id", "userId"]);
-  const mode = discordMode(channelType, guildId);
-  return {
-    workspace: guildId ?? userId,
-    surface: channelId,
-    domainSurface: attr(a, ["parent_channel_id", "parentChannelId"]),
-    mode,
-    visibility: discordVisibility(everyoneCanView, mode),
-    trust: discordTrust(attr(a, ["member_pending", "memberPending"])),
-    principalId: authPrincipalId(ctx) ?? userId,
-    target: channelId ? { channelId, ...(guildId ? { guildId } : {}), ...(channelType ? { channelType } : {}) } : undefined,
-  };
-};
-
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -188,7 +167,6 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
 }
 
 registerIdentityMapper("slack", bindSlack);
-registerIdentityMapper("discord", bindDiscord);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);

@@ -9,7 +9,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { dispatchApprovalDecisionWake } from "../channels/unified.js";
-import { discordPostMessage } from "../channels/discord-post.js";
+import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
@@ -81,6 +81,16 @@ export interface RequestApprovalInput {
 }
 
 export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]) => Promise<string | undefined>;
+
+const CARD_POSTERS = new Map<string, CardPoster>();
+
+export function registerCardPoster(platform: string, poster: CardPoster): void {
+  CARD_POSTERS.set(platform, poster);
+}
+
+export function cardPosterFor(platform: string | undefined): CardPoster | undefined {
+  return platform === undefined ? undefined : CARD_POSTERS.get(platform);
+}
 
 export interface RequestApprovalDeps {
   readonly post?: PostFn;
@@ -471,7 +481,9 @@ export function discordDecisionWakeTarget(row: PendingActionRow, guildId: string
 }
 
 export function postDiscordDecisionNotice(row: PendingActionRow, text: string): Promise<unknown> {
-  return discordPostMessage(row.channelId, text, row.messageTs ? { replyToMessageId: row.messageTs } : undefined);
+  const ops = surfaceMessageOps("discord");
+  if (!ops) return Promise.resolve(undefined);
+  return ops.postText(row.channelId, text, row.messageTs ? { replyToMessageId: row.messageTs } : undefined);
 }
 
 export interface DecisionFeedbackInput {

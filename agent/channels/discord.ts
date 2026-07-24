@@ -1,1 +1,1 @@
-export { default } from "@open-everywhere/core/agent/channels/discord.js";
+export { default } from "@open-everywhere/provider-discord/agent/channels/discord.js";

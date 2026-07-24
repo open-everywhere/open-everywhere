@@ -4,6 +4,7 @@ import type { Approval } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { callSlackRead } from "../channels/slack-read.js";
+import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
 import { confineToWorkspacePath } from "./describe_image.js";
@@ -93,23 +94,16 @@ async function postTextToSlack(ctx: BindableContext, text: string): Promise<void
 }
 
 async function postTextToDiscord(ctx: BindableContext, text: string): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
-    throw new Error("post_file: DISCORD_BOT_TOKEN is not set — the bot token is required to post to Discord.");
+  const ops = surfaceMessageOps("discord");
+  if (!ops) {
+    throw new Error("post_file: Discord message transport is not registered — the @open-everywhere/provider-discord bundle isn't wired.");
   }
   const binding = bindFrom(ctx);
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) {
     throw new Error("post_file: couldn't resolve this Discord channel's id — try again from a real channel or DM.");
   }
-  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-    method: "POST",
-    headers: { authorization: `Bot ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ content: text }),
-  });
-  if (!res.ok) {
-    throw new Error(`post_file: Discord create-message (text) failed (HTTP ${res.status}) for channel ${channelId}.`);
-  }
+  await ops.postText(channelId, text);
 }
 
 async function postLinkToSurface(ctx: BindableContext, platform: string, urls: readonly string[], comment: string | undefined): Promise<void> {
@@ -150,30 +144,16 @@ async function postFilesToSlack(ctx: BindableContext, files: readonly ResolvedFi
 }
 
 async function postFilesToDiscord(ctx: BindableContext, files: readonly ResolvedFile[], comment: string | undefined): Promise<void> {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) {
-    throw new Error("post_file: DISCORD_BOT_TOKEN is not set — the bot token is required to upload files to Discord.");
+  const ops = surfaceMessageOps("discord");
+  if (!ops) {
+    throw new Error("post_file: Discord message transport is not registered — the @open-everywhere/provider-discord bundle isn't wired.");
   }
   const binding = bindFrom(ctx);
   const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
   if (!channelId) {
     throw new Error("post_file: couldn't resolve this Discord channel's id — try again from a real channel or DM.");
   }
-  const form = new FormData();
-  const attachments = files.map((file, i) => ({ id: i, filename: file.filename, ...(file.caption ? { description: file.caption } : {}) }));
-  form.append("payload_json", JSON.stringify({ ...(comment ? { content: comment } : {}), attachments }));
-  files.forEach((file, i) => {
-    const ab = file.bytes.buffer.slice(file.bytes.byteOffset, file.bytes.byteOffset + file.bytes.byteLength) as ArrayBuffer;
-    form.append(`files[${i}]`, new Blob([ab], { type: file.contentType }), file.filename);
-  });
-  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-    method: "POST",
-    headers: { authorization: `Bot ${token}` },
-    body: form,
-  });
-  if (!res.ok) {
-    throw new Error(`post_file: Discord create-message failed (HTTP ${res.status}) for channel ${channelId}.`);
-  }
+  await ops.postFiles(channelId, files, comment);
 }
 
 const MAX_FILES = 10;

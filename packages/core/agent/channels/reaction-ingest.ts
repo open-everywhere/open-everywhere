@@ -51,7 +51,6 @@ export function registeredReactionSurfaces(): readonly string[] {
 }
 
 registerReactionSurface("slack" satisfies ReactionSurface);
-registerReactionSurface("discord" satisfies ReactionSurface);
 
 export interface IngestedReaction {
   readonly surface: ReactionSurface;

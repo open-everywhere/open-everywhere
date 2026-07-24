@@ -15,7 +15,6 @@ import {
   ChannelScopeError,
   type RenderedMessage,
 } from "./slack-read.js";
-import { linesFromDiscordMessages } from "./discord-backscroll.js";
 
 export interface RenderedLine {
   readonly author: string;
@@ -98,41 +97,6 @@ export function assertSurfaceAllowed(ctx: BindableContext, platform: string, sur
   );
 }
 
-const DISCORD_CHANNEL_DEFAULT_LIMIT = 50;
-const DISCORD_THREAD_DEFAULT_LIMIT = 100;
-const DISCORD_MAX_PAGE = 100;
-
-export type DiscordReadRequester = (channelId: string, limit: number) => Promise<unknown>;
-
-const liveDiscordRead: DiscordReadRequester = async (channelId, limit) => {
-  const token = process.env.DISCORD_BOT_TOKEN;
-  if (!token) throw new Error("read: DISCORD_BOT_TOKEN is not set — the Discord read tools need the bot token.");
-  const qs = new URLSearchParams({ limit: String(Math.min(limit, DISCORD_MAX_PAGE)) }).toString();
-  const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages?${qs}`, {
-    headers: { authorization: `Bot ${token}` },
-  });
-  if (!res.ok) throw new Error(`read: Discord GET messages failed (HTTP ${res.status}) for channel ${channelId}.`);
-  return res.json();
-};
-
-export function discordLinesFromRaw(raw: unknown): RenderedLine[] {
-  if (!Array.isArray(raw)) return [];
-  const ordered = [...(raw as Array<Record<string, unknown>>)].reverse();
-  return linesFromDiscordMessages(ordered).map((l) => ({ author: l.senderId ?? "(unknown)", ts: l.ts, text: l.text }));
-}
-
-export const discordReadAdapter = {
-  platform: "discord" as const,
-  async readChannel(ctx: BindableContext, channel: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
-    assertSurfaceAllowed(ctx, "discord", channel);
-    return discordLinesFromRaw(await req(channel, limit ?? DISCORD_CHANNEL_DEFAULT_LIMIT));
-  },
-  async readThread(ctx: BindableContext, channel: string, threadTs: string, limit?: number, req: DiscordReadRequester = liveDiscordRead): Promise<readonly RenderedLine[]> {
-    assertSurfaceAllowed(ctx, "discord", threadTs);
-    return discordLinesFromRaw(await req(threadTs, limit ?? DISCORD_THREAD_DEFAULT_LIMIT));
-  },
-};
-
 const READ_ADAPTER_REGISTRY: Record<string, ReadAdapter> = {};
 
 export function registerReadAdapter(adapter: ReadAdapter): void {
@@ -140,7 +104,6 @@ export function registerReadAdapter(adapter: ReadAdapter): void {
 }
 
 registerReadAdapter(slackReadAdapter);
-registerReadAdapter(discordReadAdapter);
 
 export const READ_ADAPTERS: Readonly<Record<string, ReadAdapter>> = READ_ADAPTER_REGISTRY;
 
@@ -169,7 +132,7 @@ export function resolveReadAdapter(
   assertTurnSurface(ctx, platform);
   const adapter = READ_ADAPTERS[platform];
   if (!adapter) {
-    throw new Error(`read: reading a ${platform} channel is not supported yet (supported: ${SUPPORTED_READ_PLATFORMS.join(", ")}).`);
+    throw new Error(`read: reading a ${platform} channel is not supported yet (supported: ${supportedReadPlatforms().join(", ")}).`);
   }
   return { platform, adapter };
 }

@@ -1,6 +1,5 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import slack from "../channels/slack.js";
-import discord from "../channels/discord.js";
 import { confirmChannelInternal, slackForm } from "../channels/slack-events.js";
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { resolveRegisteredRoutineDispatch, type DispatchTarget } from "./routine-dispatch.js";
@@ -47,23 +46,6 @@ function resolveSlackTarget(r: Routine): DispatchTarget | null {
   };
 }
 
-function resolveDiscordTarget(r: Routine): DispatchTarget | null {
-  const channelId = storedString(r.target, "channelId");
-  if (!channelId) return null;
-  const channelType = storedString(r.target, "channelType");
-  const mode: SessionMode = channelType === "1" ? "dm" : channelType === "3" ? "mpim" : "channel";
-  return {
-    channel: discord,
-    target: { channelId },
-    mode,
-    attributes: {
-      channel_id: channelId,
-      guild_id: storedString(r.target, "guildId") ?? r.surfaceKey.split("/")[1] ?? "",
-      ...(channelType ? { channel_type: channelType } : {}),
-    },
-  };
-}
-
 function resolveTarget(routine: Routine): DispatchTarget | null {
   const platform = routine.surfaceKey.split("/")[0];
   if (platform === undefined) return null;
@@ -72,8 +54,6 @@ function resolveTarget(routine: Routine): DispatchTarget | null {
   switch (platform) {
     case "slack":
       return resolveSlackTarget(routine);
-    case "discord":
-      return resolveDiscordTarget(routine);
     default:
       return null;
   }

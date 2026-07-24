@@ -22,4 +22,3 @@ export function capabilitiesFor(ctx: BindableContext): CapabilityManifest {
 }
 
 registerCapabilityManifest("slack", { midTurnPost: true, reactions: true });
-registerCapabilityManifest("discord", { midTurnPost: true, reactions: false });
