@@ -2,6 +2,13 @@ import type { GitHubApp } from "./app.js";
 import { getGitHubApp } from "./provider.js";
 import { READ_PERMISSIONS } from "./mint.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
+import {
+  describeActivity,
+  fetchPrReviews,
+  prHasActivity,
+  summarizeReviews,
+  type PrActivitySummary,
+} from "./pr-activity.js";
 
 export interface PrStatusSnapshot {
   readonly repo: string;
@@ -13,6 +20,7 @@ export interface PrStatusSnapshot {
   readonly draft: boolean;
   readonly updatedAt: string;
   readonly checks?: PrChecksSummary;
+  readonly activity?: PrActivitySummary;
 }
 
 export interface CheckRun {
@@ -110,6 +118,14 @@ export async function fetchPullRequestStatus(opts: {
     draft: boolean;
     updated_at: string;
     head?: { sha?: string };
+    comments?: number;
+    review_comments?: number;
+    commits?: number;
+  };
+  const counts = {
+    issueComments: num(pr.comments),
+    reviewComments: num(pr.review_comments),
+    commits: num(pr.commits),
   };
   const base: PrStatusSnapshot = {
     repo: opts.repo,
@@ -120,16 +136,21 @@ export async function fetchPullRequestStatus(opts: {
     merged: Boolean(pr.merged),
     draft: Boolean(pr.draft),
     updatedAt: pr.updated_at,
+    activity: { reviews: 0, approvals: 0, changesRequested: 0, ...counts },
   };
   const headSha = pr.head?.sha;
   if (!headSha) return base;
-  try {
-    const runs = await fetchCheckRuns({ repo: opts.repo, ref: headSha, token: opts.token, fetchFn, apiBase });
-    if (runs.length === 0) return base;
-    return { ...base, checks: summarizeChecks(runs) };
-  } catch {
-    return base;
-  }
+  const [runs, reviews] = await Promise.all([
+    fetchCheckRuns({ repo: opts.repo, ref: headSha, token: opts.token, fetchFn, apiBase }).catch(() => null),
+    fetchPrReviews({ repo: opts.repo, number: opts.number, token: opts.token, fetchFn, apiBase }).catch(() => null),
+  ]);
+  const activity: PrActivitySummary = { ...summarizeReviews(reviews ?? []), ...counts };
+  const checks = runs && runs.length > 0 ? summarizeChecks(runs) : undefined;
+  return checks ? { ...base, checks, activity } : { ...base, activity };
+}
+
+function num(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
 }
 
 export function describeChecks(c: PrChecksSummary): string {
@@ -146,9 +167,19 @@ export function describeChecks(c: PrChecksSummary): string {
 }
 
 export function describePrStatus(s: PrStatusSnapshot): string {
-  const label = s.merged ? "MERGED" : s.state === "closed" ? "CLOSED (not merged)" : s.draft ? "OPEN (draft)" : "OPEN";
   const checks = s.checks ? ` — ${describeChecks(s.checks)}` : "";
-  return `${label} — "${s.title}" (updated ${s.updatedAt}) ${s.url}${checks}`;
+  const act = s.activity && prHasActivity(s.activity) ? ` — ${describeActivity(s.activity)}` : "";
+  return `${prStateLabel(s)} — "${s.title}" (updated ${s.updatedAt}) ${s.url}${checks}${act}`;
+}
+
+export function prStateLabel(s: PrStatusSnapshot): string {
+  return s.merged ? "MERGED" : s.state === "closed" ? "CLOSED (not merged)" : s.draft ? "OPEN (draft)" : "OPEN";
+}
+
+export function describePrStatusStructural(s: PrStatusSnapshot): string {
+  const checks = s.checks ? ` — ${describeChecks(s.checks)}` : "";
+  const act = s.activity && prHasActivity(s.activity) ? ` — ${describeActivity(s.activity)}` : "";
+  return `${prStateLabel(s)} (updated ${s.updatedAt}) ${s.url}${checks}${act}`;
 }
 
 export function prIsSettled(s: PrStatusSnapshot): boolean {
