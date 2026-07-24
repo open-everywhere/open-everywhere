@@ -22,7 +22,7 @@ export function signSlackRequest(rawBody: string, signingSecret: string, nowMs: 
 
 export interface ApprovalClickInput {
   readonly pendingId: string;
-  readonly decision: "approve" | "reject";
+  readonly decision: "approve" | "reject" | "approve_session";
   readonly userId: string;
   readonly channelId: string;
   readonly messageTs: string;

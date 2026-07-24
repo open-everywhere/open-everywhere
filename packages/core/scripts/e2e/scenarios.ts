@@ -11,7 +11,7 @@ import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
-import { approveButton, awaitCard, awaitDecided, driveDecide, drivePrOpen, factToken } from "./journey.js";
+import { approveButton, awaitCard, awaitDecided, classifyPrMiss, driveDecide, drivePrOpen, factToken } from "./journey.js";
 
 export class ScenarioSkip extends Error {
   constructor(reason: string) {
@@ -1764,6 +1764,108 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log(`teardown: closed PR #${drive.prNumber} and deleted branch ${drive.head}`);
       } catch (err) {
         ctx.log(`teardown (best-effort) did not complete: ${String(err instanceof Error ? err.message : err)}`);
+      }
+    },
+  },
+  {
+    id: "S-PR-SESSION",
+    title:
+      "PR session grant (OPE-53): a forged Approve-for-session click publishes PR 1 AND memos the window; a second propose in the SAME session publishes directly — no card, sessionApproved:true audited; teardown both",
+    requires: ["slack", "synthetic", "pr"],
+    surface: "cross",
+    suite: "core",
+    optional: false,
+    timeoutMs: 1_200_000,
+    judged: false,
+    run: async (ctx) => {
+      const slack = ctx.slack!;
+      const synthetic = ctx.synthetic!;
+      const repo = ctx.prRepo!;
+      const prApi = ctx.prApi!;
+      const base = (process.env.E2E_PR_BASE ?? "").trim() || "main";
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+
+      const token1 = factToken("sess1");
+      const ask1 =
+        `checkout ${repo}, add a line to README.md that reads exactly ${token1} (that token and nothing else on the line), ` +
+        `commit it on a new branch, and open a pull request titled "(e2e S-PR-SESSION) add ${token1} to README" against ${base}. ` +
+        `Keep the change to that one line. ` +
+        `Note: the earlier write-access problem on this repo has been fixed server-side — don't refuse from memory, attempt the flow.`;
+      const drive = await drivePrOpen({
+        slack, synthetic, gate: ctx.gate, log: ctx.log, pr: prApi,
+        ask: ask1, token: token1, base, leg: "sess-grant", timeoutMs: REPLY_WAIT,
+        decision: "approve_session",
+      });
+      if (!drive.published) {
+        if (drive.miss === "errored") ctx.gate(false, `open_pull_request tried and errored: ${drive.reason}`);
+        throw new ScenarioSkip(
+          drive.miss === "grant-refused"
+            ? `repo ${repo} is not granted to the e2e channel's domain (provision per J-PR's guidance). Agent reply: ${drive.reason}`
+            : `the model did not call open_pull_request this run (session ran; reply: ${drive.reason})`,
+        );
+      }
+      const opened: { number: number; head: string }[] = [{ number: drive.prNumber, head: drive.head }];
+      try {
+      if (ctx.auditRead) {
+        const granted = await ctx.auditRead({ sinceIso: runStart, actions: ["approval.session_granted"] });
+        ctx.gate(
+          granted.some((r) => (r.detail as { memoKind?: unknown } | undefined)?.memoKind === "pr.open"),
+          'approve_session click audited approval.session_granted with memoKind "pr.open" (the memo exists — detail shape is OPE-11+, reds against older deployments)',
+        );
+      }
+
+      const token2 = factToken("sess2");
+      const head2 = `e2e-sess-${token2}`;
+      const { ts: ask2Ts } = await slack.post(
+        slack.mention(
+          `same again please: checkout ${repo}, add a line to README.md that reads exactly ${token2} (that token and nothing else on the line), ` +
+            `commit it on a new branch named exactly ${head2}, and open a pull request titled "(e2e S-PR-SESSION) add ${token2} to README" against ${base}. ` +
+            `Keep the change to that one line.`,
+        ),
+      );
+      const reply2 = await slack.awaitThreadReply(ask2Ts, { timeoutMs: REPLY_WAIT });
+      let pr2: Awaited<ReturnType<typeof prApi.findOpenPrByHead>> & object;
+      try {
+        pr2 = await pollUntil(async () => prApi.findOpenPrByHead(head2), {
+          timeoutMs: REPLY_WAIT,
+          what: `the session-skipped PR (head ${head2}) readable via the GitHub API`,
+        });
+      } catch (err) {
+        const miss = classifyPrMiss(reply2.text);
+        if (miss === "errored") throw err;
+        throw new ScenarioSkip(
+          `no session-skip PR published this run (${miss}); reply: ${reply2.text.replace(/\s+/g, " ").trim().slice(0, 240)}`,
+        );
+      }
+      opened.push({ number: pr2.number, head: head2 });
+      ctx.gate(pr2.base === base, `session-skipped PR targets the "${base}" base branch`);
+      ctx.gate(await prApi.prContainsToken(pr2.number, token2), `session-skipped PR's diff carries the run token "${token2}"`);
+      const thread2 = await slack.replies(ask2Ts);
+      ctx.gate(
+        thread2.every((m) => approveButton(m) === undefined),
+        "NO pr.open card posted for the second propose — the session memo skipped it (hard gate)",
+      );
+      if (ctx.auditRead) {
+        const rows = await ctx.auditRead({ sinceIso: runStart, actions: ["pr.open"] });
+        ctx.gate(
+          rows.some((r) => {
+            const d = r.detail as { number?: unknown; sessionApproved?: unknown } | undefined;
+            return d?.number === pr2.number && d?.sessionApproved === true;
+          }),
+          `pr.open audit row for PR #${pr2.number} is stamped sessionApproved:true (published off the memo, no card this time)`,
+        );
+      }
+
+      } finally {
+        for (const pr of opened) {
+          try {
+            await prApi.closePr(pr.number);
+            await prApi.deleteBranch(pr.head);
+            ctx.log(`teardown: closed PR #${pr.number}, deleted branch ${pr.head}`);
+          } catch (err) {
+            ctx.log(`teardown (best-effort) PR #${pr.number} did not complete: ${String(err instanceof Error ? err.message : err)}`);
+          }
+        }
       }
     },
   },

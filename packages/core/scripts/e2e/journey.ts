@@ -110,8 +110,10 @@ export async function drivePrOpen(args: {
   leg: string;
   timeoutMs: number;
   beforeApprove?: (card: SlackMessage) => void | Promise<void>;
+  decision?: "approve" | "approve_session";
 }): Promise<PrDriveResult> {
   const { slack, synthetic, pr, ask, token, base, timeoutMs } = args;
+  const decision = args.decision ?? "approve";
   const gate = legGate(args.gate, args.leg);
   const { ts: askTs } = await slack.post(slack.mention(ask));
   const firstReply = await slack.awaitThreadReply(askTs, { timeoutMs });
@@ -127,9 +129,9 @@ export async function drivePrOpen(args: {
   await args.beforeApprove?.(card);
 
   const { teamId } = await slack.identity();
-  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision: "approve", messageTs: card.ts, channelId: slack.channelId, teamId });
-  args.log(`${clicked.label}: approve pr.open ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
-  gate(clicked.status === 200, "forged admin approve click acked 200");
+  const clicked = await synthetic.click({ pendingId: btn.pendingId, org: btn.org, decision, messageTs: card.ts, channelId: slack.channelId, teamId });
+  args.log(`${clicked.label}: ${decision} pr.open ${btn.pendingId} (org "${btn.org}") → ${clicked.status}`);
+  gate(clicked.status === 200, `forged admin ${decision} click acked 200`);
   const decided = await awaitDecided(slack, askTs, card.ts, timeoutMs);
 
   const urlMatch = decided.text.match(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/);
