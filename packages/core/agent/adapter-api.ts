@@ -106,5 +106,65 @@ export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
 export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
 
+export { registerIdentityMapper, deploymentOrg } from "./identity/binding.js";
+export type { IdentityMapper, RawIdentity, Visibility } from "./identity/binding.js";
+
+export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/capabilities.js";
+export type { CapabilityManifest } from "./identity/capabilities.js";
+
+export { registerPostArm } from "./channels/post-arms.js";
+export type { PostArm, TargetResolveBag } from "./channels/post-arms.js";
+export type { ReplyTarget } from "./channels/reply-post.js";
+export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
+
+export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
+export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
+export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy } from "./channels/unified-window.js";
+export type { UnifiedWakeOrigin, UnifiedWindowWake } from "./channels/unified-window.js";
+
+export { registerReadAdapter } from "./channels/channel-read.js";
+export type { ReadAdapter } from "./channels/channel-read.js";
+
+export { registerReactionSurface, isRegisteredReactionSurface } from "./channels/reaction-ingest.js";
+
+export { renderWake, mkMessageTrigger } from "./channels/normalized-wake.js";
+export type { NormalizedWake, WakeEngagementTier } from "./channels/normalized-wake.js";
+export type { WakeMessageInput, WakeTrust } from "./channels/wake-envelope.js";
+
+export { divertToUnifiedWindow } from "./channels/unified.js";
+
+export { supervisorGrainFor, grainUsesUnifiedWindow, mintRotationToken } from "./channels/unified-supervisor.js";
+export type { SupervisorGrain } from "./channels/unified-supervisor.js";
+
+export { completeSupervisorTurn } from "./channels/supervisor-complete.js";
+export type { SupervisorCompletionSpec } from "./channels/supervisor-complete.js";
+
+export {
+  finalMessageAction,
+  finalMessageActionForTurn,
+  isBareStop,
+  isNoReply,
+  shouldRotate,
+  supervisorTextDelivery,
+  isSupervisorProseLeak,
+  nameDropPattern,
+  NO_REPLY_SENTINEL,
+} from "./channels/turn-delivery.js";
+export type { FinalMessageAction, SupervisorTextDelivery } from "./channels/turn-delivery.js";
+
+export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
+
+export { classifySessionSendError } from "./channels/session-death.js";
+
+export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
+export { isVouchedInternal } from "./identity/trust.js";
+
+export { ambientSupervisorEnabled, engagementTierFor } from "./memory/domain.js";
+
+export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
+
+export { registerEntityActionAdapter } from "./channels/entity-actions.js";
+export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
+
 export { appendUsageEvent } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";
