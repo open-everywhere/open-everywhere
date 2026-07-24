@@ -12,7 +12,15 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.OE_TELEMETRY = "off";
 
-const { classifyEmoji, ingestReaction, buildIngestedReaction, REACTION_FEEDBACK_ACTION } = await import("../agent/channels/reaction-ingest.js");
+const {
+  classifyEmoji,
+  ingestReaction,
+  buildIngestedReaction,
+  REACTION_FEEDBACK_ACTION,
+  registerReactionSurface,
+  isRegisteredReactionSurface,
+  registeredReactionSurfaces,
+} = await import("../agent/channels/reaction-ingest.js");
 const { parseSlackReactionEvent, routeReactionEvent } = await import("../agent/channels/slack-events.js");
 const { parseRelayReaction, routeDiscordReaction } = await import("../agent/channels/discord-gateway.js");
 const { buildFrontHandler, classifyEnvelope } = await import("../agent/channels/slack-front.js");
@@ -229,4 +237,27 @@ ok(classifyEmoji("some_custom_emoji") === "other", "classifyEmoji: arbitrary cus
   ok(sRes.status === 200 && afterSelf === after, "front: the bot's own reaction is ignored end-to-end (no feedback row)");
 }
 
-console.log(`\n✓ reaction-ingest: ${n} assertions passed (bucketing, seam, Slack+Discord parse/route, front dedupe/signature)\n`);
+{
+  ok(isRegisteredReactionSurface("slack") && isRegisteredReactionSurface("discord"), "registry: slack + discord are registered reaction surfaces at module load");
+  ok(!isRegisteredReactionSurface("fake-test-surface"), "registry: an unregistered platform reports as not registered");
+
+  registerReactionSurface("fake-test-surface");
+  ok(isRegisteredReactionSurface("fake-test-surface"), "registry: registerReactionSurface adds a new platform, immediately queryable");
+  ok(registeredReactionSurfaces().includes("fake-test-surface"), "registry: the fake platform shows up in the enumerated list");
+
+  const stillUnknown = buildIngestedReaction({
+    surface: "slack",
+    verb: "added",
+    reactorId: "U9",
+    emoji: "thumbsup",
+    target: { channelId: "C9", messageId: "9.9" },
+    onBotReply: true,
+    partition: { org: "default", platform: "slack", workspace: "T1", surfaceKey: "slack/T1/C9" },
+  });
+  ok(!isRegisteredReactionSurface("still-unregistered-surface"), "registry: a never-registered surface name stays unregistered");
+  const sUnknown = captureSink();
+  const outUnknown = await ingestReaction(stillUnknown, sUnknown.deps);
+  ok(outUnknown.recorded && sUnknown.recorded.length === 1 && sUnknown.telem.length === 1, "registry: ingestReaction behaviour is unaffected by the registry (no new gate introduced)");
+}
+
+console.log(`\n✓ reaction-ingest: ${n} assertions passed (bucketing, seam, Slack+Discord parse/route, front dedupe/signature, registry)\n`);

@@ -36,6 +36,23 @@ export function classifyEmoji(raw: string): EmojiClass {
 export type ReactionSurface = "slack" | "discord";
 export type ReactionVerb = "added" | "removed";
 
+const REACTION_SURFACE_REGISTRY = new Set<string>();
+
+export function registerReactionSurface(platform: string): void {
+  REACTION_SURFACE_REGISTRY.add(platform);
+}
+
+export function isRegisteredReactionSurface(platform: string): boolean {
+  return REACTION_SURFACE_REGISTRY.has(platform);
+}
+
+export function registeredReactionSurfaces(): readonly string[] {
+  return [...REACTION_SURFACE_REGISTRY];
+}
+
+registerReactionSurface("slack" satisfies ReactionSurface);
+registerReactionSurface("discord" satisfies ReactionSurface);
+
 export interface IngestedReaction {
   readonly surface: ReactionSurface;
   readonly verb: ReactionVerb;

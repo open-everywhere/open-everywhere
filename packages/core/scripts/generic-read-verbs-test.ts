@@ -13,10 +13,12 @@ import {
   slackReadAdapter,
   discordReadAdapter,
   teamsReadAdapter,
+  registerReadAdapter,
   READ_ADAPTERS,
   SUPPORTED_READ_PLATFORMS,
   type ChannelReadResult,
   type ThreadReadResult,
+  type ReadAdapter,
 } from "../agent/channels/channel-read.js";
 import { genericReadVerbsEnabled, OE_GENERIC_READ_VERBS_ENV } from "../agent/access/source-scoped-mount.js";
 import { ingestUntrusted } from "../agent/access/untrusted.js";
@@ -87,6 +89,25 @@ const MSGS = [
 
   ok(!SUPPORTED_READ_PLATFORMS.includes("linear") && READ_ADAPTERS["linear"] === undefined, "linear is declared unsupported (absent from READ_ADAPTERS), not faked");
   ok(SUPPORTED_READ_PLATFORMS.includes("slack") && SUPPORTED_READ_PLATFORMS.includes("discord") && SUPPORTED_READ_PLATFORMS.includes("teams"), "slack + discord + teams are the wired read adapters");
+
+  const fakeReadAdapter: ReadAdapter = {
+    platform: "fake-test-platform",
+    async readChannel() { return []; },
+    async readThread() { return []; },
+  };
+  registerReadAdapter(fakeReadAdapter);
+  ok(READ_ADAPTERS["fake-test-platform"] === fakeReadAdapter, "registry: registerReadAdapter adds a new platform, visible via READ_ADAPTERS (same live registry object)");
+  const uniFake = mk("unified", { oe_platform: "fake-test-platform", oe_sources: "fake-test-platform" });
+  const rFake = resolveReadAdapter(uniFake, undefined, []);
+  ok(rFake.platform === "fake-test-platform" && rFake.adapter === fakeReadAdapter, "registry: a newly-registered platform is resolvable through resolveReadAdapter's normal gate chain");
+
+  const uniStillUnknown = mk("unified", { oe_platform: "still-unknown", oe_sources: "still-unknown" });
+  assert.throws(
+    () => resolveReadAdapter(uniStillUnknown, undefined, []),
+    /not supported yet \(supported: slack, discord, teams\)/u,
+    "registry: an unregistered platform still fails loud with today's exact refusal text, unaffected by the fake registration above",
+  );
+  n++;
 }
 
 {

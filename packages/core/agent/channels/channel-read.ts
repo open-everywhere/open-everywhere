@@ -136,13 +136,19 @@ export const discordReadAdapter = {
   },
 };
 
-export const READ_ADAPTERS: Readonly<Record<string, ReadAdapter>> = {
-  slack: slackReadAdapter,
-  discord: discordReadAdapter,
-  teams: teamsReadAdapter,
-};
+const READ_ADAPTER_REGISTRY: Record<string, ReadAdapter> = {};
 
-export const SUPPORTED_READ_PLATFORMS: readonly string[] = Object.keys(READ_ADAPTERS);
+export function registerReadAdapter(adapter: ReadAdapter): void {
+  READ_ADAPTER_REGISTRY[adapter.platform] = adapter;
+}
+
+registerReadAdapter(slackReadAdapter);
+registerReadAdapter(discordReadAdapter);
+registerReadAdapter(teamsReadAdapter);
+
+export const READ_ADAPTERS: Readonly<Record<string, ReadAdapter>> = READ_ADAPTER_REGISTRY;
+
+export const SUPPORTED_READ_PLATFORMS: readonly string[] = Object.keys(READ_ADAPTER_REGISTRY);
 
 export function resolveReadAdapter(
   ctx: BindableContext,
