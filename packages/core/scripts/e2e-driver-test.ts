@@ -73,7 +73,10 @@ const {
   SETKEY_INPUT_ACTION: REAL_SETKEY_INPUT_ACTION,
 } = await import("../agent/credentials/intake.js");
 const { verifyWebhookSignature } = await import("../agent/webhooks/gate.js");
-const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../../node_modules/eve/dist/src/public/channels/slack/inbound.js");
+const eveRootDir = (await import("node:path")).dirname(
+  (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
+);
+const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRootDir}/dist/src/public/channels/slack/inbound.js`);
 
 {
   const empty = {};
@@ -560,7 +563,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import("../../..
   ok(linForge.ok && linForge.cfg.webhookSecret === "lin-whsec", "linear cfg carries the optional forge secret when present");
 
   const { signLinearBody, buildAgentSessionEvent } = await import("./e2e/linear-driver.js");
-  const { signLinearWebhookBody } = await import("../../../node_modules/eve/dist/src/public/channels/linear/verify.js");
+  const { signLinearWebhookBody } = await import(`${eveRootDir}/dist/src/public/channels/linear/verify.js`);
   const secret = "lin-e2e-secret";
   const raw = JSON.stringify({ type: "AgentSessionEvent", webhookTimestamp: 1_720_009_900_000 });
   ok(signLinearBody(secret, raw) === signLinearWebhookBody(raw, secret), "the linear forge signer matches eve's own signLinearWebhookBody (hex, no prefix)");
