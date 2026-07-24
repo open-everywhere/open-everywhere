@@ -10,14 +10,11 @@ import {
   type CredentialBindingsFile,
   type CredentialBindingOverride,
 } from "../access/credential-bindings-codemod.js";
-import { GitHubContents, type CommitId } from "../scm/contents.js";
-import { createBranch, getBranchSha } from "../scm/refs.js";
-import { prApiHeaders, type PrFetchFn, type PrOutcome } from "../scm/pr.js";
-import { getGitHubApp } from "../scm/provider.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { DB_BROKER } from "./db-broker.js";
 import { parseCredentialRef, EXECUTOR_HOME } from "./ref.js";
+import { getConfigPrProvider, type ConfigPrProvider } from "./config-pr.js";
 
 export interface BindingAuditWhere {
   readonly org: string;
@@ -40,13 +37,7 @@ export interface CredentialBindingPrDeps {
   readonly baseProviders?: () => readonly Provider[];
   readonly bindingsPath?: string;
   readonly dryRun?: boolean;
-  readonly contents?: Pick<GitHubContents, "getFile" | "putFile">;
-  readonly getBranchSha?: typeof getBranchSha;
-  readonly createBranch?: typeof createBranch;
-  readonly prFetch?: PrFetchFn;
-  readonly resolveToken?: (repo: string) => Promise<string>;
-  readonly committer?: CommitId;
-  readonly apiBase?: string;
+  readonly provider?: ConfigPrProvider;
 }
 
 export interface StageCredentialBindingPrResult {
@@ -54,19 +45,6 @@ export interface StageCredentialBindingPrResult {
   readonly dryRun: boolean;
   readonly url?: string;
   readonly skipped?: string;
-}
-
-async function resolveWriteToken(repo: string): Promise<string> {
-  const app = getGitHubApp();
-  if (app) {
-    const { tokens, ungranted } = await app.tokensForRepos([repo]);
-    if (!ungranted.length) return tokens.get(repo.slice(0, repo.indexOf("/")))!.token;
-  }
-  const pat = process.env.GITHUB_TOKEN;
-  if (!pat) {
-    throw new Error("no GitHub credential for the config repo: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
-  }
-  return pat;
 }
 
 function bindingPrBody(args: StageCredentialBindingPrArgs, home: string): string {
@@ -86,44 +64,6 @@ function bindingPrBody(args: StageCredentialBindingPrArgs, home: string): string
     "custody flip goes live on the next deploy of the merged config. Closing it unmerged declines the migration; the pasted",
     "ciphertext stays inert until it merges (nothing resolves the ref).",
   ].join("\n");
-}
-
-async function openOrReopenBindingPr(
-  opts: { repo: string; head: string; base: string; title: string; body: string; token: string },
-  fetchFn: PrFetchFn,
-  apiBase: string,
-): Promise<PrOutcome & { reopened: boolean }> {
-  const post = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls`, {
-    method: "POST",
-    headers: prApiHeaders(opts.token),
-    body: JSON.stringify({ title: opts.title, body: opts.body, head: opts.head, base: opts.base }),
-  });
-  if (post.ok) {
-    const pr = (await post.json()) as { html_url: string; number: number };
-    return { url: pr.html_url, number: pr.number, updated: false, reopened: false };
-  }
-  const text = await post.text();
-  if (!(post.status === 422 && text.includes("A pull request already exists"))) {
-    throw new Error(`github binding PR create failed: ${post.status} ${text}`);
-  }
-  const owner = opts.repo.slice(0, opts.repo.indexOf("/"));
-  const q = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls?head=${encodeURIComponent(`${owner}:${opts.head}`)}&state=all`, {
-    method: "GET",
-    headers: prApiHeaders(opts.token),
-  });
-  if (!q.ok) throw new Error(`github binding PR lookup failed: ${q.status} ${await q.text()}`);
-  const list = (await q.json()) as { html_url: string; number: number; state: string }[];
-  const pr = list[0];
-  if (!pr) throw new Error(`github binding PR: 422 already-exists but no PR found for ${owner}:${opts.head}`);
-  if (pr.state === "open") return { url: pr.html_url, number: pr.number, updated: true, reopened: false };
-  const patch = await fetchFn(`${apiBase}/repos/${opts.repo}/pulls/${pr.number}`, {
-    method: "PATCH",
-    headers: prApiHeaders(opts.token),
-    body: JSON.stringify({ state: "open", body: opts.body }),
-  });
-  if (!patch.ok) throw new Error(`github binding PR reopen failed: ${patch.status} ${await patch.text()}`);
-  const reopened = (await patch.json()) as { html_url: string; number: number };
-  return { url: reopened.html_url, number: reopened.number, updated: true, reopened: true };
 }
 
 export async function stageCredentialBindingPr(
@@ -195,22 +135,18 @@ export async function stageCredentialBindingPr(
     return { staged: true, dryRun: true };
   }
 
-  const token = await (deps.resolveToken ?? resolveWriteToken)(repo);
-  const contents = deps.contents ?? new GitHubContents();
-  const refSha = deps.getBranchSha ?? getBranchSha;
-  const mkBranch = deps.createBranch ?? createBranch;
-  const fetchFn = deps.prFetch ?? (globalThis.fetch as unknown as PrFetchFn);
-  const apiBase = deps.apiBase ?? "https://api.github.com";
+  const provider = deps.provider ?? getConfigPrProvider();
+  const token = await provider.resolveWriteToken(repo);
 
-  let branchSha = await refSha({ repo, branch, token });
+  let branchSha = await provider.getBranchSha({ repo, branch, token });
   if (branchSha === null) {
-    const baseSha = await refSha({ repo, branch: base, token });
+    const baseSha = await provider.getBranchSha({ repo, branch: base, token });
     if (baseSha === null) throw new Error(`config repo ${repo} has no base branch "${base}" — check accessRequests.configBase.`);
-    await mkBranch({ repo, branch, sha: baseSha, token });
+    await provider.ensureBranch({ repo, branch, sha: baseSha, token });
     branchSha = baseSha;
   }
 
-  const existing = await contents.getFile(repo, bindingsPath, branch, token);
+  const existing = await provider.getFile({ repo, path: bindingsPath, branch, token });
   const file = existing?.content ? parseCredentialBindingsText(existing.content) : emptyCredentialBindingsFile();
   const applied = validateMerged(file);
 
@@ -222,24 +158,26 @@ export async function stageCredentialBindingPr(
   });
 
   if (applied.changed) {
-    const committer = deps.committer ?? getGitHubApp()?.committer() ?? { name: "open-everywhere[bot]", email: "open-everywhere@users.noreply.github.com" };
-    await contents.putFile(
+    await provider.putFile({
       repo,
-      bindingsPath,
-      stringifyCredentialBindings(applied.file),
-      `credential binding: ${args.provider}/${args.credential} → ${home}`,
+      path: bindingsPath,
+      content: stringifyCredentialBindings(applied.file),
+      message: `credential binding: ${args.provider}/${args.credential} → ${home}`,
       branch,
       token,
-      committer,
-      existing?.sha,
-    );
+      committer: provider.committer(),
+      sha: existing?.sha,
+    });
   }
 
-  const pr = await openOrReopenBindingPr(
-    { repo, head: branch, base, title: `Bind credential: ${args.provider}/${args.credential} → ${home}`, body: bindingPrBody(args, homePrBody), token },
-    fetchFn,
-    apiBase,
-  );
+  const pr = await provider.openOrReopenPr({
+    repo,
+    head: branch,
+    base,
+    title: `Bind credential: ${args.provider}/${args.credential} → ${home}`,
+    body: bindingPrBody(args, homePrBody),
+    token,
+  });
 
   await appendAudit({
     ...args.where,

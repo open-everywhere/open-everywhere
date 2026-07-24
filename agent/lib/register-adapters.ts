@@ -8,6 +8,7 @@ import {
   registerDbCredentialBroker,
   CREDENTIAL_KEY_ENV,
   registerGitHubMemory,
+  registerGitHubConfigPrProvider,
   setBlobPutter,
   registerAuditDropCounter,
   emitTelemetry,
@@ -44,6 +45,8 @@ if (process.env[CREDENTIAL_KEY_ENV]) {
 }
 
 registerGitHubMemory();
+
+registerGitHubConfigPrProvider();
 
 registerNotionMemory();
 

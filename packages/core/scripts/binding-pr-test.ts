@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AccessRequestsConfig } from "../agent/access/config.js";
 import type { Provider } from "../agent/access/providers.js";
-import type { PrFetchFn } from "../agent/scm/pr.js";
+import type { ConfigPrProvider, ConfigPrOutcome, CommitIdentity } from "../agent/credentials/config-pr.js";
 
 const dir = join(tmpdir(), `open-everywhere-binding-pr-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -81,21 +81,42 @@ async function rowsFor(action: string, credentialAuditId: string) {
   ok(res.staged === false && !!res.skipped && res.skipped.includes("base providers not registered"), "skip: absent base providers → fail-safe skip");
 }
 
-{
-  let touched = false;
-  const contents = {
+function tripwireProvider(onTouch: () => void): ConfigPrProvider {
+  return {
+    resolveWriteToken: async () => {
+      onTouch();
+      return "tok";
+    },
+    committer: () => ({ name: "bot", email: "bot@x" }),
+    getBranchSha: async () => {
+      onTouch();
+      return null;
+    },
+    ensureBranch: async () => {
+      onTouch();
+    },
     getFile: async () => {
-      touched = true;
+      onTouch();
       return null;
     },
     putFile: async () => {
-      touched = true;
-      return "sha";
+      onTouch();
+    },
+    openOrReopenPr: async () => {
+      onTouch();
+      return { url: "x", number: 1, updated: false, reopened: false };
     },
   };
-  const res = await stageCredentialBindingPr({ ...baseArgs, credentialAuditId: "intake-dry" }, { config: cfg(), dryRun: true, contents });
+}
+
+{
+  let touched = false;
+  const provider = tripwireProvider(() => {
+    touched = true;
+  });
+  const res = await stageCredentialBindingPr({ ...baseArgs, credentialAuditId: "intake-dry" }, { config: cfg(), dryRun: true, provider });
   ok(res.staged === true && res.dryRun === true && res.url === undefined, "dry-run: staged, no url");
-  ok(touched === false, "dry-run: no GitHub network (getFile/putFile never called)");
+  ok(touched === false, "dry-run: no config-repo PR mechanism touched (provider methods never called)");
   const proposed = await rowsFor("credential.binding_proposed", "intake-dry");
   ok(proposed.length === 1, "dry-run: one binding_proposed audit row");
   const d = proposed[0].detail as Record<string, unknown>;
@@ -105,27 +126,26 @@ async function rowsFor(action: string, credentialAuditId: string) {
 
 {
   const state = { puts: 0, prPosts: 0 };
-  const contents = {
+  const provider: ConfigPrProvider = {
+    resolveWriteToken: async () => "tok",
+    committer: () => ({ name: "bot", email: "bot@x" }),
+    getBranchSha: async () => "base-sha",
+    ensureBranch: async () => {},
     getFile: async () => null,
     putFile: async () => {
       state.puts++;
-      return "sha";
     },
-  };
-  const prFetch: PrFetchFn = async () => {
-    state.prPosts++;
-    return { ok: true, status: 201, text: async () => "", json: async () => ({ html_url: "x", number: 1 }) };
+    openOrReopenPr: async () => {
+      state.prPosts++;
+      return { url: "x", number: 1, updated: false, reopened: false };
+    },
   };
   await rejectsWith(
     () =>
       stageCredentialBindingPr(baseArgs, {
         config: cfg({ baseProviders: loadInvalid }),
         dryRun: false,
-        contents,
-        getBranchSha: async () => "base-sha",
-        createBranch: async () => "created" as const,
-        prFetch,
-        resolveToken: async () => "tok",
+        provider,
       }),
     "empty credential allowlist",
     "ring ②: an invalid merged provider set refuses",
@@ -144,51 +164,31 @@ interface FakeGh {
 function fakeGh(prState: FakeGh["prState"]): FakeGh {
   return { branches: { main: "base-sha" }, files: {}, puts: [], prPost: [], prState, patched: [] };
 }
-function ghDeps(state: FakeGh) {
-  const contents = {
-    getFile: async (_repo: string, path: string, branch: string) => state.files[`${branch}:${path}`] ?? null,
-    putFile: async (_repo: string, path: string, content: string, _msg: string, branch: string) => {
+const PR_URL = "https://github.com/acme/config/pull/11";
+function ghProvider(state: FakeGh): ConfigPrProvider {
+  return {
+    resolveWriteToken: async () => "tok",
+    committer: (): CommitIdentity => ({ name: "bot", email: "bot@x" }),
+    getBranchSha: async ({ branch }) => state.branches[branch] ?? null,
+    ensureBranch: async ({ branch, sha }) => {
+      state.branches[branch] = sha;
+    },
+    getFile: async ({ path, branch }) => state.files[`${branch}:${path}`] ?? null,
+    putFile: async ({ path, content, branch }) => {
       state.files[`${branch}:${path}`] = { content, sha: `sha-${state.puts.length + 1}` };
       state.puts.push(content);
-      return "commit-sha";
+    },
+    openOrReopenPr: async ({ head, base, title, body }): Promise<ConfigPrOutcome> => {
+      state.prPost.push({ title, body, head, base });
+      if (state.prState === "new") return { url: PR_URL, number: 11, updated: false, reopened: false };
+      if (state.prState === "open-exists") return { url: PR_URL, number: 11, updated: true, reopened: false };
+      state.patched.push({ number: 11, body });
+      return { url: PR_URL, number: 11, updated: true, reopened: true };
     },
   };
-  const prFetch: PrFetchFn = async (url, init) => {
-    if (init.method === "POST" && url.endsWith("/pulls")) {
-      if (state.prState === "new") {
-        const b = JSON.parse(init.body!) as { title: string; body: string; head: string; base: string };
-        state.prPost.push(b);
-        return { ok: true, status: 201, text: async () => "", json: async () => ({ html_url: "https://github.com/acme/config/pull/11", number: 11 }) };
-      }
-      const b = JSON.parse(init.body!) as { title: string; body: string; head: string; base: string };
-      state.prPost.push(b);
-      return { ok: false, status: 422, text: async () => "A pull request already exists for acme:...", json: async () => ({}) };
-    }
-    if (init.method === "GET" && url.includes("/pulls?head=")) {
-      const st = state.prState === "closed-exists" ? "closed" : "open";
-      return { ok: true, status: 200, text: async () => "", json: async () => [{ html_url: "https://github.com/acme/config/pull/11", number: 11, state: st }] };
-    }
-    if (init.method === "PATCH" && /\/pulls\/\d+$/.test(url)) {
-      const b = JSON.parse(init.body!) as { state: string; body: string };
-      state.patched.push({ number: 11, body: b.body });
-      return { ok: true, status: 200, text: async () => "", json: async () => ({ html_url: "https://github.com/acme/config/pull/11", number: 11 }) };
-    }
-    throw new Error(`unexpected fetch ${init.method} ${url}`);
-  };
-  return {
-    config: cfg(),
-    baseProviders: loadValid,
-    dryRun: false,
-    resolveToken: async () => "tok",
-    getBranchSha: async ({ branch }: { branch: string }) => state.branches[branch] ?? null,
-    createBranch: async ({ branch, sha }: { branch: string; sha: string }) => {
-      state.branches[branch] = sha;
-      return "created" as const;
-    },
-    contents,
-    prFetch,
-    committer: { name: "bot", email: "bot@x" },
-  };
+}
+function ghDeps(state: FakeGh) {
+  return { config: cfg(), baseProviders: loadValid, dryRun: false as const, provider: ghProvider(state) };
 }
 
 {
@@ -245,19 +245,12 @@ const execArgs = { ...baseArgs, storedRef: EXEC_STORED_REF };
 
 {
   let touched = false;
-  const contents = {
-    getFile: async () => {
-      touched = true;
-      return null;
-    },
-    putFile: async () => {
-      touched = true;
-      return "sha";
-    },
-  };
-  const res = await stageCredentialBindingPr({ ...execArgs, credentialAuditId: "intake-exec-dry" }, { config: cfg(), dryRun: true, contents });
+  const provider = tripwireProvider(() => {
+    touched = true;
+  });
+  const res = await stageCredentialBindingPr({ ...execArgs, credentialAuditId: "intake-exec-dry" }, { config: cfg(), dryRun: true, provider });
   ok(res.staged === true && res.dryRun === true && res.url === undefined, "exec dry-run: staged, no url");
-  ok(touched === false, "exec dry-run: no GitHub network");
+  ok(touched === false, "exec dry-run: no config-repo PR mechanism touched");
   const proposed = await rowsFor("credential.binding_proposed", "intake-exec-dry");
   ok(proposed.length === 1, "exec dry-run: one binding_proposed audit row");
   const d = proposed[0].detail as Record<string, unknown>;

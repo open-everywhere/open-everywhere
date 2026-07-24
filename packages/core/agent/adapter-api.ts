@@ -18,6 +18,10 @@ export type { ExclusiveCredentialHome, CredentialHomeRef, ExecutorConnectionRef,
 
 export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "./credentials/db-broker.js";
 
+export { registerConfigPrProvider } from "./credentials/config-pr.js";
+export type { ConfigPrProvider, ConfigPrOutcome, ConfigFileContent, CommitIdentity } from "./credentials/config-pr.js";
+export { registerGitHubConfigPrProvider, makeGitHubConfigPrProvider } from "./credentials/config-pr-github.js";
+
 export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
 

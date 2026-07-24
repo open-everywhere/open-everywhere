@@ -65,6 +65,17 @@ const rel = (f: string) => f.slice(REPO_ROOT.length + 1);
 }
 
 {
+  const bindingPr = join(REPO_ROOT, "packages/core/agent/credentials/binding-pr.ts");
+  const src = readFileSync(bindingPr, "utf-8");
+  ok(!/api\.github\.com/.test(src), "binding-pr.ts references no api.github.com host (GitHub coupling lives in config-pr-github.ts)");
+  ok(!/GITHUB_TOKEN/.test(src), "binding-pr.ts references no GITHUB_TOKEN (write-credential custody lives in scm/credential.ts)");
+  const scmCredential = readFileSync(join(REPO_ROOT, "packages/core/agent/scm/credential.ts"), "utf-8");
+  ok(/"GITHUB_TOKEN"/.test(scmCredential), "scm/credential.ts owns the GITHUB_TOKEN read");
+  const ghAdapter = readFileSync(join(REPO_ROOT, "packages/core/agent/credentials/config-pr-github.ts"), "utf-8");
+  ok(/api\.github\.com/.test(ghAdapter), "config-pr-github.ts owns the GitHub API host");
+}
+
+{
   const files = tsFiles(join(REPO_ROOT, "packages/adapters/agent"));
   ok(files.length > 0, `scanned adapters (${files.length} files)`);
 
