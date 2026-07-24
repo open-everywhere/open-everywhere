@@ -1,9 +1,6 @@
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
-import type { PostArm, TargetResolveBag } from "./post-arms.js";
-import type { ReplyTarget } from "./reply-post.js";
-import type { UnifiedWakeOrigin } from "./unified-window.js";
-import type { UnifiedReplyDeps } from "./unified-reply.js";
+import type { PostArm, TargetResolveBag, ReplyTarget, UnifiedWakeOrigin, UnifiedReplyDeps } from "@open-everywhere/core/agent/adapter-api.js";
 
 type LinearTarget = Extract<ReplyTarget, { platform: "linear" }>;
 type LinearOrigin = Extract<UnifiedWakeOrigin, { platform: "linear" }>;

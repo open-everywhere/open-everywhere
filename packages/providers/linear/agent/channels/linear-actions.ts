@@ -1,6 +1,6 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
-import type { EntityActionAdapter } from "./entity-actions.js";
+import type { EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearActionOpts {
   readonly api?: LinearApiOptions;

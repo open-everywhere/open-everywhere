@@ -1,5 +1,4 @@
-import { appendAudit } from "../audit/audit.js";
-import { deploymentOrg } from "../identity/binding.js";
+import { appendAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
 
 const TOKEN_ENDPOINT = "https://api.linear.app/oauth/token";
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;

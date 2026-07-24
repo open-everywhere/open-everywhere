@@ -115,7 +115,7 @@ export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
 export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
 
-export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface } from "./identity/binding.js";
+export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, currentTurnIssue } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
@@ -197,6 +197,8 @@ export { isVouchedInternal, isVouchedSurface } from "./identity/trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel } from "./memory/domain.js";
 export type { EngagementTier, Domain } from "./memory/domain.js";
+
+export { windowTopologyEnabled } from "./access/capabilities.js";
 
 export type { ContextLine } from "./channels/context-render.js";
 

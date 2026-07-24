@@ -24,7 +24,8 @@ import {
 import { classifySessionId } from "../agent/channels/window-key.js";
 const githubSupervisorToken = (owner: string, repo: string, generation: number): string =>
   `github:${owner}/${repo}:oe-sup:g${generation}`;
-import { linearSupervisorToken } from "../agent/channels/linear-supervisor.js";
+const linearSupervisorToken = (teamId: string, generation: number): string =>
+  `linear:${teamId}:oe-sup:g${generation}`;
 import { isSupervisorSession } from "../agent/model/routing.js";
 import { renderWakeEnvelope, type WakeEnvelopeInput } from "../agent/channels/wake-envelope.js";
 import { renderWake, type NormalizedWake } from "../agent/channels/normalized-wake.js";
@@ -185,7 +186,7 @@ withEnv("1", () => {
 withEnv(undefined, () => {
   const off = supervisorGrainFor(GH, [payments, orgNoGate]);
   ok(supervisorTokenForGrain(off, 2, () => githubSupervisorToken("acme", "payments-api", 2)) === "github:acme/payments-api:oe-sup:g2", "flag-off github grain falls back to the per-repo token (byte-identical)");
-  ok(supervisorTokenForGrain(off, 2, () => linearSupervisorToken("team-1", 2)) === "linear:team-1:oe-sup:g2", "flag-off linear fallback is the per-team token");
+  ok(supervisorTokenForGrain(off, 2, () => "linear:team-1:oe-sup:g2") === "linear:team-1:oe-sup:g2", "flag-off linear fallback is the per-team token");
   ok(supervisorTokenForGrain(off, 2, () => "notion:page-1:oe-sup:g2") === "notion:page-1:oe-sup:g2", "flag-off notion fallback is the per-doc token");
 });
 

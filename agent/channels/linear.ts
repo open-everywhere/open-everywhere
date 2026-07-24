@@ -1,1 +1,1 @@
-export { default } from "@open-everywhere/core/agent/channels/linear.js";
+export { default } from "@open-everywhere/provider-linear/agent/channels/linear.js";

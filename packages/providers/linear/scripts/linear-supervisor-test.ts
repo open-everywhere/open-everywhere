@@ -14,9 +14,8 @@ import {
   type LinearSupervisorDispatch,
   type LinearSupervisorSession,
 } from "../agent/channels/linear-supervisor.js";
-import { renderWake } from "../agent/channels/normalized-wake.js";
+import { renderWake, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "../agent/channels/linear-identity.js";
-import { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { readLinearIssue } from "../agent/channels/linear-api.js";
 
 let passed = 0;
@@ -312,7 +311,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
       }, { issue_id: "issue-uuid-OTHER", comment_id: "c-x", team_id: "team-uuid-2", organization_id: "org-1" });
       ok(state.oeReplyTarget?.teamId === "team-uuid-2" && state.oeReplyTarget?.organizationId === "org-1", "unified turn.started snapshots THIS wake's team/org off the delivery auth");
       ok(gql.length === 1 && gql[0]!.variables?.input?.issueId === "issue-uuid-OTHER", "the unified reply posts into the issue that woke it (fail-open message-tool-only: terminal prose is Linear's only reply route)");
-      const { readAudit } = await import("../agent/audit/audit.js");
+      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
       const replied = await readAudit({ action: "linear.replied" });
       ok(replied.some((r) => r.surface === "linear/org-1/team-uuid-2"), "the linear.replied audit row names the WAKING container (snapshot team), not the seed team");
       const perTeam = supervisorState();
@@ -328,7 +327,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
         await completed("NO_REPLY", { state });
       }, { issue_id: ISSUE, comment_id: "c-top" });
       ok(gql.length === 0, "NO_REPLY suppresses the supervisor reply");
-      const { readAudit } = await import("../agent/audit/audit.js");
+      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
       const silences = await readAudit({ action: "linear.no_reply" });
       ok(silences.length >= 1, "judged silence writes a linear.no_reply audit row (audited silence, cross-surface parity)");
     }
@@ -338,7 +337,7 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
       gql = [];
       await inSession(() => linearChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state }));
       ok(gql.length === 0, "a failed supervisor turn posts NOTHING");
-      const { readAudit } = await import("../agent/audit/audit.js");
+      const { readAudit } = await import("@open-everywhere/core/agent/adapter-api.js");
       const fails = await readAudit({ action: "linear.supervisor_turn_failed" });
       ok(fails.length >= 1, "the failed supervisor turn is audited instead");
     }
@@ -348,9 +347,9 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
 }
 
 {
-  const { registerConfig } = await import("../agent/access/config.js");
-  const { defineDomain } = await import("../agent/memory/domain.js");
-  const { registerTrustedSurfaces, _resetTrustedSurfacesForTest } = await import("../agent/identity/trust.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { defineDomain } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { registerTrustedSurfaces, _resetTrustedSurfacesForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
   const { computeMentionRouting } = (await import("../agent/channels/linear.js")) as unknown as {
     computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; isPrivate?: boolean }>;
   };
@@ -566,6 +565,15 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     if (prevToken === undefined) delete process.env.LINEAR_ACCESS_TOKEN;
     else process.env.LINEAR_ACCESS_TOKEN = prevToken;
   }
+}
+
+{
+  const linWake = buildLinearSupervisorWake({
+    teamId: "TEAM",
+    issueId: "I1",
+    trigger: { id: "c1", authorId: "u1", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
+  });
+  ok(linWake.trigger.kind === "message" && linWake.trigger.message.trust === "relay", "linear builder: a resolved trigger trust rides into the wake");
 }
 
 console.log(`\n✓ linear-supervisor: ${passed} assertions passed`);

@@ -12,7 +12,6 @@ import {
 } from "../agent/identity/wake-trust.js";
 import { defineDomain, type Domain } from "../agent/memory/domain.js";
 import type { BindableContext } from "../agent/identity/binding.js";
-import { buildLinearSupervisorWake } from "../agent/channels/linear-supervisor.js";
 import { slackChannelWatchWake, slackThreadFollowWake, type ParsedMessageEvent } from "../agent/channels/slack-events.js";
 import { clusterBackscroll, type NormalizedMessage } from "../agent/channels/backscroll-cluster.js";
 
@@ -87,12 +86,6 @@ ok(resolveWakeTrustFromContext(slackCtx(VERIFIED), { id: "U_ORG_ADMIN" }, { doma
 const adminPrincipalCtx = slackCtx({ ...VERIFIED, user_id: "U_ORG_ADMIN" });
 ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { principalFallback: true, domains: DOMAINS }) === "principal", "ctx form: a TRIGGER (principalFallback on) with no explicit author id borrows the bound admin principal → principal");
 ok(resolveWakeTrustFromContext(adminPrincipalCtx, { isBot: false }, { domains: DOMAINS }) === "unauth", "ctx form: a SIBLING (no fallback) HUMAN with no author id does NOT borrow the principal → unauth, never the trigger author's principal tier (the notion-sibling escalation fix — floor is now the unvouched-human unauth, still below peer)");
-
-const linWake = buildLinearSupervisorWake({
-  teamId: "TEAM", issueId: "I1",
-  trigger: { id: "c1", authorId: "u1", sentAt: "2026-07-11T00:00:00Z", text: "hm", trust: "relay" },
-});
-ok(linWake.trigger.kind === "message" && linWake.trigger.message.trust === "relay", "linear builder: a resolved trigger trust rides into the wake");
 
 const ev: ParsedMessageEvent = {
   channelId: "C_ENG", teamId: "T1", ts: "1752501000.000100", threadTs: undefined,

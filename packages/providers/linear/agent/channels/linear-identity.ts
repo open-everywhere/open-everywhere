@@ -1,3 +1,5 @@
+import type { BindableContext, IdentityMapper, RawIdentity, Visibility } from "@open-everywhere/core/agent/adapter-api.js";
+
 export interface OpenEverywhereLinearAuth {
   readonly authenticator: string;
   readonly principalId: string;
@@ -53,3 +55,53 @@ export function buildLinearAuth(input: LinearIdentityInput): OpenEverywhereLinea
     attributes,
   };
 }
+
+export function linearVisibility(isPrivate: string | undefined): Visibility {
+  if (isPrivate === "false") return "public";
+  return "private";
+}
+
+export function linearTrust(guest: string | undefined): RawIdentity["trust"] {
+  if (guest === "true") return "external";
+  return undefined;
+}
+
+type AuthAttrs = Readonly<Record<string, string | readonly string[]>> | undefined;
+
+function linearAuthOf(ctx: BindableContext): { attributes?: AuthAttrs; principalId?: string } | null {
+  return ctx.session?.auth?.current ?? ctx.session?.auth?.initiator ?? null;
+}
+
+function linearAuthPrincipalId(ctx: BindableContext): string | undefined {
+  const pid = linearAuthOf(ctx)?.principalId;
+  return pid && pid.length > 0 ? pid : undefined;
+}
+
+function linearAttr(a: AuthAttrs, keys: readonly string[]): string | undefined {
+  if (!a) return undefined;
+  for (const k of keys) {
+    const v = a[k];
+    if (typeof v === "string" && v.length > 0) return v;
+    if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
+  }
+  return undefined;
+}
+
+export const bindLinear: IdentityMapper = (ctx): RawIdentity => {
+  const a = linearAuthOf(ctx)?.attributes;
+  const surface =
+    linearAttr(a, ["team_id", "teamId"]) ??
+    linearAttr(a, ["issue_id", "issueId"]) ??
+    linearAttr(a, ["issue_identifier", "issueIdentifier"]) ??
+    linearAttr(a, ["agent_session_id", "agentSessionId"]);
+  const agentSessionId = linearAttr(a, ["agent_session_id", "agentSessionId"]);
+  return {
+    workspace: linearAttr(a, ["organization_id", "organizationId"]),
+    surface,
+    mode: "channel",
+    visibility: linearVisibility(linearAttr(a, ["is_private", "isPrivate"])),
+    trust: linearTrust(linearAttr(a, ["guest"])),
+    principalId: linearAuthPrincipalId(ctx) ?? linearAttr(a, ["creator_id", "creatorId", "user_id", "userId"]),
+    target: agentSessionId ? { agentSessionId } : undefined,
+  };
+};

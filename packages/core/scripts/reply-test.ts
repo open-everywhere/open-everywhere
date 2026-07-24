@@ -150,15 +150,15 @@ ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply ar
 ok(armReply(reply, { channel: { kind: "notion" } }) === null, "reply is hidden on notion in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on telegram in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "teams" } }) === null, "reply is hidden on teams in core alone (bundle-registered manifest — fail-closed NONE default)");
-ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
+ok(armReply(reply, { channel: { kind: "linear" } }) === null, "reply is hidden on linear in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
 ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
 {
-  const linearArmed = armReply(reply, { channel: { kind: "linear" } });
+  const discordArmed = armReply(reply, { channel: { kind: "discord" } });
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(linearArmed !== null && /FINAL/.test(linearArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
-  ok(slackArmed !== null && slackArmed.description === linearArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
-  ok(!/update_reply/.test(linearArmed!.description), "reply: description never mentions the dropped update_reply verb");
+  ok(discordArmed !== null && /FINAL/.test(discordArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(slackArmed !== null && slackArmed.description === discordArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
+  ok(!/update_reply/.test(discordArmed!.description), "reply: description never mentions the dropped update_reply verb");
 }
 
 {
@@ -175,9 +175,7 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
 
   ok(resolveReplyTarget({ channel: { kind: "github" } } as never) === null, "resolveReplyTarget: github → null (midTurnPost gate is false)");
 
-  const linTarget = resolveReplyTarget(linearCtx("as-1") as never);
-  ok(linTarget?.platform === "linear" && (linTarget as { agentSessionId: string }).agentSessionId === "as-1", "resolveReplyTarget: linear carries the agent session id (the reply anchor)");
-  ok(resolveReplyTarget(linearCtx(undefined) as never) === null, "resolveReplyTarget: a session-less linear ctx → null");
+  ok(resolveReplyTarget(linearCtx("as-1") as never) === null, "resolveReplyTarget: linear → null in core alone (arm is bundle-registered)");
 
   ok(resolveReplyTarget({ channel: { kind: "local" } } as never) === null, "resolveReplyTarget: an unwired surface → null");
   ok(resolveReplyTarget(slackCtx(undefined) as never) === null, "resolveReplyTarget: a channel-less slack ctx → null");
@@ -234,29 +232,6 @@ await inSession(async () => {
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
 });
 restoreHttp();
-
-calls = [];
-linearResponse = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "linear-act-1" } } } } };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(reply, linearCtx("as-1"))!;
-  const res = await armed.execute({ text: "linear answer" }, linearCtx("as-1"));
-  ok(res.posted === true && res.id === "linear-act-1", "reply: on Linear returns the created activity id");
-  const gqlCall = calls.find((c) => c.url.includes("api.linear.app"));
-  ok(gqlCall !== undefined && gqlCall.method === "POST", "reply: on Linear POSTs the AgentActivityCreate mutation");
-  const payload = JSON.parse(gqlCall!.body) as { variables?: { input?: { agentSessionId?: string; content?: { body?: string; type?: string } } } };
-  ok(payload.variables?.input?.agentSessionId === "as-1", "reply: on Linear posts onto the SAME agent session it was woken on");
-  ok(payload.variables?.input?.content?.type === "response" && payload.variables?.input?.content?.body === "linear answer", "reply: on Linear posts a `response` activity carrying the model text (no stop signal, so the session stays open)");
-  const audit = await readAudit({ org: "default", action: "reply.post" });
-  ok(audit.some((r) => r.detail?.platform === "linear" && r.detail?.id === "linear-act-1"), "reply: audits a reply.post row stamped platform=linear");
-});
-restoreHttp();
-
-await inSession(async () => {
-  const armed = armReply(reply, linearCtx(undefined))!;
-  await assert.rejects(() => armed.execute({ text: "x" }, linearCtx(undefined)), /couldn't resolve/, "reply: a Linear ctx with no agent session id throws an honest error");
-  n++;
-});
 
 calls = [];
 slackResponse = { ok: false, error: "channel_not_found" };

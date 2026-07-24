@@ -5,7 +5,7 @@ type OriginArm<P extends UnifiedWakeOrigin["platform"]> = Extract<UnifiedWakeOri
 
 const noColon = (s: string): string => s.replace(/:/g, "_");
 
-type CoreCodecPlatform = Exclude<UnifiedWakeOrigin["platform"], "notion" | "github" | "teams">;
+type CoreCodecPlatform = Exclude<UnifiedWakeOrigin["platform"], "notion" | "github" | "teams" | "linear">;
 
 export const wakeOriginCodecs: { readonly [P in CoreCodecPlatform]: WakeOriginCodec<OriginArm<P>> } = {
   slack: {
@@ -17,18 +17,6 @@ export const wakeOriginCodecs: { readonly [P in CoreCodecPlatform]: WakeOriginCo
     threadRef: (origin) => ({ channelKey: noColon(`slack/${origin.channelId}`), threadKey: noColon(origin.threadTs ?? origin.channelId) }),
     isThreadScoped: (origin) => typeof origin.threadTs === "string" && origin.threadTs.length > 0,
     containerId: (origin) => origin.channelId,
-  },
-  linear: {
-    validate: (o) => {
-      if (typeof o.issueId !== "string" || o.issueId.length === 0) return false;
-      if (o.parentId !== undefined && typeof o.parentId !== "string") return false;
-      const isAmbient = o.ambient === true && o.agentSessionId === undefined;
-      const isMention = o.ambient === undefined && typeof o.agentSessionId === "string" && o.agentSessionId.length > 0;
-      return isAmbient || isMention;
-    },
-    threadRef: (origin) => ({ channelKey: noColon(`linear/${origin.issueId}`), threadKey: noColon(origin.parentId ?? origin.issueId) }),
-    isThreadScoped: () => true,
-    containerId: (origin) => origin.issueId,
   },
   discord: {
     validate: (o) =>

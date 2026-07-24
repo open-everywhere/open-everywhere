@@ -4,7 +4,6 @@ import { getAppInfo } from "../commands/core.js";
 import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
-import { linearCredentialsConfigured } from "../channels/linear-credentials.js";
 
 export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "oe.instance.first_boot": Object.freeze([]),
@@ -266,7 +265,6 @@ function surfacesWithCreds(): string[] {
   if (process.env.DISCORD_BOT_TOKEN) present.push("discord");
   if (process.env.MICROSOFT_APP_ID) present.push("teams");
   if (process.env.OE_GITHUB_APP_ID) present.push("github");
-  if (linearCredentialsConfigured()) present.push("linear");
   for (const [platform, probe] of Object.entries(SURFACE_CREDENTIAL_PROBES)) {
     try {
       if (probe()) present.push(platform);

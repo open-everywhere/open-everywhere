@@ -35,7 +35,7 @@ interface ToolCase {
   readonly env?: Readonly<Record<string, string>>;
 }
 const slackCtx = { channel: { kind: "slack" }, session: { auth: { current: { attributes: {} } } } };
-const linearCtx = { channel: { kind: "linear" }, session: { auth: { current: { attributes: {} } } } };
+const githubCtx = { channel: { kind: "github" }, session: { auth: { current: { attributes: {} } } } };
 const unifiedCtx = { channel: { kind: "unified" }, session: { auth: { current: { attributes: { oe_platform: "slack" } } } } };
 const CASES: readonly ToolCase[] = [
   { slug: "reply", entryKey: "_base", ctx: slackCtx },
@@ -45,10 +45,9 @@ const CASES: readonly ToolCase[] = [
   { slug: "read_thread", entryKey: "_single", ctx: slackCtx, env: { OE_GENERIC_READ_VERBS: "1" } },
   { slug: "read_slack_channel", entryKey: "_single", ctx: slackCtx },
   { slug: "read_slack_thread", entryKey: "_single", ctx: slackCtx },
-  { slug: "read_linear_issue", entryKey: "_single", ctx: linearCtx },
-  { slug: "add_label", entryKey: "_single", ctx: linearCtx },
-  { slug: "set_state", entryKey: "_single", ctx: linearCtx },
-  { slug: "assign", entryKey: "_single", ctx: linearCtx },
+  { slug: "add_label", entryKey: "_single", ctx: githubCtx },
+  { slug: "set_state", entryKey: "_single", ctx: githubCtx },
+  { slug: "assign", entryKey: "_single", ctx: githubCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "forget", entryKey: "_single", ctx: slackCtx },

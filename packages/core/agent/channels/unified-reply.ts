@@ -39,11 +39,10 @@ async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, dep
   return arm.dispatchUnified(origin, text, deps);
 }
 
-export async function completeLinearSessionSilently(origin: LinearOrigin, deps: UnifiedReplyDeps = {}): Promise<void> {
-  if (origin.ambient) return;
-  const arm = postArm("linear");
-  if (!arm?.closeUnifiedSilently) {
-    throw new Error("unified silent-close: no linear post arm registered (invariant broken).");
-  }
-  return arm.closeUnifiedSilently(origin, deps);
+export async function completeUnifiedSessionSilently(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps = {}): Promise<boolean> {
+  if ((origin as { ambient?: boolean }).ambient) return false;
+  const arm = postArm(origin.platform);
+  if (!arm?.closeUnifiedSilently) return false;
+  await arm.closeUnifiedSilently(origin, deps);
+  return true;
 }

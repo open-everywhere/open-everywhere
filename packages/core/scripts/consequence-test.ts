@@ -186,7 +186,7 @@ firesWith(
   const tools: ToolSource[] = readdirSync(toolsDir)
     .filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
     .map((f) => ({ name: f.replace(/\.ts$/u, ""), source: readFileSync(join(toolsDir, f), "utf8") }));
-  const NON_CORE_TOOL_ROWS = new Set(["extend_workspace_time", "read_notion_page", "read_notion_comments"]);
+  const NON_CORE_TOOL_ROWS = new Set(["extend_workspace_time", "read_notion_page", "read_notion_comments", "read_linear_issue"]);
   const coreToolNames = new Set(tools.map((t) => t.name));
   const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || !NON_CORE_TOOL_ROWS.has(name)));
   const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry);

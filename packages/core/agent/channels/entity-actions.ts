@@ -95,8 +95,6 @@ export function resolveEntityAction(
   return { ref, run: (value: string) => fn(ref.id, value) };
 }
 
-import { linearEntityAdapter } from "./linear-actions.js";
 import { githubEntityAdapter } from "../scm/issue-actions.js";
 
-registerEntityActionAdapter(linearEntityAdapter);
 registerEntityActionAdapter(githubEntityAdapter);

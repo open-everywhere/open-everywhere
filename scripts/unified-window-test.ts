@@ -42,7 +42,7 @@ import {
 } from "@open-everywhere/core/agent/channels/unified-window.js";
 import { decodeSources } from "@open-everywhere/core/agent/channels/window-sources.js";
 import unifiedChannel, { divertToUnifiedWindow, type UnifiedReceiveTarget } from "@open-everywhere/core/agent/channels/unified.js";
-import { postUnifiedReply, completeLinearSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
+import { postUnifiedReply, completeUnifiedSessionSilently } from "@open-everywhere/core/agent/channels/unified-reply.js";
 import { getOperationalStore } from "@open-everywhere/core/agent/operational/provider.js";
 import {
   parseMessageEvent,
@@ -54,8 +54,9 @@ import {
 import { withSingleWindowDiversion } from "@open-everywhere/core/agent/channels/slack-front.js";
 import { handleGitHubSupervisorDispatch, githubSupervisorToken, type GitHubSupervisorDeps } from "@open-everywhere/provider-github/agent/channels/github-supervisor.js";
 import { buildGitHubAuth } from "@open-everywhere/provider-github/agent/channels/github-identity.js";
-import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/core/agent/channels/linear-supervisor.js";
-import { buildLinearAuth } from "@open-everywhere/core/agent/channels/linear-identity.js";
+import { handleLinearSupervisorDispatch, linearSupervisorToken, type LinearSupervisorDeps } from "@open-everywhere/provider-linear/agent/channels/linear-supervisor.js";
+import { buildLinearAuth } from "@open-everywhere/provider-linear/agent/channels/linear-identity.js";
+import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
 import { handleNotionSupervisorDispatch, notionSupervisorToken, planNotionSingleWindow, type NotionSupervisorDeps } from "@open-everywhere/provider-notion/agent/channels/notion-supervisor.js";
 import { buildNotionAuth } from "@open-everywhere/provider-notion/agent/channels/notion-identity.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
@@ -103,6 +104,7 @@ const noThrow = (fn: () => unknown, label: string) => {
 registerNotionProvider();
 registerGithubProvider();
 registerTeamsProvider();
+registerLinearProvider();
 {
   const ALL_ORIGIN_PLATFORMS: Record<UnifiedWakeOrigin["platform"], true> = {
     slack: true,
@@ -141,6 +143,13 @@ registerTeamsProvider();
     const teamsRef = unifiedThreadRef({ platform: "teams", serviceUrl: "https://smba.trafficmanager.net/uk/", conversationId: "19:abc@thread.v2", replyToActivityId: "act:1" });
     ok(!teamsRef.channelKey.includes(":") && !teamsRef.threadKey.includes(":"), "teams: colons in the conversation/activity ids are folded (task windowId is [^:]+) (registered codec)");
   }
+  n++;
+  ok(isThreadScopedWakeOrigin({ platform: "linear", issueId: "iss1", agentSessionId: "as1" }), "linear: an issue IS its own thread (registered codec)");
+  assert.deepStrictEqual(
+    unifiedThreadRef({ platform: "linear", issueId: "iss_1", ambient: true }),
+    { channelKey: "linear/iss_1", threadKey: "iss_1" },
+    "linear ambient: threadKey falls back to the issue id (registered codec)",
+  );
   n++;
 }
 
@@ -813,8 +822,8 @@ const store = getOperationalStore();
   {
     const closed: Array<{ agentSessionId?: string; issueId: string }> = [];
     const closeDeps = { closeLinear: async (o: { agentSessionId?: string; issueId: string }) => void closed.push({ agentSessionId: o.agentSessionId, issueId: o.issueId }) };
-    await completeLinearSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
-    ok(closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent close: completeLinearSessionSilently closes the wake's OPEN agent session (no visible reply posted)");
+    const didClose = await completeUnifiedSessionSilently(linOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, closeDeps);
+    ok(didClose === true && closed.length === 1 && closed[0].agentSessionId === "as-lin-77" && closed[0].issueId === "issue-uuid-77", "silent close: completeUnifiedSessionSilently closes the wake's OPEN agent session (no visible reply posted)");
   }
 
   {
@@ -826,8 +835,8 @@ const store = getOperationalStore();
     const last = linPosts[linPosts.length - 1];
     ok(last.ambient === true && last.agentSessionId === undefined && last.issueId === "issue-amb-9" && last.parentId === "c-amb-1", "ambient linear reply carries issueId+parentId (commentCreate target), NO agentSessionId");
     const closedAmb: Array<{ issueId: string }> = [];
-    await completeLinearSessionSilently(ambOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, { closeLinear: async (o: { issueId: string }) => void closedAmb.push({ issueId: o.issueId }) });
-    ok(closedAmb.length === 0, "silent turn on an AMBIENT linear origin closes nothing (no agent session to stop)");
+    const didCloseAmb = await completeUnifiedSessionSilently(ambOrigin as Extract<UnifiedWakeOrigin, { platform: "linear" }>, { closeLinear: async (o: { issueId: string }) => void closedAmb.push({ issueId: o.issueId }) });
+    ok(didCloseAmb === false && closedAmb.length === 0, "silent turn on an AMBIENT linear origin closes nothing (no agent session to stop)");
   }
 
   ok(isUnifiedWakeOrigin({ platform: "linear", ambient: true, issueId: "i1" }) === true, "validator: ambient linear origin (ambient+issueId, no session) is VALID");

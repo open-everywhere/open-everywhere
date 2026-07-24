@@ -7,7 +7,7 @@ import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
-import { postUnifiedReply, completeLinearSessionSilently } from "./unified-reply.js";
+import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
@@ -138,14 +138,15 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         const wakeId = currentWakeId(bind);
         const silentOrigin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         let linearClosed: boolean | undefined;
-        if (silentOrigin?.platform === "linear" && !silentOrigin.ambient) {
+        if (silentOrigin) {
           try {
-            await completeLinearSessionSilently(silentOrigin);
-            linearClosed = true;
-            ulog(`silent turn: closed the open Linear session ${silentOrigin.agentSessionId} without posting (ephemeral stop)`);
+            if (await completeUnifiedSessionSilently(silentOrigin)) {
+              linearClosed = true;
+              ulog(`silent turn: closed the wake's open ${silentOrigin.platform} session without posting (ephemeral stop)`);
+            }
           } catch (err) {
             linearClosed = false;
-            ulog(`silent turn: FAILED to close the Linear session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
+            ulog(`silent turn: FAILED to close the open ${silentOrigin.platform} session (spinner may persist until timeout): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
           }
         }
         if (auditSilencesEnabled()) {

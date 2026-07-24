@@ -61,7 +61,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);
-    ok(msg.includes("linear") && msg.includes("github"), "the refusal names the platforms that DO support addLabel");
+    ok(msg.includes("github"), "the refusal names the platforms that DO support addLabel (github in core alone)");
   }
 }
 
@@ -100,19 +100,16 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 }
 
 {
-  ok(typeof entityActionFn("linear", "setState") === "function", "entityActionFn resolves a real registered adapter's fn");
+  ok(typeof entityActionFn("github", "setState") === "function", "entityActionFn resolves a real registered adapter's fn");
   ok(entityActionFn("bogus-platform", "setState") === undefined, "entityActionFn is undefined for an unregistered platform");
   ok(entityActionFn("test-verb-partial", "addLabel") === undefined, "entityActionFn is undefined for a verb the platform doesn't implement");
 }
 
 {
   const platforms = supportedEntityActionPlatforms();
-  ok(platforms.includes("linear"), "linear is registered (module-load side effect)");
   ok(platforms.includes("github"), "github is registered (module-load side effect)");
+  ok(!platforms.includes("linear"), "linear is NOT registered in core alone (its adapter is bundle-registered at boot)");
   ok(!platforms.includes("notion"), "notion is NOT registered — no sane status/label mapping exists (design doc decision)");
-  ok(typeof entityActionFn("linear", "setState") === "function", "linear declares setState");
-  ok(typeof entityActionFn("linear", "assign") === "function", "linear declares assign");
-  ok(typeof entityActionFn("linear", "addLabel") === "function", "linear declares addLabel");
   ok(typeof entityActionFn("github", "setState") === "function", "github declares setState");
   ok(typeof entityActionFn("github", "assign") === "function", "github declares assign");
   ok(typeof entityActionFn("github", "addLabel") === "function", "github declares addLabel");

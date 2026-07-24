@@ -144,35 +144,6 @@ const bindSlack: Mapper = (ctx) => {
   };
 };
 
-export function linearVisibility(isPrivate: string | undefined): Visibility {
-  if (isPrivate === "false") return "public";
-  return "private";
-}
-
-export function linearTrust(guest: string | undefined): Trust | undefined {
-  if (guest === "true") return "external";
-  return undefined;
-}
-
-const bindLinear: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const surface =
-    attr(a, ["team_id", "teamId"]) ??
-    attr(a, ["issue_id", "issueId"]) ??
-    attr(a, ["issue_identifier", "issueIdentifier"]) ??
-    attr(a, ["agent_session_id", "agentSessionId"]);
-  const agentSessionId = attr(a, ["agent_session_id", "agentSessionId"]);
-  return {
-    workspace: attr(a, ["organization_id", "organizationId"]),
-    surface,
-    mode: "channel",
-    visibility: linearVisibility(attr(a, ["is_private", "isPrivate"])),
-    trust: linearTrust(attr(a, ["guest"])),
-    principalId: authPrincipalId(ctx) ?? attr(a, ["creator_id", "creatorId", "user_id", "userId"]),
-    target: agentSessionId ? { agentSessionId } : undefined,
-  };
-};
-
 const bindDiscord: Mapper = (ctx) => {
   const a = authOf(ctx)?.attributes;
   const channelId = attr(a, ["channel_id", "channelId"]);
@@ -217,7 +188,6 @@ export function registerIdentityMapper(platform: string, mapper: IdentityMapper)
 }
 
 registerIdentityMapper("slack", bindSlack);
-registerIdentityMapper("linear", bindLinear);
 registerIdentityMapper("discord", bindDiscord);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {

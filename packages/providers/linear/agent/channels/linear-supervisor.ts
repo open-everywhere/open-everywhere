@@ -1,10 +1,15 @@
-import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
-import type { ContextLine } from "./context-render.js";
-import { shouldRotate } from "./turn-delivery.js";
-import { classifySessionSendError } from "./session-death.js";
+import {
+  renderWake,
+  mkMessageTrigger,
+  shouldRotate,
+  classifySessionSendError,
+  type NormalizedWake,
+  type WakeEngagementTier,
+  type ContextLine,
+  type UnifiedWindowWake,
+  type WakeTrust,
+} from "@open-everywhere/core/agent/adapter-api.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
-import type { UnifiedWindowWake } from "./unified-window.js";
-import type { WakeTrust } from "./wake-envelope.js";
 
 export function linearSupervisorSentinel(generation: number): string {
   return `oe-sup:g${generation}`;

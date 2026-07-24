@@ -6,8 +6,7 @@ import {
   staticLinearToken,
   type LinearMintFetch,
 } from "../agent/channels/linear-credentials.js";
-import { readAudit } from "../agent/audit/audit.js";
-import { deploymentOrg } from "../agent/identity/binding.js";
+import { readAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
