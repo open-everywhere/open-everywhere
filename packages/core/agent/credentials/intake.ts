@@ -26,6 +26,7 @@ export interface RequestCredentialIntakeInput {
   readonly channelId: string;
   readonly threadTs?: string;
   readonly teamId?: string;
+  readonly platform?: string;
 }
 
 export interface CredentialIntakeDeps {
@@ -35,15 +36,20 @@ export interface CredentialIntakeDeps {
   readonly executorStore?: ExecutorConnectionStore;
 }
 
-function intakeWhere(org: string, teamId: string | undefined, channelId: string): { org: string; platform: string; workspace: string; surface: string } {
-  return { org, platform: "slack", workspace: teamId || "unknown", surface: channelId };
+function intakeWhere(org: string, teamId: string | undefined, channelId: string, platform = "slack"): { org: string; platform: string; workspace: string; surface: string } {
+  return { org, platform, workspace: teamId || "unknown", surface: channelId };
 }
 
-export async function requestCredentialIntake(
+export interface CreatedCredentialIntake {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
+export async function createCredentialIntake(
   input: RequestCredentialIntakeInput,
   deps: CredentialIntakeDeps = {},
-): Promise<{ id: string; messageTs?: string }> {
-  const post = deps.post ?? bridgeSlackForm;
+): Promise<CreatedCredentialIntake> {
   const now = (deps.now ?? (() => new Date()))();
   const id = (deps.mintId ?? randomUUID)();
   const createdAt = now.toISOString();
@@ -61,6 +67,23 @@ export async function requestCredentialIntake(
     createdAt,
     expiresAt,
   });
+
+  await appendAudit({
+    ...intakeWhere(input.org, input.teamId, input.channelId, input.platform),
+    principalId: input.requestedBy,
+    action: "credential.intake_requested",
+    detail: { id, ref: input.ref, provider: input.provider, ...(input.domain ? { domain: input.domain } : {}) },
+  });
+
+  return { id, createdAt, expiresAt };
+}
+
+export async function requestCredentialIntake(
+  input: RequestCredentialIntakeInput,
+  deps: CredentialIntakeDeps = {},
+): Promise<{ id: string; messageTs?: string }> {
+  const post = deps.post ?? bridgeSlackForm;
+  const { id } = await createCredentialIntake(input, deps);
 
   const forWhom = input.domain ? `*${input.provider}* key for *${input.domain}*` : `*${input.provider}* key`;
   const blocks = [
@@ -88,14 +111,6 @@ export async function requestCredentialIntake(
   body.set("blocks", JSON.stringify(blocks));
   const res = await post("chat.postMessage", body.toString());
   const messageTs = res?.ok === true && typeof res.ts === "string" ? res.ts : undefined;
-
-  await appendAudit({
-    ...intakeWhere(input.org, input.teamId, input.channelId),
-    principalId: input.requestedBy,
-    action: "credential.intake_requested",
-    detail: { id, ref: input.ref, provider: input.provider, ...(input.domain ? { domain: input.domain } : {}) },
-  });
-
   return { id, ...(messageTs ? { messageTs } : {}) };
 }
 
@@ -187,6 +202,97 @@ export async function handleSetKeyClick(payload: unknown, deps: CredentialIntake
   }
 }
 
+export type CompleteIntakeFailure = "empty" | "not-found" | "not-owner" | "expired" | "already-used" | "store-failed";
+
+export type CompleteIntakeResult =
+  | {
+      readonly ok: true;
+      readonly provider: string;
+      readonly domain?: string;
+      readonly bindingNote: string;
+      readonly originChannelId: string;
+    }
+  | { readonly ok: false; readonly code: CompleteIntakeFailure };
+
+export interface CompleteCredentialIntakeInput {
+  readonly org: string;
+  readonly id: string;
+  readonly value: string;
+  readonly submittedBy: string;
+  readonly audit: { readonly platform: string; readonly workspace: string; readonly surface?: string };
+}
+
+export async function completeCredentialIntake(
+  input: CompleteCredentialIntakeInput,
+  deps: CredentialIntakeDeps = {},
+): Promise<CompleteIntakeResult> {
+  const now = (deps.now ?? (() => new Date()))();
+  const value = input.value.trim();
+  if (!value) return { ok: false, code: "empty" };
+
+  const store = getOperationalStore();
+  const intake = await store.getCredentialIntake(input.org, input.id);
+  if (!intake) return { ok: false, code: "not-found" };
+  if (input.submittedBy !== intake.requestedBy) return { ok: false, code: "not-owner" };
+  if (Date.parse(intake.expiresAt) <= now.getTime()) return { ok: false, code: "expired" };
+
+  if (!(await store.consumeCredentialIntake(input.org, input.id, now.toISOString()))) {
+    return { ok: false, code: "already-used" };
+  }
+
+  const where = { org: input.org, platform: input.audit.platform, workspace: input.audit.workspace, surface: input.audit.surface ?? intake.channelId };
+
+  const parsed = parseCredentialRef(intake.ref);
+  const homeName = parsed?.home ?? DB_BROKER;
+  const home = credentialHome(homeName);
+  if (!home) {
+    console.error(`[open-everywhere:credentials] no credential home "${homeName}" registered for ref "${intake.ref}"`);
+    return { ok: false, code: "store-failed" };
+  }
+  try {
+    await home.store({
+      org: input.org,
+      ref: intake.ref,
+      plaintext: value,
+      provider: intake.provider,
+      ...(intake.domain ? { domain: intake.domain } : {}),
+      createdBy: input.submittedBy,
+      parsed: parsed ?? {},
+      ...(deps.executorStore ? { deps: { executorStore: deps.executorStore } } : {}),
+    });
+  } catch (err) {
+    console.error(`[open-everywhere:credentials] failed to store credential for ref "${intake.ref}": ${String(err)}`);
+    return { ok: false, code: "store-failed" };
+  }
+
+  await appendAudit({
+    ...where,
+    principalId: input.submittedBy,
+    action: "credential.stored",
+    detail: { id: input.id, ref: intake.ref, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}) },
+  });
+
+  let bindingNote = "";
+  try {
+    const target = parseDbCredentialRef(intake.ref);
+    if (target) {
+      const res = await stageCredentialBindingPr({
+        provider: target.provider,
+        credential: target.credentialId,
+        storedRef: intake.ref,
+        credentialAuditId: input.id,
+        requestedBy: input.submittedBy,
+        where,
+      });
+      if (res.url) bindingNote = ` A config PR to bind it (custody → db broker) is open for review: ${res.url}`;
+    }
+  } catch (err) {
+    console.error(`[open-everywhere:credentials] credential-binding PR staging failed softly for ref "${intake.ref}": ${String(err)}`);
+  }
+
+  return { ok: true, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}), bindingNote, originChannelId: intake.channelId };
+}
+
 interface SetKeyViewPayload {
   readonly type?: unknown;
   readonly user?: { readonly id?: unknown };
@@ -214,8 +320,6 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
 
   const post = deps.post ?? bridgeSlackForm;
   try {
-    const now = (deps.now ?? (() => new Date()))();
-
     let meta: { org?: unknown; id?: unknown; channelId?: unknown };
     try {
       meta = JSON.parse(typeof view.private_metadata === "string" ? view.private_metadata : "{}");
@@ -230,70 +334,27 @@ export async function handleSetKeyViewSubmission(payload: unknown, deps: Credent
     if (!org || !id || !clickerId) return inputError("This request is missing its identity — please start again.");
 
     const rawValue = view.state?.values?.[SETKEY_INPUT_BLOCK]?.[SETKEY_INPUT_ACTION]?.value;
-    const value = typeof rawValue === "string" ? rawValue.trim() : "";
-    if (!value) return inputError("Enter the API key.");
+    const value = typeof rawValue === "string" ? rawValue : "";
+    if (!value.trim()) return inputError("Enter the API key.");
 
-    const store = getOperationalStore();
-    const intake = await store.getCredentialIntake(org, id);
-    if (!intake) return inputError("This credential request is no longer available.");
-    if (clickerId !== intake.requestedBy) return inputError("This credential request isn’t yours to complete.");
-    if (Date.parse(intake.expiresAt) <= now.getTime()) return inputError("This credential request has expired — please ask for a new one.");
-
-    if (!(await store.consumeCredentialIntake(org, id, now.toISOString()))) {
-      return inputError("This credential request was already used.");
-    }
-
-    const parsed = parseCredentialRef(intake.ref);
-    const homeName = parsed?.home ?? DB_BROKER;
-    const home = credentialHome(homeName);
-    if (!home) {
-      console.error(`[open-everywhere:credentials] no credential home "${homeName}" registered for ref "${intake.ref}"`);
-      return inputError("Could not store the credential — its storage home isn’t configured on this deployment. Ask an operator.");
-    }
-    try {
-      await home.store({
-        org,
-        ref: intake.ref,
-        plaintext: value,
-        provider: intake.provider,
-        ...(intake.domain ? { domain: intake.domain } : {}),
-        createdBy: clickerId,
-        parsed: parsed ?? {},
-        ...(deps.executorStore ? { deps: { executorStore: deps.executorStore } } : {}),
-      });
-    } catch (err) {
-      console.error(`[open-everywhere:credentials] failed to store credential for ref "${intake.ref}": ${String(err)}`);
-      return inputError("Could not store the credential — its storage home isn’t configured on this deployment. Ask an operator.");
-    }
-
-    await appendAudit({
-      ...intakeWhere(org, teamId, channelId ?? intake.channelId),
-      principalId: clickerId,
-      action: "credential.stored",
-      detail: { id, ref: intake.ref, provider: intake.provider, ...(intake.domain ? { domain: intake.domain } : {}) },
-    });
-
-    let bindingNote = "";
-    try {
-      const target = parseDbCredentialRef(intake.ref);
-      if (target) {
-        const res = await stageCredentialBindingPr({
-          provider: target.provider,
-          credential: target.credentialId,
-          storedRef: intake.ref,
-          credentialAuditId: id,
-          requestedBy: clickerId,
-          where: intakeWhere(org, teamId, channelId ?? intake.channelId),
-        });
-        if (res.url) bindingNote = ` A config PR to bind it (custody → db broker) is open for review: ${res.url}`;
+    const result = await completeCredentialIntake(
+      { org, id, value, submittedBy: clickerId, audit: { platform: "slack", workspace: teamId || "unknown", ...(channelId ? { surface: channelId } : {}) } },
+      deps,
+    );
+    if (!result.ok) {
+      switch (result.code) {
+        case "empty": return inputError("Enter the API key.");
+        case "not-found": return inputError("This credential request is no longer available.");
+        case "not-owner": return inputError("This credential request isn’t yours to complete.");
+        case "expired": return inputError("This credential request has expired — please ask for a new one.");
+        case "already-used": return inputError("This credential request was already used.");
+        case "store-failed": return inputError("Could not store the credential — its storage home isn’t configured on this deployment. Ask an operator.");
       }
-    } catch (err) {
-      console.error(`[open-everywhere:credentials] credential-binding PR staging failed softly for ref "${intake.ref}": ${String(err)}`);
     }
 
-    const confirmChannel = channelId ?? intake.channelId;
-    const forWhom = intake.domain ? `*${intake.provider}* key for *${intake.domain}*` : `*${intake.provider}* key`;
-    await ephemeral(post, confirmChannel, clickerId, `✅ Your ${forWhom} was stored securely. The agent never saw the value.${bindingNote}`).catch(() => undefined);
+    const confirmChannel = channelId ?? result.originChannelId;
+    const forWhom = result.domain ? `*${result.provider}* key for *${result.domain}*` : `*${result.provider}* key`;
+    await ephemeral(post, confirmChannel, clickerId, `✅ Your ${forWhom} was stored securely. The agent never saw the value.${result.bindingNote}`).catch(() => undefined);
 
     return { handled: true };
   } catch (err) {
