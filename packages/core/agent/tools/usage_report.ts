@@ -4,6 +4,7 @@ import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
 import { getConfig } from "../access/config.js";
 import { resolveReportScope, filterToDomain, approxConversationCount, aggregateByUser, aggregateBySurface, resolveSlackLabels, maskDmSurfaceKey } from "../spend/reporting.js";
+import { requirePaneVenue } from "../access/pane-venue.js";
 import { fetchUserDisplayName, fetchChannelDisplayName } from "../channels/slack-events.js";
 
 function isoDaysAgo(days: number): string {
@@ -32,6 +33,7 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     const resolved = resolveReportScope(ctx, input.scope);
+    if (input.scope === "org") await requirePaneVenue(ctx, { kind: "usage.report.org" });
     const sinceDays = input.sinceDays ?? 30;
     const since = isoDaysAgo(sinceDays);
 

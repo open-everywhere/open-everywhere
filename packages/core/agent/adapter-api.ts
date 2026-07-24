@@ -103,5 +103,7 @@ export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter } from "./audit/audit.js";
 export { bootVerifyAuditChainTail } from "./audit/chain.js";
 
+export { registerSlackGovernanceMembers } from "./channels/slack-events.js";
+
 export { appendUsageEvent } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";

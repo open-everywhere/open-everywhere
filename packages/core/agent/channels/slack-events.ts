@@ -13,6 +13,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 import { isSurfaceOnboarded, markSurfaceOnboarded } from "../onboarding/onboarding.js";
 import { buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { registerGovernanceMemberSupplier, type RoomRoster } from "../access/audience-floor.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 import type { ContextLine } from "./context-render.js";
@@ -811,6 +812,43 @@ export function fetchChannelDisplayName(channelId: string): Promise<string | und
     channelNameCache.set(channelId, p);
   }
   return p;
+}
+
+export async function slackGovernanceRoster(channelId: string): Promise<RoomRoster | undefined> {
+  try {
+    const info = await slackForm("conversations.info", `channel=${encodeURIComponent(channelId)}`);
+    if (info?.ok !== true) return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    const facts = channelFactsFromInfo(info);
+    const members = await slackForm("conversations.members", `channel=${encodeURIComponent(channelId)}&limit=200`);
+    if (members?.ok !== true || !Array.isArray(members.members)) {
+      return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    }
+    const cursor = (members.response_metadata as { next_cursor?: string } | undefined)?.next_cursor;
+    if (cursor && cursor.length > 0) {
+      return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+    }
+    const auth = await slackForm("auth.test", "");
+    const botId = auth?.ok === true && typeof auth.user_id === "string" ? auth.user_id : undefined;
+    const humanMemberIds = (members.members as unknown[])
+      .filter((m): m is string => typeof m === "string")
+      .filter((m) => m !== botId);
+    return {
+      humanMemberIds,
+      resolved: facts.trustChecked === true,
+      isPrivate: facts.isPrivate === true,
+      hasGuest: facts.isExternal === true,
+    };
+  } catch {
+    return { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false };
+  }
+}
+
+export function registerSlackGovernanceMembers(): void {
+  registerGovernanceMemberSupplier(async (channelKey) => {
+    const [platform, , surface] = channelKey.split("/");
+    if (platform === "slack" && surface) return slackGovernanceRoster(surface);
+    return undefined;
+  });
 }
 
 export function liveNameDropDeps(send: WakeSend): NameDropRouteDeps {

@@ -57,6 +57,7 @@ export interface Domain {
   readonly role?: string;
   readonly sandbox?: SandboxPreset;
   readonly admins?: readonly string[];
+  readonly governance?: boolean;
 }
 
 export function memoryRefs(domain: Domain): string[] {
@@ -166,6 +167,56 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
       "open-everywhere: multi-source cross-surface window has un-vouched source(s):\n" +
         bad.join("\n") +
         "\n(memory/domain.ts assertWindowSourcesVouched).",
+    );
+  }
+}
+
+export const GOVERNANCE_CHANNEL_MAX = 20;
+
+export function governanceDomains(domains: readonly Domain[]): Domain[] {
+  return domains.filter((d) => d.governance === true);
+}
+
+export function isGovernanceChannel(channelKey: string, domains: readonly Domain[]): boolean {
+  return domainForChannel(channelKey, domains)?.governance === true;
+}
+
+export function governanceChannelFor(domains: readonly Domain[], fallback?: string): string | undefined {
+  const first = governanceDomains(domains)[0]?.channels?.[0];
+  return first ?? fallback;
+}
+
+export function assertGovernanceDomains(domains: readonly Domain[], vouched: readonly string[]): void {
+  const vset = new Set(vouched);
+  const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
+  const bad: string[] = [];
+  for (const d of domains) {
+    if (d.governance !== true) continue;
+    const channels = d.channels ?? [];
+    if (d.match !== undefined || d.channels === undefined) {
+      bad.push(`  "${d.name}" is governance but not an explicit channels domain — a governance venue must list concrete channels, never a match/pseudo-domain`);
+    }
+    if (!d.admins || d.admins.length === 0) {
+      bad.push(`  "${d.name}" is governance but has an empty admins roster — a governance venue with no admins unlocks nothing (add the org's admin principal ids to its admins list)`);
+    }
+    if (channels.length > GOVERNANCE_CHANNEL_MAX) {
+      bad.push(`  "${d.name}" is governance with ${channels.length} channels — that exceeds the ${GOVERNANCE_CHANNEL_MAX}-channel governance cap (a governance domain is a SMALL uniformly-privileged venue; split it or re-tag)`);
+    }
+    for (const ch of channels) {
+      const segs = ch.split("/");
+      const platform = segs[0] ?? "";
+      if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
+      const workspaceKey = segs.slice(0, 2).join("/");
+      if (!(vset.has(workspaceKey) || vset.has(ch) || trustEnv)) {
+        bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/trusted-surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`);
+      }
+    }
+  }
+  if (bad.length > 0) {
+    throw new Error(
+      "open-everywhere: invalid governance domain(s):\n" +
+        bad.join("\n") +
+        "\n(memory/domain.ts assertGovernanceDomains).",
     );
   }
 }

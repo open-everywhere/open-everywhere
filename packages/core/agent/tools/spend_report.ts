@@ -22,6 +22,7 @@ import {
   dmBucketKey,
 } from "../spend/reporting.js";
 import { fetchUserDisplayName, fetchChannelDisplayName } from "../channels/slack-events.js";
+import { requirePaneVenue } from "../access/pane-venue.js";
 
 function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -121,6 +122,7 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     const resolved = resolveReportScope(ctx, input.scope);
+    if (input.scope === "org") await requirePaneVenue(ctx, { kind: "spend.report.org" });
     const domains = getConfig().loadDomains();
     const sinceDays = input.sinceDays ?? 30;
     const since = isoDaysAgo(sinceDays);
