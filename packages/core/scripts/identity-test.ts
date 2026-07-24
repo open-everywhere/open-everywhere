@@ -25,6 +25,7 @@ function ok(cond: boolean, label: string): void {
 for (const k of [
   "OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_TRUST",
   "LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API_KEY", "LINEAR_API_TOKEN",
+  "LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET",
 ]) {
   delete process.env[k];
 }

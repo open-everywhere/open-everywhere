@@ -4,6 +4,7 @@ import { getAppInfo } from "../commands/core.js";
 import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
+import { linearCredentialsConfigured } from "../channels/linear-credentials.js";
 
 export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "oe.instance.first_boot": Object.freeze([]),
@@ -259,7 +260,7 @@ function surfacesWithCreds(): string[] {
   if (process.env.MICROSOFT_APP_ID) present.push("teams");
   if (process.env.TELEGRAM_BOT_TOKEN) present.push("telegram");
   if (process.env.OE_GITHUB_APP_ID) present.push("github");
-  if (process.env.LINEAR_ACCESS_TOKEN) present.push("linear");
+  if (linearCredentialsConfigured()) present.push("linear");
   try {
     if ((getConfig().loadWebhooks?.() ?? []).length > 0) present.push("webhooks");
   } catch {

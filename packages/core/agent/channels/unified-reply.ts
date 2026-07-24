@@ -1,5 +1,6 @@
 import { slackForm } from "./slack-events.js";
 import { createLinearAgentActivity, callLinearGraphQL, LinearApiError } from "eve/channels/linear";
+import { linearAppActorCredentials } from "./linear-credentials.js";
 import { sendTeamsActivity, replyToTeamsActivity } from "eve/channels/teams";
 import { parsePrivateKey, signAppJwt, mintInstallationToken } from "../scm/mint.js";
 import { loadGitHubAppConfig } from "../scm/config.js";
@@ -157,6 +158,7 @@ async function liveLinearSilentClose(origin: LinearOrigin): Promise<void> {
   if (!origin.agentSessionId) return;
   try {
     await createLinearAgentActivity({
+      credentials: linearAppActorCredentials,
       activity: {
         agentSessionId: origin.agentSessionId,
         content: { type: "thought", body: LINEAR_SILENT_CLOSE_STATUS },
@@ -174,6 +176,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
     let data: { commentCreate?: { success?: boolean } };
     try {
       data = await callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+        credentials: linearAppActorCredentials,
         query: "mutation OeUnifiedAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
         queryName: "OeUnifiedAmbientReply",
         variables: { input: { issueId: origin.issueId, ...(origin.parentId ? { parentId: origin.parentId } : {}), body: text } },
@@ -190,6 +193,7 @@ async function liveLinearPost(origin: LinearOrigin, text: string): Promise<strin
   let res: { id: string; success: boolean };
   try {
     res = await createLinearAgentActivity({
+      credentials: linearAppActorCredentials,
       activity: { agentSessionId: origin.agentSessionId, content: { type: "response", body: text } },
     });
   } catch (err) {

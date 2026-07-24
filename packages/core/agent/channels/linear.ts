@@ -11,6 +11,7 @@ import {
 } from "eve/channels/linear";
 import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { buildLinearAuth, teamFactsFromTeam } from "./linear-identity.js";
+import { linearAppActorCredentials } from "./linear-credentials.js";
 import {
   classifyLinearAmbientComment,
   extractLinearCommentSignal,
@@ -65,7 +66,7 @@ export async function enrichTeamPrivacy(
   try {
     const data = await callLinearGraphQL<{ team?: { private?: boolean } }>({
       api: opts?.api,
-      credentials: opts?.credentials,
+      credentials: opts?.credentials ?? linearAppActorCredentials,
       query: "query TeamPrivacy($id: String!) { team(id: $id) { private } }",
       queryName: "TeamPrivacy",
       variables: { id: teamId },
@@ -84,7 +85,7 @@ export async function enrichIssueTeam(
   try {
     const d = await callLinearGraphQL<{ issue?: { team?: { id?: string; private?: boolean } } }>({
       api: opts?.api,
-      credentials: opts?.credentials,
+      credentials: opts?.credentials ?? linearAppActorCredentials,
       query: "query OeIssueTeam($id: String!) { issue(id: $id) { team { id private } } }",
       queryName: "OeIssueTeam",
       variables: { id: issueId },
@@ -107,6 +108,7 @@ function resolveViewer(): Promise<{ id?: string; name?: string }> {
       overrideId && overrideName
         ? Promise.resolve({ id: overrideId, name: overrideName })
         : callLinearGraphQL<{ viewer?: { id?: string; name?: string; displayName?: string } }>({
+            credentials: linearAppActorCredentials,
             query: "query OeViewer { viewer { id name displayName } }",
             queryName: "OeViewer",
           })
@@ -150,6 +152,7 @@ async function enrichComment(commentId: string): Promise<EnrichedLinearComment |
         issue?: { id?: string; identifier?: string; title?: string; team?: { id?: string; private?: boolean } };
       };
     }>({
+      credentials: linearAppActorCredentials,
       query:
         "query OeAmbientComment($id: String!) { comment(id: $id) { id body createdAt " +
         "user { id name displayName } parent { id user { id } } " +
@@ -505,7 +508,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
       action: "linear.dispatched",
       detail: { addressing: "direct", issueId: c.issueId, agentSessionId },
     });
-    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
+    await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "thought", body: LINEAR_MENTION_HANDOFF_TEXT } } }).catch((err) =>
       slog(`mention hand-off activity failed (dispatch already succeeded): ${String(err)}`),
     );
     slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) → addressed direct-mention wake diverted to the unified window`);
@@ -519,16 +522,17 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
       action: "linear.mention_divert_failed",
       detail: { agentSessionId, error: String(err).slice(0, 300) },
     }).catch(() => undefined);
-    await createLinearAgentActivity({ activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
+    await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: LINEAR_MENTION_DIVERT_FAILED_TEXT } } }).catch(() => undefined);
   }
 }
 
-const pristine = linearChannel({});
+const pristine = linearChannel({ credentials: linearAppActorCredentials });
 type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
 
 const native: LinearChannel = linearChannel({
+  credentials: linearAppActorCredentials,
   onAgentSession: async (_ctx, event) => {
     const s = event.agentSession;
     const agentSessionId = s.id;
@@ -619,6 +623,7 @@ const native: LinearChannel = linearChannel({
             }),
             run: () =>
               callLinearGraphQL<{ commentCreate?: { success?: boolean } }>({
+                credentials: linearAppActorCredentials,
                 query: "mutation OeAmbientReply($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
                 queryName: "OeAmbientReply",
                 variables: { input: { issueId: target!.issueId, ...(target!.parentId ? { parentId: target!.parentId } : {}), body: text } },

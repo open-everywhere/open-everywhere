@@ -8,6 +8,7 @@ import { createCommentReply, resolveNotionApiKey } from "./notion-api.js";
 import { sendTelegramMessage } from "eve/channels/telegram";
 import { sendTeamsActivity, replyToTeamsActivity, splitTeamsMessageText } from "eve/channels/teams";
 import { createLinearAgentActivity } from "eve/channels/linear";
+import { linearAppActorCredentials } from "./linear-credentials.js";
 
 export type ReplyTarget =
   | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
@@ -148,6 +149,7 @@ async function dispatchReply(target: ReplyTarget, text: string): Promise<string>
     return res.id;
   }
   const res = await createLinearAgentActivity({
+    credentials: linearAppActorCredentials,
     activity: { agentSessionId: target.agentSessionId, content: { body: text, type: "response" } },
   });
   return res.id;
