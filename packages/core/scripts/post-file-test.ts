@@ -19,7 +19,6 @@ const postFile = (await resolveWindowGated((await import("../agent/tools/post_fi
   readonly execute: (input: unknown, ctx: unknown) => Promise<{ posted: boolean; count: number; platform: string }>;
 };
 const { inferContentType } = await import("../agent/tools/post_file.js");
-const { assertSafeFetchUrl, setHostEgressLookup } = await import("../agent/access/host-egress.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineBundle, defineBinding } = await import("../agent/access/bundle.js");
@@ -53,15 +52,13 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const PNG_B64 = Buffer.from("fake-png-bytes").toString("base64");
-
-ok(postFile.inputSchema.safeParse({ files: [{ source: { base64: PNG_B64 }, filename: "shot.png" }] }).success, "valid base64 file accepted");
-ok(postFile.inputSchema.safeParse({ files: [{ source: { path: "/tmp/a.png" }, filename: "a.png" }] }).success, "path source accepted");
-ok(postFile.inputSchema.safeParse({ files: [{ source: { url: "https://x/y.png" }, filename: "y.png" }] }).success, "url source accepted");
+ok(postFile.inputSchema.safeParse({ files: [{ source: { path: "shot.png" }, filename: "shot.png" }] }).success, "sandbox path source accepted");
 ok(!postFile.inputSchema.safeParse({ files: [] }).success, "empty files array rejected (min 1)");
-ok(!postFile.inputSchema.safeParse({ files: [{ source: { base64: PNG_B64 } }] }).success, "file missing filename rejected");
+ok(!postFile.inputSchema.safeParse({ files: [{ source: { path: "a.png" } }] }).success, "file missing filename rejected");
+ok(!postFile.inputSchema.safeParse({ files: [{ source: { base64: "eA==" }, filename: "a.png" }] }).success, "base64 source shape REJECTED (removed — sandbox path only)");
+ok(!postFile.inputSchema.safeParse({ files: [{ source: { url: "https://x/y.png" }, filename: "y.png" }] }).success, "url source shape REJECTED (removed — sandbox path only, no server-side remote fetch)");
 ok(!postFile.inputSchema.safeParse({ files: [{ source: { nope: "x" }, filename: "a.png" }] }).success, "unknown source shape rejected");
-ok(!postFile.inputSchema.safeParse({ files: Array.from({ length: 11 }, () => ({ source: { base64: PNG_B64 }, filename: "a.png" })) }).success, "over-10 files rejected (max cap)");
+ok(!postFile.inputSchema.safeParse({ files: Array.from({ length: 11 }, () => ({ source: { path: "a.png" }, filename: "a.png" })) }).success, "over-10 files rejected (max cap)");
 
 ok(inferContentType("shot.png") === "image/png", "inferContentType: .png → image/png");
 ok(inferContentType("photo.JPEG") === "image/jpeg", "inferContentType: case-insensitive extension");
@@ -70,35 +67,27 @@ ok(inferContentType("page.html") === "text/html", "inferContentType: .html → t
 ok(inferContentType("mystery") === "application/octet-stream", "inferContentType: no extension → octet-stream");
 ok(inferContentType("weird.zzz") === "application/octet-stream", "inferContentType: unknown extension → octet-stream");
 
-setHostEgressLookup(async (h) => (h === "example.com" ? ["93.184.216.34"] : []));
-const safe = await assertSafeFetchUrl("https://example.com/a.png");
-ok(safe.url.hostname === "example.com", "SSRF: a normal https host (public IP) is allowed");
-ok(safe.dispatcher !== undefined, "SSRF: returns a connection-pinned dispatcher (closes the rebind TOCTOU window)");
-setHostEgressLookup(undefined);
-const rejects = async (u: string, label: string) => {
-  let threw = false;
-  try {
-    await assertSafeFetchUrl(u);
-  } catch {
-    threw = true;
-  }
-  ok(threw, label);
-};
-await rejects("ftp://example.com/x", "SSRF: non-http(s) scheme rejected");
-await rejects("http://localhost/x", "SSRF: localhost rejected");
-await rejects("http://127.0.0.1/x", "SSRF: loopback IP rejected");
-await rejects("http://10.1.2.3/x", "SSRF: private-A IP rejected");
-await rejects("http://192.168.0.1/x", "SSRF: private-C IP rejected");
-await rejects("http://172.16.5.5/x", "SSRF: private-B IP rejected");
-await rejects("http://100.64.0.1/x", "SSRF: CGNAT IP rejected");
-await rejects("http://169.254.169.254/latest/meta-data", "SSRF: cloud-metadata link-local IP rejected");
-await rejects("http://metadata.google.internal/x", "SSRF: GCP metadata host rejected");
-setHostEgressLookup(async () => ["169.254.169.254"]);
-await rejects("https://rebind.attacker.test/latest/meta-data", "SSRF: DNS-rebind to metadata IP refused after resolution");
-setHostEgressLookup(undefined);
+const eveResolvePath = (p: string) => (p.startsWith("/") ? p : `/workspace/${p}`);
+const FILE_BYTES = new TextEncoder().encode("fake-file-bytes");
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
-function slackCtx(threadTs?: string) {
+function withSandbox<T extends Record<string, unknown>>(ctx: T, opts: { missing?: readonly string[]; oversize?: readonly string[] } = {}): T {
+  const missing = new Set((opts.missing ?? []).map(eveResolvePath));
+  const oversize = new Set((opts.oversize ?? []).map(eveResolvePath));
   return {
+    ...ctx,
+    getSandbox: async () => ({
+      resolvePath: eveResolvePath,
+      readBinaryFile: async ({ path }: { path: string }) => {
+        if (missing.has(path)) throw new Error(`ENOENT: no such file "${path}"`);
+        if (oversize.has(path)) return new Uint8Array(MAX_FILE_BYTES + 1);
+        return FILE_BYTES;
+      },
+    }),
+  };
+}
+function slackCtx(threadTs?: string, sandbox?: { missing?: readonly string[]; oversize?: readonly string[] }) {
+  const base = {
     channel: { kind: "slack" },
     session: {
       auth: {
@@ -110,9 +99,10 @@ function slackCtx(threadTs?: string) {
       },
     },
   };
+  return withSandbox(base, sandbox);
 }
-function discordCtx() {
-  return {
+function discordCtx(sandbox?: { missing?: readonly string[]; oversize?: readonly string[] }) {
+  const base = {
     channel: { kind: "discord" },
     session: {
       auth: {
@@ -124,9 +114,11 @@ function discordCtx() {
       },
     },
   };
+  return withSandbox(base, sandbox);
 }
-function platformCtx(kind: string) {
-  return { channel: { kind }, session: { auth: { current: { attributes: { channel_id: "X1" }, principalId: "U1" } } } };
+function platformCtx(kind: string, withSb = true) {
+  const base = { channel: { kind }, session: { auth: { current: { attributes: { channel_id: "X1" }, principalId: "U1" } } } };
+  return withSb ? withSandbox(base) : base;
 }
 
 interface FetchCall {
@@ -163,11 +155,34 @@ const restoreFetch = () => {
 await inSession(async () => {
   for (const surface of ["teams", "telegram"]) {
     await assert.rejects(
-      () => postFile.execute({ files: [{ source: { base64: PNG_B64 }, filename: "a.png" }] }, platformCtx(surface)),
+      () => postFile.execute({ files: [{ source: { path: "a.png" }, filename: "a.png" }] }, platformCtx(surface)),
       /not supported on/,
       `post_file: fails loud on ${surface}`,
     );
   }
+});
+
+await inSession(async () => {
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { path: "a.png" }, filename: "a.png" }] }, platformCtx("slack", false)),
+    /no workspace is bound/,
+    "post_file: no sandbox bound → fail-closed",
+  );
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { path: "missing.png" }, filename: "missing.png" }] }, slackCtx(undefined, { missing: ["missing.png"] })),
+    /could not read the workspace file/,
+    "post_file: missing sandbox file → fail-closed",
+  );
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { path: "big.bin" }, filename: "big.bin" }] }, slackCtx(undefined, { oversize: ["big.bin"] })),
+    /too large/,
+    "post_file: oversize sandbox file (>10 MB) → rejected",
+  );
+  await assert.rejects(
+    () => postFile.execute({ files: [{ source: { path: "/etc/passwd" }, filename: "passwd" }] }, slackCtx()),
+    /outside the workspace/,
+    "post_file: an out-of-workspace path is rejected by lexical confinement",
+  );
 });
 
 ok(assertBlobUrl("https://abc.public.blob.vercel-storage.com/x.html").hostname.endsWith(".blob.vercel-storage.com"), "assertBlobUrl: a real Blob host is allowed");
@@ -192,19 +207,11 @@ await assert.rejects(
 );
 setBlobPutter(undefined);
 
-await inSession(async () => {
-  await assert.rejects(
-    () => postFile.execute({ files: [{ source: { url: "http://169.254.169.254/x" }, filename: "meta.png" }] }, slackCtx()),
-    /internal\/loopback\/link-local/,
-    "post_file: execute() blocks an SSRF fetch before posting",
-  );
-});
-
 calls = [];
 fakeNet();
 await inSession(async () => {
   const res = await postFile.execute(
-    { files: [{ source: { base64: PNG_B64 }, filename: "shot.png", caption: "the screenshot" }], comment: "here you go" },
+    { files: [{ source: { path: "shot.png" }, filename: "shot.png", caption: "the screenshot" }], comment: "here you go" },
     slackCtx("111.222"),
   );
   ok(res.posted === true && res.count === 1 && res.platform === "slack", "post_file(slack): returns posted/count/platform");
@@ -232,7 +239,7 @@ calls = [];
 fakeNet();
 await inSession(async () => {
   const res = await postFile.execute(
-    { files: [{ source: { base64: PNG_B64 }, filename: "shot.png" }], comment: "look" },
+    { files: [{ source: { path: "shot.png" }, filename: "shot.png" }], comment: "look" },
     discordCtx(),
   );
   ok(res.posted === true && res.platform === "discord", "post_file(discord): returns posted/platform");
@@ -256,7 +263,7 @@ setBlobPutter(async () => {
 fakeNet();
 await inSession(async () => {
   const res = await postFile.execute(
-    { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }], comment: "the page" },
+    { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "the page" },
     slackCtx("111.222"),
   );
   ok(res.posted === true && (res as { urls?: string[] }).urls === undefined, "post_file(html, opt-out): attaches (no hosted urls returned)");
@@ -264,7 +271,7 @@ await inSession(async () => {
   ok(!!getUrl, "post_file(html, opt-out): the .html is uploaded as a file (getUploadURLExternal called)");
   ok(new URLSearchParams(getUrl!.body).get("filename") === "page.html", "post_file(html, opt-out): the attachment keeps the .html filename");
   ok(!calls.some((c) => c.url.endsWith("/api/chat.postMessage")), "post_file(html, opt-out): no link message posted (nothing hosted)");
-  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] } }) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
+  ok(approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } }) === "not-applicable", "approval(html, opt-out): not-applicable (attach path is ungated)");
 });
 restoreFetch();
 setBlobPutter(undefined);
@@ -280,7 +287,7 @@ setBlobPutter(async (args: { pathname: string; body: Uint8Array; contentType: st
 fakeNet();
 await inSession(async () => {
   const res = await postFile.execute(
-    { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }], comment: "rendered page" },
+    { files: [{ source: { path: "page.html" }, filename: "page.html" }], comment: "rendered page" },
     slackCtx("111.222"),
   );
   ok(res.posted === true && JSON.stringify((res as { urls?: string[] }).urls) === JSON.stringify([BLOB_URL]), "post_file(html, opt-in): returns the hosted Blob URL");
@@ -291,8 +298,8 @@ await inSession(async () => {
   const text = new URLSearchParams(msg!.body).get("text") ?? "";
   ok(text.includes(BLOB_URL) && text.includes("rendered page"), "post_file(html, opt-in): the message carries the Blob URL + the comment");
   ok(new URLSearchParams(msg!.body).get("thread_ts") === "111.222", "post_file(html, opt-in): the link posts into the current thread");
-  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] } }) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
-  ok(approvalOf({ toolInput: { files: [{ source: { base64: PNG_B64 }, filename: "shot.png" }] } }) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
+  ok(approvalOf({ toolInput: { files: [{ source: { path: "page.html" }, filename: "page.html" }] } }) === "user-approval", "approval(html, opt-in): user-approval (the public Blob write is gated)");
+  ok(approvalOf({ toolInput: { files: [{ source: { path: "shot.png" }, filename: "shot.png" }] } }) === "not-applicable", "approval(image, opt-in): not-applicable (only the public HTML publish is gated)");
   const newest = (await readAudit({ org: "default", action: "slack.post_file" }))[0];
   ok(newest?.detail?.hosted === 1 && newest?.detail?.attached === 0, "post_file(html, opt-in): audit row records hosted=1, attached=0");
 });
@@ -307,7 +314,7 @@ setBlobPutter(async () => {
 fakeNet();
 await inSession(async () => {
   await assert.rejects(
-    () => postFile.execute({ files: [{ source: { base64: PNG_B64 }, filename: "page.html" }] }, slackCtx("111.222")),
+    () => postFile.execute({ files: [{ source: { path: "page.html" }, filename: "page.html" }] }, slackCtx("111.222")),
     /blob store exploded/,
     "post_file(html, opt-in, write fails): fails loud (no silent attach fallback)",
   );
@@ -317,4 +324,4 @@ restoreFetch();
 setBlobPutter(undefined);
 registerBlobConfig(false);
 
-console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, SSRF, surface dispatch, blob-hosting opt-in, audit)\n`);
+console.log(`\n✓ post_file: ${n} assertions passed (validation, content-type, sandbox-path resolution+guards, surface dispatch, blob-hosting opt-in, audit)\n`);

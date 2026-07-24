@@ -6,7 +6,7 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { callSlackRead } from "../channels/slack-read.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { hostHtmlArtifact, resolveBlobHosting } from "../blob/hosting.js";
-import { oeFetch } from "../access/host-egress.js";
+import { confineToWorkspacePath } from "./describe_image.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
 
 const EXT_CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -43,29 +43,35 @@ function isHtmlArtifact(contentType: string): boolean {
   return contentType === "text/html";
 }
 
-type FileSource = { readonly path: string } | { readonly url: string } | { readonly base64: string };
+interface SandboxHandle {
+  resolvePath(p: string): string;
+  readBinaryFile(a: { path: string }): PromiseLike<Uint8Array> | Uint8Array;
+}
 
-async function resolveBytes(source: FileSource, ctx: BindableContext): Promise<Uint8Array> {
-  if ("base64" in source) {
-    const comma = source.base64.indexOf(",");
-    const body = source.base64.startsWith("data:") && comma >= 0 ? source.base64.slice(comma + 1) : source.base64;
-    return new Uint8Array(Buffer.from(body, "base64"));
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+async function resolveBytes(path: string, ctx: BindableContext): Promise<Uint8Array> {
+  const sandboxCtx = ctx as unknown as { getSandbox?: () => Promise<SandboxHandle> };
+  if (typeof sandboxCtx.getSandbox !== "function") {
+    throw new Error("post_file: no workspace is bound to this seat — a file can only be posted from a session with a sandbox.");
   }
-  if ("url" in source) {
-    const res = await oeFetch(ctx, source.url);
-    if (!res.ok) throw new Error(`post_file: fetching "${source.url}" failed (HTTP ${res.status}).`);
-    return new Uint8Array(await res.arrayBuffer());
-  }
-  const { readFile } = await import("node:fs/promises");
+  let sb: SandboxHandle;
   try {
-    return new Uint8Array(await readFile(source.path));
+    sb = await sandboxCtx.getSandbox();
   } catch (err) {
-    throw new Error(
-      `post_file: could not read the file at "${source.path}" — ${err instanceof Error ? err.message : String(err)}. ` +
-        `NOTE: \`path\` reads the tool host's filesystem, NOT the bash sandbox — a file you created with bash lives in the sandbox and is invisible here. ` +
-        `Instead run \`base64 <file>\` in bash and pass the output as \`source: { base64: ... }\`.`,
-    );
+    throw new Error(`post_file: could not open the workspace to read "${path}" — ${err instanceof Error ? err.message : String(err)}.`);
   }
+  const confined = confineToWorkspacePath(sb, path);
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await Promise.resolve(sb.readBinaryFile({ path: confined })));
+  } catch (err) {
+    throw new Error(`post_file: could not read the workspace file at "${path}" — ${err instanceof Error ? err.message : String(err)}.`);
+  }
+  if (bytes.byteLength > MAX_FILE_BYTES) {
+    throw new Error(`post_file: "${path}" is too large (${bytes.byteLength} bytes; max ${MAX_FILE_BYTES}).`);
+  }
+  return bytes;
 }
 
 interface ResolvedFile {
@@ -177,12 +183,8 @@ const inputSchema = z.object({
     .array(
       z.object({
         source: z
-          .union([
-            z.object({ path: z.string().min(1) }).describe("A path on the tool host's filesystem — NOT the bash sandbox. For a file you created with bash, use base64 instead."),
-            z.object({ url: z.string().min(1) }).describe("An http(s) URL to fetch the file bytes from."),
-            z.object({ base64: z.string().min(1) }).describe("Base64-encoded file bytes (optionally a data: URL)."),
-          ])
-          .describe("Where the file's bytes come from — exactly one of path / url / base64."),
+          .object({ path: z.string().min(1) })
+          .describe("A file path in THIS session's workspace/sandbox (e.g. a bash-written artifact or an agent-browser screenshot). Read via the bound sandbox; confined to the workspace root; fails closed on a seat with no sandbox."),
         filename: z.string().min(1).describe("The name the file is posted under (its extension drives contentType inference)."),
         contentType: z.string().min(1).optional().describe("MIME type; inferred from the filename when omitted."),
         caption: z.string().min(1).optional().describe("Optional per-file caption/title."),
@@ -190,7 +192,7 @@ const inputSchema = z.object({
     )
     .min(1)
     .max(MAX_FILES)
-    .describe("One or more files to post (max 10)."),
+    .describe("One or more files to post (max 10), each up to 10 MB."),
   comment: z.string().min(1).optional().describe("Optional text posted alongside the files."),
 });
 type PostFileInput = z.infer<typeof inputSchema>;
@@ -209,12 +211,13 @@ export default windowGated("post_file", defineTool({
   description:
     "Post one or more FILES/artifacts (screenshots, images, docs, data) to the current conversation " +
     "on this surface — the delivery channel for things a text reply can't carry. Give each file a " +
-    "`source` (one of `{ path }` a local file, `{ url }` an http(s) URL, or `{ base64 }` inline " +
-    "bytes) and a `filename`; `contentType` is inferred from the filename if omitted. Add an " +
-    "optional `comment` to post alongside the files, and a per-file `caption`. Works on Slack and " +
-    "Discord today; on other surfaces it returns a clear 'not supported here' error so you can fall " +
-    "back to a text reply. HTML pages: if this org has opted in to Blob hosting they're published " +
-    "to a public URL (approval-gated); otherwise the raw `.html` is attached as a downloadable file.",
+    "`source: { path }` — a file in THIS session's workspace/sandbox (e.g. a bash-written artifact, " +
+    "or an agent-browser screenshot) — and a `filename`; `contentType` is inferred from the filename " +
+    "if omitted. Each file is capped at 10 MB. Add an optional `comment` to post alongside the files, " +
+    "and a per-file `caption`. Works on Slack and Discord today; on other surfaces it returns a clear " +
+    "'not supported here' error so you can fall back to a text reply. HTML pages: if this org has " +
+    "opted in to Blob hosting they're published to a public URL (approval-gated); otherwise the raw " +
+    "`.html` is attached as a downloadable file.",
   inputSchema,
   outputSchema: z.object({ posted: z.boolean(), count: z.number(), platform: z.string(), urls: z.array(z.string()).optional() }),
   approval: approvalPolicy,
@@ -230,7 +233,7 @@ export default windowGated("post_file", defineTool({
     const resolved: ResolvedFile[] = [];
     for (const f of input.files) {
       const contentType = f.contentType ?? inferContentType(f.filename);
-      const bytes = await resolveBytes(f.source as FileSource, ctx as BindableContext);
+      const bytes = await resolveBytes(f.source.path, ctx as BindableContext);
       resolved.push({ bytes, filename: f.filename, contentType, caption: f.caption });
     }
 
