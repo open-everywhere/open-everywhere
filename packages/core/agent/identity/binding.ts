@@ -74,7 +74,7 @@ function attr(a: AuthPrincipal["attributes"], keys: readonly string[]): string |
   return undefined;
 }
 
-interface RawIdentity {
+export interface RawIdentity {
   readonly workspace?: string;
   readonly surface?: string;
   readonly domainSurface?: string;
@@ -87,7 +87,8 @@ interface RawIdentity {
   readonly threadTs?: string;
 }
 
-type Mapper = (ctx: BindableContext) => RawIdentity;
+export type IdentityMapper = (ctx: BindableContext) => RawIdentity;
+type Mapper = IdentityMapper;
 
 export function slackMode(channelType: string | undefined, channelId: string | undefined): SessionMode {
   if (channelType === "im") return "dm";
@@ -304,15 +305,19 @@ const bindLocal: Mapper = (ctx) => {
   };
 };
 
-const MAPPERS: Readonly<Record<string, Mapper>> = {
-  slack: bindSlack,
-  linear: bindLinear,
-  teams: bindTeams,
-  github: bindGitHub,
-  discord: bindDiscord,
-  telegram: bindTelegram,
-  notion: bindNotion,
-};
+const MAPPERS: Record<string, Mapper> = {};
+
+export function registerIdentityMapper(platform: string, mapper: IdentityMapper): void {
+  MAPPERS[platform] = mapper;
+}
+
+registerIdentityMapper("slack", bindSlack);
+registerIdentityMapper("linear", bindLinear);
+registerIdentityMapper("teams", bindTeams);
+registerIdentityMapper("github", bindGitHub);
+registerIdentityMapper("discord", bindDiscord);
+registerIdentityMapper("telegram", bindTelegram);
+registerIdentityMapper("notion", bindNotion);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);

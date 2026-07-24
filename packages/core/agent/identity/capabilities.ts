@@ -7,15 +7,11 @@ export interface CapabilityManifest {
 
 const NONE: CapabilityManifest = { midTurnPost: false, reactions: false };
 
-const MANIFESTS: Readonly<Record<string, CapabilityManifest>> = {
-  slack: { midTurnPost: true, reactions: true },
-  discord: { midTurnPost: true, reactions: false },
-  teams: { midTurnPost: true, reactions: false },
-  linear: { midTurnPost: true, reactions: false },
-  github: { midTurnPost: false, reactions: false },
-  telegram: { midTurnPost: true, reactions: false },
-  notion: { midTurnPost: true, reactions: false },
-};
+const MANIFESTS: Record<string, CapabilityManifest> = {};
+
+export function registerCapabilityManifest(platform: string, manifest: CapabilityManifest): void {
+  MANIFESTS[platform] = manifest;
+}
 
 export function capabilitiesForPlatform(platform: string | undefined): CapabilityManifest {
   return (platform !== undefined ? MANIFESTS[platform] : undefined) ?? NONE;
@@ -24,3 +20,11 @@ export function capabilitiesForPlatform(platform: string | undefined): Capabilit
 export function capabilitiesFor(ctx: BindableContext): CapabilityManifest {
   return capabilitiesForPlatform(channelPlatform(ctx));
 }
+
+registerCapabilityManifest("slack", { midTurnPost: true, reactions: true });
+registerCapabilityManifest("discord", { midTurnPost: true, reactions: false });
+registerCapabilityManifest("teams", { midTurnPost: true, reactions: false });
+registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
+registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
+registerCapabilityManifest("telegram", { midTurnPost: true, reactions: false });
+registerCapabilityManifest("notion", { midTurnPost: true, reactions: false });

@@ -1,4 +1,4 @@
-import { bindFrom, bindBridged, slackMode, slackVisibility, slackTrust, linearVisibility, linearTrust, type BindableContext } from "../agent/identity/binding.js";
+import { bindFrom, bindBridged, registerIdentityMapper, slackMode, slackVisibility, slackTrust, linearVisibility, linearTrust, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { teamsTrust } from "../agent/channels/teams-identity.js";
@@ -417,5 +417,27 @@ await (async () => {
   );
   ok((await enrichTeamPrivacy("TEAM5", { api: { fetch: explodingFetch } })) === undefined, "enrichTeamPrivacy: missing token -> undefined (fail closed, no network)");
 })();
+
+const fakeMapper: IdentityMapper = (ctx) => {
+  const a = ctx.session?.auth?.current?.attributes;
+  const ws = a?.["ws"];
+  const sfc = a?.["sfc"];
+  return {
+    workspace: typeof ws === "string" ? ws : "WSX",
+    surface: typeof sfc === "string" ? sfc : "SFX",
+    mode: "channel",
+    trust: "internal",
+  };
+};
+registerIdentityMapper("regtest", fakeMapper);
+const reg = bindFrom({ channel: { kind: "regtest" }, session: { auth: { current: { attributes: { ws: "WSX", sfc: "SFX" } } } } });
+ok(
+  reg.platform === "regtest" && reg.workspace === "WSX" && reg.surface === "SFX" && reg.trust === "internal",
+  "register seam: a mapper registered via registerIdentityMapper is resolvable by bindFrom",
+);
+ok(
+  bindFrom({ channel: { kind: "neverregistered" } }).trust === "external",
+  "register seam: an unregistered platform still falls through to bindLocal + fail-closed external",
+);
 
 console.log(`✓ identity: ${passed} assertions passed`);

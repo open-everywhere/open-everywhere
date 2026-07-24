@@ -1,4 +1,4 @@
-import { capabilitiesForPlatform, capabilitiesFor, type CapabilityManifest } from "../agent/identity/capabilities.js";
+import { capabilitiesForPlatform, capabilitiesFor, registerCapabilityManifest, type CapabilityManifest } from "../agent/identity/capabilities.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 delete process.env.OE_PLATFORM;
@@ -38,5 +38,9 @@ ok(capabilitiesFor(ctxFor("channel:discord")).midTurnPost === true, "capabilitie
 ok(capabilitiesFor(ctxFor("discord-gateway")).midTurnPost === true, "capabilitiesFor: 'discord-gateway' aliases to discord");
 ok(capabilitiesFor(ctxFor("teams")).midTurnPost === true, "capabilitiesFor: teams honours mid-turn post (sendTeamsActivity)");
 ok(capabilitiesFor(ctxFor("github")).midTurnPost === false, "capabilitiesFor: github honours no optional verb (no public proactive comment seam)");
+
+registerCapabilityManifest("regtest", { midTurnPost: true, reactions: true });
+eq(capabilitiesForPlatform("regtest"), { midTurnPost: true, reactions: true }, "register seam: a manifest registered via registerCapabilityManifest is resolvable");
+eq(capabilitiesForPlatform("neverregistered"), { midTurnPost: false, reactions: false }, "register seam: an unregistered platform still falls back to NONE");
 
 console.log(`✓ ${passed} capabilities assertions passed`);
