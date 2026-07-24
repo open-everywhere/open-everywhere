@@ -19,6 +19,7 @@ import {
   onVercel,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
+import { registerTelegramProvider } from "@open-everywhere/provider-telegram/agent/register.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
 
@@ -52,6 +53,8 @@ registerGitHubMemory();
 registerGitHubConfigPrProvider();
 
 registerNotionProvider();
+
+registerTelegramProvider();
 
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&

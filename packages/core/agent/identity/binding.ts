@@ -4,7 +4,6 @@ import { normalizePlatform, platformFromKind } from "./platform.js";
 import { teamsMode, teamsVisibility, teamsTrust } from "../channels/teams-identity.js";
 import { githubVisibility, githubTrust } from "../channels/github-identity.js";
 import { discordMode, discordVisibility, discordTrust } from "../channels/discord-identity.js";
-import { telegramMode, telegramVisibility, telegramChatKey } from "../channels/telegram-identity.js";
 import { isVouchedInternal } from "./trust.js";
 import { classifySessionId, parseWindowToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -248,25 +247,6 @@ const bindDiscord: Mapper = (ctx) => {
   };
 };
 
-const bindTelegram: Mapper = (ctx) => {
-  const a = authOf(ctx)?.attributes;
-  const chatId = attr(a, ["chat_id", "chatId"]);
-  const chatType = attr(a, ["chat_type", "chatType"]);
-  const threadId = attr(a, ["message_thread_id", "messageThreadId"]);
-  const mode = telegramMode(chatType);
-  const chatKey = chatId !== undefined ? telegramChatKey(chatId) : chatId;
-  const surface = threadId ? `${chatKey}.t${threadId}` : chatKey;
-  return {
-    workspace: chatKey,
-    surface,
-    mode,
-    visibility: telegramVisibility(chatType, mode),
-    trust: undefined,
-    principalId: authPrincipalId(ctx) ?? attr(a, ["user_id", "userId"]),
-    target: chatId ? { chatId, ...(threadId ? { messageThreadId: Number(threadId) } : {}), ...(chatType ? { chatType } : {}) } : undefined,
-  };
-};
-
 const ENV_MODES: ReadonlySet<string> = new Set(["channel", "dm", "mpim"]);
 
 const bindLocal: Mapper = (ctx) => {
@@ -295,7 +275,6 @@ registerIdentityMapper("linear", bindLinear);
 registerIdentityMapper("teams", bindTeams);
 registerIdentityMapper("github", bindGitHub);
 registerIdentityMapper("discord", bindDiscord);
-registerIdentityMapper("telegram", bindTelegram);
 
 export function channelPlatform(ctx: BindableContext): string | undefined {
   const kind = platformFromKind(ctx.channel?.kind ?? process.env.OE_PLATFORM);

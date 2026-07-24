@@ -1,9 +1,5 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
-import type { TelegramReceiveTarget } from "eve/channels/telegram";
-import type { DiscordReceiveTarget } from "eve/channels/discord";
-import type { TeamsReceiveTarget } from "eve/channels/teams";
 import slack from "../channels/slack.js";
-import telegram from "../channels/telegram.js";
 import discord from "../channels/discord.js";
 import teams from "../channels/teams.js";
 import { confirmChannelInternal, slackForm } from "../channels/slack-events.js";
@@ -31,9 +27,9 @@ function routineMaxConcurrency(): number {
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CONCURRENCY;
 }
 
-interface DispatchTarget {
-  readonly channel: typeof slack | typeof telegram | typeof discord | typeof teams;
-  readonly target: { channelId: string; threadTs?: string } | TelegramReceiveTarget | DiscordReceiveTarget | TeamsReceiveTarget;
+export interface DispatchTarget {
+  readonly channel: unknown;
+  readonly target: Readonly<Record<string, unknown>>;
   readonly mode: SessionMode;
   readonly attributes: Readonly<Record<string, string>>;
 }
@@ -55,25 +51,6 @@ function resolveSlackTarget(r: Routine): DispatchTarget | null {
       team_id: r.surfaceKey.split("/")[1] ?? "",
       channel_id: channelId,
       channel_type: mode === "dm" ? "im" : "channel",
-    },
-  };
-}
-
-function resolveTelegramTarget(r: Routine): DispatchTarget | null {
-  const chatId = storedString(r.target, "chatId");
-  if (!chatId) return null;
-  const threadId = r.target?.["messageThreadId"];
-  const messageThreadId = typeof threadId === "number" && Number.isInteger(threadId) ? threadId : undefined;
-  const chatType = storedString(r.target, "chatType") ?? (chatId.startsWith("-") ? undefined : "private");
-  const mode: SessionMode = chatType === "private" ? "dm" : "channel";
-  return {
-    channel: telegram,
-    target: { chatId, ...(messageThreadId !== undefined ? { messageThreadId } : {}) },
-    mode,
-    attributes: {
-      chat_id: chatId,
-      ...(messageThreadId !== undefined ? { message_thread_id: String(messageThreadId) } : {}),
-      ...(chatType ? { chat_type: chatType } : {}),
     },
   };
 }
@@ -126,13 +103,19 @@ function resolveTeamsTarget(r: Routine): DispatchTarget | null {
   };
 }
 
+const ROUTINE_DISPATCH_RESOLVERS: Record<string, (r: Routine) => DispatchTarget | null> = {};
+
+export function registerRoutineDispatchTarget(platform: string, resolve: (r: Routine) => DispatchTarget | null): void {
+  ROUTINE_DISPATCH_RESOLVERS[platform] = resolve;
+}
+
 function resolveTarget(routine: Routine): DispatchTarget | null {
   const platform = routine.surfaceKey.split("/")[0];
+  const registered = platform !== undefined ? ROUTINE_DISPATCH_RESOLVERS[platform] : undefined;
+  if (registered) return registered(routine);
   switch (platform) {
     case "slack":
       return resolveSlackTarget(routine);
-    case "telegram":
-      return resolveTelegramTarget(routine);
     case "discord":
       return resolveDiscordTarget(routine);
     case "teams":
@@ -249,7 +232,8 @@ export async function dispatchTick(
           log(`job ${r.id} on ${r.surfaceKey}: durable-job session-join is Slack-only in v1 — firing with ledger continuity only`);
         }
       }
-      const slackChannelId = dest.channel === slack && "channelId" in dest.target ? dest.target.channelId : undefined;
+      const slackChannelId =
+        dest.channel === slack && "channelId" in dest.target && typeof dest.target.channelId === "string" ? dest.target.channelId : undefined;
       const internal =
         slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
       const markedAuth = {

@@ -322,7 +322,6 @@ ok(
   "trust: the unconfirmed fire still resolves its real surface (spend attribution unaffected by the trust gate)",
 );
 
-const telegramChannel = (await import("../agent/channels/telegram.js")).default;
 const discordChannel = (await import("../agent/channels/discord.js")).default;
 const teamsChannel = (await import("../agent/channels/teams.js")).default;
 
@@ -372,32 +371,10 @@ function seed(partial: Pick<Routine, "id" | "surfaceKey" | "target">): Promise<R
   return store.addRoutine({} as never, r);
 }
 
-await seed({ id: "r-tg-dm", surfaceKey: "telegram/555/555", target: { chatId: "555", chatType: "private" } });
-await seed({ id: "r-tg-topic", surfaceKey: "telegram/g100200/g100200.t7", target: { chatId: "-100200", messageThreadId: 7 } });
 await seed({ id: "r-dc-guild", surfaceKey: "discord/G1/CH1", target: { channelId: "CH1", guildId: "G1", channelType: "0" } });
 {
   const started = await tickCapture();
-  ok(started.includes("r-tg-dm") && started.includes("r-tg-topic") && started.includes("r-dc-guild"), "cross-surface: telegram + discord routines fire");
-
-  const tgDm = fires["r-tg-dm"];
-  ok(tgDm.channel === telegramChannel, "telegram: fires into the telegram channel module");
-  ok(JSON.stringify(tgDm.target) === JSON.stringify({ chatId: "555" }), "telegram: receive target is the strict { chatId } shape (stored chatType stripped)");
-  ok(tgDm.attributes["chat_id"] === "555" && tgDm.attributes["chat_type"] === "private", "telegram: fire stamps chat_id + chat_type for bindTelegram");
-  ok(tgDm.attributes["trust_checked"] === undefined && tgDm.attributes["is_ext_shared"] === undefined, "telegram: NO Slack trust verdict is stamped on a non-Slack fire (fail-closed to external)");
-  const tgDmBinding = bindFrom({ channel: { kind: "telegram" }, session: { auth: { current: { attributes: tgDm.attributes } as never } } });
-  ok(tgDmBinding.workspace === "555" && tgDmBinding.surface === "555", "telegram: bindFrom re-derives the routine's REAL chat partition");
-  ok(tgDmBinding.mode === "dm", "telegram: a private-chat fire binds dm mode (stored chatType honoured)");
-  ok(tgDmBinding.trust === "external", "telegram: an unverified fire binds trust=external (shared memory stays off, matching inbound)");
-  ok(
-    resolvePartition({ channel: { kind: "telegram" }, session: { auth: { current: { attributes: tgDm.attributes } as never } } }).surfaceKey === "telegram/555/555",
-    "telegram: spend/usage attribution lands on the routine's real surfaceKey",
-  );
-
-  const tgTopic = fires["r-tg-topic"];
-  ok(JSON.stringify(tgTopic.target) === JSON.stringify({ chatId: "-100200", messageThreadId: 7 }), "telegram: a forum-topic fire posts into the stored topic (RAW chat id + messageThreadId)");
-  const tgTopicBinding = bindFrom({ channel: { kind: "telegram" }, session: { auth: { current: { attributes: tgTopic.attributes } as never } } });
-  ok(tgTopicBinding.workspace === "g100200" && tgTopicBinding.surface === "g100200.t7", "telegram: a forum-topic fire re-derives the per-TOPIC surface (message_thread_id stamped)");
-  ok(tgTopicBinding.mode === "channel", "telegram: a negative (group) chat id without a stored type binds channel mode (capped, conservative)");
+  ok(started.includes("r-dc-guild"), "cross-surface: discord routines fire");
 
   const dcGuild = fires["r-dc-guild"];
   ok(dcGuild.channel === discordChannel, "discord: fires into the discord channel module");
@@ -457,31 +434,15 @@ await seed({
 }
 
 await seed({ id: "r-teams-noref", surfaceKey: "teams/TEN1/19-x", target: { conversationId: "19:x@thread.tacv2" } });
-await seed({ id: "r-tg-notarget", surfaceKey: "telegram/999/999", target: undefined });
 await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionId: "AS1" } });
 {
   const started = await tickCapture();
-  ok(!started.includes("r-teams-noref") && !started.includes("r-tg-notarget") && !started.includes("r-linear"), "dry-run: unresolvable targets start NO session (fail-closed, no crash)");
-  for (const id of ["r-teams-noref", "r-tg-notarget", "r-linear"] as const) {
-    const surfaceKey = id === "r-teams-noref" ? "teams/TEN1/19-x" : id === "r-tg-notarget" ? "telegram/999/999" : "linear/W1/T1";
+  ok(!started.includes("r-teams-noref") && !started.includes("r-linear"), "dry-run: unresolvable targets start NO session (fail-closed, no crash)");
+  for (const id of ["r-teams-noref", "r-linear"] as const) {
+    const surfaceKey = id === "r-teams-noref" ? "teams/TEN1/19-x" : "linear/W1/T1";
     const after = await store.getRoutine("default", surfaceKey, id);
     ok(after?.nextRunAt === past, `dry-run: ${id} keeps its nextRunAt (stays due for when its target exists)`);
   }
-}
-
-await opStore.setSpendLimit("default", "telegram/g900/g900", "surface", { monthlyTokens: 100 });
-await opStore.recordUsage("default", "telegram/g900/g900", "2026-07", { inputTokens: 90, outputTokens: 20 });
-await seed({ id: "r-tg-capped", surfaceKey: "telegram/g900/g900", target: { chatId: "-900", chatType: "supergroup" } });
-await opStore.setSpendLimit("default", "telegram/777/777", "surface", { monthlyTokens: 100 });
-await opStore.recordUsage("default", "telegram/777/777", "2026-07", { inputTokens: 90, outputTokens: 20 });
-await seed({ id: "r-tg-exempt", surfaceKey: "telegram/777/777", target: { chatId: "777", chatType: "private" } });
-{
-  const started = await tickCapture();
-  ok(!started.includes("r-tg-capped"), "spend: an over-budget telegram GROUP routine does not start a session");
-  ok(started.includes("r-tg-exempt"), "spend: an over-budget telegram PRIVATE chat still fires (DM exemption, cross-platform)");
-  const capped2 = await store.getRoutine("default", "telegram/g900/g900", "r-tg-capped");
-  ok(capped2?.lastOutcome === "skipped", "spend: the declined telegram fire records `skipped`");
-  ok(capped2?.nextRunAt !== undefined && capped2?.nextRunAt !== null && Date.parse(capped2.nextRunAt) > now.getTime(), "spend: the declined telegram fire advances its schedule");
 }
 
 rmSync(dir, { recursive: true, force: true });

@@ -22,10 +22,10 @@ function eq(m: CapabilityManifest, expect: CapabilityManifest, label: string): v
 eq(capabilitiesForPlatform("slack"), { midTurnPost: true, reactions: true }, "slack");
 eq(capabilitiesForPlatform("discord"), { midTurnPost: true, reactions: false }, "discord");
 eq(capabilitiesForPlatform("teams"), { midTurnPost: true, reactions: false }, "teams");
-eq(capabilitiesForPlatform("telegram"), { midTurnPost: true, reactions: false }, "telegram");
 eq(capabilitiesForPlatform("linear"), { midTurnPost: true, reactions: false }, "linear");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
 eq(capabilitiesForPlatform("notion"), { midTurnPost: false, reactions: false }, "notion (unregistered in core alone → NONE)");
+eq(capabilitiesForPlatform("telegram"), { midTurnPost: false, reactions: false }, "telegram (unregistered in core alone → NONE)");
 
 eq(capabilitiesForPlatform("local"), { midTurnPost: false, reactions: false }, "local → NONE");
 eq(capabilitiesForPlatform("nope"), { midTurnPost: false, reactions: false }, "unknown platform → NONE");

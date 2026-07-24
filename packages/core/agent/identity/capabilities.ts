@@ -26,4 +26,3 @@ registerCapabilityManifest("discord", { midTurnPost: true, reactions: false });
 registerCapabilityManifest("teams", { midTurnPost: true, reactions: false });
 registerCapabilityManifest("linear", { midTurnPost: true, reactions: false });
 registerCapabilityManifest("github", { midTurnPost: false, reactions: false });
-registerCapabilityManifest("telegram", { midTurnPost: true, reactions: false });

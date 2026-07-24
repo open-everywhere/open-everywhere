@@ -11,7 +11,6 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 delete process.env.OE_PLATFORM;
 process.env.SLACK_BOT_TOKEN = "xoxb-test-token";
 process.env.DISCORD_BOT_TOKEN = "discord-test-token";
-process.env.TELEGRAM_BOT_TOKEN = "telegram-test-token";
 process.env.MICROSOFT_APP_ID = "teams-app-id";
 process.env.MICROSOFT_APP_PASSWORD = "teams-app-secret";
 process.env.LINEAR_API_KEY = "linear-test-key";
@@ -44,7 +43,6 @@ const TEAMS_SERVICE_URL = "https://smba.test.local";
 let calls: FetchCall[] = [];
 let slackResponse: Record<string, unknown> = { ok: true, ts: "9999.0001" };
 let discordResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "d-9001" } };
-let telegramResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { ok: true, result: { message_id: 0, chat: { id: 0, type: "supergroup" } } } };
 let teamsResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "" } };
 let linearResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { data: { agentActivityCreate: { success: true, agentActivity: { id: "" } } } } };
 const realFetch = globalThis.fetch;
@@ -56,7 +54,6 @@ function fakeHttp(): void {
     const body = init?.body instanceof URLSearchParams ? init.body.toString() : String(init?.body ?? "");
     calls.push({ url: u, method: init?.method ?? "GET", body });
     if (u.includes("discord.com")) return resp(discordResponse.status, discordResponse.body);
-    if (u.includes("api.telegram.org")) return resp(telegramResponse.status, telegramResponse.body);
     if (u.includes("login.microsoftonline.com")) return resp(200, { token_type: "Bearer", expires_in: 3600, access_token: "teams-connector-token" });
     if (u.includes("smba.test.local")) return resp(teamsResponse.status, teamsResponse.body);
     if (u.includes("api.linear.app")) return resp(linearResponse.status, linearResponse.body);
@@ -95,24 +92,6 @@ function discordCtx(channelId: string | undefined) {
           attributes: { guild_id: "G1", ...(channelId ? { channel_id: channelId } : {}), channel_type: "0" },
           principalId: "U2",
           principalType: "discord-user",
-        },
-      },
-    },
-  };
-}
-function telegramCtx(chatId: string | undefined, messageThreadId?: number) {
-  return {
-    channel: { kind: "telegram" },
-    session: {
-      auth: {
-        current: {
-          attributes: {
-            ...(chatId ? { chat_id: chatId } : {}),
-            chat_type: "supergroup",
-            ...(messageThreadId !== undefined ? { message_thread_id: String(messageThreadId) } : {}),
-          },
-          principalId: "U4",
-          principalType: "telegram-user",
         },
       },
     },
@@ -169,17 +148,17 @@ ok(armReply(reply, { channel: { kind: "slack" } }) !== null, "reply arms on a Sl
 ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a Discord session");
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
 ok(armReply(reply, { channel: { kind: "notion" } }) === null, "reply is hidden on notion in core alone (bundle-registered manifest — fail-closed NONE default)");
-ok(armReply(reply, { channel: { kind: "telegram" } }) !== null, "reply arms on a Telegram session (mid-turn post via sendTelegramMessage)");
+ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on telegram in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "teams" } }) !== null, "reply arms on a Teams session (mid-turn post via sendTeamsActivity)");
 ok(armReply(reply, { channel: { kind: "linear" } }) !== null, "reply arms on a Linear session (mid-turn post via createLinearAgentActivity)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
 ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on an unwired surface (local → NONE)");
 {
-  const telegramArmed = armReply(reply, { channel: { kind: "telegram" } });
+  const teamsArmed = armReply(reply, { channel: { kind: "teams" } });
   const slackArmed = armReply(reply, { channel: { kind: "slack" } });
-  ok(telegramArmed !== null && /FINAL/.test(telegramArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
-  ok(slackArmed !== null && slackArmed.description === telegramArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
-  ok(!/update_reply/.test(telegramArmed!.description), "reply: description never mentions the dropped update_reply verb");
+  ok(teamsArmed !== null && /FINAL/.test(teamsArmed.description), "reply: description says posts are FINAL (no edit verb exists)");
+  ok(slackArmed !== null && slackArmed.description === teamsArmed!.description, "reply: ONE description on every surface (no per-surface silent-edit variant)");
+  ok(!/update_reply/.test(teamsArmed!.description), "reply: description never mentions the dropped update_reply verb");
 }
 
 {
@@ -190,12 +169,7 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
   const discordTarget = resolveReplyTarget(discordCtx("D1") as never);
   ok(discordTarget?.platform === "discord" && discordTarget.channelId === "D1" && (discordTarget as { threadTs?: string }).threadTs === undefined, "resolveReplyTarget: discord carries channel, never a threadTs");
   ok(resolveReplyTarget({ channel: { kind: "notion" } } as never) === null, "resolveReplyTarget: notion → null in core alone (arm is bundle-registered)");
-
-  const tgTarget = resolveReplyTarget(telegramCtx("-100123", 7) as never);
-  ok(tgTarget?.platform === "telegram" && (tgTarget as { chatId: string }).chatId === "-100123" && (tgTarget as { messageThreadId?: number }).messageThreadId === 7, "resolveReplyTarget: telegram carries the RAW chat id + forum topic");
-  const tgPlain = resolveReplyTarget(telegramCtx("999") as never);
-  ok(tgPlain?.platform === "telegram" && (tgPlain as { messageThreadId?: number }).messageThreadId === undefined, "resolveReplyTarget: a non-forum telegram chat carries no messageThreadId");
-  ok(resolveReplyTarget(telegramCtx(undefined) as never) === null, "resolveReplyTarget: a chat-less telegram ctx → null");
+  ok(resolveReplyTarget({ channel: { kind: "telegram" } } as never) === null, "resolveReplyTarget: telegram → null in core alone (arm is bundle-registered)");
 
   const teamsTarget = resolveReplyTarget(teamsCtx("conv-1") as never);
   ok(teamsTarget?.platform === "teams" && (teamsTarget as { conversationId: string }).conversationId === "conv-1" && (teamsTarget as { serviceUrl: string }).serviceUrl === TEAMS_SERVICE_URL, "resolveReplyTarget: teams carries the serviceUrl + conversation id (the captured reference)");
@@ -261,22 +235,6 @@ await inSession(async () => {
   ok(res.posted === true && res.id === "d-42", "reply: on Discord returns the created message id");
   ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("/channels/D1/messages"), "reply: on Discord POSTs to /channels/{id}/messages");
   ok(calls[0].body.includes("discord answer"), "reply: Discord body carries the content");
-});
-restoreHttp();
-
-calls = [];
-telegramResponse = { status: 200, body: { ok: true, result: { message_id: 555, chat: { id: -100123, type: "supergroup" } } } };
-fakeHttp();
-await inSession(async () => {
-  const armed = armReply(reply, telegramCtx("-100123", 7))!;
-  const res = await armed.execute({ text: "telegram answer" }, telegramCtx("-100123", 7));
-  ok(res.posted === true && res.id === "555", "reply: on Telegram returns the sent message id");
-  ok(calls.length === 1 && calls[0].method === "POST" && calls[0].url.includes("api.telegram.org") && calls[0].url.includes("/sendMessage"), "reply: on Telegram POSTs to the Bot API sendMessage");
-  const payload = JSON.parse(calls[0].body) as { chat_id?: unknown; text?: string; message_thread_id?: number };
-  ok(String(payload.chat_id) === "-100123" && payload.text === "telegram answer", "reply: on Telegram posts into the SAME chat with the model text");
-  ok(payload.message_thread_id === 7, "reply: on Telegram carries the forum topic it was woken on");
-  const audit = await readAudit({ org: "default", action: "reply.post" });
-  ok(audit.some((r) => r.detail?.platform === "telegram" && r.detail?.id === "555"), "reply: audits a reply.post row stamped platform=telegram");
 });
 restoreHttp();
 

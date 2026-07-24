@@ -100,7 +100,7 @@ export { stampModelCall, readModelStamp } from "./model/model-stamp.js";
 export type { BindableContext } from "./identity/binding.js";
 
 export { installLogShipping } from "./observability/ship.js";
-export { initTelemetry, emitTelemetry } from "./observability/telemetry.js";
+export { initTelemetry, emitTelemetry, registerSurfaceCredentialProbe } from "./observability/telemetry.js";
 
 export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
@@ -137,10 +137,20 @@ export type { PostArm, TargetResolveBag } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
 
+export { postTerminalProse } from "./channels/reply-post.js";
+export type { ReplyAudit } from "./channels/reply-post.js";
+
+export type { ChatAuditPartition } from "./channels/chat-turn-audit.js";
+
 export { registerWakeOriginCodec, wakeOriginCodec } from "./channels/wake-origin-codec.js";
 export type { WakeOriginCodec } from "./channels/wake-origin-codec.js";
 export { registerUnifiedWakeTarget, mintWakeId, singleWindowMentionPolicy } from "./channels/unified-window.js";
 export type { UnifiedWakeOrigin, UnifiedWindowWake } from "./channels/unified-window.js";
+
+export { rootDmGrainAttrs, OE_GRAIN_ATTR } from "./channels/unified-window.js";
+
+export { windowGrainOf } from "./identity/binding.js";
+export type { WindowGrain } from "./identity/binding.js";
 
 export { registerReadAdapter } from "./channels/channel-read.js";
 export type { ReadAdapter } from "./channels/channel-read.js";
@@ -182,6 +192,10 @@ export { isVouchedInternal } from "./identity/trust.js";
 export { ambientSupervisorEnabled, engagementTierFor } from "./memory/domain.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
+
+export { registerRoutineDispatchTarget } from "./schedules/dispatch.js";
+export type { DispatchTarget } from "./schedules/dispatch.js";
+export type { Routine } from "./routines/routine.js";
 
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";

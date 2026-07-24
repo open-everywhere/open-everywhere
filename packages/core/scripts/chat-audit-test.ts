@@ -115,23 +115,5 @@ async function replyPosts(platform: string): Promise<Array<{ detail?: Record<str
   ok((await readAudit({ action: "teams.replied" })).length === 0, "teams: the legacy teams.replied row is GONE");
 }
 
-{
-  const telegramChannel = (await import("../agent/channels/telegram.js")).default as unknown as AdapterChannel;
-  const completed = (message: string | null, ctx: unknown) => inSession(() => telegramChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
-  const posts: string[] = [];
-  const ctx = {
-    state: { chatId: "-100555", chatType: "supergroup", messageThreadId: null },
-    telegram: { chatId: "-100555", post: async (t: string) => void posts.push(t) },
-  };
-
-  await completed(NO_REPLY_SENTINEL, ctx);
-  ok((await readAudit({ action: "telegram.no_reply" })).length === 0, "telegram: a judged silence writes NO telegram.no_reply row (actions-only)");
-
-  await completed("watch fired: build green", ctx);
-  const gp = await replyPosts("telegram");
-  ok(gp.length === 1 && gp[0]!.detail?.route === "terminal" && gp[0]!.detail?.chars === "watch fired: build green".length, "telegram: a terminal-prose reply writes ONE reply.post row (route:terminal)");
-  ok((await readAudit({ action: "telegram.replied" })).length === 0, "telegram: the legacy telegram.replied row is GONE");
-}
-
 rmSync(tmp, { recursive: true, force: true });
 console.log(`chat-audit tests passed (${passed})`);

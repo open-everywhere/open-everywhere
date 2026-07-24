@@ -254,14 +254,25 @@ export async function initTelemetry(): Promise<void> {
 const HEARTBEAT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 let lastHeartbeatAt = 0;
 
+const SURFACE_CREDENTIAL_PROBES: Record<string, () => boolean> = {};
+
+export function registerSurfaceCredentialProbe(platform: string, probe: () => boolean): void {
+  SURFACE_CREDENTIAL_PROBES[platform] = probe;
+}
+
 function surfacesWithCreds(): string[] {
   const present: string[] = [];
   if (process.env.SLACK_BOT_TOKEN) present.push("slack");
   if (process.env.DISCORD_BOT_TOKEN) present.push("discord");
   if (process.env.MICROSOFT_APP_ID) present.push("teams");
-  if (process.env.TELEGRAM_BOT_TOKEN) present.push("telegram");
   if (process.env.OE_GITHUB_APP_ID) present.push("github");
   if (linearCredentialsConfigured()) present.push("linear");
+  for (const [platform, probe] of Object.entries(SURFACE_CREDENTIAL_PROBES)) {
+    try {
+      if (probe()) present.push(platform);
+    } catch {
+    }
+  }
   try {
     if ((getConfig().loadWebhooks?.() ?? []).length > 0) present.push("webhooks");
   } catch {

@@ -14,7 +14,6 @@ import { OE_GRAIN_ATTR, rootDmGrainAttrs } from "../agent/channels/unified-windo
 import { buildSlackAuth } from "../agent/channels/slack-identity.js";
 import { buildDiscordAuth } from "../agent/channels/discord-identity.js";
 import { buildTeamsAuth } from "../agent/channels/teams-identity.js";
-import { buildTelegramAuth } from "../agent/channels/telegram-identity.js";
 import { withheldFromGrain, WINDOW_GATED_TOOLS } from "../agent/access/window-gate-manifest.js";
 
 let n = 0;
@@ -91,10 +90,6 @@ const discordGroupDm = buildDiscordAuth({ userId: "U1", channelId: "GD1", channe
 const teamsDm = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "personal" });
 const teamsChan = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "channel", channelId: "ch1", teamId: "team1" });
 const teamsGroup = buildTeamsAuth({ userId: "U1", conversationId: "conv1", tenantId: "ten1", scope: "groupChat" });
-const tgDm = buildTelegramAuth({ userId: "U1", chatId: "12345", chatType: "private" });
-const tgGroup = buildTelegramAuth({ userId: "U1", chatId: "-100999", chatType: "supergroup" });
-const tgGroupPlain = buildTelegramAuth({ userId: "U1", chatId: "-100888", chatType: "group" });
-const tgChan = buildTelegramAuth({ userId: "U1", chatId: "-100777", chatType: "channel" });
 
 eq(slackDm.attributes[OE_GRAIN_ATTR], "standing", "buildSlackAuth(im) stamps oe_grain=standing");
 eq(slackDm.attributes.channel_id, "D0001", "buildSlackAuth(im) still captures the raw DM channel id (identity/memory unchanged)");
@@ -106,10 +101,6 @@ eq(discordGroupDm.attributes[OE_GRAIN_ATTR], "standing", "buildDiscordAuth(group
 eq(teamsDm.attributes[OE_GRAIN_ATTR], "standing", "buildTeamsAuth(personal) stamps oe_grain=standing");
 ok(!(OE_GRAIN_ATTR in teamsChan.attributes), "buildTeamsAuth(channel) does NOT stamp");
 eq(teamsGroup.attributes[OE_GRAIN_ATTR], "standing", "buildTeamsAuth(groupChat ⇒ mpim) stamps oe_grain=standing (widened)");
-eq(tgDm.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(private) stamps oe_grain=standing");
-eq(tgGroup.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(supergroup) stamps oe_grain=standing (widened)");
-eq(tgGroupPlain.attributes[OE_GRAIN_ATTR], "standing", "buildTelegramAuth(group) stamps oe_grain=standing (widened)");
-ok(!(OE_GRAIN_ATTR in tgChan.attributes), "buildTelegramAuth(broadcast channel) does NOT stamp (a true channel surface, not a closed conversation)");
 
 const STAMPED_SEATS = [
   ["slack DM", slackDm],
@@ -118,14 +109,11 @@ const STAMPED_SEATS = [
   ["discord group DM", discordGroupDm],
   ["teams DM", teamsDm],
   ["teams groupChat", teamsGroup],
-  ["telegram DM", tgDm],
-  ["telegram supergroup", tgGroup],
-  ["telegram group", tgGroupPlain],
 ] as const;
 for (const [label, auth] of STAMPED_SEATS) {
   eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "standing", `${label} (stamped) on a native token ⇒ windowGrainOf standing (the stamp narrows, not the token)`);
 }
-for (const [label, auth] of [["slack channel", slackChan], ["discord guild channel", discordChan], ["teams channel", teamsChan], ["telegram broadcast channel", tgChan]] as const) {
+for (const [label, auth] of [["slack channel", slackChan], ["discord guild channel", discordChan], ["teams channel", teamsChan]] as const) {
   eq(windowGrainOf(ctxWithAuth(auth.attributes, DM_NATIVE_TOKEN)), "native", `an UNstamped ${label} native-token seat stays native/FULL (F8 over-narrowing guard intact)`);
 }
 
