@@ -13,7 +13,7 @@ import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWin
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";

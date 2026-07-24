@@ -37,7 +37,7 @@ const inSession = <T>(fn: () => Promise<T>): Promise<T> => {
 
 const { readAudit } = await import("../agent/audit/audit.js");
 const { markRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
-const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
+const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 
 async function replyPosts(platform: string): Promise<Array<{ detail?: Record<string, unknown> }>> {
   return (await readAudit({ action: "reply.post" })).filter((r) => r.platform === platform);

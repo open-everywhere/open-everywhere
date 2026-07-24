@@ -4,7 +4,7 @@ import {
   type DiscordCommandInteraction,
 } from "eve/channels/discord";
 import { buildDiscordAuth, threadParentFromRawChannel, discordMemberPendingFromRaw, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
-import { finalMessageActionForTurn, isBareStop } from "./slack-events.js";
+import { finalMessageActionForTurn, isBareStop } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { frontDiscordChannel, INTERNAL_DISCORD_ROUTE } from "./discord-front.js";
 import { type ChatAuditPartition } from "./chat-turn-audit.js";

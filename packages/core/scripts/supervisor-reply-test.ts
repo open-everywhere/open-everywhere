@@ -3,11 +3,13 @@ import {
   planSupervisorReply,
   isSupervisorReplyTurn,
   deliverSupervisorReply,
+  type SupervisorReplyDeps,
+} from "../agent/channels/slack-events.js";
+import {
   finalMessageAction,
   supervisorTextDelivery,
   isSupervisorProseLeak,
-  type SupervisorReplyDeps,
-} from "../agent/channels/slack-events.js";
+} from "../agent/channels/turn-delivery.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {

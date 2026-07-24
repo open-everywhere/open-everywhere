@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { routineMarker, type Routine } from "../agent/routines/routine.js";
 import { WATCH_SILENCE_SENTINEL, WATCH_STATE_TOOL } from "../agent/routines/watch.js";
-import { NO_REPLY_SENTINEL } from "../agent/channels/slack-events.js";
+import { NO_REPLY_SENTINEL } from "../agent/channels/turn-delivery.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 import { registerConfig, getConfig } from "../agent/access/config.js";

@@ -1,4 +1,4 @@
-import { supervisorTextDelivery, isSupervisorProseLeak, type FinalMessageAction } from "./slack-events.js";
+import { supervisorTextDelivery, isSupervisorProseLeak, type FinalMessageAction } from "./turn-delivery.js";
 import { appendAudit } from "../audit/audit.js";
 
 export interface SupervisorAuditRow {

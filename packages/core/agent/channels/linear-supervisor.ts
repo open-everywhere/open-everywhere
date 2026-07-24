@@ -1,6 +1,6 @@
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 import type { ContextLine } from "./context-render.js";
-import { shouldRotate } from "./slack-events.js";
+import { shouldRotate } from "./turn-delivery.js";
 import { classifySessionSendError } from "./session-death.js";
 import type { OpenEverywhereLinearAuth } from "./linear-identity.js";
 import type { UnifiedWindowWake } from "./unified-window.js";

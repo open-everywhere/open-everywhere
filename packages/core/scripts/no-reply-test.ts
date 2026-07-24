@@ -20,7 +20,7 @@ const { NO_REPLY_REASONS } = await import("../agent/tools/no_reply.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { markNoReplyThisTurn, consumeNoReplyThisTurn, peekNoReplyThisTurn } = await import("../agent/channels/no-reply-signal.js");
 const { markReactedThisTurn } = await import("../agent/channels/react-signal.js");
-const { finalMessageActionForTurn, isBareStop, isNoReply, NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
+const { finalMessageActionForTurn, isBareStop, isNoReply, NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 
 const require = createRequire(import.meta.url);
 const eveRoot = dirname(require.resolve("eve/package.json"));

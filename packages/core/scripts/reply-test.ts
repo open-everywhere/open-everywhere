@@ -30,7 +30,7 @@ setRegisteredProviders([
 const reply = (await import("../agent/tools/reply.js")).default;
 const { resolveReplyTarget } = await import("../agent/channels/reply-post.js");
 const { markRepliedThisTurn, consumeRepliedThisTurn } = await import("../agent/channels/reply-signal.js");
-const { isBareStop, finalMessageActionForTurn } = await import("../agent/channels/slack-events.js");
+const { isBareStop, finalMessageActionForTurn } = await import("../agent/channels/turn-delivery.js");
 const { renderSupervisorPersona } = await import("../agent/instructions/access.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 

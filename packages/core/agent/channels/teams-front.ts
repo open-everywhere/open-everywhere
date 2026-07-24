@@ -8,7 +8,7 @@ import {
   type TeamsSupervisorDeps,
   type TeamsSingleWindowFacts,
 } from "./teams-supervisor.js";
-import { shouldRotate } from "./slack-events.js";
+import { shouldRotate } from "./turn-delivery.js";
 import { EventDedupe, ThreadFifo } from "./slack-front.js";
 import { divertToUnifiedWindow } from "./unified.js";
 import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";

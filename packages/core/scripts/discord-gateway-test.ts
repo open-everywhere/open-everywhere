@@ -33,7 +33,7 @@ import { discordPostMessage } from "../agent/channels/discord-post.js";
 import { threadParentChannelId, clearDiscordInfoCacheForTest } from "../agent/channels/discord-channel-info.js";
 import { bindFrom, type BindableContext } from "../agent/identity/binding.js";
 import { domainKeyOf, resolvePartition } from "../agent/memory/partition.js";
-import { finalMessageAction, NO_REPLY_SENTINEL } from "../agent/channels/slack-events.js";
+import { finalMessageAction, NO_REPLY_SENTINEL } from "../agent/channels/turn-delivery.js";
 import type { OpenEverywhereDiscordAuth } from "../agent/channels/discord-identity.js";
 
 let passed = 0;

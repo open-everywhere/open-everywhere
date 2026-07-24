@@ -2,7 +2,7 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { buildDiscordAuth, type OpenEverywhereDiscordAuth } from "./discord-identity.js";
 import { threadParentChannelId } from "./discord-channel-info.js";
 import { splitForDiscord } from "./discord-post.js";
-import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, shouldRotate, type FinalMessageAction } from "./slack-events.js";
+import { finalMessageAction, nameDropPattern, NO_REPLY_SENTINEL, shouldRotate, type FinalMessageAction } from "./turn-delivery.js";
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 import type { WakeTrust } from "./wake-envelope.js";
 import { classifySessionSendError } from "./session-death.js";

@@ -1,6 +1,6 @@
 import { renderWake, mkMessageTrigger, type NormalizedWake, type WakeEngagementTier } from "./normalized-wake.js";
 import type { WakeMessageInput, WakeTrust } from "./wake-envelope.js";
-import { shouldRotate } from "./slack-events.js";
+import { shouldRotate } from "./turn-delivery.js";
 import { classifySessionSendError } from "./session-death.js";
 import { mentionsUser, richTextToPlainText, type NotionComment } from "./notion-api.js";
 import { mintWakeId, singleWindowMentionPolicy, type UnifiedWindowWake } from "./unified-window.js";

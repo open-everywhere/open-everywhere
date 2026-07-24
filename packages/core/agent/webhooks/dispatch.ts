@@ -1,6 +1,7 @@
 import type { RouteHandlerArgs } from "eve/channels";
 import slack from "../channels/slack.js";
-import { confirmChannelInternal, NO_REPLY_SENTINEL } from "../channels/slack-events.js";
+import { confirmChannelInternal } from "../channels/slack-events.js";
+import { NO_REPLY_SENTINEL } from "../channels/turn-delivery.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { ingestUntrusted } from "../access/untrusted.js";

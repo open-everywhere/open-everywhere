@@ -25,7 +25,7 @@ import {
 import { supervisorGrainFor, mintRotationToken, grainUsesUnifiedWindow, type SupervisorGrain } from "./unified-supervisor.js";
 import { mintWakeId, type UnifiedWindowWake } from "./unified-window.js";
 import { divertToUnifiedWindow } from "./unified.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { completeSupervisorTurn, auditSupervisorFailure } from "./supervisor-complete.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";

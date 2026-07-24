@@ -9,11 +9,7 @@ import {
   parseMessageEvent,
   routeMessageEvent,
   renderWakeMessage,
-  isNoReply,
-  finalMessageAction,
   turnEffectsFor,
-  NO_REPLY_SENTINEL,
-  nameDropPattern,
   buildWakeTriggers,
   matchWakeTriggers,
   shouldNameDropWake,
@@ -24,10 +20,6 @@ import {
   supervisorToken,
   supervisorSentinel,
   supervisorFifoKey,
-  shouldRotate,
-  SUPERVISOR_ROTATE_QUIET_GAP_MS,
-  SUPERVISOR_ROTATE_TURN_BUDGET,
-  SUPERVISOR_ROTATE_TOKEN_BUDGET,
   confirmChannelInternalWithMeta,
   slackSingleWindowMentionPolicy,
   liveSupervisorDeps,
@@ -43,6 +35,16 @@ import {
   type SupervisorRouteDeps,
   type ChannelJoinRouteDeps,
 } from "../agent/channels/slack-events.js";
+import {
+  isNoReply,
+  finalMessageAction,
+  NO_REPLY_SENTINEL,
+  nameDropPattern,
+  shouldRotate,
+  SUPERVISOR_ROTATE_QUIET_GAP_MS,
+  SUPERVISOR_ROTATE_TURN_BUDGET,
+  SUPERVISOR_ROTATE_TOKEN_BUDGET,
+} from "../agent/channels/turn-delivery.js";
 import { nameDropWakeEnabled, ambientSupervisorEnabled, awarenessWakeEnabled, engagementTierFor, domainForChannel, statusVerbsFor, DEFAULT_STATUS_VERBS } from "../agent/memory/domain.js";
 import { createHmac } from "node:crypto";
 import { classifyEnvelope, verifySlackSignature, buildFrontHandler, EventDedupe, ThreadFifo } from "../agent/channels/slack-front.js";

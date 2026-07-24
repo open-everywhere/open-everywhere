@@ -2,7 +2,7 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { resolveWakeTrustFromContext } from "../identity/wake-trust.js";
-import { finalMessageActionForTurn } from "./slack-events.js";
+import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { completeSupervisorTurn } from "./supervisor-complete.js";
 import { getConfig } from "../access/config.js";
 import { ambientSupervisorEnabled, engagementTierFor } from "../memory/domain.js";

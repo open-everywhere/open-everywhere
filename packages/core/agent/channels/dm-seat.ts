@@ -1,6 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
-import { shouldRotate } from "./slack-events.js";
+import { shouldRotate } from "./turn-delivery.js";
 import { dmSeatRegistryKey, formatDmSeatToken } from "./window-key.js";
 
 export function dmSeatRotationEnabled(): boolean {

@@ -24,7 +24,7 @@ const { markThreadEngaged } = await import("../agent/channels/engagement.js");
 const { resolvePartition } = await import("../agent/memory/partition.js");
 const { buildDiscordAuth } = await import("../agent/channels/discord-identity.js");
 const { markCardPostedThisTurn } = await import("../agent/approvals/card-signal.js");
-const { NO_REPLY_SENTINEL } = await import("../agent/channels/slack-events.js");
+const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 import type { BindableContext } from "../agent/identity/binding.js";
 import type { Partition } from "../agent/memory/partition.js";
 
