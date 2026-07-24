@@ -255,6 +255,8 @@ export { capBypassFor } from "./spend/bypass.js";
 
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
+export { sessionGrantKind, connectorSessionKind } from "./approvals/session-grant.js";
+
 export { isAllowedDriver } from "./testing/driver-allowlist.js";
 
 export { buildIngestedReaction, ingestReaction, liveReactionSink } from "./channels/reaction-ingest.js";

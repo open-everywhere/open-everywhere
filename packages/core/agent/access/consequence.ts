@@ -15,14 +15,53 @@ export function isConnectorOpTool(toolName: string): boolean {
 }
 
 export function classifyConnectorOp(toolName: string): "open" | "gate:member" {
+  return classifyConnectorOpTier(toolName) === "read" ? "open" : "gate:member";
+}
+
+export type ConnectorOpTier = "read" | "write" | "destructive";
+
+const CONNECTOR_DESTRUCTIVE_VERBS: readonly string[] = ["delete", "remove", "destroy", "drop", "purge", "trash", "erase", "wipe"];
+
+const CONNECTOR_WRITE_VERBS: readonly string[] = [
+  "create", "update", "add", "append", "insert", "post", "put", "patch", "set", "move", "comment", "edit",
+  "write", "upload", "send", "assign", "label", "rename", "duplicate", "copy", "publish", "share", "invite",
+  "mark", "complete", "close", "reopen", "merge", "approve", "submit", "reply", "star", "upsert", "modify",
+  "replace", "attach", "link", "unlink", "restore", "archive", "unarchive", "unpublish", "revoke", "cancel",
+];
+
+function connectorOpVerb(toolName: string): string {
   let op = connectorOpName(toolName).toLowerCase();
   const sep = toolName.indexOf("__");
   if (sep > 0) {
     const conn = toolName.slice(0, sep).toLowerCase();
     if (op.startsWith(`${conn}-`) || op.startsWith(`${conn}_`)) op = op.slice(conn.length + 1);
   }
-  const verb = op.split(/[_-]/, 1)[0] ?? op;
-  return CONNECTOR_READ_VERBS.includes(verb) ? "open" : "gate:member";
+  return op.split(/[_-]/, 1)[0] ?? op;
+}
+
+export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
+  const verb = connectorOpVerb(toolName);
+  if (CONNECTOR_READ_VERBS.includes(verb)) return "read";
+  if (CONNECTOR_DESTRUCTIVE_VERBS.includes(verb)) return "destructive";
+  if (CONNECTOR_WRITE_VERBS.includes(verb)) return "write";
+  return "destructive";
+}
+
+export function restMethodTier(method: string): ConnectorOpTier {
+  switch (method.trim().toUpperCase()) {
+    case "GET":
+    case "HEAD":
+    case "OPTIONS":
+      return "read";
+    case "POST":
+    case "PUT":
+    case "PATCH":
+      return "write";
+    case "DELETE":
+      return "destructive";
+    default:
+      return "destructive";
+  }
 }
 
 export type GatingMechanism =

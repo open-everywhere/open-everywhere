@@ -13,6 +13,7 @@ import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
+import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
 import type { PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-forget.js";
@@ -327,12 +328,13 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: "rejected" };
   }
 
-  if (input.decision === "approve_session" && row.kind === "pr.open") {
+  if (input.decision === "approve_session") {
+    const memoKind = sessionGrantKind(row);
     const sessionId = sessionIdFromFrozenArgs(row.argsJson);
-    if (sessionId) {
+    if (memoKind && sessionId) {
       const expiresAt = new Date(Date.now() + sessionApprovalTtlHours() * 3_600_000).toISOString();
-      await store.setSessionApproval({ org: input.org, sessionId, kind: "pr.open", grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
-      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind } }).catch(() => undefined);
+      await store.setSessionApproval({ org: input.org, sessionId, kind: memoKind, grantedBy: input.clickerId, createdAt: nowIso, expiresAt }).catch(() => {});
+      await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.session_granted", detail: { id: row.id, kind: row.kind, memoKind } }).catch(() => undefined);
     }
   }
 

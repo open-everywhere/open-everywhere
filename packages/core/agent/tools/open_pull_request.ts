@@ -18,8 +18,7 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { bareTokenFromEveContext } from "../channels/window-key.js";
-import { currentWindowToken } from "../identity/binding.js";
+import { proposingSessionId } from "../identity/binding.js";
 import { markCardPostedThisTurn } from "../approvals/card-signal.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
@@ -35,11 +34,6 @@ async function resolvePrToken(repo: string): Promise<string> {
     throw new Error("no GitHub credential: configure the GitHub App (OE_GITHUB_APP_*) or set GITHUB_TOKEN.");
   }
   return pat;
-}
-
-function proposingSessionId(ctx: unknown): string | undefined {
-  const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
-  return bareTokenFromEveContext(raw) ?? currentWindowToken(ctx as never);
 }
 
 async function postSessionNote(platform: string, channelId: string, threadTs: string | null, text: string): Promise<void> {

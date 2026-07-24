@@ -1,4 +1,5 @@
 import type { PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
+import { sessionGrantKind } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_DISCORD_APPROVAL_PREFIX = "oe-approval:";
 
@@ -58,7 +59,7 @@ export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly
       custom_id: buildDiscordApprovalCustomId(row, "approve"),
     },
   ];
-  if (row.kind === "pr.open") {
+  if (sessionGrantKind(row) !== null) {
     buttons.push({
       type: COMPONENT_BUTTON,
       style: BUTTON_STYLE_SECONDARY,

@@ -1,4 +1,5 @@
 import type { PendingActionRow } from "./types.js";
+import { sessionGrantKind } from "./session-grant.js";
 
 const APPROVAL_PREFIX = "oe_approval:";
 
@@ -35,7 +36,7 @@ export function pendingCardBlocks(row: PendingActionRow, summaryLines: readonly 
       value: row.org,
     },
   ];
-  if (row.kind === "pr.open") {
+  if (sessionGrantKind(row) !== null) {
     elements.push({
       type: "button",
       text: { type: "plain_text", text: "Approve for session", emoji: true },

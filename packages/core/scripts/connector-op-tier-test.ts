@@ -44,6 +44,7 @@ ok(approve({ toolName: "notion__create_page", approvedTools: noneApproved } as n
 const oneApproved = new Set<string>(["notion__create_page"]);
 ok(approve({ toolName: "notion__create_page", approvedTools: oneApproved } as never) === "not-applicable", "already-approved write → not-applicable (once-per-op)");
 ok(approve({ toolName: "notion__delete_page", approvedTools: oneApproved } as never) === "user-approval", "a DIFFERENT write still prompts (approval is per-op, not blanket)");
+ok(approve({ toolName: "notion__delete_page", approvedTools: new Set<string>(["notion__delete_page"]) } as never) === "user-approval", "an already-approved DESTRUCTIVE op STILL prompts (per-call, OPE-11)");
 
 delete process.env[OE_CONNECTOR_OP_TIERING_ENV];
 {
