@@ -5,17 +5,18 @@ import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome 
 export interface SurfaceIntakeCapability {
   readonly secretModal?: boolean;
   readonly buttons?: boolean;
+  readonly pageLink?: boolean;
 }
 
 export type SurfaceIntakeDeclarations = Readonly<Record<string, SurfaceIntakeCapability>>;
 
 export const SURFACE_INTAKE_CAPS: SurfaceIntakeDeclarations = {
   slack: { secretModal: true, buttons: true },
-  discord: { buttons: true },
-  teams: {},
-  github: {},
-  linear: {},
-  notion: {},
+  discord: { buttons: true, pageLink: true },
+  teams: { pageLink: true },
+  github: { pageLink: true },
+  linear: { pageLink: true },
+  notion: { pageLink: true },
 };
 
 export interface BrokerIntakeRoute {
@@ -41,7 +42,7 @@ export function hostWriteHomeAvailable(homes: Iterable<CredentialHome>): boolean
   return homesHostWriteAvailable(homes);
 }
 
-export type ConnectRouteKind = "modal" | "url" | "text-degrade" | "unavailable";
+export type ConnectRouteKind = "modal" | "url" | "page" | "text-degrade" | "unavailable";
 
 export interface ConnectRoute {
   readonly kind: ConnectRouteKind;
@@ -66,6 +67,7 @@ export interface ResolveConnectorInput {
   readonly mode: ConnectMode;
   readonly isAdmin: boolean;
   readonly hostWriteBroker: boolean;
+  readonly intakePageAvailable?: boolean;
   readonly declarations?: SurfaceIntakeDeclarations;
 }
 
@@ -102,6 +104,8 @@ export function resolveConnectorOptions(input: ResolveConnectorInput): readonly 
         };
       } else if (input.platform === "slack" && surface.secretModal) {
         route = { kind: "modal" };
+      } else if (surface.pageLink && input.intakePageAvailable) {
+        route = { kind: "page" };
       } else {
         route = {
           kind: "text-degrade",

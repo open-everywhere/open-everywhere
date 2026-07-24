@@ -8,9 +8,12 @@ import { appendAudit } from "../audit/audit.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
-import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, type ConnectMode } from "../connections/connector-offer.js";
+import { resolveConnectorOptions, optionLabel, hostWriteHomeAvailable, offerableCredential, type ConnectMode, type ConnectorOption } from "../connections/connector-offer.js";
 import { registeredCredentialHomes } from "../credentials/home.js";
 import { buildConnectCard, renderNonSlackConnect } from "../connections/connector-card.js";
+import { executorHomeOf } from "../access/providers.js";
+import { deriveCredentialRef } from "../credentials/ref.js";
+import { intakePageAvailable, issueIntakePageLink } from "../credentials/intake-page.js";
 
 function connectModeOf(mode: string): ConnectMode {
   return mode === "dm" ? "dm" : "channel";
@@ -48,6 +51,7 @@ const connectorEntry = defineTool({
     const mode = connectModeOf(binding.mode);
     const isAdmin = resolveRole(ctx as BindableContext).isDomainAdmin;
     const hostWriteBroker = hostWriteHomeAvailable(registeredCredentialHomes());
+    const pageArmed = intakePageAvailable();
     const providers = getConfig().loadProviders?.() ?? [];
 
     if (!input.provider) {
@@ -55,7 +59,7 @@ const connectorEntry = defineTool({
         return { action: "none" as const, options: [], note: "No providers are configured on this deployment." };
       }
       const lines = providers.map((p) => {
-        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, hostWriteBroker })
+        const labels = resolveConnectorOptions({ provider: p, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed })
           .filter((o) => o.route.kind !== "unavailable")
           .map(optionLabel);
         return `- ${p.name}: ${labels.length ? labels.join(", ") : "nothing offerable here"}`;
@@ -74,7 +78,7 @@ const connectorEntry = defineTool({
       );
     }
 
-    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, hostWriteBroker }).filter(
+    const options = resolveConnectorOptions({ provider, platform, mode, isAdmin, hostWriteBroker, intakePageAvailable: pageArmed }).filter(
       (o) => o.route.kind !== "unavailable",
     );
     const labels = options.map(optionLabel);
@@ -127,7 +131,25 @@ const connectorEntry = defineTool({
     if (!target) {
       throw new Error("connector couldn't resolve this conversation to post the connect links — ask me from a direct channel or DM.");
     }
-    const { text, issued } = await renderNonSlackConnect(provider.name, options, { mode, principalId: binding.principalId });
+    const issuePageLink = async (o: ConnectorOption): Promise<string | undefined> => {
+      if (!binding.principalId) return undefined;
+      const cred = offerableCredential(provider, o.credentialType);
+      if (!cred) return undefined;
+      const execHome = executorHomeOf(cred);
+      const ref = deriveCredentialRef({ provider: provider.name, credentialId: cred.id, ...(execHome ? { executor: execHome } : {}) });
+      if (!ref) return undefined;
+      const link = await issueIntakePageLink({
+        org: binding.org,
+        provider: provider.name,
+        ...(partition.workspace ? { teamId: partition.workspace } : {}),
+        platform,
+        ref,
+        requestedBy: binding.principalId,
+        channelId: partition.surface,
+      });
+      return link?.url;
+    };
+    const { text, issued } = await renderNonSlackConnect(provider.name, options, { mode, principalId: binding.principalId }, undefined, issuePageLink);
     const audit: ReplyAudit = {
       org: partition.org,
       platform: partition.platform,

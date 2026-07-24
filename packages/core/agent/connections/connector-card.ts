@@ -68,6 +68,7 @@ export async function renderNonSlackConnect(
   options: readonly ConnectorOption[],
   ctx: { readonly mode: ConnectMode; readonly principalId?: string },
   startAuth: ConnectorAuthorizationStarter = defaultConnectorAuthStarter,
+  issuePageLink?: (o: ConnectorOption) => Promise<string | undefined>,
 ): Promise<{ text: string; issued: ConnectorOption[] }> {
   const lines: string[] = [`Connect *${providerName}*:`];
   const issued: ConnectorOption[] = [];
@@ -77,6 +78,15 @@ export async function renderNonSlackConnect(
         o.dashboardUrl
           ? `• *${optionLabel(o)}* — a Vercel team member authorizes the org account on the dashboard: ${o.dashboardUrl}`
           : `• *${optionLabel(o)}* — an operator authorizes the org account on the provider's admin dashboard.`,
+      );
+      continue;
+    }
+    if (o.route.kind === "page") {
+      const url = issuePageLink ? await issuePageLink(o) : undefined;
+      lines.push(
+        url
+          ? `• *${optionLabel(o)}* — open this one-time secure page to enter the key (expires soon; it works once): ${url}`
+          : `• *${optionLabel(o)}* — secure key entry isn't available on this deployment right now; ask an operator to set it via the Vercel dashboard/CLI.`,
       );
       continue;
     }
