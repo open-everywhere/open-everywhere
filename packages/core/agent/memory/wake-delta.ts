@@ -5,6 +5,8 @@ import { tierSandboxDir } from "./sandbox-sync.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel, criteriaDomain, memoryRefs, type Domain } from "./domain.js";
 import { windowTopologyEnabled } from "../access/capabilities.js";
+import { memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
+import { recallDeltaTail } from "./listing.js";
 
 export interface MemoryDeltaSilo {
   readonly tier: Tier;
@@ -61,7 +63,10 @@ export function selectChangedSilos(rows: readonly AuditEntry[], opts: RenderMemo
   return [...agg.values()].sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0)).map((e) => e.pointer);
 }
 
-export function formatMemoryDelta(pointers: readonly MemoryDeltaPointer[]): string | null {
+export function formatMemoryDelta(
+  pointers: readonly MemoryDeltaPointer[],
+  recall: MemoryRecallRoute = memoryRecallRouteFor("standing"),
+): string | null {
   if (pointers.length === 0) return null;
   const lines = pointers.map((p) => {
     const count = p.writes > 1 ? ` (updated ${p.writes}×)` : " (updated)";
@@ -70,8 +75,9 @@ export function formatMemoryDelta(pointers: readonly MemoryDeltaPointer[]): stri
   return (
     "<system-reminder>\n" +
     "Shared memory changed since your last wake — these are POINTERS, not content. The files on " +
-    "disk are already refreshed; re-read a path with your file tools ONLY if it bears on the " +
-    "current message, otherwise ignore it:\n" +
+    "disk are already refreshed; " +
+    recallDeltaTail(recall, "content") +
+    "\n" +
     lines.join("\n") +
     "\n</system-reminder>"
   );
@@ -116,15 +122,19 @@ export function selectIndexChanges(rows: readonly AuditEntry[], opts: RenderInde
   return { healed: [...healed] };
 }
 
-export function formatIndexDelta(changes: IndexDeltaChanges): string | null {
+export function formatIndexDelta(
+  changes: IndexDeltaChanges,
+  recall: MemoryRecallRoute = memoryRecallRouteFor("standing"),
+): string | null {
   if (changes.healed.length === 0) return null;
   const names = changes.healed.map((n) => `"${n}"`).join(", ");
   return (
     "<system-reminder>\n" +
     "Your memory index changed since your last wake — a silo that was unavailable earlier this " +
     `session is back: ${names}. The index and files on disk at /workspace/memory/MEMORY.md are ` +
-    "already refreshed; re-read the relevant path before answering from memory if it bears on the " +
-    "current message.\n" +
+    "already refreshed; " +
+    recallDeltaTail(recall, "index") +
+    "\n" +
     "</system-reminder>"
   );
 }

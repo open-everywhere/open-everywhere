@@ -12,6 +12,7 @@ import {
   type RenderMemoryDeltaOpts,
 } from "../agent/memory/wake-delta.js";
 import { siloTier } from "../agent/memory/store.js";
+import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import type { AuditEntry } from "../agent/audit/audit.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
@@ -61,8 +62,33 @@ ok(formatMemoryDelta([]) === null, "formatter: empty pointer list → null (noth
   ok(s!.startsWith("<system-reminder>") && s!.endsWith("</system-reminder>"), "formatter: the block is a fully-formed <system-reminder> tag");
   ok(s!.includes("- memory/acme-eng — silo \"acme-eng\" (updated)"), "formatter: a single-write silo renders '(updated)'");
   ok(s!.includes("- memory/handbook — silo \"handbook\" (updated 2×)"), "formatter: a multi-write silo renders the count");
-  ok(s!.includes("re-read a path with your file tools ONLY if it bears on the current message"), "formatter: carries the 'use only if relevant' hygiene line (Claude Tag parity)");
+  ok(s!.includes("ONLY if it bears on the current message"), "formatter: carries the 'use only if relevant' hygiene line");
   ok(!s!.includes("files: 3") && !s!.includes("<untrusted"), "formatter: no audit-internal / untrusted content leaks into the block");
+}
+
+{
+  const ptrs = [{ path: "memory/acme-eng", siloName: "acme-eng", writes: 1 }];
+  const content = (r: Parameters<typeof formatMemoryDelta>[1]) => formatMemoryDelta(ptrs, r)!;
+  const index = (r: Parameters<typeof formatIndexDelta>[1]) => formatIndexDelta({ healed: ["acme-eng"] }, r)!;
+
+  ok(content("file-tools").includes("re-read a path with your file tools"), "delta route file-tools: names the file tools");
+  ok(index("file-tools").includes("re-read the relevant path"), "index-delta route file-tools: names a plain re-read");
+
+  for (const [route, verb] of [["agent", "`agent`"], ["spawn_task", "`spawn_task`"]] as const) {
+    const c = content(route);
+    const i = index(route);
+    ok(c.includes("this seat has no file tools") && c.includes(verb), `delta route ${route}: disowns the file tools and names ${verb}`);
+    ok(i.includes("this seat has no file tools") && i.includes(verb), `index-delta route ${route}: disowns the file tools and names ${verb}`);
+    ok(!c.includes("your file tools") && !i.includes("your file tools"), `delta route ${route}: never claims the seat HAS file tools`);
+  }
+
+  const none = content("none");
+  ok(none.includes("CANNOT open these files") && none.includes("say you can't check memory"), "delta route none: refuses rather than inviting a bluff");
+  ok(!none.includes("delegate a lookup"), "delta route none: does not name a delegation verb the seat lacks");
+
+  ok(content(undefined) === content(memoryRecallRouteFor("standing")), "delta default: is the STANDING seat's route, not file-tools-by-assumption");
+  ok(index(undefined) === index(memoryRecallRouteFor("standing")), "index-delta default: is the STANDING seat's route");
+  ok(!content(undefined).includes("your file tools"), "delta default: a standing seat is never told it holds file tools");
 }
 
 {

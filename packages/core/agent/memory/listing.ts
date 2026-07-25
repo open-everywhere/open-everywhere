@@ -63,6 +63,41 @@ const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: strin
   },
 };
 
+const RECALL_DELTA_TAILS: Readonly<Record<MemoryRecallRoute, { readonly content: string; readonly index: string }>> = {
+  "file-tools": {
+    content: "re-read a path with your file tools ONLY if it bears on the current message, otherwise ignore it:",
+    index: "re-read the relevant path before answering from memory if it bears on the current message.",
+  },
+  agent: {
+    content:
+      "this seat has no file tools — ONLY if it bears on the current message, delegate a lookup " +
+      "(`agent`, `mode: \"sync\"`) naming the path; otherwise ignore it:",
+    index:
+      "this seat has no file tools, so delegate a lookup (`agent`, `mode: \"sync\"`) naming the path " +
+      "before answering from memory, if it bears on the current message.",
+  },
+  spawn_task: {
+    content:
+      "this seat has no file tools — ONLY if it bears on the current message, delegate a lookup " +
+      "(`spawn_task`) naming the path; otherwise ignore it:",
+    index:
+      "this seat has no file tools, so delegate a lookup (`spawn_task`) naming the path before " +
+      "answering from memory, if it bears on the current message.",
+  },
+  none: {
+    content:
+      "this seat CANNOT open these files — ONLY if it bears on the current message, say you can't " +
+      "check memory from here rather than answering as if you had:",
+    index:
+      "this seat CANNOT open it — if it bears on the current message, say you can't check memory from " +
+      "here rather than answering as if you had.",
+  },
+};
+
+export function recallDeltaTail(recall: MemoryRecallRoute, shape: "content" | "index"): string {
+  return (RECALL_DELTA_TAILS[recall] ?? RECALL_DELTA_TAILS["file-tools"])[shape];
+}
+
 export function renderMemoryIndex(
   reads: readonly ResolvedMemory[],
   failedSilos: readonly string[] = [],
