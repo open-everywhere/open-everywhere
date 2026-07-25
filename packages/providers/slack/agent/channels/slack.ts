@@ -45,8 +45,6 @@ import {
   bindFrom,
   isAllowedSlackDriver,
   planFor,
-  scopeOverBudget,
-  capBypassFor,
   extractPinnedInstructions,
   introMessage,
   instructionBullet,
@@ -59,6 +57,7 @@ import {
   type ReactionState,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
+import { slackSpendGate } from "./slack-spend-gate.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 
@@ -325,50 +324,19 @@ async function onInbound(
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 
-  try {
-    const partition = partitionForMessage(message, facts);
-    const binding = bindFrom(bindableForMessage(message, facts));
-    const verdict = await scopeOverBudget(partition, mode, new Date().toISOString(), binding.trust);
-    try {
-      await getOperationalStore().appendAudit({
-        ts: new Date().toISOString(),
-        org: partition.org,
-        platform: partition.platform,
-        workspace: partition.workspace,
-        surface: partition.surface,
-        action: "spend.gate",
-        detail: { key: partition.surfaceKey, mode, team: message.teamId ?? null, over: verdict.over, ...(verdict.reason ? { reason: verdict.reason } : {}) },
-      });
-    } catch {
-    }
-    if (verdict.over) {
-      const bypass = await capBypassFor({
-        org: binding.org,
-        principalId: message.author?.userId,
-        surfaceKey: partition.surfaceKey,
-        reason: verdict.reason,
-      });
-      if (bypass) {
-        if (bypass.warn) {
-          try {
-            await ctx.thread.post(
-              `:warning: ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap (an approval card follows), or change it permanently in the spend-budgets config.`,
-            );
-          } catch {
-          }
-        }
-      } else {
-        try {
-          await ctx.thread.post(
-            `:no_entry: I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = \`${partition.surfaceKey}\`, whole workspace = \`${binding.platform}/${binding.workspace}\`.`,
-          );
-        } catch {
-        }
-        return { auth: null };
-      }
-    }
-  } catch (e) {
-    console.warn(`[open-everywhere:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+  if (
+    (await slackSpendGate({
+      bindable: bindableForMessage(message, facts),
+      mode,
+      principalId: message.author?.userId,
+      teamId: message.teamId,
+      door: "mention",
+      post: async (text) => {
+        await ctx.thread.post(text);
+      },
+    })) === "declined"
+  ) {
+    return { auth: null };
   }
 
   if (mode === "channel") {

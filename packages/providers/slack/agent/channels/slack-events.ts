@@ -54,6 +54,7 @@ import {
   type WakeEngagementTier,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
+import { slackSpendGate, type SpendGateDecision } from "./slack-spend-gate.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
@@ -376,6 +377,10 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   });
   if (!decision.deliver) return { ...decision, woke: false };
 
+  if ((await slackWakeSpendGate(ev, p, ev.threadTs!)) === "declined") {
+    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+  }
+
   const confirmable = ev.channelType === "channel" || ev.channelType === "group";
   const internal = confirmable && deps.confirmInternal ? await deps.confirmInternal(ev.channelId).catch(() => false) : false;
   const auth = authForEvent(ev, internal ? { isExternal: false, trustChecked: true } : undefined);
@@ -454,6 +459,31 @@ export async function postSlackStopAck(channelId: string, threadTs: string): Pro
   } catch {
   }
 }
+
+export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, threadRootTs: string): Promise<SpendGateDecision> {
+  return slackSpendGate({
+    bindable: bindableFor(ev),
+    mode: slackMode(ev.channelType, ev.channelId),
+    principalId: ev.userId,
+    teamId: ev.teamId,
+    door: "engagement",
+    post: async (text) => {
+      await postOnce({
+        org: p.org,
+        key: outboundKey({ surface: "slack", channel: ev.channelId, threadTs: threadRootTs, action: "slack.spend-gate", payload: p.surfaceKey }),
+        ttlMs: SPEND_REFUSAL_DEDUPE_TTL_MS,
+        run: async () => {
+          await slackForm(
+            "chat.postMessage",
+            `channel=${encodeURIComponent(ev.channelId)}&thread_ts=${encodeURIComponent(threadRootTs)}&text=${encodeURIComponent(text)}`,
+          );
+        },
+      });
+    },
+  });
+}
+
+const SPEND_REFUSAL_DEDUPE_TTL_MS = 60 * 60 * 1000;
 
 export function liveDeps(send: WakeSend): MessageRouteDeps {
   return {
@@ -609,6 +639,10 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   if (!decision.deliver) return { ...decision, woke: false };
 
   const rootTs = ev.threadTs ?? ev.ts;
+
+  if ((await slackWakeSpendGate(ev, p, rootTs)) === "declined") {
+    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+  }
 
   if (deps.markEngaged) {
     await deps.markEngaged(p, rootTs, deps.now ? deps.now() : new Date().toISOString(), { participating: false });
@@ -963,6 +997,10 @@ export async function routeSupervisorEvent(
 
   if (ev.threadTs && !directMention && engRow?.stopped) {
     return { deliver: false, reason: "thread stopped — deterministic silence until an explicit @-mention re-invites", woke: false };
+  }
+
+  if ((await slackWakeSpendGate(ev, p, ev.threadTs ?? ev.ts)) === "declined") {
+    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
   }
 
   if (directMention && deps.markEngaged) {
