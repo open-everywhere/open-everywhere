@@ -329,7 +329,18 @@ async function onInbound(
     const partition = partitionForMessage(message, facts);
     const binding = bindFrom(bindableForMessage(message, facts));
     const verdict = await scopeOverBudget(partition, mode, new Date().toISOString(), binding.trust);
-    console.log(`[open-everywhere:spend-gate] key=${partition.surfaceKey} mode=${mode} team=${message.teamId ?? "∅"} over=${verdict.over}${verdict.reason ? ` reason=${JSON.stringify(verdict.reason)}` : ""}`);
+    try {
+      await getOperationalStore().appendAudit({
+        ts: new Date().toISOString(),
+        org: partition.org,
+        platform: partition.platform,
+        workspace: partition.workspace,
+        surface: partition.surface,
+        action: "spend.gate",
+        detail: { key: partition.surfaceKey, mode, team: message.teamId ?? null, over: verdict.over, ...(verdict.reason ? { reason: verdict.reason } : {}) },
+      });
+    } catch {
+    }
     if (verdict.over) {
       const bypass = await capBypassFor({
         org: binding.org,
