@@ -61,7 +61,8 @@ export async function slackSpendGate(input: SlackSpendGateInput): Promise<SpendG
     const binding = bindFrom(input.bindable);
     const verdict = await check(input.bindable, input.mode);
     try {
-      await audit({
+      if (verdict.over)
+        await audit({
         ts: new Date().toISOString(),
         org: partition.org,
         platform: partition.platform,

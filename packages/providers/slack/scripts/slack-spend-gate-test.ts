@@ -83,8 +83,7 @@ async function run(opts: {
   const r = await run({ verdict: { over: false } });
   ok(r.decision === "proceed", "under cap → proceed");
   ok(r.posts.length === 0, "under cap posts nothing");
-  ok(r.audits.length === 1 && r.audits[0]!.action === "spend.gate", "under cap still writes the spend.gate row (the S10 debug aid)");
-  ok((r.audits[0]!.detail as Record<string, unknown>).over === false, "under-cap row records over:false");
+  ok(r.audits.length === 0, "under cap writes NO spend.gate row (narrowed post-S10-green: a row means the cap bit)");
 }
 
 {
@@ -132,9 +131,9 @@ async function run(opts: {
 }
 
 {
-  const m = await run({ door: "mention" });
-  const e = await run({ door: "engagement" });
-  const j = await run({ door: "join" });
+  const m = await run({ door: "mention", verdict: { over: true, reason: "over cap" } });
+  const e = await run({ door: "engagement", verdict: { over: true, reason: "over cap" } });
+  const j = await run({ door: "join", verdict: { over: true, reason: "over cap" } });
   ok((m.audits[0]!.detail as Record<string, unknown>).door === "mention", "the mention door stamps door:\"mention\"");
   ok((e.audits[0]!.detail as Record<string, unknown>).door === "engagement", "the engagement door stamps door:\"engagement\"");
   ok((j.audits[0]!.detail as Record<string, unknown>).door === "join", "the channel-join door stamps door:\"join\"");
