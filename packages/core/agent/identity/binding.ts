@@ -2,7 +2,7 @@ import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { isVouchedInternal } from "./trust.js";
-import { bareTokenFromEveContext, classifySessionId, parseWindowToken } from "../channels/window-key.js";
+import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import type { Domain } from "../memory/domain.js";
 
@@ -131,7 +131,8 @@ export function currentWindowToken(ctx: BindableContext): string | undefined {
 
 export function proposingSessionId(ctx: BindableContext): string | undefined {
   const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
-  return bareTokenFromEveContext(raw) ?? currentWindowToken(ctx);
+  const token = bareTokenFromEveContext(raw) ?? currentWindowToken(ctx);
+  return token === undefined ? undefined : sessionGrantKeyFromToken(token);
 }
 
 export function currentTurnAddressing(ctx: BindableContext): string | undefined {

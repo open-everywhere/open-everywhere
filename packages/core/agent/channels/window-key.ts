@@ -56,6 +56,11 @@ export function taskWindowId(channelKey: string, threadTs: string, nonce?: strin
   }
   return `t/${parts.join("/")}`;
 }
+
+export function sessionGrantKeyFromToken(token: string): string {
+  const m = /^(oe-dom:[^:]+):win:t\/[^:]+(:oe-sup:g[^:]*)$/.exec(token);
+  return m ? `${m[1]}${m[2]}` : token;
+}
 export function isTaskWindowId(windowId: string): boolean {
   return TASK_WINDOW_ID_RE.test(windowId);
 }
