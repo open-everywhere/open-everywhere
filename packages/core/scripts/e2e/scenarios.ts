@@ -90,7 +90,7 @@ export interface Scenario {
 const REPLY_WAIT = 180_000;
 const FILE_REPLY_WAIT = 420_000;
 const UNIFIED_REPLY_WAIT = 420_000;
-const BROWSER_QA_WAIT = 1_800_000;
+const BROWSER_QA_WAIT = 420_000;
 const SILENCE_WINDOW = 45_000;
 
 const isFillerAck = (text: string): boolean =>
@@ -1437,8 +1437,9 @@ export const SCENARIOS: readonly Scenario[] = [
         const { ts: qaTs } = await slack.post(
           slack.mention(
             "In a sandbox worker, run this end to end: (1) start a tiny static web server on localhost port 8000 that serves exactly " +
-              "the HTML `<h1>OPE43-OK</h1>` — run it in the background, e.g. " +
-              "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' &`; " +
+              "the HTML `<h1>OPE43-OK</h1>` — run it in the background WITH BOTH OUTPUT STREAMS REDIRECTED " +
+              "(a background job that still holds stdout/stderr hangs the bash call — agent/instructions.md), e.g. " +
+              "`node -e 'require(\"http\").createServer((_,r)=>r.end(\"<h1>OPE43-OK</h1>\")).listen(8000)' > server.log 2>&1 &`; " +
               "(2) use browser_navigate to open http://localhost:8000/ ; (3) use browser_screenshot to SAVE the page to a file in your CURRENT WORKING " +
               "DIRECTORY using a RELATIVE path — save it as `ope43-shot.png` (NOT /tmp, NOT an absolute path: describe_image can only read files inside " +
               "your workspace, and /tmp is outside it); (4) use describe_image with { path: \"ope43-shot.png\" } to VISION-READ the heading from the " +
