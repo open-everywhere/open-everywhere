@@ -1,0 +1,109 @@
+import { createRequire } from "node:module";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+const require = createRequire(import.meta.url);
+const eveRoot = dirname(require.resolve("eve/package.json"));
+const distSrc = join(eveRoot, "dist", "src");
+const eveVersion = (JSON.parse(readFileSync(join(eveRoot, "package.json"), "utf8")) as { version: string }).version;
+const read = (rel: string): string => readFileSync(join(distSrc, rel), "utf8");
+
+console.log(`auth-attribute-provenance: verifying against installed eve ${eveVersion}`);
+
+{
+  const keys = read("context/keys.js");
+  ok(/AuthKey\s*=\s*new ContextKey\(`eve\.auth`\)/.test(keys), "eve still defines AuthKey as ContextKey(`eve.auth`)");
+  ok(
+    /InitiatorAuthKey\s*=\s*new ContextKey\(`eve\.initiatorAuth`\)/.test(keys),
+    "eve still defines InitiatorAuthKey as ContextKey(`eve.initiatorAuth`)",
+  );
+}
+
+{
+  ok(/get auth\(\)\{return\{current:\w+\.get\(AuthKey\)/.test(read("channel/session.js")), "channel/session.js buildSessionHandle still reads session.auth.current from AuthKey");
+  const provider = read("context/providers/session.js");
+  ok(/\w+=\w+\.require\(AuthKey\)/.test(provider), "context/providers/session.js sessionProvider still requires AuthKey");
+  ok(/auth:\{current:\w+,initiator:\w+\.get\(InitiatorAuthKey\)/.test(provider), "sessionProvider still projects that slot as session.auth.current");
+  ok(/auth:\{current:\w+,initiator:\w+\}/.test(read("context/dynamic-resolve-context.js")), "context/dynamic-resolve-context.js still projects session.auth from the container");
+}
+
+const WRITE_RE = /\.set\(\s*(?:Initiator)?AuthKey\b/g;
+const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/workflow-steps.js"]);
+{
+  const found = new Set<string>();
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const abs = join(dir, entry);
+      if (statSync(abs).isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!entry.endsWith(".js")) continue;
+      if (WRITE_RE.test(readFileSync(abs, "utf8"))) found.add(relative(distSrc, abs).replaceAll("\\", "/"));
+      WRITE_RE.lastIndex = 0;
+    }
+  };
+  walk(distSrc);
+  const unexpected = [...found].filter((f) => !EXPECTED_WRITERS.has(f));
+  if (unexpected.length > 0) {
+    console.error(
+      `✗ eve ${eveVersion} has NEW writers of the session auth slot: ${unexpected.join(", ")}\n` +
+        `  The "host-set auth attributes are model-unforgeable" invariant (OPE-129) was verified against exactly\n` +
+        `  two writers. Read each new site and confirm it cannot carry model-derived data BEFORE widening\n` +
+        `  EXPECTED_WRITERS here, and update agent/channels/unified-window.ts §AUTH-ATTRIBUTE PROVENANCE.`,
+    );
+    process.exit(1);
+  }
+  passed++;
+  for (const w of EXPECTED_WRITERS) ok(found.has(w), `eve still writes the auth slot in ${w} (the site is not gone/renamed)`);
+}
+
+{
+  const steps = read("execution/workflow-steps.js");
+  ok(
+    /input\?\.kind===`deliver`&&\w+\.input\.auth!==void 0&&\w+\.set\(AuthKey,\w+\.input\.auth\?\?null\)/.test(steps),
+    "turnStep's auth write is still guarded on kind===`deliver` AND input.auth!==undefined (approval-resume keeps its stamps)",
+  );
+  ok(
+    /resumeHook\(\w+,\{kind:`deliver`,payloads:\[\{authorizationCallback:/.test(read("runtime/connections/callback-route.js")),
+    "the connection authorization callback still resumes with NO `auth` field (auth-preserving resume)",
+  );
+}
+
+{
+  const state = read("public/definitions/state.js");
+  ok(/RESERVED_STATE_NAME_PREFIX=`eve\.`/.test(state), "defineState still reserves the `eve.` prefix");
+  ok(/startsWith\(RESERVED_STATE_NAME_PREFIX\)\)throw Error/.test(state), "defineState still THROWS on a reserved-prefix name (cannot alias eve.auth)");
+}
+
+{
+  ok(/\w+=\w+\.get\(AuthKey\)\?\?null,/.test(read("execution/dispatch-runtime-actions-step.js")), "subagent dispatch still takes the child's auth from the PARENT's AuthKey slot");
+  const sub = read("execution/subagent-tool.js");
+  ok(/\{action:\w+,auth:\w+,batchEvent/.test(sub), "buildSubagentRunInput still takes `auth` as a caller argument, not off the action");
+  ok(!/\w+\.input\.auth/.test(sub), "buildSubagentRunInput still never reads `auth` off the model's action input");
+}
+
+{
+  const messages = read("harness/messages.js");
+  ok(/function coalesceTurnInputs/.test(messages), "harness/messages.js still exports coalesceTurnInputs");
+  const body = /function coalesceTurnInputs\([^)]*\)\{[\s\S]*?\n?\}(?=function )/.exec(messages)?.[0] ?? messages.slice(messages.indexOf("function coalesceTurnInputs"), messages.indexOf("function normalizeUserContent"));
+  ok(!/auth/.test(body), "coalesceTurnInputs still merges only inputResponses/message/context/outputSchema — never `auth`");
+  ok(/inputResponses:\w+\}\}\)\)/.test(read("execution/subagent-hitl-proxy.js")), "routeDeliverPayload still routes HITL answers as `inputResponses` payloads");
+}
+
+{
+  const authMod = read("runtime/sessions/auth.js");
+  ok(/attributes:z\.record\(/.test(authMod), "eve still carries the runtimeSessionAuthContext zod schema (the shape this note is about)");
+  ok(/export\{\};?\s*$/.test(authMod.trim()), "the runtime session-auth schema is still DEAD CODE (exports nothing) — eve does not validate/coerce delivered attributes");
+}
+
+console.log(`✓ auth-attribute-provenance: ${passed} contract assertions passed against eve ${eveVersion}`);
