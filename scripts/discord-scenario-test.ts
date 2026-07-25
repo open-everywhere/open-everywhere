@@ -13,7 +13,7 @@ for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_
   delete process.env[k];
 }
 
-const { ScenarioRunner } = await import("./scenario-harness.js");
+const { ScenarioRunner } = await import("./discord-scenario-harness.js");
 const { default: discordGateway } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");

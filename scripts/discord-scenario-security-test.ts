@@ -23,7 +23,7 @@ registerSlackTestBridge();
 registerSlackFixtureMapper();
 registerSlackFixtureManifest();
 
-const { ScenarioRunner, Timeline, checkGolden } = await import("./scenario-harness.js");
+const { ScenarioRunner, Timeline, checkGolden } = await import("./discord-scenario-harness.js");
 const { default: discordGateway } = await import("@open-everywhere/provider-discord/agent/channels/discord-gateway.js");
 const { buildDiscordFrontHandler, PUBLIC_DISCORD_ROUTE } = await import("@open-everywhere/provider-discord/agent/channels/discord-front.js");
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
@@ -52,7 +52,7 @@ await import("@open-everywhere/core/agent/approvals/flow.js");
 import type { BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import type { Partition } from "@open-everywhere/core/agent/memory/partition.js";
 import type { PendingActionRow } from "@open-everywhere/core/agent/approvals/types.js";
-import type { ScenarioDriver } from "./scenario-harness.js";
+import type { ScenarioDriver } from "./discord-scenario-harness.js";
 
 registerConfig({
   loadBundles: () => [],
