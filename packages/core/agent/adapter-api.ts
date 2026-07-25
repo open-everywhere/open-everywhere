@@ -275,6 +275,9 @@ export {
 export { scopeOverBudget } from "./spend/check.js";
 export { capBypassFor } from "./spend/bypass.js";
 
+export { classifyWakeMapping, unmappedWakeCopy, UNMAPPED_WAKE_DROP_REASON } from "./access/wake-mapping.js";
+export type { WakeMappingDecision, WakeMappingInput } from "./access/wake-mapping.js";
+
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
 export { sessionGrantKind, connectorSessionKind } from "./approvals/session-grant.js";

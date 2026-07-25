@@ -52,6 +52,9 @@ import {
   STATUS_REACTION,
   renderPinned,
   isPinnedStatusMessage,
+  classifyWakeMapping,
+  unmappedWakeCopy,
+  UNMAPPED_WAKE_DROP_REASON,
   type Partition,
   type BindableContext,
   type ReactionState,
@@ -355,6 +358,18 @@ async function onInbound(
   }
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
+
+  if (classifyWakeMapping({ platform: "slack", mode, workspaceId: message.teamId }) === "unmapped") {
+    console.log(
+      `[open-everywhere:slack] unmapped-channel wake dropped — no turn (channel ${message.channelId} resolved no team; map it in agent/memory/domains.ts)`,
+    );
+    auditWakeDropped(message, UNMAPPED_WAKE_DROP_REASON, { door: "mention", channelType: facts.channelType ?? null });
+    try {
+      await ctx.thread.post(unmappedWakeCopy("slack", message.channelId));
+    } catch {
+    }
+    return DROP;
+  }
 
   const gate = await slackSpendGate({
     bindable: bindableForMessage(message, facts),
