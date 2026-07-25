@@ -7,6 +7,8 @@ import type { LinearDriver } from "./linear-driver.js";
 import type { NotionDriver } from "./notion-driver.js";
 import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
+import type { TranscriptWireEvent } from "./transcript-read.js";
+import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
@@ -53,6 +55,7 @@ export interface ScenarioContext {
   readonly unifiedAuditCall?: UnifiedAuditCall;
   readonly targetUrl?: string;
   readonly auditRead?: (opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>;
+  readonly transcriptRead?: (sessionId: string) => Promise<readonly TranscriptWireEvent[]>;
   readonly prRepo?: string;
   readonly prApi?: PrApi;
   readonly connectorWrite?: SlackDriver;
@@ -285,6 +288,83 @@ export const SCENARIOS: readonly Scenario[] = [
       } else {
         ctx.log("forget teardown: synthetic capability absent — no forget card driven (the memory assertions above are already gated)");
       }
+    },
+  },
+  {
+    id: "S-MEM-READ",
+    title: "Memory recall OPENS A FILE: asserted on reads + delegation evidence, not on reply text (OPE-121)",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 900_000,
+    judged: false,
+    run: async (ctx) => {
+      const a = ctx.slack!;
+      const auditRead = ctx.auditRead;
+      const transcriptRead = ctx.transcriptRead;
+      if (!auditRead || !transcriptRead) {
+        ctx.skip("needs E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN — the whole leg IS the audit/transcript evidence; reply text alone cannot distinguish a real read from a lucky answer");
+        return;
+      }
+      const canary = factToken("obsidian");
+
+      const seedStart = new Date().toISOString();
+      const { ts: seedTs } = await a.post(a.mention(`remember this for the team: the OPE121 canary code is ${canary}`));
+      const seedAck = await a.awaitThreadReply(seedTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      const writes = await auditRead({ sinceIso: seedStart, platform: "slack", actions: ["memory.write"] });
+      ctx.gate(
+        writes.length > 0,
+        `seed: the canary reached the SILO — a real memory.write audit row exists (found ${writes.length}). Ack was: "${seedAck.text.replace(/\s+/g, " ").trim().slice(0, 160)}"`,
+      );
+
+      const askStart = new Date().toISOString();
+      const { ts: askTs } = await a.post(
+        a.mention(`what is the OPE121 canary code? Check what is actually written in the memory files on disk before you answer, and tell me which file you found it in.`),
+      );
+      const answer = await a.awaitThreadReply(askTs, { timeoutMs: REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
+      ctx.gate(answer.threadTs === askTs, "recall: the answer lands in its OWN fresh thread");
+      ctx.gate(
+        answer.text.toLowerCase().includes(canary.toLowerCase()),
+        `recall: the reply carries the seeded canary "${canary}" — reply: "${answer.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
+      );
+
+      const rows = await auditRead({ sinceIso: askStart, limit: 1000 });
+      const sessionIds = new Set<string>();
+      for (const row of rows) {
+        for (const key of ["sessionId", "parentSessionId"] as const) {
+          const v = row.detail?.[key];
+          if (typeof v === "string" && v.length > 0) sessionIds.add(v);
+        }
+      }
+      const delegations = rows.filter((r) => r.action === "task.spawned").length;
+      ctx.log(`recall evidence: ${rows.length} audit row(s), ${sessionIds.size} distinct session(s), ${delegations} delegation(s) since the ask`);
+      ctx.gate(
+        sessionIds.size > 0,
+        "evidence: at least one session id is recoverable from the recall turn's audit rows (without one there is no transcript to check — a joinless recall is unauditable)",
+      );
+
+      const reads: string[] = [];
+      for (const sessionId of sessionIds) {
+        const events = await transcriptRead(sessionId);
+        const found = extractMemoryPathReads(events);
+        if (found.length > 0) ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
+        reads.push(...found);
+      }
+      const silosTouched = [...new Set(reads.map(siloOfPath).filter((s): s is string => s !== null))];
+      ctx.gate(
+        reads.length > 0,
+        `READ HAPPENED: the recall turn opened at least one memory/<silo>/… path (totalReads ${reads.length}) — the observable the 2026-07-25 battery measured as 0 while replies still looked fine`,
+      );
+      ctx.gate(
+        silosTouched.length > 0,
+        `READ HAPPENED: the read landed under a real silo (silosTouched [${silosTouched.join(", ")}]) — a bare "memory/" touch with no silo is not a recall`,
+      );
+      ctx.log(
+        delegations > 0
+          ? `recall route: DELEGATED — ${delegations} worker(s) spawned; the reads above are the worker's (the OPE-121 route for a conversational-root seat)`
+          : "recall route: IN-SEAT — no delegation row; this seat read the tree with its own file tools (a wide-hands grain)",
+      );
     },
   },
   {

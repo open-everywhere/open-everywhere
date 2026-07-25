@@ -244,14 +244,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const ids = SCENARIOS.map((s) => s.id);
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
-    "J1", "J2", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
+    "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
     "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
     "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-CONNECTOR-TIER-EXECUTOR", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
@@ -265,8 +265,8 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   }
   const optional = SCENARIOS.filter((s) => s.optional).map((s) => s.id);
   ok(
-    optional.join(",") === "S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-CONNECTOR-TIER-EXECUTOR,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE",
-    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the Stage-2 executor-transport tier-split variant PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg are optional (S11–S23 are core coverage)",
+    optional.join(",") === "S-MEM-READ,S8,S9,S10,S24,J-UNI-X,S-NOTION-WRITE,S-CONNECTOR-TIER,S-CONNECTOR-TIER-EXECUTOR,S-DM-NOTION,S-CONNECT-CARD,S-APIKEY-INTAKE",
+    "the plan's stretch scenarios PLUS the gated Notion read PLUS the cross-surface unified money-shot PLUS the two connector-WRITE scenarios PLUS the Stage-2 executor-transport tier-split variant PLUS the folded DM personal-Notion + channel connector-card journeys PLUS the api-key intake leg PLUS S-MEM-READ (the OPE-121 memory-READ assertion: needs the control-read creds to see anything, and pays a delegation round-trip) are optional (S11–S23 are core coverage)",
   );
 
   const KNOWN_SURFACES = new Set(["slack", "teams", "discord", "github", "linear", "notion", "cross"]);
@@ -289,7 +289,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
   ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC,S-PR-BOUNDARY", "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal)");
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S6,S10,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD", "S6/S10/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD are fully deterministic — no judge (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD", "S-MEM-READ/S6/S10/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD are fully deterministic — no judge (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");

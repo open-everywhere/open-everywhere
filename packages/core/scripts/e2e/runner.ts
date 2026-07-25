@@ -33,6 +33,7 @@ import { judge3, judgeBannerTag, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
+import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -94,6 +95,24 @@ async function main(): Promise<void> {
   const auditRead = auditTarget && auditToken ? (opts: Parameters<typeof fetchAudit>[2]) => fetchAudit(auditTarget, auditToken, opts) : undefined;
   const unifiedAuditCall =
     auditTarget && auditToken ? (query: string, token?: string) => callUnifiedAudit(auditTarget, token ?? auditToken, query) : undefined;
+  const transcriptRead =
+    auditTarget && auditToken
+      ? async (sessionId: string): Promise<readonly TranscriptWireEvent[]> => {
+          try {
+            const all: TranscriptWireEvent[] = [];
+            let start = 0;
+            for (let page = 0; page < 20; page++) {
+              const r = await fetchTranscript(auditTarget, auditToken, sessionId, { startIndex: start, limit: 10000, idleMs: 2000 });
+              all.push(...r.events);
+              if (r.complete || r.events.length === 0) break;
+              start = r.nextIndex;
+            }
+            return all;
+          } catch {
+            return [];
+          }
+        }
+      : undefined;
 
   const slackDriver = slack.ok ? new SlackDriver(slack.cfg) : undefined;
   const githubDriver = github.ok ? new GithubDriver(github.cfg) : undefined;
@@ -234,6 +253,7 @@ async function main(): Promise<void> {
       unifiedAuditCall,
       targetUrl: auditTarget || undefined,
       auditRead,
+      transcriptRead,
       prRepo: pr.ok ? pr.cfg.repo : undefined,
       prApi: prApiDriver,
       connectorWrite: connectorWriteDriver,
