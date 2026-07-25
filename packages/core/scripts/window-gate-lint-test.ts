@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -251,7 +251,11 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   for (const f of readdirSync(appDir).filter((f) => f.endsWith(".ts") && !f.startsWith("_"))) {
     appShims.set(f.replace(/\.ts$/u, ""), readFileSync(join(appDir, f), "utf8"));
   }
-  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES);
+  const subagentDir = join(here, "../../../agent/subagents");
+  const subagentNames = existsSync(subagentDir)
+    ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    : [];
+  const problems = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, undefined, undefined, undefined, subagentNames);
   ok(problems.length === 0, `the REAL tool surface carries a clean, total window-gate manifest (problems: ${JSON.stringify(problems)})`);
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);

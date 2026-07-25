@@ -8,7 +8,7 @@ import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { unifiedWindowFromToken, unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
-import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext } from "../channels/window-key.js";
+import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, isSubagentSessionToken } from "../channels/window-key.js";
 
 function isSupervisorToken(token: unknown): token is string {
   return typeof token === "string" && token.includes(":oe-sup:g");
@@ -20,6 +20,7 @@ export function turnKind(ctx: BindableContext, continuationToken?: unknown): str
     const attrs = auth?.current?.attributes ?? auth?.initiator?.attributes;
     if (routineMarker(attrs)) return "routine";
     if (isSupervisorToken(continuationToken)) return "supervisor";
+    if (isSubagentSessionToken(continuationToken)) return "subagent";
     return bindFrom(ctx).mode === "dm" ? "dm" : "channel";
   } catch {
     return "channel";

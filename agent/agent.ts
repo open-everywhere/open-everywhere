@@ -8,6 +8,7 @@ import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/m
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
+import { defaultAgentModelId } from "@open-everywhere/core/agent/model/default-model.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { readFileSync } from "node:fs";
@@ -17,7 +18,7 @@ const GATEWAY_DEFAULTS = {
   zeroDataRetention: true,
   caching: "auto",
 } as const;
-const DEFAULT_MODEL = process.env.OE_FORCE_MODEL?.trim() || process.env.OE_PRIMARY_MODEL?.trim() || "zai/glm-5.2";
+const DEFAULT_MODEL = defaultAgentModelId();
 
 const UTILITY_MODEL = "deepseek/deepseek-v4-flash";
 const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;

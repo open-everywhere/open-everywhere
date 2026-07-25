@@ -76,6 +76,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "todo",
   "load_skill",
   "connection_search",
+  "fresh_eyes_review",
+  "recall_verification",
 ]);
 
 export function withheldFromGrain(grain: WindowGrain): string[] {
@@ -97,11 +99,12 @@ export function checkWindowGateManifest(
   gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
+  subagentNames: readonly string[] = [],
 ): string[] {
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
   const coreByName = new Map(coreTools.map((t) => [t.name, t.source] as const));
-  const surface = new Set<string>([...coreByName.keys(), ...appShims.keys(), ...frameworkToolNames]);
+  const surface = new Set<string>([...coreByName.keys(), ...appShims.keys(), ...frameworkToolNames, ...subagentNames]);
 
   const kitKeyProviders = new Map<string, string>();
   for (const [slug, src] of coreByName) {
@@ -164,7 +167,9 @@ export function checkWindowGateManifest(
     }
   }
 
+  const subagentSet = new Set(subagentNames);
   for (const name of Object.keys(gated)) {
+    if (subagentSet.has(name)) continue;
     const coreSrc = coreByName.get(name);
     if (coreSrc === undefined) {
       if (!kitKeyProviders.has(name)) {

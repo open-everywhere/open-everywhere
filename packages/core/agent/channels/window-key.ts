@@ -110,6 +110,19 @@ export function dmSeatRegistryKey(dmChannelId: string): string {
   return `oe-dm-seat::${dmChannelId}`;
 }
 
+const SUBAGENT_TOKEN_RE = /^subagent:(.+):([^:]+)$/;
+
+export function parseSubagentToken(token: unknown): { parentSessionId: string; callId: string } | undefined {
+  if (typeof token !== "string") return undefined;
+  const raw = token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+  const m = SUBAGENT_TOKEN_RE.exec(raw);
+  return m ? { parentSessionId: m[1], callId: m[2] } : undefined;
+}
+
+export function isSubagentSessionToken(token: unknown): token is string {
+  return parseSubagentToken(token) !== undefined;
+}
+
 const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 const UNIFIED_SEND_PREFIX = "unified:";
@@ -128,6 +141,7 @@ export type SessionId =
   | { kind: "thread-seat"; grain: "thread"; key: WindowKey }
   | { kind: "container-supervisor"; grain: "standing"; containerKey: string; generation: number }
   | { kind: "dm-seat"; grain: "native"; channelId: string; generation: number }
+  | { kind: "subagent"; grain: "native"; parentSessionId: string; callId: string }
   | { kind: "native"; grain: "native" };
 
 export function classifySessionId(token: unknown): SessionId {
@@ -151,6 +165,8 @@ export function classifySessionId(token: unknown): SessionId {
       generation: Number(sup[1]),
     };
   }
+  const sub = parseSubagentToken(raw);
+  if (sub) return { kind: "subagent", grain: "native", parentSessionId: sub.parentSessionId, callId: sub.callId };
   return { kind: "native", grain: "native" };
 }
 
@@ -158,6 +174,7 @@ export function bareTokenFromEveContext(token: unknown): string | undefined {
   if (typeof token !== "string" || token.length === 0) return undefined;
   const anchored = (t: string): boolean => {
     if (parseWindowToken(t)) return true;
+    if (SUBAGENT_TOKEN_RE.test(t)) return true;
     const dm = parseDmSeatToken(t);
     return dm !== undefined && !dm.channelId.includes(":");
   };

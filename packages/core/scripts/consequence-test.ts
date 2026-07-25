@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -196,7 +196,11 @@ firesWith(
   ]);
   const coreToolNames = new Set(tools.map((t) => t.name));
   const coreRegistry = Object.fromEntries(Object.entries(TOOL_CONSEQUENCE).filter(([name]) => coreToolNames.has(name) || !NON_CORE_TOOL_ROWS.has(name)));
-  const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry);
+  const subagentDir = join(dirname(fileURLToPath(import.meta.url)), "../../../agent/subagents");
+  const subagentNames = existsSync(subagentDir)
+    ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    : [];
+  const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry, subagentNames);
   ok(problems.length === 0, `the REAL tool set + framework tools match the registry (problems: ${JSON.stringify(problems)})`);
   ok(tools.length >= 37, `the real scan actually covered the tools dir (saw ${tools.length})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);

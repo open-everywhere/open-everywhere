@@ -9,8 +9,9 @@ import type {
   PluginManifestEntry,
 } from "./types.js";
 import type { SkillPackageDefinition } from "eve/skills";
+import { defaultAgentModelId } from "../model/default-model.js";
 
-const DEFAULT_SUBAGENT_MODEL = process.env.OE_FORCE_MODEL?.trim() || process.env.OE_PRIMARY_MODEL?.trim() || "zai/glm-5.2";
+const DEFAULT_SUBAGENT_MODEL = defaultAgentModelId();
 
 const MODEL_ALIASES: Record<string, string> = {
   opus: "anthropic/claude-opus-4.8",

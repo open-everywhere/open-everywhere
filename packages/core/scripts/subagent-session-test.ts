@@ -1,0 +1,193 @@
+
+import assert from "node:assert/strict";
+import { classifySessionId, parseSubagentToken, isSubagentSessionToken, isSupervisorShapedToken, bareTokenFromEveContext, formatDmSeatToken, formatWindowToken } from "../agent/channels/window-key.js";
+import { turnKind } from "../agent/hooks/spend.js";
+import { checkDeclaredSubagents, listDeclaredSubagents, type DeclaredSubagentSource } from "../agent/subagents/declared.js";
+import { checkConsequenceRegistry, type ConsequenceEntry } from "../agent/access/consequence.js";
+import { checkWindowGateManifest } from "../agent/access/window-gate-manifest.js";
+import { FRESH_EYES_REVIEW_OUTPUT, RECALL_VERIFICATION_OUTPUT } from "../agent/subagents/contracts.js";
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+const eq = (a: unknown, b: unknown, label: string) => {
+  assert.deepStrictEqual(a, b, label);
+  n++;
+};
+
+const CHILD = "subagent:ses_01ABCDEF:call_7";
+
+{
+  const sid = classifySessionId(CHILD);
+  eq(sid.kind, "subagent", "eve's delegated-child token classifies kind 'subagent' (was an unrecognised 'native' before OPE-45)");
+  eq(sid.grain, "native", "the subagent arm's GRAIN stays 'native' — 'task' is a WIDE-HANDS grain (FULL_KIT), so promoting it would widen the tool gate");
+  eq(sid.kind === "subagent" ? sid.parentSessionId : undefined, "ses_01ABCDEF", "parentSessionId is recovered (the attribution anchor: a child's spend belongs to its parent's surface)");
+  eq(sid.kind === "subagent" ? sid.callId : undefined, "call_7", "callId is recovered — the parent's tool-call this child answers");
+
+  eq(parseSubagentToken(CHILD), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "parseSubagentToken returns both halves");
+  ok(isSubagentSessionToken(CHILD), "isSubagentSessionToken recognises it");
+  eq(parseSubagentToken("unified:" + CHILD), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "eve's `unified:` send-prefix is stripped first, same as every other parse here");
+
+  for (const junk of [undefined, null, 42, "", "subagent:", "subagent:onlyonepart", "notsubagent:a:b", {}]) {
+    ok(parseSubagentToken(junk) === undefined, `parseSubagentToken is fail-soft on ${JSON.stringify(junk)}`);
+    ok(classifySessionId(junk).kind !== "subagent", `classifySessionId does not over-match ${JSON.stringify(junk)}`);
+  }
+}
+
+{
+  ok(!isSupervisorShapedToken(CHILD), "a subagent token is NOT supervisor-shaped — routing/rotation stay inert");
+  ok(!CHILD.includes(":oe-sup:g"), "…and does not carry the supervisor infix hooks/spend.ts's broad substring test looks for");
+  ok(!CHILD.includes(":oe-dm:g"), "…nor the DM-seat infix");
+  eq(bareTokenFromEveContext(CHILD), CHILD, "bareTokenFromEveContext passes a bare subagent token through unchanged (rule 1, structurally anchored)");
+  eq(bareTokenFromEveContext("slack:" + CHILD), CHILD, "…and strips ONE namespace segment when eve reports it namespaced (rule 2)");
+}
+
+{
+  const before: ReadonlyArray<readonly [unknown, string, string]> = [
+    [formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 }), "window", "standing"],
+    [formatWindowToken({ domain: "payments", windowId: "t/slack/T1/C_PAY/1.2", generation: 3 }), "task", "task"],
+    [formatWindowToken({ domain: "payments", windowId: "s/slackT1CPAY/1.2", generation: 3 }), "thread-seat", "thread"],
+    ["notion:page-abc:oe-sup:g2", "container-supervisor", "standing"],
+    [formatDmSeatToken("D123", 4), "dm-seat", "native"],
+    ["cse_abc123", "native", "native"],
+    ["", "native", "native"],
+    [undefined, "native", "native"],
+  ];
+  for (const [tok, kind, grain] of before) {
+    const sid = classifySessionId(tok);
+    eq([sid.kind, sid.grain], [kind, grain], `byte-identity: ${JSON.stringify(tok)} still classifies ${kind}/${grain}`);
+  }
+}
+
+const ctx = { channel: { kind: "local" }, session: { auth: { current: { attributes: {} } } } };
+
+function withMode<T>(mode: string, fn: () => T): T {
+  const prev = process.env.OE_MODE;
+  process.env.OE_MODE = mode;
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.OE_MODE;
+    else process.env.OE_MODE = prev;
+  }
+}
+
+{
+  eq(turnKind(ctx, CHILD), "subagent", "a delegated child's usage row is tagged 'subagent' — delegated work is separable in the per-session cost series");
+  eq(withMode("dm", () => turnKind(ctx, CHILD)), "subagent", "…including a child delegated FROM a DM: the subagent tag wins over the binding mode");
+  ok(withMode("dm", () => turnKind(ctx, CHILD)) !== "dm", "a DM-delegated child does NOT classify 'dm' — the DM-seat starvation diagnostic no longer false-positives on it");
+
+  eq(turnKind(ctx, "oe-dom:payments:oe-sup:g3"), "supervisor", "a supervisor token still tags 'supervisor' (precedence unchanged)");
+  eq(withMode("dm", () => turnKind(ctx, formatDmSeatToken("D123", 2))), "dm", "a DM seat still tags 'dm'");
+  eq(turnKind(ctx, "cse_x"), "channel", "an ordinary channel turn still tags 'channel'");
+}
+
+const FRAMEWORK = ["ask_question", "bash", "glob", "grep", "load_skill", "read_file", "todo", "web_fetch", "web_search", "write_file"];
+const DISABLED = "import { disableTool } from \"eve/tools\";\nexport default disableTool();\n";
+
+function goodSubagent(overrides: Partial<DeclaredSubagentSource> = {}): DeclaredSubagentSource {
+  return {
+    name: "fresh_eyes_review",
+    agentSource: "export default defineAgent({ description: \"x\", model: m(), outputSchema: S });",
+    hasInstructions: true,
+    toolFiles: new Map(FRAMEWORK.map((t) => [t, DISABLED])),
+    hookFiles: new Set(["spend"]),
+    directories: new Set(["tools", "hooks"]),
+    ...overrides,
+  };
+}
+
+function expectProblem(subject: DeclaredSubagentSource, needle: string, label: string): void {
+  const problems = checkDeclaredSubagents([subject], FRAMEWORK, []);
+  ok(
+    problems.some((p) => p.includes(needle)),
+    `${label} (expected a problem mentioning "${needle}", got: ${problems.join(" | ") || "none"})`,
+  );
+}
+
+{
+  eq(checkDeclaredSubagents([goodSubagent()], FRAMEWORK, []), [], "a conforming subagent package passes clean");
+  eq(checkDeclaredSubagents([], FRAMEWORK, []), [], "no subagents at all is legal (a fork may declare none)");
+  eq(listDeclaredSubagents([goodSubagent({ name: "b_b" }), goodSubagent({ name: "a_a" })]), ["a_a", "b_b"], "listDeclaredSubagents returns the names sorted");
+
+  expectProblem(
+    goodSubagent({ toolFiles: new Map(FRAMEWORK.filter((t) => t !== "bash").map((t) => [t, DISABLED])) }),
+    "tools/bash.ts is missing",
+    "a MISSING sentinel is caught — an absent slot mounts eve's built-in unfenced (hooks are not inherited either)",
+  );
+  expectProblem(
+    goodSubagent({ toolFiles: new Map(FRAMEWORK.map((t) => [t, t === "bash" ? "export default defineTool({});" : DISABLED])) }),
+    "is not a `disableTool()` sentinel",
+    "a sentinel REPLACED by a real tool is caught",
+  );
+  expectProblem(
+    goodSubagent({ toolFiles: new Map([...FRAMEWORK.map((t) => [t, DISABLED] as const), ["read_memory", "export default defineTool({});"]]) }),
+    "is an authored tool",
+    "an EXTRA authored tool is caught — giving a subagent hands is a posture change that must move its manifest rows first",
+  );
+
+  expectProblem(goodSubagent({ agentSource: undefined }), "agent.ts is missing", "a missing config module is caught");
+  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ model: m(), outputSchema: S });" }), "no `description`", "a missing description is caught (eve fails the build on it too)");
+  expectProblem(goodSubagent({ agentSource: "export default defineAgent({ description: \"x\", model: m() });" }), "no `outputSchema`", "an UNTYPED subagent is caught — a prose result is not actionable by the caller or the audit trail");
+  expectProblem(goodSubagent({ hasInstructions: false }), "instructions.md is missing", "missing instructions are caught — a subagent inherits none from the root");
+
+  expectProblem(goodSubagent({ hookFiles: new Set() }), "hooks/spend.ts is missing", "a missing spend hook is caught — hooks are NOT inherited, so the child would burn tokens off the ledger");
+
+  expectProblem(goodSubagent({ name: "fresh-eyes-review" }), "not lower snake_case", "a dashed directory name is caught (it IS the model-visible tool name, in one namespace with agent/tools/*)");
+  ok(
+    checkDeclaredSubagents([goodSubagent({ name: "reply" })], FRAMEWORK, ["reply"]).some((p) => p.includes("collides with the tool")),
+    "a subagent colliding with a real tool name is caught — eve rejects the build rather than picking a winner",
+  );
+  expectProblem(goodSubagent({ directories: new Set(["tools", "hooks", "schedules"]) }), "schedules/ is not supported", "a schedules/ dir is caught — schedules are root-only and eve fails the build");
+  expectProblem(goodSubagent({ directories: new Set(["tools", "hooks", "prompts"]) }), "is not a slot eve discovers", "an unknown slot dir is caught — eve would silently ignore it");
+}
+
+{
+  const noTools: never[] = [];
+  const emptyShims = new Map<string, string>();
+
+  const untieredProblems = checkConsequenceRegistry(noTools, [], () => undefined, {}, ["my_reviewer"]);
+  ok(untieredProblems.some((p) => p.includes("my_reviewer") && p.includes("NO consequence declaration")), "an un-tiered subagent fails the consequence registry (fail-closed)");
+
+  const openEntry: Record<string, ConsequenceEntry> = { my_reviewer: { tier: "open", via: { kind: "none" }, reason: "zero tools" } };
+  eq(checkConsequenceRegistry(noTools, [], () => undefined, openEntry, ["my_reviewer"]), [], "an open/none subagent row passes");
+
+  const gatedEntry: Record<string, ConsequenceEntry> = { my_reviewer: { tier: "gate:admin", via: { kind: "admin-roles" }, reason: "x" } };
+  ok(
+    checkConsequenceRegistry(noTools, [], () => undefined, gatedEntry, ["my_reviewer"]).some((p) => p.includes("must be open/none")),
+    "a subagent cannot declare a gated tier — there is no source to scan and no ActionKind to own it; gate its OWN tools/ dir instead",
+  );
+
+  const noPosture = checkWindowGateManifest(noTools, emptyShims, [], {}, new Set(), ["task"], ["my_reviewer"]);
+  ok(noPosture.some((p) => p.includes("my_reviewer") && p.includes("NO window-gate posture")), "a subagent with no declared grain posture fails the window-gate manifest (fail-closed)");
+  eq(checkWindowGateManifest(noTools, emptyShims, [], {}, new Set(["my_reviewer"]), ["task"], ["my_reviewer"]), [], "…and passes once it is declared ungated");
+  const gatedPosture = checkWindowGateManifest(noTools, emptyShims, [], { my_reviewer: ["standing"] }, new Set(), ["task"], ["my_reviewer"]);
+  ok(!gatedPosture.some((p) => p.includes("disableTool") || p.includes("windowGatedKit")), "a GATED subagent is not asked for a sentinel shim or a kit provider (rule 4 skips it — the whole agent IS the tool)");
+}
+
+{
+  const review = FRESH_EYES_REVIEW_OUTPUT.parse({
+    recommendation: "block",
+    summary: "No change was supplied.",
+    evidenceSeen: false,
+    findings: [{ severity: "high", category: "security", title: "No diff", detail: "Nothing to review." }],
+  });
+  eq(review.recommendation, "block", "fresh_eyes_review parses the fail-closed shape (evidenceSeen false ⇒ block)");
+  eq(FRESH_EYES_REVIEW_OUTPUT.shape.recommendation.options, ["approve", "block"], "the review verdict stays two-valued — no 'approve with reservations' escape hatch");
+  ok(!FRESH_EYES_REVIEW_OUTPUT.safeParse({ recommendation: "maybe", summary: "", evidenceSeen: true, findings: [] }).success, "an unknown recommendation is rejected");
+
+  const recall = RECALL_VERIFICATION_OUTPUT.parse({
+    verdict: "unverified",
+    claim: "The team decided X.",
+    supportingEvidencePaths: [],
+    contradictingEvidencePaths: [],
+    unsupportedParts: ["The team decided X."],
+    note: "No evidence was supplied.",
+  });
+  eq(recall.verdict, "unverified", "recall_verification parses the fail-closed shape (no evidence ⇒ unverified)");
+  eq(RECALL_VERIFICATION_OUTPUT.shape.verdict.options, ["verified", "unverified"], "the recall verdict stays two-valued — 'partially verified' would be a place to hide an unsupported claim");
+}
+
+console.log(`subagent-session-test: ${n} assertions passed`);

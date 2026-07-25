@@ -3,6 +3,8 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { checkConsequenceRegistry, type ToolSource } from "@open-everywhere/core/agent/access/consequence.js";
+import { listDeclaredSubagents } from "@open-everywhere/core/agent/subagents/declared.js";
+import { readDeclaredSubagents } from "./read-subagents.js";
 import { actionKind } from "@open-everywhere/core/agent/approvals/actions.js";
 import "@open-everywhere/core/agent/approvals/flow.js";
 
@@ -36,7 +38,15 @@ for (const f of readdirSync(appToolsDir).filter((f) => f.endsWith(".ts") && !f.s
   tools.set(name, { name, source });
 }
 
-const problems = checkConsequenceRegistry([...tools.values()], frameworkToolNames, (action) => actionKind(action)?.policy);
+const subagentNames = listDeclaredSubagents(readDeclaredSubagents(root));
+
+const problems = checkConsequenceRegistry(
+  [...tools.values()],
+  frameworkToolNames,
+  (action) => actionKind(action)?.policy,
+  undefined,
+  subagentNames,
+);
 
 if (problems.length > 0) {
   console.error(`✗ consequence-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
@@ -44,6 +54,6 @@ if (problems.length > 0) {
 }
 const frameworkOnly = frameworkToolNames.filter((n) => !tools.has(n)).length;
 console.log(
-  `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework), every declaration matching its runtime gate. ` +
+  `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework + ${subagentNames.length} declared subagent), every declaration matching its runtime gate. ` +
     `Connector/MCP operations are a separate, design-deferred plane (§3 grain 2, §7 item 5).`,
 );

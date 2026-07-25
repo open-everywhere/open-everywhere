@@ -96,6 +96,13 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   load_skill: open("loads a skill's instructions INTO CONTEXT — reading a procedure, not executing an effect; arming a skill stays gated at create_skill"),
   connection_search: open("read of WHICH connectors exist for this session; a connector's own OPERATIONS are the separate design-deferred plane (§3 grain 2)"),
 
+  fresh_eyes_review: open(
+    "declared subagent: an independent review pass over text the caller already holds. Zero tools (disableTool() sentinel set, lint-pinned), no sandbox reach, no audience — the verdict returns into the calling session only",
+  ),
+  recall_verification: open(
+    "declared subagent: entailment check of a claim against evidence the caller quotes. Zero tools (lint-pinned) — it reads no memory itself, so it discloses nothing the caller did not already have",
+  ),
+
   check_pr_status: open("read of a PR's state"),
   get_pr_feedback: open("read of a PR's reviews/comments/check runs via the read-scoped credential; disclosure is bounded by the channel's repo grant (membership is the ACL), and the digest is size-capped"),
   checkout_repo: open("read into the sandbox with a read-only credential; the write path is open_pull_request"),
@@ -218,6 +225,7 @@ export function checkConsequenceRegistry(
   frameworkToolNames: readonly string[],
   policyOf: (action: string) => "admin" | "member" | undefined,
   registry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
+  subagentNames: readonly string[] = [],
 ): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
@@ -304,6 +312,23 @@ export function checkConsequenceRegistry(
     if (!(entry.tier === "open" && entry.via.kind === "none")) {
       problems.push(
         `framework tool "${name}" is declared ${entry.tier}/${entry.via.kind} — a framework tool OE doesn't author has no source to scan and no ActionKind of its own, so it must be open/none. To gate it, ship an agent/tools/${name}.ts override (which moves it onto the scanned path).`,
+      );
+    }
+  }
+
+  for (const name of subagentNames) {
+    if (authored.has(name)) continue;
+    seen.add(name);
+    const entry = registry[name];
+    if (!entry) {
+      problems.push(
+        `declared subagent "${name}" (agent/subagents/${name}/) is mounted as a model-visible tool but has NO consequence declaration — add it to access/consequence.ts's TOOL_CONSEQUENCE (fail-closed: a mounted tool can't be un-tiered)`,
+      );
+      continue;
+    }
+    if (!(entry.tier === "open" && entry.via.kind === "none")) {
+      problems.push(
+        `declared subagent "${name}" is declared ${entry.tier}/${entry.via.kind} — a subagent has no tool source to scan and no ActionKind of its own, so it must be open/none. Gate what the SUBAGENT can do via agent/subagents/${name}/tools/ instead.`,
       );
     }
   }
