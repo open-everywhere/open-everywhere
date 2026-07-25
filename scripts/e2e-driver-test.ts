@@ -719,6 +719,11 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   const emptyReplay = joinDelegations(rows, new Map([["wrun_worker", []]]));
   ok(emptyReplay[0].gaps.some((g) => g.includes("EMPTY")), "an expired/unreadable worker session is a NAMED gap — the S-MEM-READ precedent that an observability failure must not read as a product result");
 
+  const lateSpawnRow = { ...spawned, ts: "2026-03-29T01:10:09.500Z" };
+  const [raced] = joinDelegations([returned, lateSpawnRow], new Map([["wrun_worker", worker]]));
+  ok(raced.dispatchMs === -823, `a worker that beats the spawn row yields a NEGATIVE dispatch, not a clamp to 0; got ${raced.dispatchMs}`);
+  ok(raced.gaps.length === 0, "…and that race is NOT a gap — the join is still complete");
+
   const sum = summariseTimings([{ scenarioId: "X", label: "l", capturedAt: "2026-03-29T01:11:00.000Z", sessions: [{ sessionId: "wrun_worker", timing: s }], delegations: [d] }]);
   ok(sum.delegations === 1 && sum.delegationsFullyJoined === 1, "the run summary counts delegations and how many decomposed end-to-end");
   ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === 6033, "the run summary carries p50 wall / boot / ttft — the recorded series, never a threshold");

@@ -486,9 +486,10 @@ export function fmtMs(v: number | null): string {
 
 export function renderDelegationTiming(d: DelegationTiming): string[] {
   const lines = [
-    `delegation ${d.taskId.slice(-24)} — wall ${fmtMs(d.wallMs)}` +
+    `delegation ${d.taskId.slice(-24)} — wall ≥${fmtMs(d.wallMs)}` +
       `${d.mode ? ` (${d.mode})` : ""}${d.hasError ? " ERROR" : ""}`,
-    `  dispatch ${fmtMs(d.dispatchMs)} → boot(sandbox+memory) ${fmtMs(d.bootMs)} → ttft ${fmtMs(d.ttftMs)}` +
+    `  dispatch ${fmtMs(d.dispatchMs)}${d.dispatchMs !== null && d.dispatchMs < 0 ? " (worker beat the spawn row — benign race)" : ""}` +
+      ` → boot(sandbox+memory) ${fmtMs(d.bootMs)} → ttft ${fmtMs(d.ttftMs)}` +
       ` → work ${fmtMs(d.workMs)} → return ${fmtMs(d.returnMs)} | unaccounted ${fmtMs(d.unaccountedMs)}`,
   ];
   if (d.worker) {
