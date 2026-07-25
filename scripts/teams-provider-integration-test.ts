@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
+import { rmSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { registerTeamsProvider, resolveTeamsTarget } from "@open-everywhere/provider-teams/agent/register.js";
 import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
 import { teamsReadAdapter } from "@open-everywhere/provider-teams/agent/channels/teams-read.js";
@@ -223,4 +223,30 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   ok(resolveTeamsTarget(seedRoutine("r-teams-noref", "teams/TEN1/19-x", { conversationId: "19:x@thread.tacv2" })) === null, "routine: a teams routine with no serviceUrl resolves null (dry-run, fail-closed)");
 }
 
-console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom)`);
+{
+  const manifestPath = join(dirname(fileURLToPath(import.meta.url)), "..", "teams-app", "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+    version: string;
+    bots: { scopes: string[] }[];
+    webApplicationInfo?: unknown;
+    authorization?: { permissions?: { resourceSpecific?: { name: string; type: string }[] } };
+  };
+  const rsc = manifest.authorization?.permissions?.resourceSpecific ?? [];
+  const named = (name: string) => rsc.find((p) => p.name === name);
+
+  ok(named("ChannelMessage.Read.Group")?.type === "Application", "manifest: the CHANNEL RSC grant is declared (Application context) — ambient team-channel delivery");
+  ok(named("ChatMessage.Read.Chat")?.type === "Application", "manifest: the CHAT RSC grant is declared (Application context) — non-mention group-chat delivery");
+  ok(manifest.webApplicationInfo !== undefined, "manifest: authorization is paired with webApplicationInfo (its absence fails the upload)");
+  ok(manifest.bots.some((b) => b.scopes.includes("groupChat")), "manifest: the bot is installable in groupChat scope (what the chat RSC grant applies to)");
+  ok(manifest.version !== "1.0.1", "manifest: version was bumped past 1.0.1 — RSC consent is install-time only, so an unbumped package can't re-consent");
+}
+
+{
+  const { teamsSingleWindowPrivacyOk } = await import("@open-everywhere/provider-teams/agent/channels/teams-supervisor.js");
+  const vouchedFacts = { tenantId: "TEN1", vouched: true } as const;
+  ok(teamsSingleWindowPrivacyOk({ ...vouchedFacts, scope: "channel" }), "window floor: a vouched team CHANNEL is admitted");
+  ok(!teamsSingleWindowPrivacyOk({ ...vouchedFacts, scope: "groupChat" }), "window floor: a group chat is refused EVEN WHEN VOUCHED (a per-person surface is not an org container)");
+  ok(!teamsSingleWindowPrivacyOk({ ...vouchedFacts, scope: "personal" }), "window floor: a personal chat is refused even when vouched");
+}
+
+console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom)`);
