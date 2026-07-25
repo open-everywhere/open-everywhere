@@ -62,6 +62,23 @@ import { loadConversationContext } from "./slack-context.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 
+function teamIdFromDomainConfig(channelId: string | undefined): string | undefined {
+  if (!channelId) return undefined;
+  try {
+    const suffix = `/${channelId}`;
+    for (const d of getConfig().loadDomains()) {
+      for (const c of d.channels ?? []) {
+        if (c.startsWith("slack/") && c.endsWith(suffix)) {
+          const team = c.split("/")[1];
+          if (team) return team;
+        }
+      }
+    }
+  } catch {
+  }
+  return undefined;
+}
+
 function statusVerb(state: { channelId?: string | null; teamId?: string | null }): string {
   try {
     const p = resolvePartition({
@@ -293,7 +310,12 @@ async function onInbound(
 ): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
   if (!message.teamId) {
     const threadTeam = (ctx.thread as { teamId?: string | null }).teamId;
-    if (typeof threadTeam === "string" && threadTeam.length > 0) message = { ...message, teamId: threadTeam };
+    const healed =
+      typeof threadTeam === "string" && threadTeam.length > 0
+        ? threadTeam
+        :
+          teamIdFromDomainConfig(message.channelId);
+    if (healed) message = { ...message, teamId: healed };
   }
   if (message.author?.isBot) {
     const rawBotId = typeof (message.raw as { bot_id?: unknown })?.bot_id === "string" ? (message.raw as { bot_id: string }).bot_id : undefined;
