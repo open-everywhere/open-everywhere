@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { bash, glob, grep, readFile, writeFile, webFetch } from "eve/tools/defaults";
 import { withStallGuard } from "../stall/guard.js";
+import { withBashHangGuard } from "../stall/bash-hang-guard.js";
 import { windowGatedKit } from "../access/window-gated.js";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
 
@@ -12,7 +13,7 @@ interface WebFetchOutput {
 }
 
 export default windowGatedKit("sandbox_tools", {
-  bash: defineTool(withStallGuard("bash", bash)),
+  bash: defineTool(withStallGuard("bash", withBashHangGuard(bash))),
   glob: defineTool(withStallGuard("glob", glob)),
   grep: defineTool(withStallGuard("grep", grep)),
   read_file: defineTool(withStallGuard("read_file", readFile)),
