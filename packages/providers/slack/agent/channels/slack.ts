@@ -303,6 +303,9 @@ async function onInbound(
     const partition = partitionForMessage(message, facts);
     const binding = bindFrom(bindableForMessage(message, facts));
     const verdict = await scopeOverBudget(partition, mode, new Date().toISOString(), binding.trust);
+    if (verdict.over || verdict.reason) {
+      console.log(`[open-everywhere:spend-gate] ${partition.surfaceKey} mode=${mode} over=${verdict.over}${verdict.reason ? ` reason=${JSON.stringify(verdict.reason)}` : ""}`);
+    }
     if (verdict.over) {
       const bypass = await capBypassFor({
         org: binding.org,
@@ -329,7 +332,8 @@ async function onInbound(
         return { auth: null };
       }
     }
-  } catch {
+  } catch (e) {
+    console.warn(`[open-everywhere:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   if (mode === "channel") {
