@@ -49,6 +49,7 @@ function attr(over: Partial<Attribution> = {}): Attribution {
   return {
     completionOf: new Map(),
     replyPostsOf: new Map(),
+    delegationsOf: new Map(),
     sessionId: "SESS",
     completions: [],
     redrivenWakeIds: new Set(),
@@ -64,6 +65,20 @@ function attr(over: Partial<Attribution> = {}): Attribution {
   const a = attributeOutcomes([i1], rows);
   ok((a.replyPostsOf.get("W1") ?? []).length === 2, "reply.post rows join their injection EXACTLY by detail.wakeId (2 posts on W1)");
   ok(!a.replyPostsOf.has("W2"), "no phantom join for an un-posted wakeId");
+}
+
+{
+  clock = Date.UTC(2026, 6, 24, 12, 0, 0);
+  const i1 = inj({ wakeId: "W1" });
+  const spawn = (over: Record<string, unknown>): AuditWireEntry => ({
+    ts: new Date((clock += 1000)).toISOString(), org: "acme", platform: "unified", workspace: "w",
+    action: "task.spawned", detail: { taskId: "T", oneshot: true, ...over },
+  });
+  const a = attributeOutcomes([i1], [spawn({ parentWakeId: "W1", wakeId: "child-1" }), spawn({ parentWakeId: "W1", wakeId: "child-2" })]);
+  ok((a.delegationsOf.get("W1") ?? []).length === 2, "task.spawned rows join the DELEGATING turn exactly by detail.parentWakeId");
+  ok(!a.delegationsOf.has("child-1"), "the row's own detail.wakeId is the CHILD's — it must never create a phantom parent join");
+  const none = attributeOutcomes([i1], [spawn({ wakeId: "child-1" })]);
+  ok(none.delegationsOf.size === 0, "a task.spawned with no parentWakeId is skipped, not guessed at");
 }
 
 {
@@ -159,7 +174,7 @@ const SILENT: Expected = "SILENT_OK";
 
 {
   const mkTurn = (over: Partial<TurnResult> & Pick<TurnResult, "turn" | "scenario" | "expected" | "outcome">): TurnResult => ({
-    label: "", probe: null, state: null, latencyMs: null, recall: null, matchedRows: [], notes: "", ...over,
+    label: "", probe: null, state: null, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "", ...over,
   });
   const turns: TurnResult[] = [
     mkTurn({ turn: 1, scenario: "S1", expected: "LANDED", outcome: "LANDED_VIA_REPLY_TOOL", recall: { code: true, date: true, ref: true } }),

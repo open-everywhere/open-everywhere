@@ -249,6 +249,7 @@ const A_NO_REPLY = "unified.no_reply";
 const A_BRIDGE_UNRESOLVED = "turn.direct_mention_bridge_unresolved";
 const A_BRIDGE_FAILED = "turn.direct_mention_bridge_post_failed";
 const A_REDRIVE = "unified.turn.redrive";
+const A_TASK_SPAWNED = "task.spawned";
 const COMPLETION_ACTIONS: ReadonlySet<string> = new Set([A_NO_REPLY, A_PROSE_DROPPED, A_PROSE_DELIVERED, A_BRIDGE_UNRESOLVED, A_BRIDGE_FAILED]);
 
 const dS = (e: AuditWireEntry, k: string): string | undefined => (typeof e.detail?.[k] === "string" ? (e.detail![k] as string) : undefined);
@@ -258,6 +259,7 @@ const dN = (e: AuditWireEntry, k: string): number | undefined => (typeof e.detai
 export interface Attribution {
   readonly completionOf: ReadonlyMap<string, AuditWireEntry>;
   readonly replyPostsOf: ReadonlyMap<string, readonly AuditWireEntry[]>;
+  readonly delegationsOf: ReadonlyMap<string, readonly AuditWireEntry[]>;
   readonly sessionId: string | null;
   readonly completions: readonly AuditWireEntry[];
   readonly redrivenWakeIds: ReadonlySet<string>;
@@ -275,6 +277,15 @@ export function attributeOutcomes(injs: readonly Injection[], rows: readonly Aud
     if (!w) continue;
     if (!replyPostsOf.has(w)) replyPostsOf.set(w, []);
     replyPostsOf.get(w)!.push(r);
+  }
+
+  const delegationsOf = new Map<string, AuditWireEntry[]>();
+  for (const r of asc) {
+    if (r.action !== A_TASK_SPAWNED) continue;
+    const w = dS(r, "parentWakeId");
+    if (!w) continue;
+    if (!delegationsOf.has(w)) delegationsOf.set(w, []);
+    delegationsOf.get(w)!.push(r);
   }
 
   let completions = asc.filter((r) => r.platform === "unified" && COMPLETION_ACTIONS.has(r.action));
@@ -353,7 +364,7 @@ export function attributeOutcomes(injs: readonly Injection[], rows: readonly Aud
     });
   }
 
-  return { completionOf, replyPostsOf, sessionId, completions, redrivenWakeIds, notes };
+  return { completionOf, replyPostsOf, delegationsOf, sessionId, completions, redrivenWakeIds, notes };
 }
 
 export function outcomeFor(
@@ -416,6 +427,7 @@ export interface TurnResult {
   probe: Injection | null;
   state: Injection | null;
   latencyMs: number | null;
+  delegations: number;
   recall: { code: boolean; date: boolean; ref: boolean } | null;
   matchedRows: AuditWireEntry[];
   notes: string;
@@ -598,10 +610,10 @@ async function rescoreRun(cli: Cli): Promise<void> {
     const probe = injections.find((i) => i.wakeId === w) ?? null;
     const state = injections.find((i) => i.kind === "state" && i.turn === t.turn) ?? null;
     if (!probe) {
-      return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: "SKIP" as Outcome, probe: null, state, latencyMs: null, recall: null, matchedRows: [], notes: "probe wakeId not found in the injection log / audit window" };
+      return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: "SKIP" as Outcome, probe: null, state, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: "probe wakeId not found in the injection log / audit window" };
     }
     const o = outcomeFor(probe, t.expected, attribution);
-    return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: o.outcome, probe, state, latencyMs: o.latencyMs, recall: null, matchedRows: o.matched, notes: `[rescored] ${o.notes}` };
+    return { turn: t.turn, scenario: t.scenario, label: spec.label, expected: t.expected, outcome: o.outcome, probe, state, latencyMs: o.latencyMs, delegations: (attribution.delegationsOf.get(probe.wakeId) ?? []).length, recall: null, matchedRows: o.matched, notes: `[rescored] ${o.notes}` };
   });
 
   const disagreements: string[] = [];
@@ -797,7 +809,8 @@ function printReport(turns: readonly TurnResult[], summary: ReturnType<typeof su
   for (const t of turns) {
     const rec = t.recall ? `${t.recall.code ? "c" : "·"}${t.recall.date ? "d" : "·"}${t.recall.ref ? "r" : "·"}` : "—";
     const fc = t.failureClass && t.failureClass !== "n/a" ? `  ✗${t.failureClass}` : "";
-    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(22)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(6)} rec:${rec}  ${t.notes}${fc}`);
+    const dlg = t.delegations > 0 ? ` dlg:${t.delegations}` : "";
+    console.log(`T${String(t.turn).padEnd(3)} ${t.scenario}  ${t.expected.padEnd(10)} ${t.outcome.padEnd(22)} ${(t.latencyMs ? Math.round(t.latencyMs / 1000) + "s" : "-").padEnd(6)}${dlg} rec:${rec}  ${t.notes}${fc}`);
   }
   console.log(`\n=== SUMMARY ===`);
   const s = summary;
@@ -936,7 +949,7 @@ async function runOneSeries(
   for (const p of pending) {
     const spec = SCENARIOS[p.scenario];
     if (p.skip || !p.probe) {
-      turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: "SKIP", probe: p.probe, state: p.state, latencyMs: null, recall: null, matchedRows: [], notes: p.skip ?? "no probe injected" });
+      turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: "SKIP", probe: p.probe, state: p.state, latencyMs: null, delegations: 0, recall: null, matchedRows: [], notes: p.skip ?? "no probe injected" });
       continue;
     }
     const o = outcomeFor(p.probe, spec.expected, finalAttribution);
@@ -948,7 +961,7 @@ async function runOneSeries(
         if (body) recall = recallHit(body, p.fact);
       }
     }
-    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, recall, matchedRows: o.matched, notes: o.notes });
+    turns.push({ turn: p.turn, scenario: p.scenario, label: spec.label, expected: spec.expected, outcome: o.outcome, probe: p.probe, state: p.state, latencyMs: o.latencyMs, delegations: (finalAttribution.delegationsOf.get(p.probe.wakeId) ?? []).length, recall, matchedRows: o.matched, notes: o.notes });
   }
 
   const fc = await classifyFailures(turns, finalAttribution);
