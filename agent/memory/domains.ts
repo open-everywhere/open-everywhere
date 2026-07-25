@@ -31,6 +31,8 @@ const silos: MemorySilo[] = [
   defineMemorySilo({ name: "e2e-solo-brain", provider: "postgres", description: "solo-window e2e pack scratch brain" }),
 ];
 
+const E2E_NOTION_SURFACE = "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101";
+
 const rawDomains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true,
     admins: ["U0EXOWNER", "U0EXUSER002", "300000000000000104"],
@@ -52,7 +54,8 @@ const rawDomains: Domain[] = [
 
   defineDomain({
     name: "e2e-unified",
-    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "slack/T0EXAMPLE/C0EXRANDM", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101", "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2", "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011", "notion/40000000-0000-4000-8000-000000000001/40000000-0000-4000-8000-000000000101"],
+    channels: ["slack/T0EXAMPLE/C0EXCHAN003", "slack/T0EXAMPLE/C0EXRANDM", "github/example-owner/e2e-scratch", "discord/1300000000000000100/1300000000000000101", "teams/7e5a0000-0000-4000-8000-000000000001/19-0exampleTeamsChannel00005119784069361745884-thread.tacv2", "linear/1a000000-0000-4000-8000-000000000001/1a000000-0000-4000-8000-000000000011",
+      ...(process.env.OE_MEMORY_EVAL === "1" ? [] : [E2E_NOTION_SURFACE])],
     memory: "e2e-ambient-brain",
     ambientSupervisor: true,
     mode: "unified",
@@ -65,7 +68,7 @@ const rawDomains: Domain[] = [
     ? [
         defineDomain({
           name: "e2e-memory",
-          channels: ["slack/T0EXAMPLE/C0EXCHAN005"],
+          channels: ["slack/T0EXAMPLE/C0EXCHAN005", E2E_NOTION_SURFACE],
           memory: ["payments-brain", "platform-notes", "misc", "handbook-cache"],
           ambientSupervisor: true,
           mode: "unified",

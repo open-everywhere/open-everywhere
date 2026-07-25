@@ -64,7 +64,9 @@ ok(JSON.stringify(a.facts.map((f) => f.needles)) !== JSON.stringify(c.facts.map(
 
 const snip = configSnippet(T, "e2e-memory");
 ok(snip.includes("defineMemorySilo") && snip.includes("payments-brain"), "config snippet emits defineMemorySilo for each silo");
-ok(snip.includes('name: "e2e-memory"') && snip.includes("crossSurfaceWindow: true"), "config snippet emits the e2e-memory domain with crossSurfaceWindow");
+ok(snip.includes('name: "e2e-memory"') && snip.includes('mode: "unified"') && snip.includes("ambientSupervisor: true"), "config snippet emits the e2e-memory domain on the CURRENT unified-window fields");
+ok(!snip.includes("crossSurfaceWindow"), "config snippet does not emit the retired crossSurfaceWindow field");
+ok(snip.includes('"slack/T_EVAL/C_MEMORY"') && snip.includes('"notion/W_EVAL/P_MEMORY"'), "config snippet wires TWO surfaces (Slack + a non-Slack one) so M4 cross-surface is runnable");
 ok(snip.includes("readOnly: true") && snip.includes('skill: "notion"'), "config snippet marks the read-only cache with its skill");
 
 console.log(`\n✓ seed-silo: ${n} assertions passed (topology shape, fact/distractor placement, depth, index quality, size scaling, determinism, config)\n`);
