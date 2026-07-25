@@ -2,8 +2,10 @@ import { appendAudit } from "../audit/audit.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "./config.js";
-import { governanceChannelFor, governanceDomains, isGovernanceChannel, type Domain } from "../memory/domain.js";
+import { governanceChannelFor, governanceDeliveryMode, governanceDomains, isGovernanceChannel, type Domain } from "../memory/domain.js";
 import { attestGovernanceChannel, floorBreachNotice, type FloorAttestation } from "./audience-floor.js";
+import { adminControlRoles } from "./roles.js";
+import { canDeliverDirectMessage, directMessageCapablePlatforms, dispatchDirectMessage } from "../channels/post-arms.js";
 
 export type PaneVenue =
   | { readonly placement: "inline"; readonly via: "governance-channel" }
@@ -59,55 +61,137 @@ function redirectDirective(target: "governance-channel" | "requester-dm", channe
 }
 
 export async function requirePaneVenue(ctx: BindableContext, opts: { kind: string }): Promise<PaneVenue> {
-  const domains = getConfig().loadDomains();
-  if (governanceDomains(domains).length === 0) {
-    return { placement: "inline", via: "requester-dm" };
-  }
+  const r = await resolvePaneVenue(ctx);
+  if (r.decision.placement === "inline") return r.decision;
+  await auditRedirect(r, opts.kind);
+  throw redirectError(r, opts.kind);
+}
 
+interface VenueResolution {
+  readonly decision: PaneVenue;
+  readonly domains: readonly Domain[];
+  readonly channelKey: string;
+  readonly principalId?: string;
+  readonly isGovernanceChannel: boolean;
+  readonly attestation?: FloorAttestation;
+  readonly coords: { org: string; platform: string; workspace: string; surface: string };
+}
+
+async function resolvePaneVenue(ctx: BindableContext): Promise<VenueResolution> {
+  const domains = getConfig().loadDomains();
   const b = bindFrom(ctx);
   const part = resolvePartition(ctx);
-  const channelKey = part.surfaceKey;
-  const isDm = b.mode === "dm";
-  const isGov = isGovernanceChannel(channelKey, domains);
+  const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface };
+  const base = { domains, channelKey: part.surfaceKey, principalId: b.principalId, coords };
 
-  let attestation: FloorAttestation | undefined;
-  if (isGov) {
-    attestation = await attestGovernanceChannel(channelKey, domains, {
-      org: part.org,
-      platform: part.platform,
-      workspace: part.workspace,
-      surface: part.surface,
-      principalId: b.principalId,
-    });
+  const dmFallback = governanceDeliveryMode(domains) === "dm-fallback";
+  if (governanceDomains(domains).length === 0 && !dmFallback) {
+    return { ...base, decision: { placement: "inline", via: "requester-dm" }, isGovernanceChannel: false };
   }
 
+  const isGov = isGovernanceChannel(part.surfaceKey, domains);
+  const attestation = isGov ? await attestGovernanceChannel(part.surfaceKey, domains, { ...coords, principalId: b.principalId }) : undefined;
+
   const decision = classifyPaneVenue({
-    isRequesterDm: isDm,
+    isRequesterDm: b.mode === "dm",
     isGovernanceChannel: isGov,
     attestation,
     governanceChannel: governanceChannelFor(domains, adminChannelFallback()),
   });
+  return { ...base, decision, isGovernanceChannel: isGov, attestation };
+}
 
-  if (decision.placement === "inline") return decision;
-
+async function auditRedirect(r: VenueResolution, kind: string, refused?: string): Promise<void> {
+  const decision = r.decision;
   await appendAudit({
-    org: part.org,
-    platform: part.platform,
-    workspace: part.workspace,
-    surface: part.surface,
-    principalId: b.principalId,
+    ...r.coords,
+    principalId: r.principalId,
     action: "governance.redirected",
     detail: {
-      kind: opts.kind,
-      from: channelKey,
-      to: decision.target,
-      ...(decision.channel ? { channel: decision.channel } : {}),
-      ...(isGov && attestation?.breach ? { floorBreach: attestation.breach.reason } : {}),
+      kind,
+      from: r.channelKey,
+      to: decision.placement === "redirect" ? decision.target : "inline",
+      ...(decision.placement === "redirect" && decision.channel ? { channel: decision.channel } : {}),
+      ...(r.isGovernanceChannel && r.attestation?.breach ? { floorBreach: r.attestation.breach.reason } : {}),
+      ...(refused ? { refused } : {}),
     },
   });
+}
 
-  const notice = isGov && attestation?.breach ? ` (${floorBreachNotice(attestation.breach)})` : "";
-  throw new PaneRedirectError(redirectDirective(decision.target, decision.channel, opts.kind) + notice, decision.target, decision.channel);
+function redirectError(r: VenueResolution, kind: string, refused?: string): PaneRedirectError {
+  const decision = r.decision;
+  if (decision.placement !== "redirect") throw new Error("redirectError called on a non-redirect venue");
+  const notice = r.isGovernanceChannel && r.attestation?.breach ? ` (${floorBreachNotice(r.attestation.breach)})` : "";
+  const why = refused ? ` I couldn't deliver it to your DM either: ${refused}` : "";
+  return new PaneRedirectError(redirectDirective(decision.target, decision.channel, kind) + notice + why, decision.target, decision.channel);
+}
+
+export class PaneDmDeliveredError extends Error {
+  readonly dmSurfaceId: string;
+  constructor(message: string, dmSurfaceId: string) {
+    super(message);
+    this.name = "PaneDmDeliveredError";
+    this.dmSurfaceId = dmSurfaceId;
+  }
+}
+
+export async function fulfilPaneRead<T>(
+  ctx: BindableContext,
+  opts: { kind: string; render: (value: T) => string },
+  compute: () => Promise<T>,
+): Promise<T> {
+  const r = await resolvePaneVenue(ctx);
+  const decision = r.decision;
+  if (decision.placement === "inline") return await compute();
+
+  if (decision.target === "governance-channel") {
+    await auditRedirect(r, opts.kind);
+    throw redirectError(r, opts.kind);
+  }
+
+  const roles = adminControlRoles(r.principalId, r.domains);
+  if (roles.length === 0) {
+    const why = r.principalId
+      ? `your id ("${r.principalId}") holds no admin standing in any configured domain`
+      : "this turn carries no verified sender id";
+    await auditRedirect(r, opts.kind, "role-unverified");
+    throw redirectError(r, opts.kind, why);
+  }
+  if (!canDeliverDirectMessage(r.coords.platform)) {
+    const capable = directMessageCapablePlatforms();
+    await auditRedirect(r, opts.kind, "no-dm-arm");
+    throw redirectError(r, opts.kind, `this deployment can't DM on "${r.coords.platform}" (DM delivery is implemented by: ${capable.length ? capable.join(", ") : "no provider"})`);
+  }
+
+  const value = await compute();
+  let delivery: { surfaceId: string; messageId: string };
+  try {
+    delivery = await dispatchDirectMessage(r.coords.platform, {
+      principalId: r.principalId!,
+      text: dmEnvelope(opts.kind, r.channelKey, opts.render(value)),
+    });
+  } catch (err) {
+    await auditRedirect(r, opts.kind, "dm-delivery-failed");
+    throw redirectError(r, opts.kind, String(err instanceof Error ? err.message : err));
+  }
+
+  await appendAudit({
+    ...r.coords,
+    principalId: r.principalId,
+    action: "governance.dm_delivered",
+    detail: { kind: opts.kind, from: r.channelKey, to: "requester-dm", dmSurface: delivery.surfaceId, roles },
+  });
+
+  throw new PaneDmDeliveredError(
+    `that's admin-pane output (${opts.kind}) — it can't be shown in this room, so I've DELIVERED IT to the person who asked, in their DM with me. ` +
+      `Reply here with ONLY a short pointer ("I've sent you a DM") — you do not have the content and must not restate, summarise, estimate or hint at any of it. ` +
+      `(Configure a governance domain to give the whole admin team a shared venue instead.)`,
+    delivery.surfaceId,
+  );
+}
+
+function dmEnvelope(kind: string, askedIn: string, body: string): string {
+  return `Admin-pane output (${kind}) — you asked in ${askedIn}, which isn't a venue that may hear org-scope output, so here it is view-only.\n\n${body}`;
 }
 
 function adminChannelFallback(): string | undefined {

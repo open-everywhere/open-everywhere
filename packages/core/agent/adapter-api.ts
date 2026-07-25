@@ -140,7 +140,7 @@ export { registerCapabilityManifest, capabilitiesForPlatform } from "./identity/
 export type { CapabilityManifest } from "./identity/capabilities.js";
 
 export { registerPostArm } from "./channels/post-arms.js";
-export type { PostArm, TargetResolveBag } from "./channels/post-arms.js";
+export type { PostArm, TargetResolveBag, DirectMessageRequest, DirectMessageDelivery } from "./channels/post-arms.js";
 export type { ReplyTarget } from "./channels/reply-post.js";
 export type { UnifiedReplyDeps } from "./channels/unified-reply.js";
 

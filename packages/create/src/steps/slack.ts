@@ -15,6 +15,7 @@ export function slackManifest(): string {
             "chat:write",
             "channels:history",
             "im:history",
+            "im:write",
             "groups:history",
             "reactions:write",
             "reactions:read",

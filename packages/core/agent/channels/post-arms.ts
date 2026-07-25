@@ -10,6 +10,16 @@ export interface TargetResolveBag {
   readonly ctx: BindableContext;
 }
 
+export interface DirectMessageDelivery {
+  readonly surfaceId: string;
+  readonly messageId: string;
+}
+
+export interface DirectMessageRequest {
+  readonly principalId: string;
+  readonly text: string;
+}
+
 export interface PostArm {
   readonly platform: string;
   resolveTarget?(bag: TargetResolveBag): ReplyTarget | null;
@@ -19,6 +29,7 @@ export interface PostArm {
   closeUnifiedSilently?(origin: UnifiedWakeOrigin, deps: UnifiedReplyDeps): Promise<void>;
   describeRedriveTarget?(origin: UnifiedWakeOrigin): string;
   redriveContainerId?(origin: UnifiedWakeOrigin): string;
+  deliverDirectMessage?(input: DirectMessageRequest): Promise<DirectMessageDelivery>;
 }
 
 const POST_ARMS: Record<string, PostArm> = {};
@@ -33,4 +44,26 @@ export function postArm(platform: string | undefined): PostArm | undefined {
 
 export function registeredPostArmPlatforms(): readonly string[] {
   return Object.keys(POST_ARMS);
+}
+
+export function directMessageCapablePlatforms(): readonly string[] {
+  return Object.values(POST_ARMS)
+    .filter((a) => typeof a.deliverDirectMessage === "function")
+    .map((a) => a.platform);
+}
+
+export function canDeliverDirectMessage(platform: string | undefined): boolean {
+  return typeof postArm(platform)?.deliverDirectMessage === "function";
+}
+
+export async function dispatchDirectMessage(platform: string | undefined, input: DirectMessageRequest): Promise<DirectMessageDelivery> {
+  const arm = postArm(platform);
+  const deliver = arm?.deliverDirectMessage;
+  if (!arm || !deliver) {
+    const capable = directMessageCapablePlatforms();
+    throw new Error(
+      `no DM-delivery arm for platform "${platform ?? "(unknown)"}" — DM delivery is implemented by: ${capable.length ? capable.join(", ") : "(no provider)"}.`,
+    );
+  }
+  return await deliver.call(arm, input);
 }

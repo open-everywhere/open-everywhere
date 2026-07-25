@@ -29,7 +29,8 @@ import {
   floorBreachNotice,
   type RoomRoster,
 } from "../agent/access/audience-floor.js";
-import { classifyPaneVenue, requirePaneVenue, PaneRedirectError } from "../agent/access/pane-venue.js";
+import { classifyPaneVenue, requirePaneVenue, fulfilPaneRead, PaneRedirectError, PaneDmDeliveredError } from "../agent/access/pane-venue.js";
+import { registerPostArm, dispatchDirectMessage, canDeliverDirectMessage, directMessageCapablePlatforms, type DirectMessageRequest } from "../agent/channels/post-arms.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -272,5 +273,180 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
   n++;
 }
 
+{
+  const orgOnly = (delivery?: "channel" | "dm-fallback") => [
+    defineDomain({ name: "org", match: "org", admins: ["U_ORG"], ...(delivery ? { governanceDelivery: delivery } : {}) }),
+  ];
+
+  {
+    let threw = false;
+    try {
+      assertGovernanceDomains([defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], governanceDelivery: "dm-fallback" })], []);
+    } catch (err) {
+      threw = true;
+      ok(/single ORG-WIDE knob/.test(String(err)), "the governanceDelivery lint explains it belongs on the org pseudo-domain");
+    }
+    ok(threw, "governanceDelivery on a non-org domain fails the config lint");
+    assert.doesNotThrow(() => assertGovernanceDomains(orgOnly("dm-fallback"), []), "governanceDelivery on the org pseudo-domain passes the lint");
+    n++;
+  }
+
+  {
+    registerConfig(baseConfig(orgOnly()) as never);
+    let ran = false;
+    const value = await fulfilPaneRead(ctxFor("U_ORG", "C_GENERAL", "channel"), { kind: "spend.report.org", render: () => "x" }, async () => {
+      ran = true;
+      return { secret: "org-wide totals" };
+    });
+    ok(ran && value.secret === "org-wide totals", "without governanceDelivery the venue gate stays INERT (the read renders in place, as before OPE-44)");
+  }
+
+  const sent: DirectMessageRequest[] = [];
+  const armWithDm = () =>
+    registerPostArm({
+      platform: "slack",
+      deliverDirectMessage: async (input) => {
+        sent.push(input);
+        return { surfaceId: "D_REQUESTER", messageId: "1712.0001" };
+      },
+    });
+  const armWithoutDm = () => registerPostArm({ platform: "slack" });
+
+  armWithDm();
+  ok(canDeliverDirectMessage("slack"), "canDeliverDirectMessage is true for a provider whose arm implements it");
+  ok(!canDeliverDirectMessage("teams"), "canDeliverDirectMessage is false for a platform with no arm at all");
+  ok(directMessageCapablePlatforms().includes("slack"), "directMessageCapablePlatforms lists the DM-capable provider");
+  await assert.rejects(
+    () => dispatchDirectMessage("teams", { principalId: "U_ORG", text: "hi" }),
+    (err: unknown) => err instanceof Error && /no DM-delivery arm for platform "teams"/.test(err.message) && !/xox|token=/.test(err.message),
+    "dispatchDirectMessage throws a loud, token-free refusal for a platform with no DM arm",
+  );
+  n++;
+
+  {
+    registerConfig(baseConfig(orgOnly("dm-fallback")) as never);
+    sent.length = 0;
+    let ran = false;
+    let threw = false;
+    try {
+      await fulfilPaneRead(
+        ctxFor("U_ORG", "C_GENERAL", "channel"),
+        { kind: "spend.report.org", render: (v: { secret: string }) => `TOTALS: ${v.secret}` },
+        async () => {
+          ran = true;
+          return { secret: "org-wide totals" };
+        },
+      );
+    } catch (err) {
+      threw = true;
+      ok(err instanceof PaneDmDeliveredError, "a delivered DM throws PaneDmDeliveredError (not a plain redirect)");
+      ok((err as PaneDmDeliveredError).dmSurfaceId === "D_REQUESTER", "the delivered error carries the DM conversation id");
+      const msg = String((err as Error).message);
+      ok(/sent you a DM/.test(msg), "the room directive asks for a pointer only");
+      ok(!/org-wide totals/.test(msg) && !/TOTALS/.test(msg), "the room directive carries NO substance");
+    }
+    ok(threw, "the DM-delivery arm throws rather than returning the substance to the model");
+    ok(ran, "the DM arm DOES compute the substance (redirect-and-FULFIL, not refuse)");
+    ok(sent.length === 1 && sent[0].principalId === "U_ORG", "the substance was delivered to the requesting principal's DM");
+    ok(/TOTALS: org-wide totals/.test(sent[0].text), "the DM carries the rendered substance");
+    ok(/asked in slack\/T1\/C_GENERAL/.test(sent[0].text), "the DM envelope names where it was asked + why it arrived");
+
+    const delivered = await readAudit({ action: "governance.dm_delivered" });
+    ok(delivered.length === 1, "exactly one governance.dm_delivered audit row is written");
+    const d = delivered[0].detail as { kind?: string; from?: string; to?: string; dmSurface?: string };
+    ok(d.kind === "spend.report.org" && d.from === "slack/T1/C_GENERAL" && d.to === "requester-dm" && d.dmSurface === "D_REQUESTER", "governance.dm_delivered detail carries { kind, from, to, dmSurface }");
+    ok(!JSON.stringify(delivered[0].detail).includes("org-wide totals"), "the audit row carries NO substance");
+  }
+
+  {
+    sent.length = 0;
+    let ran = false;
+    let threw = false;
+    try {
+      await fulfilPaneRead(ctxFor("U_NOBODY", "C_GENERAL", "channel"), { kind: "spend.report.org", render: () => "x" }, async () => {
+        ran = true;
+        return {};
+      });
+    } catch (err) {
+      threw = true;
+      ok(err instanceof PaneRedirectError, "an unverifiable role refuses with the ordinary redirect error");
+      ok(/holds no admin standing/.test(String((err as Error).message)), "the refusal names why the DM wasn't sent");
+    }
+    ok(threw && !ran && sent.length === 0, "an unverifiable role NEVER computes or delivers org-scope substance");
+    const rows = await readAudit({ action: "governance.redirected" });
+    ok(rows.some((r) => (r.detail as { refused?: string })?.refused === "role-unverified"), "a role-unverified refusal is audited as governance.redirected { refused }");
+  }
+
+  {
+    armWithoutDm();
+    let ran = false;
+    let threw = false;
+    try {
+      await fulfilPaneRead(ctxFor("U_ORG", "C_GENERAL", "channel"), { kind: "spend.report.org", render: () => "x" }, async () => {
+        ran = true;
+        return {};
+      });
+    } catch (err) {
+      threw = true;
+      ok(err instanceof PaneRedirectError, "a provider with no DM arm refuses with the ordinary redirect error");
+      ok(/can't DM on "slack"/.test(String((err as Error).message)), "the refusal names the platform that can't DM");
+    }
+    ok(threw && !ran, "a provider with no DM arm never computes org-scope substance");
+    ok((await readAudit({ action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "no-dm-arm"), "a missing DM arm is audited as governance.redirected { refused: no-dm-arm }");
+  }
+
+  {
+    registerPostArm({
+      platform: "slack",
+      deliverDirectMessage: async () => {
+        throw new Error("missing_scope: im:write");
+      },
+    });
+    let threw = false;
+    try {
+      await fulfilPaneRead(ctxFor("U_ORG", "C_GENERAL", "channel"), { kind: "spend.report.org", render: (v: { secret: string }) => v.secret }, async () => ({ secret: "org-wide totals" }));
+    } catch (err) {
+      threw = true;
+      ok(err instanceof PaneRedirectError && !(err instanceof PaneDmDeliveredError), "a failed DM post refuses (never reports delivery)");
+      const msg = String((err as Error).message);
+      ok(/missing_scope/.test(msg) && !/org-wide totals/.test(msg), "the refusal names the delivery failure and carries no substance");
+    }
+    ok(threw, "a failed DM post throws rather than returning the substance");
+    ok((await readAudit({ action: "governance.dm_delivered" })).length === 1, "a failed DM post writes NO extra governance.dm_delivered row");
+    ok((await readAudit({ action: "governance.redirected" })).some((r) => (r.detail as { refused?: string })?.refused === "dm-delivery-failed"), "a failed DM post is audited as governance.redirected { refused: dm-delivery-failed }");
+  }
+
+  {
+    armWithDm();
+    sent.length = 0;
+    registerConfig(
+      baseConfig([
+        defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["U_ORG"] }),
+        defineDomain({ name: "org", match: "org", admins: ["U_ORG"], governanceDelivery: "dm-fallback" }),
+      ]) as never,
+    );
+    _resetGovernanceFloorCacheForTest();
+    let ran = false;
+    let threw = false;
+    try {
+      await fulfilPaneRead(ctxFor("U_ORG", "C_GENERAL", "channel"), { kind: "spend.report.org", render: () => "x" }, async () => {
+        ran = true;
+        return {};
+      });
+    } catch (err) {
+      threw = true;
+      ok(err instanceof PaneRedirectError && (err as PaneRedirectError).target === "governance-channel", "with a governance channel configured the redirect still targets it, not the DM");
+    }
+    ok(threw && !ran && sent.length === 0, "the governance-channel redirect never computes the substance (OPE-110's shape preserved)");
+  }
+
+  {
+    registerConfig(baseConfig(orgOnly("dm-fallback")) as never);
+    sent.length = 0;
+    const value = await fulfilPaneRead(ctxFor("U_ORG", "D_DM", "im"), { kind: "spend.report.org", render: () => "x" }, async () => ({ secret: "s" }));
+    ok(value.secret === "s" && sent.length === 0, "asked IN the requester's DM the read renders inline (no re-delivery)");
+  }
+}
+
 rmSync(tmp, { recursive: true, force: true });
-console.log(`\n✓ governance: ${n} assertions passed (OPE-110 governance venue: config lint + floor tripwire + dual gate + redirect-and-fulfil)\n`);
+console.log(`\n✓ governance: ${n} assertions passed (OPE-110 governance venue + OPE-44 DM-delivery arm)\n`);

@@ -59,7 +59,10 @@ export interface Domain {
   readonly admins?: readonly string[];
   readonly governance?: boolean;
   readonly requestorEntitlementChecks?: boolean;
+  readonly governanceDelivery?: GovernanceDeliveryMode;
 }
+
+export type GovernanceDeliveryMode = "channel" | "dm-fallback";
 
 export function memoryRefs(domain: Domain): string[] {
   if (!domain.memory) return [];
@@ -187,11 +190,20 @@ export function governanceChannelFor(domains: readonly Domain[], fallback?: stri
   return first ?? fallback;
 }
 
+export function governanceDeliveryMode(domains: readonly Domain[]): GovernanceDeliveryMode {
+  return criteriaDomain("org", domains)?.governanceDelivery === "dm-fallback" ? "dm-fallback" : "channel";
+}
+
 export function assertGovernanceDomains(domains: readonly Domain[], vouched: readonly string[]): void {
   const vset = new Set(vouched);
   const trustEnv = (process.env.OE_TRUST ?? "").trim().toLowerCase() === "internal";
   const bad: string[] = [];
   for (const d of domains) {
+    if (d.governanceDelivery !== undefined && d.match !== "org") {
+      bad.push(
+        `  "${d.name}" sets governanceDelivery, but that is a single ORG-WIDE knob — move it to the "org" pseudo-domain (the { match: "org" } domain); there is deliberately no per-domain delivery policy`,
+      );
+    }
     if (d.governance !== true) continue;
     const channels = d.channels ?? [];
     if (d.match !== undefined || d.channels === undefined) {
