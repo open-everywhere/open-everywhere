@@ -291,6 +291,10 @@ async function onInbound(
   message: SlackMessage,
   isDm: boolean,
 ): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
+  if (!message.teamId) {
+    const threadTeam = (ctx.thread as { teamId?: string | null }).teamId;
+    if (typeof threadTeam === "string" && threadTeam.length > 0) message = { ...message, teamId: threadTeam };
+  }
   if (message.author?.isBot) {
     const rawBotId = typeof (message.raw as { bot_id?: unknown })?.bot_id === "string" ? (message.raw as { bot_id: string }).bot_id : undefined;
     if (!isAllowedSlackDriver(message.teamId, rawBotId)) return { auth: null };
