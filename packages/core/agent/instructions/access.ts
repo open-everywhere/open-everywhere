@@ -9,6 +9,7 @@ import { bindFrom } from "../identity/binding.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
+import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
 import { bridgeReadableChannelList, bridgeBotDisplayName } from "../channels/slack-bridge.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -19,6 +20,7 @@ import {
   channelPlatform,
   isUnifiedWindowContext,
   deploymentOrg,
+  windowGrainOf,
   type BindableContext,
   type SurfaceBinding,
 } from "../identity/binding.js";
@@ -355,7 +357,8 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     }
     try {
       const plan = resolveMemoryPlan(anchor.binding, anchor.partition, { domains: cfg.loadDomains(), silos: cfg.loadSilos() });
-      memoryMd = plan.reads.length > 0 ? frozenMemoryIndex(renderMemoryIndex(plan.reads)) : frozenMemoryIndex("");
+      const recall = memoryRecallRouteFor(windowGrainOf(ctx));
+      memoryMd = plan.reads.length > 0 ? frozenMemoryIndex(renderMemoryIndex(plan.reads, [], recall)) : frozenMemoryIndex("");
     } catch {
       memoryMd = "";
     }
@@ -390,7 +393,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, resolvePartition(ctx));
-  const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads) : "";
+  const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], memoryRecallRouteFor(windowGrainOf(ctx))) : "";
   const name = await surfaceAgentName(ctx);
   return [
     renderIdentity(name),

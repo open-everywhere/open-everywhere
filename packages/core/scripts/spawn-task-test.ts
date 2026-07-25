@@ -142,4 +142,38 @@ await assert.rejects(
 );
 n++;
 
+console.log("4. spawn_task on a RESUMED standing seat (OPE-121):");
+const resumedWindowToken = unifiedSupervisorToken("payments", 1);
+ok(
+  (await resolveWindowGated(spawnTask, {
+    channel: { kind: "unified", continuationToken: "" },
+    session: { auth: { current: { attributes: { oe_grain: "standing", oe_window_token: resumedWindowToken } } } },
+  } as never)) !== null,
+  "a resumed standing seat (blank continuation token + oe_window_token stamp) still MOUNTS spawn_task",
+);
+n++;
+await assert.rejects(
+  () =>
+    tool.execute(
+      { brief: "grep memory for the office move date" },
+      {
+        channel: { kind: "unified", continuationToken: "" },
+        session: { auth: { current: { attributes: { oe_grain: "standing", oe_window_token: resumedWindowToken, oe_wake_id: "wk-not-registered" } } } },
+      },
+    ),
+  /couldn't resolve the thread that woke you/,
+  "a resumed standing seat gets PAST the window wall on the oe_window_token stamp (it is no longer told it has no window)",
+);
+n++;
+await assert.rejects(
+  () =>
+    tool.execute(
+      { brief: "x" },
+      { channel: { kind: "unified", continuationToken: "" }, session: { auth: { current: { attributes: { oe_grain: "standing", oe_window_token: taskToken } } } } },
+    ),
+  /cannot spawn further tasks/,
+  "a task worker identified ONLY by its oe_window_token stamp is still refused by the recursion guard (the fallback narrows, never widens)",
+);
+n++;
+
 console.log(`spawn-task-test: ${n} assertions passed`);

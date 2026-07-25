@@ -2,6 +2,7 @@ import type { ResolvedMemory } from "./resolve.js";
 import type { MemorySilo } from "./silo.js";
 import { isProjectedCache } from "./readonly.js";
 import { tierSandboxDir } from "./sandbox-sync.js";
+import type { MemoryRecallRoute } from "../access/window-gate-manifest.js";
 
 const code = (s: string): string => "`" + s + "`";
 
@@ -30,12 +31,49 @@ function accessClause(silo: MemorySilo, readOnly: boolean): string {
   return "read-only — edits are blocked; use `remember` for this channel's own memory";
 }
 
-export function renderMemoryIndex(reads: readonly ResolvedMemory[], failedSilos: readonly string[] = []): string {
+const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: string; readonly heading: string }>> = {
+  "file-tools": {
+    lead: "Read the relevant silo with your tools before acting.",
+    heading: "## Silos — read with file tools",
+  },
+  agent: {
+    lead:
+      "This seat has NO file tools, so you cannot open these files yourself. To recall anything from " +
+      "memory, delegate a lookup: `agent` with `mode: \"sync\"` and a brief naming the paths below and " +
+      "what you need out of them (the worker has the file tools, greps the tree, and returns what it " +
+      "found this turn). Do that before answering from guesswork — and if the lookup comes back empty, " +
+      "say so rather than inventing the answer.",
+    heading: "## Silos — read by delegating a lookup",
+  },
+  spawn_task: {
+    lead:
+      "This seat has NO file tools, so you cannot open these files yourself. To recall anything from " +
+      "memory, delegate a lookup: `spawn_task` with a brief naming the paths below and what you need " +
+      "out of them (the worker has the file tools, greps the tree, and replies in the thread). Do that " +
+      "before answering from guesswork — and if the lookup comes back empty, say so rather than " +
+      "inventing the answer.",
+    heading: "## Silos — read by delegating a lookup",
+  },
+  none: {
+    lead:
+      "This seat has NO file tools and cannot delegate, so it CANNOT read these files. If a question " +
+      "turns on what is in them, say plainly that you can't check memory from here — never answer as " +
+      "if you had read it.",
+    heading: "## Silos — on disk, but unreachable from this seat",
+  },
+};
+
+export function renderMemoryIndex(
+  reads: readonly ResolvedMemory[],
+  failedSilos: readonly string[] = [],
+  recall: MemoryRecallRoute = "file-tools",
+): string {
+  const guidance = RECALL_GUIDANCE[recall] ?? RECALL_GUIDANCE["file-tools"];
   const lines: string[] = [
     "# Memory index",
     "",
     "Your durable memory for this channel — files on disk, **not** in your context automatically.",
-    "Read the relevant silo with your tools before acting.",
+    guidance.lead,
     "",
   ];
 
@@ -45,7 +83,7 @@ export function renderMemoryIndex(reads: readonly ResolvedMemory[], failedSilos:
   }
 
   if (reads.length > 0) {
-    lines.push("## Silos — read with file tools");
+    lines.push(guidance.heading);
     for (const r of reads) {
       const dir = tierSandboxDir(r.tier);
       const desc = r.silo.description ? `${r.silo.description} — ` : "";

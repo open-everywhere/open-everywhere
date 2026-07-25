@@ -84,6 +84,18 @@ export function withheldFromGrain(grain: WindowGrain): string[] {
   return Object.keys(WINDOW_GATED_TOOLS).filter((name) => !WINDOW_GATED_TOOLS[name].includes(grain));
 }
 
+export type MemoryRecallRoute = "file-tools" | "agent" | "spawn_task" | "none";
+
+export function memoryRecallRouteFor(
+  grain: WindowGrain,
+  wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
+  armed: boolean = oneshotAgentEnabled(),
+): MemoryRecallRoute {
+  if (wideHandsGrains.includes(grain)) return "file-tools";
+  const delegator = armed ? "agent" : "spawn_task";
+  return WINDOW_GATED_TOOLS[delegator].includes(grain) ? delegator : "none";
+}
+
 export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "reply",
   "no_reply",

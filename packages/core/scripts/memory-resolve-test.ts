@@ -196,6 +196,18 @@ const allFailedIndex = renderMemoryIndex([], ["org-brain"]);
 ok(allFailedIndex.includes("Unavailable this session") && !allFailedIndex.includes("No memory is configured"), "index: every silo failed → unavailable note, NOT the no-memory-configured lie");
 ok(!renderMemoryIndex(multi.reads).includes("Unavailable"), "index: no failures → no unavailable section (default unchanged)");
 
+ok(renderMemoryIndex(multi.reads, [], "file-tools") === multiIndex, "recall: the default IS 'file-tools' — the on-disk copy is byte-identical");
+ok(multiIndex.includes("Read the relevant silo with your tools") && multiIndex.includes("read with file tools"), "recall/file-tools: the pre-OPE-121 wording is preserved verbatim");
+const delegIndex = renderMemoryIndex(multi.reads, [], "agent");
+ok(!delegIndex.includes("Read the relevant silo with your tools"), "recall/agent: a seat with no file tools is NOT told to use file tools");
+ok(delegIndex.includes("NO file tools") && delegIndex.includes("`agent`") && delegIndex.includes("mode: \"sync\""), "recall/agent: names the delegation verb + the mode, at the point of need");
+ok(delegIndex.includes("memory/txn/") && delegIndex.includes("delegating a lookup"), "recall/agent: still lists every silo path — they are what goes in the brief");
+const spawnIndex = renderMemoryIndex(multi.reads, [], "spawn_task");
+ok(spawnIndex.includes("`spawn_task`") && !spawnIndex.includes("`agent`"), "recall/spawn_task: flag-OFF seats are pointed at the verb they actually mount");
+const noneIndex = renderMemoryIndex(multi.reads, [], "none");
+ok(noneIndex.includes("CANNOT read these files") && noneIndex.includes("can't check memory"), "recall/none: a seat with neither file tools nor delegation is told to SAY SO, not to bluff");
+ok(!noneIndex.includes("`agent`") && !noneIndex.includes("`spawn_task`"), "recall/none: names no delegation verb it doesn't hold");
+
 assertSilosValid(cfg.silos);
 ok(true, "validation: a valid silo set passes");
 throws(() => assertSilosValid([{ name: "empty" } as MemorySilo]), "validation: a silo with no provider throws");
