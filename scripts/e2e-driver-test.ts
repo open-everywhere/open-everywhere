@@ -724,6 +724,32 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(raced.dispatchMs === -823, `a worker that beats the spawn row yields a NEGATIVE dispatch, not a clamp to 0; got ${raced.dispatchMs}`);
   ok(raced.gaps.length === 0, "…and that race is NOT a gap — the join is still complete");
 
+  const { attributeBoot, projectMemorySync, renderBootAttribution, MEMORY_SYNC_TIMING_ACTION } = await import(
+    "../packages/core/scripts/e2e/transcript-timings.js"
+  );
+  const syncRow = {
+    ts: "2026-03-29T01:10:10.100Z", org: "o", platform: "slack", workspace: "T1", action: MEMORY_SYNC_TIMING_ACTION,
+    detail: {
+      sessionId: "wrun_worker", hookMs: 1800, baselineMs: 120, sandboxMs: 1200, indexMs: 60, siloCount: 2,
+      silos: [
+        { silo: "payments-brain", tier: "silo:payments-brain", provider: "postgres", readOnly: false, loadMs: 40, syncMs: 30, files: 12, bytes: 40960, ok: true },
+        { silo: "notion-projection", tier: "silo:notion-projection", provider: "notion", readOnly: true, loadMs: 300, syncMs: 20, lockMs: 25, files: 30, bytes: 131072, ok: true },
+      ],
+    },
+  };
+  ok(MEMORY_SYNC_TIMING_ACTION === "memory.sync_timing", "the driver's action key matches the producer's (memory-sync-timing-test.ts pins the constant identity)");
+  const proj = projectMemorySync([syncRow], "wrun_worker")!;
+  ok(proj.silos.length === 2 && proj.sandboxMs === 1200, "the row projects into a per-silo decomposition plus the once-per-session sandbox cold-create");
+  ok(proj.silos[1].totalMs === 345, `a silo's share of boot = load + sync + lock; got ${proj.silos[1].totalMs}`);
+  const boot = attributeBoot(s, [syncRow], "wrun_worker")!;
+  ok(boot.bootMs === 2226 && boot.hookMs === 1800 && boot.unattributedMs === 426, `boot = memory hook + the OTHER session.started work; got ${boot.unattributedMs}`);
+  ok(boot.sandboxMs === 1200 && boot.siloMs === 415, `the sandbox cold-create and Σ per-silo memory cost are SEPARATE numbers (1200 vs ${boot.siloMs}) — the confusion this exists to end`);
+  ok(boot.silos[0].silo === "notion-projection", "silos come back slowest-first, so 'which silo cost the boot' is answerable — here the Notion pull, not Postgres");
+  ok(boot.gaps.length === 0 && renderBootAttribution(boot).some((l) => l.includes("notion-projection")), "a complete attribution reports no gaps and names the silo in the render");
+  ok(attributeBoot(s, [], "wrun_worker") === null, "NO row (the default — the flag is OFF) ⇒ null, so bootMs stays the ceiling it always was; an absent measurement is never a zero");
+  const emptyPlan = attributeBoot(s, [{ ...syncRow, detail: { sessionId: "wrun_worker", hookMs: 2, siloCount: 0, silos: [] } }], "wrun_worker")!;
+  ok(emptyPlan.sandboxMs === null && emptyPlan.gaps.some((g) => g.includes("ZERO silos")), "an EMPTY memory plan is a NAMED gap: that session's hook returns before getSandbox(), so its bootMs is not comparable to a memory-bearing session's");
+
   const sum = summariseTimings([{ scenarioId: "X", label: "l", capturedAt: "2026-03-29T01:11:00.000Z", sessions: [{ sessionId: "wrun_worker", timing: s }], delegations: [d] }]);
   ok(sum.delegations === 1 && sum.delegationsFullyJoined === 1, "the run summary counts delegations and how many decomposed end-to-end");
   ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === 6033, "the run summary carries p50 wall / boot / ttft — the recorded series, never a threshold");

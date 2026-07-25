@@ -479,6 +479,118 @@ export function joinDelegations(
   return out.sort((a, b) => (ms(a.spawnedAt) ?? 0) - (ms(b.spawnedAt) ?? 0));
 }
 
+export const MEMORY_SYNC_TIMING_ACTION = "memory.sync_timing";
+
+export interface SiloSyncTiming {
+  readonly silo: string | null;
+  readonly tier: string | null;
+  readonly provider: string | null;
+  readonly readOnly: boolean | null;
+  readonly loadMs: number | null;
+  readonly syncMs: number | null;
+  readonly lockMs: number | null;
+  readonly files: number | null;
+  readonly bytes: number | null;
+  readonly ok: boolean | null;
+  readonly totalMs: number | null;
+}
+
+export interface MemorySyncTiming {
+  readonly sessionId: string | null;
+  readonly hookMs: number | null;
+  readonly baselineMs: number | null;
+  readonly sandboxMs: number | null;
+  readonly indexMs: number | null;
+  readonly versionsMs: number | null;
+  readonly silos: readonly SiloSyncTiming[];
+}
+
+export interface BootAttribution {
+  readonly bootMs: number | null;
+  readonly hookMs: number | null;
+  readonly sandboxMs: number | null;
+  readonly baselineMs: number | null;
+  readonly siloMs: number | null;
+  readonly indexMs: number | null;
+  readonly versionsMs: number | null;
+  readonly unattributedMs: number | null;
+  readonly silos: readonly SiloSyncTiming[];
+  readonly gaps: readonly string[];
+}
+
+function detailNum(d: Record<string, unknown> | undefined, key: string): number | null {
+  return num(d?.[key]);
+}
+
+export function projectMemorySync(
+  rows: readonly AuditWireEntry[],
+  sessionId: string | null,
+): MemorySyncTiming | null {
+  const candidates = rows.filter((r) => r.action === MEMORY_SYNC_TIMING_ACTION);
+  const row = sessionId === null
+    ? candidates[0] ?? null
+    : candidates.find((r) => detailStr(r, "sessionId") === sessionId) ?? null;
+  if (!row) return null;
+  const d = row.detail;
+  const rawSilos = Array.isArray(d?.["silos"]) ? (d?.["silos"] as unknown[]) : [];
+  const silos: SiloSyncTiming[] = [];
+  for (const raw of rawSilos) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const s = raw as Record<string, unknown>;
+    const loadMs = num(s["loadMs"]);
+    const syncMs = num(s["syncMs"]);
+    const lockMs = num(s["lockMs"]);
+    silos.push({
+      silo: str(s["silo"]),
+      tier: str(s["tier"]),
+      provider: str(s["provider"]),
+      readOnly: typeof s["readOnly"] === "boolean" ? (s["readOnly"] as boolean) : null,
+      loadMs,
+      syncMs,
+      lockMs,
+      files: num(s["files"]),
+      bytes: num(s["bytes"]),
+      ok: typeof s["ok"] === "boolean" ? (s["ok"] as boolean) : null,
+      totalMs: sumKnown([loadMs, syncMs !== null && syncMs >= 0 ? syncMs : null, lockMs]),
+    });
+  }
+  return {
+    sessionId: detailStr(row, "sessionId"),
+    hookMs: detailNum(d, "hookMs"),
+    baselineMs: detailNum(d, "baselineMs"),
+    sandboxMs: detailNum(d, "sandboxMs"),
+    indexMs: detailNum(d, "indexMs"),
+    versionsMs: detailNum(d, "versionsMs"),
+    silos,
+  };
+}
+
+export function attributeBoot(
+  session: SessionTiming,
+  rows: readonly AuditWireEntry[],
+  sessionId: string | null = session.sessionId,
+): BootAttribution | null {
+  const sync = projectMemorySync(rows, sessionId);
+  if (!sync) return null;
+  const gaps: string[] = [];
+  if (session.bootMs === null) gaps.push("no bootMs in this replay (paged read with no session.started) — the split has nothing to subtract from");
+  if (sync.silos.length === 0) gaps.push("the sync row lists ZERO silos — this session's memory plan was empty, so its boot contains no memory work and no sandbox create");
+  for (const s of sync.silos) if (s.ok === false) gaps.push(`silo ${s.silo ?? "?"} FAILED to materialise but still spent boot time`);
+  const siloMs = sumKnown(sync.silos.map((s) => s.totalMs));
+  return {
+    bootMs: session.bootMs,
+    hookMs: sync.hookMs,
+    sandboxMs: sync.sandboxMs,
+    baselineMs: sync.baselineMs,
+    siloMs,
+    indexMs: sync.indexMs,
+    versionsMs: sync.versionsMs,
+    unattributedMs: delta(sync.hookMs, session.bootMs),
+    silos: [...sync.silos].sort((a, b) => (b.totalMs ?? -1) - (a.totalMs ?? -1)),
+    gaps,
+  };
+}
+
 export function fmtMs(v: number | null): string {
   if (v === null) return "?";
   return v >= 10_000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`;
@@ -502,6 +614,24 @@ export function renderDelegationTiming(d: DelegationTiming): string[] {
     if (slowest.length > 0) lines.push(`  slowest calls: ${slowest.map((c) => `${c.name ?? c.kind} ${fmtMs(c.wallMs)}`).join(", ")}`);
   }
   for (const g of d.gaps) lines.push(`  ⚠ gap: ${g}`);
+  return lines;
+}
+
+export function renderBootAttribution(a: BootAttribution): string[] {
+  const lines = [
+    `boot ${fmtMs(a.bootMs)} = memory hook ${fmtMs(a.hookMs)} + other session.started work ${fmtMs(a.unattributedMs)}`,
+    `  memory hook: sandbox-create ${fmtMs(a.sandboxMs)}, write-baseline ${fmtMs(a.baselineMs)},` +
+      ` silos ${fmtMs(a.siloMs)}, index ${fmtMs(a.indexMs)}, version-probes ${fmtMs(a.versionsMs)}`,
+  ];
+  for (const s of a.silos) {
+    lines.push(
+      `  silo ${s.silo ?? "?"} (${s.provider ?? "?"}${s.readOnly ? ", ro" : ""}): total ${fmtMs(s.totalMs)}` +
+        ` = load ${fmtMs(s.loadMs)} + sync ${fmtMs(s.syncMs !== null && s.syncMs >= 0 ? s.syncMs : null)}` +
+        `${s.lockMs !== null ? ` + lock ${fmtMs(s.lockMs)}` : ""}` +
+        ` | ${s.files ?? "?"} file(s), ${s.bytes ?? "?"} byte(s)${s.ok === false ? " — FAILED" : ""}`,
+    );
+  }
+  for (const g of a.gaps) lines.push(`  ⚠ gap: ${g}`);
   return lines;
 }
 
