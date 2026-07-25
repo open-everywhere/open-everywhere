@@ -34,6 +34,8 @@ import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext 
 import { buildCostReport, checkExpectedModels, fetchRunUsage, renderCostReport } from "./cost.js";
 import { callUnifiedAudit, fetchAudit } from "./audit-read.js";
 import { fetchTranscript, type TranscriptWireEvent } from "./transcript-read.js";
+import { summariseTimings, writeTimingsRecords, type TimingsRecord } from "./timings-record.js";
+import { fmtMs } from "./transcript-timings.js";
 
 class TimeoutError extends Error {
   constructor(ms: number) {
@@ -67,6 +69,7 @@ function replyTail(reply: string, max = 320): string {
 
 async function main(): Promise<void> {
   const runStartedIso = new Date().toISOString();
+  const timingRecords: TimingsRecord[] = [];
   const report = resolveCapabilities();
   const slack = resolveSlack();
   const discord = resolveDiscord();
@@ -281,6 +284,9 @@ async function main(): Promise<void> {
       log(line: string): void {
         console.log(`  [${scenario.id}] ${line}`);
       },
+      recordTiming(record: TimingsRecord): void {
+        timingRecords.push(record);
+      },
     };
 
     const startedAt = Date.now();
@@ -337,6 +343,21 @@ async function main(): Promise<void> {
     console.log(
       "e2e run cost: skipped — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN + E2E_USAGE_WORKSPACES to price runs (reads GET /control/v1/usage)",
     );
+  }
+
+  if (timingRecords.length > 0) {
+    const s = summariseTimings(timingRecords);
+    console.log(
+      `e2e timings: ${s.records} record(s), ${s.delegations} delegation(s) (${s.delegationsFullyJoined} fully joined)` +
+        ` — delegation wall p50 ${fmtMs(s.delegationWallMs.p50)} (min ${fmtMs(s.delegationWallMs.min)}, max ${fmtMs(s.delegationWallMs.max)}),` +
+        ` boot(sandbox+memory) p50 ${fmtMs(s.bootMsP50)}, ttft p50 ${fmtMs(s.ttftMsP50)}`,
+    );
+    try {
+      const path = writeTimingsRecords(timingRecords, { startedAt: runStartedIso, ...(costTarget ? { target: costTarget } : {}) });
+      if (path) console.log(`e2e timings: written to ${path}`);
+    } catch (err) {
+      console.log(`e2e timings: not written (${String(err instanceof Error ? err.message : err)})`);
+    }
   }
 
   const summary = `${passed} passed, ${failed} failed, ${skipped} skipped of ${SCENARIOS.length}`;

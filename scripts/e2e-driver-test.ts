@@ -646,6 +646,86 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
 }
 
 {
+  const { decomposeSession, joinDelegations, delegationJoinTargets, fmtMs } = await import(
+    "../packages/core/scripts/e2e/transcript-timings.js"
+  );
+  const { summariseTimings } = await import("../packages/core/scripts/e2e/timings-record.js");
+
+  const worker = [
+    { index: 0, at: "2026-03-29T01:10:08.677Z", type: "session.started", data: { runtime: { modelId: "m" } } },
+    { index: 1, at: "2026-03-29T01:10:10.903Z", type: "turn.started", data: { turnId: "t1", sequence: 0 } },
+    { index: 2, at: "2026-03-29T01:10:10.917Z", type: "message.received", data: { message: "<wake .../>", turnId: "t1" } },
+    { index: 3, at: "2026-03-29T01:10:10.918Z", type: "step.started", data: { turnId: "t1", stepIndex: 0 } },
+    { index: 4, at: "2026-03-29T01:10:16.951Z", type: "reasoning.appended", data: { turnId: "t1", stepIndex: 0, reasoningDelta: "a" } },
+    { index: 5, at: "2026-03-29T01:10:17.010Z", type: "reasoning.appended", data: { turnId: "t1", stepIndex: 0, reasoningDelta: "b" } },
+    { index: 6, at: "2026-03-29T01:10:17.079Z", type: "actions.requested", data: { turnId: "t1", stepIndex: 0, actions: [{ callId: "c1", kind: "tool-call", toolName: "read_file", input: {} }] } },
+    { index: 7, at: "2026-03-29T01:10:17.169Z", type: "action.result", data: { turnId: "t1", stepIndex: 0, status: "completed", result: { callId: "c1", kind: "tool-result", toolName: "read_file", output: "x" } } },
+    { index: 8, at: "2026-03-29T01:10:17.222Z", type: "step.completed", data: { turnId: "t1", stepIndex: 0, finishReason: "tool-calls", usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 }, providerMetadata: { gateway: { generationId: "gen_1" } } } },
+    { index: 9, at: "2026-03-29T01:10:17.625Z", type: "step.started", data: { turnId: "t1", stepIndex: 1 } },
+    { index: 10, at: "2026-03-29T01:10:24.504Z", type: "message.appended", data: { turnId: "t1", stepIndex: 1, messageDelta: "done" } },
+    { index: 11, at: "2026-03-29T01:10:24.625Z", type: "step.completed", data: { turnId: "t1", stepIndex: 1, finishReason: "stop", usage: { inputTokens: 200, outputTokens: 30, costUsd: 0.002 } } },
+    { index: 12, at: "2026-03-29T01:10:24.700Z", type: "turn.completed", data: { turnId: "t1", sequence: 1 } },
+    { index: 13, at: "2026-03-29T01:10:24.800Z", type: "session.waiting", data: { continuationToken: "ct", wait: "next-user-message" } },
+  ];
+
+  const s = decomposeSession(worker);
+  ok(s.bootMs === 2226, `boot = session.started → first turn.started (sandbox create + memory materialisation); got ${s.bootMs}`);
+  ok(s.turns.length === 1 && s.turns[0].outcome === "completed", "one turn, terminal outcome read off turn.completed");
+  ok(s.turns[0].preflightMs === 15, `preflight = turn.started → first step.started (the turn.started hook chain); got ${s.turns[0].preflightMs}`);
+  ok(s.turns[0].steps.length === 2, "two model calls in the turn, keyed by (turnId, stepIndex)");
+  ok(s.turns[0].steps[0].ttftMs === 6033, `ttft = step.started → the step's FIRST delta (later deltas must not overwrite it); got ${s.turns[0].steps[0].ttftMs}`);
+  ok(s.turns[0].steps[1].ttftMs === 6879, "the second step gets its OWN ttft — stepIndex is per-turn, not global");
+  ok(s.turns[0].steps[0].generationId === "gen_1", "the gateway generationId is projected — the join key into the AI Gateway inference log (the only record of the upstream provider)");
+  ok(s.turns[0].toolCalls.length === 1 && s.turns[0].toolCalls[0].wallMs === 90, `tool call paired actions.requested → action.result by callId; got ${s.turns[0].toolCalls[0]?.wallMs}`);
+  ok(s.turns[0].toolCalls[0].status === "completed" && s.turns[0].toolCalls[0].name === "read_file", "tool call carries its eve status + tool name");
+  ok(s.totals.tokens === 350 && s.totals.costUsd === 0.003, "step usage totals sum across steps");
+  ok(s.coverage.events === 14 && s.coverage.withAt === 14 && s.coverage.unpairedCalls === 0, "coverage counts every event and every paired call — the deterministic observability gate");
+
+  const untimed = decomposeSession([{ index: 0, at: null, type: "session.started", data: {} }, { index: 1, at: null, type: "turn.started", data: { turnId: "t1" } }]);
+  ok(untimed.bootMs === null, "a missing meta.at yields a NULL duration, not 0 — an unknown is not a zero");
+  ok(untimed.coverage.withAt === 0 && untimed.coverage.events === 2, "…and the coverage counter reports it, so an eve drift is visible rather than silent");
+  ok(fmtMs(null) === "?" && fmtMs(90) === "90ms" && fmtMs(23200) === "23.2s", "fmtMs renders unknown as '?' and never as a number");
+  const unknownType = decomposeSession([{ index: 0, at: "2026-03-29T00:30:00.000Z", type: "some.future.event", data: { turnId: "t9" } }]);
+  ok(unknownType.turns.length === 0 && unknownType.coverage.events === 1, "an unrecognised eve event type is counted but never invents a phase");
+
+  const spawned = {
+    ts: "2026-03-29T01:10:06.000Z", org: "o", platform: "unified", workspace: "d", action: "task.spawned",
+    detail: { taskId: "T1", oneshot: true, parentSessionId: "wrun_caller", parentWakeId: "w0", wakeId: "w1", briefLen: 347 },
+  };
+  const returned = {
+    ts: "2026-03-29T01:10:25.500Z", org: "o", platform: "unified", workspace: "d", action: "task.returned",
+    detail: { taskId: "T1", mode: "async", sessionId: "wrun_worker", summaryLen: 165, hasError: false, delivered: true },
+  };
+  const rows = [returned, spawned];
+  const targets = delegationJoinTargets(rows);
+  ok(targets.length === 1 && targets[0].workerSessionId === "wrun_worker" && targets[0].parentSessionId === "wrun_caller", "delegationJoinTargets names both sides BEFORE any transcript is paid for");
+
+  const [d] = joinDelegations(rows, new Map([["wrun_worker", worker]]));
+  ok(d.gaps.length === 0, `a complete join reports NO gaps; got ${JSON.stringify(d.gaps)}`);
+  ok(d.wallMs === 19500, `wall = task.spawned → task.returned (what the caller waits out); got ${d.wallMs}`);
+  ok(d.dispatchMs === 2677, `dispatch = spawn row → the worker's first recorded event (workflow cold-start); got ${d.dispatchMs}`);
+  ok(d.bootMs === 2226, "boot carries the worker's sandbox-create + memory-materialisation window through to the delegation view");
+  ok(d.ttftMs === 6033, "ttft is the worker's FIRST model call's time to first token — the number a 'viable in a conversational turn?' argument is about");
+  ok(d.workMs === 13797, `work = worker turn.started → last turn end; got ${d.workMs}`);
+  ok(d.returnMs === 700, `return = worker's last recorded event → the task.returned row (result persist + caller wake); got ${d.returnMs}`);
+  ok(d.unaccountedMs === 100, `phases + unaccounted reconstruct the wall exactly; got ${d.unaccountedMs}`);
+  ok(d.worker !== null && d.worker.totals.toolCalls === 1, "the worker's whole session decomposition rides along");
+
+  const noStamp = joinDelegations([{ ...returned, detail: { taskId: "T1", mode: "async" } }, spawned], new Map());
+  ok(noStamp[0].gaps.some((g) => g.includes("no sessionId")), "a task.returned that loses its sessionId stamp is a NAMED gap (the pre-OPE-121 shape) — the worker's work would be unobservable");
+  ok(noStamp[0].wallMs === 19500, "…and the caller-visible wall-clock is still derivable from the audit rows alone");
+  const noReturn = joinDelegations([spawned], new Map());
+  ok(noReturn[0].gaps.some((g) => g.includes("no task.returned")), "a spawn with no return inside the window is a NAMED gap, not a hidden null");
+  const emptyReplay = joinDelegations(rows, new Map([["wrun_worker", []]]));
+  ok(emptyReplay[0].gaps.some((g) => g.includes("EMPTY")), "an expired/unreadable worker session is a NAMED gap — the S-MEM-READ precedent that an observability failure must not read as a product result");
+
+  const sum = summariseTimings([{ scenarioId: "X", label: "l", capturedAt: "2026-03-29T01:11:00.000Z", sessions: [{ sessionId: "wrun_worker", timing: s }], delegations: [d] }]);
+  ok(sum.delegations === 1 && sum.delegationsFullyJoined === 1, "the run summary counts delegations and how many decomposed end-to-end");
+  ok(sum.delegationWallMs.p50 === 19500 && sum.bootMsP50 === 2226 && sum.ttftMsP50 === 6033, "the run summary carries p50 wall / boot / ttft — the recorded series, never a threshold");
+  ok(summariseTimings([]).delegationWallMs.p50 === null, "an empty run summarises to nulls, not zeros");
+}
+
+{
   const { buildChatUpdateBody, buildUploadUrlBody, buildCompleteUploadBody } = await import("../packages/core/scripts/e2e/slack-driver.js");
   const upd = new URLSearchParams(buildChatUpdateBody({ channel: "C1", ts: "1.2", text: "edited" }));
   ok(upd.get("channel") === "C1" && upd.get("ts") === "1.2" && upd.get("text") === "edited", "chat.update body carries channel + ts + new text");

@@ -9,6 +9,8 @@ import type { PrApi } from "./pr-api.js";
 import { buildUnifiedAuditQuery, type AuditQueryOpts, type AuditWireEntry, type UnifiedAuditCall, type UnifiedAuditWire } from "./audit-read.js";
 import type { TranscriptWireEvent } from "./transcript-read.js";
 import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
+import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
+import type { TimingsRecord } from "./timings-record.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
@@ -65,6 +67,7 @@ export interface ScenarioContext {
   judgePass3(rubric: Rubric, reply: string, label: string): Promise<void>;
   skip(reason: string): never;
   log(line: string): void;
+  recordTiming(record: TimingsRecord): void;
 }
 
 export type Surface = "slack" | "teams" | "discord" | "github" | "linear" | "notion" | "cross";
@@ -345,8 +348,10 @@ export const SCENARIOS: readonly Scenario[] = [
       );
 
       const reads: string[] = [];
+      const replays = new Map<string, readonly TranscriptWireEvent[]>();
       for (const sessionId of sessionIds) {
         const events = await transcriptRead(sessionId);
+        replays.set(sessionId, events);
         const found = extractMemoryPathReads(events);
         if (found.length > 0) ctx.log(`  session ${sessionId}: ${found.length} memory-path read(s) — ${[...new Set(found)].slice(0, 6).join(", ")}`);
         reads.push(...found);
@@ -365,6 +370,42 @@ export const SCENARIOS: readonly Scenario[] = [
           ? `recall route: DELEGATED — ${delegations} worker(s) spawned; the reads above are the worker's (the OPE-121 route for a conversational-root seat)`
           : "recall route: IN-SEAT — no delegation row; this seat read the tree with its own file tools (a wide-hands grain)",
       );
+
+      const targets = delegationJoinTargets(rows);
+      const workerTranscripts = new Map<string, readonly TranscriptWireEvent[]>();
+      for (const t of targets) {
+        if (!t.workerSessionId) continue;
+        const cached = replays.get(t.workerSessionId);
+        workerTranscripts.set(t.workerSessionId, cached ?? (await transcriptRead(t.workerSessionId)));
+      }
+      const timings = joinDelegations(rows, workerTranscripts);
+      for (const d of timings) for (const line of renderDelegationTiming(d)) ctx.log(line);
+
+      const sessionTimings = [...replays.entries()]
+        .filter(([, events]) => events.length > 0)
+        .map(([sessionId, events]) => ({ sessionId, timing: decomposeSession(events) }));
+      for (const s of sessionTimings) for (const line of renderSessionTiming(s.timing, `session ${s.sessionId}`)) ctx.log(line);
+
+      ctx.recordTiming({
+        scenarioId: "S-MEM-READ",
+        label: "delegated memory recall — standing seat asks for what is on disk",
+        capturedAt: new Date().toISOString(),
+        sessions: sessionTimings,
+        delegations: timings,
+      });
+
+      const untimed = sessionTimings.reduce((n, s) => n + (s.timing.coverage.events - s.timing.coverage.withAt), 0);
+      ctx.gate(
+        untimed === 0,
+        `TIMED: every replayed transcript event carries eve's durable meta.at (${untimed} untimed across ${sessionTimings.length} session(s)) — without it the phase decomposition is unmeasurable`,
+      );
+      if (timings.length > 0) {
+        const gapped = timings.filter((d) => d.gaps.length > 0);
+        ctx.gate(
+          gapped.length === 0,
+          `JOINED: every delegation decomposes end-to-end (caller → spawn → worker session → return); ${gapped.length}/${timings.length} had gaps${gapped.length > 0 ? ` — ${gapped[0].gaps.join("; ")}` : ""}`,
+        );
+      }
     },
   },
   {
