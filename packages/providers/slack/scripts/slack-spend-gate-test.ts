@@ -9,6 +9,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackSpendGate, spendRefusalCopy, spendBypassWarnCopy, type SpendGateAuditRow } from "../agent/channels/slack-spend-gate.js";
+import { admitInbound } from "../agent/channels/slack.js";
 
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
   delete process.env[k];
@@ -50,7 +51,7 @@ async function run(opts: {
   bypass?: { warn: boolean } | null;
   throwAudit?: boolean;
   throwPost?: boolean;
-  door?: "mention" | "engagement";
+  door?: "mention" | "engagement" | "join";
   principalId?: string;
 }): Promise<{ decision: string; posts: string[]; audits: SpendGateAuditRow[] }> {
   const posts: string[] = [];
@@ -133,8 +134,10 @@ async function run(opts: {
 {
   const m = await run({ door: "mention" });
   const e = await run({ door: "engagement" });
+  const j = await run({ door: "join" });
   ok((m.audits[0]!.detail as Record<string, unknown>).door === "mention", "the mention door stamps door:\"mention\"");
   ok((e.audits[0]!.detail as Record<string, unknown>).door === "engagement", "the engagement door stamps door:\"engagement\"");
+  ok((j.audits[0]!.detail as Record<string, unknown>).door === "join", "the channel-join door stamps door:\"join\"");
   ok((m.audits[0]!.detail as Record<string, unknown>).mode === "channel", "the row still carries the session mode");
 }
 
@@ -153,12 +156,74 @@ ok(!/scopeOverBudget|capBypassFor/.test(mentionDoor), "slack.ts no longer hand-r
 const engagementDoor = read("slack-events.ts");
 ok(/import \{ slackSpendGate, type SpendGateDecision \} from "\.\/slack-spend-gate\.js"/.test(engagementDoor), "slack-events.ts imports the shared gate");
 ok(/door: "engagement"/.test(engagementDoor), "the engagement door labels itself");
+ok(/door: "join"/.test(engagementDoor), "the channel-join door labels itself");
 const wired = engagementDoor.match(/await slackWakeSpendGate\(/g) ?? [];
 ok(wired.length >= 3, `ENGAGEMENT DOOR: every wake route gates (found ${wired.length} call sites; expected the engaged-thread, name-drop and supervisor routes)`);
 for (const route of ["routeMessageEvent", "routeNameDropEvent", "routeSupervisorEvent"]) {
   const body = engagementDoor.slice(engagementDoor.indexOf(`export async function ${route}(`));
   const end = body.indexOf("\nexport ", 1);
   ok(/await slackWakeSpendGate\(/.test(end > 0 ? body.slice(0, end) : body), `${route} calls the gate before dispatching a turn`);
+}
+
+{
+  const fnRe = /export async function (\w+)\(/g;
+  const starts: { name: string; at: number }[] = [];
+  for (let m = fnRe.exec(engagementDoor); m; m = fnRe.exec(engagementDoor)) starts.push({ name: m[1]!, at: m.index });
+  let dispatching = 0;
+  for (let i = 0; i < starts.length; i++) {
+    const body = engagementDoor.slice(starts[i]!.at, starts[i + 1]?.at ?? engagementDoor.length);
+    if (!/deps\.wake\(/.test(body)) continue;
+    dispatching++;
+    ok(/SpendGate\(/.test(body), `${starts[i]!.name} dispatches a turn (deps.wake) and therefore MUST consult a spend gate`);
+  }
+  ok(dispatching >= 4, `the scan actually found the dispatching routes (saw ${dispatching}; expected engaged-thread, name-drop, supervisor and channel-join)`);
+}
+
+ok(
+  /thread_ts=\$\{encodeURIComponent\(threadRootTs\)\}/.test(engagementDoor),
+  "ENGAGEMENT DOOR: the refusal posts threaded under the wake's thread root (thread_ts=<root>)",
+);
+ok(
+  /thread_ts=\$\{encodeURIComponent\(ev\.ts\)\}/.test(engagementDoor),
+  "JOIN DOOR: the refusal posts threaded under the join notice",
+);
+ok(
+  /door: "mention",[\s\S]{0,200}post: async \(text\) => \{\s*await ctx\.thread\.post\(text\);/.test(mentionDoor),
+  "MENTION DOOR: the refusal posts through ctx.thread (rooted at thread_ts||ts — the wake's own root)",
+);
+
+const codeOf = (src: string) =>
+  src
+    .split("\n")
+    .filter((l) => {
+      const t = l.trim();
+      return !(t.startsWith("//") || t.startsWith("*") || t.startsWith("/*"));
+    })
+    .join("\n");
+ok(!/return \{ auth: null \}/.test(codeOf(mentionDoor)), "slack.ts contains NO counterfeit `return { auth: null }` drop (it dispatches a turn)");
+ok(/^const DROP = null;$/m.test(mentionDoor), "slack.ts names the real drop (`const DROP = null`)");
+ok(/onAppMention: \(ctx, message\) => admitInbound\(/.test(mentionDoor), "onAppMention is wired to the admission chokepoint, not onInbound");
+ok(/onDirectMessage: \(ctx, message\) => admitInbound\(/.test(mentionDoor), "onDirectMessage is wired to the admission chokepoint, not onInbound");
+ok(/consult\.gated = true;/.test(mentionDoor), "the mention door's gate consult records itself for the chokepoint");
+
+{
+  const msg = { channelId: "C_TXN", ts: "1700.1" } as never;
+  const ctx = {} as never;
+
+  const admitted = await admitInbound(ctx, msg, false, async (consult) => {
+    consult.gated = true;
+    return { auth: { attributes: {} } as never };
+  });
+  ok(admitted !== null, "a gated wake is admitted (a turn runs)");
+
+  const ungated = await admitInbound(ctx, msg, false, async () => ({ auth: { attributes: {} } as never }));
+  ok(ungated === null, "FAIL-CLOSED: a wake admitted without a spend-gate consult is dropped, not spent");
+
+  const ungatedAuthless = await admitInbound(ctx, msg, false, async () => ({ auth: null }));
+  ok(ungatedAuthless === null, "the exact live shape — an un-gated `{ auth: null }` — is dropped (it used to run an auth-less turn)");
+
+  const dropped = await admitInbound(ctx, msg, false, async () => null);
+  ok(dropped === null, "a real DROP passes straight through (nothing to gate: no turn, no spend)");
 }
 
 console.log(`slack-spend-gate: ${n} assertions passed`);

@@ -302,11 +302,37 @@ function partitionForMessage(message: SlackMessage, facts: ChannelFacts): Partit
   return resolvePartition(bindableForMessage(message, facts));
 }
 
+type InboundOutcome = { readonly auth: OpenEverywhereSlackAuth | null; readonly context?: readonly string[] } | null;
+
+const DROP = null;
+
+function auditWakeDropped(message: SlackMessage, reason: string, detail: Record<string, unknown> = {}): void {
+  void (async () => {
+    try {
+      const p = resolvePartition({
+        channel: { kind: "slack" },
+        session: { auth: { current: { attributes: { team_id: message.teamId ?? "", channel_id: message.channelId }, principalId: "", principalType: "slack-user" } } },
+      });
+      await getOperationalStore().appendAudit({
+        ts: new Date().toISOString(),
+        org: p.org,
+        platform: p.platform,
+        workspace: p.workspace,
+        surface: p.surface,
+        action: "surface.wake_dropped",
+        detail: { reason, channel: message.channelId, ts: message.ts, ...detail },
+      });
+    } catch {
+    }
+  })();
+}
+
 async function onInbound(
   ctx: SlackContext,
   message: SlackMessage,
   isDm: boolean,
-): Promise<{ auth: OpenEverywhereSlackAuth | null; context?: readonly string[] }> {
+  consult: { gated: boolean },
+): Promise<InboundOutcome> {
   if (!message.teamId) {
     const threadTeam = (ctx.thread as { teamId?: string | null }).teamId;
     const healed =
@@ -318,25 +344,31 @@ async function onInbound(
   }
   if (message.author?.isBot) {
     const rawBotId = typeof (message.raw as { bot_id?: unknown })?.bot_id === "string" ? (message.raw as { bot_id: string }).bot_id : undefined;
-    if (!isAllowedSlackDriver(message.teamId, rawBotId)) return { auth: null };
+    if (!isAllowedSlackDriver(message.teamId, rawBotId)) {
+      console.log(
+        `[open-everywhere:slack] bot-authored mention dropped — no turn (bot ${rawBotId ?? "?"} in team ${message.teamId ?? "?"} is not an allowlisted e2e driver)`,
+      );
+      auditWakeDropped(message, "bot author is not an allowlisted driver", { botId: rawBotId ?? null, team: message.teamId ?? null });
+      return DROP;
+    }
     console.log(`[open-everywhere:slack] e2e driver accepted: bot-authored mention from ${rawBotId} in team ${message.teamId} (allowlisted)`);
   }
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
 
-  if (
-    (await slackSpendGate({
-      bindable: bindableForMessage(message, facts),
-      mode,
-      principalId: message.author?.userId,
-      teamId: message.teamId,
-      door: "mention",
-      post: async (text) => {
-        await ctx.thread.post(text);
-      },
-    })) === "declined"
-  ) {
-    return { auth: null };
+  const gate = await slackSpendGate({
+    bindable: bindableForMessage(message, facts),
+    mode,
+    principalId: message.author?.userId,
+    teamId: message.teamId,
+    door: "mention",
+    post: async (text) => {
+      await ctx.thread.post(text);
+    },
+  });
+  consult.gated = true;
+  if (gate === "declined") {
+    return DROP;
   }
 
   if (mode === "channel") {
@@ -356,7 +388,7 @@ async function onInbound(
     } catch {
     }
     await setStatusReaction(ctx.slack, "none");
-    return { auth: null };
+    return DROP;
   }
 
   let context: readonly string[] | undefined;
@@ -367,10 +399,29 @@ async function onInbound(
   return { auth: authFromFacts(message, facts), context };
 }
 
+export async function admitInbound(
+  ctx: SlackContext,
+  message: SlackMessage,
+  isDm: boolean,
+  run: (consult: { gated: boolean }) => Promise<InboundOutcome> = (consult) => onInbound(ctx, message, isDm, consult),
+): Promise<InboundOutcome> {
+  const consult = { gated: false };
+  const outcome = await run(consult);
+  if (outcome === DROP) return DROP;
+  if (!consult.gated) {
+    console.warn(
+      `[open-everywhere:slack] wake admitted without a spend-gate consult — dropped fail-closed (${message.channelId}/${message.ts})`,
+    );
+    auditWakeDropped(message, "admitted without a spend-gate consult — fail-closed");
+    return DROP;
+  }
+  return outcome;
+}
+
 const slackMentionChannel = slackChannel({
   route: INTERNAL_SLACK_ROUTE,
-  onAppMention: (ctx, message) => onInbound(ctx, message, false),
-  onDirectMessage: (ctx, message) => onInbound(ctx, message, true),
+  onAppMention: (ctx, message) => admitInbound(ctx, message, false),
+  onDirectMessage: (ctx, message) => admitInbound(ctx, message, true),
   events: {
     "turn.started": async (_data, channel, ctx) => {
       if (isSupervisorReplyTurn(channel.state)) {

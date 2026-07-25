@@ -483,6 +483,29 @@ export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, t
   });
 }
 
+export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
+  return slackSpendGate({
+    bindable: bindableForJoin(ev),
+    mode: slackMode(channelType, ev.channelId),
+    principalId: ev.inviterId ?? ev.userId,
+    teamId: ev.teamId,
+    door: "join",
+    post: async (text) => {
+      await postOnce({
+        org: p.org,
+        key: outboundKey({ surface: "slack", channel: ev.channelId, threadTs: ev.ts, action: "slack.spend-gate", payload: p.surfaceKey }),
+        ttlMs: SPEND_REFUSAL_DEDUPE_TTL_MS,
+        run: async () => {
+          await slackForm(
+            "chat.postMessage",
+            `channel=${encodeURIComponent(ev.channelId)}&thread_ts=${encodeURIComponent(ev.ts)}&text=${encodeURIComponent(text)}`,
+          );
+        },
+      });
+    },
+  });
+}
+
 const SPEND_REFUSAL_DEDUPE_TTL_MS = 60 * 60 * 1000;
 
 export function liveDeps(send: WakeSend): MessageRouteDeps {
@@ -1401,6 +1424,10 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   }
 
   const m = meta ?? { channelId: ev.channelId };
+
+  if ((await slackJoinSpendGate(ev, p, m.channelType ?? joinChannelType(ev.channelKind))) === "declined") {
+    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+  }
 
   try {
     await deps.markOnboarded(p);

@@ -8,7 +8,7 @@ import {
   type SessionMode,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
-export type SpendGateDoor = "mention" | "engagement";
+export type SpendGateDoor = "mention" | "engagement" | "join";
 
 export type SpendGateDecision = "proceed" | "declined";
 
