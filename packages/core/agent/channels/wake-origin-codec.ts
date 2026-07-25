@@ -1,4 +1,5 @@
 import type { UnifiedThreadRef, UnifiedWakeOrigin } from "./unified-window.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin> {
   validate(o: Record<string, unknown>): boolean;
@@ -13,6 +14,7 @@ export function registerWakeOriginCodec<P extends UnifiedWakeOrigin["platform"]>
   platform: P,
   codec: WakeOriginCodec<Extract<UnifiedWakeOrigin, { platform: P }>>,
 ): void {
+  if (!admitProviderRegistration(platform, "wake-origin-codec")) return;
   WAKE_ORIGIN_CODECS.set(platform, codec as WakeOriginCodec);
 }
 

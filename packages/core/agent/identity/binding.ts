@@ -1,6 +1,7 @@
 import type { SessionMode } from "../access/resolver.js";
 import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./binding-bridge.js";
 import { normalizePlatform, platformFromKind } from "./platform.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 import { isVouchedInternal } from "./trust.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
@@ -105,6 +106,7 @@ const bindLocal: Mapper = (ctx) => {
 const MAPPERS: Record<string, Mapper> = {};
 
 export function registerIdentityMapper(platform: string, mapper: IdentityMapper): void {
+  if (!admitProviderRegistration(platform, "identity-mapper")) return;
   MAPPERS[platform] = mapper;
 }
 

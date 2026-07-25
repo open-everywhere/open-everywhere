@@ -10,6 +10,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 
 import { ChannelScopeError } from "./read-scope-error.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 export { ChannelScopeError };
 
 export interface RenderedLine {
@@ -78,6 +79,7 @@ const READ_ADAPTER_REGISTRY: Record<string, ReadAdapter> = {};
 const SUPPORTED_PLATFORMS_LIVE: string[] = [];
 
 export function registerReadAdapter(adapter: ReadAdapter): void {
+  if (!admitProviderRegistration(adapter.platform, "read-adapter")) return;
   if (!(adapter.platform in READ_ADAPTER_REGISTRY)) SUPPORTED_PLATFORMS_LIVE.push(adapter.platform);
   READ_ADAPTER_REGISTRY[adapter.platform] = adapter;
 }

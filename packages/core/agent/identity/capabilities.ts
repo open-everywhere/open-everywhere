@@ -1,4 +1,5 @@
 import { channelPlatform, type BindableContext } from "./binding.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface CapabilityManifest {
   readonly midTurnPost: boolean;
@@ -10,6 +11,7 @@ const NONE: CapabilityManifest = { midTurnPost: false, reactions: false };
 const MANIFESTS: Record<string, CapabilityManifest> = {};
 
 export function registerCapabilityManifest(platform: string, manifest: CapabilityManifest): void {
+  if (!admitProviderRegistration(platform, "capability-manifest")) return;
   MANIFESTS[platform] = manifest;
 }
 

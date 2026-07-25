@@ -124,6 +124,18 @@ export { bootVerifyAuditChainTail } from "./audit/chain.js";
 export { registerGovernanceMemberSupplier, _resetGovernanceMemberSupplierForTest } from "./access/audience-floor.js";
 export type { RoomRoster, GovernanceMemberSupplier } from "./access/audience-floor.js";
 
+export {
+  declareProviderSelection,
+  providerSelection,
+  providerSelectionDeclared,
+  isProviderSelected,
+  admitProviderRegistration,
+  admitInboundSurface,
+  refusedProviderRegistrations,
+  clearProviderSelection,
+} from "./access/provider-selection.js";
+export type { ProviderRegistrationRefusal } from "./access/provider-selection.js";
+
 export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, currentTurnIssue } from "./identity/binding.js";
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";

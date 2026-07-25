@@ -3,6 +3,7 @@ import type { TelegramReceiveTarget } from "eve/channels/telegram";
 import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
 import type { Routine } from "../routines/routine.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface DispatchTarget {
   readonly channel: Channel<any, any, any>;
@@ -18,6 +19,7 @@ export interface RoutineDispatchProvider {
 const ROUTINE_DISPATCH: Map<string, RoutineDispatchProvider> = new Map();
 
 export function registerRoutineDispatch(platform: string, provider: RoutineDispatchProvider): void {
+  if (!admitProviderRegistration(platform, "routine-dispatch")) return;
   ROUTINE_DISPATCH.set(platform, provider);
 }
 

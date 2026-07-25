@@ -4,6 +4,7 @@ import { getAppInfo } from "../commands/core.js";
 import { getProvider as getMemoryProvider } from "../memory/provider.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "oe.instance.first_boot": Object.freeze([]),
@@ -256,6 +257,7 @@ let lastHeartbeatAt = 0;
 const SURFACE_CREDENTIAL_PROBES: Record<string, () => boolean> = {};
 
 export function registerSurfaceCredentialProbe(platform: string, probe: () => boolean): void {
+  if (!admitProviderRegistration(platform, "surface-credential-probe")) return;
   SURFACE_CREDENTIAL_PROBES[platform] = probe;
 }
 

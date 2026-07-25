@@ -2,6 +2,7 @@ import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import type { Partition } from "../memory/partition.js";
 import { memoryFloatMode, handleNegativeReactionUndo } from "../approvals/memory-float.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export type EmojiClass = "positive" | "negative" | "other";
 
@@ -39,6 +40,7 @@ export type ReactionVerb = "added" | "removed";
 const REACTION_SURFACE_REGISTRY = new Set<string>();
 
 export function registerReactionSurface(platform: string): void {
+  if (!admitProviderRegistration(platform, "reaction-surface")) return;
   REACTION_SURFACE_REGISTRY.add(platform);
 }
 

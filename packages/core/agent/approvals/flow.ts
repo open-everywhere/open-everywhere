@@ -3,6 +3,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { onVercel } from "../access/platform.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 import { criteriaDomain } from "../memory/domain.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -86,6 +87,7 @@ export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]
 const CARD_POSTERS = new Map<string, CardPoster>();
 
 export function registerCardPoster(platform: string, poster: CardPoster): void {
+  if (!admitProviderRegistration(platform, "approval-card-poster")) return;
   CARD_POSTERS.set(platform, poster);
 }
 

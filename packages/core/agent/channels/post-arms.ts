@@ -2,6 +2,7 @@ import type { BindableContext } from "../identity/binding.js";
 import type { ReplyTarget } from "./reply-post.js";
 import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface TargetResolveBag {
   str(k: string): string | undefined;
@@ -35,6 +36,7 @@ export interface PostArm {
 const POST_ARMS: Record<string, PostArm> = {};
 
 export function registerPostArm(arm: PostArm): void {
+  if (!admitProviderRegistration(arm.platform, "post-arm")) return;
   POST_ARMS[arm.platform] = arm;
 }
 

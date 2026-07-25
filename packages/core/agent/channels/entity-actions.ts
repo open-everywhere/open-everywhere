@@ -6,6 +6,7 @@ import {
   type BindableContext,
 } from "../identity/binding.js";
 import type { Domain } from "../memory/domain.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface EntityRef {
   readonly platform: string;
@@ -27,6 +28,7 @@ export interface EntityActionAdapter {
 const ENTITY_ACTION_ADAPTERS: Record<string, EntityActionAdapter> = {};
 
 export function registerEntityActionAdapter(adapter: EntityActionAdapter): void {
+  if (!admitProviderRegistration(adapter.platform, "entity-action-adapter")) return;
   ENTITY_ACTION_ADAPTERS[adapter.platform] = adapter;
 }
 

@@ -1,4 +1,5 @@
 import type { BindableContext } from "../identity/binding.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 export interface ResolvedAttachment {
   readonly bytes: Uint8Array;
@@ -33,6 +34,7 @@ export interface AttachmentResolver {
 const resolvers = new Map<string, AttachmentResolver>();
 
 export function registerAttachmentResolver(resolver: AttachmentResolver): void {
+  if (!admitProviderRegistration(resolver.platform, "attachment-resolver")) return;
   resolvers.set(resolver.platform, resolver);
 }
 

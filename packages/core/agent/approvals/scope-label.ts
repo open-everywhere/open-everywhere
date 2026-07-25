@@ -1,4 +1,5 @@
 import { bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
+import { admitProviderRegistration } from "../access/provider-selection.js";
 
 function parseScopeKey(scopeKey: string): { platform: string; workspace: string; surface?: string } | null {
   const parts = scopeKey.split("/");
@@ -11,6 +12,7 @@ export type ScopeLabelResolver = (parsed: { workspace: string; surface?: string 
 const SCOPE_LABEL_RESOLVERS = new Map<string, ScopeLabelResolver>();
 
 export function registerScopeLabelResolver(platform: string, resolver: ScopeLabelResolver): void {
+  if (!admitProviderRegistration(platform, "scope-label-resolver")) return;
   SCOPE_LABEL_RESOLVERS.set(platform, resolver);
 }
 

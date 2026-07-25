@@ -1,3 +1,5 @@
+import { admitProviderRegistration } from "../access/provider-selection.js";
+
 export interface OutboundFile {
   readonly bytes: Uint8Array;
   readonly filename: string;
@@ -15,6 +17,7 @@ export interface SurfaceMessageOps {
 const REGISTRY = new Map<string, SurfaceMessageOps>();
 
 export function registerSurfaceMessageOps(ops: SurfaceMessageOps): void {
+  if (!admitProviderRegistration(ops.platform, "surface-message-ops")) return;
   REGISTRY.set(ops.platform, ops);
 }
 

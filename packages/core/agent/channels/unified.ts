@@ -17,6 +17,7 @@ import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
+import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
 
 function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
@@ -272,6 +273,18 @@ export async function divertToUnifiedWindow(
     readonly excludeTaskResultId?: string;
   },
 ): Promise<void> {
+  if (!admitInboundSurface(input.window.origin.platform)) {
+    ulog(`REFUSED inbound wake from unselected provider "${input.window.origin.platform}" (audited, not delivered)`);
+    await appendAudit({
+      org: deploymentOrg(),
+      platform: input.window.origin.platform,
+      workspace: parseWindowToken(input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token)?.domain ?? "unknown",
+      surface: input.surfaceKey,
+      action: "provider.unselected_wake_refused",
+      detail: { wakeId: input.window.wakeId, selected: [...(providerSelection() ?? [])] },
+    }).catch(() => undefined);
+    return;
+  }
   rememberUnifiedReceive(receive);
   const sources = windowSourcesForDivert(input.token, input.window.origin.platform);
   const bareToken = input.token.startsWith("unified:") ? input.token.slice("unified:".length) : input.token;
