@@ -58,6 +58,7 @@ export interface Domain {
   readonly sandbox?: SandboxPreset;
   readonly admins?: readonly string[];
   readonly governance?: boolean;
+  readonly requestorEntitlementChecks?: boolean;
 }
 
 export function memoryRefs(domain: Domain): string[] {
@@ -217,6 +218,28 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       "open-everywhere: invalid governance domain(s):\n" +
         bad.join("\n") +
         "\n(memory/domain.ts assertGovernanceDomains).",
+    );
+  }
+}
+
+export function requestorEntitlementChecksEnabled(domains: readonly Domain[]): boolean {
+  return criteriaDomain("org", domains)?.requestorEntitlementChecks === true;
+}
+
+export function assertComplianceDomains(domains: readonly Domain[]): void {
+  const bad = domains
+    .filter((d) => d.requestorEntitlementChecks !== undefined && d.match !== "org")
+    .map(
+      (d) =>
+        `  "${d.name}" sets requestorEntitlementChecks — that is an ORG-LEVEL compliance opt-in and ` +
+        `belongs on the \`org\` pseudo-domain (match: "org"), never on a room/criteria domain ` +
+        `(a per-room requestor pre-check is the per-user-answers-inside-a-room shape the design rejected)`,
+    );
+  if (bad.length > 0) {
+    throw new Error(
+      "open-everywhere: invalid compliance-mode config:\n" +
+        bad.join("\n") +
+        "\n(memory/domain.ts assertComplianceDomains).",
     );
   }
 }

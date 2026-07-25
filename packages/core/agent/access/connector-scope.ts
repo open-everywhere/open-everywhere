@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import type { SessionAuth } from "eve/context";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolveAccessFor } from "./request.js";
+import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
@@ -237,6 +238,8 @@ export async function assertConnectorGranted(connectionName: string, auth: Sessi
         `rule enforced at the credential layer, not a permission that can be requested in-chat.`,
     );
   }
+  await assertConnectorDisclosure(connectionName, ctx as BindableContext);
+
   await auditConnectorGate(ctx, "connector.use", {
     connection: connectionName,
     ...(mode !== undefined ? { mode } : {}),

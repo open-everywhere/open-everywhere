@@ -74,8 +74,47 @@ interface CachedAttestation {
 const FLOOR_TTL_MS = Number(process.env.OE_GOVERNANCE_FLOOR_TTL_MS) || 15 * 60_000;
 const floorCache = new Map<string, CachedAttestation>();
 
-export function _resetGovernanceFloorCacheForTest(): void {
+interface CachedRoster {
+  readonly roster: RoomRoster;
+  readonly at: number;
+}
+const rosterCache = new Map<string, CachedRoster>();
+
+const UNRESOLVED_ROSTER: RoomRoster = Object.freeze({
+  humanMemberIds: Object.freeze([]) as readonly string[],
+  resolved: false,
+  isPrivate: false,
+  hasGuest: false,
+});
+
+export function _resetAudienceFloorCacheForTest(): void {
   floorCache.clear();
+  rosterCache.clear();
+}
+
+export function _resetGovernanceFloorCacheForTest(): void {
+  _resetAudienceFloorCacheForTest();
+}
+
+export interface AudienceFloorResolution {
+  readonly floor: AudienceFloor;
+  readonly roster: RoomRoster;
+}
+
+export async function resolveRoomRoster(channelKey: string): Promise<RoomRoster> {
+  const cached = rosterCache.get(channelKey);
+  if (cached && Date.now() - cached.at < FLOOR_TTL_MS) return cached.roster;
+  const roster = (await governanceMemberSupplier()(channelKey)) ?? UNRESOLVED_ROSTER;
+  rosterCache.set(channelKey, { roster, at: Date.now() });
+  return roster;
+}
+
+export async function resolveAudienceFloor(
+  channelKey: string,
+  admins: ReadonlySet<string>,
+): Promise<AudienceFloorResolution> {
+  const roster = await resolveRoomRoster(channelKey);
+  return { floor: computeAudienceFloor(roster, admins), roster };
 }
 
 export interface FloorAttestContext {
@@ -94,12 +133,7 @@ export async function attestGovernanceChannel(
   const cached = floorCache.get(channelKey);
   if (cached && Date.now() - cached.at < FLOOR_TTL_MS) return cached.attestation;
 
-  const roster = (await governanceMemberSupplier()(channelKey)) ?? {
-    humanMemberIds: [] as string[],
-    resolved: false,
-    isPrivate: false,
-    hasGuest: false,
-  };
+  const roster = await resolveRoomRoster(channelKey);
   const attestation = attestGovernanceFloor(roster, governanceAdminSet(channelKey, domains));
   floorCache.set(channelKey, { attestation, at: Date.now() });
 
