@@ -35,6 +35,7 @@ export interface Routine {
   sessionMode?: "job";
   jobSessionAnchor?: string;
   jobState?: string;
+  jobTainted?: boolean;
   prWatch?: { readonly repo: string; readonly number: number; readonly checksRemaining: number };
   completedAt?: string;
   completedReason?: string;

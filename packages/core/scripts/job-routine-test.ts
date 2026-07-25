@@ -12,6 +12,7 @@ import {
   JOB_COMPLETE_TOOL,
 } from "../agent/routines/job.js";
 import { isJobRoutine, routineMarker, ROUTINE_MARKER, JOB_STATE_MAX_BYTES, type Routine } from "../agent/routines/routine.js";
+import { jobFireStamped } from "../agent/access/job-posture.js";
 import { classifySessionId } from "../agent/channels/window-key.js";
 import { registerSlackBridge } from "../agent/channels/slack-bridge.js";
 
@@ -123,10 +124,15 @@ const postJobKickoff = async (_channelId: string, _text: string): Promise<string
   kickoffCalls++;
   return KICKOFF_TS;
 };
-const fires: { target: Record<string, unknown>; message: string; markerId?: string }[] = [];
+const fires: { target: Record<string, unknown>; message: string; markerId?: string; jobFire: boolean }[] = [];
 const receive = ((_channel: unknown, opts: { message?: string; target?: Record<string, unknown>; auth?: { attributes?: Record<string, unknown> } }) => {
   const mk = routineMarker(opts.auth?.attributes as never);
-  fires.push({ target: opts.target ?? {}, message: opts.message ?? "", markerId: mk?.id });
+  fires.push({
+    target: opts.target ?? {},
+    message: opts.message ?? "",
+    markerId: mk?.id,
+    jobFire: jobFireStamped(opts.auth?.attributes as never),
+  });
   return Promise.resolve();
 }) as never;
 
@@ -147,6 +153,7 @@ ok(fires.length === 1 && fires[0].markerId === "r-job1", "first job fire dispatc
 ok(fires[0].target.threadTs === KICKOFF_TS, "first job fire pins target.threadTs to the kickoff anchor (the session join)");
 ok((await store.getRoutine("default", "slack/T1/C1", "r-job1"))?.jobSessionAnchor === KICKOFF_TS, "the anchor is persisted on the routine");
 ok(fires[0].message.includes("DURABLE JOB"), "first job fire receives the job protocol message");
+ok(fires[0].jobFire, "a job fire carries the OPE-111 autonomous-fire stamp (⇒ restricted toolset for that wake)");
 const tokenFire1 = slackContinuationToken("C1", String(fires[0].target.threadTs));
 
 await tick(new Date(at.getTime() + 61 * 60_000));

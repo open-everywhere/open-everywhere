@@ -8,6 +8,7 @@ import {
   WINDOW_GATED_TOOLS,
   WINDOW_UNGATED_TOOLS,
   FULL_KIT,
+  JOB_WAKE_TOOLS,
   withheldFromGrain,
   type WindowToolSource,
 } from "../agent/access/window-gate-manifest.js";
@@ -260,6 +261,20 @@ for (const name of Object.keys(WINDOW_GATED_TOOLS)) {
   ok(coreTools.length >= 37, `the real scan actually covered the core tools dir (saw ${coreTools.length})`);
   ok(appShims.size >= 40, `the real scan covered the deploy shims (saw ${appShims.size})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
+
+  const stale = checkWindowGateManifest(
+    coreTools,
+    appShims,
+    FRAMEWORK_TOOL_NAMES,
+    WINDOW_GATED_TOOLS,
+    WINDOW_UNGATED_TOOLS,
+    FULL_KIT,
+    subagentNames,
+    new Set([...JOB_WAKE_TOOLS, "ghost_job_verb"]),
+  );
+  firesWith(stale, 'JOB_WAKE_TOOLS names "ghost_job_verb"', "a stale JOB_WAKE_TOOLS row FAILS (rule 6)");
+  const cleanKit = checkWindowGateManifest(coreTools, appShims, FRAMEWORK_TOOL_NAMES, WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, FULL_KIT, subagentNames, JOB_WAKE_TOOLS);
+  ok(cleanKit.length === 0, `the REAL job kit is clean against the real surface (problems: ${JSON.stringify(cleanKit)})`);
 }
 
 console.log(`✓ ${n} window-gate-manifest assertions passed`);

@@ -1,6 +1,7 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import { bridgeSlackChannel, bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
+import { jobFireAttrs } from "../access/job-posture.js";
 import { resolveRegisteredRoutineDispatch, type DispatchTarget } from "./routine-dispatch.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
@@ -181,6 +182,7 @@ export async function dispatchTick(
           ...dest.attributes,
           ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
           ...rootDmGrainAttrs(mode === "dm" || mode === "mpim" || dest.attributes.chat_type === "group" || dest.attributes.chat_type === "supergroup"),
+          ...jobFireAttrs(isJobRoutine(r), r.jobTainted === true),
           [ROUTINE_MARKER.id]: r.id,
           [ROUTINE_MARKER.surface]: r.surfaceKey,
           [ROUTINE_MARKER.org]: r.org,

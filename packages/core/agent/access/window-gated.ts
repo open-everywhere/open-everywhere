@@ -13,6 +13,8 @@ import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
 import { registerReplayModelProjection } from "./untrusted-projection.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
+import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
+import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
 
@@ -80,6 +82,20 @@ export async function grainBackstopAtExecute(
   refusal: (grain: WindowGrain) => string = (grain) => refusalFor(name, grain),
 ): Promise<void> {
   const grain = grainOf(ctx);
+  if (jobWakeWithholds(name, ctx)) {
+    await auditWindowToolGate({
+      org: deploymentOrg(),
+      domain: domainLabelOf(ctx),
+      grain,
+      withheld: [name],
+      wakeId: currentWakeId(ctx) ?? null,
+      sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
+      reason: "job-wake",
+    }).catch(() => undefined);
+    throw new Error(
+      `${name} is not available on an un-escalated durable-job fire — a job runs on its own schedule with nobody in the room, so it keeps reads, its replies and its own progress ledger. Report what you found and record it with record_job_state; a person in this thread can take the step that needs ${name}.`,
+    );
+  }
   if (allowed.includes(grain)) return;
   await auditWindowToolGate({
     org: deploymentOrg(),
@@ -90,6 +106,20 @@ export async function grainBackstopAtExecute(
     sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
   }).catch(() => undefined);
   throw new Error(refusal(grain));
+}
+
+function jobWakeWithholds(name: string, ctx: BindableContext): boolean {
+  try {
+    const attrs = ctx.session?.auth?.current?.attributes ?? ctx.session?.auth?.initiator?.attributes;
+    const posture = resolveJobWakePosture({
+      jobFire: jobFireStamped(attrs),
+      jobSession: isJobSession(),
+      humanPrincipal: jobWakeEscalated(),
+    });
+    return posture === "restricted" && !allowedOnRestrictedJobWake(name);
+  } catch {
+    return false;
+  }
 }
 
 function gatedExecute(name: string, entry: GatedToolEntry): (input: unknown, ctx: unknown) => Promise<unknown> {

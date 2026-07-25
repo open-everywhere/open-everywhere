@@ -1,4 +1,6 @@
 import { ingestUntrustedModelOutput } from "./untrusted.js";
+import { restrictToolsetForJobWake } from "./job-posture.js";
+import { currentJobWakePosture } from "./job-session-state.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -33,6 +35,8 @@ function isConnectorExternalName(name: string): boolean {
 }
 
 export function projectToolSet(toolset: Record<string, unknown>): void {
+  if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
+
   for (const [name, raw] of Object.entries(toolset)) {
     if (raw === null || typeof raw !== "object") continue;
     const tool = raw as AiSdkToolLike;

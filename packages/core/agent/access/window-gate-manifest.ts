@@ -84,6 +84,44 @@ export function withheldFromGrain(grain: WindowGrain): string[] {
   return Object.keys(WINDOW_GATED_TOOLS).filter((name) => !WINDOW_GATED_TOOLS[name].includes(grain));
 }
 
+export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
+  "reply",
+  "no_reply",
+  "react",
+  "update_status",
+  "record_job_state",
+  "complete_job",
+  "record_watch_state",
+  "read_channel",
+  "read_thread",
+  "read_slack_channel",
+  "read_slack_thread",
+  "read_notion_page",
+  "read_notion_comments",
+  "read_linear_issue",
+  "read_file_upload",
+  "describe_image",
+  "check_pr_status",
+  "get_pr_feedback",
+  "list_repos",
+  "list_routines",
+  "list_skills",
+  "session_cost",
+  "spend_report",
+  "usage_report",
+  "query_analytics",
+  "todo",
+  "load_skill",
+]);
+
+export function withheldFromJobWake(
+  gated: Readonly<Record<string, readonly WindowGrain[]>> = WINDOW_GATED_TOOLS,
+  ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
+  jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
+): string[] {
+  return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !jobKit.has(name)).sort();
+}
+
 export interface WindowToolSource {
   readonly name: string;
   readonly source: string;
@@ -100,6 +138,7 @@ export function checkWindowGateManifest(
   ungated: ReadonlySet<string> = WINDOW_UNGATED_TOOLS,
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
   subagentNames: readonly string[] = [],
+  jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS,
 ): string[] {
   const WIDE_HANDS_KEY = grainKey(wideHandsGrains);
   const problems: string[] = [];
@@ -201,6 +240,16 @@ export function checkWindowGateManifest(
     const m = src.match(/@open-everywhere\/core\/agent\/tools\/([\w-]+)\.js/u);
     if (m && !coreByName.has(m[1])) {
       problems.push(`agent/tools/${slug}.ts re-exports @open-everywhere/core/agent/tools/${m[1]}.js but no such core tool file exists (dangling shim)`);
+    }
+  }
+
+  if (gated === WINDOW_GATED_TOOLS && ungated === WINDOW_UNGATED_TOOLS) {
+    for (const name of jobKit) {
+      if (!surface.has(name)) {
+        problems.push(
+          `JOB_WAKE_TOOLS names "${name}" which is neither a tool file nor a mounted framework tool — remove it or fix the name (a stale job-kit row misrepresents what an un-escalated durable-job wake can do)`,
+        );
+      }
     }
   }
 

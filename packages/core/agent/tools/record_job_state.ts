@@ -4,6 +4,7 @@ import { z } from "zod";
 import { routineMarker, JOB_STATE_MAX_BYTES } from "../routines/routine.js";
 import { applyJobStateObservation } from "../routines/job.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 
 export default defineTool({
   description:
@@ -31,7 +32,7 @@ export default defineTool({
       throw new Error(`Routine ${marker.id} is not a durable job — there is no job ledger to write. (A watch uses record_watch_state.)`);
     }
 
-    const obs = applyJobStateObservation(input.state);
+    const obs = applyJobStateObservation(input.state, untrustedIngestedThisTurn());
     if (!obs.accepted) {
       throw new Error(`That note is ${obs.bytes} bytes — the job ledger cap is ${JOB_STATE_MAX_BYTES}. Trim it to a compact progress summary (it's a ledger, not a document store).`);
     }
