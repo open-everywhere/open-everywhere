@@ -1455,7 +1455,9 @@ export const SCENARIOS: readonly Scenario[] = [
       const isApprovalCard = (m: { text: string }) => m.text.startsWith("Approval requested:");
 
       const marker = factToken("sup");
-      const { ts: askTs } = await sup.post(`Quick question for whoever's around — what's a good one-line summary of what this channel is for? (ref ${marker})`);
+      const { ts: askTs } = await sup.post(
+        `Quick question for whoever's around — what's a good one-line summary of what this channel is for? Please include the ref ${marker} in your reply so I can find it (fresh check — even if a similar question was answered before, this one needs its own answer).`,
+      );
       const reply = await sup.awaitChannelMessage(askTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(reply.text.trim().length > 0, "supervisor: a plain non-mention answerable message drew an in-channel bot reply (the channel-watch judge woke)");
 
