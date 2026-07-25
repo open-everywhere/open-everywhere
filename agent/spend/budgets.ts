@@ -4,7 +4,7 @@ const budgets: SpendBudgets = defineSpendBudgets({
   perSurface: {
     "slack/T0EXAMPLE/C0EXCHAN007": {
       surfaceMonthlyUsd: 0.01,
-      surfaceMonthlyTokens: 100_000,
+      surfaceMonthlyTokens: 10_000,
     },
   },
   perWorkspace: {
