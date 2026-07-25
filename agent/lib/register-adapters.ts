@@ -16,16 +16,13 @@ import {
   bootVerifyAuditChainTail,
   registerOperationalPglite,
   onVercel,
+  declareProviderSelection,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { registerNotionProvider } from "@open-everywhere/provider-notion/agent/register.js";
-import { registerTelegramProvider } from "@open-everywhere/provider-telegram/agent/register.js";
-import { registerGithubProvider } from "@open-everywhere/provider-github/agent/register.js";
-import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { registerLinearProvider } from "@open-everywhere/provider-linear/agent/register.js";
-import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
-import { registerSlackProvider } from "@open-everywhere/provider-slack/agent/register.js";
+import { SELECTED_PROVIDERS, SELECTED_PROVIDER_IDS } from "./providers.js";
 import { registerNeon } from "@open-everywhere/adapters/agent/postgres/neon.js";
 import { vercelBlobPutter } from "@open-everywhere/adapters/agent/blob/hosting.js";
+
+declareProviderSelection(SELECTED_PROVIDER_IDS);
 
 {
   const oeOauthCfg = oeOauthEnabled() ? loadOeOauthConfig() : undefined;
@@ -56,15 +53,9 @@ registerGitHubMemory();
 
 registerGitHubConfigPrProvider();
 
-registerNotionProvider();
-
-registerTelegramProvider();
-
-registerGithubProvider();
-registerTeamsProvider();
-registerLinearProvider();
-registerDiscordProvider();
-registerSlackProvider();
+for (const provider of SELECTED_PROVIDERS) {
+  provider.register();
+}
 
 if (
   (process.env.OE_MEMORY_PROVIDER === "postgres" || process.env.OE_OPERATIONAL_PROVIDER === "postgres") &&
