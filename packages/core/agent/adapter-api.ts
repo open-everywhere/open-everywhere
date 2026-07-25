@@ -17,6 +17,8 @@ export {
   vercelConnectorOf,
 } from "./access/providers.js";
 export type { ExclusiveCredentialHome, CredentialHomeRef, ExecutorConnectionRef, ProviderCredentialType } from "./access/providers.js";
+export { grantFamilyOf, isHumanActing, principalOfCredential, humanActingSupport } from "./access/providers.js";
+export type { CredentialGrantFamily, CredentialLifecycle, CredentialRefreshPosture, HumanActingSupport } from "./access/providers.js";
 
 export { registerDbCredentialBroker, CREDENTIAL_KEY_ENV } from "./credentials/db-broker.js";
 

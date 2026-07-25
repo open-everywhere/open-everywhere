@@ -4,6 +4,43 @@ export function principalOf(type: ProviderCredentialType): "app" | "user" {
   return type === "user-oauth" ? "user" : "app";
 }
 
+export type CredentialGrantFamily = "install" | "human-acting";
+
+export type CredentialRefreshPosture = "manual-rotation" | "re-mint" | "refresh-token";
+
+export interface CredentialLifecycle {
+  readonly refresh: CredentialRefreshPosture;
+  readonly ttlSeconds?: number;
+}
+
+export interface HumanActingSupport {
+  readonly supported: boolean;
+  readonly credentialTypes?: readonly ProviderCredentialType[];
+  readonly reason?: string;
+}
+
+export function grantFamilyOf(cred: { readonly grantFamily?: CredentialGrantFamily }): CredentialGrantFamily {
+  return cred.grantFamily ?? "install";
+}
+
+export function isHumanActing(cred: { readonly grantFamily?: CredentialGrantFamily }): boolean {
+  return grantFamilyOf(cred) === "human-acting";
+}
+
+export function principalOfCredential(cred: {
+  readonly type: ProviderCredentialType;
+  readonly grantFamily?: CredentialGrantFamily;
+}): "app" | "user" {
+  return isHumanActing(cred) ? "user" : principalOf(cred.type);
+}
+
+export function humanActingSupport(provider: {
+  readonly humanActing?: HumanActingSupport;
+}): "undeclared" | "vendor-incapable" | "supported" {
+  if (!provider.humanActing) return "undeclared";
+  return provider.humanActing.supported ? "supported" : "vendor-incapable";
+}
+
 export interface ExecutorConnectionRef {
   readonly integration: string;
   readonly owner: string;
@@ -41,6 +78,8 @@ export function vercelConnectorOf(cred: { readonly home?: CredentialHomeRef }): 
 export interface ProviderCredential {
   readonly id: string;
   readonly type: ProviderCredentialType;
+  readonly grantFamily?: CredentialGrantFamily;
+  readonly lifecycle?: CredentialLifecycle;
   readonly secretRef?: string;
   readonly broker?: string;
   readonly intake?: boolean;
@@ -53,6 +92,7 @@ export interface Provider {
   readonly connection: string;
   readonly allows: readonly ProviderCredentialType[];
   readonly credentials: readonly ProviderCredential[];
+  readonly humanActing?: HumanActingSupport;
   readonly skill?: string;
   readonly description?: string;
 }
@@ -67,6 +107,7 @@ export interface ResolvedConnectorCredential {
   readonly provider: string;
   readonly credential: string;
   readonly type: ProviderCredentialType;
+  readonly grantFamily: CredentialGrantFamily;
   readonly principal: "app" | "user";
   readonly secretRef?: string;
   readonly broker?: string;
@@ -129,6 +170,39 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
     seen.add(p.name);
     if (!p.connection) throw new Error(`provider "${p.name}": missing connection slug`);
     if (!p.allows.length) throw new Error(`provider "${p.name}": empty credential allowlist`);
+
+    if (p.humanActing) {
+      const ha = p.humanActing;
+      if (ha.supported) {
+        if (!ha.credentialTypes?.length) {
+          throw new Error(
+            `provider "${p.name}": humanActing.supported requires a non-empty credentialTypes — name which credential type(s) carry the human-acting grant for this vendor (it is a SEPARATE mint from the install credential, so it has its own type)`,
+          );
+        }
+        for (const t of ha.credentialTypes) {
+          if (!p.allows.includes(t)) {
+            throw new Error(
+              `provider "${p.name}": humanActing.credentialTypes lists "${t}", which is not in the connection's allowlist (${p.allows.join(", ")}) — a human-acting grant still has to be a type the connection accepts`,
+            );
+          }
+        }
+        if (new Set(ha.credentialTypes).size !== ha.credentialTypes.length) {
+          throw new Error(`provider "${p.name}": humanActing.credentialTypes has duplicates`);
+        }
+      } else {
+        if (!ha.reason) {
+          throw new Error(
+            `provider "${p.name}": humanActing.supported:false requires a \`reason\` — record the STRUCTURAL vendor fact (e.g. "no scope combination lets an app post chat as a human"), so "the vendor cannot do this" never reads as "nobody configured it"`,
+          );
+        }
+        if (ha.credentialTypes) {
+          throw new Error(
+            `provider "${p.name}": humanActing.supported:false must NOT list credentialTypes — the vendor cannot issue a human-acting credential of any type`,
+          );
+        }
+      }
+    }
+
     const credIds = new Set<string>();
     for (const c of p.credentials) {
       if (credIds.has(c.id)) throw new Error(`provider "${p.name}": duplicate credential id "${c.id}"`);
@@ -159,6 +233,36 @@ export function assertProvidersValid(providers: readonly Provider[]): void {
       if (c.intake === false && c.type !== "api-key") {
         throw new Error(`${where}: intake:false is only valid on an api-key credential (it marks operator-env plumbing that is never offered for intake)`);
       }
+
+      if (isHumanActing(c)) {
+        const state = humanActingSupport(p);
+        if (state === "undeclared") {
+          throw new Error(
+            `${where}: grantFamily "human-acting" needs provider "${p.name}" to DECLARE \`humanActing\` support first. It is undeclared — which is not the same as unsupported: research the vendor and declare either { supported: true, credentialTypes: [...] } or { supported: false, reason: "..." }.`,
+          );
+        }
+        if (state === "vendor-incapable") {
+          throw new Error(
+            `${where}: provider "${p.name}" is declared STRUCTURALLY INCAPABLE of a human-acting credential — ${p.humanActing?.reason ?? "no reason recorded"}. This is a VENDOR limitation, not a configuration gap: no credential, scope, or broker change can grant it.`,
+          );
+        }
+        if (!p.humanActing?.credentialTypes?.includes(c.type)) {
+          throw new Error(
+            `${where}: a ${c.type} credential cannot carry provider "${p.name}"'s human-acting grant (declared for: ${p.humanActing?.credentialTypes?.join(", ") ?? "none"}) — "act as a user" is a distinct mint with a distinct token shape, not a mode of any credential you happen to hold`,
+          );
+        }
+      }
+
+      if (c.lifecycle) {
+        const postures: readonly CredentialRefreshPosture[] = ["manual-rotation", "re-mint", "refresh-token"];
+        if (!postures.includes(c.lifecycle.refresh)) {
+          throw new Error(`${where}: lifecycle.refresh must be one of ${postures.join(" | ")}`);
+        }
+        const ttl = c.lifecycle.ttlSeconds;
+        if (ttl !== undefined && (!Number.isFinite(ttl) || ttl <= 0)) {
+          throw new Error(`${where}: lifecycle.ttlSeconds must be a positive number of seconds (omit it when the credential does not expire, or when the vendor TTL is unverified)`);
+        }
+      }
     }
   }
 }
@@ -178,13 +282,14 @@ export function expandProviderGrant(
       warnings: [`provider "${provider.name}": grant references unknown credential "${grant.credential}" — ignored`],
     };
   }
-  const principal = principalOf(cred.type);
+  const principal = principalOfCredential(cred);
 
   if (principal === "user" && !opts.dm) {
+    const why = isHumanActing(cred) ? `${cred.type}, human-acting grant` : cred.type;
     return {
       resolved: null,
       warnings: [
-        `provider "${provider.name}": credential "${cred.id}" is user-principal (${cred.type}) — ` +
+        `provider "${provider.name}": credential "${cred.id}" is user-principal (${why}) — ` +
           `personal credentials resolve only in DMs, never on a channel/domain binding. Ignored.`,
       ],
     };
@@ -206,6 +311,7 @@ export function expandProviderGrant(
       provider: provider.name,
       credential: cred.id,
       type: cred.type,
+      grantFamily: grantFamilyOf(cred),
       principal,
       secretRef: cred.secretRef,
       broker: cred.broker,

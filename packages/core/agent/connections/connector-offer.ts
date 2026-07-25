@@ -1,5 +1,5 @@
 import type { Provider, ProviderCredential, ProviderCredentialType } from "../access/providers.js";
-import { principalOf, vercelConnectorOf } from "../access/providers.js";
+import { isHumanActing, principalOf, vercelConnectorOf } from "../access/providers.js";
 import { hostWriteHomeAvailable as homesHostWriteAvailable, type CredentialHome } from "../credentials/home.js";
 
 export interface SurfaceIntakeCapability {
@@ -74,7 +74,7 @@ export interface ResolveConnectorInput {
 const OFFER_ORDER: readonly ProviderCredentialType[] = ["user-oauth", "service-oauth", "api-key"];
 
 export function offerableCredential(provider: Provider, type: ProviderCredentialType): ProviderCredential | undefined {
-  return provider.credentials.find((c) => c.type === type && c.intake !== false);
+  return provider.credentials.find((c) => c.type === type && c.intake !== false && !isHumanActing(c));
 }
 
 export function resolveConnectorOptions(input: ResolveConnectorInput): readonly ConnectorOption[] {
