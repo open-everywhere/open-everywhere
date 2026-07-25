@@ -737,5 +737,29 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.getStoredCredential("default", REF))?.ciphertext === "ENVELOPE-OPAQUE", "claim: claim/release never mutate the ciphertext payload");
 }
 
+{
+  ok((await store.listGitHubInstallations("default")).length === 0, "installations: an org with no installs reads empty");
+  await store.putGitHubInstallation("default", { owner: "acme", installationId: "4242", accountType: "Organization", repositorySelection: "selected", updatedAt: "2026-07-25T10:00:00Z" });
+  await store.putGitHubInstallation("default", { owner: "globex", installationId: "7777", updatedAt: "2026-07-25T10:01:00Z" });
+  const rows = await store.listGitHubInstallations("default");
+  ok(rows.length === 2 && rows[0]!.owner === "acme" && rows[1]!.owner === "globex", "installations: list is owner-ascending");
+  ok(rows[0]!.installationId === "4242" && rows[0]!.accountType === "Organization" && rows[0]!.repositorySelection === "selected", "installations: metadata round-trips");
+  ok(rows[1]!.accountType === undefined && rows[1]!.repositorySelection === undefined, "installations: absent optional columns come back absent, not null");
+
+  await store.putGitHubInstallation("default", { owner: "acme", installationId: "4242", repositorySelection: "all", updatedAt: "2026-07-25T11:00:00Z" });
+  const after = await store.listGitHubInstallations("default");
+  ok(after.length === 2, "installations: a re-delivered install upserts (one row per owner), never duplicates");
+  ok(after[0]!.repositorySelection === "all" && after[0]!.updatedAt === "2026-07-25T11:00:00Z", "installations: an installation_repositories refresh updates the selection + stamp");
+
+  ok((await store.listGitHubInstallations("acme")).length === 0, "installations: another org sees none (row is org-scoped)");
+  await store.putGitHubInstallation("acme", { owner: "acme", installationId: "9999", updatedAt: "2026-07-25T10:00:00Z" });
+  ok((await store.listGitHubInstallations("default"))[0]!.installationId === "4242", "installations: a same-owner row in another org doesn't bleed across the tenant boundary");
+
+  ok((await store.deleteGitHubInstallation("default", "globex")) === true, "installations: delete reports the removal");
+  ok((await store.deleteGitHubInstallation("default", "globex")) === false, "installations: deleting an unknown owner reports false, never throws");
+  const left = await store.listGitHubInstallations("default");
+  ok(left.length === 1 && left[0]!.owner === "acme", "installations: delete removes exactly the named owner");
+}
+
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);

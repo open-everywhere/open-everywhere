@@ -18,7 +18,12 @@ export class GitHubApp {
 
   constructor(
     private readonly config: GitHubAppConfig,
-    private readonly deps: { fetchFn?: FetchFn; now?: () => number } = {},
+    private readonly deps: {
+      fetchFn?: FetchFn;
+      now?: () => number;
+      discovered?: (owner: string) => string | undefined;
+      hydrate?: () => Promise<void>;
+    } = {},
   ) {
     this.key = parsePrivateKey(config.privateKeyPem);
   }
@@ -32,10 +37,11 @@ export class GitHubApp {
   }
 
   installationFor(owner: string): string | undefined {
-    return this.config.installations[owner];
+    return this.config.installations[owner] ?? this.deps.discovered?.(owner);
   }
 
   async tokensForRepos(repos: readonly RepoRef[], permissions?: MintPermissions): Promise<MintOutcome> {
+    await this.deps.hydrate?.();
     const byOwner = new Map<string, string[]>();
     const ungranted: RepoRef[] = [];
     for (const ref of repos) {

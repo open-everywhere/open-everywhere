@@ -18,6 +18,7 @@ export const OPERATIONAL_TABLES = [
   "slack_attachment",
   "stored_credential",
   "credential_intake",
+  "github_installation",
   "pr_session_approval",
   "pending_actions",
   "domain_skill",
@@ -230,6 +231,14 @@ export interface SlackAttachmentRow {
   readonly teamId?: string;
 }
 
+export interface GitHubInstallationRow {
+  readonly owner: string;
+  readonly installationId: string;
+  readonly accountType?: string;
+  readonly repositorySelection?: string;
+  readonly updatedAt: string;
+}
+
 export interface StoredCredentialRow {
   readonly ref: string;
   readonly ciphertext: string;
@@ -350,6 +359,10 @@ export interface OperationalStore {
 
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;
+
+  putGitHubInstallation(org: string, rec: GitHubInstallationRow): Promise<void>;
+  deleteGitHubInstallation(org: string, owner: string): Promise<boolean>;
+  listGitHubInstallations(org: string): Promise<readonly GitHubInstallationRow[]>;
 
   claimStoredCredential(org: string, ref: string, claimId: string, claimedAtIso: string, staleBeforeIso: string): Promise<boolean>;
   releaseStoredCredential(org: string, ref: string, claimId: string): Promise<boolean>;

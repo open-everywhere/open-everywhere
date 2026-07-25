@@ -17,6 +17,7 @@ import { fetchPrFeedback, renderPrFeedbackForModel, MAX_REVIEW_COMMENTS, MAX_REV
 import { wrapUntrusted, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { repoSlug, mergeRepoSkills, isSafeSkillName, parseRepoAgent, delegationHeader, REPO_SKILL_SEP, type RepoSkillsEntry } from "../agent/scm/repo-skills.js";
 import { loadGitHubAppConfig } from "../agent/scm/config.js";
+import { composeGitHubInstallations } from "../agent/scm/installations.js";
 import { GitHubApp } from "../agent/scm/app.js";
 import { repoAllowed } from "../agent/scm/provider.js";
 import { compileNetworkPolicy } from "../agent/access/egress.js";
@@ -137,6 +138,48 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(calls[0].body.permissions.contents === "write" && calls[0].body.permissions.pull_requests === "write", "tokensForRepos default mint requests the write set (PR flow)");
   await app.tokensForRepos(["acme/web"], READ_PERMISSIONS);
   ok(calls[1].body.permissions.contents === "read" && calls[1].body.permissions.pull_requests === undefined, "tokensForRepos with READ_PERMISSIONS requests read-only (checkout mint)");
+}
+
+{
+  ok(
+    composeGitHubInstallations({ acme: "1" }, { globex: "2" }).globex === "2",
+    "compose: a discovered owner the env map doesn't name is ADDED (the whole point — no env edit per org)",
+  );
+  ok(
+    composeGitHubInstallations({ acme: "1" }, { acme: "999" }).acme === "1",
+    "compose: env WINS every collision (a webhook can never re-point a hand-pinned owner)",
+  );
+  ok(Object.keys(composeGitHubInstallations({}, {})).length === 0, "compose: empty ∘ empty is empty");
+  ok(
+    JSON.stringify(composeGitHubInstallations({ acme: "1" }, {})) === JSON.stringify({ acme: "1" }),
+    "compose: no discovered entries ⇒ byte-identical to the configured map (the store-outage floor)",
+  );
+  const configured = { acme: "1" };
+  composeGitHubInstallations(configured, { globex: "2" });
+  ok(Object.keys(configured).length === 1, "compose is PURE — it never mutates the configured map");
+}
+
+{
+  const fetchFn: FetchFn = async (url) => {
+    const installationId = url.match(/installations\/([^/]+)\//)![1];
+    return { ok: true, status: 201, text: async () => "", json: async () => ({ token: `tok_${installationId}`, expires_at: "2026-06-25T13:00:00Z", repositories: [] }) };
+  };
+  let hydrated = 0;
+  const app = new GitHubApp(
+    { appId: "111", privateKeyPem: pkcs1, appSlug: "open-everywhere", installations: { acme: "4242" } },
+    { fetchFn, now: () => 1_750_000_000_000, discovered: (owner) => (owner === "globex" ? "7777" : undefined), hydrate: async () => void hydrated++ },
+  );
+  ok(app.installationFor("acme") === "4242", "installationFor prefers the CONFIGURED map");
+  ok(app.installationFor("globex") === "7777", "installationFor falls back to the DISCOVERED map");
+  ok(app.installationFor("initech") === undefined, "installationFor stays undefined for an owner neither map names");
+
+  const { tokens, ungranted } = await app.tokensForRepos(["acme/web", "globex/secret", "initech/x"]);
+  ok(hydrated === 1, "tokensForRepos hydrates the discovered map BEFORE deciding ungranted (serverless: this instance may never have seen the webhook)");
+  ok(tokens.get("globex")!.token === "tok_7777", "a webhook-discovered owner mints a real token — no env edit needed");
+  ok(ungranted.length === 1 && ungranted[0] === "initech/x", "an owner in NEITHER map is still reported ungranted, never widened");
+
+  const bare = new GitHubApp({ appId: "111", privateKeyPem: pkcs1, appSlug: "oe", installations: { acme: "4242" } }, { fetchFn });
+  ok(bare.installationFor("acme") === "4242" && bare.installationFor("globex") === undefined, "without the discovered/hydrate deps the app behaves exactly as before");
 }
 
 {
@@ -620,4 +663,4 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(projected.type === "text" && projected.value === rendered, "get_pr_feedback.toModelOutput renders through renderPrFeedbackForModel");
 }
 
-console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress, PR checks summary, PR feedback digest)\n`);
+console.log(`\n✓ scm: ${n} assertions passed (JWT, scoping, read/write mint split, git-arg safety, identity, config, orchestrator, checkout cmd, approved push, PR create/update, convention probe, repo skills, repo agents, guards, egress, PR checks summary, PR feedback digest, installation composition)\n`);

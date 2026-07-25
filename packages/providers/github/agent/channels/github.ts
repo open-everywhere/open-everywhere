@@ -10,7 +10,10 @@ import {
   type GitHubAmbientEvent,
   type GitHubSupervisorDeps,
 } from "./github-supervisor.js";
+import { extractGitHubInstallationEvent, handleGitHubInstallationDelivery } from "./github-installations.js";
 import {
+  recordGitHubInstallation,
+  forgetGitHubInstallation,
   supervisorGrainFor,
   mintRotationToken,
   grainUsesUnifiedWindow,
@@ -47,6 +50,10 @@ function log(msg: string): void {
 
 function slog(msg: string): void {
   console.log(`[open-everywhere:github-supervisor] ${msg}`);
+}
+
+function ilog(msg: string): void {
+  console.log(`[open-everywhere:github-installations] ${msg}`);
 }
 
 function str(v: unknown): string | undefined {
@@ -255,6 +262,23 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
   slog(`comment on ${surfaceKey}#${ev.issueNumber} → judged wake dispatched`);
 }
 
+async function installationDelivery(body: string, eventType: string): Promise<void> {
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+  const ev = extractGitHubInstallationEvent(eventType, payload);
+  if (!ev) return;
+  await handleGitHubInstallationDelivery(ev, {
+    record: (rec) => recordGitHubInstallation(rec),
+    forget: (owner) => forgetGitHubInstallation(owner),
+    audit: (action, detail, workspace) => appendAudit({ org: deploymentOrg(), platform: "github", workspace, action, detail }),
+    log: (m) => ilog(m),
+  });
+}
+
 const pristine = githubChannel({ botName: BOT_NAME });
 type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
@@ -399,6 +423,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     const eventType = req.headers.get("x-github-event") ?? "";
     args.waitUntil(fanOutGitHubDelivery(body, eventType, args.receive));
     args.waitUntil(ambientDelivery(body, eventType, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+    args.waitUntil(installationDelivery(body, eventType).catch((err) => ilog(`installation leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);
   };

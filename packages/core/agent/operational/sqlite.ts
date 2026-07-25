@@ -171,6 +171,20 @@ function getDb(): DatabaseSync {
       used_at      TEXT,                      -- ISO-8601 when consumed; NULL = still open (single-use)
       PRIMARY KEY (org_id, id)
     );
+    -- github_installation (scm/installations.ts): owner → installation id, learned from the App's own
+    -- signature-verified "installation" webhook so a new org installing the App self-registers instead
+    -- of needing an OE_GITHUB_INSTALLATIONS env edit + redeploy. NOT a secret (an installation id is a
+    -- public routing number; the App private key stays in env). The env map is composed OVER these
+    -- rows — env stays authoritative, this only augments.
+    CREATE TABLE IF NOT EXISTS github_installation (
+      org_id               TEXT NOT NULL,
+      owner                TEXT NOT NULL,     -- installation.account.login (the SCM map's key)
+      installation_id      TEXT NOT NULL,     -- installation.id, stringified
+      account_type         TEXT,              -- "Organization" | "User" (diagnostics)
+      repository_selection TEXT,              -- "all" | "selected" (refreshed by installation_repositories)
+      updated_at           TEXT NOT NULL,     -- ISO-8601 of the delivery that last wrote this row
+      PRIMARY KEY (org_id, owner)
+    );
     -- pr_session_approval (OPE-53): the "Approve for session" grant on a pr.open card. Keyed by the
     -- bare session/window token (embeds the generation ⇒ the memo dies with the session). Scoped to
     -- kind="pr.open" by the callers. NEVER holds PR content — only who granted the skip + when.
@@ -1131,6 +1145,35 @@ export const sqliteOperationalStore: OperationalStore = {
       createdBy: row.created_by,
       createdAt: row.created_at,
     };
+  },
+
+  async putGitHubInstallation(org, rec) {
+    getDb()
+      .prepare(
+        `INSERT INTO github_installation (org_id, owner, installation_id, account_type, repository_selection, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, owner) DO UPDATE SET installation_id = excluded.installation_id,
+           account_type = excluded.account_type, repository_selection = excluded.repository_selection,
+           updated_at = excluded.updated_at`,
+      )
+      .run(org, rec.owner, rec.installationId, rec.accountType ?? null, rec.repositorySelection ?? null, rec.updatedAt);
+  },
+
+  async deleteGitHubInstallation(org, owner) {
+    return getDb().prepare("DELETE FROM github_installation WHERE org_id = ? AND owner = ?").run(org, owner).changes > 0;
+  },
+
+  async listGitHubInstallations(org) {
+    const rows = getDb()
+      .prepare("SELECT owner, installation_id, account_type, repository_selection, updated_at FROM github_installation WHERE org_id = ? ORDER BY owner ASC")
+      .all(org) as { owner: string; installation_id: string; account_type: string | null; repository_selection: string | null; updated_at: string }[];
+    return rows.map((r) => ({
+      owner: r.owner,
+      installationId: r.installation_id,
+      ...(r.account_type ? { accountType: r.account_type } : {}),
+      ...(r.repository_selection ? { repositorySelection: r.repository_selection } : {}),
+      updatedAt: r.updated_at,
+    }));
   },
 
   async claimStoredCredential(org, ref, claimId, claimedAtIso, staleBeforeIso) {

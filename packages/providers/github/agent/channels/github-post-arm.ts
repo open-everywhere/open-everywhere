@@ -3,6 +3,7 @@ import {
   signAppJwt,
   mintInstallationToken,
   loadGitHubAppConfig,
+  resolveGitHubInstallationId,
   type PostArm,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
@@ -26,9 +27,11 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
   if (!creds) {
     throw new Error("unified reply couldn't post to GitHub — no App credentials (set OE_GITHUB_APP_* or GITHUB_APP_ID/GITHUB_APP_PRIVATE_KEY).");
   }
-  const installationId = origin.installationId !== undefined ? String(origin.installationId) : creds.installations[origin.owner];
+  const installationId = origin.installationId !== undefined ? String(origin.installationId) : await resolveGitHubInstallationId(origin.owner, creds.installations);
   if (!installationId) {
-    throw new Error(`unified reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none and OE_GITHUB_INSTALLATIONS has no entry).`);
+    throw new Error(
+      `unified reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
+    );
   }
   const cacheKey = `${installationId} ${origin.repo}`;
   const cached = tokenCache.get(cacheKey);

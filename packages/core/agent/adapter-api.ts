@@ -26,6 +26,14 @@ export { registerGitHubConfigPrProvider, makeGitHubConfigPrProvider } from "./cr
 
 export { parsePrivateKey, signAppJwt, mintInstallationToken } from "./scm/mint.js";
 export { loadGitHubAppConfig } from "./scm/config.js";
+export {
+  composeGitHubInstallations,
+  recordGitHubInstallation,
+  forgetGitHubInstallation,
+  resolveGitHubInstallationId,
+  hydrateGitHubInstallations,
+} from "./scm/installations.js";
+export type { GitHubInstallationRow } from "./operational/store.js";
 
 export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";

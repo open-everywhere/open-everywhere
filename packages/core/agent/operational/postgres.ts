@@ -152,6 +152,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      used_at      text,
      PRIMARY KEY (org_id, id)
    )`,
+  `CREATE TABLE IF NOT EXISTS github_installation (
+     org_id               text NOT NULL,
+     owner                text NOT NULL,
+     installation_id      text NOT NULL,
+     account_type         text,
+     repository_selection text,
+     updated_at           text NOT NULL,
+     PRIMARY KEY (org_id, owner)
+   )`,
   `CREATE TABLE IF NOT EXISTS pr_session_approval (
      org_id     text NOT NULL,
      session_id text NOT NULL,
@@ -254,6 +263,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE stored_credential ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_intake ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE github_installation ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
@@ -276,6 +286,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
   `DROP POLICY IF EXISTS stored_credential_org_isolation ON stored_credential`,
   `DROP POLICY IF EXISTS credential_intake_org_isolation ON credential_intake`,
+  `DROP POLICY IF EXISTS github_installation_org_isolation ON github_installation`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
@@ -321,6 +332,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY credential_intake_org_isolation ON credential_intake
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY github_installation_org_isolation ON github_installation
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
@@ -1429,6 +1443,36 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         createdBy: r.created_by,
         createdAt: r.created_at,
       };
+    },
+
+    async putGitHubInstallation(org, rec) {
+      await client.query(
+        `INSERT INTO github_installation (org_id, owner, installation_id, account_type, repository_selection, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (org_id, owner) DO UPDATE SET installation_id = EXCLUDED.installation_id,
+           account_type = EXCLUDED.account_type, repository_selection = EXCLUDED.repository_selection,
+           updated_at = EXCLUDED.updated_at`,
+        [org, rec.owner, rec.installationId, rec.accountType ?? null, rec.repositorySelection ?? null, rec.updatedAt],
+      );
+    },
+
+    async deleteGitHubInstallation(org, owner) {
+      const { rows } = await client.query("DELETE FROM github_installation WHERE org_id = $1 AND owner = $2 RETURNING owner", [org, owner]);
+      return rows.length > 0;
+    },
+
+    async listGitHubInstallations(org) {
+      const { rows } = await client.query(
+        "SELECT owner, installation_id, account_type, repository_selection, updated_at FROM github_installation WHERE org_id = $1 ORDER BY owner ASC",
+        [org],
+      );
+      return (rows as { owner: string; installation_id: string; account_type: string | null; repository_selection: string | null; updated_at: string }[]).map((r) => ({
+        owner: r.owner,
+        installationId: r.installation_id,
+        ...(r.account_type ? { accountType: r.account_type } : {}),
+        ...(r.repository_selection ? { repositorySelection: r.repository_selection } : {}),
+        updatedAt: r.updated_at,
+      }));
     },
 
     async claimStoredCredential(org, ref, claimId, claimedAtIso, staleBeforeIso) {
