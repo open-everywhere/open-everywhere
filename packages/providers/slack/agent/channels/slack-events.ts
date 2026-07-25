@@ -54,7 +54,7 @@ import {
   type WakeEngagementTier,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
-import { slackSpendGate, type SpendGateDecision } from "./slack-spend-gate.js";
+import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
@@ -359,7 +359,10 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     inThread,
     subtype: ev.subtype,
   });
-  if (!pre.deliver) return { ...pre, woke: false };
+  if (!pre.deliver) {
+    auditIfBotAuthorDrop(ev, "engagement", pre.reason);
+    return { ...pre, woke: false };
+  }
 
   const p = resolvePartition(bindableFor(ev));
   const engaged = await deps.isEngaged(p, ev.threadTs!);
@@ -378,7 +381,8 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   if (!decision.deliver) return { ...decision, woke: false };
 
   if ((await slackWakeSpendGate(ev, p, ev.threadTs!)) === "declined") {
-    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+    auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeMessageEvent" });
+    return { deliver: false, reason: SPEND_DECLINED_DROP_REASON, woke: false };
   }
 
   const confirmable = ev.channelType === "channel" || ev.channelType === "group";
@@ -481,6 +485,55 @@ export async function slackWakeSpendGate(ev: ParsedMessageEvent, p: Partition, t
       });
     },
   });
+}
+
+function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, detail: Record<string, unknown> = {}): void {
+  void (async () => {
+    try {
+      const p = resolvePartition(bindableFor(ev));
+      await getOperationalStore().appendAudit({
+        ts: new Date().toISOString(),
+        org: p.org,
+        platform: p.platform,
+        workspace: p.workspace,
+        surface: p.surface,
+        action: "surface.wake_dropped",
+        detail: { reason, channel: ev.channelId, ts: ev.ts, ...detail },
+      });
+    } catch {
+    }
+  })();
+}
+
+function unvouchedBotAuthor(ev: ParsedMessageEvent): boolean {
+  return Boolean(ev.botId) && !isAllowedSlackDriver(ev.teamId, ev.botId);
+}
+
+const BOT_AUTHOR_DROP_REASON = "bot author is not an allowlisted driver";
+
+const SPEND_DECLINED_DROP_REASON = "over spend cap — declined (refusal posted)";
+
+function auditJoinWakeDropped(ev: ParsedChannelJoinEvent, p: Partition, reason: string): void {
+  void (async () => {
+    try {
+      await getOperationalStore().appendAudit({
+        ts: new Date().toISOString(),
+        org: p.org,
+        platform: p.platform,
+        workspace: p.workspace,
+        surface: p.surface,
+        action: "surface.wake_dropped",
+        detail: { reason, door: "join" as SpendGateDoor, route: "routeChannelJoinEvent", channel: ev.channelId, ts: ev.ts },
+      });
+    } catch {
+    }
+  })();
+}
+
+function auditIfBotAuthorDrop(ev: ParsedMessageEvent, door: SpendGateDoor, decisionReason: string | undefined): void {
+  if (!unvouchedBotAuthor(ev)) return;
+  if (!decisionReason?.startsWith("author is a bot")) return;
+  auditEngagementWakeDropped(ev, BOT_AUTHOR_DROP_REASON, { door, botId: ev.botId ?? null, team: ev.teamId ?? null, decision: decisionReason });
 }
 
 export async function slackJoinSpendGate(ev: ParsedChannelJoinEvent, p: Partition, channelType: string | undefined): Promise<SpendGateDecision> {
@@ -651,7 +704,10 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
     textMatchesName: matched !== undefined,
   };
   const pre = shouldNameDropWake({ ...base, domainEnabled: true, channelConfirmedInternal: true });
-  if (!pre.deliver) return { ...pre, woke: false };
+  if (!pre.deliver) {
+    auditIfBotAuthorDrop(ev, "engagement", pre.reason);
+    return { ...pre, woke: false };
+  }
 
   const p = resolvePartition(bindableFor(ev));
   const enabled = deps.enabledFor(p.surfaceKey);
@@ -664,7 +720,8 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   const rootTs = ev.threadTs ?? ev.ts;
 
   if ((await slackWakeSpendGate(ev, p, rootTs)) === "declined") {
-    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+    auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeNameDropEvent" });
+    return { deliver: false, reason: SPEND_DECLINED_DROP_REASON, woke: false };
   }
 
   if (deps.markEngaged) {
@@ -998,7 +1055,10 @@ export async function routeSupervisorEvent(
     channelType: directMention && ev.channelType === undefined ? "channel" : ev.channelType,
   };
   const pre = shouldSupervisorWake({ ...base, channelConfirmedInternal: true });
-  if (!pre.deliver) return { ...pre, woke: false };
+  if (!pre.deliver) {
+    auditIfBotAuthorDrop(ev, "engagement", pre.reason);
+    return { ...pre, woke: false };
+  }
 
   const { internal, memberCount } = await deps
     .confirmInternalWithMeta(ev.channelId)
@@ -1023,7 +1083,8 @@ export async function routeSupervisorEvent(
   }
 
   if ((await slackWakeSpendGate(ev, p, ev.threadTs ?? ev.ts)) === "declined") {
-    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+    auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeSupervisorEvent" });
+    return { deliver: false, reason: SPEND_DECLINED_DROP_REASON, woke: false };
   }
 
   if (directMention && deps.markEngaged) {
@@ -1426,7 +1487,8 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   const m = meta ?? { channelId: ev.channelId };
 
   if ((await slackJoinSpendGate(ev, p, m.channelType ?? joinChannelType(ev.channelKind))) === "declined") {
-    return { deliver: false, reason: "over spend cap — declined (refusal posted)", woke: false };
+    auditJoinWakeDropped(ev, p, SPEND_DECLINED_DROP_REASON);
+    return { deliver: false, reason: SPEND_DECLINED_DROP_REASON, woke: false };
   }
 
   try {

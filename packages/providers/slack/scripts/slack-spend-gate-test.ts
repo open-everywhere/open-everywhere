@@ -1,3 +1,6 @@
+
+process.env.OE_SQLITE_PATH = ":memory:";
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -5,11 +8,13 @@ import {
   registerConfig,
   registerIdentityMapper,
   defineDomain,
+  getOperationalStore,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { bindSlack } from "../agent/channels/slack-identity.js";
 import { slackSpendGate, spendRefusalCopy, spendBypassWarnCopy, type SpendGateAuditRow } from "../agent/channels/slack-spend-gate.js";
 import { admitInbound } from "../agent/channels/slack.js";
+import { parseMessageEvent, routeSupervisorEvent, supervisorToken, type SupervisorRouteDeps } from "../agent/channels/slack-events.js";
 
 for (const k of ["OE_PLATFORM", "OE_WORKSPACE", "OE_SURFACE", "OE_CHANNEL", "OE_MODE", "OE_VISIBILITY", "OE_PRINCIPAL", "OE_ORG", "OE_TRUST", "OE_TEST_DRIVER_IDS"]) {
   delete process.env[k];
@@ -153,7 +158,7 @@ ok(/door: "mention"/.test(mentionDoor), "the mention door labels itself");
 ok(!/scopeOverBudget|capBypassFor/.test(mentionDoor), "slack.ts no longer hand-rolls the gate (no forked scopeOverBudget/capBypassFor)");
 
 const engagementDoor = read("slack-events.ts");
-ok(/import \{ slackSpendGate, type SpendGateDecision \} from "\.\/slack-spend-gate\.js"/.test(engagementDoor), "slack-events.ts imports the shared gate");
+ok(/import \{ slackSpendGate, type SpendGateDecision(?:, type SpendGateDoor)? \} from "\.\/slack-spend-gate\.js"/.test(engagementDoor), "slack-events.ts imports the shared gate");
 ok(/door: "engagement"/.test(engagementDoor), "the engagement door labels itself");
 ok(/door: "join"/.test(engagementDoor), "the channel-join door labels itself");
 const wired = engagementDoor.match(/await slackWakeSpendGate\(/g) ?? [];
@@ -223,6 +228,71 @@ ok(/consult\.gated = true;/.test(mentionDoor), "the mention door's gate consult 
 
   const dropped = await admitInbound(ctx, msg, false, async () => null);
   ok(dropped === null, "a real DROP passes straight through (nothing to gate: no turn, no spend)");
+}
+
+{
+  const TEAM = "T0EXAMPLE";
+  const DRIVER_BOT = "B0EXBOT0001";
+  const OTHER_BOT = "B0BZZZOTHER";
+  const CHANNEL = "C0EXCHAN006";
+  process.env.OE_TEST_DRIVER_IDS = `${TEAM}:${DRIVER_BOT}`;
+  const store = getOperationalStore();
+
+  const ambient = (over: Record<string, unknown>, ts: string) =>
+    parseMessageEvent({
+      type: "event_callback",
+      team_id: TEAM,
+      event: { type: "message", channel: CHANNEL, ts, user: "U_ASKER", channel_type: "channel", text: "what is this channel for?", ...over },
+    } as never)!;
+
+  const wakes: unknown[] = [];
+  const supDeps = {
+    confirmInternalWithMeta: async () => ({ internal: true, memberCount: 3 }),
+    getOrCreateSession: async (_org: string, _sk: string, channelId: string) => ({ token: supervisorToken(channelId, 1), generation: 1, freshGeneration: false }),
+    touchSession: async () => {},
+    wake: async (input: unknown) => {
+      wakes.push(input);
+    },
+  } as unknown as SupervisorRouteDeps;
+
+  const dropRows = async (ts: string) => {
+    for (let i = 0; i < 20; i++) {
+      const rows = await store.readAudit({ org: "default", action: "surface.wake_dropped" });
+      const mine = rows.filter((r) => (r.detail as { ts?: unknown } | undefined)?.ts === ts);
+      if (mine.length > 0) return mine;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return [];
+  };
+
+  wakes.length = 0;
+  const allowed = await routeSupervisorEvent(ambient({ bot_id: DRIVER_BOT }, "9001.1"), supDeps);
+  ok(allowed.woke === true && wakes.length === 1, "ALLOWLISTED driver bot + ambient non-mention message → the supervisor wake DISPATCHES (the carve-out survives)");
+  ok((await dropRows("9001.1")).length === 0, "…and an admitted wake writes NO surface.wake_dropped row (a row must mean a drop, or the trail is noise)");
+
+  wakes.length = 0;
+  const foreign = await routeSupervisorEvent(ambient({ bot_id: OTHER_BOT }, "9002.1"), supDeps);
+  ok(foreign.woke === false && wakes.length === 0, "NON-allowlisted bot author → no supervisor wake (loop safety holds)");
+  const rows = await dropRows("9002.1");
+  ok(rows.length === 1, "…and the drop writes exactly ONE surface.wake_dropped audit row (zero-rows-on-drop was the observability bug)");
+  {
+    const d = (rows[0]!.detail ?? {}) as Record<string, unknown>;
+    ok(d.reason === "bot author is not an allowlisted driver", "the row names WHY the wake was dropped");
+    ok(d.door === "engagement", "the row names the ingress door (engagement — the mention door audits its own)");
+    ok(d.botId === OTHER_BOT && d.channel === CHANNEL, "the row carries the offending bot record + channel (enough to fix the allowlist from the audit alone)");
+  }
+
+  wakes.length = 0;
+  const human = await routeSupervisorEvent(ambient({}, "9003.1"), supDeps);
+  ok(human.woke === true && wakes.length === 1, "human-authored ambient message still dispatches (no new gate on the ordinary path)");
+  ok((await dropRows("9003.1")).length === 0, "…writing no row");
+
+  delete process.env.OE_TEST_DRIVER_IDS;
+}
+
+{
+  const declines = engagementDoor.match(/=== "declined"\) \{\n\s*audit(?:Engagement|Join)WakeDropped\(/g) ?? [];
+  ok(declines.length === 4, `every spend-gate decline audits its drop (found ${declines.length}; expected the engaged-thread, name-drop, supervisor and join doors)`);
 }
 
 console.log(`slack-spend-gate: ${n} assertions passed`);
