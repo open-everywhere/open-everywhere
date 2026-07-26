@@ -217,13 +217,13 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 {
   const store = getOperationalStore();
   ok(
-    (await store.markEventSeen("acme", deliveryDedupeKey("delivery-aaa"), new Date().toISOString(), 600_000)) === false,
-    "dedupe: the durable mark is written under a gh-fanout-namespaced key (no collision with inbound slack event ids)",
+    (await store.markEventSeen("acme", deliveryDedupeKey("github", "delivery-aaa"), new Date().toISOString(), 600_000)) === false,
+    "dedupe: the durable mark is written under a SOURCE-namespaced key (no collision with inbound slack event ids, and no collision between two trigger sources whose id spaces overlap)",
   );
   const h = harness([routine({ id: "r-ping" })]);
   await fanOutDelivery(JSON.stringify({}), "ping", "delivery-ping", h.deps);
   ok(
-    (await store.markEventSeen("acme", deliveryDedupeKey("delivery-ping"), new Date().toISOString(), 600_000)) === true,
+    (await store.markEventSeen("acme", deliveryDedupeKey("github", "delivery-ping"), new Date().toISOString(), 600_000)) === true,
     "dedupe: an unmodelled event (ping) never burns a dedupe slot",
   );
 }
