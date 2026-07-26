@@ -4,8 +4,10 @@ import { bridgeConfirmChannelInternal } from "../channels/slack-bridge.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolveRoutineTarget, type DispatchTarget } from "../schedules/routine-dispatch.js";
+import { mintWakeId } from "../channels/unified-window.js";
 import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
+import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { matchesEvent, normalizeGithubEvent, eventPrompt, type NormalizedEvent } from "./events.js";
 import type { Routine } from "./routine.js";
@@ -37,6 +39,7 @@ export interface GitHubFanOutDeps {
   readonly markSeen?: (org: string, key: string, atIso: string, ttlMs: number) => Promise<boolean>;
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly now?: () => Date;
+  readonly fireWindow?: FireWindowDeps;
 }
 
 let warnedDedupeStore = false;
@@ -99,12 +102,23 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
       principalId: "github:webhook",
       attributes: routineFireAttributes(r, dest.attributes, dest.mode, internal),
     };
-    await deps
-      .receive(dest.channel, { message: eventPrompt(r, ev), target: dest.target, auth })
-      .catch(async (err: unknown) => {
-        log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
-        await auditRoutineFireLost(r, String(err), auditDeps);
-      });
+    const message = eventPrompt(r, ev);
+    const fireWakeId = mintWakeId();
+    const deliver = async (): Promise<void> => {
+      if (dest.origin) {
+        const diverted = await divertTriggeredFire(
+          deps.receive,
+          { message, surfaceKey: r.surfaceKey, origin: dest.origin, seatKey: runFireSeatKey(fireWakeId), auth, wakeId: fireWakeId },
+          deps.fireWindow ?? {},
+        );
+        if (diverted) return;
+      }
+      await deps.receive(dest.channel, { message, target: dest.target, auth });
+    };
+    await deliver().catch(async (err: unknown) => {
+      log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
+      await auditRoutineFireLost(r, String(err), auditDeps);
+    });
     fired++;
   }
   if (matches.length > 0) {

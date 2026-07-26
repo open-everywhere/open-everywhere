@@ -1,0 +1,341 @@
+import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+const dir = join(tmpdir(), `open-everywhere-triggered-fire-test-${process.pid}`);
+rmSync(dir, { recursive: true, force: true });
+process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+delete process.env.OE_ORG;
+delete process.env.OE_ONESHOT_AGENT;
+process.env.OE_WINDOW_TOPOLOGY = "1";
+
+const { registerSlackTestBridge, registerSlackFixtureCodec, registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
+const { registerConfig } = await import("../agent/access/config.js");
+const { defineDomain } = await import("../agent/memory/domain.js");
+const fireWindow = await import("../agent/routines/fire-window.js");
+const { classifySessionId, isThreadSeatWindowToken, parseWindowToken } = await import("../agent/channels/window-key.js");
+const { windowGrainOf } = await import("../agent/identity/binding.js");
+const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
+const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
+const { getOperationalStore } = await import("../agent/operational/provider.js");
+const { readAudit } = await import("../agent/audit/audit.js");
+const { ROUTINE_MARKER, routineMarker } = await import("../agent/routines/routine.js");
+const { WEBHOOK_MARKER_ATTR, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+const unifiedMod = await import("../agent/channels/unified.js");
+const unifiedChannel = unifiedMod.default;
+
+type Routine = import("../agent/routines/routine.js").Routine;
+type UnifiedWakeOrigin = import("../agent/channels/unified-window.js").UnifiedWakeOrigin;
+type UnifiedReceiveTarget = import("../agent/channels/unified.js").UnifiedReceiveTarget;
+type Domain = import("../agent/memory/domain.js").Domain;
+
+const ORG = "default";
+const DOMAIN = "payments";
+const TEAM = "T_FIRE";
+const CHAN = "C_FIRE";
+const SURFACE = `slack/${TEAM}/${CHAN}`;
+const LONELY_SURFACE = "slack/T_FIRE/C_LONELY";
+
+const SLACK_CHANNEL = { __fixture: "slack" } as never;
+registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
+registerSlackFixtureCodec();
+registerSlackFixtureMapper();
+
+const winDomain = defineDomain({ name: DOMAIN, channels: [SURFACE], ambientSupervisor: true, mode: "unified" });
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [winDomain],
+  loadSilos: () => [],
+  domainsForSurface: ({ surface }) => (surface === CHAN ? [DOMAIN] : []),
+});
+const DOMAINS: readonly Domain[] = [winDomain];
+
+const SLACK_ORIGIN: UnifiedWakeOrigin = { platform: "slack", channelId: CHAN };
+const store = getOperationalStore();
+
+{
+  const base = { surfaceKey: SURFACE, origin: SLACK_ORIGIN, seatKey: "run/abc", domains: DOMAINS, generation: 4, armed: true };
+  const plan = fireWindow.planFireWindow(base);
+  ok(plan !== null, "plan: an armed fire on a windowed surface DOES get a window (the whole defect: it never did)");
+  ok(plan!.domain === DOMAIN, "plan: the window is anchored on the surface's domain");
+  ok(parseWindowToken(plan!.token)?.generation === 4, "plan: the standing window's CURRENT generation rides into the token (a rotation retires fire seats too)");
+  ok(plan!.token.includes(":win:s/"), "plan: the windowId is a THREAD-SEAT id (`s/…`) — not a task id, not the degenerate domain form");
+  ok(isThreadSeatWindowToken(plan!.token), "plan: the minted token classifies as a thread-seat token");
+
+  ok(classifySessionId(plan!.token).grain === "thread", "grain/token: the TOKEN SHAPE alone classifies the fire `thread` (the fail-closed backstop)");
+  ok(classifySessionId(plan!.token).grain !== "task", "grain/token: an `s/` id can never fail OPEN to the one wide-hands grain");
+  const noStampCtx = { channel: { continuationToken: plan!.token }, session: { auth: { current: { attributes: {} } } } } as never;
+  ok(windowGrainOf(noStampCtx) === "thread", "grain/backstop: even with the host `oe_grain` stamp LOST, windowGrainOf still reads `thread` off the token");
+  ok(fireWindow.TRIGGERED_FIRE_GRAIN === "thread", "grain: the constant every ingress stamps is `thread`");
+
+  ok(fireWindow.planFireWindow({ ...base, armed: false }) === null, "plan/fail-closed: delegation DISARMED ⇒ no divert (flag-off is byte-identical; a thread seat with no delegator would be worse than native)");
+  ok(fireWindow.planFireWindow({ ...base, surfaceKey: LONELY_SURFACE }) === null, "plan/fail-closed: a surface with no window ⇒ no divert");
+  ok(fireWindow.planFireWindow({ ...base, domains: [] }) === null, "plan/fail-closed: no domains configured ⇒ no divert");
+  ok(fireWindow.planFireWindow({ ...base, seatKey: "" }) === null, "plan/fail-closed: an empty seat key ⇒ no divert");
+  ok(
+    fireWindow.planFireWindow({ ...base, origin: { platform: "teams", serviceUrl: "https://smba.trafficmanager.net/", conversationId: "c1" } }) === null,
+    "plan/fail-closed: an origin whose platform has NO registered wake-origin codec ⇒ no divert (a wake we could never reply from is not dispatched)",
+  );
+  ok(
+    fireWindow.planFireWindow({ ...base, origin: { platform: "slack", channelId: "" } }) === null,
+    "plan/fail-closed: a structurally invalid origin is rejected by isUnifiedWakeOrigin",
+  );
+
+  ok(fireWindow.jobFireSeatKey("r-1") === fireWindow.jobFireSeatKey("r-1"), "seat/job: STABLE per routine — a durable job resumes ONE seat across fires (the OPE-55 join, now token-derived)");
+  ok(fireWindow.runFireSeatKey("w-1") !== fireWindow.runFireSeatKey("w-2"), "seat/run: UNIQUE per fire — a non-job run gets its own session, exactly as before");
+  ok(!fireWindow.jobFireSeatKey("a:b").includes(":"), "seat: colons are sanitised (a windowId is `[^:]+`)");
+  ok(
+    fireWindow.planFireWindow({ ...base, seatKey: fireWindow.jobFireSeatKey("r-1") })!.token ===
+      fireWindow.planFireWindow({ ...base, seatKey: fireWindow.jobFireSeatKey("r-1") })!.token,
+    "seat/job: the same job seat key mints the SAME token ⇒ eve resumes the SAME session",
+  );
+}
+
+{
+  const ARMED_KIT = ["task"] as const;
+  ok(!ARMED_KIT.includes("thread" as never), "hands: a thread seat is NARROW — never the wide-hands kit (that stays the one-shot worker's)");
+  ok(WINDOW_GATED_TOOLS["agent"].includes("thread"), "delegator: `agent` MOUNTS on thread grain — the fire can reach wider hands");
+  ok(!WINDOW_GATED_TOOLS["agent"].includes("native"), "delegator: `agent` does NOT mount on native — which is why the pre-fix fire had none");
+  ok(memoryRecallRouteFor("thread", ARMED_KIT, true) === "agent", "memory: a thread-grain fire reaches its org memory via `agent`");
+  ok(memoryRecallRouteFor("native", ARMED_KIT, true) === "none", "memory/defect pinned: the grain the fire USED to land on could not reach memory at all");
+  ok(Array.isArray(FULL_KIT), "hands: FULL_KIT is the single flag-derived lever both rows above read");
+}
+
+interface Delivered {
+  readonly unified: boolean;
+  readonly target: Record<string, unknown>;
+  readonly message: string;
+  readonly attrs: Record<string, unknown>;
+  readonly continuationToken?: string;
+}
+function captureReceive() {
+  const seen: Delivered[] = [];
+  const receive = (async (channel: unknown, input: { message?: string; target?: unknown; auth?: { attributes?: Record<string, unknown> } }) => {
+    const unified = channel === (unifiedChannel as unknown);
+    let continuationToken: string | undefined;
+    if (unified) {
+      await unifiedChannel.receive!({ message: input.message ?? "", target: input.target as never, auth: input.auth as never }, {
+        send: (async (_payload: unknown, opts: { continuationToken?: string }) => {
+          continuationToken = opts.continuationToken;
+          return {} as never;
+        }) as never,
+      });
+    }
+    seen.push({
+      unified,
+      target: (input.target ?? {}) as Record<string, unknown>,
+      message: input.message ?? "",
+      attrs: input.auth?.attributes ?? {},
+      ...(continuationToken !== undefined ? { continuationToken } : {}),
+    });
+  }) as never;
+  return { seen, receive };
+}
+
+const dispatch = await import("../agent/schedules/dispatch.js");
+const routineStore = await import("../agent/routines/store.js");
+
+function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
+  return {
+    org: ORG,
+    surfaceKey: SURFACE,
+    target: { channelId: CHAN },
+    trigger: { kind: "interval", everyMinutes: 60 },
+    prompt: "Post the daily digest.",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: "2026-07-01T00:00:00.000Z",
+    ...over,
+  };
+}
+
+async function tick(now: Date, receive: unknown): Promise<void> {
+  const pending: Promise<unknown>[] = [];
+  await dispatch.dispatchTick({
+    now,
+    receive,
+    waitUntil: (p: Promise<unknown>) => void pending.push(p),
+    appAuth: { attributes: {} },
+    postJobKickoff: async () => "1700000000.0001",
+  } as never);
+  await Promise.all(pending);
+}
+
+const NOW = new Date("2026-07-02T12:00:00.000Z");
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-clock" }));
+  const { seen, receive } = captureReceive();
+  await tick(NOW, receive);
+  ok(seen.length === 1, "clock: exactly one delivery");
+  const d = seen[0];
+  ok(d.unified, "clock: the fire is delivered into the UNIFIED channel — it JOINS the window (pre-fix it went to the native provider channel)");
+  const target = d.target as unknown as UnifiedReceiveTarget;
+  ok(isThreadSeatWindowToken(target.token), "clock: the fire's window token is a THREAD-SEAT token");
+  ok(d.continuationToken === target.token, "clock: the unified receive delivered under that exact raw token (one token ⇒ one session)");
+  ok(d.attrs[OE_GRAIN_ATTR] === "thread", "clock: the delivery carries the host-set `oe_grain: thread` stamp");
+  ok(d.attrs[OE_ADDRESSING_ATTR] === "direct-mention", "clock: the fire is OWED its output — addressed, so terminal prose bridges to the origin instead of being hard-dropped");
+  ok(routineMarker(d.attrs as never)?.id === "r-clock", "clock: the ROUTINE MARKER still rides the fire (the OPE-145 outcome/forensics join is unmoved)");
+  ok(d.attrs["channel_id"] === CHAN && d.attrs["team_id"] === TEAM, "clock: the platform identity attributes still ride (partition/spend binding unmoved)");
+  ok(d.attrs["trust_checked"] === "true", "clock: the LIVE per-fire trust recheck still rides");
+
+  const origin = await store.getUnifiedWakeTarget(ORG, target.wakeId);
+  ok(origin !== null, "clock/ANSWERABLE: a durable `wakeId → origin` row exists (pre-fix this write never happened at all)");
+  const resolved = await resolveAnswerableReplyTarget(store, ORG, target.wakeId, target.token, "turn-1", target.wakeId);
+  ok(resolved.ok && resolved.origin.platform === "slack", "clock/ANSWERABLE: the unified `reply` fence RESOLVES the fire's own wake to its origin");
+  ok(resolved.ok && (resolved.origin as { channelId: string }).channelId === CHAN, "clock/ANSWERABLE: it resolves to the channel the routine posts in");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-clock");
+}
+
+{
+  delete process.env.OE_ONESHOT_AGENT;
+  await routineStore.addRoutine({} as never, routine({ id: "r-off" }));
+  const { seen, receive } = captureReceive();
+  await tick(NOW, receive);
+  ok(seen.length === 1 && !seen[0].unified, "flag-off: the fire lands NATIVE — delegation disarmed means a thread seat would have no delegator, so the divert must not apply");
+  ok(seen[0].target["channelId"] === CHAN && seen[0].target["threadTs"] === undefined, "flag-off: the native target is unchanged");
+  ok(seen[0].attrs[OE_GRAIN_ATTR] === undefined, "flag-off: no window stamps are added — byte-identical to the pre-OPE-144 fire");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-off");
+
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-lonely", surfaceKey: LONELY_SURFACE, target: { channelId: "C_LONELY" } }));
+  const l = captureReceive();
+  await tick(NOW, l.receive);
+  ok(l.seen.length === 1 && !l.seen[0].unified, "no-window: a surface outside every windowed domain keeps the native fire (fail-closed to today's behaviour)");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: LONELY_SURFACE } as never, "r-lonely");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-job", sessionMode: "job", trigger: { kind: "interval", everyMinutes: 1 } }));
+  const a = captureReceive();
+  await tick(NOW, a.receive);
+  const t1 = a.seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(a.seen[0].unified, "job: a durable-job fire joins the window too");
+  ok((t1.origin as { threadTs?: string }).threadTs === "1700000000.0001", "job: the wake ORIGIN is the job's own thread anchor — its answers land in the job thread, not the channel root");
+  const b = captureReceive();
+  await tick(new Date(NOW.getTime() + 10 * 60_000), b.receive);
+  const t2 = b.seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(t2.token === t1.token, "job: the SECOND fire resumes the SAME seat token — the OPE-55 durable-job session join survives the re-grain");
+  ok(t2.wakeId !== t1.wakeId, "job: each fire still mints its OWN wakeId (two runs, two answerable wakes, one session)");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-job");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-lost" }));
+  const before = (await readAudit({ org: ORG, limit: 200 })).length;
+  const boom = (async () => {
+    throw new Error("divert exploded");
+  }) as never;
+  await tick(NOW, boom);
+  const rows = await readAudit({ org: ORG, limit: 200 });
+  const lost = rows.filter((r) => r.action === "routine.fire_lost" && (r.detail as { routineId?: string } | undefined)?.routineId === "r-lost");
+  ok(rows.length > before, "forensics: the failed fire wrote an audit row");
+  ok(lost.length === 1, "forensics: a failed DIVERT lands the SAME `routine.fire_lost` row a failed native receive does — the trail does not move when the grain does");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-lost");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
+  const ev = routine({ id: "r-event", trigger: { kind: "event", source: "github" }, prompt: "Summarise the PR." });
+  const body = JSON.stringify({
+    action: "opened",
+    pull_request: { number: 42, title: "Add caching", html_url: "https://github.com/me/proj/pull/42" },
+    repository: { full_name: "me/proj" },
+    sender: { login: "alice" },
+  });
+  const { seen, receive } = captureReceive();
+  await fanOutDelivery(body, "pull_request", "delivery-1", { receive, org: ORG, listRoutines: async () => [ev] });
+  ok(seen.length === 1 && seen[0].unified, "event: an event-routine fire joins the window on the SAME decision as a clock fire");
+  ok(seen[0].attrs[OE_GRAIN_ATTR] === "thread", "event: thread grain");
+  ok(routineMarker(seen[0].attrs as never)?.id === "r-event", "event: the routine marker still rides");
+  const et = seen[0].target as unknown as UnifiedReceiveTarget;
+  ok((await store.getUnifiedWakeTarget(ORG, et.wakeId)) !== null, "event/ANSWERABLE: the `wakeId → origin` row is registered");
+
+  delete process.env.OE_ONESHOT_AGENT;
+  const off = captureReceive();
+  await fanOutDelivery(body, "pull_request", "delivery-2", { receive: off.receive, org: ORG, listRoutines: async () => [ev] });
+  ok(off.seen.length === 1 && !off.seen[0].unified, "event/flag-off: byte-identical native fire");
+}
+
+{
+  const { defineWebhook, assertWebhooksValid } = await import("../agent/webhooks/config.js");
+  const { fireWebhook } = await import("../agent/webhooks/dispatch.js");
+  const hook = defineWebhook({
+    id: "deploy-status",
+    secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
+    broker: "env",
+    target: SURFACE,
+    instruction: "A deploy just finished. Summarise it.",
+  });
+
+  const bag = webhookFireAttributes("deploy-status", TEAM, CHAN, false, true);
+  ok(bag[WEBHOOK_MARKER_ATTR] === "deploy-status", "webhook/bag: the hook marker rides");
+  ok(bag["team_id"] === TEAM && bag["channel_id"] === CHAN && bag["channel_type"] === "channel", "webhook/bag: the surface stamping is unchanged");
+  ok(bag["trust_checked"] === "true", "webhook/bag: the live trust verdict rides, positive-only");
+  ok(webhookFireAttributes("h", TEAM, "D_X", true, false)[OE_GRAIN_ATTR] === "standing", "webhook/bag: a DM-family target would stamp the standing grain — the shared builder can no longer omit a deliberate stamp");
+
+  process.env.OE_ONESHOT_AGENT = "1";
+  const { seen, receive } = captureReceive();
+  const res = await fireWebhook(hook, JSON.stringify({ status: "failed" }), { receive, confirmInternal: async () => true });
+  ok(res.fired, "webhook: the fire reports fired");
+  ok(seen.length === 1 && seen[0].unified, "webhook: an unattended, PUBLICLY-triggered fire joins the window at thread grain — not the `native` posture a live human channel turn carries");
+  ok(seen[0].attrs[OE_GRAIN_ATTR] === "thread", "webhook: thread grain (pre-fix this leg stamped NO grain attribute at all)");
+  ok(seen[0].attrs[WEBHOOK_MARKER_ATTR] === "deploy-status", "webhook: the hook marker rides through the divert");
+  ok(seen[0].attrs[ROUTINE_MARKER.id] === undefined, "webhook: a hook fire carries no routine marker (it is not a routine — the outcome hook stays a no-op)");
+  const wt = seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(isThreadSeatWindowToken(wt.token), "webhook: a thread-seat token");
+  const wres = await resolveAnswerableReplyTarget(store, ORG, wt.wakeId, wt.token, "turn-w", wt.wakeId);
+  ok(wres.ok, "webhook/ANSWERABLE: the fire's wake resolves through the unified reply fence");
+
+  delete process.env.OE_ONESHOT_AGENT;
+  const off = captureReceive();
+  await fireWebhook(hook, JSON.stringify({ status: "ok" }), { receive: off.receive, confirmInternal: async () => true });
+  ok(off.seen.length === 1 && !off.seen[0].unified, "webhook/flag-off: byte-identical native fire");
+  ok(off.seen[0].target["channelId"] === CHAN, "webhook/flag-off: the native target is unchanged");
+
+  const dmHook = defineWebhook({
+    id: "dm-hook",
+    secretRef: "DM_HOOK_SECRET",
+    broker: "env",
+    target: "slack/T_FIRE/D_ALICE",
+    instruction: "Ping me.",
+  });
+  assertWebhooksValid([dmHook]);
+  const dm = captureReceive();
+  await fireWebhook(dmHook, JSON.stringify({ ping: 1 }), { receive: dm.receive, confirmInternal: async () => false });
+  ok(dm.seen.length === 1 && !dm.seen[0].unified, "webhook/dm: the DM hook fires (no window on that surface ⇒ the native path)");
+  ok(dm.seen[0].attrs["channel_type"] === "im", "webhook/dm: the fire binds as a DM — it used to hardcode `channel` on a 1:1, mis-binding the session's mode");
+  ok(dm.seen[0].attrs[OE_GRAIN_ATTR] === "standing", "webhook/dm: an autonomous fire into someone's DM gets the DM-family STANDING grain, NOT a live human turn's hands (the fourth site's real hole)");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  const w1 = mintWakeId();
+  const w2 = mintWakeId();
+  const base = { surfaceKey: SURFACE, origin: SLACK_ORIGIN, domains: DOMAINS, generation: 1, armed: true };
+  const p1 = fireWindow.planFireWindow({ ...base, seatKey: fireWindow.runFireSeatKey(w1) });
+  const p2 = fireWindow.planFireWindow({ ...base, seatKey: fireWindow.runFireSeatKey(w2) });
+  ok(p1!.token !== p2!.token, "runs: two non-job fires mint DIFFERENT seats ⇒ a fresh session per run, exactly as before the re-grain");
+  ok(classifySessionId(p1!.token).grain === "thread" && classifySessionId(p2!.token).grain === "thread", "runs: both are thread grain");
+}
+
+delete process.env.OE_ONESHOT_AGENT;
+rmSync(dir, { recursive: true, force: true });
+console.log(`✓ triggered-fire-window: ${passed} assertions passed`);

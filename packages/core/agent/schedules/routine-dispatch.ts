@@ -3,6 +3,7 @@ import type { TelegramReceiveTarget } from "eve/channels/telegram";
 import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
 import type { Routine } from "../routines/routine.js";
+import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { bridgeSlackChannel } from "../channels/slack-bridge.js";
 
@@ -11,6 +12,7 @@ export interface DispatchTarget {
   readonly target: { channelId: string; threadTs?: string } | TelegramReceiveTarget | DiscordReceiveTarget | Readonly<Record<string, unknown>>;
   readonly mode: SessionMode;
   readonly attributes: Readonly<Record<string, string>>;
+  readonly origin?: UnifiedWakeOrigin;
 }
 
 export interface RoutineDispatchProvider {
@@ -48,6 +50,7 @@ function resolveSlackTarget(r: Routine): DispatchTarget | null {
       channel_id: channelId,
       channel_type: mode === "dm" ? "im" : "channel",
     },
+    origin: { platform: "slack", channelId },
   };
 }
 

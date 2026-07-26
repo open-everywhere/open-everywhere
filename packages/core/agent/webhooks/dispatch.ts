@@ -5,6 +5,9 @@ import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { emitTelemetry } from "../observability/telemetry.js";
+import { webhookFireAttributes } from "../routines/fire-auth.js";
+import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
+import { mintWakeId } from "../channels/unified-window.js";
 import type { WebhookHook } from "./config.js";
 
 export function webhookOrg(): string {
@@ -35,6 +38,7 @@ export async function fireWebhook(
     readonly receive: RouteHandlerArgs["receive"];
     readonly now?: Date;
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
+    readonly fireWindow?: FireWindowDeps;
   },
 ): Promise<WebhookFireResult> {
   const now = args.now ?? new Date();
@@ -49,6 +53,7 @@ export async function fireWebhook(
   const workspaceKey = `slack/${teamId}`;
   const surfaceKey = `${workspaceKey}/${channelId}`;
   const partition: Partition = { org, platform: "slack", workspace: teamId, surface: channelId, workspaceKey, surfaceKey, key: surfaceKey };
+  const isDm = channelId.startsWith("D");
   const mode = "channel" as const;
 
   try {
@@ -66,16 +71,24 @@ export async function fireWebhook(
     authenticator: "webhook",
     principalType: "service",
     principalId: `webhook:${hook.id}`,
-    attributes: {
-      team_id: teamId,
-      channel_id: channelId,
-      channel_type: "channel",
-      ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
-      open_everywhere_webhook_id: hook.id,
-    },
+    attributes: webhookFireAttributes(hook.id, teamId, channelId, isDm, internal),
   };
 
-  await args.receive(slackChannel, { message: renderWebhookMessage(hook, rawBody), target: { channelId }, auth });
+  const message = renderWebhookMessage(hook, rawBody);
+  const fireWakeId = mintWakeId();
+  const diverted = await divertTriggeredFire(
+    args.receive,
+    {
+      message,
+      surfaceKey,
+      origin: { platform: "slack", channelId },
+      seatKey: runFireSeatKey(fireWakeId),
+      auth,
+      wakeId: fireWakeId,
+    },
+    args.fireWindow ?? {},
+  );
+  if (!diverted) await args.receive(slackChannel, { message, target: { channelId }, auth });
   emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });
   return { fired: true };
 }

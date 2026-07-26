@@ -21,3 +21,22 @@ export function routineFireAttributes(
     [ROUTINE_MARKER.org]: r.org,
   };
 }
+
+export const WEBHOOK_MARKER_ATTR = "open_everywhere_webhook_id";
+
+export function webhookFireAttributes(
+  hookId: string,
+  teamId: string,
+  channelId: string,
+  isDm: boolean,
+  internal: boolean,
+): Record<string, string> {
+  return {
+    team_id: teamId,
+    channel_id: channelId,
+    channel_type: isDm ? "im" : "channel",
+    ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+    ...rootDmGrainAttrs(isDm),
+    [WEBHOOK_MARKER_ATTR]: hookId,
+  };
+}

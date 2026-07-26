@@ -2,6 +2,8 @@ import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveRoutineTarget } from "./routine-dispatch.js";
 import { routineFireAttributes } from "../routines/fire-auth.js";
+import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
+import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
@@ -147,16 +149,29 @@ export async function dispatchTick(
           ...routineFireAttributes(r, dest.attributes, mode, internal),
         },
       };
+      const fireOrigin: UnifiedWakeOrigin | undefined =
+        dest.origin && dest.origin.platform === "slack" && isJobRoutine(r) && jobAnchor
+          ? { ...dest.origin, threadTs: jobAnchor }
+          : dest.origin;
+      const fireWakeId = mintWakeId();
+      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id) : runFireSeatKey(fireWakeId);
+      const message = isJobRoutine(r)
+        ? renderJobMessage(r)
+        : r.trigger.kind === "watch"
+          ? renderWatchMessage(r)
+          : renderScheduledMessage(r);
+      const deliver = async (): Promise<void> => {
+        if (fireOrigin) {
+          const diverted = await divertTriggeredFire(
+            receive,
+            { message, surfaceKey: r.surfaceKey, origin: fireOrigin, seatKey, auth: markedAuth, wakeId: fireWakeId },
+          );
+          if (diverted) return;
+        }
+        await receive(dest.channel, { message, target: fireTarget, auth: markedAuth });
+      };
       waitUntil(
-        receive(dest.channel, {
-          message: isJobRoutine(r)
-            ? renderJobMessage(r)
-            : r.trigger.kind === "watch"
-              ? renderWatchMessage(r)
-              : renderScheduledMessage(r),
-          target: fireTarget,
-          auth: markedAuth,
-        }).catch(async (err: unknown) => {
+        deliver().catch(async (err: unknown) => {
           log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
           await auditRoutineFireLost(r, String(err));
         }),
