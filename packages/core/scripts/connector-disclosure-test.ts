@@ -32,6 +32,7 @@ import {
   registerConnectorEntitlementProbe,
   _resetConnectorEntitlementProbeForTest,
 } from "../agent/access/connector-disclosure.js";
+import { connectorDmOnlyEnabled } from "../agent/access/connector-scope.js";
 import { PaneRedirectError } from "../agent/access/pane-venue.js";
 import { readAudit } from "../agent/audit/audit.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -332,6 +333,121 @@ const rowsFor = async (action: string) => (await readAudit({ action })).length;
   );
   n++;
   ok(!requestorEntitlementChecksEnabled(plainDomains), "compliance mode is OFF by default");
+}
+
+{
+  const walkSrc = (dir: string, out: string[]): string[] => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return out;
+    }
+    for (const e of entries) {
+      if (e === "node_modules" || e === "dist" || e === ".git" || e === "scripts") continue;
+      const p = join(dir, e);
+      if (statSync(p).isDirectory()) walkSrc(p, out);
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+
+  const prodFiles = walkSrc(join(REPO, "packages"), []).concat(walkSrc(join(REPO, "agent"), []));
+  const registrars = prodFiles.flatMap((f) => {
+    const calls = readFileSync(f, "utf8").match(/(?<!export function )registerGovernanceMemberSupplier\(/g) ?? [];
+    return calls.map(() => f);
+  });
+  ok(
+    registrars.length === 1 && registrars[0].endsWith(join("providers", "slack", "agent", "channels", "slack-events.ts")),
+    `n1: exactly ONE production registerGovernanceMemberSupplier CALL in the whole tree, in the Slack bundle (found ${registrars.length}: ${registrars.map((f) => f.slice(REPO.length + 1)).join(", ")})`,
+  );
+
+  const slackEventsSrc = readFileSync(registrars[0], "utf8");
+  ok(
+    /platform === "slack" && surface\) return slackGovernanceRoster\(surface\);/.test(slackEventsSrc) &&
+      /\n\s*return undefined;/.test(slackEventsSrc),
+    "n1: the one supplier is platform-gated to slack and returns undefined for every other channel key",
+  );
+
+  ok(
+    /hasGuest: facts\.isExternal === true,/.test(slackEventsSrc),
+    "n2: slackGovernanceRoster feeds hasGuest from the channel-level facts.isExternal bit",
+  );
+  const slackIdentitySrc = readFileSync(
+    join(REPO, "packages/providers/slack/agent/channels/slack-identity.ts"),
+    "utf8",
+  );
+  const isExternalExpr = /const isExternal = Boolean\(\s*([^)]*)\)/.exec(slackIdentitySrc)?.[1] ?? "";
+  ok(
+    isExternalExpr.length > 0 &&
+      ["is_ext_shared", "is_org_shared", "is_shared", "is_pending_ext_shared"].every((b) => isExternalExpr.includes(b)),
+    "n2: isExternal is derived from the four CHANNEL-shared bits",
+  );
+  ok(
+    !/is_restricted|is_ultra_restricted|is_stranger/.test(isExternalExpr),
+    "n2: the per-MEMBER guest flags (is_restricted / is_ultra_restricted / is_stranger) are NOT in the hasGuest path — a guest in an internal private channel cannot trip leg 1",
+  );
+
+  const scopeSrc = readFileSync(join(REPO, "packages/core/agent/access/connector-scope.ts"), "utf8");
+  const wallAt = scopeSrc.indexOf("if (connectorDmOnlyEnabled() && mode !== \"dm\")");
+  const gateAt = scopeSrc.indexOf("await assertConnectorDisclosure(");
+  ok(wallAt > 0 && gateAt > wallAt, "n3: the DM-only wall is evaluated BEFORE the disclosure gate");
+  const dmOnlyEnv = process.env.OE_CONNECTOR_DM_ONLY;
+  delete process.env.OE_CONNECTOR_DM_ONLY;
+  ok(connectorDmOnlyEnabled(), "n3: the DM-only wall DEFAULTS ON (unset env) — leg 1 needs OE_CONNECTOR_DM_ONLY=0 to see a channel turn");
+  if (dmOnlyEnv !== undefined) process.env.OE_CONNECTOR_DM_ONLY = dmOnlyEnv;
+
+  {
+    _resetGovernanceMemberSupplierForTest();
+    _resetAudienceFloorCacheForTest();
+    _resetConnectorEntitlementProbeForTest();
+    registerConfig(baseConfig(plainDomains) as never);
+    registerGovernanceMemberSupplier(async (channelKey) => {
+      const [platform] = channelKey.split("/");
+      if (platform !== "slack") return undefined;
+      return { humanMemberIds: ["U_A", "U_GUEST"], resolved: true, isPrivate: false, hasGuest: true };
+    });
+
+    const before = await rowsFor("connector.refused");
+    await assertConnectorDisclosure("notion", {
+      channel: { kind: "notion" },
+      session: { auth: { current: { principalId: "U_A", principalType: "notion-user", attributes: {} } } },
+    } as unknown as BindableContext);
+    ok(
+      (await rowsFor("connector.refused")) === before,
+      "n1 (behavioural): a non-Slack surface is NOT floored — leg 1 is structurally unreachable there, guest or no guest",
+    );
+
+    await assert.rejects(
+      () => assertConnectorDisclosure("notion", ctxFor("U_A", "C_SHARED_2", "channel")),
+      (err: unknown) => err instanceof PaneRedirectError,
+      "the SAME supplier DOES floor the Slack room — the narrowing is the platform gate, not a dead classifier",
+    );
+    n++;
+  }
+
+  const discSrc = readFileSync(join(REPO, "packages/core/agent/access/connector-disclosure.ts"), "utf8");
+  ok(
+    !/POSITIVELY-OBSERVED guest\/external member/.test(discSrc),
+    "claim: the over-wide 'POSITIVELY-OBSERVED guest/external member' promise is gone from the guard's header",
+  );
+  for (const [label, marker] of [
+    ["names the ticket", "OPE-173"],
+    ["names the one-surface narrowing", "registerSlackGovernanceMembers"],
+    ["names the externally-shared narrowing", "is_pending_ext_shared"],
+    ["names the DM-wall narrowing", "OE_CONNECTOR_DM_ONLY=0"],
+  ] as const) {
+    ok(discSrc.includes(marker), `claim: connector-disclosure.ts's header ${label} (${marker})`);
+  }
+  ok(
+    scopeSrc.includes("OPE-173") && !/leg 1, always on/.test(scopeSrc),
+    "claim: the connector-scope.ts call site no longer says leg 1 is 'always on' and points at the narrowings",
+  );
+  const planesDoc = readFileSync(join(REPO, "docs/security/credentials-and-planes.md"), "utf8");
+  ok(
+    /externally-shared Slack channel/.test(planesDoc) && planesDoc.includes("OE_CONNECTOR_DM_ONLY=0"),
+    "claim: the shipped manual's audience-floor layer states the Slack-only, externally-shared, DM-wall-off reach",
+  );
 }
 
 _resetGovernanceMemberSupplierForTest();

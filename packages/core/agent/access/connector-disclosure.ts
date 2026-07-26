@@ -176,7 +176,8 @@ export async function assertConnectorDisclosure(connection: string, ctx: Bindabl
       floorBreach: "guest-present",
     });
     throw new PaneRedirectError(
-      `connection "${connection}": this room has a guest/external member, so org-internal connector data ` +
+      `connection "${connection}": this room's audience floor resolved to "guest" — it is externally shared, ` +
+        `or carries an observed guest/external member — so org-internal connector data ` +
         `can't be disclosed here. Deliver the answer view-only in the requester's DM instead and reply here ` +
         `only with a pointer ("I've sent it to you directly"). Do NOT render any of the substance in this ` +
         `channel — partial disclosure is still disclosure.`,
