@@ -382,6 +382,9 @@ export { bridgedContext } from "./identity/binding-bridge.js";
 export { registerEntityActionAdapter } from "./channels/entity-actions.js";
 export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/entity-actions.js";
 
+export { registerTicketCreateAdapter } from "./channels/ticket-create.js";
+export type { TicketCreateAdapter, TicketCreateFn, TicketDestination, TicketDraft, CreatedTicket } from "./channels/ticket-create.js";
+
 export { gateGithubDelivery } from "./routines/events.js";
 export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
 

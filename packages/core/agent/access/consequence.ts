@@ -194,6 +194,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   request_access: member("access.request", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
   set_state: member("ticket.set_state", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
   assign: member("ticket.assign", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
+  create_ticket: member(
+    "ticket.create",
+    "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
+  ),
 
   set_spend_limit: admin("spend.set", "self-modification + money: changes what the org will spend"),
   clear_spend_limit: admin("spend.clear", "reverts a spend control — same bar as setting one"),

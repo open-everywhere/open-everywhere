@@ -2,8 +2,9 @@ import { getGitHubApp, repoAllowed } from "./provider.js";
 import { resolveAccessFor } from "../access/request.js";
 import { ISSUE_WRITE_PERMISSIONS } from "./mint.js";
 import { prApiHeaders, type PrFetchFn } from "./pr.js";
-import type { BindableContext } from "../identity/binding.js";
+import { currentTurnGithubTarget, type BindableContext } from "../identity/binding.js";
 import type { EntityActionAdapter } from "../channels/entity-actions.js";
+import type { CreatedTicket, TicketCreateAdapter, TicketDraft } from "../channels/ticket-create.js";
 
 export function parseGithubEntityId(id: string): { repo: string; number: number } {
   const m = /^([^/#]+\/[^/#]+)#(\d+)$/.exec(id);
@@ -68,8 +69,7 @@ export async function addGithubIssueLabel(entityId: string, label: string, opts:
   return `Label "${label}" added to GitHub ${repo}#${number}.`;
 }
 
-function checkGithubAccess(ctx: BindableContext, entityId: string): void {
-  const { repo } = parseGithubEntityId(entityId);
+function requireRepoGrant(ctx: BindableContext, repo: string): void {
   const access = resolveAccessFor(ctx);
   if (!repoAllowed(repo, access.repos)) {
     throw new Error(
@@ -79,10 +79,60 @@ function checkGithubAccess(ctx: BindableContext, entityId: string): void {
   }
 }
 
+function checkGithubAccess(ctx: BindableContext, entityId: string): void {
+  requireRepoGrant(ctx, parseGithubEntityId(entityId).repo);
+}
+
 export const githubEntityAdapter: EntityActionAdapter = {
   platform: "github",
   checkAccess: checkGithubAccess,
   setState: (id, value) => setGithubIssueState(id, value),
   assign: (id, value) => assignGithubIssue(id, value),
   addLabel: (id, value) => addGithubIssueLabel(id, value),
+};
+
+interface CreatedIssueResponse {
+  number?: number;
+  html_url?: string;
+}
+
+export async function createGithubIssue(repo: string, draft: TicketDraft, opts: GithubActionOpts = {}): Promise<CreatedTicket> {
+  if (!/^[^/#\s]+\/[^/#\s]+$/.test(repo)) {
+    throw new Error(`GitHub: invalid repo "${repo}" — expected "owner/repo".`);
+  }
+  const fetchFn = opts.fetchFn ?? (globalThis.fetch as unknown as PrFetchFn);
+  const apiBase = opts.apiBase ?? "https://api.github.com";
+  const token = await (opts.resolveToken ?? resolveIssueWriteToken)(repo);
+  const res = await fetchFn(`${apiBase}/repos/${repo}/issues`, {
+    method: "POST",
+    headers: prApiHeaders(token),
+    body: JSON.stringify({ title: draft.title, body: draft.body }),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub issue creation failed for ${repo}: ${res.status} ${await res.text()}`);
+  }
+  const created = (await res.json()) as CreatedIssueResponse;
+  if (typeof created.number !== "number") {
+    throw new Error(`GitHub: issue creation on ${repo} returned no issue number — unexpected API response.`);
+  }
+  const id = `${repo}#${created.number}`;
+  return {
+    ref: { platform: "github", id },
+    ...(typeof created.html_url === "string" ? { url: created.html_url } : {}),
+    summary: `Filed GitHub issue ${id}: "${draft.title}".`,
+  };
+}
+
+function defaultGithubRepo(ctx: BindableContext): string | undefined {
+  const t = currentTurnGithubTarget(ctx);
+  if (t) return `${t.owner}/${t.repo}`;
+  const repos = resolveAccessFor(ctx).repos.filter((r) => !r.includes("*"));
+  return repos.length === 1 ? repos[0] : undefined;
+}
+
+export const githubTicketCreateAdapter: TicketCreateAdapter = {
+  platform: "github",
+  checkAccess: (ctx, target) => requireRepoGrant(ctx, target),
+  defaultTarget: defaultGithubRepo,
+  create: (target, draft) => createGithubIssue(target, draft),
 };

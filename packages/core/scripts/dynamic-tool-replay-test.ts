@@ -50,6 +50,7 @@ const CASES: readonly ToolCase[] = [
   { slug: "add_label", entryKey: "_single", ctx: githubCtx },
   { slug: "set_state", entryKey: "_single", ctx: githubCtx },
   { slug: "assign", entryKey: "_single", ctx: githubCtx },
+  { slug: "create_ticket", entryKey: "_single", ctx: githubCtx },
   { slug: "request_access", entryKey: "_single", ctx: slackCtx },
   { slug: "connector", entryKey: "_single", ctx: slackCtx },
   { slug: "forget", entryKey: "_single", ctx: slackCtx },

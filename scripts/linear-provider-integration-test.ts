@@ -12,6 +12,11 @@ import {
   entityActionFn,
   resolveEntityAction,
 } from "@open-everywhere/core/agent/channels/entity-actions.js";
+import {
+  supportedTicketCreatePlatforms,
+  ticketCreateFn,
+  resolveTicketCreate,
+} from "@open-everywhere/core/agent/channels/ticket-create.js";
 
 const dir = join(tmpdir(), `open-everywhere-linear-integration-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -109,6 +114,22 @@ n++;
   } catch (err) {
     const msg = String((err as Error).message);
     ok(msg.includes("linear") && msg.includes("github"), "the addLabel refusal names BOTH linear and github (core + bundle composed)");
+  }
+}
+
+{
+  const platforms = supportedTicketCreatePlatforms();
+  ok(platforms.includes("linear"), "linear's ticket-CREATE adapter is registered by registerLinearProvider()");
+  ok(platforms.includes("github"), "github's ticket-CREATE adapter is registered (core module-load side effect)");
+  ok(!platforms.includes("notion"), "notion registers NO create adapter — a database row's property schema can't be inferred, so it fails closed rather than faking a ticket");
+  ok(typeof ticketCreateFn("linear") === "function", "linear declares create");
+  try {
+    resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
+    assert.fail("expected a throw");
+  } catch (err) {
+    const msg = String((err as Error).message);
+    ok(/not supported on "notion"/.test(msg), "create_ticket refuses on notion");
+    ok(msg.includes("linear") && msg.includes("github"), "…naming BOTH linear and github as the supported set (core + bundle composed)");
   }
 }
 

@@ -43,6 +43,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "set_state",
   "assign",
   "add_label",
+  "create_ticket",
   "read_channel",
   "read_thread",
   "read_slack_channel",
