@@ -7,12 +7,8 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { unifiedWindowFromToken, unifiedDomainSessionKey } from "../channels/unified-supervisor.js";
+import { isSupervisorToken, standingSeatRegistryKey } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, isSubagentSessionToken } from "../channels/window-key.js";
-
-function isSupervisorToken(token: unknown): token is string {
-  return typeof token === "string" && token.includes(":oe-sup:g");
-}
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
   try {
@@ -72,8 +68,7 @@ export default defineHook({
       if (isSupervisorToken(token)) {
         try {
           const delta = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
-          const windowId = unifiedWindowFromToken(token);
-          const registryKey = windowId !== undefined ? unifiedDomainSessionKey(windowId) : domainKeyOf(p);
+          const registryKey = standingSeatRegistryKey(token, domainKeyOf(p)) ?? domainKeyOf(p);
           if (delta > 0) {
             const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
             if (matched === 0) console.warn(`[open-everywhere:spend] supervisor counter bump matched no row (org=${p.org} key=${registryKey} token=${token})`);

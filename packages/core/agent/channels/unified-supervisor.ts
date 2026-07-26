@@ -1,5 +1,13 @@
 import { windowedDomainFor, windowModeFor, type Domain } from "../memory/domain.js";
-import { formatWindowToken, parseWindowToken, isWindowToken, windowKeyForDomain, saltSupervisorGeneration } from "./window-key.js";
+import {
+  formatWindowToken,
+  parseWindowToken,
+  isWindowToken,
+  windowKeyForDomain,
+  saltSupervisorGeneration,
+  parseDmSeatToken,
+  dmSeatRegistryKey,
+} from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
 
@@ -39,6 +47,19 @@ export function unifiedDomainSessionKey(windowId: string): string {
 
 export function domainFromSessionKey(key: string): string | undefined {
   return key.startsWith(UNIFIED_DOMAIN_KEY_PREFIX) ? key.slice(UNIFIED_DOMAIN_KEY_PREFIX.length) : undefined;
+}
+
+export function isSupervisorToken(token: unknown): token is string {
+  return typeof token === "string" && token.includes(":oe-sup:g");
+}
+
+export function standingSeatRegistryKey(token: unknown, domainKey: string): string | undefined {
+  if (isSupervisorToken(token)) {
+    const windowId = unifiedWindowFromToken(token);
+    return windowId !== undefined ? unifiedDomainSessionKey(windowId) : domainKey;
+  }
+  const dm = parseDmSeatToken(token);
+  return dm ? dmSeatRegistryKey(dm.channelId) : undefined;
 }
 
 export interface SupervisorGrain {
