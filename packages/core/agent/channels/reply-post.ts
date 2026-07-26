@@ -54,6 +54,26 @@ export async function auditReplyPost(audit: ReplyAudit | undefined, id: string, 
   }).catch(() => undefined);
 }
 
+const REFUSED_WAKE_MAX = 200;
+
+export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: string): Promise<void> {
+  if (!audit) return;
+  await appendAudit({
+    org: audit.org,
+    platform: audit.platform,
+    workspace: audit.workspace,
+    surface: audit.surface,
+    principalId: audit.principalId,
+    action: "reply.refused",
+    detail: {
+      reason,
+      route: audit.route,
+      ...(audit.wakeId ? { wakeId: audit.wakeId.slice(0, REFUSED_WAKE_MAX) } : {}),
+      ...(audit.sessionId ? { sessionId: audit.sessionId } : {}),
+    },
+  }).catch(() => undefined);
+}
+
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit): Promise<string> {
   const id = await dispatchReply(target, text);
   await auditReplyPost(audit, id, target.platform, text.length);

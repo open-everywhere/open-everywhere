@@ -2,9 +2,10 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, deploymentOrg, isUnifiedWindowContext, currentWakeId, currentTurnId, type BindableContext } from "../identity/binding.js";
 import { capabilitiesFor } from "../identity/capabilities.js";
-import { resolveReplyTarget, postReply, type ReplyAudit } from "../channels/reply-post.js";
+import { resolveReplyTarget, postReply, auditReplyRefused, type ReplyAudit } from "../channels/reply-post.js";
 import { markRepliedThisTurn } from "../channels/reply-signal.js";
-import { resolveAnswerableReplyTarget } from "../channels/unified-window.js";
+import { resolveAnswerableReplyTarget, replyRefusalMessage } from "../channels/unified-window.js";
+import { silentRoutineThisTurn } from "../routines/report.js";
 import { resolveOwnWindowToken } from "../access/oneshot-spawn.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -56,19 +57,8 @@ const unifiedReplyEntry = defineTool({
       const store = getOperationalStore();
       const resolution = await resolveAnswerableReplyTarget(store, org, turnWake, windowToken, turnId, input.wake);
       if (!resolution.ok) {
-        if (resolution.reason === "expired") {
-          throw new Error(
-            `reply couldn't resolve wake-id "${input.wake.slice(0, 64)}" — the wake's reply target is no longer on record (expired). It can't be answered now.`,
-          );
-        }
-        if (resolution.reason === "answered") {
-          throw new Error(
-            `reply: you already replied to wake-id "${input.wake.slice(0, 64)}" — if that conversation has moved on, the newer message there carries its own wake-id; answer that one. (If you knew a follow-up was coming, \`done:false\` on the first reply keeps a wake answerable.)`,
-          );
-        }
-        throw new Error(
-          `reply: wake-id "${input.wake.slice(0, 64)}" is not a wake you can answer — pass a \`wake-id\` from the envelope of a wake in THIS session that you have not already answered (a wake-id from another session, another conversation outside this window, or one you made up is refused).`,
-        );
+        await auditReplyRefused(replyAuditFor(bind, "tool", input.wake), resolution.reason);
+        throw new Error(replyRefusalMessage(resolution.reason, input.wake, { turnWake, silent: silentRoutineThisTurn() }));
       }
       const origin = resolution.origin;
 
