@@ -66,7 +66,7 @@ assert.ok(
       .map((p) => `${p.file} (${p.field}) pins "${p.version}"`)
       .join("; ") +
     ". A divergent pin installs a NESTED node_modules/eve that patch-package never patches — " +
-    "the OE hooks (__oeForceContinue, __oeProjectToolSet) are silently absent from it.",
+    "the OE additions (__oeCeil step ceiling, __oeProjectToolSet projection) are silently absent from it.",
 );
 n++;
 ok(/^\d+\.\d+\.\d+$/.test(pinned), `pins: eve is pinned to an EXACT version (got "${pinned}") — a range would let the installed bytes drift off the patch`);
@@ -109,6 +109,18 @@ ok(
 );
 
 const TOOL_LOOP = join("dist", "src", "harness", "tool-loop.js");
+
+const RETIRED = [
+  "__oeCfg",
+  "__oeMatch",
+  "__oeWrapPrepareStep",
+  "__oeNoteTerminal",
+  "__oeForceContinue",
+  "__oeHistoryHasTerminal",
+  "__OE_FORCE_NUDGE",
+  "OE_FORCE_TOOL_TURN",
+] as const;
+
 for (const eveDir of copies) {
   const where = rel(eveDir);
   const version = (JSON.parse(readFileSync(join(eveDir, "package.json"), "utf8")) as { version?: string }).version;
@@ -120,15 +132,21 @@ for (const eveDir of copies) {
   ok(existsSync(toolLoop), `copies: ${where}/${TOOL_LOOP} exists (if eve moved the harness file, the patch and every sibling test are stale)`);
   const src = readFileSync(toolLoop, "utf8");
   ok(
-    src.includes("__oeForceContinue"),
-    `copies: ${where} carries the __oeForceContinue hook (force-tool-turn / step-ceiling patch) — an unpatched copy means turn continuation and the step ceiling are silently absent`,
+    src.includes("__oeCeilTrip"),
+    `copies: ${where} carries the __oeCeil* step-ceiling helpers — an unpatched copy means a runaway tool spiral has no upper bound (the default ceiling is 120 and is LIVE even with OE_TURN_STEP_CEILING unset)`,
   );
   ok(
     src.includes("__oeProjectToolSet"),
     `copies: ${where} carries the __oeProjectToolSet hook (OPE-73) — an unpatched copy means authored toModelOutput is dropped on session-mounted dynamic tools, so untrusted-content envelopes never reach the model (prompt-injection containment regression)`,
   );
+  for (const dead of RETIRED) {
+    ok(
+      !src.includes(dead),
+      `absent: ${where} must NOT contain \`${dead}\` — the force-tool-turn nudge was retired in OPE-172 (gated on an env var that was never set anywhere, so it never ran once). A re-roll that ports the old __oe* block wholesale drags it back; port only the step-ceiling and projection helpers`,
+    );
+  }
 }
 
 console.log(
-  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y" : "ies"} patched)\n`,
+  `\n✓ eve-install-integrity: ${n} assertions passed (${pins.length} pins all @${pinned}, patch file present, ${copies.length} installed cop${copies.length === 1 ? "y carries" : "ies carry"} both OE additions and none of the ${RETIRED.length} retired force-tool-turn symbols)\n`,
 );

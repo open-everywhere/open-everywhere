@@ -16,7 +16,7 @@ const src = readFileSync(join(eveRoot, "dist/src/harness/tool-loop.js"), "utf8")
 ok(src.includes("OE UNTRUSTED OUTPUT PROJECTION (OPE-73)"), "patch present: the OPE-73 marker comment is in the installed bytes");
 const helperDef = 'function __oeProjectToolSet(ts){const h=globalThis.__oeToolResultProjection;if(typeof h==="function")h(ts);return ts}';
 ok(src.includes(helperDef), "patch present: the __oeProjectToolSet helper is byte-exact in the installed bytes");
-const END = "// === END OE SPIKE HELPERS ===";
+const END = "// === END OE PATCH HELPERS ===";
 ok(src.indexOf(helperDef) < src.indexOf(END), "patch present: the helper lives inside the OE helper block (survives block-extraction by the sibling tests)");
 
 const wiring = /__oeProjectToolSet\(([A-Za-z_$]{1,2})\);[A-Za-z_$]{1,2}\.outputSchema!==void 0&&\(\1\[FINAL_OUTPUT_TOOL_NAME\]=buildFinalOutputTool\(/;
