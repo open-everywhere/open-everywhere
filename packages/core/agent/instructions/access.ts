@@ -143,8 +143,10 @@ a silent finish after useful work is a normal shape, not an unfinished one. Rese
 a result, a question, or a blocker, and deciding to stay silent is still correct and common.
 
 The \`reply\` tool works on EVERY surface in this session — Slack, Notion, Linear, GitHub, all of
-them, every wake, without exception. Never conclude that a reply "isn't possible here": if a wake
-has a \`wake-id\`, \`reply\` delivers to it.`
+them — and on every wake you have not yet answered, not only the newest one. Several messages can
+reach you in one turn; answer each with its OWN \`wake-id\`. Never conclude that a reply "isn't
+possible here": if a wake has a \`wake-id\` and you haven't already answered it, \`reply\` delivers
+to it.`
     : `### Reporting
 
 Posting is an action, not the end of your turn: \`reply\` posts into the channel mid-turn,

@@ -103,29 +103,53 @@ export function sameUnifiedConversation(a: UnifiedWakeOrigin, b: UnifiedWakeOrig
   return ra.channelKey === rb.channelKey && ra.threadKey === rb.threadKey;
 }
 
-export type DelegatedReplyResolution =
-  | { readonly ok: true; readonly origin: UnifiedWakeOrigin }
-  | { readonly ok: false; readonly reason: "mismatch" | "expired" };
+export type AnswerableReplyResolution =
+  | { readonly ok: true; readonly origin: UnifiedWakeOrigin; readonly via: "turn" | "same-conversation" | "pending" }
+  | { readonly ok: false; readonly reason: "mismatch" | "expired" | "answered" };
 
-export async function resolveDelegatedReplyTarget(
-  store: UnifiedWakeTargetStore,
+export async function resolveAnswerableReplyTarget(
+  store: AnswerableWakeStore,
   org: string,
   turnWake: string | undefined,
+  windowToken: string | undefined,
+  turnId: string | undefined,
   inputWake: string,
-): Promise<DelegatedReplyResolution> {
+  nowMs?: number,
+): Promise<AnswerableReplyResolution> {
   if (!turnWake) return { ok: false, reason: "mismatch" };
   if (inputWake === turnWake) {
     const origin = await resolveUnifiedWakeTarget(store, org, inputWake);
-    return origin ? { ok: true, origin } : { ok: false, reason: "expired" };
+    return origin ? { ok: true, origin, via: "turn" } : { ok: false, reason: "expired" };
   }
   const [turnOrigin, echoedOrigin] = await Promise.all([
     resolveUnifiedWakeTarget(store, org, turnWake),
     resolveUnifiedWakeTarget(store, org, inputWake),
   ]);
-  if (!turnOrigin || !echoedOrigin || !sameUnifiedConversation(turnOrigin, echoedOrigin)) {
+  if (turnOrigin && echoedOrigin && sameUnifiedConversation(turnOrigin, echoedOrigin)) {
+    return { ok: true, origin: echoedOrigin, via: "same-conversation" };
+  }
+  if (!windowToken) return { ok: false, reason: "mismatch" };
+  if (typeof inputWake !== "string" || inputWake.length === 0 || inputWake.length > 200) return { ok: false, reason: "mismatch" };
+  let row: UnifiedWakeRecord | null;
+  try {
+    row = await store.getUnifiedWakeRecord(org, inputWake);
+  } catch {
     return { ok: false, reason: "mismatch" };
   }
-  return { ok: true, origin: echoedOrigin };
+  if (!row) return { ok: false, reason: "mismatch" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.targetJson);
+  } catch {
+    return { ok: false, reason: "mismatch" };
+  }
+  if (!isUnifiedWakeOrigin(parsed)) return { ok: false, reason: "mismatch" };
+  if (!row.windowToken || row.windowToken !== windowToken) return { ok: false, reason: "mismatch" };
+  const created = Date.parse(row.createdAt);
+  const now = nowMs ?? Date.now();
+  if (!Number.isFinite(created) || now - created > WAKE_TARGET_TTL_MS) return { ok: false, reason: "expired" };
+  if (row.answeredAt !== undefined && row.answeredTurnId !== turnId) return { ok: false, reason: "answered" };
+  return { ok: true, origin: parsed, via: "pending" };
 }
 
 export function isUnifiedWakeOrigin(v: unknown): v is UnifiedWakeOrigin {

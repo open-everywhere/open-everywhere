@@ -28,7 +28,7 @@ import {
   registerUnifiedWakeTarget,
   resolveUnifiedWakeTarget,
   sameUnifiedConversation,
-  resolveDelegatedReplyTarget,
+  resolveAnswerableReplyTarget,
   isUnifiedWakeOrigin,
   stampUnifiedWindowAuth,
   shouldBridgeAddressedProse,
@@ -796,12 +796,29 @@ const store = getOperationalStore();
       return "nc-reply-1";
     },
   };
-  const slackOrigin = await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId);
-  const ghOrigin = await resolveUnifiedWakeTarget(store, "default", ghWindow.wakeId);
-  const linOrigin = await resolveUnifiedWakeTarget(store, "default", linWindow.wakeId);
-  const notOrigin = await resolveUnifiedWakeTarget(store, "default", notWindow.wakeId);
-  const disOrigin = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
+  const TURN_WAKE = received[4].target.wakeId;
+  const TURN_ID = "turn-coalesced-1";
+  const answerable = (wake: string) => resolveAnswerableReplyTarget(store, "default", TURN_WAKE, RAW_TOKEN, TURN_ID, wake);
+  const slackRes = await answerable(received[0].target.wakeId);
+  const ghRes = await answerable(ghWindow.wakeId);
+  const linRes = await answerable(linWindow.wakeId);
+  const notRes = await answerable(notWindow.wakeId);
+  const disRes = await answerable(TURN_WAKE);
+  ok(disRes.ok && disRes.via === "turn", "coalesced turn: the LAST-delivered (discord) wake resolves via the this-turn arm");
+  ok(
+    slackRes.ok && slackRes.via === "pending" && ghRes.ok && ghRes.via === "pending" && linRes.ok && linRes.via === "pending" && notRes.ok && notRes.via === "pending",
+    "coalesced turn: the FOUR sibling wakes the turn's auth does NOT name all resolve via the PENDING arm — the OPE-161 fix (each was `mismatch` before)",
+  );
+  const slackOrigin = slackRes.ok ? slackRes.origin : null;
+  const ghOrigin = ghRes.ok ? ghRes.origin : null;
+  const linOrigin = linRes.ok ? linRes.origin : null;
+  const notOrigin = notRes.ok ? notRes.origin : null;
+  const disOrigin = disRes.ok ? disRes.origin : null;
   ok(slackOrigin !== null && ghOrigin !== null && linOrigin !== null && notOrigin !== null && disOrigin !== null, "coalesced turn: ALL FIVE pending wakeIds resolve from the map");
+  ok(
+    slackOrigin!.platform === "slack" && ghOrigin!.platform === "github" && linOrigin!.platform === "linear" && notOrigin!.platform === "notion" && disOrigin!.platform === "discord",
+    "coalesced turn: each wakeId resolved to ITS OWN surface's origin through the fence (no cross-surface swap)",
+  );
   ok((await postUnifiedReply(slackOrigin!, "answer for slack", deps)) === "ts-1", "reply(slack wakeId) returns the Slack post id");
   ok((await postUnifiedReply(ghOrigin!, "answer for github", deps)) === "c-1", "reply(github wakeId) returns the GitHub comment id");
   ok((await postUnifiedReply(linOrigin!, "answer for linear", deps)) === "lc-1", "reply(linear wakeId) returns the Linear comment id");
@@ -822,6 +839,65 @@ const store = getOperationalStore();
     slackPosts[0].text === "answer for slack" && ghPosts[0].text === "answer for github" && linPosts[0].text === "answer for linear" && notPosts[0].text === "answer for notion" && disPosts[0].text === "answer for discord",
     "each reply carried ITS OWN text — no cross-surface swap in the coalesced turn",
   );
+
+  {
+    const org = "default";
+    const iso = () => new Date().toISOString();
+    const OTHER_WINDOW = unifiedSupervisorToken("treasury", 1);
+    const slackC: UnifiedWakeOrigin = { platform: "slack", channelId: "C_ANS" };
+
+    const wAns = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wAns, slackC, iso(), RAW_TOKEN);
+    const before = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-1", wAns);
+    ok(before.ok && before.via === "pending", "answered lifecycle: an unanswered sibling wake resolves via the pending arm");
+    await store.markUnifiedWakeAnswered(org, wAns, iso(), "turn-1");
+    const sameTurn = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-1", wAns);
+    ok(sameTurn.ok && sameTurn.via === "pending", "answered lifecycle: the turn that ANSWERED it may keep replying to it (same-turn re-accept)");
+    const laterTurn = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-2", wAns);
+    ok(!laterTurn.ok && laterTurn.reason === "answered", "answered lifecycle: a LATER turn gets the instructive `answered` refusal");
+    const noTurnId = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, undefined, wAns);
+    ok(!noTurnId.ok && noTurnId.reason === "answered", "answered lifecycle: an UNKNOWN turn id compares unequal ⇒ fail-closed `answered` (never a free pass)");
+
+    const wOpen = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wOpen, slackC, iso(), RAW_TOKEN);
+    const nextTurn = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-9", wOpen);
+    ok(nextTurn.ok && nextTurn.via === "pending", "done:false flow: a wake nobody marked stays answerable on a later turn (the F1 recovery handle)");
+
+    const wOther = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wOther, slackC, iso(), OTHER_WINDOW);
+    const foreign = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, TURN_ID, wOther);
+    ok(!foreign.ok && foreign.reason === "mismatch", "window fence: a pending wake on ANOTHER window token is REFUSED (cross-domain + task-worker isolation)");
+    const wLegacy = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wLegacy, slackC, iso());
+    const legacy = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, TURN_ID, wLegacy);
+    ok(!legacy.ok && legacy.reason === "mismatch", "window fence: a LEGACY (pre-migration, NULL window_token) row never qualifies for the pending arm — fail-closed");
+    const legacyAsTurn = await resolveAnswerableReplyTarget(store, org, wLegacy, RAW_TOKEN, TURN_ID, wLegacy);
+    ok(legacyAsTurn.ok && legacyAsTurn.via === "turn", "window fence: a legacy row is STILL answerable as THIS turn's own wake (arm 2 byte-compatible)");
+    const noWindow = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, undefined, TURN_ID, wOpen);
+    ok(!noWindow.ok && noWindow.reason === "mismatch", "window fence: no resolvable window token ⇒ arm 4 silently unavailable (honest degrade, no new refusal class)");
+
+    await store.markUnifiedWakeAnswered(org, TURN_WAKE, iso(), "turn-earlier");
+    const ownWake = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-2", TURN_WAKE);
+    ok(ownWake.ok && ownWake.via === "turn", "arm 2 never consults the answered mark — this turn may always re-answer its own wake (multi-reply + redrive preserved)");
+
+    const wStale = mintWakeId();
+    const staleAt = new Date(Date.now() - WAKE_TARGET_TTL_MS - 60_000).toISOString();
+    await registerUnifiedWakeTarget(store, org, wStale, slackC, staleAt, RAW_TOKEN);
+    ok((await resolveUnifiedWakeTarget(store, org, wStale)) !== null, "read-time TTL: the stale row is STILL readable from the store (no prune ran) — the store has no read-time bound");
+    const stale = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, TURN_ID, wStale);
+    ok(!stale.ok && stale.reason === "expired", "read-time TTL: the FENCE refuses a past-TTL row as `expired` (arm 4 must not inherit prune-only eviction)");
+    const inTtl = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, TURN_ID, wStale, Date.parse(staleAt) + 60_000);
+    ok(inTtl.ok && inTtl.via === "pending", "read-time TTL: the SAME row resolves when `now` sits inside the window (the bound is the clock, not the row)");
+
+    const wRedrive = mintWakeId();
+    await registerUnifiedWakeTarget(store, org, wRedrive, slackC, iso(), RAW_TOKEN);
+    await store.markUnifiedWakeAnswered(org, wRedrive, iso(), "turn-1");
+    await registerUnifiedWakeTarget(store, org, wRedrive, slackC, iso(), RAW_TOKEN);
+    const rearmed = await resolveAnswerableReplyTarget(store, org, TURN_WAKE, RAW_TOKEN, "turn-2", wRedrive);
+    ok(!rearmed.ok && rearmed.reason === "answered", "redrive/retry: RE-REGISTERING an answered wake does NOT resurrect it (the ON CONFLICT clause never touches the answered columns)");
+    const redriven = await resolveAnswerableReplyTarget(store, org, wRedrive, RAW_TOKEN, "turn-2", wRedrive);
+    ok(redriven.ok && redriven.via === "turn", "redrive: the corrective wake re-stamps the ORIGINAL id, so the redriven reply still passes on arm 2 (zero redrive code change)");
+  }
 
   {
     const closed: Array<{ agentSessionId?: string; issueId: string }> = [];
@@ -1045,8 +1121,8 @@ process.env.OE_WINDOW_TOPOLOGY = "0";
   await store.putUnifiedWakeTarget("default", strayWake, JSON.stringify({ platform: "slack", channelId: "C_OTHER" }), new Date().toISOString(), WAKE_TARGET_TTL_MS);
   await assert.rejects(
     () => armedReply!.execute({ text: "exfil", wake: strayWake }, unifiedCtx("github", turnWake)),
-    /is not the wake you are answering this turn/,
-    "reply REFUSES a wakeId that isn't THIS turn's wake — even one live in the org-wide map (authority-bleed fence, finding 1a)",
+    /is not a wake you can answer/,
+    "reply REFUSES a wakeId that isn't answerable by this session — even one live in the org-wide map (authority-bleed fence, finding 1a: the ctx carries no window token, so the pending arm can't admit it either)",
   );
   n++;
   await assert.rejects(
@@ -1055,6 +1131,27 @@ process.env.OE_WINDOW_TOPOLOGY = "0";
     "reply lets THIS turn's own wakeId PAST the fence (then fails at resolve, unregistered) — the demo's own-wake reply path is intact",
   );
   n++;
+  {
+    const windowedCtx = (wakeId: string, turnId: string): BindableContext => ({
+      channel: { kind: "channel:unified", continuationToken: `unified:${RAW_TOKEN}` },
+      session: {
+        turn: { id: turnId },
+        auth: { current: { attributes: { oe_platform: "slack", oe_wake_id: wakeId, oe_window_token: RAW_TOKEN, channel_id: "C_WINA", team_id: "T_WIN" }, principalId: "U1", principalType: "slack-user" } },
+      },
+    } as unknown as BindableContext);
+    const wDone = mintWakeId();
+    const wThisTurn = mintWakeId();
+    await registerUnifiedWakeTarget(store, "default", wDone, { platform: "slack", channelId: "C_DONE" }, new Date().toISOString(), RAW_TOKEN);
+    await registerUnifiedWakeTarget(store, "default", wThisTurn, { platform: "slack", channelId: "C_LIVE" }, new Date().toISOString(), RAW_TOKEN);
+    await store.markUnifiedWakeAnswered("default", wDone, new Date().toISOString(), "turn-earlier");
+    const armedWindowed = arm(replyTool, windowedCtx(wThisTurn, "turn-now"));
+    await assert.rejects(
+      () => armedWindowed!.execute({ text: "again", wake: wDone }, windowedCtx(wThisTurn, "turn-now")),
+      /you already replied to wake-id/,
+      "reply: an ALREADY-ANSWERED pending wake draws the instructive `answered` refusal through the real tool (raised at the fence — nothing is posted)",
+    );
+    n++;
+  }
 
   {
     const slackThreadA: UnifiedWakeOrigin = { platform: "slack", channelId: "C_DA", threadTs: "1700.1" };
@@ -1069,29 +1166,33 @@ process.env.OE_WINDOW_TOPOLOGY = "0";
     const iso = () => new Date().toISOString();
     const wFast = mintWakeId();
     await registerUnifiedWakeTarget(store, org, wFast, slackThreadA, iso());
-    const fast = await resolveDelegatedReplyTarget(store, org, wFast, wFast);
-    ok(fast.ok && sameUnifiedConversation(fast.origin, slackThreadA), "resolveDelegatedReplyTarget: fast path (echo THIS turn's wake) resolves the origin");
+    const fast = await resolveAnswerableReplyTarget(store, org, wFast, undefined, undefined, wFast);
+    ok(fast.ok && sameUnifiedConversation(fast.origin, slackThreadA) && fast.via === "turn", "resolveAnswerableReplyTarget: fast path (echo THIS turn's wake) resolves the origin via the turn arm");
 
     const wTurn = mintWakeId();
     const wOrig = mintWakeId();
     await registerUnifiedWakeTarget(store, org, wTurn, slackThreadA, iso());
     await registerUnifiedWakeTarget(store, org, wOrig, slackThreadAWithAnchor, iso());
-    const delegated = await resolveDelegatedReplyTarget(store, org, wTurn, wOrig);
-    ok(delegated.ok && sameUnifiedConversation(delegated.origin, slackThreadA), "resolveDelegatedReplyTarget: a delegated completion turn MAY answer the original ask's wake (same conversation) — the #101 fix");
+    const delegated = await resolveAnswerableReplyTarget(store, org, wTurn, undefined, undefined, wOrig);
+    ok(delegated.ok && sameUnifiedConversation(delegated.origin, slackThreadA) && delegated.via === "same-conversation", "resolveAnswerableReplyTarget: a delegated completion turn MAY answer the original ask's wake (same conversation) — the fix");
 
     const wTurnB = mintWakeId();
     const wCross = mintWakeId();
     await registerUnifiedWakeTarget(store, org, wTurnB, slackThreadA, iso());
     await registerUnifiedWakeTarget(store, org, wCross, slackThreadB, iso());
-    const cross = await resolveDelegatedReplyTarget(store, org, wTurnB, wCross);
-    ok(!cross.ok && cross.reason === "mismatch", "resolveDelegatedReplyTarget: a wake naming a DIFFERENT conversation is REFUSED (authority-bleed fence intact)");
+    const cross = await resolveAnswerableReplyTarget(store, org, wTurnB, undefined, undefined, wCross);
+    ok(!cross.ok && cross.reason === "mismatch", "resolveAnswerableReplyTarget: a wake naming a DIFFERENT conversation is REFUSED (authority-bleed fence intact)");
+    const crossWindowed = await resolveAnswerableReplyTarget(store, org, wTurnB, RAW_TOKEN, "turn-x", wCross);
+    ok(!crossWindowed.ok && crossWindowed.reason === "mismatch", "resolveAnswerableReplyTarget: a DIFFERENT-conversation wake that is not pending on THIS window is refused even with a window token");
 
-    const noTurn = await resolveDelegatedReplyTarget(store, org, undefined, wOrig);
-    ok(!noTurn.ok && noTurn.reason === "mismatch", "resolveDelegatedReplyTarget: no current-turn wake ⇒ refused");
+    const noTurn = await resolveAnswerableReplyTarget(store, org, undefined, undefined, undefined, wOrig);
+    ok(!noTurn.ok && noTurn.reason === "mismatch", "resolveAnswerableReplyTarget: no current-turn wake ⇒ refused");
+    const noTurnWindowed = await resolveAnswerableReplyTarget(store, org, undefined, RAW_TOKEN, "turn-x", wOrig);
+    ok(!noTurnWindowed.ok && noTurnWindowed.reason === "mismatch", "resolveAnswerableReplyTarget: arm 1 wins over arm 4 — a session with no wake stamp is refused even holding a window token");
 
     const wGone = mintWakeId();
-    const expired = await resolveDelegatedReplyTarget(store, org, wGone, wGone);
-    ok(!expired.ok && expired.reason === "expired", "resolveDelegatedReplyTarget: this-turn wake with no live map row ⇒ expired");
+    const expired = await resolveAnswerableReplyTarget(store, org, wGone, undefined, undefined, wGone);
+    ok(!expired.ok && expired.reason === "expired", "resolveAnswerableReplyTarget: this-turn wake with no live map row ⇒ expired");
   }
   n++;
 

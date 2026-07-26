@@ -2,7 +2,7 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -189,6 +189,11 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
             route: "bridge",
           });
           ulog(`addressed-mention bridge: delivered terminal prose (${action.text.length} chars) to ${origin.platform} — id ${id}`);
+          if (wakeId) {
+            await getOperationalStore()
+              .markUnifiedWakeAnswered(org, wakeId, new Date().toISOString(), currentTurnId(bind))
+              .catch(() => undefined);
+          }
           return;
         } catch (err) {
           const errMsg = (err instanceof Error ? err.message : String(err)).slice(0, 300);

@@ -127,6 +127,11 @@ export function currentWakeId(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_wake_id", "oeWakeId"]);
 }
 
+export function currentTurnId(ctx: BindableContext): string | undefined {
+  const turn = (ctx as { session?: { turn?: { id?: string } } }).session?.turn;
+  return typeof turn?.id === "string" && turn.id.length > 0 ? turn.id : undefined;
+}
+
 export function currentWindowToken(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["oe_window_token", "oeWindowToken"]);
 }

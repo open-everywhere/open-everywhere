@@ -132,6 +132,9 @@ ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
   ok(slackMd.includes("works on EVERY surface"), "unified persona keeps the reply-works-everywhere affirmation");
   ok(!slackMd.includes("Only the extras vary by surface"), "unified persona no longer hedges react availability in prose (per-turn runtime fence instead)");
+  ok(slackMd.includes("every wake you have not yet answered"), "unified persona scopes the reply affirmation to UNANSWERED wakes (what the fence actually admits)");
+  ok(slackMd.includes("answer each with its OWN `wake-id`"), "unified persona teaches per-wake answering on a coalesced multi-message turn");
+  ok(!slackMd.includes("every wake, without exception"), "unified persona drops the old unqualified 'without exception' claim");
 
   ok(slackMd.includes("payments-notes"), "unified block carries the domain-anchored memory index (frozen snapshot)");
 }
