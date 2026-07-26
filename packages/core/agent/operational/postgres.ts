@@ -1661,6 +1661,26 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return r ? { org, sessionId: r.session_id, kind: r.kind, grantedBy: r.granted_by, createdAt: r.created_at, expiresAt: r.expires_at } : null;
     },
 
+    async listSessionApprovals(org, sessionId, nowIso) {
+      const { rows } = await client.query(
+        "SELECT session_id, kind, granted_by, created_at, expires_at FROM pr_session_approval WHERE org_id = $1 AND session_id = $2 AND expires_at > $3 ORDER BY kind ASC",
+        [org, sessionId, nowIso],
+      );
+      return (rows as { session_id: string; kind: string; granted_by: string; created_at: string; expires_at: string }[]).map((r) => ({
+        org,
+        sessionId: r.session_id,
+        kind: r.kind,
+        grantedBy: r.granted_by,
+        createdAt: r.created_at,
+        expiresAt: r.expires_at,
+      }));
+    },
+
+    async revokeSessionApprovals(org, sessionId) {
+      const { rows } = await client.query("DELETE FROM pr_session_approval WHERE org_id = $1 AND session_id = $2 RETURNING kind", [org, sessionId]);
+      return (rows as unknown[]).length;
+    },
+
     async getMeta(key) {
       const { rows } = await client.query("SELECT value FROM instance_meta WHERE key = $1", [key]);
       const r = (rows as { value: string }[])[0];

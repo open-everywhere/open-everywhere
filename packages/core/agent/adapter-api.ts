@@ -292,7 +292,7 @@ export type { WakeMappingDecision, WakeMappingInput } from "./access/wake-mappin
 
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
-export { sessionGrantKind, connectorSessionKind } from "./approvals/session-grant.js";
+export { sessionGrantKind, connectorSessionKind, grantButtonLabel } from "./approvals/session-grant.js";
 
 export { isAllowedDriver } from "./testing/driver-allowlist.js";
 

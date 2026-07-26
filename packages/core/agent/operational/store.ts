@@ -363,6 +363,8 @@ export interface OperationalStore {
 
   setSessionApproval(row: SessionApprovalRow): Promise<void>;
   getSessionApproval(org: string, sessionId: string, kind: string, nowIso: string): Promise<SessionApprovalRow | null>;
+  listSessionApprovals(org: string, sessionId: string, nowIso: string): Promise<SessionApprovalRow[]>;
+  revokeSessionApprovals(org: string, sessionId: string): Promise<number>;
 
   putStoredCredential(org: string, rec: StoredCredentialRow): Promise<void>;
   getStoredCredential(org: string, ref: string): Promise<StoredCredentialRow | null>;

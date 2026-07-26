@@ -1,6 +1,8 @@
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
-import { describeTrigger, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { describeTrigger, routineGrantGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { describeDeclaredPermissions, grantDeclaredRoutinePermissions } from "../routines/grants.js";
+import { describeGrantKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
@@ -17,6 +19,16 @@ export interface RoutineCreateArgs {
   readonly createdBy?: string;
   readonly tainted?: boolean;
   readonly sessionMode?: "job";
+  readonly permissions?: readonly string[];
+}
+
+export function permissionLines(args: Pick<RoutineCreateArgs, "permissions" | "tainted">): string[] {
+  const described = describeDeclaredPermissions(args.permissions ?? []);
+  if (described.length === 0) return [];
+  if (args.tainted) {
+    return [`🔑 asked for standing permission to ${described.join(" · ")} — NOT granted, because it was authored in a turn that read external content; it will ask a human every time`];
+  }
+  return [`🔑 may, without asking: ${described.join(" · ")} — anything else will ask you first`];
 }
 
 const routineCreate: ActionKind<RoutineCreateArgs> = {
@@ -28,6 +40,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.sessionMode === "job" ? ["↻ keeps ONE persistent session across fires (accumulates context) until it calls complete_job"] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
+      ...permissionLines(args),
       `> ${args.prompt}`,
       `Target: ${args.surfaceKey}`,
     ];
@@ -52,6 +65,25 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
     };
     await addRoutine(args.partition, routine);
+    const granted = await grantDeclaredRoutinePermissions({
+      org: args.org,
+      routine,
+      declared: args.permissions ?? [],
+      grantedBy: decidedBy,
+      tainted: Boolean(args.tainted),
+      nowIso: now.toISOString(),
+    });
+    if (granted.length > 0) {
+      await appendAudit({
+        org: args.partition.org,
+        platform: args.partition.platform,
+        workspace: args.partition.workspace,
+        surface: args.partition.surface,
+        principalId: decidedBy,
+        action: "routine.grant",
+        detail: { id: routine.id, grantedBy: decidedBy, kinds: granted, generation: routineGrantGeneration(routine), declared: true },
+      });
+    }
     await appendAudit({
       org: args.partition.org,
       platform: args.partition.platform,
@@ -61,7 +93,10 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       action: "routine.create",
       detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
     });
-    return `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}.`;
+    return (
+      `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}` +
+      `${granted.length > 0 ? `; standing permission to ${granted.map(describeGrantKind).join(" · ")} (revoke with revoke_routine_permissions)` : ""}.`
+    );
   },
 };
 

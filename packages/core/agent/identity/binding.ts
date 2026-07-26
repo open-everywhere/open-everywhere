@@ -5,6 +5,7 @@ import { admitProviderRegistration } from "../access/provider-selection.js";
 import { isVouchedInternal } from "./trust.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
+import { routineGrantKeyStamped } from "../routines/routine.js";
 import type { Domain } from "../memory/domain.js";
 
 export type Visibility = "public" | "private";
@@ -137,6 +138,8 @@ export function currentWindowToken(ctx: BindableContext): string | undefined {
 }
 
 export function proposingSessionId(ctx: BindableContext): string | undefined {
+  const routineKey = routineGrantKeyStamped(authOf(ctx)?.attributes);
+  if (routineKey !== undefined) return routineKey;
   const raw = (ctx as { channel?: { continuationToken?: unknown } }).channel?.continuationToken;
   const token = bareTokenFromEveContext(raw) ?? currentWindowToken(ctx);
   return token === undefined ? undefined : sessionGrantKeyFromToken(token);

@@ -10,6 +10,7 @@ import { renderFireMessage } from "../routines/fire-message.js";
 import { SCOPE_KINDS, type FilterClause, type ScopeKind, type ScopeSelector, type SubscriptionFilter } from "../routines/event-model.js";
 import { validateSubscription } from "../routines/event-match.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
+import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
@@ -141,6 +142,19 @@ export default defineTool({
           "multi-fire objectives; leave off for a plain recurring post (a daily summary). Slack-only, and " +
           "scheduled triggers only (not `event`).",
       ),
+    permissions: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "STANDING PERMISSIONS this routine may use without asking, declared here so the human arms the " +
+          "routine AND its permissions in one read. Only two things are declarable: \"pr.open\" (open pull " +
+          "requests) and \"connector:<slug>\" (write to that connector, e.g. \"connector:notion\"). " +
+          "INFER CONSERVATIVELY — declare only what the prompt CERTAINLY needs every single fire ('read the " +
+          "queue and comment on each ticket' certainly needs the comment). Under-declaring costs one approval " +
+          "prompt when it fires, which a human can then make standing with a click; over-declaring silently " +
+          "widens what runs unattended at 03:00. When in doubt, leave it out. Deletes are never declarable and " +
+          "always ask. Omit entirely for a routine that only reads or only posts here.",
+      ),
   }),
   outputSchema: z.object({
     created: z.boolean(),
@@ -211,11 +225,13 @@ export default defineTool({
 
     const target = binding.target;
     const tainted = untrustedIngestedThisTurn();
+    const permissions = (input.permissions ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
+    declaredPermissionKinds(permissions);
     const posted = await requestApproval(
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}), ...(permissions.length ? { permissions } : {}) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,

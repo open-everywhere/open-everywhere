@@ -62,6 +62,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "edit_routine",
   "enable_routine",
   "run_routine_now",
+  "revoke_routine_permissions",
   "record_watch_state",
   "record_job_state",
   "complete_job",

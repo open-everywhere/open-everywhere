@@ -171,6 +171,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   run_routine_now: open(
     "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine",
   ),
+  revoke_routine_permissions: open(
+    "de-escalation only (OPE-152): withdraws a routine's STANDING permissions so it goes back to drawing an approval card for every gated action, leaving the routine itself running. There is no configuration in which it widens anything — after it runs the routine can do strictly less unattended — so gating it would put a confirmation in front of the brake pedal. It still REFUSES without a verified principal, for attribution (the routine.grants_revoked audit row names who withdrew them), and the grants it deletes were each minted by a human's click in the first place",
+  ),
   extend_workspace_time: open("extends this session's own sandbox window; capped (OE_SANDBOX_EXTEND_MAX_MIN) and audited"),
   spawn_task: open(
     "delegation: mints an async thread-grain worker and dispatches to it, non-blocking. Escapes nothing this table doesn't re-gate INSIDE the child (egress + every L2 consequence gate fire again there); widens hands, not consequence, and delegation IS the standing seat's job — so open, fully audited (task.spawned). Taint is forwarded onto the child, not gated here",

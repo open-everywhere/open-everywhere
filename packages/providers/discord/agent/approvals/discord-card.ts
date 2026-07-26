@@ -1,5 +1,5 @@
 import type { PendingActionRow } from "@open-everywhere/core/agent/adapter-api.js";
-import { sessionGrantKind } from "@open-everywhere/core/agent/adapter-api.js";
+import { grantButtonLabel, sessionGrantKind } from "@open-everywhere/core/agent/adapter-api.js";
 
 export const OE_DISCORD_APPROVAL_PREFIX = "oe-approval:";
 
@@ -63,7 +63,7 @@ export function pendingDiscordCard(row: PendingActionRow, summaryLines: readonly
     buttons.push({
       type: COMPONENT_BUTTON,
       style: BUTTON_STYLE_SECONDARY,
-      label: "Approve for session",
+      label: grantButtonLabel(row),
       custom_id: buildDiscordApprovalCustomId(row, "approve_session"),
     });
   }

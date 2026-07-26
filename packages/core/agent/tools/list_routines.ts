@@ -5,10 +5,11 @@ import { resolvePartition } from "../memory/partition.js";
 import { listRoutines } from "../routines/store.js";
 import { emptyRoutineForensics, readRoutineForensics } from "../routines/fire-audit.js";
 import { describeTrigger } from "../routines/routine.js";
+import { listRoutinePermissions } from "../routines/grants.js";
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, and recent run history (last session id, last time it posted, fires and tokens over 7 days). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, or what one is costing.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), and the standing permissions each one may use unattended without asking. Use when asked what proactive/recurring work is configured here, whether a routine actually ran, what one is costing, or what any of them are allowed to do on their own.",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -32,6 +33,7 @@ export default defineTool({
         lastPostedAt: z.string().nullable(),
         fires7d: z.number(),
         tokens7d: z.number(),
+        permissions: z.array(z.string()),
         note: z.string().nullable(),
       }),
     ),
@@ -50,6 +52,9 @@ export default defineTool({
       surface: p.surface,
       surfaceKey: p.surfaceKey,
     });
+    const nowIso = new Date().toISOString();
+    const permissions = new Map<string, string[]>();
+    for (const r of selected) permissions.set(r.id, await listRoutinePermissions(p.org, r, nowIso));
     const routines = selected.map((r) => {
       const f = forensics.get(r.id) ?? emptyRoutineForensics();
       return {
@@ -69,6 +74,7 @@ export default defineTool({
         lastPostedAt: f.lastPostedAt,
         fires7d: f.fires7d,
         tokens7d: f.tokens7d,
+        permissions: permissions.get(r.id) ?? [],
         note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       };
     });

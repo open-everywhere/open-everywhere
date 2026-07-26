@@ -63,8 +63,10 @@ export function nextPromptGeneration(r: Pick<Routine, "promptGeneration">): numb
   return routineGrantGeneration(r) + 1;
 }
 
+export const ROUTINE_GRANT_PREFIX = "oe-routine:";
+
 export function routineGrantKey(r: Pick<Routine, "id" | "promptGeneration">): string {
-  return `oe-routine:${r.id}:g${routineGrantGeneration(r)}`;
+  return `${ROUTINE_GRANT_PREFIX}${r.id}:g${routineGrantGeneration(r)}`;
 }
 
 export function isSilentRoutine(r: Pick<Routine, "report">): boolean {
@@ -89,6 +91,7 @@ export const ROUTINE_MARKER = {
   org: "open_everywhere_routine_org",
   silent: "open_everywhere_routine_silent",
   manual: "open_everywhere_routine_manual",
+  grant: "open_everywhere_routine_grant_key",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -107,6 +110,11 @@ export function routineMarker(attributes: Attrs): { id: string; surfaceKey: stri
 
 export function routineSilentStamped(attributes: Attrs): boolean {
   return oneOf(attributes?.[ROUTINE_MARKER.silent]) === "true";
+}
+
+export function routineGrantKeyStamped(attributes: Attrs): string | undefined {
+  const key = oneOf(attributes?.[ROUTINE_MARKER.grant]);
+  return key !== undefined && key.startsWith(ROUTINE_GRANT_PREFIX) ? key : undefined;
 }
 
 export function routineManualStamped(attributes: Attrs): boolean {

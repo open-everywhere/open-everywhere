@@ -1360,6 +1360,19 @@ export const sqliteOperationalStore: OperationalStore = {
     return { org, sessionId: row.session_id, kind: row.kind, grantedBy: row.granted_by, createdAt: row.created_at, expiresAt: row.expires_at };
   },
 
+  async listSessionApprovals(org, sessionId, nowIso) {
+    const rows = getDb()
+      .prepare(
+        "SELECT session_id, kind, granted_by, created_at, expires_at FROM pr_session_approval WHERE org_id = ? AND session_id = ? AND expires_at > ? ORDER BY kind ASC",
+      )
+      .all(org, sessionId, nowIso) as { session_id: string; kind: string; granted_by: string; created_at: string; expires_at: string }[];
+    return rows.map((r) => ({ org, sessionId: r.session_id, kind: r.kind, grantedBy: r.granted_by, createdAt: r.created_at, expiresAt: r.expires_at }));
+  },
+
+  async revokeSessionApprovals(org, sessionId) {
+    return Number(getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
+  },
+
   async getMeta(key) {
     const row = getDb().prepare("SELECT value FROM instance_meta WHERE key = ?").get(key) as { value: string } | undefined;
     return row ? row.value : null;
