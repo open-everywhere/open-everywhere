@@ -14,6 +14,15 @@ import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from ".
 import { evaluateSubscription } from "./event-match.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
 import { GITHUB_EVENT_SOURCE } from "./github-normalizer.js";
+import "./github-entity-read.js";
+import {
+  hydratePointer,
+  newHydrationMemo,
+  renderHydratedEntity,
+  type HydrationDeps,
+  type HydrationMemo,
+  type HydrationOutcome,
+} from "./entity-read.js";
 import type { Routine } from "./routine.js";
 
 function log(msg: string): void {
@@ -45,6 +54,7 @@ export interface GitHubFanOutDeps {
   readonly now?: () => Date;
   readonly fireWindow?: FireWindowDeps;
   readonly grant?: EventGrantDeps;
+  readonly hydrate?: HydrationDeps;
 }
 
 let warnedDedupeStore = false;
@@ -86,10 +96,13 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     if (verdict.match) matches.push(r);
   }
   const cap = eventMaxFanOut();
+  const memo: HydrationMemo = newHydrationMemo();
   let fired = 0;
   let unwired = 0;
   let overCap = 0;
   let ungranted = 0;
+  let drifted = 0;
+  let hydrated = 0;
   for (const r of matches) {
     const grant = checkEventReadGrant(ev, eventGrantPartitions(r), deps.grant ?? {});
     if (!grant.ok) {
@@ -128,6 +141,36 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
       );
       continue;
     }
+    let entityBlock: string | undefined;
+    if (ev.pointer) {
+      const h: HydrationOutcome = await hydratePointer(ev.pointer, memo, deps.hydrate ?? {});
+      if (h.status === "forbidden") {
+        drifted++;
+        log(`event ${ev.summary} matched ${r.id} but hydrating ${ev.pointer.platform} ${ev.pointer.id} was REFUSED by the vendor — grant drift, skipped (no strike)`);
+        await auditRoutineSkip(
+          r,
+          "grant_drift",
+          {
+            platform: ev.pointer.platform,
+            entity: ev.pointer.id,
+            event: ev.event,
+            ...(ev.occurredAt ? { occurredAt: ev.occurredAt } : {}),
+            note: "our read grant allows this scope but the vendor refused the fetch — access changed after the grant was written",
+          },
+          auditDeps,
+        );
+        continue;
+      }
+      if (h.status === "error") {
+        log(`event ${ev.summary} matched ${r.id} but hydration failed: ${h.error}`);
+        await auditRoutineFireLost(r, `hydration failed: ${h.error}`, auditDeps);
+        continue;
+      }
+      if (h.status === "ok") {
+        hydrated++;
+        entityBlock = renderHydratedEntity(h.entity);
+      }
+    }
     const slackChannelId =
       r.surfaceKey.split("/")[0] === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
         ? (dest.target as { channelId: string }).channelId
@@ -139,7 +182,11 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
       principalId: "github:webhook",
       attributes: routineFireAttributes(r, dest.attributes, dest.mode, internal),
     };
-    const message = eventPrompt(r, { summary: ev.summary, ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}) });
+    const message = eventPrompt(r, {
+      summary: ev.summary,
+      ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}),
+      ...(entityBlock ? { entity: entityBlock } : {}),
+    });
     const fireWakeId = mintWakeId();
     const deliver = async (): Promise<void> => {
       if (dest.origin) {
@@ -160,8 +207,8 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
   }
   if (matches.length > 0 || invalid > 0) {
     log(
-      `event "${ev.summary}": ${matches.length} matched -> ${fired} fired, ${ungranted} ungranted, ${unwired} unwired, ` +
-        `${overCap} over-cap (cap ${cap}), ${invalid} invalid-filter`,
+      `event "${ev.summary}": ${matches.length} matched -> ${fired} fired (${hydrated} hydrated), ${ungranted} ungranted, ` +
+        `${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ${invalid} invalid-filter`,
     );
   }
 }

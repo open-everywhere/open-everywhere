@@ -42,8 +42,11 @@ export function normalizeGithubEvent(eventType: string, payload: Record<string, 
   return { source: "github", event: eventType, action, repo, number, title, url, sender, summary };
 }
 
-export function eventPrompt(routine: { readonly prompt: string }, ev: { readonly summary: string; readonly url?: string }): string {
-  const body = [ev.summary, ev.url].filter((s): s is string => Boolean(s)).join("\n");
+export function eventPrompt(
+  routine: { readonly prompt: string },
+  ev: { readonly summary: string; readonly url?: string; readonly entity?: string },
+): string {
+  const body = [ev.summary, ev.url, ev.entity].filter((s): s is string => Boolean(s)).join("\n");
   return `${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
 }
 
