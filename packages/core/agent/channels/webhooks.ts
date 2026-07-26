@@ -6,6 +6,7 @@ import "../webhooks/oe-hmac.js";
 import { resolveHookKeys } from "../webhooks/secrets.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
 import { auditWebhookRejection } from "../webhooks/reject-audit.js";
+import { firstSightingOfWebhookDelivery } from "../webhooks/replay-dedupe.js";
 import { appendAudit } from "../audit/audit.js";
 
 function log(msg: string): void {
@@ -73,6 +74,19 @@ export default defineChannel({
         log(`webhook "${id}" rejected (${rejection.status}): ${rejection.reason}`);
         waitUntil(auditRejection(id, hook, rejection));
         return new Response(rejection.reason, { status: rejection.status });
+      }
+
+      if (outcome.replayKey) {
+        const firstSeen = await firstSightingOfWebhookDelivery(webhookOrg(), id, outcome.replayKey);
+        if (!firstSeen) {
+          const rejection: WebhookRejection = {
+            status: 409,
+            reason: "duplicate delivery rejected — an already-accepted delivery was replayed inside its skew window",
+          };
+          log(`webhook "${id}" rejected (409): ${rejection.reason}`);
+          waitUntil(auditRejection(id, hook, rejection));
+          return new Response(rejection.reason, { status: rejection.status });
+        }
       }
 
       log(`webhook "${id}" accepted (${bodyBytes} bytes) — firing`);

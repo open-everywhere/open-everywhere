@@ -17,7 +17,7 @@ export type WebhookVerifyFailure =
   | "unsupported-scheme";
 
 export type WebhookVerdict =
-  | { readonly ok: true; readonly keyIndex: number }
+  | { readonly ok: true; readonly keyIndex: number; readonly replayKey?: string }
   | { readonly ok: false; readonly failure: WebhookVerifyFailure };
 
 export interface WebhookVerifier {

@@ -25,7 +25,7 @@ export interface WebhookRejection {
 }
 
 export type WebhookGateOutcome =
-  | { readonly ok: true; readonly keyIndex: number | null }
+  | { readonly ok: true; readonly keyIndex: number | null; readonly replayKey?: string }
   | { readonly ok: false; readonly rejection: WebhookRejection };
 
 export interface WebhookGateInput {
@@ -70,5 +70,7 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
   } catch (err) {
     return reject(401, `verifier for source ${JSON.stringify(hook.source)} THREW — rejecting (fail closed): ${String(err instanceof Error ? err.message : err)}`);
   }
-  return verdict.ok ? { ok: true, keyIndex: verdict.keyIndex } : reject(401, `invalid signature (${verdict.failure})`);
+  return verdict.ok
+    ? { ok: true, keyIndex: verdict.keyIndex, replayKey: verifier.signedTimestamp ? verdict.replayKey : undefined }
+    : reject(401, `invalid signature (${verdict.failure})`);
 }
