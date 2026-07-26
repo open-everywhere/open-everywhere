@@ -10,7 +10,9 @@ import {
   registerRoutineDispatch,
   registerNativeAdminCheck,
   registerScopeLabelResolver,
+  registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { PROVIDER_DOCS } from "./docs-generated.js";
 import { resolveDiscordTarget } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
@@ -36,4 +38,5 @@ export function registerDiscordProvider(): void {
     return guildId ? isGuildAdminViaRest(guildId, principalId) : false;
   });
   registerScopeLabelResolver("discord", discordScopeLabelResolver);
+  registerProviderDocs("discord", PROVIDER_DOCS);
 }

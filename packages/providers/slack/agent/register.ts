@@ -6,7 +6,9 @@ import {
   registerReadAdapter,
   registerReactionSurface,
   registerSlackBridge,
+  registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindSlack, partnerFactsFromInfo } from "./channels/slack-identity.js";
 import { slackPostArm } from "./channels/slack-post-arm.js";
 import { slackWakeOriginCodec } from "./channels/slack-origin-codec.js";
@@ -44,4 +46,5 @@ export function registerSlackProvider(): void {
     channel: slackChannel,
   });
   registerSlackOps();
+  registerProviderDocs("slack", PROVIDER_DOCS);
 }

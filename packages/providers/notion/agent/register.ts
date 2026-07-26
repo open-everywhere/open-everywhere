@@ -3,7 +3,9 @@ import {
   registerCapabilityManifest,
   registerPostArm,
   registerWakeOriginCodec,
+  registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindNotion } from "./channels/notion-identity.js";
 import { notionPostArm } from "./channels/notion-post-arm.js";
 import { notionWakeOriginCodec } from "./channels/notion-origin-codec.js";
@@ -15,4 +17,5 @@ export function registerNotionProvider(): void {
   registerPostArm(notionPostArm);
   registerWakeOriginCodec("notion", notionWakeOriginCodec);
   registerNotionMemory();
+  registerProviderDocs("notion", PROVIDER_DOCS);
 }

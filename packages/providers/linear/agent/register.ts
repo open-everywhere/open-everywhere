@@ -6,7 +6,9 @@ import {
   registerEntityActionAdapter,
   registerTicketCreateAdapter,
   registerSurfaceCredentialProbe,
+  registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindLinear } from "./channels/linear-identity.js";
 import { linearPostArm } from "./channels/linear-post-arm.js";
 import { linearWakeOriginCodec } from "./channels/linear-origin-codec.js";
@@ -22,4 +24,5 @@ export function registerLinearProvider(): void {
   registerEntityActionAdapter(linearEntityAdapter);
   registerTicketCreateAdapter(linearTicketCreateAdapter);
   registerSurfaceCredentialProbe("linear", linearCredentialsConfigured);
+  registerProviderDocs("linear", PROVIDER_DOCS);
 }

@@ -7,7 +7,9 @@ import {
   registerRoutineDispatch,
   type DispatchTarget,
   type Routine,
+  registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { PROVIDER_DOCS } from "./docs-generated.js";
 import teamsChannel from "./channels/teams.js";
 import { bindTeams, teamsMode } from "./channels/teams-identity.js";
 import { teamsPostArm } from "./channels/teams-post-arm.js";
@@ -57,4 +59,5 @@ export function registerTeamsProvider(): void {
   registerWakeOriginCodec("teams", teamsWakeOriginCodec);
   registerReadAdapter(teamsReadAdapter);
   registerRoutineDispatch("teams", { resolveTarget: resolveTeamsTarget });
+  registerProviderDocs("teams", PROVIDER_DOCS);
 }

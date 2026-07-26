@@ -17,6 +17,7 @@ import { loadModelPolicy } from "../model/policy.js";
 import { loadBlobHosting } from "../blob/hosting.js";
 import { loadPrincipals } from "../identity/principals.js";
 import "../identity/trusted-surfaces.js";
+import "./register-docs.js";
 
 registerConfig({
   loadBundles,

@@ -110,6 +110,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   list_repos: open("read of this channel's own grant"),
   list_routines: open("read of this surface's own routines"),
   list_skills: open("read of the domain's own skills"),
+  read_docs: open(
+    "read of OE's OWN shipped manual, compiled into the bundle (OPE-138). First-party prose about the product, identical for every member of every deployment that carries the same bundles — it discloses nothing about this org, reaches no external host, and changes nothing, so it fails all three rubric axes harder than any other read here. The provider scoping it applies is a RELEVANCE + non-disclosure boundary (a deployment without the Notion bundle is never handed Notion's runbook), not an access tier",
+  ),
   read_file_upload: open("read/decode of a text upload already in the room; bot-token fetch is host-pinned to Slack, type-allowlisted, size-capped, content ingested untrusted"),
   read_notion_page: open("granted read; disclosure is bounded by the room-level grant (membership is the ACL)"),
   read_notion_comments: open("granted read of page comments/inline discussions; bounded by the room-level grant (membership is the ACL)"),
