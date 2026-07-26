@@ -223,6 +223,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
       windowOpen = false;
       return true;
     },
+    grant: { resolve: () => ({ repos: ["me/proj"] }) as never },
   };
   const body = JSON.stringify({
     action: "opened",

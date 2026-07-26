@@ -72,7 +72,7 @@ interface Fired {
   target: Record<string, unknown>;
   auth: { authenticator?: string; principalType?: string; principalId?: string; attributes: Record<string, string> };
 }
-function harness(routines: Routine[]) {
+function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   const fired: Fired[] = [];
   const audited: AuditInput[] = [];
   return {
@@ -87,6 +87,7 @@ function harness(routines: Routine[]) {
       audit: async (e: AuditInput) => {
         audited.push(e);
       },
+      grant: { resolve: () => ({ repos }) as never },
     },
   };
 }
@@ -249,6 +250,107 @@ function harness(routines: Routine[]) {
     "prune: past its OWN ttl the 10-minute key is expired and fresh again",
   );
   ok(await store.markEventSeen("globex", "prune-long", iso(0), 600_000), "prune: another org's identical key is untouched (org-scoped)");
+}
+
+{
+  const under = routine({ id: "r-under", trigger: { kind: "event", source: "github", filter: { under: [{ kind: "container", id: "me/proj" }] } } });
+  const h = harness([under]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+  ok(h.fired.length === 1, "match: an `under` selector on the delivery's container FIRES");
+
+  const elsewhere = routine({ id: "r-elsewhere", trigger: { kind: "event", source: "github", filter: { under: [{ kind: "container", id: "other/repo" }] } } });
+  const h2 = harness([elsewhere]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h2.deps);
+  ok(h2.fired.length === 0, "match: an `under` selector naming a DIFFERENT container never fires");
+
+  const set = routine({
+    id: "r-in",
+    trigger: { kind: "event", source: "github", filter: { all: [{ key: "action", in: ["opened", "reopened", "synchronize"] }] } },
+  });
+  const h3 = harness([set]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h3.deps);
+  ok(h3.fired.length === 1, "match: an `in` clause matches any value in the set");
+
+  const notMe = routine({ id: "r-notin", trigger: { kind: "event", source: "github", filter: { all: [{ key: "sender", notIn: ["alice"] }] } } });
+  const h4 = harness([notMe]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h4.deps);
+  ok(h4.fired.length === 0, "match: a `notIn` clause SUPPRESSES the actor it names (the generic self-trigger guard)");
+}
+
+{
+  const drifted = routine({ id: "r-drift", trigger: { kind: "event", source: "github", filter: { all: [{ key: "branch", in: ["main"] }] } } });
+  const h = harness([drifted]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+  ok(h.fired.length === 0, "filter drift: a stored filter naming an unknown field does NOT fire");
+  ok(h.audited.length === 1 && h.audited[0]!.action === "routine.skip", "filter drift: the skip is audited, not silent");
+  ok(h.audited[0]!.detail?.["reason"] === "filter_invalid", "filter drift: the reason distinguishes config drift from a genuine non-match");
+  ok(
+    String(h.audited[0]!.detail?.["why"] ?? "").includes("branch"),
+    "filter drift: the row names the offending key, so the operator can fix the routine",
+  );
+}
+
+{
+  const r = routine({ id: "r-ungranted" });
+  const h = harness([r], []);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+  ok(h.fired.length === 0, "grant: a perfect filter with NO read grant on the event's scope never fires");
+  ok(h.audited.length === 1 && h.audited[0]!.action === "routine.skip", "grant: the refusal is audited — 'matches but never fires' must not look like 'never matches'");
+  ok(h.audited[0]!.detail?.["reason"] === "grant_refused", "grant: the audited reason is grant_refused");
+  ok(h.audited[0]!.detail?.["grant"] === "refused", "grant: the sub-reason rides its OWN key — it must never overwrite the skip reason readers switch on");
+  ok(h.audited[0]!.detail?.["partition"] === "slack/T1/C1", "grant: the row names WHICH partition refused");
+}
+
+{
+  const r = routine({ id: "r-revoked" });
+  const before = harness([r], ["me/proj"]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, before.deps);
+  ok(before.fired.length === 1, "grant: a granted routine fires");
+  const after = harness([r], ["me/other"]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, after.deps);
+  ok(after.fired.length === 0, "grant: revoking the grant AFTER arming stops the fire (checked at fire time, not only at create)");
+}
+
+{
+  const h = harness([routine({ id: "r-unresolvable" })]);
+  const deps = {
+    ...h.deps,
+    grant: {
+      resolve: () => {
+        throw new Error("config unloadable");
+      },
+    },
+  };
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, deps);
+  ok(h.fired.length === 0, "grant: an unresolvable config fails CLOSED (no fire)");
+  ok(
+    h.audited[0]?.detail?.["reason"] === "grant_refused" && h.audited[0]?.detail?.["grant"] === "unresolvable",
+    "grant: an unresolvable config is audited under the same skip reason, with its own sub-reason",
+  );
+}
+
+{
+  process.env.OE_EVENT_MAX_FANOUT = "1";
+  const rs = [routine({ id: "r-cap-ungranted", surfaceKey: "slack/T1/C2", target: { channelId: "C2" } }), routine({ id: "r-cap-granted" })];
+  const h = {
+    fired: [] as Fired[],
+    audited: [] as AuditInput[],
+  };
+  const deps = {
+    receive: ((channel: unknown, opts: unknown) => {
+      h.fired.push({ channel, ...(opts as Omit<Fired, "channel">) });
+      return Promise.resolve();
+    }) as never,
+    listRoutines: async () => rs,
+    audit: async (e: AuditInput) => {
+      h.audited.push(e);
+    },
+    grant: { resolve: (p: { surfaceKey: string }) => ({ repos: p.surfaceKey === "slack/T1/C1" ? ["me/proj"] : [] }) as never },
+  };
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, deps);
+  ok(h.fired.length === 1, "grant: the granted routine still fires with a cap of 1");
+  ok(h.fired[0]!.auth.attributes[ROUTINE_MARKER.id] === "r-cap-granted", "grant: an UNGRANTED routine never consumes fan-out cap");
+  delete process.env.OE_EVENT_MAX_FANOUT;
 }
 
 rmSync(dir, { recursive: true, force: true });

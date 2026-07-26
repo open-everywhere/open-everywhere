@@ -1,8 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { Routine } from "./routine.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 
-export interface NormalizedEvent {
+export interface LegacyGithubEvent {
   readonly source: string;
   readonly event: string;
   readonly action?: string;
@@ -21,7 +20,7 @@ function obj(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
 }
 
-export function normalizeGithubEvent(eventType: string, payload: Record<string, unknown>): NormalizedEvent | null {
+export function normalizeGithubEvent(eventType: string, payload: Record<string, unknown>): LegacyGithubEvent | null {
   if (!eventType || eventType === "ping") return null;
   const action = str(payload["action"]);
   const repo = str(obj(payload["repository"])?.["full_name"]);
@@ -43,26 +42,7 @@ export function normalizeGithubEvent(eventType: string, payload: Record<string, 
   return { source: "github", event: eventType, action, repo, number, title, url, sender, summary };
 }
 
-const MATCH_FIELDS: Record<string, (e: NormalizedEvent) => string | undefined> = {
-  event: (e) => e.event,
-  action: (e) => e.action,
-  repo: (e) => e.repo,
-  sender: (e) => e.sender,
-};
-
-export function matchesEvent(routine: Routine, ev: NormalizedEvent): boolean {
-  const t = routine.trigger;
-  if (t.kind !== "event") return false;
-  if (t.source !== ev.source) return false;
-  if (!t.match) return true;
-  for (const [key, want] of Object.entries(t.match)) {
-    const actual = MATCH_FIELDS[key]?.(ev);
-    if (actual !== want) return false;
-  }
-  return true;
-}
-
-export function eventPrompt(routine: Routine, ev: NormalizedEvent): string {
+export function eventPrompt(routine: { readonly prompt: string }, ev: { readonly summary: string; readonly url?: string }): string {
   const body = [ev.summary, ev.url].filter((s): s is string => Boolean(s)).join("\n");
   return `${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
 }

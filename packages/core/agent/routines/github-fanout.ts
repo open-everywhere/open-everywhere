@@ -9,7 +9,11 @@ import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
-import { matchesEvent, normalizeGithubEvent, eventPrompt, type NormalizedEvent } from "./events.js";
+import { eventPrompt } from "./events.js";
+import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
+import { evaluateSubscription } from "./event-match.js";
+import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
+import { GITHUB_EVENT_SOURCE } from "./github-normalizer.js";
 import type { Routine } from "./routine.js";
 
 function log(msg: string): void {
@@ -40,6 +44,7 @@ export interface GitHubFanOutDeps {
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly now?: () => Date;
   readonly fireWindow?: FireWindowDeps;
+  readonly grant?: EventGrantDeps;
 }
 
 let warnedDedupeStore = false;
@@ -67,12 +72,44 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     principalId: "github:webhook",
   };
 
-  const matches = (await list()).filter((r) => r.org === org && r.status === "active" && matchesEvent(r, ev));
+  const candidates = (await list()).filter((r) => r.org === org && r.status === "active");
+  const matches: Routine[] = [];
+  let invalid = 0;
+  for (const r of candidates) {
+    const verdict = evaluateSubscription(r, ev);
+    if ("invalid" in verdict) {
+      invalid++;
+      log(`event ${ev.summary} skipped ${r.id}: stored filter no longer valid (${verdict.invalid})`);
+      await auditRoutineSkip(r, "filter_invalid", { why: verdict.invalid, event: ev.event }, auditDeps);
+      continue;
+    }
+    if (verdict.match) matches.push(r);
+  }
   const cap = eventMaxFanOut();
   let fired = 0;
   let unwired = 0;
   let overCap = 0;
+  let ungranted = 0;
   for (const r of matches) {
+    const grant = checkEventReadGrant(ev, eventGrantPartitions(r), deps.grant ?? {});
+    if (!grant.ok) {
+      ungranted++;
+      log(
+        `event ${ev.summary} matched ${r.id} but the read grant refuses (${grant.reason}${grant.partition ? ` on ${grant.partition}` : ""}) — skipped`,
+      );
+      await auditRoutineSkip(
+        r,
+        "grant_refused",
+        {
+          grant: grant.reason,
+          ...(grant.partition ? { partition: grant.partition } : {}),
+          event: ev.event,
+          ...(ev.occurredAt ? { occurredAt: ev.occurredAt } : {}),
+        },
+        auditDeps,
+      );
+      continue;
+    }
     const dest = resolveTarget(r);
     if (!dest) {
       unwired++;
@@ -102,7 +139,7 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
       principalId: "github:webhook",
       attributes: routineFireAttributes(r, dest.attributes, dest.mode, internal),
     };
-    const message = eventPrompt(r, ev);
+    const message = eventPrompt(r, { summary: ev.summary, ...(ev.fields["url"] ? { url: ev.fields["url"] } : {}) });
     const fireWakeId = mintWakeId();
     const deliver = async (): Promise<void> => {
       if (dest.origin) {
@@ -121,8 +158,11 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     });
     fired++;
   }
-  if (matches.length > 0) {
-    log(`event "${ev.summary}": ${matches.length} matched -> ${fired} fired, ${unwired} unwired, ${overCap} over-cap (cap ${cap})`);
+  if (matches.length > 0 || invalid > 0) {
+    log(
+      `event "${ev.summary}": ${matches.length} matched -> ${fired} fired, ${ungranted} ungranted, ${unwired} unwired, ` +
+        `${overCap} over-cap (cap ${cap}), ${invalid} invalid-filter`,
+    );
   }
 }
 
@@ -141,13 +181,14 @@ export async function fanOutDelivery(
   deliveryId: string | undefined,
   deps: GitHubFanOutDeps,
 ): Promise<void> {
-  let payload: Record<string, unknown>;
-  try {
-    payload = JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    return;
-  }
-  const ev = normalizeGithubEvent(eventType, payload);
+  const delivery: TriggerDelivery = {
+    source: GITHUB_EVENT_SOURCE,
+    headers: { "x-github-event": eventType },
+    body,
+    ...(deliveryId ? { deliveryId } : {}),
+    receivedAt: (deps.now?.() ?? new Date()).toISOString(),
+  };
+  const ev = normalizeDelivery(delivery, (reason) => log(`delivery not routable: ${reason}`));
   if (!ev) return;
 
   if (deliveryId) {

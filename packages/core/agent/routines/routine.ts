@@ -1,3 +1,5 @@
+import { describeFilter, type SubscriptionFilter } from "./event-model.js";
+
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
   | { readonly kind: "interval"; readonly everyMinutes: number }
@@ -7,6 +9,7 @@ export type RoutineTrigger =
       readonly kind: "event";
       readonly source: string;
       readonly match?: Readonly<Record<string, string>>;
+      readonly filter?: SubscriptionFilter;
     };
 
 export type RoutineReport = { readonly kind: "silent" };
@@ -123,9 +126,7 @@ export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): stri
         : `every ${t.everyMinutes} min (posts only on change)`;
     case "once":
       return `once at ${t.at} (fires once, then disables)`;
-    case "event": {
-      const m = t.match ? ` ${JSON.stringify(t.match)}` : "";
-      return `on ${t.source} event${m}`;
-    }
+    case "event":
+      return describeFilter(t.source, t.filter, t.match);
   }
 }

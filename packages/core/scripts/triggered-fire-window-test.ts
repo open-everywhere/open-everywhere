@@ -253,6 +253,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   process.env.OE_ONESHOT_AGENT = "1";
   const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
+  const GRANT = { resolve: () => ({ repos: ["me/proj"] }) as never };
   const ev = routine({ id: "r-event", trigger: { kind: "event", source: "github" }, prompt: "Summarise the PR." });
   const body = JSON.stringify({
     action: "opened",
@@ -261,7 +262,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
     sender: { login: "alice" },
   });
   const { seen, receive } = captureReceive();
-  await fanOutDelivery(body, "pull_request", "delivery-1", { receive, org: ORG, listRoutines: async () => [ev] });
+  await fanOutDelivery(body, "pull_request", "delivery-1", { receive, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(seen.length === 1 && seen[0].unified, "event: an event-routine fire joins the window on the SAME decision as a clock fire");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === "thread", "event: thread grain");
   ok(routineMarker(seen[0].attrs as never)?.id === "r-event", "event: the routine marker still rides");
@@ -270,7 +271,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 
   delete process.env.OE_ONESHOT_AGENT;
   const off = captureReceive();
-  await fanOutDelivery(body, "pull_request", "delivery-2", { receive: off.receive, org: ORG, listRoutines: async () => [ev] });
+  await fanOutDelivery(body, "pull_request", "delivery-2", { receive: off.receive, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(off.seen.length === 1 && !off.seen[0].unified, "event/flag-off: byte-identical native fire");
 }
 

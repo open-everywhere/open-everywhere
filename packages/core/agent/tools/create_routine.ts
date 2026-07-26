@@ -7,11 +7,15 @@ import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
+import { SCOPE_KINDS, type FilterClause, type ScopeKind, type ScopeSelector, type SubscriptionFilter } from "../routines/event-model.js";
+import { validateSubscription } from "../routines/event-match.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
+
+const SCOPE_KINDS_TUPLE = SCOPE_KINDS as unknown as [ScopeKind, ...ScopeKind[]];
 
 const trigger = z.discriminatedUnion("kind", [
   z.object({
@@ -51,13 +55,50 @@ const trigger = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("event"),
-    source: z.string().describe('External event source, e.g. "github".'),
-    match: z.record(z.string(), z.string()).optional().describe('Event filter, e.g. { "event": "pull_request", "action": "opened" }.'),
+    source: z.string().describe("External event source. Must be one registered in this deployment — an unknown source is refused, naming the known set."),
+    under: z
+      .array(z.object({ kind: z.enum(SCOPE_KINDS_TUPLE), id: z.string() }))
+      .optional()
+      .describe(
+        'WHERE to subscribe, structurally: the container path the event must sit under, e.g. [{ "kind": "container", "id": "acme/web" }]. ' +
+          "Required unless you narrow with an `in` clause on a scope field — a subscription must say what it is scoped to.",
+      ),
+    all: z
+      .array(
+        z.object({
+          key: z.string(),
+          in: z.array(z.string()).optional(),
+          notIn: z.array(z.string()).optional(),
+        }),
+      )
+      .optional()
+      .describe(
+        'WHICH events, as AND-ed clauses over the source\'s filterable fields, e.g. [{ "key": "event", "in": ["pull_request"] }, ' +
+          '{ "key": "action", "in": ["opened", "reopened"] }]. Exactly one of `in`/`notIn` per clause. An absent field makes `in` ' +
+          "false and `notIn` true. No wildcards, no regex, no substring matching — these compare ids exactly.",
+      ),
+    match: z
+      .record(z.string(), z.string())
+      .optional()
+      .describe("DEPRECATED shorthand for single-value `all` clauses — prefer `all`/`under`. Same validation applies."),
   }),
 ]);
 
+export function eventFilterFrom(t: { under?: readonly ScopeSelector[]; all?: readonly { key: string; in?: readonly string[]; notIn?: readonly string[] }[]; match?: Readonly<Record<string, string>> }): SubscriptionFilter | undefined {
+  const clauses: FilterClause[] = [];
+  for (const c of t.all ?? []) clauses.push(c as unknown as FilterClause);
+  if (t.match) for (const [key, value] of Object.entries(t.match)) clauses.push({ key, in: [value] });
+  const under = t.under ?? [];
+  if (clauses.length === 0 && under.length === 0) return undefined;
+  return { ...(under.length ? { under } : {}), ...(clauses.length ? { all: clauses } : {}) };
+}
+
 export function storedTrigger(t: z.infer<typeof trigger>): RoutineTrigger {
-  if (t.kind === "event") return { kind: "event", source: t.source, match: t.match };
+  if (t.kind === "event") {
+    const filter = eventFilterFrom(t);
+    validateSubscription(t.source, filter);
+    return { kind: "event", source: t.source, ...(filter ? { filter } : {}) };
+  }
   const present = [t.cron !== undefined, t.everyMinutes !== undefined, t.at !== undefined].filter(Boolean).length;
   if (present !== 1) {
     throw new Error("A scheduled routine needs exactly ONE of `cron`, `everyMinutes`, or `at`.");

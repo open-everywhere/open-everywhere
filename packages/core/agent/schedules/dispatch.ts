@@ -10,6 +10,7 @@ import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, routineGrantGeneration, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
+import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -30,11 +31,7 @@ function onceDisablePatch(r: Routine, now: Date, note: string): Partial<Routine>
   return r.trigger.kind === "once" ? { status: "disabled", disabledReason: `once: ${note} at ${now.toISOString()}` } : {};
 }
 
-function partitionOf(r: Routine): Partition {
-  const [platform = "", workspace = "", ...rest] = r.surfaceKey.split("/");
-  const workspaceKey = `${platform}/${workspace}`;
-  return { org: r.org, platform, workspace, surface: rest.join("/"), workspaceKey, surfaceKey: r.surfaceKey, key: r.surfaceKey };
-}
+const partitionOf = (r: Routine): Partition => routinePartition(r);
 
 async function liveJobKickoff(channelId: string, text: string): Promise<string | undefined> {
   try {

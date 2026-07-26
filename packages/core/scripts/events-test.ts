@@ -1,11 +1,7 @@
 import { createHmac } from "node:crypto";
-import {
-  normalizeGithubEvent,
-  matchesEvent,
-  eventPrompt,
-  verifyGithubSignature,
-  gateGithubDelivery,
-} from "../agent/routines/events.js";
+import { normalizeGithubEvent, eventPrompt, verifyGithubSignature, gateGithubDelivery } from "../agent/routines/events.js";
+import { liftGithubEvent } from "../agent/routines/github-normalizer.js";
+import { evaluateSubscription } from "../agent/routines/event-match.js";
 import type { Routine } from "../agent/routines/routine.js";
 
 let passed = 0;
@@ -48,15 +44,20 @@ ok(normalizeGithubEvent("", {}) === null, "empty event type is ignored");
 const issue = normalizeGithubEvent("issues", { action: "labeled", issue: { number: 7, title: "Bug" }, repository: { full_name: "me/proj" } });
 ok(issue!.number === 7 && issue!.action === "labeled", "normalize: issues event");
 
-ok(matchesEvent(eventRoutine(), pr!), "no filter -> matches any github event");
-ok(matchesEvent(eventRoutine({ event: "pull_request", action: "opened" }), pr!), "filter event+action matches");
-ok(!matchesEvent(eventRoutine({ action: "closed" }), pr!), "filter action mismatch -> no match");
-ok(matchesEvent(eventRoutine({ repo: "me/proj" }), pr!), "filter repo matches");
-ok(!matchesEvent(eventRoutine({ repo: "other/repo" }), pr!), "filter repo mismatch -> no match");
+const prV2 = liftGithubEvent("pull_request", prPayload)!;
+const matches = (r: Routine): boolean => {
+  const v = evaluateSubscription(r, prV2);
+  return !("invalid" in v) && v.match;
+};
+ok(matches(eventRoutine()), "no filter -> matches any github event");
+ok(matches(eventRoutine({ event: "pull_request", action: "opened" })), "filter event+action matches");
+ok(!matches(eventRoutine({ action: "closed" })), "filter action mismatch -> no match");
+ok(matches(eventRoutine({ repo: "me/proj" })), "filter repo matches");
+ok(!matches(eventRoutine({ repo: "other/repo" })), "filter repo mismatch -> no match");
 const wrongSource: Routine = { ...eventRoutine(), trigger: { kind: "event", source: "gitlab" } };
-ok(!matchesEvent(wrongSource, pr!), "different source -> no match");
+ok(!matches(wrongSource), "different source -> no match");
 const clockRoutine: Routine = { ...eventRoutine(), trigger: { kind: "interval", everyMinutes: 5 } };
-ok(!matchesEvent(clockRoutine, pr!), "non-event routine never matches an event");
+ok(!matches(clockRoutine), "non-event routine never matches an event");
 
 const prompt = eventPrompt(eventRoutine(), pr!);
 ok(

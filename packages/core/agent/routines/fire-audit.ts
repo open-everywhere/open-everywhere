@@ -14,7 +14,9 @@ export const ROUTINE_AUDIT = {
 export type RoutineSkipReason =
   | "fanout_cap"
   | "over_budget"
-  | "unresolved_target";
+  | "unresolved_target"
+  | "filter_invalid"
+  | "grant_refused";
 
 export const SKIP_WINDOW_MS = 60 * 60_000;
 
