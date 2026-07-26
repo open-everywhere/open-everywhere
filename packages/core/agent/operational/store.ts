@@ -2,6 +2,7 @@ import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
+import type { UnifiedWakeRecord } from "../channels/unified-window.js";
 
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
@@ -332,8 +333,10 @@ export interface OperationalStore {
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
 
-  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number): Promise<void>;
+  putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string): Promise<void>;
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;
+  getUnifiedWakeRecord(org: string, wakeId: string): Promise<UnifiedWakeRecord | null>;
+  markUnifiedWakeAnswered(org: string, wakeId: string, at: string, turnId?: string): Promise<void>;
 
   putThreadOwner(org: string, channelKey: string, threadKey: string, taskToken: string, at: string, ttlMs: number): Promise<void>;
   getThreadOwner(org: string, channelKey: string, threadKey: string): Promise<string | null>;

@@ -109,10 +109,13 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, key)
     );
     CREATE TABLE IF NOT EXISTS unified_wake_target (
-      org_id      TEXT NOT NULL,
-      wake_id     TEXT NOT NULL,              -- host-minted per-wake id (rides the wake envelope)
-      target_json TEXT NOT NULL,              -- serialized UnifiedWakeOrigin (opaque to the store)
-      created_at  TEXT NOT NULL,              -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      org_id           TEXT NOT NULL,
+      wake_id          TEXT NOT NULL,         -- host-minted per-wake id (rides the wake envelope)
+      target_json      TEXT NOT NULL,         -- serialized UnifiedWakeOrigin (opaque to the store)
+      created_at       TEXT NOT NULL,         -- ISO-8601 (lexicographic = chronological; TTL prune key)
+      window_token     TEXT,                  -- OPE-161: the BARE window token dispatched to; NULL = legacy row (never answerable via the pending arm)
+      answered_at      TEXT,                  -- OPE-161: ISO-8601 when a reply answered this wake; NULL = still pending
+      answered_turn_id TEXT,                  -- OPE-161: the turn that answered it (the same-turn re-accept key)
       PRIMARY KEY (org_id, wake_id)
     );
     CREATE TABLE IF NOT EXISTS thread_ownership (
@@ -280,6 +283,10 @@ function getDb(): DatabaseSync {
 
     "ALTER TABLE task_result ADD COLUMN caller_token TEXT",
     "ALTER TABLE task_result ADD COLUMN delivered_at TEXT",
+
+    "ALTER TABLE unified_wake_target ADD COLUMN window_token TEXT",
+    "ALTER TABLE unified_wake_target ADD COLUMN answered_at TEXT",
+    "ALTER TABLE unified_wake_target ADD COLUMN answered_turn_id TEXT",
 
     "ALTER TABLE pending_actions ADD COLUMN posted_to TEXT",
 
@@ -1000,16 +1007,16 @@ export const sqliteOperationalStore: OperationalStore = {
     return info.changes > 0;
   },
 
-  async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
+  async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken) {
     const handle = getDb();
     const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
     handle.prepare("DELETE FROM unified_wake_target WHERE created_at < ? AND org_id = ?").run(cutoff, org);
     handle
       .prepare(
-        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = excluded.target_json, created_at = excluded.created_at`,
+        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at, window_token) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = excluded.target_json, created_at = excluded.created_at, window_token = excluded.window_token`,
       )
-      .run(org, wakeId, targetJson, at);
+      .run(org, wakeId, targetJson, at, windowToken ?? null);
   },
 
   async getUnifiedWakeTarget(org, wakeId) {
@@ -1017,6 +1024,28 @@ export const sqliteOperationalStore: OperationalStore = {
       | { target_json: string }
       | undefined;
     return row?.target_json ?? null;
+  },
+
+  async getUnifiedWakeRecord(org, wakeId) {
+    const row = getDb()
+      .prepare("SELECT target_json, created_at, window_token, answered_at, answered_turn_id FROM unified_wake_target WHERE org_id = ? AND wake_id = ?")
+      .get(org, wakeId) as
+      | { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return {
+      targetJson: row.target_json,
+      createdAt: row.created_at,
+      ...(row.window_token !== null ? { windowToken: row.window_token } : {}),
+      ...(row.answered_at !== null ? { answeredAt: row.answered_at } : {}),
+      ...(row.answered_turn_id !== null ? { answeredTurnId: row.answered_turn_id } : {}),
+    };
+  },
+
+  async markUnifiedWakeAnswered(org, wakeId, at, turnId) {
+    getDb()
+      .prepare("UPDATE unified_wake_target SET answered_at = ?, answered_turn_id = ? WHERE org_id = ? AND wake_id = ?")
+      .run(at, turnId ?? null, org, wakeId);
   },
 
   async putThreadOwner(org, channelKey, threadKey, taskToken, at, ttlMs) {

@@ -95,10 +95,13 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, key)
    )`,
   `CREATE TABLE IF NOT EXISTS unified_wake_target (
-     org_id      text NOT NULL,
-     wake_id     text NOT NULL,
-     target_json text NOT NULL,
-     created_at  text NOT NULL,
+     org_id           text NOT NULL,
+     wake_id          text NOT NULL,
+     target_json      text NOT NULL,
+     created_at       text NOT NULL,
+     window_token     text,
+     answered_at      text,
+     answered_turn_id text,
      PRIMARY KEY (org_id, wake_id)
    )`,
   `CREATE TABLE IF NOT EXISTS thread_ownership (
@@ -245,6 +248,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE channel_session ADD COLUMN IF NOT EXISTS handoff_note text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS caller_token text`,
   `ALTER TABLE task_result ADD COLUMN IF NOT EXISTS delivered_at text`,
+  `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS window_token text`,
+  `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_at text`,
+  `ALTER TABLE unified_wake_target ADD COLUMN IF NOT EXISTS answered_turn_id text`,
   `ALTER TABLE pending_actions ADD COLUMN IF NOT EXISTS posted_to text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
@@ -1304,13 +1310,13 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
-    async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs) {
+    async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken) {
       const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
       await client.query("DELETE FROM unified_wake_target WHERE created_at < $1 AND org_id = $2", [cutoff, org]);
       await client.query(
-        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = EXCLUDED.target_json, created_at = EXCLUDED.created_at`,
-        [org, wakeId, targetJson, at],
+        `INSERT INTO unified_wake_target (org_id, wake_id, target_json, created_at, window_token) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (org_id, wake_id) DO UPDATE SET target_json = EXCLUDED.target_json, created_at = EXCLUDED.created_at, window_token = EXCLUDED.window_token`,
+        [org, wakeId, targetJson, at, windowToken ?? null],
       );
     },
 
@@ -1318,6 +1324,31 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const { rows } = await client.query("SELECT target_json FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2", [org, wakeId]);
       const r = (rows as { target_json: string }[])[0];
       return r ? r.target_json : null;
+    },
+
+    async getUnifiedWakeRecord(org, wakeId) {
+      const { rows } = await client.query(
+        "SELECT target_json, created_at, window_token, answered_at, answered_turn_id FROM unified_wake_target WHERE org_id = $1 AND wake_id = $2",
+        [org, wakeId],
+      );
+      const r = (rows as { target_json: string; created_at: string; window_token: string | null; answered_at: string | null; answered_turn_id: string | null }[])[0];
+      if (!r) return null;
+      return {
+        targetJson: r.target_json,
+        createdAt: r.created_at,
+        ...(r.window_token !== null ? { windowToken: r.window_token } : {}),
+        ...(r.answered_at !== null ? { answeredAt: r.answered_at } : {}),
+        ...(r.answered_turn_id !== null ? { answeredTurnId: r.answered_turn_id } : {}),
+      };
+    },
+
+    async markUnifiedWakeAnswered(org, wakeId, at, turnId) {
+      await client.query("UPDATE unified_wake_target SET answered_at = $1, answered_turn_id = $2 WHERE org_id = $3 AND wake_id = $4", [
+        at,
+        turnId ?? null,
+        org,
+        wakeId,
+      ]);
     },
 
     async putThreadOwner(org, channelKey, threadKey, taskToken, at, ttlMs) {

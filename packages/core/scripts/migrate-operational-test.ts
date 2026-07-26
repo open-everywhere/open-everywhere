@@ -73,6 +73,16 @@ function roSqlite(path: string): DatabaseSync {
     await s.markEngaged("acme", "slack/T1/C1", "1720000000.0002", "2026-07-01T10:05:00Z", { participating: true });
     await s.markStopped("acme", "slack/T1/C1", "1720000000.0002");
     await s.setMeta("telemetry_instance_id", "inst-abc-123");
+    await s.putUnifiedWakeTarget("acme", "w-pending", JSON.stringify({ platform: "slack", channelId: "C_MIG" }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
+    await s.putUnifiedWakeTarget("acme", "w-answered", JSON.stringify({ platform: "github", owner: "o", repo: "r", issueNumber: 3 }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
+    await s.markUnifiedWakeAnswered("acme", "w-answered", "2026-07-01T10:30:00Z", "turn-mig");
+    const srcPending = await s.getUnifiedWakeRecord("acme", "w-pending");
+    ok(srcPending?.windowToken === "oe-dom:payments:oe-sup:g1" && srcPending?.answeredAt === undefined, "sqlite: a fresh wake row round-trips its window token and reads PENDING");
+    const srcAnswered = await s.getUnifiedWakeRecord("acme", "w-answered");
+    ok(srcAnswered?.answeredAt === "2026-07-01T10:30:00Z" && srcAnswered?.answeredTurnId === "turn-mig", "sqlite: markUnifiedWakeAnswered stamps answeredAt + answeredTurnId");
+    await s.putUnifiedWakeTarget("acme", "w-answered", JSON.stringify({ platform: "github", owner: "o", repo: "r", issueNumber: 3 }), "2026-07-01T11:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
+    const srcRePut = await s.getUnifiedWakeRecord("acme", "w-answered");
+    ok(srcRePut?.answeredAt === "2026-07-01T10:30:00Z" && srcRePut?.createdAt === "2026-07-01T11:00:00Z", "sqlite: re-registering an answered wake refreshes created_at but NEVER clears the mark");
   });
 
   const source = roSqlite(srcPath);
@@ -98,6 +108,11 @@ function roSqlite(path: string): DatabaseSync {
   ok(notion?.granted === true && github?.granted === false, "full: connector_override.granted booleans round-trip");
   const eng = await store.getEngagement("acme", "slack/T1/C1", "1720000000.0002");
   ok(eng?.participating === true && eng?.stopped === true, "full: thread_engagement participating/stopped booleans round-trip");
+
+  const migPending = await store.getUnifiedWakeRecord("acme", "w-pending");
+  ok(migPending?.windowToken === "oe-dom:payments:oe-sup:g1" && migPending?.answeredAt === undefined, "full: unified_wake_target.window_token migrates (and a PENDING row stays pending)");
+  const migAnswered = await store.getUnifiedWakeRecord("acme", "w-answered");
+  ok(migAnswered?.answeredAt === "2026-07-01T10:30:00Z" && migAnswered?.answeredTurnId === "turn-mig", "full: unified_wake_target answered_at + answered_turn_id migrate verbatim");
 
   const rawChain = await store.readAuditChain("acme");
   ok(rawChain[0].prevSha === null, "full: acme genesis row keeps null prev_sha (verbatim)");

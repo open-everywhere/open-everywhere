@@ -298,6 +298,48 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  const TTL = 6 * 60 * 60 * 1000;
+  const ORIGIN = JSON.stringify({ platform: "slack", channelId: "C_WAKE" });
+  const WIN = "oe-dom:payments:oe-sup:g1";
+
+  ok((await store.getUnifiedWakeRecord("acme", "w-nope")) === null, "pg: an unknown wakeId has no record (fail-closed null, never a phantom)");
+
+  await store.putUnifiedWakeTarget("acme", "w-1", ORIGIN, "2026-07-26T10:00:00Z", TTL, WIN);
+  const fresh = await store.getUnifiedWakeRecord("acme", "w-1");
+  ok(fresh?.targetJson === ORIGIN && fresh?.createdAt === "2026-07-26T10:00:00Z", "pg: getUnifiedWakeRecord round-trips targetJson + createdAt");
+  ok(fresh?.windowToken === WIN, "pg: the dispatched-to window token round-trips (the cross-domain fence key)");
+  ok(fresh?.answeredAt === undefined && fresh?.answeredTurnId === undefined, "pg: a freshly-registered wake is PENDING (both answered columns NULL ⇒ undefined)");
+  ok((await store.getUnifiedWakeTarget("acme", "w-1")) === ORIGIN, "pg: the narrow getUnifiedWakeTarget is unchanged by the new columns");
+  ok((await store.getUnifiedWakeRecord("globex", "w-1")) === null, "pg: wake records are org-partitioned");
+
+  await store.putUnifiedWakeTarget("acme", "w-legacy", ORIGIN, "2026-07-26T10:00:00Z", TTL);
+  ok((await store.getUnifiedWakeRecord("acme", "w-legacy"))?.windowToken === undefined, "pg: an un-stamped row reads windowToken undefined (never qualifies for the pending arm)");
+
+  await store.markUnifiedWakeAnswered("acme", "w-1", "2026-07-26T10:05:00Z", "turn-A");
+  const marked = await store.getUnifiedWakeRecord("acme", "w-1");
+  ok(marked?.answeredAt === "2026-07-26T10:05:00Z" && marked?.answeredTurnId === "turn-A", "pg: markUnifiedWakeAnswered stamps answeredAt + answeredTurnId");
+  await store.markUnifiedWakeAnswered("acme", "w-1", "2026-07-26T10:06:00Z", "turn-B");
+  const remarked = await store.getUnifiedWakeRecord("acme", "w-1");
+  ok(remarked?.answeredAt === "2026-07-26T10:06:00Z" && remarked?.answeredTurnId === "turn-B", "pg: marking twice is idempotent (last write wins, no error)");
+
+  await store.putUnifiedWakeTarget("acme", "w-1", ORIGIN, "2026-07-26T10:10:00Z", TTL, WIN);
+  const afterRePut = await store.getUnifiedWakeRecord("acme", "w-1");
+  ok(afterRePut?.answeredAt === "2026-07-26T10:06:00Z" && afterRePut?.answeredTurnId === "turn-B", "pg: RE-REGISTERING an answered wake does NOT clear the mark (redrive/retry can't resurrect it)");
+  ok(afterRePut?.createdAt === "2026-07-26T10:10:00Z", "pg: the re-register DOES refresh created_at (the TTL clock), as before");
+  const NEWWIN = "oe-dom:payments:win:t/slack~C_WAKE/1.2:oe-sup:g1";
+  await store.putUnifiedWakeTarget("acme", "w-1", ORIGIN, "2026-07-26T10:11:00Z", TTL, NEWWIN);
+  const rewin = await store.getUnifiedWakeRecord("acme", "w-1");
+  ok(rewin?.windowToken === NEWWIN && rewin?.answeredAt === "2026-07-26T10:06:00Z", "pg: the re-register DOES refresh window_token (names the newly dispatched-to session) while still preserving the mark");
+
+  await store.markUnifiedWakeAnswered("acme", "w-ghost", "2026-07-26T10:07:00Z", "turn-A");
+  ok((await store.getUnifiedWakeRecord("acme", "w-ghost")) === null, "pg: marking an ABSENT wake inserts nothing (UPDATE-only)");
+
+  await store.putUnifiedWakeTarget("globex", "w-1", ORIGIN, "2026-07-26T10:00:00Z", TTL, WIN);
+  await store.markUnifiedWakeAnswered("acme", "w-1", "2026-07-26T10:20:00Z", "turn-C");
+  ok((await store.getUnifiedWakeRecord("globex", "w-1"))?.answeredAt === undefined, "pg: the answered mark never crosses the org boundary");
+}
+
+{
   const REC = { urlPrivate: "https://files.slack.com/files-pri/T/F_UP/data.csv", mimeType: "text/csv", name: "data.csv", teamId: "T_UP" };
   ok((await store.getSlackAttachment("acme", "F_UP")) === null, "pg: a fresh file id has no attachment row");
   await store.putSlackAttachment("acme", "F_UP", REC, "2026-07-19T10:00:00Z", 24 * 60 * 60 * 1000);

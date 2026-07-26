@@ -119,7 +119,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();
-    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString());
+    await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
     return send(
       { message: input.message, ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}) },
