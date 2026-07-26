@@ -17,8 +17,9 @@ import { formatWindowToken, threadSeatWindowId } from "../channels/window-key.js
 
 export const TRIGGERED_FIRE_GRAIN = "thread" as const;
 
-export function jobFireSeatKey(routineId: string): string {
-  return `job/${routineId.replace(/:/g, "_")}`;
+export function jobFireSeatKey(routineId: string, generation = 1): string {
+  const g = Number.isInteger(generation) && generation > 1 ? generation : 1;
+  return `job/${routineId.replace(/:/g, "_")}${g > 1 ? `/g${g}` : ""}`;
 }
 export function runFireSeatKey(wakeId: string): string {
   return `run/${wakeId.replace(/:/g, "_")}`;

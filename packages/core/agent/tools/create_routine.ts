@@ -6,6 +6,7 @@ import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { renderFireMessage } from "../routines/fire-message.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
@@ -106,6 +107,14 @@ export default defineTool({
     pendingId: z.string().optional(),
     trigger: z.string(),
     nextRunAt: z.string().nullable().describe("When it WOULD first fire once armed (ISO, UTC), or null for event subscriptions."),
+    preview: z
+      .string()
+      .describe(
+        "The EXACT message this routine's first fire will receive — the temporal preamble, any protocol " +
+          "block (watch / durable job / silent), and your prompt. Rendered by the same code the dispatcher " +
+          "uses, so it cannot drift. Read it before telling the user what you've set up: if the protocol " +
+          "block contradicts what they asked for, the trigger or the post policy is wrong, not the prompt.",
+      ),
     message: z.string(),
   }),
   approval: never(),
@@ -176,12 +185,22 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const preview = renderFireMessage({
+      id: "(pending)",
+      prompt: input.prompt.trim(),
+      createdAt: now.toISOString(),
+      trigger: t,
+      ...(report ? { report } : {}),
+      ...(input.job ? { sessionMode: "job" as const } : {}),
+    });
+
     return {
       created: false,
       pending: true,
       pendingId: posted.id,
       trigger: describeTrigger(t, report),
       nextRunAt: next ? next.toISOString() : null,
+      preview,
       message: `card posted — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },

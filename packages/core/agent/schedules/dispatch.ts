@@ -8,9 +8,8 @@ import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.j
 import { foldRoutineOutcome } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
-import { isClockScheduled, isJobRoutine, type Routine } from "../routines/routine.js";
-import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
-import { renderJobMessage } from "../routines/job.js";
+import { isClockScheduled, isJobRoutine, routineGrantGeneration, type Routine } from "../routines/routine.js";
+import { renderFireMessage } from "../routines/fire-message.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { emitTelemetry } from "../observability/telemetry.js";
@@ -118,6 +117,7 @@ export async function dispatchTick(
         lastRunAt: now.toISOString(),
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
+        ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...onceDisablePatch(r, now, "fired"),
       });
       let fireTarget = dest.target;
@@ -156,12 +156,8 @@ export async function dispatchTick(
           ? { ...dest.origin, threadTs: jobAnchor }
           : dest.origin;
       const fireWakeId = mintWakeId();
-      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id) : runFireSeatKey(fireWakeId);
-      const message = isJobRoutine(r)
-        ? renderJobMessage(r)
-        : r.trigger.kind === "watch"
-          ? renderWatchMessage(r)
-          : renderScheduledMessage(r);
+      const seatKey = isJobRoutine(r) ? jobFireSeatKey(r.id, routineGrantGeneration(r)) : runFireSeatKey(fireWakeId);
+      const message = renderFireMessage(r);
       const deliver = async (): Promise<void> => {
         if (fireOrigin) {
           const diverted = await divertTriggeredFire(

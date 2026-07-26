@@ -20,6 +20,7 @@ export function routineFireAttributes(
     [ROUTINE_MARKER.surface]: r.surfaceKey,
     [ROUTINE_MARKER.org]: r.org,
     ...(isSilentRoutine(r) ? { [ROUTINE_MARKER.silent]: "true" } : {}),
+    ...(r.manualRunAt !== undefined ? { [ROUTINE_MARKER.manual]: "true" } : {}),
   };
 }
 

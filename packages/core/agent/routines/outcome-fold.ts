@@ -22,6 +22,7 @@ export async function foldRoutineOutcome(opts: {
   readonly sessionOutcome: "ok" | "failed";
   readonly at?: Date;
   readonly sessionId?: string;
+  readonly manual?: boolean;
 }): Promise<RoutineOutcomeFold> {
   const { marker, sessionOutcome } = opts;
   const at = opts.at ?? new Date();
@@ -43,6 +44,7 @@ export async function foldRoutineOutcome(opts: {
     await auditRoutineFire(routine, opts.sessionId, settled, {
       consecutiveFailures: updated.consecutiveFailures,
       ...(updated.disabledReason ? { disabledReason: updated.disabledReason } : {}),
+      ...(opts.manual === true ? { manual: true } : {}),
     });
   }
   const disabled = updated.status === "disabled" && routine.status !== "disabled";

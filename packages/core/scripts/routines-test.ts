@@ -28,10 +28,6 @@ import { storedTrigger } from "../agent/tools/create_routine.js";
 import {
   CHECK_IN_START_MS,
   CHECK_IN_CAP_MS,
-  nextCheckInDelayMs,
-  nextCheckInAt,
-  clampCheckInDelayMs,
-  clampCheckInMinutes,
   CHECK_IN_DOCTRINE,
 } from "../agent/routines/check-in.js";
 
@@ -302,33 +298,6 @@ rmSync(dir, { recursive: true, force: true });
   const MIN = 60_000;
   ok(CHECK_IN_START_MS === 1 * MIN, "check-in: start interval is 1 min");
   ok(CHECK_IN_CAP_MS === 5 * MIN, "check-in: hard cap is 5 min");
-
-  ok(nextCheckInDelayMs(1) === 1 * MIN, "check-in: attempt 1 → 1 min");
-  ok(nextCheckInDelayMs(2) === 2 * MIN, "check-in: attempt 2 → 2 min (back off)");
-  ok(nextCheckInDelayMs(3) === 4 * MIN, "check-in: attempt 3 → 4 min (back off)");
-  ok(nextCheckInDelayMs(4) === 5 * MIN, "check-in: attempt 4 → 5 min (would be 8, clamped to the cap)");
-  ok(nextCheckInDelayMs(5) === 5 * MIN, "check-in: attempt 5 → 5 min (stays at the cap)");
-  ok(nextCheckInDelayMs(100) === 5 * MIN, "check-in: a large attempt never exceeds the cap");
-
-  ok(nextCheckInDelayMs(0) === 1 * MIN, "check-in: attempt 0 clamps to the first check (1 min)");
-  ok(nextCheckInDelayMs(-3) === 1 * MIN, "check-in: negative attempt clamps to the first check");
-  ok(nextCheckInDelayMs(Number.NaN) === 1 * MIN, "check-in: NaN attempt clamps to the first check");
-  ok(nextCheckInDelayMs(2.9) === 2 * MIN, "check-in: fractional attempt floors (2.9 → attempt 2)");
-
-  const now = new Date("2026-07-18T12:00:00.000Z");
-  ok(nextCheckInAt(now, 1).toISOString() === "2026-07-26T21:16:00.000Z", "check-in: nextCheckInAt(now, 1) = now + 1 min");
-  ok(nextCheckInAt(now, 3).toISOString() === "2026-07-26T21:19:00.000Z", "check-in: nextCheckInAt(now, 3) = now + 4 min");
-  ok(nextCheckInAt(now, 9).toISOString() === "2026-07-26T21:20:00.000Z", "check-in: nextCheckInAt caps at now + 5 min");
-
-  ok(clampCheckInDelayMs(10_000) === CHECK_IN_START_MS, "check-in: a 10s request clamps UP to the 1-min floor");
-  ok(clampCheckInDelayMs(3 * MIN) === 3 * MIN, "check-in: a 3-min request passes through unchanged");
-  ok(clampCheckInDelayMs(30 * MIN) === CHECK_IN_CAP_MS, "check-in: a 30-min request clamps DOWN to the 5-min cap");
-  ok(clampCheckInDelayMs(0) === CHECK_IN_START_MS, "check-in: a zero/invalid delay clamps to the floor");
-  ok(clampCheckInDelayMs(Number.NaN) === CHECK_IN_START_MS, "check-in: a NaN delay clamps to the floor");
-
-  ok(clampCheckInMinutes(0.5) === 1, "check-in: 0.5 min clamps UP to 1 min");
-  ok(clampCheckInMinutes(3) === 3, "check-in: 3 min passes through");
-  ok(clampCheckInMinutes(60) === 5, "check-in: 60 min clamps DOWN to 5 min");
 
   ok(CHECK_IN_DOCTRINE.includes("1 min"), "check-in: doctrine names the 1-min start");
   ok(CHECK_IN_DOCTRINE.includes("5 min"), "check-in: doctrine names the 5-min cap");

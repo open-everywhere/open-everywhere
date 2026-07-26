@@ -8,6 +8,7 @@ export const ROUTINE_AUDIT = {
   skip: "routine.skip",
   fireLost: "routine.fire_lost",
   disabled: "routine.disabled",
+  runNow: "routine.run_now",
 } as const;
 
 export type RoutineSkipReason =
@@ -117,6 +118,24 @@ export async function auditRoutineFireLost(r: Routine, error: string, deps: Rout
         sessionId: null,
         note: "delivery rejected — no session started, so no sessionId exists for this fire",
       },
+    },
+    deps,
+  );
+}
+
+export async function auditRoutineRunNow(
+  r: Routine,
+  requestedBy: string,
+  nextRunAt: string,
+  deps: RoutineAuditDeps = {},
+): Promise<void> {
+  await write(
+    {
+      org: r.org,
+      ...routineAuditScope(r),
+      principalId: requestedBy,
+      action: ROUTINE_AUDIT.runNow,
+      detail: { routineId: r.id, requestedBy, nextRunAt, trigger: r.trigger.kind },
     },
     deps,
   );

@@ -30,6 +30,8 @@ export interface Routine {
 
   status: RoutineStatus;
   disabledReason?: string;
+  promptGeneration?: number;
+  manualRunAt?: string;
   nextRunAt?: string | null;
   lastRunAt?: string;
   lastOutcome?: RunOutcome;
@@ -47,6 +49,19 @@ export interface Routine {
 
 export function isJobRoutine(r: Pick<Routine, "sessionMode">): boolean {
   return r.sessionMode === "job";
+}
+
+export function routineGrantGeneration(r: Pick<Routine, "promptGeneration">): number {
+  const g = r.promptGeneration;
+  return Number.isInteger(g) && (g as number) > 0 ? (g as number) : 1;
+}
+
+export function nextPromptGeneration(r: Pick<Routine, "promptGeneration">): number {
+  return routineGrantGeneration(r) + 1;
+}
+
+export function routineGrantKey(r: Pick<Routine, "id" | "promptGeneration">): string {
+  return `oe-routine:${r.id}:g${routineGrantGeneration(r)}`;
 }
 
 export function isSilentRoutine(r: Pick<Routine, "report">): boolean {
@@ -70,6 +85,7 @@ export const ROUTINE_MARKER = {
   surface: "open_everywhere_routine_surface",
   org: "open_everywhere_routine_org",
   silent: "open_everywhere_routine_silent",
+  manual: "open_everywhere_routine_manual",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -88,6 +104,10 @@ export function routineMarker(attributes: Attrs): { id: string; surfaceKey: stri
 
 export function routineSilentStamped(attributes: Attrs): boolean {
   return oneOf(attributes?.[ROUTINE_MARKER.silent]) === "true";
+}
+
+export function routineManualStamped(attributes: Attrs): boolean {
+  return oneOf(attributes?.[ROUTINE_MARKER.manual]) === "true";
 }
 
 export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {

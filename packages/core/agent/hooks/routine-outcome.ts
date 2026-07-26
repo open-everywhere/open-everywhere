@@ -1,5 +1,5 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { routineMarker } from "../routines/routine.js";
+import { routineManualStamped, routineMarker } from "../routines/routine.js";
 import { foldRoutineOutcome } from "../routines/outcome-fold.js";
 
 function log(msg: string): void {
@@ -14,11 +14,13 @@ async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void>
 
   try {
     const sessionId = typeof ctx.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
+    const manual = routineManualStamped(attrs);
     const folded = await foldRoutineOutcome({
       marker,
       sessionOutcome: outcome,
       at: new Date(),
       ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(manual ? { manual: true } : {}),
     });
     if (!folded.folded) return;
     log(

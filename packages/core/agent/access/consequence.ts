@@ -150,6 +150,14 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   },
 
   cancel_routine: member("routine.cancel", "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms"),
+  edit_routine: member(
+    "routine.edit",
+    "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read",
+  ),
+  enable_routine: member(
+    "routine.enable",
+    "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button",
+  ),
   delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
 
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
@@ -159,6 +167,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
   subscribe_pr: open(
     "arms a self-serve check-back whose routine prompt is CODE-templated (subscribePrPrompt) from grant-validated inputs — the model authors no routine text, incl. the re-arm, which loops through this SAME tool, never create_routine; posts stay in the arming surface; READ-scoped credential only; the chain is hard-capped (MAX_CHECKS_PER_SUBSCRIPTION, budget carried on the routine ROW so a prompt rewrite can't reset it) and self-retires on merge/close; cancellable with cancel_routine, which stays the ONLY manual off switch (a `stop` param here would be a second, ungated removal path)",
+  ),
+  run_routine_now: open(
+    "brings a routine's ALREADY-ARMED run forward (OPE-147): sets nextRunAt to now so the ordinary dispatcher tick fires it — no new fire path, no new audience, no new authority, and every consequential thing the fired turn attempts re-gates on its own. The prompt is the one a human already read on the routine.create card, and the schedule is unchanged. Host-rate-limited to one manual run per routine per dispatcher tick, audited (routine.run_now with the real requester; the resulting fire's routine.fire row carries manual:true), and it REFUSES without a verified principal — so a fire, which has none, can never re-trigger itself or another routine",
   ),
   extend_workspace_time: open("extends this session's own sandbox window; capped (OE_SANDBOX_EXTEND_MAX_MIN) and audited"),
   spawn_task: open(
