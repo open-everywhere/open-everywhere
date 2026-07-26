@@ -14,6 +14,8 @@ import {
   type UnifiedWakeOrigin,
 } from "../channels/unified-window.js";
 import { formatWindowToken, threadSeatWindowId } from "../channels/window-key.js";
+import { NO_REPLY_SENTINEL } from "../channels/normalized-wake.js";
+import { ROUTINE_MARKER } from "./routine.js";
 
 export const TRIGGERED_FIRE_GRAIN = "thread" as const;
 
@@ -23,6 +25,29 @@ export function jobFireSeatKey(routineId: string, generation = 1): string {
 }
 export function runFireSeatKey(wakeId: string): string {
   return `run/${wakeId.replace(/:/g, "_")}`;
+}
+
+export function fireReplyMandate(wakeId: string): string {
+  return (
+    "<system-reminder>\n" +
+    "This turn was started by a TRIGGER, not by a message, so there is no wake envelope above this " +
+    `line and no one is going to send you one: the \`wake-id\` for this fire is \`${wakeId}\`.\n` +
+    "You are in a cross-surface window, so anything you have to say MUST be delivered by CALLING THE " +
+    "`reply` TOOL with `wake` set to that exact id — your turn-final text is not posted here. " +
+    `Choosing to stay silent is still fine (end with ${NO_REPLY_SENTINEL}, or call the no_reply tool). ` +
+    "But do NOT go silent because you could not find a wake-id, and never guess one: it is the id on " +
+    "this line, and a guessed id is refused.\n" +
+    "</system-reminder>"
+  );
+}
+
+export function renderFireWindowMessage(
+  message: string,
+  wakeId: string,
+  attributes: Readonly<Record<string, unknown>> = {},
+): string {
+  if (attributes[ROUTINE_MARKER.silent] === "true") return message;
+  return `${message}\n\n${fireReplyMandate(wakeId)}`;
 }
 
 export interface FireWindowPlan {
@@ -110,10 +135,11 @@ export async function divertTriggeredFire(
   });
   if (!plan) return false;
   const attributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}), [OE_GRAIN_ATTR]: TRIGGERED_FIRE_GRAIN };
+  const wakeId = input.wakeId ?? mintWakeId();
   await (deps.divert ?? divertToUnifiedWindow)(receive, {
-    message: input.message,
+    message: renderFireWindowMessage(input.message, wakeId, input.auth.attributes ?? {}),
     token: plan.token,
-    window: { wakeId: input.wakeId ?? mintWakeId(), origin: input.origin, addressing: "direct-mention" },
+    window: { wakeId, origin: input.origin, addressing: "direct-mention" },
     surfaceKey: input.surfaceKey,
     auth: { ...input.auth, attributes },
   });

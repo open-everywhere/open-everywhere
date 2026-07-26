@@ -30,6 +30,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { readAudit } = await import("../agent/audit/audit.js");
 const { ROUTINE_MARKER, routineMarker } = await import("../agent/routines/routine.js");
 const { WEBHOOK_MARKER_ATTR, webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+const { NO_REPLY_SENTINEL } = await import("../agent/channels/normalized-wake.js");
 const unifiedMod = await import("../agent/channels/unified.js");
 const unifiedChannel = unifiedMod.default;
 
@@ -337,6 +338,91 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   const p2 = fireWindow.planFireWindow({ ...base, seatKey: fireWindow.runFireSeatKey(w2) });
   ok(p1!.token !== p2!.token, "runs: two non-job fires mint DIFFERENT seats ⇒ a fresh session per run, exactly as before the re-grain");
   ok(classifySessionId(p1!.token).grain === "thread" && classifySessionId(p2!.token).grain === "thread", "runs: both are thread grain");
+}
+
+{
+  const { registerSlackFixturePostArm } = await import("./_slack-test-stubs.js");
+  const { OE_WAKE_ID_ATTR, shouldBridgeAddressedProse } = await import("../agent/channels/unified-window.js");
+  const { replayStepNames } = await import("../agent/access/window-gated.js");
+
+  const posted: { channel: string; text: string }[] = [];
+  registerSlackTestBridge({
+    confirmChannelInternal: async () => true,
+    form: async (method: string, body: string) => {
+      const p = new URLSearchParams(body);
+      if (method === "chat.postMessage") posted.push({ channel: p.get("channel") ?? "", text: p.get("text") ?? "" });
+      return { ok: true, ts: "1700000001.0001" } as never;
+    },
+  });
+  registerSlackFixturePostArm();
+
+  const wakeIdInMessage = (message: string): string | undefined =>
+    /`wake-id` for this fire is `([^`]+)`/.exec(message)?.[1];
+
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-speak", prompt: "Post the deploy digest." }));
+  const { seen, receive } = captureReceive();
+  await tick(NOW, receive);
+  ok(seen.length === 1 && seen[0].unified, "speak: the fire diverted (the precondition for everything below)");
+  const d = seen[0];
+  const target = d.target as unknown as UnifiedReceiveTarget;
+
+  const disclosed = wakeIdInMessage(d.message);
+  ok(disclosed !== undefined, "speak/DISCLOSURE: the fire's message names a `wake-id` — pre-fix it named none, which is why prod hallucinated one");
+  ok(disclosed === target.wakeId, "speak/DISCLOSURE: the id in the message is the SAME id the durable map row was registered under (one binding, two consumers)");
+  ok(d.attrs[OE_WAKE_ID_ATTR] === disclosed, "speak/DISCLOSURE: and the same id the host stamped on the delivery, so the bridge and the tool agree");
+  ok(d.message.includes("Post the deploy digest."), "speak: the routine's own prompt still rides verbatim");
+  ok(!d.message.includes("<untrusted_external_data"), "speak: the mandate does not re-wrap the fire prompt as untrusted (it is appended, never around)");
+
+  const resolved = await resolveAnswerableReplyTarget(store, ORG, disclosed ?? "none", target.token, "turn-speak", disclosed ?? "none");
+  ok(resolved.ok, "speak/REPLY: the id the model can READ OFF ITS OWN MESSAGE is accepted by the answerable-reply fence");
+  ok(resolved.ok && (resolved.origin as { channelId: string }).channelId === CHAN, "speak/REPLY: and it resolves to the room the routine posts in");
+
+  await import("../agent/tools/reply.js");
+  const reg = (globalThis as Record<symbol, unknown>)[Symbol.for("@workflow/core//registeredSteps")] as Map<string, unknown>;
+  const replyExec = reg?.get(replayStepNames("reply", "_single").execute) as
+    | ((cv: unknown, input: unknown, ctx: unknown) => Promise<unknown>)
+    | undefined;
+  ok(typeof replyExec === "function", "speak/ROOM: the unified `reply` execute is reachable (the only way to speak in this window)");
+  const ctx = {
+    session: { auth: { current: { attributes: d.attrs } }, turn: { id: "turn-speak" } },
+    channel: { continuationToken: target.token },
+  };
+  const out = await replyExec!({}, { text: "Deploy 42 is green.", wake: disclosed ?? "made-up", done: true }, ctx)
+    .then((r) => r as { posted?: boolean })
+    .catch(() => ({ posted: false }));
+  ok(out.posted === true, "speak/ROOM: `reply` ACCEPTED the disclosed id and posted — pre-fix the model had no id, guessed, and was refused");
+  ok(posted.length === 1, "speak/ROOM: the fire's output actually LANDED — one post reached the surface (the regression: nothing landed at all)");
+  ok(posted[0].channel === CHAN && posted[0].text === "Deploy 42 is green.", "speak/ROOM: it landed in the routine's own room, verbatim");
+
+  ok(shouldBridgeAddressedProse(d.attrs[OE_ADDRESSING_ATTR] as string | undefined, false), "speak/BACKSTOP: the fire's delivery is still `direct-mention`, so terminal prose bridges to its origin");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-speak");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-silent", report: { kind: "silent" }, prompt: "Archive yesterday's rows." }));
+  const { seen, receive } = captureReceive();
+  await tick(NOW, receive);
+  ok(seen.length === 1 && seen[0].unified, "silent: a silent routine still joins the window (it has work to do, it just says nothing)");
+  ok(seen[0].attrs[ROUTINE_MARKER.silent] === "true", "silent: the host-set silent stamp rides the divert — the gate's unforgeable input");
+  ok(!seen[0].message.includes("wake-id"), "silent/OPE-149 PRESERVED: a silent routine is NOT told a wake-id — the disclosure must not become the way a silent routine starts talking");
+  ok(!seen[0].message.includes("<system-reminder>"), "silent: its message carries no reply mandate at all");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-silent");
+
+  ok(fireWindow.renderFireWindowMessage("body", "w-1", { [ROUTINE_MARKER.silent]: "true" }) === "body", "silent/pure: renderFireWindowMessage returns the message UNTOUCHED for a silent fire");
+  ok(fireWindow.renderFireWindowMessage("body", "w-1", {}).includes("w-1"), "silent/pure: and discloses the id for every other fire");
+  ok(fireWindow.fireReplyMandate("w-1").includes(NO_REPLY_SENTINEL), "mandate: the silence exit is stated — a fire that judges silence warranted still has a cheap way to take it");
+}
+
+{
+  delete process.env.OE_ONESHOT_AGENT;
+  await routineStore.addRoutine({} as never, routine({ id: "r-native", prompt: "Post the deploy digest." }));
+  const { seen, receive } = captureReceive();
+  await tick(NOW, receive);
+  ok(seen.length === 1 && !seen[0].unified, "native: flag-off still fires natively");
+  ok(!seen[0].message.includes("wake-id"), "native: a non-diverted fire is told NO wake-id — there is no unified window to reply into, so the mandate would be a lie");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-native");
 }
 
 delete process.env.OE_ONESHOT_AGENT;
