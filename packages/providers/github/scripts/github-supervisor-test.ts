@@ -340,6 +340,26 @@ ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensT
   }
 
   {
+    const { markSilentRoutineTurn } = await import("@open-everywhere/core/agent/adapter-api.js");
+    const nonSupervisor = { ...supervisorState(), oeSupervisor: undefined, issueNumber: 42 };
+    const posts: unknown[] = [];
+    const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };
+    let threw: unknown = null;
+    await inSession(async () => {
+      markSilentRoutineTurn();
+      try {
+        await completed("NO_REPLY", { state: nonSupervisor, github });
+      } catch (err) {
+        threw = err;
+      }
+    }, { owner: OWNER, repo: REPO, issue_number: "42" });
+    ok(
+      posts.length === 0 && threw === null,
+      "SILENT routine: a non-supervisor github turn is DROPPED before eve's default poster (else it comments the literal string NO_REPLY)",
+    );
+  }
+
+  {
     const state = supervisorState();
     const posts: unknown[] = [];
     const github = { request: async (input: unknown) => { posts.push(input); return { ok: true, status: 201, body: {} }; } };

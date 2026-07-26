@@ -1,4 +1,4 @@
-import type { Routine } from "./routine.js";
+import { isSilentRoutine, type Routine } from "./routine.js";
 import { hashState, shouldPostOnDiff } from "./lifecycle.js";
 
 export const WATCH_SILENCE_SENTINEL = "NO_REPLY";
@@ -10,8 +10,23 @@ export function firePreamble(r: Pick<Routine, "id" | "createdAt" | "lastRunAt">)
   return `[routine ${r.id}] Scheduled fire (routine created: ${r.createdAt}; ${last}).`;
 }
 
-export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt">): string {
-  return [firePreamble(r), "", r.prompt].join("\n");
+export function renderSilentBlock(r: Pick<Routine, "report">): string {
+  if (!isSilentRoutine(r)) return "";
+  return (
+    `[silent] This routine reports NOTHING here — its product is the work itself, not a message, ` +
+    `so a post would be noise. Do the work, then end your turn with exactly ${WATCH_SILENCE_SENTINEL} ` +
+    `and nothing else. The ONE exception: if you hit a problem you cannot resolve, say so with the ` +
+    `\`reply\` tool — that message WILL post. Anything you write as your FINAL answer instead is ` +
+    `dropped before it reaches anyone, so never leave a problem in it.`
+  );
+}
+
+function fireMessage(head: string, silent: string, ...rest: readonly string[]): string {
+  return [head, ...(silent.length > 0 ? ["", silent] : []), "", ...rest].join("\n");
+}
+
+export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "report">): string {
+  return fireMessage(firePreamble(r), renderSilentBlock(r), r.prompt);
 }
 
 export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastStateHash" | "createdAt" | "lastRunAt">): string {

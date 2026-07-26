@@ -5,7 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
-import { describeTrigger, type RoutineTrigger } from "../routines/routine.js";
+import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
@@ -34,7 +34,7 @@ const trigger = z.discriminatedUnion("kind", [
           CHECK_IN_DOCTRINE,
       ),
     postPolicy: z
-      .enum(["every-run", "only-on-change"])
+      .enum(["every-run", "only-on-change", "never"])
       .optional()
       .describe(
         "REQUIRED for cron/everyMinutes (ignored for `at`). Decide from the TASK'S SHAPE, never from the " +
@@ -42,7 +42,9 @@ const trigger = z.discriminatedUnion("kind", [
           "silent run would be a failure); 'only-on-change' = the post is an alert ('check X and tell me " +
           "when something is new/changed') — the fired turn records what it observed and a durable " +
           "host-side diff decides whether to post (reliable across fires, unlike anything remembered " +
-          "in-session). A cadence in the request ('hourly') only sets the schedule, never the policy. If " +
+          "in-session); 'never' = the work IS the product (updates a ticket, writes memory) — a post " +
+          "would be noise, so it reports nothing at all, except a problem it can't resolve. " +
+          "A cadence in the request ('hourly') only sets the schedule, never the policy. If " +
           "genuinely unclear, ask in plain words ('post every hour regardless, or only when something new lands?').",
       ),
   }),
@@ -67,7 +69,7 @@ export function storedTrigger(t: z.infer<typeof trigger>): RoutineTrigger {
     return { kind: "once", at: when.toISOString() };
   }
   if (t.postPolicy === undefined) {
-    throw new Error("A cron/everyMinutes routine needs `postPolicy` (every-run or only-on-change).");
+    throw new Error("A cron/everyMinutes routine needs `postPolicy` (every-run, only-on-change, or never).");
   }
   if (t.postPolicy === "only-on-change") {
     return t.cron !== undefined ? { kind: "watch", expr: t.cron } : { kind: "watch", everyMinutes: t.everyMinutes! };
@@ -75,9 +77,14 @@ export function storedTrigger(t: z.infer<typeof trigger>): RoutineTrigger {
   return t.cron !== undefined ? { kind: "cron", expr: t.cron } : { kind: "interval", everyMinutes: t.everyMinutes! };
 }
 
+export function storedReport(t: z.infer<typeof trigger>): RoutineReport | undefined {
+  if (t.kind === "event" || t.at !== undefined) return undefined;
+  return t.postPolicy === "never" ? { kind: "silent" } : undefined;
+}
+
 export default defineTool({
   description:
-    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/everyMinutes, with a required post policy — every run, or only when something changed), a ONE-SHOT (`at`, an ISO 8601 UTC instant — fires exactly once, then disables itself; e.g. 'check back on this in an hour' -> create a once routine for now+1h, and just create another one-shot to check again if nothing's changed — no re-arm state to manage), or an event subscription. Use this when the user asks for recurring, scheduled, one-time-later, or 'let me know when…' work. When talking to users, describe the policy in plain words ('I'll check every hour and only post when something changes', or 'I'll check back in an hour'), never internal jargon. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
+    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/everyMinutes, with a required post policy — every run, only when something changed, or never, for work whose product is an action rather than a message), a ONE-SHOT (`at`, an ISO 8601 UTC instant — fires exactly once, then disables itself; e.g. 'check back on this in an hour' -> create a once routine for now+1h, and just create another one-shot to check again if nothing's changed — no re-arm state to manage), or an event subscription. Use this when the user asks for recurring, scheduled, one-time-later, or 'let me know when…' work. When talking to users, describe the policy in plain words ('I'll check every hour and only post when something changes', or 'I'll check back in an hour'), never internal jargon. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
   inputSchema: z.object({
     prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (an ordinary fire has no prior thread context; a durable job — see `job` — DOES, and accumulates it)."),
     trigger,
@@ -110,6 +117,8 @@ export default defineTool({
     }
     const p = resolvePartition(ctx);
     const t = storedTrigger(input.trigger as z.infer<typeof trigger>);
+    const report = storedReport(input.trigger as z.infer<typeof trigger>);
+    assertReportConsistent(t, report);
 
     const expr = t.kind === "cron" ? t.expr : t.kind === "watch" ? t.expr : undefined;
     if (expr !== undefined) {
@@ -156,7 +165,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,
@@ -171,9 +180,9 @@ export default defineTool({
       created: false,
       pending: true,
       pendingId: posted.id,
-      trigger: describeTrigger(t),
+      trigger: describeTrigger(t, report),
       nextRunAt: next ? next.toISOString() : null,
-      message: `card posted — ${input.job ? "durable job" : "routine"} ${describeTrigger(t)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
+      message: `card posted — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },
 });

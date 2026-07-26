@@ -32,7 +32,7 @@ export default defineTool({
     if (!routine) {
       throw new Error(`No routine '${id}' on this surface — check the id with list_routines.`);
     }
-    const description = describeTrigger(routine.trigger);
+    const description = describeTrigger(routine.trigger, routine.report);
 
     const binding = bindFrom(ctx);
     if (!hasApprovalCardPath(binding.platform)) {

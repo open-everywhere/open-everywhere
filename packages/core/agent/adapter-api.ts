@@ -214,6 +214,8 @@ export {
 } from "./channels/turn-delivery.js";
 export type { FinalMessageAction, SupervisorTextDelivery } from "./channels/turn-delivery.js";
 
+export { silentRoutineThisTurn, markSilentRoutineTurn, SILENT_ROUTINE_DROP_REASON } from "./routines/report.js";
+
 export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 
 export { classifySessionSendError } from "./channels/session-death.js";

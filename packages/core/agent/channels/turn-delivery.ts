@@ -1,5 +1,6 @@
 import { NO_REPLY_SENTINEL } from "./normalized-wake.js";
 import { consumeNoReplyThisTurn } from "./no-reply-signal.js";
+import { silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } from "../routines/report.js";
 import type { ChannelSessionRow } from "../operational/store.js";
 
 export { NO_REPLY_SENTINEL };
@@ -24,6 +25,7 @@ export function finalMessageActionForTurn(finishReason: string, message: string 
   const action = finalMessageAction(finishReason, message);
   if (action.kind === "buffer-tool-status") return action;
   const reason = consumeNoReplyThisTurn();
+  if (silentRoutineThisTurn()) return { kind: "silent", reason: SILENT_ROUTINE_DROP_REASON };
   if (reason) return { kind: "silent", reason: `no_reply tool: ${reason}` };
   return action;
 }

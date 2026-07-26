@@ -54,7 +54,7 @@ export default defineTool({
       const f = forensics.get(r.id) ?? emptyRoutineForensics();
       return {
         id: r.id,
-        trigger: describeTrigger(r.trigger),
+        trigger: describeTrigger(r.trigger, r.report),
         prompt: r.prompt,
         status: r.status,
         job: r.sessionMode === "job",

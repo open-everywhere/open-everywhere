@@ -1,5 +1,6 @@
 import { applyOutcome, settleOutcome } from "./lifecycle.js";
 import { auditRoutineDisabled, auditRoutineFire } from "./fire-audit.js";
+import { announceSelfDisable } from "./disable-notice.js";
 import { getRoutine, updateRoutine } from "./store.js";
 import type { RunOutcome } from "./routine.js";
 
@@ -47,6 +48,7 @@ export async function foldRoutineOutcome(opts: {
   const disabled = updated.status === "disabled" && routine.status !== "disabled";
   if (disabled) {
     await auditRoutineDisabled(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures, opts.sessionId);
+    await announceSelfDisable(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures);
   }
   return { folded: true, outcome: settled, consecutiveFailures: updated.consecutiveFailures, disabled };
 }

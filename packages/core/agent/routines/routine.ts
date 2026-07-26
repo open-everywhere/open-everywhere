@@ -9,6 +9,8 @@ export type RoutineTrigger =
       readonly match?: Readonly<Record<string, string>>;
     };
 
+export type RoutineReport = { readonly kind: "silent" };
+
 export type RoutineStatus = "active" | "disabled" | "done";
 export type RunOutcome = "ok" | "failed" | "skipped";
 
@@ -20,6 +22,7 @@ export interface Routine {
   readonly surfaceKey: string;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly trigger: RoutineTrigger;
+  readonly report?: RoutineReport;
   readonly prompt: string;
   readonly createdBy?: string;
   readonly createdAt: string;
@@ -46,6 +49,18 @@ export function isJobRoutine(r: Pick<Routine, "sessionMode">): boolean {
   return r.sessionMode === "job";
 }
 
+export function isSilentRoutine(r: Pick<Routine, "report">): boolean {
+  return r.report?.kind === "silent";
+}
+
+export function assertReportConsistent(trigger: RoutineTrigger, report: RoutineReport | undefined): void {
+  if (report?.kind === "silent" && trigger.kind === "watch") {
+    throw new Error(
+      "A routine can't be both `never` (posts nothing) and only-on-change — a silent watch is just a silent cron. Pick one.",
+    );
+  }
+}
+
 export function isClockScheduled(t: RoutineTrigger): boolean {
   return t.kind === "cron" || t.kind === "interval" || t.kind === "watch" || t.kind === "once";
 }
@@ -54,6 +69,7 @@ export const ROUTINE_MARKER = {
   id: "open_everywhere_routine_id",
   surface: "open_everywhere_routine_surface",
   org: "open_everywhere_routine_org",
+  silent: "open_everywhere_routine_silent",
 } as const;
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -70,12 +86,17 @@ export function routineMarker(attributes: Attrs): { id: string; surfaceKey: stri
   return id && surfaceKey ? { id, surfaceKey, org } : null;
 }
 
-export function describeTrigger(t: RoutineTrigger): string {
+export function routineSilentStamped(attributes: Attrs): boolean {
+  return oneOf(attributes?.[ROUTINE_MARKER.silent]) === "true";
+}
+
+export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {
+  const silent = report?.kind === "silent";
   switch (t.kind) {
     case "cron":
-      return `cron "${t.expr}" (UTC; posts every run)`;
+      return `cron "${t.expr}" (UTC; ${silent ? "posts nothing" : "posts every run"})`;
     case "interval":
-      return `every ${t.everyMinutes} min (posts every run)`;
+      return `every ${t.everyMinutes} min (${silent ? "posts nothing" : "posts every run"})`;
     case "watch":
       return t.expr !== undefined
         ? `cron "${t.expr}" (UTC; posts only on change)`

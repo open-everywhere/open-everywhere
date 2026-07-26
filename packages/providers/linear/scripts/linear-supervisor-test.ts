@@ -333,6 +333,25 @@ ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW
     }
 
     {
+      const { markSilentRoutineTurn } = await import("@open-everywhere/core/agent/adapter-api.js");
+      const nonSupervisor = { ...supervisorState(), oeSupervisor: undefined, agentSessionId: "agent-session-1" };
+      gql = [];
+      let threw: unknown = null;
+      await inSession(async () => {
+        markSilentRoutineTurn();
+        try {
+          await completed("NO_REPLY", { state: nonSupervisor });
+        } catch (err) {
+          threw = err;
+        }
+      }, { issue_id: ISSUE, comment_id: "c-top" });
+      ok(
+        gql.length === 0 && threw === null,
+        "SILENT routine: a non-supervisor linear turn is DROPPED before eve's default poster (else it posts the literal string NO_REPLY)",
+      );
+    }
+
+    {
       const state = supervisorState();
       gql = [];
       await inSession(() => linearChannelModule.adapter["turn.failed"]!({ error: "boom" }, { state }));

@@ -175,7 +175,7 @@ export default defineTool({
 
     await auditToolAction(ctx as BindableContext, "routine.create", {
       id: routine.id,
-      trigger: describeTrigger(routine.trigger),
+      trigger: describeTrigger(routine.trigger, routine.report),
       nextRunAt: routine.nextRunAt ?? null,
       prSubscription: `${input.repo}#${input.number}`,
       checksRemaining,

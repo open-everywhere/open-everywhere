@@ -1,7 +1,7 @@
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { jobFireAttrs } from "../access/job-posture.js";
 import type { SessionMode } from "../access/resolver.js";
-import { isJobRoutine, ROUTINE_MARKER, type Routine } from "./routine.js";
+import { isJobRoutine, isSilentRoutine, ROUTINE_MARKER, type Routine } from "./routine.js";
 
 export function routineFireAttributes(
   r: Routine,
@@ -19,6 +19,7 @@ export function routineFireAttributes(
     [ROUTINE_MARKER.id]: r.id,
     [ROUTINE_MARKER.surface]: r.surfaceKey,
     [ROUTINE_MARKER.org]: r.org,
+    ...(isSilentRoutine(r) ? { [ROUTINE_MARKER.silent]: "true" } : {}),
   };
 }
 

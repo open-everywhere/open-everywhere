@@ -20,7 +20,7 @@ if (rows.length === 0) {
       .filter(Boolean)
       .join(" ");
     console.log(`\n  ${r.id}  [${r.surfaceKey}]  ${flags}`);
-    console.log(`    trigger : ${describeTrigger(r.trigger)}`);
+    console.log(`    trigger : ${describeTrigger(r.trigger, r.report)}`);
     console.log(`    next    : ${r.nextRunAt ?? "(event-driven)"}`);
     console.log(`    do      : ${r.prompt.slice(0, 100)}${r.prompt.length > 100 ? "…" : ""}`);
     if (r.disabledReason) console.log(`    note    : ${r.disabledReason}`);

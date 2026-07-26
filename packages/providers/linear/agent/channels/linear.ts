@@ -29,6 +29,7 @@ import {
   mintWakeId,
   divertToUnifiedWindow,
   finalMessageActionForTurn,
+  silentRoutineThisTurn,
   completeSupervisorTurn,
   auditSupervisorFailure,
   appendAudit,
@@ -636,6 +637,7 @@ const native: LinearChannel = linearChannel({
     },
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
+        if (silentRoutineThisTurn()) return;
         await defaultEvent("message.completed")?.(data, channel);
         return;
       }

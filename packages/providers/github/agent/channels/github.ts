@@ -22,6 +22,7 @@ import {
   isVouchedInternal,
   divertToUnifiedWindow,
   finalMessageActionForTurn,
+  silentRoutineThisTurn,
   completeSupervisorTurn,
   auditSupervisorFailure,
   capabilitiesForPlatform,
@@ -333,6 +334,7 @@ const native: GitHubChannel = githubChannel({
     },
     async "message.completed"(data, channel, ctx) {
       if (!isSupervisorGitHubState(channel.state)) {
+        if (silentRoutineThisTurn()) return;
         await defaultEvent("message.completed")?.(data, channel);
         return;
       }

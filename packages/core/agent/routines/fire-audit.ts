@@ -1,7 +1,7 @@
 import { appendAudit, readAudit, type AuditInput } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { usageSummary } from "../spend/usage-events.js";
-import type { Routine } from "./routine.js";
+import { isSilentRoutine, type Routine } from "./routine.js";
 
 export const ROUTINE_AUDIT = {
   fire: "routine.fire",
@@ -98,7 +98,7 @@ export async function auditRoutineFire(
       ...routineAuditScope(r),
       principalId: deps.principalId ?? ROUTINE_DISPATCHER_PRINCIPAL,
       action: ROUTINE_AUDIT.fire,
-      detail: { routineId: r.id, sessionId, outcome, ...extra },
+      detail: { routineId: r.id, sessionId, outcome, ...(isSilentRoutine(r) ? { silent: true, reportKind: "silent" } : {}), ...extra },
     },
     deps,
   );

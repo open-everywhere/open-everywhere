@@ -147,7 +147,7 @@ export async function routinesView(opts: { onlyDue?: boolean; org?: string; surf
       org: r.org,
       surfaceKey: r.surfaceKey,
       status: r.status,
-      trigger: describeTrigger(r.trigger),
+      trigger: describeTrigger(r.trigger, r.report),
       nextRunAt: r.nextRunAt ?? null,
       prompt: r.prompt,
       ...(r.lastOutcome ? { lastOutcome: r.lastOutcome } : {}),

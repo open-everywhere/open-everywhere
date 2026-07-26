@@ -1,6 +1,6 @@
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
-import { describeTrigger, type Routine, type RoutineTrigger } from "../routines/routine.js";
+import { describeTrigger, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
 import { registerActionKind } from "./actions.js";
@@ -12,6 +12,7 @@ export interface RoutineCreateArgs {
   readonly surfaceKey: string;
   readonly target: unknown;
   readonly trigger: RoutineTrigger;
+  readonly report?: RoutineReport;
   readonly prompt: string;
   readonly createdBy?: string;
   readonly tainted?: boolean;
@@ -23,7 +24,8 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
   policy: "member",
   summarize(args) {
     return [
-      `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger)} — fires WITHOUT a fresh @-mention`,
+      `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
+      ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.sessionMode === "job" ? ["↻ keeps ONE persistent session across fires (accumulates context) until it calls complete_job"] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       `> ${args.prompt}`,
@@ -39,6 +41,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       surfaceKey: args.surfaceKey,
       target: args.target as Routine["target"],
       trigger: args.trigger,
+      ...(args.report ? { report: args.report } : {}),
       prompt: args.prompt,
       createdBy: args.createdBy,
       createdAt: now.toISOString(),
@@ -56,9 +59,9 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       surface: args.partition.surface,
       principalId: decidedBy,
       action: "routine.create",
-      detail: { id: routine.id, trigger: describeTrigger(args.trigger), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}) },
+      detail: { id: routine.id, trigger: describeTrigger(args.trigger, args.report), nextRunAt: routine.nextRunAt, armedBy: decidedBy, tainted: Boolean(args.tainted), ...(args.sessionMode === "job" ? { sessionMode: "job" } : {}), ...(args.report ? { report: args.report.kind } : {}) },
     });
-    return `routine ${routine.id} armed — ${describeTrigger(args.trigger)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}.`;
+    return `routine ${routine.id} armed — ${describeTrigger(args.trigger, args.report)}${routine.nextRunAt ? ` (first run ${routine.nextRunAt})` : ""}.`;
   },
 };
 
