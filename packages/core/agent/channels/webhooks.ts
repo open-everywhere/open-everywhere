@@ -2,6 +2,7 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { gateWebhookDelivery, webhookMaxBodyBytes, type WebhookRejection } from "../webhooks/gate.js";
+import { resolveHookKeys } from "../webhooks/secrets.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
 import { auditWebhookRejection } from "../webhooks/reject-audit.js";
 import { appendAudit } from "../audit/audit.js";
@@ -47,10 +48,10 @@ export default defineChannel({
 
       const body = await req.text();
       const bodyBytes = Buffer.byteLength(body, "utf8");
-      const secretValue = hook ? process.env[hook.secretEnv] : undefined;
+      const secretValues = hook ? await resolveHookKeys(hook) : [];
       const rejection = gateWebhookDelivery({
         hook,
-        secretValue,
+        secretValues,
         body,
         bodyBytes,
         signatureHeader: req.headers.get("x-hook-signature-256"),

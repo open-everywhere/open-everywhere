@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { WebhookHook } from "./config.js";
+import { hookSecretRefs, type WebhookHook } from "./config.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
@@ -25,23 +25,25 @@ export interface WebhookRejection {
 
 export function gateWebhookDelivery(args: {
   readonly hook: WebhookHook | undefined;
-  readonly secretValue: string | undefined;
+  readonly secretValues: readonly string[];
   readonly body: string;
   readonly bodyBytes: number;
   readonly signatureHeader: string | null;
   readonly allowUnverified: boolean;
   readonly maxBodyBytes: number;
 }): WebhookRejection | null {
-  const { hook, secretValue, body, bodyBytes, signatureHeader, allowUnverified, maxBodyBytes } = args;
+  const { hook, secretValues, body, bodyBytes, signatureHeader, allowUnverified, maxBodyBytes } = args;
   if (!hook) return { status: 404, reason: "unknown webhook id" };
   if (bodyBytes > maxBodyBytes) return { status: 413, reason: `payload exceeds ${maxBodyBytes} bytes` };
-  if (!secretValue) {
+  const keys = secretValues.filter((k) => k);
+  if (keys.length === 0) {
+    const currentRef = hookSecretRefs(hook)[0] ?? "(none)";
     return allowUnverified
       ? null
       : {
           status: 401,
-          reason: `${hook.secretEnv} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
+          reason: `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
         };
   }
-  return verifyWebhookSignature(secretValue, body, signatureHeader) ? null : { status: 401, reason: "invalid signature" };
+  return keys.some((k) => verifyWebhookSignature(k, body, signatureHeader)) ? null : { status: 401, reason: "invalid signature" };
 }

@@ -1,12 +1,17 @@
 export interface WebhookHook {
   readonly id: string;
-  readonly secretEnv: string;
+  readonly secretRef: string | readonly string[];
+  readonly broker: string;
   readonly target: string;
   readonly instruction: string;
 }
 
 export function defineWebhook(hook: WebhookHook): WebhookHook {
   return hook;
+}
+
+export function hookSecretRefs(hook: WebhookHook): readonly string[] {
+  return typeof hook.secretRef === "string" ? [hook.secretRef] : hook.secretRef;
 }
 
 const ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -19,7 +24,21 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
     }
     if (seen.has(h.id)) throw new Error(`duplicate webhook hook id "${h.id}"`);
     seen.add(h.id);
-    if (!h.secretEnv || !h.secretEnv.trim()) throw new Error(`webhook "${h.id}" is missing secretEnv (the env var name holding its shared secret)`);
+    const refs = hookSecretRefs(h);
+    if (refs.length === 0) {
+      throw new Error(`webhook "${h.id}" has an empty secretRef list — it needs at least one ref (current key first)`);
+    }
+    for (const [i, ref] of refs.entries()) {
+      if (typeof ref !== "string" || !ref.trim()) {
+        throw new Error(`webhook "${h.id}" secretRef[${i}] is blank — each entry must name where the shared secret lives (a ref, never the value)`);
+      }
+    }
+    if (new Set(refs).size !== refs.length) {
+      throw new Error(`webhook "${h.id}" repeats a secretRef — a rotation overlap lists DISTINCT refs (current first, then the outgoing one)`);
+    }
+    if (!h.broker || !h.broker.trim()) {
+      throw new Error(`webhook "${h.id}" is missing broker — name the ONE home its secretRef(s) resolve through (\`broker: "env" | "db" | ...\`); there is no default`);
+    }
     const parts = h.target.split("/");
     if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
       throw new Error(`webhook "${h.id}" target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(h.target)}`);

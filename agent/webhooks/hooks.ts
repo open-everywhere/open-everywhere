@@ -3,7 +3,8 @@ import { defineWebhook, assertWebhooksValid, type WebhookHook } from "@open-ever
 const hooks: WebhookHook[] = [
   defineWebhook({
     id: "smoke-test",
-    secretEnv: "OE_WEBHOOK_SMOKE_SECRET",
+    secretRef: "OE_WEBHOOK_SMOKE_SECRET",
+    broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",
     instruction:
       "This is the deployment's smoke-test webhook. Post one short line confirming the " +
@@ -11,7 +12,8 @@ const hooks: WebhookHook[] = [
   }),
   defineWebhook({
     id: "e2e-smoke",
-    secretEnv: "OE_WEBHOOK_E2E_SECRET",
+    secretRef: "OE_WEBHOOK_E2E_SECRET",
+    broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",
     instruction:
       "This is the e2e driver-bot pack's own smoke-test webhook. ALWAYS post one short line " +
