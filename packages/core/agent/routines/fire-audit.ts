@@ -17,7 +17,8 @@ export type RoutineSkipReason =
   | "unresolved_target"
   | "filter_invalid"
   | "grant_refused"
-  | "grant_drift";
+  | "grant_drift"
+  | "audience_floor";
 
 export const SKIP_WINDOW_MS = 60 * 60_000;
 

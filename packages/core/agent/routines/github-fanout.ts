@@ -14,6 +14,12 @@ import { eventPrompt } from "./events.js";
 import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription } from "./event-match.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
+import {
+  announceFireWithheld,
+  checkFireDisclosure,
+  type FireDisclosureDeps,
+  type FireWithheldNoticeDeps,
+} from "./fire-disclosure.js";
 import { GITHUB_EVENT_SOURCE } from "./github-normalizer.js";
 import "./github-entity-read.js";
 import {
@@ -56,6 +62,8 @@ export interface GitHubFanOutDeps {
   readonly fireWindow?: FireWindowDeps;
   readonly grant?: EventGrantDeps;
   readonly hydrate?: HydrationDeps;
+  readonly disclosure?: FireDisclosureDeps;
+  readonly notice?: FireWithheldNoticeDeps;
 }
 
 let warnedDedupeStore = false;
@@ -123,6 +131,7 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
   let ungranted = 0;
   let drifted = 0;
   let hydrated = 0;
+  let withheld = 0;
   for (const r of matches) {
     const grant = checkEventReadGrant(ev, eventGrantPartitions(r), deps.grant ?? {});
     if (!grant.ok) {
@@ -159,6 +168,24 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
         { cap, matched: matches.length, event: ev.event, ...(ev.action ? { action: ev.action } : {}) },
         auditDeps,
       );
+      continue;
+    }
+    const disclosure = await checkFireDisclosure(r.surfaceKey, deps.disclosure ?? {});
+    if (!disclosure.ok) {
+      withheld++;
+      log(`event ${ev.summary} matched ${r.id} but the room's audience floor is "${disclosure.floor}" — WITHHELD (audited + announced)`);
+      const emitted = await auditRoutineSkip(
+        r,
+        "audience_floor",
+        {
+          floor: disclosure.floor,
+          event: ev.event,
+          ...(ev.action ? { action: ev.action } : {}),
+          note: "the read grant allows this content but the reporting room's live audience floor does not",
+        },
+        auditDeps,
+      );
+      if (emitted) await announceFireWithheld(r.id, r.surfaceKey, dest.origin, deps.notice ?? {});
       continue;
     }
     let entityBlock: string | undefined;
@@ -228,7 +255,8 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
   if (matches.length > 0 || invalid > 0) {
     log(
       `event "${ev.summary}": ${matches.length} matched -> ${fired} fired (${hydrated} hydrated), ${ungranted} ungranted, ` +
-        `${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ${invalid} invalid-filter`,
+        `${withheld} audience-withheld, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
+        `${invalid} invalid-filter`,
     );
   }
 }
