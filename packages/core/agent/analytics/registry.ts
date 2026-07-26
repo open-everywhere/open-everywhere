@@ -52,6 +52,7 @@ const USAGE: DatasetSpec = {
     kind: { kind: "column", column: "kind" },
     model: { kind: "column", column: "model" },
     session: { kind: "column", column: "session_id" },
+    routine: { kind: "column", column: "routine_id" },
     domain: { kind: "domain" },
   },
   measures: {
@@ -63,7 +64,7 @@ const USAGE: DatasetSpec = {
     sessions: { kind: "sql", expr: "COUNT(DISTINCT session_id)" },
     est_usd: { kind: "est_usd" },
   },
-  rowColumns: ["ts", "surface_key", "principal_id", "kind", "model", "session_id", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"],
+  rowColumns: ["ts", "surface_key", "principal_id", "kind", "routine_id", "model", "session_id", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"],
   surfaceColumn: "surface_key",
   surfaceParts: null,
   principalColumn: "principal_id",

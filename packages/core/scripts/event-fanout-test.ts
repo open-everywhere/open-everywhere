@@ -161,7 +161,13 @@ function harness(routines: Routine[]) {
 {
   const h = harness([routine({ id: "r-nowhere", surfaceKey: "linear/W1/S1", target: { channelId: "S1" } })]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-  ok(h.fired.length === 0 && h.audited.length === 0, "an unresolvable surface is skipped without firing (and is not a cap skip)");
+  ok(h.fired.length === 0, "an unresolvable surface is skipped without firing");
+  ok(h.audited.length === 1, "OPE-145: the unwired skip is AUDITED (it used to be console-log only)");
+  ok(
+    h.audited[0]!.action === "routine.skip" && h.audited[0]!.detail?.["reason"] === "unresolved_target",
+    "OPE-145: an unwired skip is the SAME action as a cap skip, distinguished by `reason` — not a second vocabulary",
+  );
+  ok(h.audited[0]!.platform === "linear" && h.audited[0]!.workspace === "W1" && h.audited[0]!.surface === "S1", "the unwired skip row is attributed to the routine's own partition");
 }
 
 {
@@ -172,7 +178,7 @@ function harness(routines: Routine[]) {
   ok(h.fired.length === 2, "cap: N+1 matches with a cap of N ⇒ exactly N fire");
   ok(h.audited.length === 1, "cap: the over-cap match writes exactly one audit row");
   const row = h.audited[0]!;
-  ok(row.action === "routine.event_skipped", "cap: the skip is audited under a dedicated action (not indistinguishable from silence)");
+  ok(row.action === "routine.skip", "cap: the skip is audited under the shared routine.skip action (not indistinguishable from silence)");
   ok(row.org === "acme" && row.platform === "slack" && row.workspace === "T1" && row.surface === "C1", "cap: the skip row is attributed to the SKIPPED routine's own partition");
   ok(row.detail?.["routineId"] === "r-3" && row.detail?.["reason"] === "fanout_cap", "cap: the skip row names the routine and the reason");
   ok(row.detail?.["cap"] === 2 && row.detail?.["matched"] === 3, "cap: the skip row records the cap and the match count");

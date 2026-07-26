@@ -1,6 +1,7 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { routineMarker } from "../routines/routine.js";
 import { applyOutcome, settleOutcome } from "../routines/lifecycle.js";
+import { auditRoutineDisabled, auditRoutineFire } from "../routines/fire-audit.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
 
 function log(msg: string): void {
@@ -26,6 +27,16 @@ async function record(ctx: HookContext, outcome: "ok" | "failed"): Promise<void>
       disabledReason: updated.disabledReason,
       nextRunAt: updated.nextRunAt,
     });
+    const sessionId = typeof ctx.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
+    if (sessionId !== undefined) {
+      await auditRoutineFire(routine, sessionId, settled, {
+        consecutiveFailures: updated.consecutiveFailures,
+        ...(updated.disabledReason ? { disabledReason: updated.disabledReason } : {}),
+      });
+    }
+    if (updated.status === "disabled" && routine.status !== "disabled") {
+      await auditRoutineDisabled(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures, sessionId);
+    }
     log(
       `outcome ${settled} for ${marker.id} [${marker.surfaceKey}] ` +
         `(fails=${updated.consecutiveFailures}${updated.status === "disabled" ? ", AUTO-DISABLED" : ""})`,

@@ -1,11 +1,12 @@
 import type { RouteHandlerArgs } from "eve/channels";
-import { appendAudit, type AuditInput } from "../audit/audit.js";
+import type { AuditInput } from "../audit/audit.js";
 import { bridgeConfirmChannelInternal } from "../channels/slack-bridge.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolveRoutineTarget, type DispatchTarget } from "../schedules/routine-dispatch.js";
 import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
+import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { matchesEvent, normalizeGithubEvent, eventPrompt, type NormalizedEvent } from "./events.js";
 import type { Routine } from "./routine.js";
 
@@ -51,17 +52,17 @@ async function liveMarkSeen(org: string, key: string, atIso: string, ttlMs: numb
   }
 }
 
-function auditScope(r: Routine): { platform: string; workspace: string; surface: string } {
-  const [platform = "", workspace = "", ...rest] = r.surfaceKey.split("/");
-  return { platform, workspace, surface: rest.join("/") };
-}
-
 async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void> {
   const org = deps.org ?? deploymentOrg();
   const list = deps.listRoutines ?? listAllRoutines;
   const resolveTarget = deps.resolveTarget ?? resolveRoutineTarget;
   const confirmInternal = deps.confirmInternal ?? bridgeConfirmChannelInternal;
-  const audit = deps.audit ?? appendAudit;
+  const auditDeps: RoutineAuditDeps = {
+    ...(deps.audit ? { audit: deps.audit } : {}),
+    ...(deps.markSeen ? { markSeen: deps.markSeen } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+    principalId: "github:webhook",
+  };
 
   const matches = (await list()).filter((r) => r.org === org && r.status === "active" && matchesEvent(r, ev));
   const cap = eventMaxFanOut();
@@ -73,19 +74,18 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     if (!dest) {
       unwired++;
       log(`event ${ev.summary} matched ${r.id} but its surface has no wired channel/target — skipped`);
+      await auditRoutineSkip(r, "unresolved_target", { event: ev.event, ...(ev.action ? { action: ev.action } : {}) }, auditDeps);
       continue;
     }
     if (fired >= cap) {
       overCap++;
       log(`event ${ev.summary} matched ${r.id} but the fan-out cap (${cap}) is reached — SKIPPED (audited; an event has no "later")`);
-      await audit({
-        org: r.org,
-        ...auditScope(r),
-        principalId: "github:webhook",
-        action: "routine.event_skipped",
-        detail: { routineId: r.id, reason: "fanout_cap", cap, matched: matches.length, event: ev.event, ...(ev.action ? { action: ev.action } : {}) },
-      }).catch(() => {
-      });
+      await auditRoutineSkip(
+        r,
+        "fanout_cap",
+        { cap, matched: matches.length, event: ev.event, ...(ev.action ? { action: ev.action } : {}) },
+        auditDeps,
+      );
       continue;
     }
     const slackChannelId =
@@ -101,7 +101,10 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     };
     await deps
       .receive(dest.channel, { message: eventPrompt(r, ev), target: dest.target, auth })
-      .catch((err: unknown) => log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`));
+      .catch(async (err: unknown) => {
+        log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
+        await auditRoutineFireLost(r, String(err), auditDeps);
+      });
     fired++;
   }
   if (matches.length > 0) {

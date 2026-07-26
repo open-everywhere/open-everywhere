@@ -23,6 +23,7 @@ export interface Routine {
   readonly prompt: string;
   readonly createdBy?: string;
   readonly createdAt: string;
+  readonly taintedAtCreation?: boolean;
 
   status: RoutineStatus;
   disabledReason?: string;

@@ -45,6 +45,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       status: "active",
       nextRunAt: next ? next.toISOString() : null,
       consecutiveFailures: 0,
+      ...(args.tainted ? { taintedAtCreation: true } : {}),
       ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
     };
     await addRoutine(args.partition, routine);

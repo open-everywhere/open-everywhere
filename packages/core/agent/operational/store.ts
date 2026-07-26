@@ -150,6 +150,7 @@ export interface UsageEventEntry {
   readonly principalId?: string;
   readonly ts: string;
   readonly kind?: string;
+  readonly routineId?: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cacheReadTokens: number;
@@ -176,6 +177,7 @@ export interface UsageSummaryRow {
   readonly surfaceKey: string;
   readonly principalId?: string;
   readonly kind?: string;
+  readonly routineId?: string;
   readonly model?: string;
   readonly inputTokens: number;
   readonly outputTokens: number;

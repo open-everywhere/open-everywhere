@@ -219,6 +219,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      principal_id       text,
      ts                 text   NOT NULL,
      kind               text,
+     routine_id         text,
      input_tokens       bigint NOT NULL DEFAULT 0,
      output_tokens      bigint NOT NULL DEFAULT 0,
      cache_read_tokens  bigint NOT NULL DEFAULT 0,
@@ -255,6 +256,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claim_id text`,
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
+  `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -1179,9 +1181,9 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     async appendUsageEvent(entry: UsageEventEntry) {
       await client.query(
         `INSERT INTO usage_events
-           (org_id, surface_key, session_id, principal_id, ts, kind,
+           (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           entry.org,
           entry.surfaceKey,
@@ -1189,6 +1191,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
           entry.principalId ?? null,
           entry.ts,
           entry.kind ?? null,
+          entry.routineId ?? null,
           entry.inputTokens,
           entry.outputTokens,
           entry.cacheReadTokens,
@@ -1201,7 +1204,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async usageForSession(org, sessionId) {
       const { rows } = await client.query(
-        `SELECT surface_key, session_id, principal_id, ts, kind,
+        `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail
          FROM usage_events WHERE org_id = $1 AND session_id = $2 ORDER BY seq ASC`,
         [org, sessionId],
@@ -1212,6 +1215,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         principal_id: string | null;
         ts: string;
         kind: string | null;
+        routine_id: string | null;
         input_tokens: number;
         output_tokens: number;
         cache_read_tokens: number;
@@ -1225,6 +1229,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         ...(r.principal_id ? { principalId: r.principal_id } : {}),
         ts: r.ts,
         ...(r.kind ? { kind: r.kind } : {}),
+        ...(r.routine_id ? { routineId: r.routine_id } : {}),
         inputTokens: Number(r.input_tokens),
         outputTokens: Number(r.output_tokens),
         cacheReadTokens: Number(r.cache_read_tokens),
@@ -1250,18 +1255,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         where.push(`ts <= $${params.length}`);
       }
       const { rows } = await client.query(
-        `SELECT surface_key, principal_id, kind, model,
+        `SELECT surface_key, principal_id, kind, routine_id, model,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
                 COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
          FROM usage_events WHERE ${where.join(" AND ")}
-         GROUP BY surface_key, principal_id, kind, model`,
+         GROUP BY surface_key, principal_id, kind, routine_id, model`,
         params,
       );
       return (rows as {
         surface_key: string;
         principal_id: string | null;
         kind: string | null;
+        routine_id: string | null;
         model: string | null;
         input_tokens: number;
         output_tokens: number;
@@ -1273,6 +1279,7 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         surfaceKey: r.surface_key,
         ...(r.principal_id ? { principalId: r.principal_id } : {}),
         ...(r.kind ? { kind: r.kind } : {}),
+        ...(r.routine_id ? { routineId: r.routine_id } : {}),
         ...(r.model ? { model: r.model } : {}),
         inputTokens: Number(r.input_tokens),
         outputTokens: Number(r.output_tokens),

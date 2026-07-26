@@ -14,6 +14,15 @@ function isSupervisorToken(token: unknown): token is string {
   return typeof token === "string" && token.includes(":oe-sup:g");
 }
 
+export function routineIdOf(ctx: BindableContext): string | undefined {
+  try {
+    const auth = ctx.session?.auth;
+    return routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes)?.id;
+  } catch {
+    return undefined;
+  }
+}
+
 export function turnKind(ctx: BindableContext, continuationToken?: unknown): string {
   try {
     const auth = ctx.session?.auth;
@@ -34,6 +43,7 @@ export default defineHook({
       if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return;
       const p = resolvePartition(ctx);
       const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
+      const routineId = routineIdOf(ctx);
 
       try {
         await recordUsage(p, periodOf(new Date().toISOString()), usage);
@@ -48,6 +58,7 @@ export default defineHook({
           sessionId: ctx.session.id,
           principalId: bindFrom(ctx).principalId,
           kind: turnKind(ctx, token),
+          ...(routineId !== undefined ? { routineId } : {}),
           model: readModelStamp() ?? undefined,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,

@@ -2,6 +2,7 @@ import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveRoutineTarget } from "./routine-dispatch.js";
 import { routineFireAttributes } from "../routines/fire-auth.js";
+import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, type Routine } from "../routines/routine.js";
@@ -83,6 +84,7 @@ export async function dispatchTick(
     if (!dest) {
       dryRun++;
       log(`DUE (dry-run, unresolvable channel/target): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
+      await auditRoutineSkip(r, "unresolved_target", { trigger: r.trigger.kind });
       continue;
     }
     if (fired >= cap) {
@@ -102,6 +104,7 @@ export async function dispatchTick(
           lastOutcome: "skipped",
           ...onceDisablePatch(r, now, "declined (over budget)"),
         });
+        await auditRoutineSkip(r, "over_budget", { ...(verdict.reason ? { budgetReason: verdict.reason } : {}) }).catch(() => false);
         continue;
       }
     } catch {
@@ -153,7 +156,10 @@ export async function dispatchTick(
               : renderScheduledMessage(r),
           target: fireTarget,
           auth: markedAuth,
-        }).catch((err: unknown) => log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`)),
+        }).catch(async (err: unknown) => {
+          log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
+          await auditRoutineFireLost(r, String(err));
+        }),
       );
       fired++;
       emitTelemetry("oe.feature.used", { "oe.feature": "routine_fired", "oe.outcome": "ok" });

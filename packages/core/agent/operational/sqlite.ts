@@ -246,6 +246,7 @@ function getDb(): DatabaseSync {
       principal_id       TEXT,
       ts                 TEXT NOT NULL,        -- ISO-8601
       kind               TEXT,                 -- "dm" | "channel" | "routine" | "sandbox" | ...
+      routine_id         TEXT,                 -- OPE-145: set iff kind = "routine"
       input_tokens       INTEGER NOT NULL DEFAULT 0,
       output_tokens      INTEGER NOT NULL DEFAULT 0,
       cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
@@ -294,6 +295,8 @@ function getDb(): DatabaseSync {
     "ALTER TABLE stored_credential ADD COLUMN claimed_at TEXT",
 
     "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
+
+    "ALTER TABLE usage_events ADD COLUMN routine_id TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -336,6 +339,7 @@ type UsageEventRow = {
   principal_id: string | null;
   ts: string;
   kind: string | null;
+  routine_id: string | null;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
@@ -352,6 +356,7 @@ function usageEventFromRow(org: string, r: UsageEventRow): UsageEventEntry {
     ...(r.principal_id ? { principalId: r.principal_id } : {}),
     ts: r.ts,
     ...(r.kind ? { kind: r.kind } : {}),
+    ...(r.routine_id ? { routineId: r.routine_id } : {}),
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
     cacheReadTokens: r.cache_read_tokens,
@@ -905,9 +910,9 @@ export const sqliteOperationalStore: OperationalStore = {
     getDb()
       .prepare(
         `INSERT INTO usage_events
-           (org_id, surface_key, session_id, principal_id, ts, kind,
+           (org_id, surface_key, session_id, principal_id, ts, kind, routine_id,
             input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         entry.org,
@@ -916,6 +921,7 @@ export const sqliteOperationalStore: OperationalStore = {
         entry.principalId ?? null,
         entry.ts,
         entry.kind ?? null,
+        entry.routineId ?? null,
         entry.inputTokens,
         entry.outputTokens,
         entry.cacheReadTokens,
@@ -928,7 +934,7 @@ export const sqliteOperationalStore: OperationalStore = {
   async usageForSession(org, sessionId) {
     const rows = getDb()
       .prepare(
-        `SELECT surface_key, session_id, principal_id, ts, kind,
+        `SELECT surface_key, session_id, principal_id, ts, kind, routine_id,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model, detail
          FROM usage_events WHERE org_id = ? AND session_id = ? ORDER BY seq ASC`,
       )
@@ -953,17 +959,18 @@ export const sqliteOperationalStore: OperationalStore = {
     }
     const rows = getDb()
       .prepare(
-        `SELECT surface_key, principal_id, kind, model,
+        `SELECT surface_key, principal_id, kind, routine_id, model,
                 SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
                 SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
                 COUNT(*) AS events, COUNT(DISTINCT session_id) AS sessions
          FROM usage_events WHERE ${where.join(" AND ")}
-         GROUP BY surface_key, principal_id, kind, model`,
+         GROUP BY surface_key, principal_id, kind, routine_id, model`,
       )
       .all(...params) as {
       surface_key: string;
       principal_id: string | null;
       kind: string | null;
+      routine_id: string | null;
       model: string | null;
       input_tokens: number;
       output_tokens: number;
@@ -976,6 +983,7 @@ export const sqliteOperationalStore: OperationalStore = {
       surfaceKey: r.surface_key,
       ...(r.principal_id ? { principalId: r.principal_id } : {}),
       ...(r.kind ? { kind: r.kind } : {}),
+      ...(r.routine_id ? { routineId: r.routine_id } : {}),
       ...(r.model ? { model: r.model } : {}),
       inputTokens: r.input_tokens,
       outputTokens: r.output_tokens,
