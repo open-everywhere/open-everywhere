@@ -18,6 +18,10 @@ export const SELF_DISPATCH_MAX_BODY_BYTES = 512 * 1024;
 
 export const SELF_DISPATCH_MAX_SKEW_MS = 5 * 60 * 1000;
 
+export const SELF_DISPATCH_TIMEOUT_MS = 15_000;
+
+export const SELF_DISPATCH_ATTEMPTS = 2;
+
 export interface UnifiedDispatchPayload {
   readonly message: string;
   readonly context?: readonly string[];
@@ -231,10 +235,10 @@ export async function postSelfDispatch(
   const url = `${base}${SELF_DISPATCH_PATH}`;
   const headers = { "content-type": "application/json", [SELF_DISPATCH_SIGNATURE_HEADER]: signSelfDispatchBody(secret, body) };
   const doFetch = deps.fetchImpl ?? fetch;
-  const timeoutMs = deps.timeoutMs ?? 15_000;
+  const timeoutMs = deps.timeoutMs ?? SELF_DISPATCH_TIMEOUT_MS;
 
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < SELF_DISPATCH_ATTEMPTS; attempt++) {
     let res: Response;
     try {
       res = await doFetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(timeoutMs) });
