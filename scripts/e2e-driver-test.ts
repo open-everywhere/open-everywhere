@@ -669,7 +669,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ];
 
   const s = decomposeSession(worker);
-  ok(s.bootMs === 2226, `boot = session.started → first turn.started (sandbox create + memory materialisation); got ${s.bootMs}`);
+  ok(s.bootMs === 2226, `boot = session.started → first turn.started (the whole session.started hook chain — a CEILING, not a sandbox or memory number); got ${s.bootMs}`);
   ok(s.turns.length === 1 && s.turns[0].outcome === "completed", "one turn, terminal outcome read off turn.completed");
   ok(s.turns[0].preflightMs === 15, `preflight = turn.started → first step.started (the turn.started hook chain); got ${s.turns[0].preflightMs}`);
   ok(s.turns[0].steps.length === 2, "two model calls in the turn, keyed by (turnId, stepIndex)");
@@ -704,7 +704,7 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(d.gaps.length === 0, `a complete join reports NO gaps; got ${JSON.stringify(d.gaps)}`);
   ok(d.wallMs === 19500, `wall = task.spawned → task.returned (what the caller waits out); got ${d.wallMs}`);
   ok(d.dispatchMs === 2677, `dispatch = spawn row → the worker's first recorded event (workflow cold-start); got ${d.dispatchMs}`);
-  ok(d.bootMs === 2226, "boot carries the worker's sandbox-create + memory-materialisation window through to the delegation view");
+  ok(d.bootMs === 2226, "boot carries the worker's whole session.started hook-chain window through to the delegation view (a ceiling — the sandbox create inside it is ≤5.7s measured, OPE-126)");
   ok(d.ttftMs === 6033, "ttft is the worker's FIRST model call's time to first token — the number a 'viable in a conversational turn?' argument is about");
   ok(d.workMs === 13797, `work = worker turn.started → last turn end; got ${d.workMs}`);
   ok(d.returnMs === 700, `return = worker's last recorded event → the task.returned row (result persist + caller wake); got ${d.returnMs}`);

@@ -350,7 +350,7 @@ async function main(): Promise<void> {
     console.log(
       `e2e timings: ${s.records} record(s), ${s.delegations} delegation(s) (${s.delegationsFullyJoined} fully joined)` +
         ` — delegation wall p50 ${fmtMs(s.delegationWallMs.p50)} (min ${fmtMs(s.delegationWallMs.min)}, max ${fmtMs(s.delegationWallMs.max)}),` +
-        ` boot(sandbox+memory) p50 ${fmtMs(s.bootMsP50)}, ttft p50 ${fmtMs(s.ttftMsP50)}`,
+        ` boot(session.started chain) p50 ${fmtMs(s.bootMsP50)}, ttft p50 ${fmtMs(s.ttftMsP50)}`,
     );
     try {
       const path = writeTimingsRecords(timingRecords, { startedAt: runStartedIso, ...(costTarget ? { target: costTarget } : {}) });
