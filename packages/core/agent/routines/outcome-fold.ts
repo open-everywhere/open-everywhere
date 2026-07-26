@@ -34,22 +34,32 @@ export async function foldRoutineOutcome(opts: {
   await updateRoutine(marker.org, marker.surfaceKey, marker.id, {
     lastRunAt: updated.lastRunAt,
     lastOutcome: updated.lastOutcome,
+    lastFailureReason: updated.lastFailureReason,
     consecutiveFailures: updated.consecutiveFailures,
     status: updated.status,
     disabledReason: updated.disabledReason,
     nextRunAt: updated.nextRunAt,
   });
 
+  const declared = updated.lastFailureReason;
+
   if (opts.sessionId !== undefined) {
     await auditRoutineFire(routine, opts.sessionId, settled, {
       consecutiveFailures: updated.consecutiveFailures,
       ...(updated.disabledReason ? { disabledReason: updated.disabledReason } : {}),
       ...(opts.manual === true ? { manual: true } : {}),
+      ...(declared !== undefined ? { declaredFailure: declared } : {}),
     });
   }
   const disabled = updated.status === "disabled" && routine.status !== "disabled";
   if (disabled) {
-    await auditRoutineDisabled(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures, opts.sessionId);
+    await auditRoutineDisabled(
+      routine,
+      updated.disabledReason ?? "auto-disabled",
+      updated.consecutiveFailures,
+      opts.sessionId,
+      declared !== undefined ? { declaredFailure: declared } : {},
+    );
     await announceSelfDisable(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures);
   }
   return { folded: true, outcome: settled, consecutiveFailures: updated.consecutiveFailures, disabled };

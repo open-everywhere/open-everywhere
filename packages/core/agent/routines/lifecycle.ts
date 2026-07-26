@@ -1,4 +1,4 @@
-import type { Routine, RunOutcome } from "./routine.js";
+import { RUN_FAILURE_REASON_MAX_CHARS, type Routine, type RunOutcome } from "./routine.js";
 
 export const MAX_CONSECUTIVE_FAILURES = 3;
 
@@ -9,7 +9,13 @@ export function applyOutcome(
   maxFailures = MAX_CONSECUTIVE_FAILURES,
 ): Routine {
   if (routine.status === "done") {
-    return { ...routine, lastRunAt: ranAt.toISOString(), lastOutcome: outcome, nextRunAt: null };
+    return {
+      ...routine,
+      lastRunAt: ranAt.toISOString(),
+      lastOutcome: outcome,
+      lastFailureReason: outcome === "failed" ? routine.lastFailureReason : undefined,
+      nextRunAt: null,
+    };
   }
   const consecutiveFailures = outcome === "failed" ? routine.consecutiveFailures + 1 : 0;
   const next: Routine = {
@@ -17,6 +23,7 @@ export function applyOutcome(
     lastRunAt: ranAt.toISOString(),
     lastOutcome: outcome,
     consecutiveFailures,
+    lastFailureReason: outcome === "failed" ? routine.lastFailureReason : undefined,
   };
   if (outcome === "failed" && consecutiveFailures >= maxFailures) {
     next.status = "disabled";
@@ -49,7 +56,14 @@ export function completeJob(routine: Routine, reason: string, at: Date): JobComp
 }
 
 export function settleOutcome(sessionOutcome: "ok" | "failed", recorded: RunOutcome | undefined): RunOutcome {
+  if (recorded === "failed") return "failed";
   return sessionOutcome === "ok" && recorded === "skipped" ? "skipped" : sessionOutcome;
+}
+
+export function declareRunFailed(reason: string): { readonly reason: string; readonly patch: Partial<Routine> } {
+  const normalised = reason.trim().replace(/\s+/gu, " ").slice(0, RUN_FAILURE_REASON_MAX_CHARS);
+  const text = normalised.length > 0 ? normalised : "failure declared with no reason given";
+  return { reason: text, patch: { lastOutcome: "failed", lastFailureReason: text } };
 }
 
 export function shouldPostOnDiff(prevHash: string | undefined, newHash: string): boolean {

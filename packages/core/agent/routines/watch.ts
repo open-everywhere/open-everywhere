@@ -1,9 +1,11 @@
 import { isSilentRoutine, type Routine } from "./routine.js";
-import { hashState, shouldPostOnDiff } from "./lifecycle.js";
+import { hashState, MAX_CONSECUTIVE_FAILURES, shouldPostOnDiff } from "./lifecycle.js";
 
 export const WATCH_SILENCE_SENTINEL = "NO_REPLY";
 
 export const WATCH_STATE_TOOL = "record_watch_state";
+
+export const RUN_FAILED_TOOL = "report_run_failed";
 
 export function firePreamble(r: Pick<Routine, "id" | "createdAt" | "lastRunAt">): string {
   const last = r.lastRunAt ? `previous run: ${r.lastRunAt}` : "previous run: none — this is the FIRST run";
@@ -21,8 +23,20 @@ export function renderSilentBlock(r: Pick<Routine, "report">): string {
   );
 }
 
+export function renderFailureBlock(): string {
+  return (
+    `[health] If the work this fire was asked to do DID NOT HAPPEN — the thing you needed was down, ` +
+    `a credential was rejected, the page never loaded — call the \`${RUN_FAILED_TOOL}\` tool with one ` +
+    `line saying why, before you finish. Saying it only in your answer is not enough: nothing reads ` +
+    `your prose, so a run that reports a problem and finishes cleanly is recorded as a SUCCESS and ` +
+    `this routine keeps firing at the same broken thing forever. ${MAX_CONSECUTIVE_FAILURES} declared ` +
+    `failures in a row and it stops itself. Do NOT call it when the work DID happen and the news was ` +
+    `merely bad — finding a problem is a routine doing its job, not failing at it.`
+  );
+}
+
 function fireMessage(head: string, silent: string, ...rest: readonly string[]): string {
-  return [head, ...(silent.length > 0 ? ["", silent] : []), "", ...rest].join("\n");
+  return [head, ...(silent.length > 0 ? ["", silent] : []), "", renderFailureBlock(), "", ...rest].join("\n");
 }
 
 export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "report">): string {
@@ -36,6 +50,8 @@ export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastState
       : "A baseline from the last check is recorded — the tool will tell you whether the state changed.";
   return [
     firePreamble(r),
+    "",
+    renderFailureBlock(),
     "",
     `[watch] This is a scheduled check of a WATCH routine — post ONLY if the watched state changed. ` +
       `Protocol: do the check below, then call the \`${WATCH_STATE_TOOL}\` tool with a canonical text ` +

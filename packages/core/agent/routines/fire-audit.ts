@@ -150,6 +150,7 @@ export async function auditRoutineDisabled(
   reason: string,
   consecutiveFailures: number,
   sessionId: string | undefined,
+  extra: Readonly<Record<string, unknown>> = {},
   deps: RoutineAuditDeps = {},
 ): Promise<void> {
   await write(
@@ -158,7 +159,7 @@ export async function auditRoutineDisabled(
       ...routineAuditScope(r),
       principalId: deps.principalId ?? ROUTINE_DISPATCHER_PRINCIPAL,
       action: ROUTINE_AUDIT.disabled,
-      detail: { routineId: r.id, reason, consecutiveFailures, ...(sessionId ? { sessionId } : {}) },
+      detail: { routineId: r.id, reason, consecutiveFailures, ...(sessionId ? { sessionId } : {}), ...extra },
     },
     deps,
   );

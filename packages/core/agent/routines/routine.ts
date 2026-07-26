@@ -19,6 +19,8 @@ export type RunOutcome = "ok" | "failed" | "skipped";
 
 export const JOB_STATE_MAX_BYTES = 16 * 1024;
 
+export const RUN_FAILURE_REASON_MAX_CHARS = 300;
+
 export interface Routine {
   readonly id: string;
   readonly org: string;
@@ -38,6 +40,7 @@ export interface Routine {
   nextRunAt?: string | null;
   lastRunAt?: string;
   lastOutcome?: RunOutcome;
+  lastFailureReason?: string;
   consecutiveFailures: number;
   lastStateHash?: string;
 

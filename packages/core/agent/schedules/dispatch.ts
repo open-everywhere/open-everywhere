@@ -102,6 +102,7 @@ export async function dispatchTick(
           lastRunAt: now.toISOString(),
           nextRunAt: next ? next.toISOString() : null,
           lastOutcome: "skipped",
+          lastFailureReason: undefined,
           ...onceDisablePatch(r, now, "declined (over budget)"),
         });
         await auditRoutineSkip(r, "over_budget", { ...(verdict.reason ? { budgetReason: verdict.reason } : {}) }).catch(() => false);
@@ -114,6 +115,7 @@ export async function dispatchTick(
         lastRunAt: now.toISOString(),
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
+        lastFailureReason: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...onceDisablePatch(r, now, "fired"),
       });

@@ -1,5 +1,5 @@
 import { JOB_STATE_MAX_BYTES, type Routine } from "./routine.js";
-import { firePreamble, renderSilentBlock } from "./watch.js";
+import { firePreamble, renderFailureBlock, renderSilentBlock } from "./watch.js";
 
 export const JOB_STATE_TOOL = "record_job_state";
 export const JOB_COMPLETE_TOOL = "complete_job";
@@ -34,6 +34,8 @@ export function renderJobMessage(
   return [
     firePreamble(r),
     ...(silent.length > 0 ? ["", silent] : []),
+    "",
+    renderFailureBlock(),
     "",
     `[job] This is a DURABLE JOB — it fires on its own schedule (nobody re-tagged you) and, unlike an ` +
       `ordinary routine, keeps ONE persistent session across fires: this thread IS your working context, ` +

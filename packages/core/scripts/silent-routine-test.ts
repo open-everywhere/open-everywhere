@@ -35,7 +35,9 @@ const {
   ROUTINE_MARKER,
 } = await import("../agent/routines/routine.js");
 const { storedTrigger, storedReport } = await import("../agent/tools/create_routine.js");
-const { renderScheduledMessage, renderSilentBlock, renderWatchMessage, WATCH_SILENCE_SENTINEL } = await import("../agent/routines/watch.js");
+const { renderFailureBlock, renderScheduledMessage, renderSilentBlock, renderWatchMessage, WATCH_SILENCE_SENTINEL } = await import(
+  "../agent/routines/watch.js"
+);
 const { renderJobMessage } = await import("../agent/routines/job.js");
 const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
 const { markSilentRoutineTurn, clearSilentRoutineTurn, silentRoutineThisTurn, SILENT_ROUTINE_DROP_REASON } = await import(
@@ -122,7 +124,11 @@ const turnStarted = (attributes?: Record<string, string>): Promise<unknown> =>
   ok(msg.includes("[silent]"), "renderScheduledMessage carries the block for a silent routine");
   ok(msg.indexOf("[silent]") < msg.indexOf(silent.prompt), "the block sits between the fire preamble and the prompt (trusted framing before the instruction)");
   const plain = routine({ id: "r-plain" });
-  ok(renderScheduledMessage(plain) === `[routine r-plain] Scheduled fire (routine created: ${plain.createdAt}; previous run: none — this is the FIRST run).\n\n${plain.prompt}`, "an ordinary fire's message is byte-identical to the pre-OPE-149 rendering");
+  ok(
+    renderScheduledMessage(plain) ===
+      `[routine r-plain] Scheduled fire (routine created: ${plain.createdAt}; previous run: none — this is the FIRST run).\n\n${renderFailureBlock()}\n\n${plain.prompt}`,
+    "an ordinary fire's message is preamble + health block + prompt, with no stray blank paragraph where the silent block would have been",
+  );
   ok(!renderWatchMessage(routine({ id: "r-w", trigger: { kind: "watch", everyMinutes: 15 } })).includes("[silent]"), "a watch fire never carries the silent block (the pair is refused anyway)");
   ok(renderJobMessage(routine({ id: "r-j", sessionMode: "job", report: { kind: "silent" } })).includes("[silent]"), "a durable JOB can be silent too, and gets the same block");
   ok(!renderJobMessage(routine({ id: "r-j2", sessionMode: "job" })).includes("[silent]"), "an ordinary job's message is unchanged");

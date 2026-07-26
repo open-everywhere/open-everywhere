@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ingestUntrusted } from "../access/untrusted.js";
+import { renderFailureBlock } from "./watch.js";
 
 export interface LegacyGithubEvent {
   readonly source: string;
@@ -47,7 +48,7 @@ export function eventPrompt(
   ev: { readonly summary: string; readonly url?: string; readonly entity?: string },
 ): string {
   const body = [ev.summary, ev.url, ev.entity].filter((s): s is string => Boolean(s)).join("\n");
-  return `${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
+  return `${renderFailureBlock()}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
 }
 
 export function verifyGithubSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {
