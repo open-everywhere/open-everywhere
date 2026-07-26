@@ -27,6 +27,8 @@ export const OPERATIONAL_TABLES = [
   "instance_meta",
 ] as const;
 
+export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+
 export interface AuditEntry {
   readonly ts: string;
   readonly org: string;

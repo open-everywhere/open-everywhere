@@ -421,7 +421,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       return new Response(rejection, { status: 401 });
     }
     const eventType = req.headers.get("x-github-event") ?? "";
-    args.waitUntil(fanOutGitHubDelivery(body, eventType, args.receive));
+    args.waitUntil(fanOutGitHubDelivery(body, eventType, args.receive, req.headers.get("x-github-delivery")));
     args.waitUntil(ambientDelivery(body, eventType, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     args.waitUntil(installationDelivery(body, eventType).catch((err) => ilog(`installation leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });

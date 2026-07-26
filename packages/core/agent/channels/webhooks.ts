@@ -3,6 +3,7 @@ import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { gateWebhookDelivery, webhookMaxBodyBytes, type WebhookRejection } from "../webhooks/gate.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
+import { auditWebhookRejection } from "../webhooks/reject-audit.js";
 import { appendAudit } from "../audit/audit.js";
 
 function log(msg: string): void {
@@ -10,15 +11,7 @@ function log(msg: string): void {
 }
 
 async function auditRejection(id: string, hook: WebhookHook | undefined, rejection: WebhookRejection): Promise<void> {
-  const target = hook?.target.split("/") ?? [];
-  await appendAudit({
-    org: webhookOrg(),
-    platform: "slack",
-    workspace: target[1] ?? "unknown",
-    surface: target[2] ?? id,
-    action: "webhook.rejected",
-    detail: { hookId: id, status: rejection.status, reason: rejection.reason },
-  });
+  await auditWebhookRejection(id, hook, rejection);
 }
 
 async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArgs["receive"]): Promise<void> {

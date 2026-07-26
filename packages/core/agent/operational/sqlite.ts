@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -990,8 +990,12 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async markEventSeen(org, key, at, ttlMs) {
     const handle = getDb();
-    const cutoff = new Date(Date.parse(at) - ttlMs).toISOString();
-    handle.prepare("DELETE FROM event_dedupe WHERE seen_at < ?").run(cutoff);
+    const atMs = Date.parse(at);
+    const ttlCutoff = new Date(atMs - ttlMs).toISOString();
+    const maxCutoff = new Date(atMs - EVENT_DEDUPE_MAX_RETENTION_MS).toISOString();
+    handle
+      .prepare("DELETE FROM event_dedupe WHERE org_id = ? AND (seen_at < ? OR (key = ? AND seen_at < ?))")
+      .run(org, maxCutoff, key, ttlCutoff);
     const info = handle.prepare("INSERT OR IGNORE INTO event_dedupe (org_id, key, seen_at) VALUES (?, ?, ?)").run(org, key, at);
     return info.changes > 0;
   },

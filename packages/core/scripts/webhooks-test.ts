@@ -194,5 +194,63 @@ await opStore.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 90, o
   ok(calls.length === 0, "receive() is never called for a declined fire — no session starts");
 }
 
+{
+  const { auditWebhookRejection, resetRejectionThrottle, rejectionThrottleKey, REJECTION_WINDOW_MS, REJECTION_ID_MAX_CHARS } =
+    await import("../agent/webhooks/reject-audit.js");
+  type AuditInput = import("../agent/operational/store.js").AuditInput;
+
+  resetRejectionThrottle();
+  const rows: AuditInput[] = [];
+  const audit = async (e: AuditInput): Promise<void> => {
+    rows.push(e);
+  };
+  let clock = Date.parse("2026-07-20T09:00:00.000Z");
+  const now = (): Date => new Date(clock);
+  const notFound = { status: 404, reason: "no such hook" };
+
+  for (let i = 0; i < 500; i++) await auditWebhookRejection(`scan-${i}`, undefined, notFound, { audit, now });
+  ok(rows.length === 1, "OPE-142: 500 unknown-id rejections in one window write at most ONE audit row (even with 500 distinct ids)");
+  ok(rows[0]!.detail?.["suppressed"] === undefined, "the FIRST row of a window carries no suppressed count (it stands for itself)");
+  ok(rows[0]!.surface === "unknown", "an unknown id gets a SYNTHETIC surface — a stranger never chooses a partition label in the audit log");
+  ok(rows[0]!.workspace === "unknown", "an unknown id gets a synthetic workspace too");
+  ok(rows[0]!.detail?.["hookId"] === "scan-0", "the caller-supplied id still rides in detail (a specific probe stays findable)");
+
+  clock += REJECTION_WINDOW_MS + 1_000;
+  await auditWebhookRejection("scan-0", undefined, notFound, { audit, now });
+  ok(rows.length === 2, "past the window the next rejection emits a fresh row");
+  ok(rows[1]!.detail?.["suppressed"] === 499, "the next row CARRIES the suppressed count — rate-limiting that hid its own existence would just move the blind spot");
+  ok(rows[1]!.detail?.["windowMs"] === REJECTION_WINDOW_MS, "the carried count names the window it covers");
+
+  clock += REJECTION_WINDOW_MS + 1_000;
+  await auditWebhookRejection("scan-0", undefined, notFound, { audit, now });
+  ok(rows[2]!.detail?.["suppressed"] === undefined, "a quiet window emits a row with no suppressed count (the counter resets when carried)");
+
+  clock += REJECTION_WINDOW_MS + 1_000;
+  await auditWebhookRejection("x".repeat(5_000), undefined, notFound, { audit, now });
+  ok(String(rows[3]!.detail?.["hookId"]).length === REJECTION_ID_MAX_CHARS, "a hostile, oversized hook id is length-capped in the row");
+
+  ok(rejectionThrottleKey(undefined, 404) === rejectionThrottleKey(undefined, 404), "unknown-id rejections collapse onto ONE throttle key");
+  ok(rejectionThrottleKey(goodHook, 401) !== rejectionThrottleKey(undefined, 401), "a configured hook throttles separately from the unknown-id bucket");
+  ok(rejectionThrottleKey(goodHook, 401) !== rejectionThrottleKey(goodHook, 404), "different rejection statuses throttle separately");
+
+  clock += REJECTION_WINDOW_MS + 1_000;
+  const before = rows.length;
+  await auditWebhookRejection(goodHook.id, goodHook, { status: 401, reason: "invalid signature" }, { audit, now });
+  await auditWebhookRejection(goodHook.id, goodHook, { status: 401, reason: "invalid signature" }, { audit, now });
+  ok(rows.length === before + 1, "a configured hook's rejections are throttled the same way");
+  ok(rows[before]!.workspace === "T1" && rows[before]!.surface === "C1", "a CONFIGURED hook's rejection row is attributed to its real target surface");
+
+  resetRejectionThrottle();
+  const emitted = await auditWebhookRejection("boom", undefined, notFound, {
+    audit,
+    now,
+    markSeen: async () => {
+      throw new Error("store down");
+    },
+  });
+  ok(emitted === true, "a throwing throttle store fails OPEN — a store blip never silences rejection auditing");
+  resetRejectionThrottle();
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ webhooks: ${passed} assertions passed`);

@@ -1,16 +1,14 @@
 import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
-import { bridgeSlackChannel, bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
-import { rootDmGrainAttrs } from "../channels/unified-window.js";
-import { jobFireAttrs } from "../access/job-posture.js";
-import { resolveRegisteredRoutineDispatch, type DispatchTarget } from "./routine-dispatch.js";
+import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
+import { resolveRoutineTarget } from "./routine-dispatch.js";
+import { routineFireAttributes } from "../routines/fire-auth.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue } from "../routines/schedule.js";
-import { isClockScheduled, isJobRoutine, ROUTINE_MARKER, type Routine } from "../routines/routine.js";
+import { isClockScheduled, isJobRoutine, type Routine } from "../routines/routine.js";
 import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
 import { renderJobMessage } from "../routines/job.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
-import type { SessionMode } from "../access/resolver.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 
 function log(msg: string): void {
@@ -23,42 +21,6 @@ function routineMaxConcurrency(): number {
   if (raw === undefined) return DEFAULT_MAX_CONCURRENCY;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_CONCURRENCY;
-}
-
-function storedString(t: Routine["target"], key: string): string | undefined {
-  const v = t?.[key];
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
-
-function resolveSlackTarget(r: Routine): DispatchTarget | null {
-  const channelId = storedString(r.target, "channelId");
-  if (!channelId) return null;
-  const slackChannel = bridgeSlackChannel();
-  if (!slackChannel) return null;
-  const mode: SessionMode = channelId.startsWith("D") ? "dm" : "channel";
-  return {
-    channel: slackChannel,
-    target: { channelId },
-    mode,
-    attributes: {
-      team_id: r.surfaceKey.split("/")[1] ?? "",
-      channel_id: channelId,
-      channel_type: mode === "dm" ? "im" : "channel",
-    },
-  };
-}
-
-function resolveTarget(routine: Routine): DispatchTarget | null {
-  const platform = routine.surfaceKey.split("/")[0];
-  if (platform === undefined) return null;
-  const provider = resolveRegisteredRoutineDispatch(platform);
-  if (provider) return provider.resolveTarget(routine);
-  switch (platform) {
-    case "slack":
-      return resolveSlackTarget(routine);
-    default:
-      return null;
-  }
 }
 
 function onceDisablePatch(r: Routine, now: Date, note: string): Partial<Routine> {
@@ -116,7 +78,7 @@ export async function dispatchTick(
   let deferred = 0;
   let declined = 0;
   for (const r of due) {
-    const dest = resolveTarget(r);
+    const dest = resolveRoutineTarget(r);
     const firePlatform = r.surfaceKey.split("/")[0];
     if (!dest) {
       dryRun++;
@@ -179,13 +141,7 @@ export async function dispatchTick(
         ...appAuth,
         attributes: {
           ...appAuth.attributes,
-          ...dest.attributes,
-          ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
-          ...rootDmGrainAttrs(mode === "dm" || mode === "mpim" || dest.attributes.chat_type === "group" || dest.attributes.chat_type === "supergroup"),
-          ...jobFireAttrs(isJobRoutine(r), r.jobTainted === true),
-          [ROUTINE_MARKER.id]: r.id,
-          [ROUTINE_MARKER.surface]: r.surfaceKey,
-          [ROUTINE_MARKER.org]: r.org,
+          ...routineFireAttributes(r, dest.attributes, mode, internal),
         },
       };
       waitUntil(

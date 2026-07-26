@@ -4,6 +4,7 @@ import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
 import type { Routine } from "../routines/routine.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { bridgeSlackChannel } from "../channels/slack-bridge.js";
 
 export interface DispatchTarget {
   readonly channel: Channel<any, any, any>;
@@ -25,4 +26,40 @@ export function registerRoutineDispatch(platform: string, provider: RoutineDispa
 
 export function resolveRegisteredRoutineDispatch(platform: string): RoutineDispatchProvider | undefined {
   return ROUTINE_DISPATCH.get(platform);
+}
+
+function storedString(t: Routine["target"], key: string): string | undefined {
+  const v = t?.[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function resolveSlackTarget(r: Routine): DispatchTarget | null {
+  const channelId = storedString(r.target, "channelId");
+  if (!channelId) return null;
+  const slackChannel = bridgeSlackChannel();
+  if (!slackChannel) return null;
+  const mode: SessionMode = channelId.startsWith("D") ? "dm" : "channel";
+  return {
+    channel: slackChannel,
+    target: { channelId },
+    mode,
+    attributes: {
+      team_id: r.surfaceKey.split("/")[1] ?? "",
+      channel_id: channelId,
+      channel_type: mode === "dm" ? "im" : "channel",
+    },
+  };
+}
+
+export function resolveRoutineTarget(routine: Routine): DispatchTarget | null {
+  const platform = routine.surfaceKey.split("/")[0];
+  if (platform === undefined) return null;
+  const provider = resolveRegisteredRoutineDispatch(platform);
+  if (provider) return provider.resolveTarget(routine);
+  switch (platform) {
+    case "slack":
+      return resolveSlackTarget(routine);
+    default:
+      return null;
+  }
 }
