@@ -9,6 +9,7 @@ import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
+import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
 import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription } from "./event-match.js";
@@ -80,6 +81,25 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     ...(deps.markSeen ? { markSeen: deps.markSeen } : {}),
     ...(deps.now ? { now: deps.now } : {}),
     principalId: "github:webhook",
+  };
+
+  const loseFire = async (r: Routine, error: string): Promise<void> => {
+    await auditRoutineFireLost(r, error, auditDeps);
+    try {
+      const folded = await foldRoutineOutcome({
+        marker: { id: r.id, surfaceKey: r.surfaceKey, org: r.org },
+        sessionOutcome: "failed",
+        at: deps.now?.() ?? new Date(),
+      });
+      if (folded.folded) {
+        log(
+          `lost fire folded for ${r.id} [${r.surfaceKey}] ` +
+            `(fails=${folded.consecutiveFailures}${folded.disabled ? ", AUTO-DISABLED" : ""})`,
+        );
+      }
+    } catch (foldErr) {
+      log(`lost-fire fold skipped for ${r.id}: ${String(foldErr)}`);
+    }
   };
 
   const candidates = (await list()).filter((r) => r.org === org && r.status === "active");
@@ -163,7 +183,7 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
       }
       if (h.status === "error") {
         log(`event ${ev.summary} matched ${r.id} but hydration failed: ${h.error}`);
-        await auditRoutineFireLost(r, `hydration failed: ${h.error}`, auditDeps);
+        await loseFire(r, `hydration failed: ${h.error}`);
         continue;
       }
       if (h.status === "ok") {
@@ -201,7 +221,7 @@ async function fanOut(ev: NormalizedEvent, deps: GitHubFanOutDeps): Promise<void
     };
     await deliver().catch(async (err: unknown) => {
       log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
-      await auditRoutineFireLost(r, String(err), auditDeps);
+      await loseFire(r, String(err));
     });
     fired++;
   }
