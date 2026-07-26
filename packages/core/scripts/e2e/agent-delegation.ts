@@ -5,6 +5,7 @@ import { classifyT1bSpawnedOutcome } from "./agent-delegation-classify.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
 const DOMAIN = process.env.E2E_AGENT_DELEG_DOMAIN ?? "e2e-unified";
 const SURFACE = process.env.E2E_AGENT_DELEG_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN003";
@@ -18,7 +19,7 @@ const degradedIds: string[] = [];
 
 const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
 
-const inject = createInjector(TARGET, READ);
+const inject = createInjector(TARGET, INJECT);
 const { rowsSince, readFailed: auditReadFailed } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
 const toolCallsOf = (sessionId: string, sinceIso?: string): Promise<{ name: string; errored: boolean }[] | null> =>
@@ -149,8 +150,8 @@ async function t1cFile(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log(`agent-delegation e2e — target=${TARGET || "(none)"} org=${ORG} domain=${DOMAIN} surface=${SURFACE}`);
-  if (!TARGET || !READ) {
-    for (const id of ["T1a", "T1b", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN — the delegation e2e needs the live spoofed-ingest target started with OE_ONESHOT_AGENT=1");
+  if (!TARGET || !READ || !INJECT) {
+    for (const id of ["T1a", "T1b", "T1c"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — the delegation e2e needs the live spoofed-ingest target started with OE_ONESHOT_AGENT=1");
   } else {
     if (want("T1a")) await t1aAsync();
     if (want("T1b")) await t1bSync();

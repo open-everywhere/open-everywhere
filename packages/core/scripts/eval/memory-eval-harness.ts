@@ -3,6 +3,7 @@ import { fetchTranscript, findEvents, type TranscriptWireEvent } from "../e2e/tr
 
 export const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 export const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+export const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export function mulberry32(seed: number): () => number {
@@ -61,7 +62,7 @@ export async function injectWake(b: InjectBody, kind: InjectionKind, tag: string
     : b;
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${INJECT}`, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);

@@ -6,6 +6,7 @@ import { isWindowToken } from "../../agent/channels/window-key.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const DOMAIN = process.env.E2E_SSM_DOMAIN ?? "e2e-unified";
 const SLACK_SURFACE = process.env.E2E_SSM_SLACK_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN003";
 const GITHUB_SURFACE = process.env.E2E_SSM_GITHUB_SURFACE ?? "github/example-owner/e2e-scratch";
@@ -21,7 +22,7 @@ const want = makeWant(process.env.SSM_ONLY);
 const A_REPLY = "reply.post";
 const { results, record } = createRecorder();
 
-const inject = createInjector(TARGET, READ);
+const inject = createInjector(TARGET, INJECT);
 const { rowsSince } = createAuditReader(TARGET, READ, { onError: "throw" });
 
 async function pollForReplySession(sinceIso: string, wakeId: string, timeoutMs: number): Promise<string | null> {
@@ -131,8 +132,8 @@ async function main(): Promise<void> {
     for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "OE_SOURCE_SCOPED_TOOLS is not set in THIS process — flag-OFF the mount is byte-identical (arm-on-unified), nothing to narrow. Re-run with the flag on AND a target started with OE_SOURCE_SCOPED_TOOLS=1.");
     return summary();
   }
-  if (!TARGET || !READ) {
-    for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN — cannot drive a live window.");
+  if (!TARGET || !READ || !INJECT) {
+    for (const id of ["S1", "S2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
     return summary();
   }
   for (const [id, fn] of [["S1", s1], ["S2", s2]] as [string, () => Promise<void>][]) {

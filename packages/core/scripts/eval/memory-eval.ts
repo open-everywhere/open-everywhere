@@ -9,7 +9,7 @@ import { controlPartition } from "../../agent/memory/partition.js";
 import { siloTier } from "../../agent/memory/store.js";
 import { tierSandboxDir } from "../../agent/memory/sandbox-sync.js";
 import {
-  TARGET, READ, sleep, injectWake, auditSince, dS, rowsForWake,
+  TARGET, READ, INJECT, sleep, injectWake, auditSince, dS, rowsForWake,
   readTranscript, extractMemoryPathReads, terminalProse, replyText, scoreNavigation,
   transcriptServedWake, attributeRow, newTierContent, type RowAttribution,
   type Injection, type InjectBody, type HarnessMsg,
@@ -494,7 +494,7 @@ async function main(): Promise<void> {
     console.error(`✗ --model "${cli.model}" not in allow-list ${JSON.stringify(ALLOW_POLICY.allow!.map((a) => a.id))}.`);
     process.exit(1);
   }
-  if (!TARGET || !READ) { console.error("✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
+  if (!TARGET || !READ || !INJECT) { console.error("✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN + E2E_CONTROL_INJECT_TOKEN (the injection family is separate from the read family — OPE-136)"); process.exit(1); }
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) { console.error("✗ DATABASE_URL required (live Neon) for the pick + rotate + disk-state reads"); process.exit(1); }
   if (!SLACK_SURFACE) { console.error("✗ EVAL_MEM_SLACK_SURFACE (or EVAL_SLACK_SURFACE) required — most probes are Slack"); process.exit(1); }

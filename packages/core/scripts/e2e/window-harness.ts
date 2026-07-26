@@ -41,11 +41,11 @@ export interface InjectBody {
 
 export interface Injected { wakeId: string; token: string; }
 
-export function createInjector(target: string, readToken: string): (b: InjectBody) => Promise<Injected> {
+export function createInjector(target: string, injectToken: string): (b: InjectBody) => Promise<Injected> {
   return async (b: InjectBody): Promise<Injected> => {
     const res = await fetch(`${target}/control/v1/test/wake`, {
       method: "POST",
-      headers: { authorization: `Bearer ${readToken}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${injectToken}`, "content-type": "application/json" },
       body: JSON.stringify(b),
     });
     if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 240)}`);

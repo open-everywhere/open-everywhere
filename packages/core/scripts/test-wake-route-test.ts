@@ -19,6 +19,7 @@ process.env.OE_ORG = "acme";
 process.env.OE_WINDOW_TOPOLOGY = "1";
 delete process.env.OE_TEST_WAKE;
 delete process.env.OE_CONTROL_READ_TOKENS;
+delete process.env.OE_CONTROL_INJECT_TOKENS;
 
 const __slackStubs = await import("./_slack-test-stubs.js");
 __slackStubs.registerSlackFixtureCodec();
@@ -63,8 +64,10 @@ registerConfig({
   domainsForSurface: () => [],
 });
 
-const SECRET = "test-wake-test-token";
-const SHA = createHash("sha256").update(SECRET, "utf-8").digest("hex");
+const INJECT_SECRET = "test-inject-token";
+const INJECT_SHA = createHash("sha256").update(INJECT_SECRET, "utf-8").digest("hex");
+const READ_SECRET = "test-read-only-token";
+const READ_SHA = createHash("sha256").update(READ_SECRET, "utf-8").digest("hex");
 
 const slackOrigin = { platform: "slack", channelId: CHANNEL_ID } as const;
 function goodBody(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -96,42 +99,64 @@ function post(body: unknown, token?: string, receive = captureReceive): Promise<
   ok(!testWakeEnabled({ OE_TEST_WAKE: "0" } as NodeJS.ProcessEnv), "testWakeEnabled: '0' → false");
 }
 
-process.env.OE_CONTROL_READ_TOKENS = `eval-harness:${SHA}`;
+process.env.OE_CONTROL_INJECT_TOKENS = `eval-injector:${INJECT_SHA}`;
 {
-  const res = await post(goodBody(), SECRET);
+  const res = await post(goodBody(), INJECT_SECRET);
   ok(res.status === 404, "OE_TEST_WAKE unset → 404 (seam does not exist) even with tokens + bearer + good body");
   ok(captured.length === 0, "disarmed seam never diverts");
 }
 
 process.env.OE_TEST_WAKE = "1";
-delete process.env.OE_CONTROL_READ_TOKENS;
+delete process.env.OE_CONTROL_INJECT_TOKENS;
 {
-  ok((await post(goodBody(), SECRET)).status === 404, "armed but no OE_CONTROL_READ_TOKENS → 404");
+  ok((await post(goodBody(), INJECT_SECRET)).status === 404, "armed but no OE_CONTROL_INJECT_TOKENS → 404");
 }
 
-process.env.OE_CONTROL_READ_TOKENS = `eval-harness:${SHA}`;
+process.env.OE_CONTROL_READ_TOKENS = `eval-harness:${READ_SHA}`;
+{
+  ok((await post(goodBody(), READ_SECRET)).status === 404, "armed + READ family configured but INJECT family unset → 404 (no fallback to the read family)");
+  ok((await post(goodBody(), INJECT_SECRET)).status === 404, "…and the inject VALUE is equally dead while its own family is unconfigured (fail-closed on entries, not on the bearer)");
+  ok(captured.length === 0, "no divert while the injection family is unconfigured");
+}
+
+process.env.OE_CONTROL_INJECT_TOKENS = `eval-injector:${INJECT_SHA}`;
 {
   ok((await post(goodBody())).status === 401, "armed + no bearer → 401");
   ok((await post(goodBody(), "not-the-token")).status === 401, "armed + wrong token → 401");
+  ok((await post(goodBody(), READ_SECRET)).status === 401, "🔴 a VALID OE_CONTROL_READ_TOKENS token is REFUSED by the wake route (401) — the read family is not an injection credential");
+  ok(captured.length === 0, "a refused read token never reaches the divert seam");
 }
 
 {
-  ok((await post({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, origin: slackOrigin }, SECRET)).status === 400, "missing text → 400");
-  ok((await post(goodBody({ origin: { platform: "slack" } }), SECRET)).status === 400, "invalid origin (no channelId) → 400");
-  ok((await post(goodBody({ platform: "notion" }), SECRET)).status === 400, "origin.platform != platform → 400");
-  ok((await post(goodBody({ surfaceKey: "slack/T1/UNLISTED" }), SECRET)).status === 400, "surface not in a windowed domain → 400");
+  const { verifyServiceToken, verifyInjectToken, parseServiceTokenEntries, injectTokenEntries } = await import("../agent/control/auth.js");
+  const readEntries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  const injEntries = injectTokenEntries();
+  ok(verifyServiceToken(INJECT_SECRET, readEntries) === null, "the READ verifier refuses an INJECT-family token value");
+  ok(verifyServiceToken(READ_SECRET, readEntries)?.readOnly === true, "…while still admitting its own family as a readOnly principal");
+  ok(verifyInjectToken(READ_SECRET, injEntries) === null, "the INJECT verifier refuses a READ-family token value");
+  ok(verifyInjectToken(INJECT_SECRET, injEntries)?.subject === "svc:eval-injector", "…and admits its own family as svc:<name>");
+  const inj = verifyInjectToken(INJECT_SECRET, injEntries) as unknown as Record<string, unknown>;
+  ok(inj.roles === undefined && inj.readOnly === undefined, "an inject identity carries NO roles and NO readOnly flag (not an AdminIdentity)");
+  ok(injectTokenEntries({} as NodeJS.ProcessEnv).length === 0, "injectTokenEntries is fail-closed on an env with no OE_CONTROL_INJECT_TOKENS");
+}
+
+{
+  ok((await post({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, origin: slackOrigin }, INJECT_SECRET)).status === 400, "missing text → 400");
+  ok((await post(goodBody({ origin: { platform: "slack" } }), INJECT_SECRET)).status === 400, "invalid origin (no channelId) → 400");
+  ok((await post(goodBody({ platform: "notion" }), INJECT_SECRET)).status === 400, "origin.platform != platform → 400");
+  ok((await post(goodBody({ surfaceKey: "slack/T1/UNLISTED" }), INJECT_SECRET)).status === 400, "surface not in a windowed domain → 400");
   ok(captured.length === 0, "no divert on any rejected request");
 }
 
 {
-  const res = await post(goodBody(), SECRET);
+  const res = await post(goodBody(), INJECT_SECRET);
   ok(res.status === 400, "window enabled but no channel_session row → 400 (seed the window first)");
 }
 
 const token = unifiedSupervisorToken(DOMAIN, Date.now());
 await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DOMAIN), token, new Date().toISOString());
 {
-  const res = await post(goodBody(), SECRET);
+  const res = await post(goodBody(), INJECT_SECRET);
   ok(res.status === 200, "armed + bearer + valid body + seeded window → 200");
   const jb = (await res.json()) as { ok: boolean; wakeId: string; token: string; surfaceKey: string; addressing: string };
   ok(jb.ok === true && typeof jb.wakeId === "string" && jb.wakeId.length > 0, "200 body carries a minted wakeId");
@@ -155,7 +180,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
 
 {
   captured.length = 0;
-  await post(goodBody({ unifiedDisclosure: false }), SECRET);
+  await post(goodBody({ unifiedDisclosure: false }), INJECT_SECRET);
   ok(!captured[0].message.includes("Cross-surface disclosure:"), "unifiedDisclosure:false renders without the disclosure sentence");
 }
 
@@ -167,14 +192,14 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
     loadDomains: () => [defineDomain({ name: DOMAIN, channels: [SURFACE, notionSurface], ambientSupervisor: true, mode: "unified" })],
     loadSilos: () => [], loadRoles: () => [], domainsForSurface: () => [],
   });
-  const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, SECRET);
+  const res = await post({ domain: DOMAIN, platform: "notion", surfaceKey: notionSurface, text: "note for the doc", origin: { platform: "notion", discussionId: "D1" } }, INJECT_SECRET);
   ok(res.status === 200, "notion injection → 200");
   ok(captured[0].message.includes("this doc's standing session"), "notion containerNoun defaults to 'doc' (matches notion-supervisor)");
 }
 
 {
   captured.length = 0;
-  const res = await post(goodBody({ addressing: "direct-mention", mention: true }), SECRET);
+  const res = await post(goodBody({ addressing: "direct-mention", mention: true }), INJECT_SECRET);
   ok(res.status === 200, "direct-mention injection → 200");
   const c = captured[0];
   ok(c.auth.attributes?.oe_addressing === "direct-mention", "direct-mention stamps oe_addressing (enables the addressed-prose bridge)");
@@ -183,7 +208,7 @@ await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(DO
 
 {
   captured.length = 0;
-  await post(goodBody({ authAttributes: { is_private: "true", user_id: "U999" } }), SECRET);
+  await post(goodBody({ authAttributes: { is_private: "true", user_id: "U999" } }), INJECT_SECRET);
   const c = captured[0];
   ok(c.auth.attributes?.is_private === "true", "caller authAttributes override the surfaceKey-derived defaults");
   ok(c.auth.attributes?.user_id === "U999", "caller authAttributes are merged in");
@@ -208,7 +233,7 @@ const norm = (s: string): string =>
       ],
       text: undefined,
     }),
-    SECRET,
+    INJECT_SECRET,
   );
   ok(res.status === 200, "coalesced messages injection → 200");
   const jb = (await res.json()) as { messageCount: number };
@@ -233,19 +258,19 @@ const norm = (s: string): string =>
 {
   captured.length = 0;
   const tooMany = Array.from({ length: 11 }, (_, i) => ({ text: `m${i}` }));
-  ok((await post(goodBody({ messages: tooMany }), SECRET)).status === 400, "messages.length > 10 → 400");
-  ok((await post(goodBody({ messages: [] }), SECRET)).status === 400, "empty messages array → 400");
-  ok((await post(goodBody({ messages: [{ text: "" }] }), SECRET)).status === 400, "empty message text → 400");
-  ok((await post(goodBody({ messages: [{ text: "x".repeat(4001) }] }), SECRET)).status === 400, "message text > 4000 chars → 400");
+  ok((await post(goodBody({ messages: tooMany }), INJECT_SECRET)).status === 400, "messages.length > 10 → 400");
+  ok((await post(goodBody({ messages: [] }), INJECT_SECRET)).status === 400, "empty messages array → 400");
+  ok((await post(goodBody({ messages: [{ text: "" }] }), INJECT_SECRET)).status === 400, "empty message text → 400");
+  ok((await post(goodBody({ messages: [{ text: "x".repeat(4001) }] }), INJECT_SECRET)).status === 400, "message text > 4000 chars → 400");
   ok(captured.length === 0, "no divert on any rejected coalesced request");
 }
 
 {
   captured.length = 0;
-  await post(goodBody({ text: "one line only", author: "sam" }), SECRET);
+  await post(goodBody({ text: "one line only", author: "sam" }), INJECT_SECRET);
   const single = norm(captured[0].message);
   captured.length = 0;
-  await post(goodBody({ messages: [{ text: "one line only", author: "sam" }], text: undefined }), SECRET);
+  await post(goodBody({ messages: [{ text: "one line only", author: "sam" }], text: undefined }), INJECT_SECRET);
   const oneEntry = norm(captured[0].message);
   ok(single === oneEntry, "single-text render == single-entry coalesced render (byte-identical, single path untouched)");
   ok(single.includes("[channel-watch]"), "the frozen single-text render is still the judged channel-watch envelope");
@@ -282,12 +307,12 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   process.env.OE_WINDOW_TOPOLOGY = "1";
   useDomains(soloDomains);
   await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_DOMAIN), unifiedSupervisorToken(SOLO_DOMAIN, Date.now()), new Date().toISOString());
-  ok((await post(soloBody(), SECRET)).status === 400, "solo domain with ONLY a domain-keyed row → 400 (the route reads the WINDOW's row, not the domain's)");
+  ok((await post(soloBody(), INJECT_SECRET)).status === 400, "solo domain with ONLY a domain-keyed row → 400 (the route reads the WINDOW's row, not the domain's)");
   ok(captured.length === 0, "no divert while the solo window's own row is absent");
 
   const soloToken = formatWindowToken({ domain: SOLO_DOMAIN, windowId: SOLO_SURFACE, generation: Date.now() });
   await getOperationalStore().rotateChannelSession(ORG, unifiedDomainSessionKey(SOLO_SURFACE), soloToken, new Date().toISOString());
-  const res = await post(soloBody(), SECRET);
+  const res = await post(soloBody(), INJECT_SECRET);
   ok(res.status === 200, "solo window (mode:solo + code gate) is INJECTABLE → 200");
   const jb = (await res.json()) as { token: string };
   ok(jb.token === soloToken, "solo injection dispatches the SOLO window's live token (windowId === surfaceKey)");
@@ -298,7 +323,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
   captured.length = 0;
   process.env.OE_WINDOW_TOPOLOGY = "0";
   useDomains(soloDomains);
-  ok((await post(soloBody(), SECRET)).status === 400, "mode:solo but WINDOW_TOPOLOGY_ENABLED off → 400 (gate-off makes the mode inert)");
+  ok((await post(soloBody(), INJECT_SECRET)).status === 400, "mode:solo but WINDOW_TOPOLOGY_ENABLED off → 400 (gate-off makes the mode inert)");
   ok(captured.length === 0, "no divert on any window-gate rejection");
   process.env.OE_WINDOW_TOPOLOGY = "1";
 }
@@ -306,7 +331,7 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 {
   captured.length = 0;
   useDomains(domains);
-  ok((await post(goodBody({ domain: "some-other-domain" }), SECRET)).status === 400, "claimed domain != the surfaceKey's resolved domain → 400 (fail-closed)");
+  ok((await post(goodBody({ domain: "some-other-domain" }), INJECT_SECRET)).status === 400, "claimed domain != the surfaceKey's resolved domain → 400 (fail-closed)");
   ok(captured.length === 0, "no divert on a domain mismatch");
 }
 
@@ -318,4 +343,4 @@ function soloBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 }
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`\n✓ test-wake route: ${passed} assertions passed (triple fail-closed gate + validation + render+divert + self-audit)\n`);
+console.log(`\n✓ test-wake route: ${passed} assertions passed (triple fail-closed gate + INJECT-vs-READ credential separation + validation + render+divert + self-audit)\n`);

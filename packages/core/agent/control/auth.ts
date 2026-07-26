@@ -159,6 +159,9 @@ export function staticTokenVerifier(opts: { token: string; subject?: string }): 
 
 export const SERVICE_TOKEN_ISSUER = "service-token";
 
+export const READ_TOKEN_ENV = "OE_CONTROL_READ_TOKENS";
+export const INJECT_TOKEN_ENV = "OE_CONTROL_INJECT_TOKENS";
+
 export interface ServiceTokenEntry {
   readonly name: string;
   readonly sha256: string;
@@ -167,7 +170,7 @@ export interface ServiceTokenEntry {
 const SERVICE_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-export function parseServiceTokenEntries(raw: string | undefined): ServiceTokenEntry[] {
+export function parseServiceTokenEntries(raw: string | undefined, envName: string = READ_TOKEN_ENV): ServiceTokenEntry[] {
   if (!raw || raw.trim().length === 0) return [];
   const out: ServiceTokenEntry[] = [];
   raw.split(",").forEach((part, i) => {
@@ -178,7 +181,7 @@ export function parseServiceTokenEntries(raw: string | undefined): ServiceTokenE
     const hash = at > 0 ? entry.slice(at + 1).toLowerCase() : "";
     if (!SERVICE_NAME.test(name) || !SHA256_HEX.test(hash)) {
       console.warn(
-        `[open-everywhere:control] OE_CONTROL_READ_TOKENS entry #${i + 1} ignored — expected "name:sha256hex" (lowercase name, 64-hex-char sha256 of the token). Entry content not shown.`,
+        `[open-everywhere:control] ${envName} entry #${i + 1} ignored — expected "name:sha256hex" (lowercase name, 64-hex-char sha256 of the token). Entry content not shown.`,
       );
       return;
     }
@@ -187,16 +190,33 @@ export function parseServiceTokenEntries(raw: string | undefined): ServiceTokenE
   return out;
 }
 
-export function verifyServiceToken(token: string, entries: readonly ServiceTokenEntry[]): AdminIdentity | null {
+export function injectTokenEntries(env: NodeJS.ProcessEnv = process.env): ServiceTokenEntry[] {
+  return parseServiceTokenEntries(env[INJECT_TOKEN_ENV], INJECT_TOKEN_ENV);
+}
+
+function matchServiceToken(token: string, entries: readonly ServiceTokenEntry[]): ServiceTokenEntry | null {
   if (!token || entries.length === 0) return null;
   const presented = createHash("sha256").update(token, "utf-8").digest();
   for (const e of entries) {
     const digest = Buffer.from(e.sha256, "hex");
-    if (digest.length === presented.length && timingSafeEqual(presented, digest)) {
-      return { issuer: SERVICE_TOKEN_ISSUER, subject: `svc:${e.name}`, emailVerified: false, roles: ["admin"], readOnly: true };
-    }
+    if (digest.length === presented.length && timingSafeEqual(presented, digest)) return e;
   }
   return null;
+}
+
+export interface InjectIdentity {
+  readonly subject: string;
+}
+
+export function verifyInjectToken(token: string, entries: readonly ServiceTokenEntry[]): InjectIdentity | null {
+  const e = matchServiceToken(token, entries);
+  return e ? { subject: `svc:${e.name}` } : null;
+}
+
+export function verifyServiceToken(token: string, entries: readonly ServiceTokenEntry[]): AdminIdentity | null {
+  const e = matchServiceToken(token, entries);
+  if (!e) return null;
+  return { issuer: SERVICE_TOKEN_ISSUER, subject: `svc:${e.name}`, emailVerified: false, roles: ["admin"], readOnly: true };
 }
 
 export function makeServiceTokenAuthenticator(entries: readonly ServiceTokenEntry[]): (req: IncomingMessage) => Promise<AdminIdentity | null> {
@@ -227,7 +247,7 @@ export function makeAdminAuthenticator(
 export function adminAuthenticatorFromEnv(): ((req: IncomingMessage) => Promise<AdminIdentity | null>) | null {
   const verifiers: TokenVerifier[] = [];
   const rules: RoleRule[] = [];
-  const serviceTokens = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  const serviceTokens = parseServiceTokenEntries(process.env[READ_TOKEN_ENV], READ_TOKEN_ENV);
 
   const issuer = process.env.OE_ADMIN_OIDC_ISSUER;
   const audience = process.env.OE_ADMIN_OIDC_AUDIENCE;

@@ -14,6 +14,7 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const DB = process.env.DATABASE_URL ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
 const DOMAIN = process.env.E2E_WINDOW_GATE_DOMAIN ?? "e2e-unified";
@@ -35,7 +36,7 @@ const dmOrigin = { platform: "slack" as const, channelId: process.env.E2E_SLACK_
 
 const { results, record } = createRecorder();
 
-const inject = createInjector(TARGET, READ);
+const inject = createInjector(TARGET, INJECT);
 const { rowsSince } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
 const gatedRowFor = (rows: readonly AuditWireEntry[], wakeId: string): AuditWireEntry | null =>
@@ -286,9 +287,9 @@ async function f9(): Promise<void> {
 async function main(): Promise<void> {
   console.log(`=== WINDOW TOOL-GATING · STAGE F per-route e2e · run ${RUN} · ${new Date().toISOString()} ===`);
   console.log(`target=${TARGET || "(unset)"} domain=${DOMAIN} surface=${SURFACE}`);
-  if (!TARGET || !READ) {
-    console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN — cannot drive any route.");
-    for (const id of ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN");
+  if (!TARGET || !READ || !INJECT) {
+    console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN and/or E2E_CONTROL_INJECT_TOKEN — cannot drive any route.");
+    for (const id of ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN");
     return summary();
   }
 

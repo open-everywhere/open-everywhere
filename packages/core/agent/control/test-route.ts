@@ -1,5 +1,5 @@
 import type { RouteHandlerArgs } from "eve/channels";
-import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
+import { injectTokenEntries, verifyInjectToken } from "./auth.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
@@ -86,11 +86,11 @@ function defaultContainerNoun(platform: string): string | undefined {
 }
 
 export async function handleTestWakeInjection(req: Request, receive: RouteHandlerArgs["receive"]): Promise<Response> {
-  const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
+  const entries = injectTokenEntries();
   if (!testWakeEnabled() || entries.length === 0) return new Response("not found", { status: 404 });
 
   const match = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") ?? "").trim());
-  const identity = match ? verifyServiceToken(match[1], entries) : null;
+  const identity = match ? verifyInjectToken(match[1], entries) : null;
   if (!identity) return json(401, { error: "unauthorized: missing or invalid bearer token" });
 
   let body: Partial<TestWakeRequest>;

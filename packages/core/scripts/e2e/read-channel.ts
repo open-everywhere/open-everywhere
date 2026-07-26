@@ -6,6 +6,7 @@ import { isWindowToken } from "../../agent/channels/window-key.js";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const DOMAIN = process.env.E2E_GRV_DOMAIN ?? "e2e-unified";
 const SLACK_SURFACE = process.env.E2E_GRV_SLACK_SURFACE ?? "slack/T0EXAMPLE/C0EXCHAN003";
 const DISCORD_SURFACE = process.env.E2E_GRV_DISCORD_SURFACE ?? "";
@@ -37,7 +38,7 @@ interface InjectBody {
 async function inject(b: InjectBody): Promise<{ wakeId: string; token: string }> {
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${INJECT}`, "content-type": "application/json" },
     body: JSON.stringify(b),
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 240)}`);
@@ -132,8 +133,8 @@ async function main(): Promise<void> {
     for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "OE_GENERIC_READ_VERBS is not set in THIS process — flag-OFF the generic verbs are absent (read_slack_* is the reader). Re-run with the flag on AND a target started with OE_GENERIC_READ_VERBS=1.");
     return summary();
   }
-  if (!TARGET || !READ) {
-    for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN — cannot drive a live window.");
+  if (!TARGET || !READ || !INJECT) {
+    for (const id of ["G1", "G2"]) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN — cannot drive a live window.");
     return summary();
   }
   for (const [id, fn] of [["G1", g1], ["G2", g2]] as [string, () => Promise<void>][]) {

@@ -20,6 +20,7 @@ const DOMAIN_CEILING: ModelReasoning = "high";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const FACT_WAIT_MS = Number.parseInt(process.env.AMBIENT_FACT_WAIT_MS ?? "35000", 10);
 let REPLY_TIMEOUT_MS = Number.parseInt(process.env.AMBIENT_REPLY_TIMEOUT_MS ?? "240000", 10);
 const POLL_MS = Number.parseInt(process.env.AMBIENT_POLL_MS ?? "7000", 10);
@@ -127,7 +128,7 @@ interface InjectBody {
 async function injectWake(b: InjectBody, kind: InjectionKind, turn: number, scenario?: ScenarioId): Promise<Injection> {
   const res = await fetch(`${TARGET}/control/v1/test/wake`, {
     method: "POST",
-    headers: { authorization: `Bearer ${READ}`, "content-type": "application/json" },
+    headers: { authorization: `Bearer ${INJECT}`, "content-type": "application/json" },
     body: JSON.stringify(b),
   });
   if (!res.ok) throw new Error(`inject ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
@@ -1080,7 +1081,7 @@ async function main() {
   }
   if (cli.plan) { console.log(`\n(plan-only — no store writes, no injection.)`); return; }
 
-  if (!TARGET || !READ) { console.error("\n✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN"); process.exit(1); }
+  if (!TARGET || !READ || !INJECT) { console.error("\n✗ need E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN + E2E_CONTROL_INJECT_TOKEN (the injection family is separate from the read family — OPE-136)"); process.exit(1); }
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) { console.error("\n✗ DATABASE_URL required (live Neon) for the pick + rotate"); process.exit(1); }
   if (!surf.slack) { console.error("\n✗ EVAL_SLACK_SURFACE required for any live run (S1/S3/S4 all use Slack)"); process.exit(1); }

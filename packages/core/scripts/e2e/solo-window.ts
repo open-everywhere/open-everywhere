@@ -12,6 +12,7 @@ import type { OperationalStore } from "../../agent/operational/store.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
+const INJECT = process.env.E2E_CONTROL_INJECT_TOKEN ?? "";
 const DB = process.env.DATABASE_URL ?? "";
 const ORG = process.env.E2E_ORG ?? "default";
 
@@ -38,7 +39,7 @@ const WIDE_HANDS = ["bash", "checkout_repo", "open_pull_request", "web_fetch", "
 const withheldStanding = new Set(withheldFromGrain("standing"));
 
 const { results, record } = createRecorder();
-const injectRaw = createInjector(TARGET, READ);
+const injectRaw = createInjector(TARGET, INJECT);
 const { rowsSince, readFailed } = createAuditReader(TARGET, READ, { onError: "swallow" });
 
 function originFor(surfaceKey: string): Record<string, unknown> {
@@ -331,9 +332,9 @@ async function main(): Promise<void> {
   console.log(`  solo windows: ${SOLO_SURFACES.join(" | ")}`);
   console.log(`  control (cross-surface): ${CTRL_DOMAIN} → ${CTRL_SLACK} | ${CTRL_GITHUB}`);
   const ids = ["W1", "W2", "W2N", "W3", "W4", "W5"];
-  if (!TARGET || !READ) {
-    console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN — cannot drive any route.");
-    for (const id of ids) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN");
+  if (!TARGET || !READ || !INJECT) {
+    console.error("\nMISSING E2E_TARGET_URL and/or E2E_CONTROL_READ_TOKEN and/or E2E_CONTROL_INJECT_TOKEN — cannot drive any route.");
+    for (const id of ids) if (want(id)) record(id, "SKIP", "no E2E_TARGET_URL / E2E_CONTROL_READ_TOKEN / E2E_CONTROL_INJECT_TOKEN");
     return summary();
   }
 
