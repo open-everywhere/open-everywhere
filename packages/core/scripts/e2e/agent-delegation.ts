@@ -1,6 +1,7 @@
 import {
   sleep, dS, makeWant, createRecorder, createInjector, createAuditReader, readToolCalls,
 } from "./window-harness.js";
+import { classifyT1bSpawnedOutcome } from "./agent-delegation-classify.js";
 
 const TARGET = (process.env.E2E_TARGET_URL ?? "").replace(/\/+$/, "");
 const READ = process.env.E2E_CONTROL_READ_TOKEN ?? "";
@@ -13,6 +14,7 @@ const POLL_MS = 4000;
 const want = makeWant(process.env.AGENT_DELEG_ONLY);
 
 const { results, record } = createRecorder();
+const degradedIds: string[] = [];
 
 const slackOrigin = { platform: "slack" as const, channelId: CHANNEL_ID };
 
@@ -61,9 +63,10 @@ async function t1aAsync(): Promise<void> {
 
 async function t1bSync(): Promise<void> {
   const since = new Date().toISOString();
+  const startedAt = Date.now();
   const { wakeId } = await inject({ domain: DOMAIN, platform: "slack", surfaceKey: SURFACE, addressing: "direct-mention", mention: true, author: "tester", origin: slackOrigin, text: SYNC_BRIEF });
   console.log(`  T1b injected standing window wake ${wakeId}`);
-  const deadline = Date.now() + TIMEOUT_MS;
+  const deadline = startedAt + TIMEOUT_MS;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     const rows = await rowsSince(since);
@@ -91,16 +94,18 @@ async function t1bSync(): Promise<void> {
   const rows = await rowsSince(since);
   const spawn = rows.find((r) => r.action === "task.spawned" && (dS(r, "parentWakeId") === wakeId || dS(r, "wakeId") === wakeId));
   if (spawn) {
-    const taskId = dS(spawn, "taskId");
-    const returned = taskId ? rows.find((r) => r.action === "task.returned" && dS(r, "taskId") === taskId) : undefined;
-    if (returned) {
-      if (returned.detail?.hasError === true) {
-        return record("T1b", "FAIL", `agent(sync) worker for task ${taskId} RETURNED WITH AN ERROR (task.returned hasError=true) — the delegated work itself failed; read the worker transcript.`);
-      }
-      const delivered = returned.detail?.delivered === true;
-      return record("T1b", "PASS", `agent(sync) delegated and the worker RETURNED (task.returned${delivered ? " delivered=true" : ", delivered=false — pushed via the F1 recovery reader on the caller's next wake"}, task ${taskId}). The mechanism ran end-to-end; the inline reply exceeded ${TIMEOUT_MS}ms — the worker's whole session (dispatch, boot, its own model turns, return) does not fit the sync budget — so sync degraded to async: the documented MAX_WAIT fallback, not a failure. Raise AGENT_DELEG_TIMEOUT_MS to observe the inline reply.`);
-    }
-    return record("T1b", "FAIL", `agent(sync) SPAWNED a worker (task ${taskId}) but it NEVER returned (no task.returned row) within ${TIMEOUT_MS}ms — the worker session hung or failed. This is a real regression, not reply latency or model choice; read the worker transcript.`);
+    const taskId = dS(spawn, "taskId") ?? "?";
+    const returned = taskId !== "?" ? rows.find((r) => r.action === "task.returned" && dS(r, "taskId") === taskId) : undefined;
+    const outcome = classifyT1bSpawnedOutcome({
+      taskId,
+      returned: !!returned,
+      returnedHasError: returned?.detail?.hasError === true,
+      returnedDelivered: returned?.detail?.delivered === true,
+      timeoutMs: TIMEOUT_MS,
+      observedMs: Date.now() - startedAt,
+    });
+    if (outcome.degraded) degradedIds.push("T1b");
+    return record("T1b", outcome.status, outcome.detail);
   }
   record("T1b", "SKIP", `no reply and no task.spawned row for wake ${wakeId} within ${TIMEOUT_MS}ms — the seat did not complete a turn (model-dependent / flag off).${auditReadFailed() ? " NOTE: at least one audit READ failed during the poll — this SKIP may be an audit-route observability failure, not model behaviour." : ""}`);
 }
@@ -154,7 +159,10 @@ async function main(): Promise<void> {
   const pass = results.filter((r) => r.status === "PASS").length;
   const skip = results.filter((r) => r.status === "SKIP").length;
   const fail = results.filter((r) => r.status === "FAIL").length;
-  console.log(`\n──────\nagent-delegation: ${pass} PASS, ${skip} SKIP, ${fail} FAIL`);
+  const degradeNote = degradedIds.length > 0
+    ? ` — ⚠ ${degradedIds.length} DEGRADED (${degradedIds.join(",")}): passed via the absorb-a-timeout path, not by observing the asserted behaviour. See the per-route detail above.`
+    : "";
+  console.log(`\n──────\nagent-delegation: ${pass} PASS, ${skip} SKIP, ${fail} FAIL${degradeNote}`);
   if (fail > 0) process.exit(1);
 }
 
