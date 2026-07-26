@@ -101,15 +101,6 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: Ro
       return { token: existing.token, generation: existing.generation, freshGeneration: fresh, handoffNote: existing.handoffNote, ...(fresh ? {} : { lastWakeAt: existing.lastWakeAt }) };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, notionGrainFor(surfaceKey).registryKey, atIso),
-    async forceRotate(surfaceKey, pageId, atIso) {
-      const grain = notionGrainFor(surfaceKey);
-      const existing = await store.getChannelSession(org, grain.registryKey);
-      const gen = (existing?.generation ?? 0) + 1;
-      const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => notionSupervisorToken(pageId, gen)), atIso);
-      return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
-    },
-    audit: (action, detail) =>
-      appendAudit({ org, platform: "notion", workspace: typeof detail.workspaceId === "string" ? detail.workspaceId : "unknown", surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     memoryDelta: liveMemoryDeltaDep(org, surfaceKey),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, state, window }) {

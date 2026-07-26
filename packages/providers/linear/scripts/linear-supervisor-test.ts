@@ -185,37 +185,23 @@ interface WakeCapture { token: string; message: string; context: readonly string
 
 ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young generation is NOT rotated");
 
-{
+for (const [label, err] of [
+  ["a gateway blip", new Error("transient network blip")],
+  ["an eve session-limit-shaped error", new Error("SESSION_TOKEN_LIMIT_REACHED")],
+] as const) {
   const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: false, handoffNote: null };
-  const audits: string[] = [];
-  let forced = false;
+  let touched = false;
   const wakes: WakeCapture[] = [];
-  let first = true;
   const deps: LinearSupervisorDeps = {
     getOrCreateSession: async () => session,
-    forceRotate: async () => { forced = true; return { token: linearSupervisorToken(TEAM, 2), generation: 2, handoffNote: "carried over" }; },
-    audit: async (a) => { audits.push(a); },
+    touchSession: async () => { touched = true; },
     now: NOW,
-    wake: async (w) => {
-      if (first) { first = false; throw new Error("SESSION_TOKEN_LIMIT_REACHED"); }
-      wakes.push({ token: w.token, message: w.message, context: w.context });
-    },
+    wake: async (w) => { wakes.push({ token: w.token, message: w.message, context: w.context }); throw err; },
   };
-  await handleLinearSupervisorDispatch(dispatch(), deps);
-  ok(forced && audits.includes("linear.session_terminal_death"), "terminal death -> audited force-rotate");
-  ok(wakes.length === 1 && wakes[0]!.token === linearSupervisorToken(TEAM, 2), "the trigger is re-delivered ONCE to the fresh generation");
-}
-
-{
-  const session: LinearSupervisorSession = { token: linearSupervisorToken(TEAM, 1), generation: 1, freshGeneration: false, handoffNote: null };
-  const deps: LinearSupervisorDeps = {
-    getOrCreateSession: async () => session,
-    forceRotate: async () => { throw new Error("should not be called"); },
-    now: NOW,
-    wake: async () => { throw new Error("transient network blip"); },
-  };
-  await assert.rejects(() => handleLinearSupervisorDispatch(dispatch(), deps), /transient network blip/, "a transient (non-terminal) wake error propagates");
+  await assert.rejects(() => handleLinearSupervisorDispatch(dispatch(), deps), /transient network blip|SESSION_TOKEN_LIMIT_REACHED/, `${label} propagates out of the dispatch`);
   passed++;
+  ok(wakes.length === 1, `${label}: exactly one wake attempt (no retry, no rotate-and-redeliver)`);
+  ok(!touched, `${label}: the session is NOT touched`);
 }
 
 {

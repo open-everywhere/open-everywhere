@@ -9,7 +9,6 @@ import {
   shouldRotate,
   renderWake,
   mkMessageTrigger,
-  classifySessionSendError,
   supervisorGrainFor,
   unifiedSupervisorToken,
   grainUsesUnifiedWindow,
@@ -769,21 +768,7 @@ async function divertDiscordWakeToUnifiedWindow(input: {
     });
   };
 
-  try {
-    await doWake(session.token, session.generation, session.fresh ? session.handoffNote : undefined);
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal") throw err;
-    await appendAudit({
-      org,
-      platform: "discord",
-      workspace: msg.guildId ?? "unknown",
-      surface: input.partition.surfaceKey,
-      action: "discord.session_terminal_death",
-      detail: { token: session.token, generation: session.generation },
-    }).catch(() => undefined);
-    const row = await store.rotateChannelSession(org, grain.registryKey, tokenFor(session.generation + 1), atIso);
-    await doWake(row.token, row.generation, row.handoffNote);
-  }
+  await doWake(session.token, session.generation, session.fresh ? session.handoffNote : undefined);
   await store.touchChannelSession(org, grain.registryKey, atIso).catch(() => undefined);
 }
 

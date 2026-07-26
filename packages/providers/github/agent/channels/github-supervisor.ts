@@ -2,7 +2,6 @@ import {
   renderWake,
   mkMessageTrigger,
   shouldRotate,
-  classifySessionSendError,
   singleWindowMentionPolicy,
   type NormalizedWake,
   type WakeEngagementTier,
@@ -188,7 +187,6 @@ export interface GitHubSupervisorSession {
 export interface GitHubSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, owner: string, repo: string, atIso: string) => Promise<GitHubSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
-  readonly forceRotate?: (surfaceKey: string, owner: string, repo: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly wake: (input: {
     token: string;
     auth: OpenEverywhereGitHubAuth;
@@ -196,7 +194,6 @@ export interface GitHubSupervisorDeps {
     context: readonly string[];
     window?: UnifiedWindowWake;
   }) => Promise<void>;
-  readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -236,14 +233,7 @@ export async function handleGitHubSupervisorDispatch(d: GitHubSupervisorDispatch
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
-  try {
-    await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal" || !deps.forceRotate) throw err;
-    if (deps.audit) await deps.audit("github.session_terminal_death", { surfaceKey: d.surfaceKey, token: session.token, generation: session.generation });
-    const fresh = await deps.forceRotate(d.surfaceKey, d.owner, d.repo, atIso);
-    await doWake(fresh.token, fresh.generation, fresh.handoffNote);
-  }
+  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
 }
 

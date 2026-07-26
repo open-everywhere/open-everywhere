@@ -218,8 +218,6 @@ export { silentRoutineThisTurn, markSilentRoutineTurn, SILENT_ROUTINE_DROP_REASO
 
 export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 
-export { classifySessionSendError } from "./channels/session-death.js";
-
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
 export { isVouchedInternal, isVouchedSurface } from "./identity/trust.js";
 

@@ -146,15 +146,6 @@ function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAm
       return { token: existing.token, generation: existing.generation, freshGeneration: existing.firstWakeAt == null, handoffNote: existing.handoffNote };
     },
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
-    async forceRotate(surfaceKey, owner, repo, atIso) {
-      const grain = githubGrainFor(surfaceKey);
-      const existing = await store.getChannelSession(org, grain.registryKey);
-      const gen = (existing?.generation ?? 0) + 1;
-      const row = await store.rotateChannelSession(org, grain.registryKey, mintRotationToken(grain, gen, () => githubSupervisorToken(owner, repo, gen)), atIso);
-      return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
-    },
-    audit: (action, detail) =>
-      appendAudit({ org, platform: "github", workspace: ev.owner, surface: typeof detail.surfaceKey === "string" ? detail.surfaceKey : undefined, action, detail }),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
       if (window && receive) {

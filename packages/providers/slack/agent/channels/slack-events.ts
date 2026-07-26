@@ -30,7 +30,6 @@ import {
   markSurfaceOnboarded,
   registerGovernanceMemberSupplier,
   consumeNoReplyThisTurn,
-  classifySessionSendError,
   generateHandoffNote,
   renderWake,
   mkMessageTrigger,
@@ -322,7 +321,6 @@ export interface MessageRouteDeps {
   readonly confirmInternal?: (channelId: string) => Promise<boolean>;
   readonly disengage?: (p: Partition, threadTs: string) => Promise<boolean>;
   readonly stopAck?: (channelId: string, threadTs: string) => Promise<void>;
-  readonly deathNotice?: (channelId: string, threadTs: string) => Promise<void>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly resolveProfile?: ResolveProfile;
 }
@@ -398,26 +396,18 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
     surfaceInternal: internal,
     channelKey: domainKeyOf(p),
   });
-  try {
-    await deps.wake({
-      channelId: ev.channelId,
-      threadTs: ev.threadTs!,
-      auth,
-      message: renderWakeMessage(ev, deps.now, {
-        trust: wakeTrust,
-        triggerAuthorName: trigger.authorName,
-        triggerAuthorHandle: trigger.authorHandle,
-        participants: names.participants,
-      }),
-      state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
-    });
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal") throw err;
-    if (deps.disengage) await deps.disengage(p, ev.threadTs!);
-    if (deps.audit) await deps.audit("session.terminal_death", { surfaceKey: p.surfaceKey, threadTs: ev.threadTs });
-    if (deps.deathNotice) await deps.deathNotice(ev.channelId, ev.threadTs!);
-    return { deliver: false, reason: "terminal session death — thread disengaged", woke: false };
-  }
+  await deps.wake({
+    channelId: ev.channelId,
+    threadTs: ev.threadTs!,
+    auth,
+    message: renderWakeMessage(ev, deps.now, {
+      trust: wakeTrust,
+      triggerAuthorName: trigger.authorName,
+      triggerAuthorHandle: trigger.authorHandle,
+      participants: names.participants,
+    }),
+    state: wakeState(ev, ev.threadTs!, { oeUninvited: uninvited }),
+  });
   if (deps.touch) await deps.touch(p, ev.threadTs!, deps.now ? deps.now() : new Date().toISOString());
   return { ...decision, woke: true };
 }
@@ -437,10 +427,6 @@ function wakeState(ev: ParsedMessageEvent, threadTs: string, extra?: Record<stri
   };
 }
 
-export const SESSION_DEATH_NOTICE_COPY =
-  "⚠️ This conversation has reached its session size limit and can't continue in this thread. " +
-  "Please start a fresh thread (or @mention me on a new message) and I'll pick things up from there.";
-
 async function appendRouteAudit(surfaceKey: string, action: string, detail: Record<string, unknown>): Promise<void> {
   try {
     const [platform = "slack", workspace = "", surface = ""] = surfaceKey.split("/");
@@ -450,7 +436,7 @@ async function appendRouteAudit(surfaceKey: string, action: string, detail: Reco
     } as Parameters<typeof resolvePartition>[0]).org;
     await getOperationalStore().appendAudit({ ts: new Date().toISOString(), org, platform, workspace, surface, action, detail });
   } catch (err) {
-    console.warn(`[open-everywhere:slack] terminal-death audit write failed: ${String(err)}`);
+    console.warn(`[open-everywhere:slack] route audit write failed: ${String(err)}`);
   }
 }
 
@@ -570,15 +556,6 @@ export function liveDeps(send: WakeSend): MessageRouteDeps {
     resolveProfile: liveResolveProfile,
     disengage: (p, threadTs) => disengageThread(p, threadTs),
     stopAck: (channelId, threadTs) => postSlackStopAck(channelId, threadTs),
-    async deathNotice(channelId, threadTs) {
-      try {
-        await slackForm(
-          "chat.postMessage",
-          `channel=${encodeURIComponent(channelId)}&thread_ts=${encodeURIComponent(threadTs)}&text=${encodeURIComponent(SESSION_DEATH_NOTICE_COPY)}`,
-        );
-      } catch {
-      }
-    },
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     async wake({ channelId, threadTs, auth, message, state }) {
       await send({ message }, { auth, continuationToken: slackContinuationToken(channelId, threadTs), state });
@@ -1030,7 +1007,6 @@ export interface SupervisorRouteDeps {
     channelKey?: string;
   }) => Promise<readonly WakeMessageInput[]>;
   readonly wake: (input: { token: string; auth: unknown; message: string; state: unknown; window?: UnifiedWindowWake }) => Promise<void>;
-  readonly forceRotate?: (org: string, surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly markEngaged?: (p: Partition, threadTs: string, atIso: string) => Promise<void>;
   readonly getEngagement?: (p: Partition, threadTs: string) => Promise<EngagementRow | null>;
@@ -1160,19 +1136,7 @@ export async function routeSupervisorEvent(
     });
   };
 
-  try {
-    await doWake(session.token, session.generation, backscroll, session.freshGeneration ? session.handoffNote : undefined);
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal" || !deps.forceRotate) throw err;
-    if (deps.audit) await deps.audit("session.terminal_death", { surfaceKey: p.surfaceKey, token: session.token, generation: session.generation });
-    const fresh = await deps.forceRotate(p.org, p.surfaceKey, ev.channelId, atIso);
-    const freshBackscroll = deps.fetchBackscroll
-      ? await deps.fetchBackscroll({ channelId: ev.channelId, ts: ev.ts, surfaceInternal: internal, channelKey: domainKeyOf(p) }).catch(() => [] as readonly WakeMessageInput[])
-      : [];
-    await doWake(fresh.token, fresh.generation, freshBackscroll, fresh.handoffNote);
-    if (deps.touchSession) await deps.touchSession(p.org, p.surfaceKey, atIso);
-    return { ...decision, woke: true, reason: "terminal session death — force-rotated + redelivered" };
-  }
+  await doWake(session.token, session.generation, backscroll, session.freshGeneration ? session.handoffNote : undefined);
   if (deps.touchSession) await deps.touchSession(p.org, p.surfaceKey, atIso);
   return { ...decision, woke: true };
 }
@@ -1226,12 +1190,6 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
         undefined,
         backscrollTrustResolver({ surfaceInternal: input.surfaceInternal, channelKey: input.channelKey }),
       ),
-    async forceRotate(org, surfaceKey, channelId, atIso) {
-      const grain = grainFor(surfaceKey);
-      const existing = await getOperationalStore().getChannelSession(org, grain.registryKey);
-      const row = await rotateWithHandoff(org, surfaceKey, channelId, atIso, existing, grain);
-      return { token: row.token, generation: row.generation, handoffNote: row.handoffNote };
-    },
     audit: (action, detail) => appendRouteAudit(typeof detail.surfaceKey === "string" ? detail.surfaceKey : "slack//", action, detail),
     getEngagement: (p, threadTs) => getThreadEngagement(p, threadTs),
     markStopped: (p, threadTs) => markThreadStopped(p, threadTs),

@@ -2,7 +2,6 @@ import {
   renderWake,
   mkMessageTrigger,
   shouldRotate,
-  classifySessionSendError,
   type NormalizedWake,
   type WakeEngagementTier,
   type ContextLine,
@@ -201,7 +200,6 @@ export interface LinearSupervisorSession {
 export interface LinearSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, teamId: string, atIso: string) => Promise<LinearSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
-  readonly forceRotate?: (surfaceKey: string, teamId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly wake: (input: {
     token: string;
     auth: OpenEverywhereLinearAuth;
@@ -209,7 +207,6 @@ export interface LinearSupervisorDeps {
     context: readonly string[];
     window?: UnifiedWindowWake;
   }) => Promise<void>;
-  readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly memoryDelta?: (sinceIso: string, atIso: string, selfKey?: string) => Promise<string | null>;
   readonly now?: () => string;
 }
@@ -262,14 +259,7 @@ export async function handleLinearSupervisorDispatch(d: LinearSupervisorDispatch
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
-  try {
-    await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal" || !deps.forceRotate) throw err;
-    if (deps.audit) await deps.audit("linear.session_terminal_death", { surfaceKey: d.surfaceKey, token: session.token, generation: session.generation });
-    const fresh = await deps.forceRotate(d.surfaceKey, d.teamId, atIso);
-    await doWake(fresh.token, fresh.generation, fresh.handoffNote);
-  }
+  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
 }
 

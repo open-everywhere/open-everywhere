@@ -1,3 +1,4 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
 
 import assert from "node:assert/strict";
@@ -75,7 +76,7 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
     "formatSessionTokenLimitMessage still formats `The session reached its configured <kind> token limit.`",
   );
 
-  ok(!mod.includes("n_REACHED"), "the 0.22.x `n_REACHED` minifier artifact is absent from this dist (why session-death.ts's third pattern was removed)");
+  ok(!mod.includes("n_REACHED"), "the 0.22.x `n_REACHED` minifier artifact is absent from this dist (why the classifier's third pattern was removed in OPE-171)");
 }
 
 {

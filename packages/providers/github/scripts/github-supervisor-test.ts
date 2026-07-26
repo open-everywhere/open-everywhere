@@ -189,39 +189,23 @@ interface WakeCapture { token: string; message: string; context: readonly string
 ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
 ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: a stale (quiet-gap) generation rotates");
 
-{
+for (const [label, err] of [
+  ["a gateway blip", new Error("transient network blip")],
+  ["an eve session-limit-shaped error", new Error("SESSION_TOKEN_LIMIT_REACHED")],
+] as const) {
   const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: false, handoffNote: null };
-  const audits: string[] = [];
-  let forced = false;
+  let touched = false;
   const wakes: WakeCapture[] = [];
-  let first = true;
   const deps: GitHubSupervisorDeps = {
     getOrCreateSession: async () => session,
-    forceRotate: async () => { forced = true; return { token: githubSupervisorToken(OWNER, REPO, 2), generation: 2, handoffNote: "carried over" }; },
-    audit: async (a) => { audits.push(a); },
+    touchSession: async () => { touched = true; },
     now: NOW,
-    wake: async (w) => {
-      if (first) { first = false; throw new Error("SESSION_TOKEN_LIMIT_REACHED"); }
-      wakes.push({ token: w.token, message: w.message, context: w.context });
-    },
+    wake: async (w) => { wakes.push({ token: w.token, message: w.message, context: w.context }); throw err; },
   };
-  await handleGitHubSupervisorDispatch(dispatch(), deps);
-  ok(forced, "terminal death -> force-rotate to a fresh generation");
-  ok(audits.includes("github.session_terminal_death"), "terminal death is audited");
-  ok(wakes.length === 1 && wakes[0]!.token === githubSupervisorToken(OWNER, REPO, 2), "the trigger is re-delivered ONCE to the fresh generation (never lost)");
-  ok(wakes[0]!.message.includes("carried over"), "the re-delivered wake carries the fresh generation's handoff note");
-}
-
-{
-  const session: GitHubSupervisorSession = { token: githubSupervisorToken(OWNER, REPO, 1), generation: 1, freshGeneration: false, handoffNote: null };
-  const deps: GitHubSupervisorDeps = {
-    getOrCreateSession: async () => session,
-    forceRotate: async () => { throw new Error("should not be called"); },
-    now: NOW,
-    wake: async () => { throw new Error("transient network blip"); },
-  };
-  await assert.rejects(() => handleGitHubSupervisorDispatch(dispatch(), deps), /transient network blip/, "a transient (non-terminal) wake error propagates");
+  await assert.rejects(() => handleGitHubSupervisorDispatch(dispatch(), deps), /transient network blip|SESSION_TOKEN_LIMIT_REACHED/, `${label} propagates out of the dispatch`);
   passed++;
+  ok(wakes.length === 1, `${label}: exactly one wake attempt (no retry, no rotate-and-redeliver)`);
+  ok(!touched, `${label}: the session is NOT touched`);
 }
 
 {

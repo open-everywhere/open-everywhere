@@ -1,7 +1,6 @@
 import {
   renderWake,
   mkMessageTrigger,
-  classifySessionSendError,
   mintWakeId,
   singleWindowMentionPolicy,
   type NormalizedWake,
@@ -123,9 +122,7 @@ export interface TeamsSupervisorSession {
 export interface TeamsSupervisorDeps {
   readonly getOrCreateSession: (surfaceKey: string, channelId: string, atIso: string) => Promise<TeamsSupervisorSession>;
   readonly touchSession?: (surfaceKey: string, atIso: string) => Promise<void>;
-  readonly forceRotate?: (surfaceKey: string, channelId: string, atIso: string) => Promise<{ token: string; generation: number; handoffNote: string | null }>;
   readonly wake: (input: { token: string; auth: OpenEverywhereTeamsAuth; message: string; context: readonly string[]; window: UnifiedWindowWake }) => Promise<void>;
-  readonly audit?: (action: string, detail: Record<string, unknown>) => Promise<void>;
   readonly now?: () => string;
 }
 
@@ -158,13 +155,6 @@ export async function handleTeamsSingleWindowDispatch(d: TeamsSupervisorDispatch
     await deps.wake({ token, auth: d.auth, message, context: context ?? [], window: d.window });
   };
 
-  try {
-    await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
-  } catch (err) {
-    if (classifySessionSendError(err) !== "terminal" || !deps.forceRotate) throw err;
-    if (deps.audit) await deps.audit("teams.session_terminal_death", { surfaceKey: d.surfaceKey, token: session.token, generation: session.generation });
-    const fresh = await deps.forceRotate(d.surfaceKey, d.channelId, atIso);
-    await doWake(fresh.token, fresh.generation, fresh.handoffNote);
-  }
+  await doWake(session.token, session.generation, session.freshGeneration ? session.handoffNote : undefined);
   if (deps.touchSession) await deps.touchSession(d.surfaceKey, atIso);
 }
