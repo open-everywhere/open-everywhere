@@ -13,6 +13,8 @@ export interface ParsedCron {
 
 const MIN = 60_000;
 
+export const DISPATCH_TICK_MINUTES = 10;
+
 function field(values: ReadonlySet<number>, star: boolean): CronField {
   return { star, has: (n) => star || values.has(n) };
 }
@@ -94,15 +96,24 @@ type Trigger =
   | { kind: "once"; at: string }
   | { kind: "event"; source: string; match?: Record<string, string> };
 
-export function computeNextRun(trigger: Trigger, from: Date): Date | null {
+function nextIntervalAfter(anchor: Date, everyMinutes: number, notBefore: Date): Date {
+  const period = Math.max(1, everyMinutes) * MIN;
+  const base = anchor.getTime();
+  const floor = notBefore.getTime();
+  if (base + period > floor) return new Date(base + period);
+  return new Date(base + (Math.floor((floor - base) / period) + 1) * period);
+}
+
+export function computeNextRun(trigger: Trigger, from: Date, notBefore: Date = from): Date | null {
+  const cronFrom = notBefore.getTime() > from.getTime() ? notBefore : from;
   switch (trigger.kind) {
     case "cron":
-      return nextCronAfter(parseCron(trigger.expr), from);
+      return nextCronAfter(parseCron(trigger.expr), cronFrom);
     case "watch":
-      if (trigger.expr !== undefined) return nextCronAfter(parseCron(trigger.expr), from);
-      return trigger.everyMinutes === undefined ? null : new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
+      if (trigger.expr !== undefined) return nextCronAfter(parseCron(trigger.expr), cronFrom);
+      return trigger.everyMinutes === undefined ? null : nextIntervalAfter(from, trigger.everyMinutes, notBefore);
     case "interval":
-      return new Date(from.getTime() + Math.max(1, trigger.everyMinutes) * MIN);
+      return nextIntervalAfter(from, trigger.everyMinutes, notBefore);
     case "once":
       return null;
     case "event":

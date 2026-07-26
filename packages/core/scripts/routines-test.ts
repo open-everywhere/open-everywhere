@@ -14,9 +14,9 @@ import {
   settleOutcome,
   shouldPostOnDiff,
   hashState,
-  gcOrphaned,
   MAX_CONSECUTIVE_FAILURES,
 } from "../agent/routines/lifecycle.js";
+import * as lifecycleModule from "../agent/routines/lifecycle.js";
 import {
   renderWatchMessage,
   applyWatchObservation,
@@ -170,13 +170,7 @@ ok(settleOutcome("ok", undefined) === "ok", "settle: an ok session with no recor
 ok(settleOutcome("ok", "ok") === "ok", "settle: a stale non-skip outcome never masks ok");
 ok(settleOutcome("failed", "skipped") === "failed", "settle: a failure always wins (even after a recorded skip)");
 
-const rs: Routine[] = [
-  { ...base, id: "a", surfaceKey: "local/dev/alpha" },
-  { ...base, id: "b", surfaceKey: "local/dev/gone" },
-];
-const gc = gcOrphaned(rs, new Set(["local/dev/alpha"]));
-ok(gc.kept.length === 1 && gc.kept[0].id === "a" && gc.removed[0].id === "b", "gc drops routines on surfaces the agent left");
-ok(gcOrphaned(rs, null).removed.length === 0, "gc with unknown membership keeps everything");
+ok(!("gcOrphaned" in lifecycleModule), "gc: the never-wired surface-removal GC is GONE, not re-exported (a tested-but-uncalled mechanism reads as evidence for a guarantee nothing enforced)");
 
 const mk = routineMarker({ [ROUTINE_MARKER.id]: "r-9", [ROUTINE_MARKER.surface]: "slack/T1/C9", [ROUTINE_MARKER.org]: "acme" });
 ok(mk?.id === "r-9" && mk.surfaceKey === "slack/T1/C9" && mk.org === "acme", "routineMarker reads id + surfaceKey + org from attributes");

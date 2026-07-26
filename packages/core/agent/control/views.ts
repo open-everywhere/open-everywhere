@@ -132,9 +132,10 @@ export interface RoutinesView {
   readonly routines: readonly RoutineRow[];
 }
 
-export async function routinesView(opts: { onlyDue?: boolean } = {}): Promise<RoutinesView> {
+export async function routinesView(opts: { onlyDue?: boolean; org?: string; surfaceKey?: string } = {}): Promise<RoutinesView> {
   const now = new Date();
-  const all = await listAllRoutines();
+  const org = opts.org ?? deploymentOrg();
+  const all = (await listAllRoutines()).filter((r) => r.org === org && (opts.surfaceKey === undefined || r.surfaceKey === opts.surfaceKey));
   const dueCount = all.filter((r) => r.status === "active" && isDue(r.nextRunAt, now)).length;
   const rows = opts.onlyDue ? all.filter((r) => r.status === "active" && isDue(r.nextRunAt, now)) : all;
   return {

@@ -4,7 +4,7 @@ import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.
 import { resolveSkillDomainDetailed, type SkillDomainRefusal } from "../skills/domain-skills.js";
 import { getOperationalStore } from "../operational/provider.js";
 import type { UsageSummaryRow } from "../operational/store.js";
-import { parseCron, cronMatches } from "../routines/schedule.js";
+import { parseCron, cronMatches, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import type { RoutineTrigger } from "../routines/routine.js";
 import { modelPricing, estimateCostUsd, soleConfiguredModel, type ModelPricing, type UsageTokens } from "./pricing.js";
 import type { BindableContext } from "../identity/binding.js";
@@ -124,16 +124,19 @@ export function pricingNote(mix: PricingMix, assumed: AssumedModelPricing): stri
   return parts.join(" ");
 }
 
+const MAX_FIRES_PER_DAY = 1440 / DISPATCH_TICK_MINUTES;
+
 function cronFiresPerDay(expr: string): number | undefined {
   try {
     const parsed = parseCron(expr);
     const start = new Date();
     start.setUTCSeconds(0, 0);
-    let count = 0;
+    const ticks = new Set<number>();
     for (let i = 0; i < 1440; i++) {
-      if (cronMatches(parsed, new Date(start.getTime() + i * 60_000))) count++;
+      const t = new Date(start.getTime() + i * 60_000);
+      if (cronMatches(parsed, t)) ticks.add(Math.floor((t.getUTCHours() * 60 + t.getUTCMinutes()) / DISPATCH_TICK_MINUTES));
     }
-    return count;
+    return ticks.size;
   } catch {
     return undefined;
   }
@@ -142,7 +145,7 @@ function cronFiresPerDay(expr: string): number | undefined {
 export function firesPerDay(trigger: RoutineTrigger): number | undefined {
   switch (trigger.kind) {
     case "interval":
-      return 1440 / Math.max(1, trigger.everyMinutes);
+      return Math.min(MAX_FIRES_PER_DAY, 1440 / Math.max(1, trigger.everyMinutes));
     case "cron":
       return cronFiresPerDay(trigger.expr);
     case "watch":

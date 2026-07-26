@@ -5,8 +5,9 @@ import { routineFireAttributes } from "../routines/fire-auth.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
+import { foldRoutineOutcome } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
-import { computeNextRun, isDue } from "../routines/schedule.js";
+import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, type Routine } from "../routines/routine.js";
 import { renderWatchMessage, renderScheduledMessage } from "../routines/watch.js";
 import { renderJobMessage } from "../routines/job.js";
@@ -93,7 +94,8 @@ export async function dispatchTick(
       deferred++;
       continue;
     }
-    const next = computeNextRun(r.trigger, now);
+    const dueAt = Date.parse(r.nextRunAt ?? "");
+    const next = computeNextRun(r.trigger, Number.isFinite(dueAt) ? new Date(dueAt) : now, now);
     const mode = dest.mode;
     try {
       const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString());
@@ -174,6 +176,21 @@ export async function dispatchTick(
         deliver().catch(async (err: unknown) => {
           log(`fire delivery failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
           await auditRoutineFireLost(r, String(err));
+          try {
+            const folded = await foldRoutineOutcome({
+              marker: { id: r.id, surfaceKey: r.surfaceKey, org: r.org },
+              sessionOutcome: "failed",
+              at: now,
+            });
+            if (folded.folded) {
+              log(
+                `delivery failure folded for ${r.id} [${r.surfaceKey}] ` +
+                  `(fails=${folded.consecutiveFailures}${folded.disabled ? ", AUTO-DISABLED" : ""})`,
+              );
+            }
+          } catch (foldErr) {
+            log(`delivery-failure fold skipped for ${r.id}: ${String(foldErr)}`);
+          }
         }),
       );
       fired++;
@@ -187,7 +204,7 @@ export async function dispatchTick(
 }
 
 export default defineSchedule({
-  cron: "*/10 * * * *",
+  cron: `*/${DISPATCH_TICK_MINUTES} * * * *`,
   async run(args: ScheduleHandlerArgs) {
     await dispatchTick(args);
   },

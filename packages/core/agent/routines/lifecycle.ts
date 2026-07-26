@@ -62,13 +62,3 @@ export function hashState(s: string): string {
   return h.toString(16).padStart(8, "0");
 }
 
-export function gcOrphaned(
-  routines: readonly Routine[],
-  liveSurfaceKeys: ReadonlySet<string> | null,
-): { kept: Routine[]; removed: Routine[] } {
-  if (liveSurfaceKeys === null) return { kept: [...routines], removed: [] };
-  const kept: Routine[] = [];
-  const removed: Routine[] = [];
-  for (const r of routines) (liveSurfaceKeys.has(r.surfaceKey) ? kept : removed).push(r);
-  return { kept, removed };
-}

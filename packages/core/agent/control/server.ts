@@ -63,10 +63,17 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     "routines_list",
     {
       title: "List routines",
-      description: "Every proactive routine across surfaces (config-as-code's routines console). onlyDue=true returns just those a tick would fire now. Read-only.",
-      inputSchema: { onlyDue: z.boolean().optional() },
+      description:
+        'Every proactive routine across one org\'s surfaces (config-as-code\'s routines console) — id, trigger, next run, status, failure count and the routine\'s full PROMPT. onlyDue=true returns just those a tick would fire now. org defaults to the deployment\'s (OE_ORG / "default"); an org-wide listing requires the org-wide "admin" role, or pass surfaceKey to scope it to one channel (a covering "domain:<name>" role is enough for that). Read-only.',
+      inputSchema: { onlyDue: z.boolean().optional(), org: z.string().min(1).optional(), surfaceKey: z.string().min(1).optional() },
     },
-    (args) => jsonTool(() => routinesView({ onlyDue: args.onlyDue }))(),
+    (args) =>
+      jsonTool(async () => {
+        const org = args.org ?? deploymentOrg();
+        const denial = scopeDenial(roles, { org, ...(args.surfaceKey ? { surfaceKey: args.surfaceKey } : {}) });
+        if (denial) throw new Error(denial);
+        return routinesView({ onlyDue: args.onlyDue, org, ...(args.surfaceKey ? { surfaceKey: args.surfaceKey } : {}) });
+      })(),
   );
 
   server.registerTool(
