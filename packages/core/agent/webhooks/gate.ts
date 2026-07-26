@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { hookSecretRefs, type WebhookHook } from "./config.js";
+import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
@@ -23,27 +24,51 @@ export interface WebhookRejection {
   readonly reason: string;
 }
 
-export function gateWebhookDelivery(args: {
+export type WebhookGateOutcome =
+  | { readonly ok: true; readonly keyIndex: number | null }
+  | { readonly ok: false; readonly rejection: WebhookRejection };
+
+export interface WebhookGateInput {
   readonly hook: WebhookHook | undefined;
   readonly secretValues: readonly string[];
-  readonly body: string;
+  readonly rawBody: string;
   readonly bodyBytes: number;
-  readonly signatureHeader: string | null;
+  readonly headers: Headers;
+  readonly nowMs: number;
   readonly allowUnverified: boolean;
   readonly maxBodyBytes: number;
-}): WebhookRejection | null {
-  const { hook, secretValues, body, bodyBytes, signatureHeader, allowUnverified, maxBodyBytes } = args;
-  if (!hook) return { status: 404, reason: "unknown webhook id" };
-  if (bodyBytes > maxBodyBytes) return { status: 413, reason: `payload exceeds ${maxBodyBytes} bytes` };
+}
+
+export async function gateWebhookDelivery(args: WebhookGateInput): Promise<WebhookGateOutcome> {
+  const { hook, secretValues, rawBody, bodyBytes, headers, nowMs, allowUnverified, maxBodyBytes } = args;
+  const reject = (status: number, reason: string): WebhookGateOutcome => ({ ok: false, rejection: { status, reason } });
+
+  if (!hook) return reject(404, "unknown webhook id");
+  if (bodyBytes > maxBodyBytes) return reject(413, `payload exceeds ${maxBodyBytes} bytes`);
+
+  const verifier = webhookVerifier(hook.source);
+  if (!verifier) {
+    const registered = registeredWebhookVerifierSources();
+    return reject(
+      401,
+      `no verifier registered for webhook source ${JSON.stringify(hook.source)} — registered sources: ${registered.length ? registered.join(", ") : "(none)"}. ` +
+        `Refusing to authenticate with another source's scheme (fail closed).`,
+    );
+  }
+
   const keys = secretValues.filter((k) => k);
   if (keys.length === 0) {
     const currentRef = hookSecretRefs(hook)[0] ?? "(none)";
     return allowUnverified
-      ? null
-      : {
-          status: 401,
-          reason: `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
-        };
+      ? { ok: true, keyIndex: null }
+      : reject(401, `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`);
   }
-  return keys.some((k) => verifyWebhookSignature(k, body, signatureHeader)) ? null : { status: 401, reason: "invalid signature" };
+
+  let verdict;
+  try {
+    verdict = await verifier.verify({ rawBody, headers, keys, nowMs });
+  } catch (err) {
+    return reject(401, `verifier for source ${JSON.stringify(hook.source)} THREW — rejecting (fail closed): ${String(err instanceof Error ? err.message : err)}`);
+  }
+  return verdict.ok ? { ok: true, keyIndex: verdict.keyIndex } : reject(401, `invalid signature (${verdict.failure})`);
 }

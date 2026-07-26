@@ -259,6 +259,15 @@ export type { OeCommand } from "./commands/core.js";
 
 export { verifyWebhookSignature } from "./webhooks/gate.js";
 
+export {
+  registerWebhookVerifier,
+  webhookVerifier,
+  registeredWebhookVerifierSources,
+  registeredWebhookVerifiers,
+  resetWebhookVerifiersForTest,
+} from "./webhooks/verifier.js";
+export type { WebhookVerifier, WebhookVerifyInput, WebhookVerdict, WebhookVerifyFailure } from "./webhooks/verifier.js";
+
 export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
 
 export { nameDropWakeEnabled } from "./memory/domain.js";
@@ -390,7 +399,7 @@ export type { EntityActionAdapter, EntityRef, EntityVerb } from "./channels/enti
 export { registerTicketCreateAdapter } from "./channels/ticket-create.js";
 export type { TicketCreateAdapter, TicketCreateFn, TicketDestination, TicketDraft, CreatedTicket } from "./channels/ticket-create.js";
 
-export { gateGithubDelivery } from "./routines/events.js";
+export { gateGithubDelivery, verifyGithubSignature } from "./routines/events.js";
 export { fanOutGitHubDelivery } from "./routines/github-fanout.js";
 
 export { registerRoutineDispatch } from "./schedules/routine-dispatch.js";

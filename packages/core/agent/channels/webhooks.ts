@@ -2,6 +2,7 @@ import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { gateWebhookDelivery, webhookMaxBodyBytes, type WebhookRejection } from "../webhooks/gate.js";
+import "../webhooks/oe-hmac.js";
 import { resolveHookKeys } from "../webhooks/secrets.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
 import { auditWebhookRejection } from "../webhooks/reject-audit.js";
@@ -15,9 +16,10 @@ async function auditRejection(id: string, hook: WebhookHook | undefined, rejecti
   await auditWebhookRejection(id, hook, rejection);
 }
 
-async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArgs["receive"]): Promise<void> {
+async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArgs["receive"], keyIndex: number | null): Promise<void> {
   const result = await fireWebhook(hook, body, { receive });
   const [, teamId, channelId] = hook.target.split("/");
+  const previousKey = keyIndex !== null && keyIndex > 0;
   await appendAudit({
     org: webhookOrg(),
     platform: "slack",
@@ -25,8 +27,15 @@ async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArg
     surface: channelId,
     principalId: `webhook:${hook.id}`,
     action: result.fired ? "webhook.fired" : "webhook.declined",
-    detail: { hookId: hook.id, bytes: Buffer.byteLength(body, "utf8"), ...(result.reason ? { reason: result.reason } : {}) },
+    detail: {
+      hookId: hook.id,
+      source: hook.source,
+      bytes: Buffer.byteLength(body, "utf8"),
+      ...(previousKey ? { keyIndex, previousKey: true } : {}),
+      ...(result.reason ? { reason: result.reason } : {}),
+    },
   });
+  if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);
   log(`"${hook.id}": ${result.fired ? "fired" : `declined (${result.reason})`}`);
 }
 
@@ -49,23 +58,25 @@ export default defineChannel({
       const body = await req.text();
       const bodyBytes = Buffer.byteLength(body, "utf8");
       const secretValues = hook ? await resolveHookKeys(hook) : [];
-      const rejection = gateWebhookDelivery({
+      const outcome = await gateWebhookDelivery({
         hook,
         secretValues,
-        body,
+        rawBody: body,
         bodyBytes,
-        signatureHeader: req.headers.get("x-hook-signature-256"),
+        headers: req.headers,
+        nowMs: Date.now(),
         allowUnverified: process.env.OE_ALLOW_UNVERIFIED_WEBHOOK === "1",
         maxBodyBytes,
       });
-      if (rejection) {
+      if (!outcome.ok) {
+        const { rejection } = outcome;
         log(`webhook "${id}" rejected (${rejection.status}): ${rejection.reason}`);
         waitUntil(auditRejection(id, hook, rejection));
         return new Response(rejection.reason, { status: rejection.status });
       }
 
       log(`webhook "${id}" accepted (${bodyBytes} bytes) — firing`);
-      waitUntil(deliver(hook!, body, receive));
+      waitUntil(deliver(hook!, body, receive, outcome.keyIndex));
       return new Response("ok", { status: 200 });
     }),
   ],

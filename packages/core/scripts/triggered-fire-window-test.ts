@@ -279,6 +279,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   const { fireWebhook } = await import("../agent/webhooks/dispatch.js");
   const hook = defineWebhook({
     id: "deploy-status",
+    source: "oe-hmac",
     secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
     broker: "env",
     target: SURFACE,
@@ -312,6 +313,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 
   const dmHook = defineWebhook({
     id: "dm-hook",
+    source: "oe-hmac",
     secretRef: "DM_HOOK_SECRET",
     broker: "env",
     target: "slack/T_FIRE/D_ALICE",

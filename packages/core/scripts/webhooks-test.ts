@@ -19,6 +19,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
 
 const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs } = await import("../agent/webhooks/config.js");
+const { oeHmacSignature, OE_HMAC_SOURCE, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } = await import("../agent/webhooks/oe-hmac.js");
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackTestBridge();
 const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes } = await import("../agent/webhooks/gate.js");
@@ -28,6 +29,7 @@ const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrus
 
 const goodHook = defineWebhook({
   id: "deploy-status",
+  source: OE_HMAC_SOURCE,
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
   broker: "env",
   target: "slack/T1/C1",
@@ -47,6 +49,9 @@ ok(!throws(() => assertWebhooksValid([goodHook])), "a well-formed hook passes va
 ok(throws(() => assertWebhooksValid([goodHook, goodHook])), "duplicate hook id is rejected");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, id: "" }])), "empty id is rejected");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, id: "bad id!" }])), "non-url-safe id is rejected");
+ok(throws(() => assertWebhooksValid([{ ...goodHook, source: "" }])), "a missing source is rejected — every hook names the scheme its sender signs with, there is no default");
+ok(throws(() => assertWebhooksValid([{ ...goodHook, source: "   " }])), "a blank source is rejected");
+ok(!throws(() => assertWebhooksValid([{ ...goodHook, source: "github" }])), "a VENDOR source is valid config — whether it RESOLVES is checked at delivery, not at import (verifiers register at startup)");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: "" }])), "a blank secretRef string is rejected");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: [] }])), "an EMPTY secretRef list is rejected (a hook with no key can never authenticate anything)");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, secretRef: ["A", "  "] }])), "a blank entry INSIDE a secretRef list is rejected");
@@ -84,62 +89,71 @@ ok(webhookMaxBodyBytes() === defaultMax, "a non-numeric override falls back to t
 delete process.env.OE_WEBHOOK_MAX_BODY_BYTES;
 
 const maxBodyBytes = 1024;
+const nowMs = Date.parse("2026-03-30T11:30:00.000Z");
+const ts = String(Math.floor(nowMs / 1000));
+const signedFor = (key: string, rawBody = body, timestamp = ts): Headers =>
+  new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: timestamp, [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(key, timestamp, rawBody) });
+
 const baseArgs = {
   hook: goodHook,
   secretValues: [secret],
-  body,
+  rawBody: body,
   bodyBytes: Buffer.byteLength(body, "utf8"),
-  signatureHeader: good,
+  headers: signedFor(secret),
+  nowMs,
   allowUnverified: false,
   maxBodyBytes,
 };
 
-ok(gateWebhookDelivery(baseArgs) === null, "configured secret + valid signature -> accepted");
+ok((await gateWebhookDelivery(baseArgs)).ok, "configured secret + valid signature -> accepted");
 
-const unknownId = gateWebhookDelivery({ ...baseArgs, hook: undefined });
-ok(unknownId !== null && unknownId.status === 404, "unknown hook id -> 404 (not 401 — nothing to authenticate against)");
+const unknownId = await gateWebhookDelivery({ ...baseArgs, hook: undefined });
+ok(!unknownId.ok && unknownId.rejection.status === 404, "unknown hook id -> 404 (not 401 — nothing to authenticate against)");
 
-const oversized = gateWebhookDelivery({ ...baseArgs, bodyBytes: maxBodyBytes + 1 });
-ok(oversized !== null && oversized.status === 413, "oversized payload -> 413");
+const oversized = await gateWebhookDelivery({ ...baseArgs, bodyBytes: maxBodyBytes + 1 });
+ok(!oversized.ok && oversized.rejection.status === 413, "oversized payload -> 413");
 
-const oversizedUnknown = gateWebhookDelivery({ ...baseArgs, hook: undefined, bodyBytes: maxBodyBytes + 1 });
-ok(oversizedUnknown !== null && oversizedUnknown.status === 404, "an unknown id is rejected as 404 even when also oversized (id checked first)");
+const oversizedUnknown = await gateWebhookDelivery({ ...baseArgs, hook: undefined, bodyBytes: maxBodyBytes + 1 });
+ok(!oversizedUnknown.ok && oversizedUnknown.rejection.status === 404, "an unknown id is rejected as 404 even when also oversized (id checked first)");
 
-const badSig = gateWebhookDelivery({ ...baseArgs, signatureHeader: "sha256=deadbeef" });
-ok(badSig !== null && badSig.status === 401, "bad signature -> 401");
+const badSig = await gateWebhookDelivery({ ...baseArgs, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: "sha256=deadbeef" }) });
+ok(!badSig.ok && badSig.rejection.status === 401, "bad signature -> 401");
 
-const noSecret = gateWebhookDelivery({ ...baseArgs, secretValues: [] });
-ok(noSecret !== null && noSecret.status === 401 && noSecret.reason.includes("DEPLOY_STATUS_WEBHOOK_SECRET"), "unset secret -> 401 naming the missing CURRENT ref (fail-closed, not accept-all)");
+const noSecret = await gateWebhookDelivery({ ...baseArgs, secretValues: [] });
+ok(!noSecret.ok && noSecret.rejection.status === 401 && noSecret.rejection.reason.includes("DEPLOY_STATUS_WEBHOOK_SECRET"), "unset secret -> 401 naming the missing CURRENT ref (fail-closed, not accept-all)");
 
 ok(
-  gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true }) === null,
+  (await gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true })).ok,
   "unset secret + OE_ALLOW_UNVERIFIED_WEBHOOK escape hatch -> accepted",
 );
 ok(
-  gateWebhookDelivery({ ...baseArgs, signatureHeader: "sha256=deadbeef", allowUnverified: true }) !== null,
+  !(await gateWebhookDelivery({
+    ...baseArgs,
+    headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: "sha256=deadbeef" }),
+    allowUnverified: true,
+  })).ok,
   "the escape hatch does NOT bypass verification once a secret IS configured",
 );
 ok(
-  gateWebhookDelivery({ ...baseArgs, secretValues: [""] }) !== null,
+  !(await gateWebhookDelivery({ ...baseArgs, hook: { ...goodHook, source: "no-such-scheme" }, secretValues: [], allowUnverified: true })).ok,
+  "the escape hatch does NOT waive verifier resolution — an unregistered source is still 401",
+);
+ok(
+  !(await gateWebhookDelivery({ ...baseArgs, secretValues: [""] })).ok,
   "empty-string secret value is treated as unset -> rejected",
 );
 
 const previous = "old-s3cr3t";
-const signedWithPrevious = "sha256=" + createHmac("sha256", previous).update(body, "utf8").digest("hex");
+const prevAccepted = await gateWebhookDelivery({ ...baseArgs, secretValues: [secret, previous], headers: signedFor(previous) });
+ok(prevAccepted.ok && prevAccepted.keyIndex === 1, "a delivery signed with the PREVIOUS key is accepted during a rotation overlap, reported at keyIndex 1");
+const curAccepted = await gateWebhookDelivery({ ...baseArgs, secretValues: [secret, previous] });
+ok(curAccepted.ok && curAccepted.keyIndex === 0, "a delivery signed with the CURRENT key is still accepted during a rotation overlap (keyIndex 0)");
 ok(
-  gateWebhookDelivery({ ...baseArgs, secretValues: [secret, previous], signatureHeader: signedWithPrevious }) === null,
-  "a delivery signed with the PREVIOUS key is accepted during a rotation overlap",
-);
-ok(
-  gateWebhookDelivery({ ...baseArgs, secretValues: [secret, previous] }) === null,
-  "a delivery signed with the CURRENT key is still accepted during a rotation overlap",
-);
-ok(
-  gateWebhookDelivery({ ...baseArgs, secretValues: [secret], signatureHeader: signedWithPrevious }) !== null,
+  !(await gateWebhookDelivery({ ...baseArgs, secretValues: [secret], headers: signedFor(previous) })).ok,
   "once the overlap ends, the retired key no longer verifies (401)",
 );
 ok(
-  gateWebhookDelivery({ ...baseArgs, signatureHeader: null }) !== null,
+  !(await gateWebhookDelivery({ ...baseArgs, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts }) })).ok,
   "missing signature header -> rejected",
 );
 
@@ -178,8 +192,9 @@ ok(
   delete process.env.OE_TEST_HOOK_CURRENT;
   const noCurrent = await resolveHookKeys(rotating, { log });
   ok(noCurrent.length === 0, "a missing CURRENT ref yields NO keys — the previous key alone is NOT enough");
+  const noCurrentOutcome = await gateWebhookDelivery({ ...baseArgs, secretValues: noCurrent });
   ok(
-    gateWebhookDelivery({ ...baseArgs, secretValues: noCurrent })?.status === 401,
+    !noCurrentOutcome.ok && noCurrentOutcome.rejection.status === 401,
     "…and no keys is exactly the gate's existing fail-closed 401",
   );
 

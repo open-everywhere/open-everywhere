@@ -3,6 +3,7 @@ import { defineWebhook, assertWebhooksValid, type WebhookHook } from "@open-ever
 const hooks: WebhookHook[] = [
   defineWebhook({
     id: "smoke-test",
+    source: "oe-hmac",
     secretRef: "OE_WEBHOOK_SMOKE_SECRET",
     broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",
@@ -12,6 +13,7 @@ const hooks: WebhookHook[] = [
   }),
   defineWebhook({
     id: "e2e-smoke",
+    source: "oe-hmac",
     secretRef: "OE_WEBHOOK_E2E_SECRET",
     broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",

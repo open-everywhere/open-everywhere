@@ -1,5 +1,6 @@
 export interface WebhookHook {
   readonly id: string;
+  readonly source: string;
   readonly secretRef: string | readonly string[];
   readonly broker: string;
   readonly target: string;
@@ -24,6 +25,11 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
     }
     if (seen.has(h.id)) throw new Error(`duplicate webhook hook id "${h.id}"`);
     seen.add(h.id);
+    if (!h.source || !h.source.trim()) {
+      throw new Error(
+        `webhook "${h.id}" is missing source — name the signature scheme its sender uses (\`source: "oe-hmac"\` for a sender you configure, or a vendor's source like "github"); there is no default`,
+      );
+    }
     const refs = hookSecretRefs(h);
     if (refs.length === 0) {
       throw new Error(`webhook "${h.id}" has an empty secretRef list — it needs at least one ref (current key first)`);
