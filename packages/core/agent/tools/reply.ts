@@ -10,12 +10,6 @@ import { postUnifiedReply } from "../channels/unified-reply.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { resolvePartition } from "../memory/partition.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
-import { gradeReplyFreshness, freshnessRefusalMessage, freshnessNoticeText } from "../channels/reply-freshness.js";
-
-const FORCE_DESCRIPTION =
-  "Escape hatch: post even if newer messages have arrived in this conversation since your last " +
-  "reply this turn. Default false — only set true when sending immediately matters more than " +
-  "reflecting the newer message.";
 
 function replyAuditFor(ctx: BindableContext, route: ReplyAudit["route"], wakeId?: string): ReplyAudit {
   const p = resolvePartition(ctx);
@@ -51,7 +45,6 @@ const unifiedReplyEntry = defineTool({
         .describe(
           "Leave true (the default) to mark this wake answered. Set false ONLY when you know you will reply to this same wake again later — e.g. you are reporting progress now and the full answer comes after delegated work finishes.",
         ),
-      force: z.boolean().optional().default(false).describe(FORCE_DESCRIPTION),
     }),
     outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string() }),
     async execute(input, ctx) {
@@ -79,22 +72,16 @@ const unifiedReplyEntry = defineTool({
       }
       const origin = resolution.origin;
 
-      const freshness = gradeReplyFreshness(ctx as BindableContext, input.force === true);
-      if (freshness.kind === "refuse") {
-        throw new Error(freshnessRefusalMessage(freshness.newerCount));
-      }
-
       const id = await postUnifiedReply(origin, input.text, {}, replyAuditFor(ctx as BindableContext, "tool", input.wake));
       markRepliedThisTurn();
 
       if (input.done !== false) {
         await store.markUnifiedWakeAnswered(org, input.wake, new Date().toISOString(), turnId).catch(() => undefined);
       }
-      const base = `Turn reply requirement satisfied — posted to ${origin.platform}. Keep working if needed; your terminal prose is still discarded.`;
       return {
         posted: true,
         id,
-        note: freshness.kind === "notice" ? `${base} ${freshnessNoticeText(freshness.newerCount, input.force === true)}` : base,
+        note: `Turn reply requirement satisfied — posted to ${origin.platform}. Keep working if needed; your terminal prose is still discarded.`,
       };
     },
 });
@@ -110,9 +97,8 @@ const baseReplyEntry = defineTool({
           "you; you can't target another place.",
         inputSchema: z.object({
           text: z.string().min(1).describe("The message to post (channel mrkdwn/markdown). Keep it one curated message, not a stack."),
-          force: z.boolean().optional().default(false).describe(FORCE_DESCRIPTION),
         }),
-        outputSchema: z.object({ posted: z.boolean(), id: z.string(), note: z.string().optional() }),
+        outputSchema: z.object({ posted: z.boolean(), id: z.string() }),
         async execute(input, ctx) {
           const target = resolveReplyTarget(ctx);
           if (!target) {
@@ -120,17 +106,9 @@ const baseReplyEntry = defineTool({
               "reply couldn't resolve this conversation — try again from a real channel, thread, or discussion, not a synthetic context.",
             );
           }
-          const freshness = gradeReplyFreshness(ctx as BindableContext, input.force === true);
-          if (freshness.kind === "refuse") {
-            throw new Error(freshnessRefusalMessage(freshness.newerCount));
-          }
           const id = await postReply(target, input.text, replyAuditFor(ctx as BindableContext, "tool"));
           markRepliedThisTurn();
-          return {
-            posted: true,
-            id,
-            ...(freshness.kind === "notice" ? { note: freshnessNoticeText(freshness.newerCount, input.force === true) } : {}),
-          };
+          return { posted: true, id };
         },
 });
 preRegisterDynamicEntry("reply", "_base", baseReplyEntry);

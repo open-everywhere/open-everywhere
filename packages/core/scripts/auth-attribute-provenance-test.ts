@@ -106,4 +106,55 @@ const EXPECTED_WRITERS = new Set(["execution/runtime-context.js", "execution/wor
   ok(/export\{\};?\s*$/.test(authMod.trim()), "the runtime session-auth schema is still DEAD CODE (exports nothing) — eve does not validate/coerce delivered attributes");
 }
 
+{
+  const tw = read("execution/turn-workflow.js");
+
+  const ownedStart = tw.indexOf("async function runTurnOwnedWorkflow(");
+  const waitStart = tw.indexOf("async function waitForRuntimeActionResults(");
+  const legacyStart = tw.indexOf("async function runLegacyTurnWorkflow(");
+  ok(ownedStart >= 0 && waitStart > ownedStart && legacyStart > waitStart, "turn-workflow.js still declares runTurnOwnedWorkflow → waitForRuntimeActionResults → runLegacyTurnWorkflow");
+  const owned = tw.slice(ownedStart, waitStart);
+  const waitFn = tw.slice(waitStart, legacyStart);
+  const legacy = tw.slice(legacyStart);
+
+  const ownedParam = /^async function runTurnOwnedWorkflow\((\w+)\)/.exec(owned)?.[1];
+  ok(ownedParam !== undefined, "runTurnOwnedWorkflow still takes a single named workflow-input parameter");
+  const stepVar = /turnStep\(\w+\.createStepInput\((\w+),/.exec(owned)?.[1];
+  ok(stepVar !== undefined, "runTurnOwnedWorkflow still drives turnStep via cursor.createStepInput(<stepInput>, …)");
+
+  const assignRe = new RegExp(`(?<![\\w$.])${stepVar as string}=(?!=)`, "g");
+  const rhs = [...owned.matchAll(assignRe)].map((m) => owned.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 48));
+  ok(rhs.length === 4, `runTurnOwnedWorkflow still assigns its step-input variable exactly 4 times (found ${rhs.length})`);
+  const initial = rhs.filter((r) => r.startsWith(`${ownedParam as string}.stepInput.input`));
+  ok(initial.length === 1, "exactly ONE assignment carries the workflow input's `deliver` payload (the initial one)");
+  ok(rhs[0] === initial[0], "…and it is the FIRST assignment (so only the first turnStep can see a `deliver` input)");
+  const carriedOn = rhs.slice(1);
+  ok(
+    carriedOn.every((r) => /^(?:void 0|\{kind:`runtime-action-result`)/.test(r)),
+    `every LATER assignment is either \`void 0\` or a runtime-action-result — never a delivery (saw: ${JSON.stringify(carriedOn.map((r) => r.slice(0, 34)))})`,
+  );
+  ok(
+    new RegExp(`\\.adopt\\(\\w+\\),${stepVar as string}=void 0\\}`).test(owned),
+    "the loop bottom still adopts the step result and NULLS the step input (a continued turn re-enters turnStep with no `deliver`)",
+  );
+
+  const legacyVar = /turnStep\((\w+)\)/.exec(legacy)?.[1];
+  const legacyParam = /^async function runLegacyTurnWorkflow\((\w+)\)/.exec(legacy)?.[1];
+  ok(legacyVar !== undefined && legacyParam !== undefined, "runLegacyTurnWorkflow still drives turnStep(<stepInput>) from a named workflow parameter");
+  ok(new RegExp(`(?<![\\w$.])${legacyVar as string}=${legacyParam as string}\\.stepInput;`).test(legacy), "runLegacyTurnWorkflow still seeds its step input from the workflow input ONCE");
+  const legacyRebuilds = [...legacy.matchAll(new RegExp(`(?<![\\w$.])${legacyVar as string}=\\{input:([^,]*),`, "g"))].map((m) => m[1]);
+  ok(legacyRebuilds.length === 1 && legacyRebuilds[0] === "void 0", `runLegacyTurnWorkflow's loop bottom still rebuilds the step input with \`input: void 0\` (saw: ${JSON.stringify(legacyRebuilds)})`);
+
+  const cursor = read("execution/turn-execution-cursor.js");
+  ok(/createStepInput\((\w+),\w+\)\{return\{[^}]*input:\1[,}]/.test(cursor), "TurnExecutionCursor.createStepInput still passes its first argument straight through as `input` (no hidden delivery source)");
+
+  ok(/kind===`driver-delivery`/.test(waitFn), "waitForRuntimeActionResults still recognises a `driver-delivery` while a turn is in flight");
+  ok(/routeDeliverToChildren\(\{auth:\w+\.delivery\.auth/.test(waitFn), "…and routes it to CHILD sessions (their auth, not this turn's)");
+  ok(/\w+\.bufferedDeliveries\.push\(\{\.\.\.\w+\.delivery/.test(waitFn), "…pushing the residue to bufferedDeliveries — never back into the step input");
+  ok(
+    /async finish\(\w+,\w+,(\w+)\)\{[\s\S]{0,320}?bufferedDeliveries:\1\.length===0\?void 0:\[\.\.\.\1\]/.test(cursor),
+    "TurnExecutionCursor.finish still hands bufferedDeliveries back in the `turn-result` (they become the NEXT turn, not this one)",
+  );
+}
+
 console.log(`✓ auth-attribute-provenance: ${passed} contract assertions passed against eve ${eveVersion}`);
