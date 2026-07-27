@@ -34,6 +34,7 @@ export interface AppConfig {
   loadRoles?(): readonly Role[];
   domainsForSurface(arg: { workspaceKey: string; surface: string }): readonly string[];
   loadWebhooks?(): readonly WebhookHook[];
+  loadWebhookSources?(): readonly string[] | undefined;
   loadSpendBudgets?(): SpendBudgets;
   loadSpendCheckpoints?(): SpendCheckpoints;
   loadAccessRequests?(): AccessRequestsConfig | null;

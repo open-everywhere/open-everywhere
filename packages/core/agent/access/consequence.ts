@@ -163,6 +163,22 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
   delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
 
+  create_webhook: member(
+    "webhook.create",
+    "mints a PUBLIC signed ingress that lets an EXTERNAL system wake this deployment and spend its budget — but it is EMIT-ONLY (no target, no instruction, no prompt), so it decides nothing: whatever a subscribing `event` routine later does still passes every per-action gate, and the routine itself was separately member-gated and card-armed. The admin decision is the SOURCE CLASS, taken once in the diff that registered that source's verifier + normalizer — a source outside that vocabulary is REFUSED outright here (no click can substitute; there is nothing to authenticate it with). The flow also DISCLOSES a host-minted signing secret, which is why the card exists and why the secret is delivered privately, once, and never rendered in chat. HARD-REFUSES on a tainted turn: no card text can honestly anchor a request to mint durable external wake authority when the request originated in fetched content",
+  ),
+  rotate_webhook: member(
+    "webhook.rotate",
+    "re-mints and DISCLOSES a fresh signing secret for an ingress that ALREADY exists — same disclosure axis as webhook.create and therefore the same bar; it widens nothing (no new endpoint, no new authority, no new audience). This is also the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. The superseded key stays valid for a HOST-CLAMPED overlap (OE_WEBHOOK_ROTATION_OVERLAP_MS) so rotation never silently breaks a live sender — the model cannot choose that window. Hard-refuses on taint, same as create",
+  ),
+  revoke_webhook: member(
+    "webhook.revoke",
+    "behaviour-persisting removal: kills a live ingress an external system depends on. NARROWING ONLY — it can never widen — so it takes the fast lane at the cancel_routine/delete_skill bar: a human confirms because a sender starts failing, not because authority moves. Deliberately does NOT refuse on taint (unlike create/rotate): a taint gate in front of the brake pedal is the wrong control, and a turn that read external content and wants a hook GONE is often reacting to exactly that content",
+  ),
+  list_webhooks: open(
+    "read of this org's OWN event-source inventory: source name, posture, status, creator, created-at. NEVER the hook id, the endpoint URL, or any secret ref — the id IS the URL, so it stays host-side and every write tool addresses a hook by its `source` name instead (tools/list_webhooks.ts projects field-by-field so a new column can't silently join the disclosure). Same tier and same reasoning as list_routines: membership IS the read tier for a surface's own standing behaviour",
+  ),
+
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
   report_run_failed: open(
     "a fire declaring that ITS OWN run did not do its work (OPE-177) — writes `lastOutcome: failed` plus a capped one-line reason onto the calling routine's OWN row (marker-located, never a supplied id), which the three-strike fold then honours. It is the only routine verb whose entire reach is to make the routine do LESS: it cannot post, cannot widen anything, and its worst case is a routine that stops early and announces that it did. Gating it would put a confirmation in front of the honesty mechanism, on a path with no human present to click it. The declared text is model-authored and quarantined to the audit rows, never to the host-composed disable notice",
