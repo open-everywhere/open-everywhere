@@ -2,7 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const PAGE_TOKEN_KEY_ENV = "OE_INTAKE_PAGE_SIGNING_KEY";
 
-export type PageAudience = "intake" | "reveal";
+export type PageAudience = "intake" | "reveal" | "webhook-collect" | "webhook-endpoint";
+
+export const PAGE_AUDIENCES = ["intake", "reveal", "webhook-collect", "webhook-endpoint"] as const satisfies readonly PageAudience[];
+
+type _AudiencesAreTotal = Exclude<PageAudience, (typeof PAGE_AUDIENCES)[number]> extends never ? true : never;
+const _audiencesAreTotal: _AudiencesAreTotal = true;
+void _audiencesAreTotal;
 
 export interface PageTokenClaims {
   readonly v: 1;

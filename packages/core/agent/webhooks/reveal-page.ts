@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
 import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken } from "../credentials/page-token.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
@@ -53,30 +55,7 @@ export async function issueRevealLink(input: IssueRevealLinkInput, deps: RevealG
   return { id, url: `${base}${REVEAL_PAGE_PATH}?${TOKEN_FIELD}=${encodeURIComponent(token)}` };
 }
 
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
-
-const PAGE_STYLE =
-  "font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:34rem;margin:3rem auto;padding:0 1rem;color:#1a1a1a;background:#fff";
-
-function htmlResponse(status: number, title: string, inner: string): Response {
-  const html =
-    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<meta name="robots" content="noindex,nofollow">` +
-    `<meta name="referrer" content="no-referrer">` +
-    `<title>${esc(title)}</title></head>` +
-    `<body style="${PAGE_STYLE}"><h1 style="font-size:1.25rem">${esc(title)}</h1>${inner}</body></html>`;
-  return new Response(html, {
-    status,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
-    },
-  });
-}
+const htmlResponse = securePageResponse;
 
 function invalidPage(): Response {
   return htmlResponse(
@@ -94,7 +73,7 @@ function confirmPage(token: string, label: string): Response {
     `the webhook has to be rotated, which issues a new secret. Have the place you're pasting it into open before you continue.</p>` +
     `<form method="post" action="${esc(REVEAL_PAGE_PATH)}" autocomplete="off">` +
     `<input type="hidden" name="${TOKEN_FIELD}" value="${esc(token)}">` +
-    `<button type="submit" style="margin-top:.5rem;padding:.6rem 1.2rem;font:inherit;font-weight:600;color:#fff;background:#1a56db;border:0;border-radius:.4rem;cursor:pointer">Show the secret</button>` +
+    `<button type="submit" style="${BUTTON_STYLE}">Show the secret</button>` +
     `</form>`;
   return htmlResponse(200, "Show a webhook signing secret", inner);
 }
@@ -102,12 +81,12 @@ function confirmPage(token: string, label: string): Response {
 function secretPage(label: string, endpointUrl: string | undefined, secret: string): Response {
   const endpoint = endpointUrl
     ? `<p style="margin-top:1.5rem">Point the sender at this URL:</p>` +
-      `<pre style="background:#f5f5f5;padding:.75rem;border-radius:.4rem;overflow-x:auto"><code>${esc(endpointUrl)}</code></pre>`
+      `<pre style="${CODE_BLOCK_STYLE}"><code>${esc(endpointUrl)}</code></pre>`
     : "";
   const inner =
     `<p>The signing secret for the <strong>${esc(label)}</strong> webhook. <strong>Copy it now</strong> — this page cannot be reloaded ` +
     `and the secret cannot be shown again.</p>` +
-    `<pre style="background:#f5f5f5;padding:.75rem;border-radius:.4rem;overflow-x:auto"><code>${esc(secret)}</code></pre>` +
+    `<pre style="${CODE_BLOCK_STYLE}"><code>${esc(secret)}</code></pre>` +
     endpoint +
     `<p style="margin-top:1.5rem;color:#666">This link is now used up. You can close this tab.</p>`;
   return htmlResponse(200, "Webhook signing secret", inner);
@@ -177,13 +156,35 @@ export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}):
   }
   if (!value) return invalidPage();
 
+  const hookId = revealedHookId(row.ref);
+  await appendAudit({
+    org: claims.org,
+    platform: "web",
+    workspace: "reveal-page",
+    surface: REVEAL_PAGE_PATH,
+    principalId: row.requestedBy,
+    action: "webhook.secret_revealed",
+    detail: {
+      ...(hookId ? { hookId } : {}),
+      ref: row.ref,
+      grantId: claims.id,
+      revealedAt: now.toISOString(),
+    },
+  });
+
   return secretPage(row.domain ?? "webhook", (deps.endpointUrl ?? ((r) => revealEndpointUrl(r, env)))(row.ref), value);
 }
 
 export function revealEndpointUrl(ref: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const base = pageBaseUrl(env);
-  const hookId = ref.startsWith("hook:") ? ref.slice("hook:".length) : undefined;
-  return base && hookId && !hookId.includes(":") ? `${base}/webhooks/${hookId}` : undefined;
+  const hookId = revealedHookId(ref);
+  return base && hookId ? `${base}/webhooks/${hookId}` : undefined;
+}
+
+export function revealedHookId(ref: string): string | undefined {
+  if (!ref.startsWith("hook:")) return undefined;
+  const rest = ref.slice("hook:".length);
+  return rest.length > 0 && !rest.includes(":") ? rest : undefined;
 }
 
 async function liveReadSecret(ref: string): Promise<string | null> {

@@ -90,10 +90,17 @@ const revokeKind = actionKind("webhook.revoke")!;
   ok(verifierMod.acceptsMintedSecret(fake("x", "vendor-issued")) === false, "acceptsMintedSecret: a vendor-ISSUED shared secret does not (we cannot choose the value)");
   ok(verifierMod.acceptsMintedSecret(fake("x", "receiver-minted", "public-key")) === false, "acceptsMintedSecret: an ASYMMETRIC scheme does not (there is no shared secret to mint)");
 
-  const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"]);
+  const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"], []);
   ok(refusal.includes("github, notion"), "🔴 the refusal NAMES the legal set — the error message IS the vocabulary");
   ok(/PR|merge/i.test(refusal), "…and names the PR path (an 'ask an admin' with no WHAT is a dead end)");
-  ok(vocab.unknownSourceRefusal("stripe", []).includes("No sources are available"), "an empty vocabulary refuses honestly rather than naming an empty list");
+  ok(vocab.unknownSourceRefusal("stripe", [], []).includes("No sources are available"), "an empty vocabulary refuses honestly rather than naming an empty list");
+  ok(
+    refusal.includes("none of those can be set up this way on this deployment"),
+    "with NO collectable source the refusal scopes its claim to this deployment rather than to the world",
+  );
+  const collectable = vocab.unknownSourceRefusal("stripe", ["github"], ["linear", "pagerduty"]);
+  ok(collectable.includes("linear, pagerduty"), "🔴 with a collectable source the refusal NAMES it — the message IS the second vocabulary too");
+  ok(!/can't be set up this way at all/.test(collectable), "…and stops claiming vendor-issued secrets are impossible, because on that deployment they are not");
 
   eq(rh.runtimeHookSourceDefect("notion"), null, "a plain lowercase token is a valid source");
   ok(rh.runtimeHookSourceDefect("Notion") !== null, "uppercase is refused (the tool lowercases first; the grammar is the floor)");

@@ -6,8 +6,10 @@ import { encryptedKvVault } from "../credentials/kv-vault.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { issueRevealLink } from "../webhooks/reveal-page.js";
+import { COLLECT_WINDOW_MS, issueCollectLink } from "../webhooks/setup-pages.js";
 import {
   describeRuntimeHook,
+  hookAcquisition,
   mintRuntimeHookId,
   rotationOverlapMs,
   runtimeHookPrevSecretRef,
@@ -15,6 +17,7 @@ import {
   type RuntimeWebhookHook,
   type WebhookPosture,
 } from "../webhooks/runtime-hook.js";
+import type { WebhookAcquisition } from "../webhooks/provisioning.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -27,6 +30,7 @@ function mintSecret(): string {
 export interface RevealDeliveryDeps {
   readonly postPrivate?: (channelId: string, userId: string, text: string) => Promise<boolean>;
   readonly issueLink?: typeof issueRevealLink;
+  readonly issueCollect?: typeof issueCollectLink;
 }
 
 let deliveryDeps: RevealDeliveryDeps = {};
@@ -68,11 +72,30 @@ async function deliverReveal(
   );
 }
 
+async function deliverCollect(
+  args: { readonly org: string; readonly ref: string; readonly source: string; readonly to: string; readonly platform: string; readonly channelId: string; readonly expiresAt: string },
+): Promise<boolean> {
+  if (args.platform !== "slack") return false;
+  const issue = deliveryDeps.issueCollect ?? issueCollectLink;
+  const link = await issue({ org: args.org, ref: args.ref, boundTo: args.to, label: args.source, expiresAt: args.expiresAt });
+  if (!link) return false;
+  const post = deliveryDeps.postPrivate ?? livePostPrivate;
+  const minutes = Math.round(COLLECT_WINDOW_MS / 60_000);
+  return post(
+    args.channelId,
+    args.to,
+    `Your "${args.source}" webhook is set up but NOT live yet — ${args.source} generates its own signing secret, so I can't mint one. ` +
+      `Open this link to see where to point it and to paste that secret in — it works ONCE, expires in ${minutes} minutes, and only you can see this message:\n${link.url}\n\n` +
+      `Until you do, the endpoint refuses every delivery. If you walk away, the name frees up and you can just ask me again.`,
+  );
+}
+
 export interface WebhookCreateArgs {
   readonly org: string;
   readonly source: string;
   readonly scheme?: string;
   readonly posture: WebhookPosture;
+  readonly provisioning?: WebhookAcquisition;
   readonly surfaceKey: string;
   readonly requestedBy: string;
   readonly platform: string;
@@ -83,14 +106,20 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
   kind: "webhook.create",
   policy: "member",
   summarize(args) {
+    const statusOnApproval = hookAcquisition({ provisioning: args.provisioning }) === "mint" ? "active" : "pending-secret";
     return [
-      `Create an inbound webhook — ${describeRuntimeHook({ source: args.source, ...(args.scheme ? { scheme: args.scheme } : {}), posture: args.posture, status: "active" })}`,
+      `Create an inbound webhook — ${describeRuntimeHook({ source: args.source, ...(args.scheme ? { scheme: args.scheme } : {}), posture: args.posture, status: statusOnApproval })}`,
       ...(args.posture === "content-bearing"
         ? [
             "⚠ CONTENT-BEARING: whatever this sender posts becomes part of the prompt, on every delivery, indefinitely — treat it like an untrusted person typing into the channel. Anything the agent then tries to do off that content is treated as tainted and re-asks you.",
           ]
         : ["🔒 TRIGGER-ONLY: the payload is discarded. Deliveries can only cause a routine you already approved to run — nothing the sender writes reaches the agent."]),
-      "A signing secret is generated when you approve. You get a ONE-TIME link to read it — it is never shown in chat and cannot be shown again; a lost secret means rotating.",
+      ...(hookAcquisition({ provisioning: args.provisioning }) === "collect"
+        ? [
+            `⏳ NOT LIVE ON APPROVAL: ${args.source} generates its own signing secret, so I can't make one up. Approving reserves the name and gives you a ONE-TIME link, private to you, showing where to point ${args.source} and where to paste the secret it shows you.`,
+            `You have ${Math.round(COLLECT_WINDOW_MS / 60_000)} minutes. Until you finish, the endpoint refuses every delivery — and if you don't, nothing is left behind and the name frees up.`,
+          ]
+        : ["A signing secret is generated when you approve. You get a ONE-TIME link to read it — it is never shown in chat and cannot be shown again; a lost secret means rotating."]),
       `Requested by ${args.requestedBy}`,
     ];
   },
@@ -105,6 +134,10 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       surface: args.surfaceKey.split("/")[2] ?? "",
     })[0];
 
+    const acquisition = hookAcquisition({ provisioning: args.provisioning });
+    const collecting = acquisition === "collect";
+    const setupExpiresAt = new Date(now.getTime() + COLLECT_WINDOW_MS).toISOString();
+
     const hook: RuntimeWebhookHook = {
       org: args.org,
       id,
@@ -112,7 +145,8 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       ...(args.scheme && args.scheme !== args.source ? { scheme: args.scheme } : {}),
       posture: args.posture,
       secretRef,
-      status: "active",
+      status: collecting ? "pending-secret" : "active",
+      ...(collecting ? { setupExpiresAt, provisioning: acquisition } : {}),
       createdBy: decidedBy,
       createdIn: args.surfaceKey,
       ...(ownerDomain ? { ownerDomain } : {}),
@@ -124,6 +158,42 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       return (
         `no webhook created — a "${args.source}" webhook already exists here (one per name per org). ` +
         `Nothing was minted and nothing changed. Check list_webhooks: if it's live, point the sender at that one, or rotate its secret.`
+      );
+    }
+
+    if (collecting) {
+      const handed = await deliverCollect({ org: args.org, ref: secretRef, source: args.source, to: decidedBy, platform: args.platform, channelId: args.channelId, expiresAt: setupExpiresAt });
+      if (!handed) {
+        await store.deleteWebhookHook(args.org, id, "pending-secret");
+        emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "failed" });
+        return `couldn't set up the "${args.source}" webhook — I had no way to hand you the private link for pasting its signing secret, so I've removed the half-built hook rather than leave a name reserved for a setup nobody can finish. Nothing exists and the name is free.`;
+      }
+      await appendAudit({
+        org: args.org,
+        platform: args.surfaceKey.split("/")[0] ?? "webhook",
+        workspace: args.surfaceKey.split("/")[1] ?? "-",
+        surface: args.surfaceKey.split("/")[2] ?? "-",
+        principalId: decidedBy,
+        action: "webhook.created",
+        detail: {
+          hookId: id,
+          source: args.source,
+          ...(hook.scheme ? { scheme: hook.scheme } : {}),
+          ...(ownerDomain ? { ownerDomain } : {}),
+          posture: args.posture,
+          acquisition,
+          status: "pending-secret",
+          setupExpiresAt,
+          secretRefArmed: false,
+          createdBy: decidedBy,
+          requestedBy: args.requestedBy,
+          collectLinkDelivered: true,
+        },
+      });
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "ok" });
+      return (
+        `webhook "${args.source}" reserved (${args.posture}) but NOT live yet — ${args.source} issues its own signing secret, so I've sent you a private one-time link ` +
+        `showing where to point it and where to paste that secret. Nothing accepts deliveries until you do.`
       );
     }
 
