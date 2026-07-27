@@ -14,6 +14,8 @@ process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 const vocab = await import("../agent/webhooks/source-vocabulary.js");
+const verifierMod = await import("../agent/webhooks/verifier.js");
+type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
 const rh = await import("../agent/webhooks/runtime-hook.js");
 const ri = await import("../agent/webhooks/runtime-ingress.js");
 const revealMod = await import("../agent/webhooks/reveal-page.js");
@@ -59,7 +61,14 @@ const revokeKind = actionKind("webhook.revoke")!;
 
 {
   console.log("\n1. source vocabulary (OPE-159):");
-  const V = () => ["github", "notion", "oe-hmac"];
+  const fake = (source: string, keyOrigin: "receiver-minted" | "vendor-issued" = "receiver-minted", keyKind: "shared-secret" | "public-key" = "shared-secret"): WebhookVerifier => ({
+    source,
+    keyKind,
+    keyOrigin,
+    signedTimestamp: false,
+    verify: () => ({ ok: false, failure: "signature-mismatch" }),
+  });
+  const V = () => [fake("github"), fake("notion"), fake("oe-hmac")];
   const N = () => ["github", "notion", "linear"];
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }), ["github", "notion"], "the vocabulary is the INTERSECTION of verifiers ∩ normalizers");
   ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("oe-hmac"), "a source with a verifier but NO normalizer is not mintable (nothing could subscribe)");
@@ -67,6 +76,17 @@ const revokeKind = actionKind("webhook.revoke")!;
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["notion"] }), ["notion"], "the operator's declared list NARROWS the intersection");
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["stripe"] }), [], "the declared list can NEVER ADD a source with no verifier (narrowing-only)");
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: () => [], normalizers: N, declared: () => undefined }), [], "no verifiers ⇒ nothing is mintable");
+
+  const VK = () => [fake("github"), fake("vendor-token", "vendor-issued"), fake("asym", "receiver-minted", "public-key")];
+  const NK = () => ["github", "vendor-token", "asym"];
+  eq(
+    vocab.runtimeHookSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => undefined }),
+    ["github"],
+    "🔴 a source with BOTH halves is still NOT mintable when its verifier can't take an OE-minted secret",
+  );
+  ok(verifierMod.acceptsMintedSecret(fake("x")) === true, "acceptsMintedSecret: a receiver-minted shared secret qualifies");
+  ok(verifierMod.acceptsMintedSecret(fake("x", "vendor-issued")) === false, "acceptsMintedSecret: a vendor-ISSUED shared secret does not (we cannot choose the value)");
+  ok(verifierMod.acceptsMintedSecret(fake("x", "receiver-minted", "public-key")) === false, "acceptsMintedSecret: an ASYMMETRIC scheme does not (there is no shared secret to mint)");
 
   const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"]);
   ok(refusal.includes("github, notion"), "🔴 the refusal NAMES the legal set — the error message IS the vocabulary");

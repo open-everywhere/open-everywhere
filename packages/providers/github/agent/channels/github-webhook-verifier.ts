@@ -8,6 +8,7 @@ export const githubWebhookVerifier: WebhookVerifier = {
   source: GITHUB_WEBHOOK_SOURCE,
   provider: "github",
   keyKind: "shared-secret",
+  keyOrigin: "receiver-minted",
   signedTimestamp: false,
   verify({ rawBody, headers, keys }) {
     const signature = headers.get(GITHUB_SIGNATURE_HEADER);

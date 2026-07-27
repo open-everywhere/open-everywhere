@@ -9,6 +9,7 @@ export const notionWebhookVerifier: WebhookVerifier = {
   source: NOTION_WEBHOOK_SOURCE,
   provider: "notion",
   keyKind: "shared-secret",
+  keyOrigin: "vendor-issued",
   signedTimestamp: false,
   verify({ rawBody, headers, keys }) {
     const signature = headers.get(NOTION_SIGNATURE_HEADER);

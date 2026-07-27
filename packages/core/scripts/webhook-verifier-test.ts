@@ -96,6 +96,7 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   const otherVerifier: Verifier = {
     source: "test-other",
     keyKind: "shared-secret",
+    keyOrigin: "receiver-minted",
     signedTimestamp: false,
     verify({ rawBody, headers, keys }): Verdict {
       const sig = headers.get("x-other-signature-256");
@@ -137,6 +138,7 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   registerWebhookVerifier({
     source: "test-shape",
     keyKind: "shared-secret",
+    keyOrigin: "receiver-minted",
     signedTimestamp: false,
     verify(input): Verdict {
       seenKeys = Object.keys(input).sort();
@@ -211,6 +213,7 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   registerWebhookVerifier({
     source: "test-broken",
     keyKind: "shared-secret",
+    keyOrigin: "receiver-minted",
     signedTimestamp: false,
     verify(): Verdict {
       throw new Error("verifier is broken");
@@ -225,6 +228,7 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   registerWebhookVerifier({
     source: "test-async",
     keyKind: "public-key",
+    keyOrigin: "vendor-issued",
     signedTimestamp: true,
     async verify(): Promise<Verdict> {
       await Promise.resolve();

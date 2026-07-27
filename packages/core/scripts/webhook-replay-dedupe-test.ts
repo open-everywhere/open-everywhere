@@ -116,6 +116,7 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
   const untimestamped: Verifier = {
     source: "untimestamped-vendor",
     keyKind: "shared-secret",
+    keyOrigin: "vendor-issued",
     signedTimestamp: false,
     verify(): Verdict {
       return { ok: true, keyIndex: 0, replayKey: "should-never-surface" };

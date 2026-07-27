@@ -24,6 +24,7 @@ export interface WebhookVerifier {
   readonly source: string;
   readonly provider?: string;
   readonly keyKind: "shared-secret" | "public-key";
+  readonly keyOrigin: "receiver-minted" | "vendor-issued";
   readonly signedTimestamp: boolean;
   verify(input: WebhookVerifyInput): Promise<WebhookVerdict> | WebhookVerdict;
 }
@@ -46,6 +47,10 @@ export function registeredWebhookVerifierSources(): readonly string[] {
 
 export function registeredWebhookVerifiers(): readonly WebhookVerifier[] {
   return [...VERIFIERS.values()];
+}
+
+export function acceptsMintedSecret(verifier: WebhookVerifier): boolean {
+  return verifier.keyOrigin === "receiver-minted" && verifier.keyKind === "shared-secret";
 }
 
 export function resetWebhookVerifiersForTest(): void {
