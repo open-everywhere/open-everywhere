@@ -26,6 +26,8 @@ export interface WebhookRejection {
   readonly reason: string;
 }
 
+export const UNKNOWN_HOOK_REJECTION: WebhookRejection = { status: 404, reason: "unknown webhook id" };
+
 export type WebhookGateOutcome =
   | { readonly ok: true; readonly keyIndex: number | null; readonly replayKey?: string }
   | { readonly ok: false; readonly rejection: WebhookRejection };
@@ -56,7 +58,7 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
   const { hook, secretValues, rawBody, bodyBytes, headers, nowMs, allowUnverified, maxBodyBytes } = args;
   const reject = (status: number, reason: string): WebhookGateOutcome => ({ ok: false, rejection: { status, reason } });
 
-  if (!hook) return reject(404, "unknown webhook id");
+  if (!hook) return { ok: false, rejection: UNKNOWN_HOOK_REJECTION };
   if (bodyBytes > maxBodyBytes) return reject(413, `payload exceeds ${maxBodyBytes} bytes`);
 
   const scheme = webhookScheme(hook);

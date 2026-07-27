@@ -3,6 +3,7 @@ import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import { resolveRuntimeHook, resolveRuntimeHookKeys, deliverRuntimeHook, type ResolvedRuntimeHook } from "../webhooks/runtime-ingress.js";
+import { handleSetupDelivery, resolveSetupHook } from "../webhooks/setup-ingress.js";
 import "../webhooks/oe-hmac.js";
 import "../webhooks/oe-standard-webhook.js";
 import { resolveHookKeys } from "../webhooks/secrets.js";
@@ -105,6 +106,21 @@ export default defineChannel({
 
       const body = await req.text();
       const bodyBytes = Buffer.byteLength(body, "utf8");
+
+      const setupHook = hook || runtime || bodyBytes > maxBodyBytes ? undefined : await resolveSetupHook(id);
+      if (setupHook) {
+        const flat: Record<string, string> = {};
+        req.headers.forEach((v, k) => {
+          flat[k.toLowerCase()] = v;
+        });
+        const outcome = await handleSetupDelivery({ hook: setupHook, delivery: { headers: flat, rawBody: body } });
+        if (outcome.kind === "ignored") {
+          waitUntil(auditRejection(id, setupHook, outcome.rejection));
+          return new Response(outcome.rejection.reason, { status: outcome.rejection.status });
+        }
+        return new Response("ok", { status: 200, headers: outcome.kind === "echoed" ? { ...outcome.headers } : {} });
+      }
+
       const secretValues = hook ? await resolveHookKeys(hook) : runtime ? await resolveRuntimeHookKeys(runtime) : [];
       const outcome = await gateWebhookDelivery({
         hook: gated,
