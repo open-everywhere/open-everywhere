@@ -387,6 +387,7 @@ export interface OperationalStore {
   getWebhookHookBySource(org: string, source: string): Promise<RuntimeWebhookHook | null>;
   listWebhookHooks(org: string): Promise<readonly RuntimeWebhookHook[]>;
   updateWebhookHook(org: string, id: string, patch: Partial<RuntimeWebhookHook>): Promise<RuntimeWebhookHook | null>;
+  deleteWebhookHook(org: string, id: string, expectedStatus: string): Promise<boolean>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

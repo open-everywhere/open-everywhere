@@ -190,8 +190,11 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
   async execute(args, decidedBy) {
     const store = getOperationalStore();
     const existing = await store.getWebhookHookById(args.id);
-    if (!existing || existing.org !== args.org || existing.status !== "active") {
-      return `no active webhook "${args.source}" any more — nothing to rotate (it may have been revoked).`;
+    if (!existing || existing.org !== args.org) {
+      return `no webhook "${args.source}" on this deployment any more — nothing to rotate.`;
+    }
+    if (existing.status !== "active") {
+      return `webhook "${args.source}" is ${existing.status}, not live — nothing to rotate. Nothing was minted and nothing changed.`;
     }
     const vault = encryptedKvVault();
     const now = new Date();

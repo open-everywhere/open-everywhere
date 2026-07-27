@@ -245,7 +245,8 @@ let createdId = "";
     { org: ORG, id: createdId, source: "notion", posture: "content-bearing" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" },
     DECIDER,
   );
-  ok(/no active/.test(rot), "🔴 rotating a REVOKED hook is refused — it never comes back to life");
+  ok(/is revoked, not live/.test(rot) && /nothing to rotate/.test(rot), "🔴 rotating a REVOKED hook is refused, naming the status — it never comes back to life");
+  ok(/[Nn]othing was minted/.test(rot), "…and says outright that no secret was created, because a post-click line is the last thing anybody reads about this hook");
   eq((await store.getWebhookHookById(createdId))!.status, "revoked", "…and it stays revoked");
 }
 

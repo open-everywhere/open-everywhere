@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
+import { isDeletableHookStatus } from "../webhooks/runtime-hook.js";
 import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -1316,6 +1317,14 @@ export const sqliteOperationalStore: OperationalStore = {
     const updated: RuntimeWebhookHook = { ...(JSON.parse(row.data) as RuntimeWebhookHook), ...patch, org, id };
     handle.prepare("UPDATE webhook_hook SET source = ?, data = ? WHERE org_id = ? AND id = ?").run(updated.source, JSON.stringify(updated), org, id);
     return updated;
+  },
+
+  async deleteWebhookHook(org, id, expectedStatus) {
+    if (!isDeletableHookStatus(expectedStatus)) return false;
+    const info = getDb()
+      .prepare("DELETE FROM webhook_hook WHERE org_id = ? AND id = ? AND json_extract(data, '$.status') = ?")
+      .run(org, id, expectedStatus);
+    return Number(info.changes) > 0;
   },
 
   async consumeCredentialIntake(org, id, usedAt) {

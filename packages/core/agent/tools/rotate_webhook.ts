@@ -11,6 +11,7 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { hasPrivateDeliveryPath } from "./create_webhook.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
+import { isDeletableHookStatus } from "../webhooks/runtime-hook.js";
 
 export default defineTool({
   description:
@@ -51,8 +52,16 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const source = input.source.trim().toLowerCase();
     const hook = await getOperationalStore().getWebhookHookBySource(p.org, source);
-    if (!hook || hook.status !== "active") {
-      throw new Error(`There's no active "${source}" webhook here. Use list_webhooks to see what exists, or create_webhook to set one up.`);
+    if (!hook) {
+      throw new Error(`There's no "${source}" webhook here. Use list_webhooks to see what exists, or create_webhook to set one up.`);
+    }
+    if (isDeletableHookStatus(hook.status)) {
+      throw new Error(
+        `The "${source}" webhook is ${hook.status} — its setup was started but never finished, so there's no signing secret to rotate yet. Finish setting it up; rotation only applies to a live hook.`,
+      );
+    }
+    if (hook.status !== "active") {
+      throw new Error(`There's no active "${source}" webhook here — it's ${hook.status}. Use list_webhooks to see what exists, or create_webhook to set one up.`);
     }
 
     const requestedBy = principalIdOf(ctx);
