@@ -270,6 +270,22 @@ export {
 } from "./webhooks/verifier.js";
 export type { WebhookVerifier, WebhookVerifyInput, WebhookVerdict, WebhookVerifyFailure } from "./webhooks/verifier.js";
 
+export {
+  registerEventNormalizer,
+  eventNormalizer,
+  registeredEventSources,
+  resetEventNormalizersForTest,
+  scopeIdOf,
+} from "./routines/event-model.js";
+export type { EventNormalizer, NormalizedEvent, TriggerDelivery, ScopeStep, ScopeKind, EntityPointer } from "./routines/event-model.js";
+export {
+  registerEventScopeGrant,
+  eventScopeGrant,
+  registeredEventGrantSources,
+  resetEventScopeGrantsForTest,
+} from "./routines/event-authz.js";
+export type { EventScopeGrant } from "./routines/event-authz.js";
+
 export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
 
 export { nameDropWakeEnabled } from "./memory/domain.js";

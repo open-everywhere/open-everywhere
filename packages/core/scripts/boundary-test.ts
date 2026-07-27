@@ -26,6 +26,8 @@ const CORE_PKG = /^@open-everywhere\/core(\/|$)/;
 
 const CORE_ADAPTER_BARREL = /^@open-everywhere\/core\/agent\/adapter-api\.(js|ts)$/;
 
+const EVENT_PLANE_DEEP = /routines\/event-(model|authz)(\.[jt]s)?$/;
+
 function tsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -142,7 +144,7 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
 
   for (const f of files) {
     for (const spec of specifiers(f)) {
-      const climbsIntoCore = /\.\.\/.*\/(memory|operational|access)\//.test(spec) && !CORE_PKG.test(spec);
+      const climbsIntoCore = /\.\.\/.*\/(memory|operational|access|routines)\//.test(spec) && !CORE_PKG.test(spec);
       ok(!climbsIntoCore, `adapters reach core via package name: ${rel(f)} imports "${spec}"`);
       ok(!/(^|\/)agent\/(tools|channels|hooks)\//.test(spec), `adapters do not import the app: ${rel(f)} imports "${spec}"`);
     }
@@ -192,6 +194,32 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
           `provider "${name}" reaches core ONLY via the adapter-api barrel: ${rel(f)} imports "${spec}"`,
         );
       }
+    }
+  }
+}
+
+{
+  const barrel = readFileSync(join(REPO_ROOT, "packages/core/agent/adapter-api.ts"), "utf-8");
+  for (const sym of ["registerEventNormalizer", "registerEventScopeGrant"]) {
+    ok(
+      new RegExp(`^\\s*${sym},?\\s*$`, "m").test(barrel) || barrel.includes(`{ ${sym}`),
+      `adapter-api re-exports ${sym} — a provider bundle can register its own event plane`,
+    );
+  }
+
+  const outsideCore = [
+    ...tsFiles(join(REPO_ROOT, "packages/adapters/agent")),
+    ...tsFiles(join(REPO_ROOT, "packages/adapters/scripts")),
+    join(REPO_ROOT, "agent/lib/register-adapters.ts"),
+    ...discoverBundles().flatMap((name) => bundleSourceFiles(join(REPO_ROOT, "packages/providers", name))),
+  ];
+  ok(outsideCore.length > 10, `scanned the non-core surface for event-plane deep imports (${outsideCore.length} files)`);
+  for (const f of outsideCore) {
+    for (const spec of specifiers(f)) {
+      ok(
+        !EVENT_PLANE_DEEP.test(spec),
+        `the event plane is reached ONLY via the adapter-api barrel: ${rel(f)} imports "${spec}"`,
+      );
     }
   }
 }
@@ -294,6 +322,40 @@ function firstStringPresent(text: string, strings: string[]): string | undefined
     ok(
       bundleCoreImportViolation(scriptsFile, "../../../../agent/channels/x.js", bundleRoot),
       "self-test: rule 4 still flags a relative agent-tree reach that climbs out of the bundle",
+    );
+
+    const eventPlaneBundle = join(agentDir, "register-events.ts");
+    writeFileSync(
+      eventPlaneBundle,
+      importLine("@open-everywhere/core/agent/adapter-api.js") +
+        `registerEventNormalizer({} as never);\nregisterEventScopeGrant({} as never);\n`,
+    );
+    ok(
+      specsOf(eventPlaneBundle).every((s) => !bundleCoreImportViolation(eventPlaneBundle, s, bundleRoot)),
+      "self-test: a bundle registering an event normalizer + scope grant THROUGH the barrel passes rule 4",
+    );
+    ok(
+      specsOf(eventPlaneBundle).every((s) => !bundleForeignImportViolation(s, bundleName)),
+      "self-test: …and rule 5 does not flag it either",
+    );
+    ok(
+      specsOf(eventPlaneBundle).every((s) => !EVENT_PLANE_DEEP.test(s)),
+      "self-test: …and the barrel specifier is not mistaken for an event-plane deep import",
+    );
+
+    const deepEventPlane = join(agentDir, "bad-deep-event-plane.ts");
+    writeFileSync(deepEventPlane, importLine("@open-everywhere/core/agent/routines/event-model.js"));
+    ok(
+      specsOf(deepEventPlane).some((s) => bundleCoreImportViolation(deepEventPlane, s, bundleRoot)),
+      "self-test: rule 4 flags a DEEP import of routines/event-model past the barrel",
+    );
+    ok(
+      specsOf(deepEventPlane).some((s) => EVENT_PLANE_DEEP.test(s)),
+      "self-test: section 4b's event-plane matcher catches the same specifier by name",
+    );
+    ok(
+      EVENT_PLANE_DEEP.test("../../../core/agent/routines/event-authz.js"),
+      "self-test: the event-plane matcher is path-shaped, so a RELATIVE climb to event-authz is caught too",
     );
 
     ok(
