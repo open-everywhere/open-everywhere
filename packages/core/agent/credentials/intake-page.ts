@@ -1,88 +1,35 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { createCredentialIntake, completeCredentialIntake, type RequestCredentialIntakeInput, type CredentialIntakeDeps } from "./intake.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken, PAGE_TOKEN_KEY_ENV, type PageTokenClaims } from "./page-token.js";
 
 export const INTAKE_PAGE_PATH = "/connect/v1/intake";
 
-export const INTAKE_PAGE_KEY_ENV = "OE_INTAKE_PAGE_SIGNING_KEY";
+export const INTAKE_PAGE_KEY_ENV = PAGE_TOKEN_KEY_ENV;
 
 const TOKEN_FIELD = "t";
 const VALUE_FIELD = "k";
 
 export function intakePageSigningKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const v = (env[INTAKE_PAGE_KEY_ENV] ?? "").trim();
-  return v.length > 0 ? v : undefined;
+  return pageTokenSigningKey(env);
 }
 
 export function intakePageBaseUrl(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const explicit = (env.OE_PUBLIC_BASE_URL ?? "").trim();
-  if (explicit.length > 0) {
-    const withScheme = /^https?:\/\//i.test(explicit) ? explicit : `https://${explicit}`;
-    return withScheme.replace(/\/+$/, "");
-  }
-  const host = (env.VERCEL_PROJECT_PRODUCTION_URL ?? "").trim() || (env.VERCEL_URL ?? "").trim();
-  return host.length > 0 ? `https://${host.replace(/\/+$/, "")}` : undefined;
+  return pageBaseUrl(env);
 }
 
 export function intakePageAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   return intakePageSigningKey(env) !== undefined && intakePageBaseUrl(env) !== undefined;
 }
 
-export interface IntakePageClaims {
-  readonly v: 1;
-  readonly org: string;
-  readonly id: string;
-  readonly rb: string;
-  readonly exp: number;
-}
-
-function b64urlEncode(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function b64urlDecode(s: string): Buffer {
-  if (!/^[A-Za-z0-9_-]*$/.test(s)) return Buffer.alloc(0);
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-}
-
-function sign(secret: string, payloadB64: string): string {
-  return b64urlEncode(createHmac("sha256", secret).update(payloadB64, "utf8").digest());
-}
+export type IntakePageClaims = Omit<PageTokenClaims, "aud">;
 
 export function mintIntakePageToken(claims: IntakePageClaims, secret: string): string {
-  const payloadB64 = b64urlEncode(Buffer.from(JSON.stringify(claims), "utf8"));
-  return `${payloadB64}.${sign(secret, payloadB64)}`;
+  return mintPageToken({ ...claims, aud: "intake" }, secret);
 }
 
 export function verifyIntakePageToken(token: string, secret: string, now: number = Date.now()): IntakePageClaims | null {
-  if (typeof token !== "string") return null;
-  const dot = token.indexOf(".");
-  if (dot <= 0 || dot === token.length - 1) return null;
-  const payloadB64 = token.slice(0, dot);
-  const sigB64 = token.slice(dot + 1);
-
-  const expected = sign(secret, payloadB64);
-  const a = Buffer.from(sigB64);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
-
-  let parsed: unknown;
-  try {
-    const raw = b64urlDecode(payloadB64);
-    if (raw.length === 0) return null;
-    parsed = JSON.parse(raw.toString("utf8"));
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const c = parsed as Record<string, unknown>;
-  if (c.v !== 1) return null;
-  if (typeof c.org !== "string" || !c.org) return null;
-  if (typeof c.id !== "string" || !c.id) return null;
-  if (typeof c.rb !== "string" || !c.rb) return null;
-  if (typeof c.exp !== "number" || !Number.isFinite(c.exp)) return null;
-  if (c.exp <= now) return null;
-  return { v: 1, org: c.org, id: c.id, rb: c.rb, exp: c.exp };
+  const c = verifyPageToken(token, secret, "intake", now);
+  return c ? { v: c.v, org: c.org, id: c.id, rb: c.rb, exp: c.exp } : null;
 }
 
 export interface IssueIntakePageLinkDeps extends CredentialIntakeDeps {
