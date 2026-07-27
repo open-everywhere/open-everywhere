@@ -178,14 +178,18 @@ function getDb(): DatabaseSync {
     -- webhook_hook (OPE-150): a CHAT-CREATED inbound webhook ingress. The routine table's shape --
     -- the whole row lives in one JSON data column, with only the lookup keys promoted. Three
     -- lookups exist and each has its key: by id (the URL -- CROSS-ORG, see the store port's note),
-    -- by (org, source) (every tool addresses a hook by source), and all-of-an-org (list_webhooks).
+    -- by (org, name) (every tool addresses a hook by its handle), and all-of-an-org (list_webhooks).
     -- The PRIMARY KEY is the bare id, NOT (org_id, id): the id IS the URL path segment, so it must
     -- be globally unique across tenants or one org's hook could shadow another's on the shared
     -- ingress. NO SECRET HERE: data.secretRef is a pointer into stored_credential.
+    -- ⭐ The source column holds the NAME (OPE-198 S2). The SCHEME -- the verifier/normalizer/
+    -- grant registry key -- lives unpromoted in the JSON blob as data.scheme, because nothing looks
+    -- a hook up by it. The column keeps its spelling: (org, source) and (org, name) are the same
+    -- pair of values, and renaming it would be a migration buying nothing. See the postgres twin.
     CREATE TABLE IF NOT EXISTS webhook_hook (
       org_id     TEXT NOT NULL,
       id         TEXT NOT NULL,                -- hk_<base32> -- globally unique, IS the URL segment
-      source     TEXT NOT NULL,                -- the model-facing handle; unique per org
+      source     TEXT NOT NULL,                -- the NAME: the model-facing handle; unique per org
       data       TEXT NOT NULL,                -- the whole RuntimeWebhookHook, JSON
       PRIMARY KEY (id)
     );

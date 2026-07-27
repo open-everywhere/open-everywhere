@@ -113,7 +113,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
     if (!(await store.addWebhookHook(hook))) {
       emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "declined" });
       return (
-        `no webhook created — a "${args.source}" webhook already exists here (one per source per org). ` +
+        `no webhook created — a "${args.source}" webhook already exists here (one per name per org). ` +
         `Nothing was minted and nothing changed. Check list_webhooks: if it's live, point the sender at that one, or rotate its secret.`
       );
     }

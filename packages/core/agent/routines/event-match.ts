@@ -8,6 +8,7 @@ import {
   type ScopeSelector,
   type SubscriptionFilter,
 } from "./event-model.js";
+import { webhookScheme } from "./scheme-name.js";
 import type { Routine, RoutineTrigger } from "./routine.js";
 
 export const FILTER_MAX_CLAUSES = 8;
@@ -109,15 +110,16 @@ export function evaluateSubscription(routine: Routine, ev: NormalizedEvent): Sub
   if (t.source !== ev.source) return { match: false };
   const filter = storedFilter(t);
   try {
-    validateSubscriptionAtFire(t.source, filter);
+    validateSubscriptionAtFire(webhookScheme(ev), filter);
   } catch (err) {
     return { match: false, invalid: String(err instanceof Error ? err.message : err) };
   }
   return { match: evaluateFilter(ev, filter) };
 }
 
-function validateSubscriptionAtFire(source: string, filter: SubscriptionFilter | undefined): void {
-  const n = eventNormalizer(source);
+function validateSubscriptionAtFire(scheme: string, filter: SubscriptionFilter | undefined): void {
+  const source = scheme;
+  const n = eventNormalizer(scheme);
   if (!n) throw new Error(`no normalizer registered for source "${source}"`);
   for (const s of filter?.under ?? []) {
     if (!n.scopeKinds.includes(s.kind)) throw new Error(`source "${source}" no longer proves scope kind "${s.kind}"`);

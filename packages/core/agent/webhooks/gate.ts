@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { hookSecretRefs } from "./config.js";
 import { isRuntimeHookId } from "./runtime-hook.js";
 import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
+import { webhookScheme } from "../routines/scheme-name.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
@@ -36,6 +37,7 @@ export function acceptedUnverified(outcome: WebhookGateOutcome): boolean {
 export interface GateableHook {
   readonly id: string;
   readonly source: string;
+  readonly scheme?: string;
   readonly secretRef: string | readonly string[];
 }
 
@@ -57,12 +59,13 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
   if (!hook) return reject(404, "unknown webhook id");
   if (bodyBytes > maxBodyBytes) return reject(413, `payload exceeds ${maxBodyBytes} bytes`);
 
-  const verifier = webhookVerifier(hook.source);
+  const scheme = webhookScheme(hook);
+  const verifier = webhookVerifier(scheme);
   if (!verifier) {
     const registered = registeredWebhookVerifierSources();
     return reject(
       401,
-      `no verifier registered for webhook source ${JSON.stringify(hook.source)} — registered sources: ${registered.length ? registered.join(", ") : "(none)"}. ` +
+      `no verifier registered for webhook source ${JSON.stringify(scheme)} — registered sources: ${registered.length ? registered.join(", ") : "(none)"}. ` +
         `Refusing to authenticate with another source's scheme (fail closed).`,
     );
   }
@@ -85,7 +88,7 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
   try {
     verdict = await verifier.verify({ rawBody, headers, keys, nowMs });
   } catch (err) {
-    return reject(401, `verifier for source ${JSON.stringify(hook.source)} THREW — rejecting (fail closed): ${String(err instanceof Error ? err.message : err)}`);
+    return reject(401, `verifier for source ${JSON.stringify(scheme)} THREW — rejecting (fail closed): ${String(err instanceof Error ? err.message : err)}`);
   }
   return verdict.ok
     ? { ok: true, keyIndex: verdict.keyIndex, replayKey: verifier.signedTimestamp ? verdict.replayKey : undefined }

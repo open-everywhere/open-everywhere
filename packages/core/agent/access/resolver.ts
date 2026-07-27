@@ -28,6 +28,7 @@ export interface InstructionLayer {
 export interface EffectiveAccess {
   readonly mode: SessionMode;
   readonly scopeKey: string;
+  readonly domains: readonly string[];
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
@@ -220,6 +221,7 @@ export function resolveAccess(
   return {
     mode: req.mode,
     scopeKey,
+    domains: req.domains ?? [],
     connections,
     reachableHosts,
     repos,

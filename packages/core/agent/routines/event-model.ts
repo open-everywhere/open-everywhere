@@ -1,4 +1,5 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { webhookScheme } from "./scheme-name.js";
 
 export type ScopeKind = "tenant" | "group" | "container" | "entity" | "sub";
 
@@ -21,6 +22,7 @@ export const FIELD_VALUE_MAX = 200;
 
 export interface NormalizedEvent {
   readonly source: string;
+  readonly scheme?: string;
   readonly event: string;
   readonly action?: string;
   readonly scope: readonly ScopeStep[];
@@ -35,6 +37,7 @@ export interface NormalizedEvent {
 
 export interface TriggerDelivery {
   readonly source: string;
+  readonly scheme?: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
   readonly deliveryId?: string;
@@ -91,8 +94,8 @@ export function eventNormalizer(source: string | undefined): EventNormalizer | u
   return source === undefined ? undefined : NORMALIZERS.get(source);
 }
 
-export function declaredDeliveryId(source: string, headers: Readonly<Record<string, string>>): string | undefined {
-  const header = eventNormalizer(source)?.deliveryIdHeader;
+export function declaredDeliveryId(scheme: string, headers: Readonly<Record<string, string>>): string | undefined {
+  const header = eventNormalizer(scheme)?.deliveryIdHeader;
   if (!header) return undefined;
   const value = headers[header.toLowerCase()];
   return value ? value : undefined;
@@ -130,27 +133,29 @@ export function normalizedEventDefect(ev: NormalizedEvent): string | null {
 }
 
 export function normalizeDelivery(d: TriggerDelivery, onReject?: (reason: string) => void): NormalizedEvent | null {
-  const n = eventNormalizer(d.source);
+  const scheme = webhookScheme(d);
+  const n = eventNormalizer(scheme);
   if (!n) {
-    onReject?.(`no normalizer registered for source "${d.source}" (registered: ${registeredEventSources().join(", ") || "none"})`);
+    onReject?.(`no normalizer registered for source "${scheme}" (registered: ${registeredEventSources().join(", ") || "none"})`);
     return null;
   }
   let ev: NormalizedEvent | null;
   try {
     ev = n.normalize(d);
   } catch (err) {
-    onReject?.(`normalizer for "${d.source}" threw: ${String(err)}`);
+    onReject?.(`normalizer for "${scheme}" threw: ${String(err)}`);
     return null;
   }
   if (!ev) return null;
   const defect = normalizedEventDefect(ev);
   if (defect) {
-    onReject?.(`normalizer for "${d.source}" produced a defective event: ${defect}`);
+    onReject?.(`normalizer for "${scheme}" produced a defective event: ${defect}`);
     return null;
   }
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(ev.fields)) fields[k] = v.length > FIELD_VALUE_MAX ? v.slice(0, FIELD_VALUE_MAX) : v;
-  return d.redactPayload ? redactEvent({ ...ev, fields }, d.source) : { ...ev, fields };
+  const out: NormalizedEvent = { ...ev, fields, source: d.source, scheme };
+  return d.redactPayload ? redactEvent(out, d.source) : out;
 }
 
 export function redactEvent(ev: NormalizedEvent, declaredSource: string): NormalizedEvent {

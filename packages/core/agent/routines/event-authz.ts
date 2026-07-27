@@ -3,6 +3,7 @@ import { resolveAccess, type EffectiveAccess, type ResolveRequest } from "../acc
 import type { Partition } from "../memory/partition.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { innermostScope, type NormalizedEvent, type ScopeStep } from "./event-model.js";
+import { webhookScheme } from "./scheme-name.js";
 import { routinePartition } from "./partition.js";
 import type { Routine } from "./routine.js";
 
@@ -80,7 +81,7 @@ export function checkEventReadGrant(
   partitions: readonly Partition[],
   deps: EventGrantDeps = {},
 ): EventGrantVerdict {
-  const adapter = eventScopeGrant(ev.source);
+  const adapter = eventScopeGrant(webhookScheme(ev));
   if (!adapter) return { ok: false, reason: "no-grant-adapter" };
   if (!innermostScope(ev.scope)) return { ok: false, reason: "no-scope" };
   if (partitions.length === 0) return { ok: false, reason: "unresolvable" };
