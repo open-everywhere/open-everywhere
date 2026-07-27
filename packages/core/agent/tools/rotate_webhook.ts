@@ -11,7 +11,9 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { hasPrivateDeliveryPath } from "./create_webhook.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
-import { isDeletableHookStatus } from "../webhooks/runtime-hook.js";
+import { hookAcquisition, isDeletableHookStatus } from "../webhooks/runtime-hook.js";
+import { rotateAcquisitionRefusal } from "../webhooks/provisioning.js";
+import { webhookScheme } from "../routines/scheme-name.js";
 
 export default defineTool({
   description:
@@ -64,6 +66,10 @@ export default defineTool({
       throw new Error(`There's no active "${source}" webhook here — it's ${hook.status}. Use list_webhooks to see what exists, or create_webhook to set one up.`);
     }
 
+    const acquisition = hookAcquisition(hook);
+    const refusal = rotateAcquisitionRefusal(acquisition, hook.source, webhookScheme(hook));
+    if (refusal) throw new Error(refusal);
+
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) throw new Error("rotate_webhook needs a verified sender — there's no requester to show on the approval card.");
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
@@ -73,7 +79,18 @@ export default defineTool({
       {
         org: p.org,
         kind: "webhook.rotate",
-        args: { org: p.org, id: hook.id, source: hook.source, posture: hook.posture, surfaceKey: p.surfaceKey, requestedBy, platform: binding.platform, channelId },
+        args: {
+          org: p.org,
+          id: hook.id,
+          source: hook.source,
+          ...(hook.scheme && hook.scheme !== hook.source ? { scheme: hook.scheme } : {}),
+          ...(acquisition !== "mint" ? { provisioning: acquisition } : {}),
+          posture: hook.posture,
+          surfaceKey: p.surfaceKey,
+          requestedBy,
+          platform: binding.platform,
+          channelId,
+        },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,

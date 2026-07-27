@@ -313,6 +313,7 @@ let createdId = "";
   ok(/NOT reversible/i.test(revokeCard), "🔴 the revoke card says the revocation is NOT reversible");
   ok(/retires/.test(revokeCard) && revokeCard.includes("notion"), "…and that it retires that specific source name");
   ok(!/Reversible only by creating a new webhook/.test(revokeCard), "🔴 the old, false reversibility promise is gone");
+  ok(/no record/.test(revokeCard) && /do not read this as remediation/.test(revokeCard), "🔴 a card with no known remediation says so, rather than implying revoking is enough");
 }
 
 rmSync(dir, { recursive: true, force: true });

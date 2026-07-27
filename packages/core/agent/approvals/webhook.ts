@@ -11,13 +11,22 @@ import {
   describeRuntimeHook,
   hookAcquisition,
   mintRuntimeHookId,
+  ownsSecretRef,
   rotationOverlapMs,
   runtimeHookPrevSecretRef,
   runtimeHookSecretRef,
   type RuntimeWebhookHook,
   type WebhookPosture,
 } from "../webhooks/runtime-hook.js";
-import type { WebhookAcquisition } from "../webhooks/provisioning.js";
+import { webhookScheme } from "../routines/scheme-name.js";
+import {
+  hookRemediation,
+  revokeRemediationNote,
+  rotateAcquisitionRefusal,
+  webhookProvisioning,
+  type WebhookAcquisition,
+  type WebhookRemediation,
+} from "../webhooks/provisioning.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -239,6 +248,8 @@ export interface WebhookRotateArgs {
   readonly id: string;
   readonly source: string;
   readonly posture: WebhookPosture;
+  readonly scheme?: string;
+  readonly provisioning?: WebhookAcquisition;
   readonly surfaceKey: string;
   readonly requestedBy: string;
   readonly platform: string;
@@ -249,6 +260,10 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
   kind: "webhook.rotate",
   policy: "member",
   summarize(args) {
+    const refusal = rotateAcquisitionRefusal(hookAcquisition({ provisioning: args.provisioning }), args.source, args.scheme ?? args.source);
+    if (refusal) {
+      return [`Rotate the signing secret for the "${args.source}" webhook — I CAN'T, and approving this changes nothing`, refusal, `Requested by ${args.requestedBy}`];
+    }
     const hours = Math.round(rotationOverlapMs() / 3_600_000);
     return [
       `Rotate the signing secret for the "${args.source}" webhook`,
@@ -266,6 +281,22 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     if (existing.status !== "active") {
       return `webhook "${args.source}" is ${existing.status}, not live — nothing to rotate. Nothing was minted and nothing changed.`;
     }
+
+    const acquisition = hookAcquisition(existing);
+    const refusal = rotateAcquisitionRefusal(acquisition, args.source, webhookScheme(existing));
+    if (refusal) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": "declined" });
+      return `${refusal} Nothing was minted, the vault was not touched, and the webhook is exactly as it was.`;
+    }
+
+    if (!ownsSecretRef(args.id, existing.secretRef)) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": "declined" });
+      return (
+        `I can't rotate the "${args.source}" webhook: its signing secret is stored under a ref this hook does not own, which means something else is authenticating with the same key. ` +
+        `Rotating would silently break whatever that is. Nothing was minted and nothing changed — an admin needs to look at this hook's storage by hand.`
+      );
+    }
+
     const vault = encryptedKvVault();
     const now = new Date();
     const prevRef = runtimeHookPrevSecretRef(args.id);
@@ -292,7 +323,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
       surface: args.surfaceKey.split("/")[2] ?? "-",
       principalId: decidedBy,
       action: "webhook.rotated",
-      detail: { hookId: args.id, source: args.source, rotatedBy: decidedBy, requestedBy: args.requestedBy, ...(outgoing ? { overlapUntil } : {}), revealDelivered: delivered },
+      detail: { hookId: args.id, source: args.source, acquisition, rotatedBy: decidedBy, requestedBy: args.requestedBy, ...(outgoing ? { overlapUntil } : {}), revealDelivered: delivered },
     });
     const rotatedOutcome = delivered ? "ok" : "failed";
     emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": rotatedOutcome });
@@ -306,6 +337,9 @@ export interface WebhookRevokeArgs {
   readonly org: string;
   readonly id: string;
   readonly source: string;
+  readonly scheme?: string;
+  readonly remediation?: WebhookRemediation;
+  readonly provisioning?: WebhookAcquisition;
   readonly surfaceKey: string;
   readonly requestedBy: string;
 }
@@ -316,7 +350,9 @@ const webhookRevoke: ActionKind<WebhookRevokeArgs> = {
   summarize(args) {
     return [
       `Revoke the "${args.source}" webhook — the endpoint stops accepting anything, immediately`,
-      `Whatever is sending to it will start failing. NOT reversible: the row is kept so the endpoint stays dead, and that retires the "${args.source}" name — no replacement webhook can be created for it afterwards. If the secret leaked but you want the integration, cancel this and rotate instead.`,
+      `Whatever is sending to it will start failing. NOT reversible: the row is kept so the endpoint stays dead, and that retires the "${args.source}" name — no replacement webhook can be created for it afterwards.` +
+        (hookAcquisition({ provisioning: args.provisioning }) === "mint" ? " If the secret leaked but you want the integration, cancel this and rotate instead." : ""),
+      revokeRemediationNote(args.remediation, args.scheme ?? args.source),
       `Requested by ${args.requestedBy}`,
     ];
   },
@@ -331,14 +367,25 @@ const webhookRevoke: ActionKind<WebhookRevokeArgs> = {
     if (!updated) return `no webhook "${args.source}" on this deployment — nothing to revoke (it may already be gone).`;
 
     const vault = encryptedKvVault();
+    let scrubbed = 0;
+    let skipped = 0;
     for (const ref of [updated.secretRef, updated.prevSecretRef]) {
       if (!ref) continue;
+      if (!ownsSecretRef(args.id, ref)) {
+        skipped++;
+        console.log(
+          `[open-everywhere:webhooks] "${args.source}" revoked, but its stored key was left in place: the ref is not this hook's own, so something else may be authenticating with it. Scrub it by hand once you know what else points there.`,
+        );
+        continue;
+      }
       try {
         await vault.write(ref, mintSecret(), { provider: "webhook", domain: `${args.source} (revoked)`, createdBy: decidedBy });
+        scrubbed++;
       } catch {
       }
     }
 
+    const remediation = hookRemediation(hookAcquisition(updated), webhookProvisioning(webhookScheme(updated)));
     await appendAudit({
       org: args.org,
       platform: args.surfaceKey.split("/")[0] ?? "webhook",
@@ -346,10 +393,22 @@ const webhookRevoke: ActionKind<WebhookRevokeArgs> = {
       surface: args.surfaceKey.split("/")[2] ?? "-",
       principalId: decidedBy,
       action: "webhook.revoked",
-      detail: { hookId: args.id, source: args.source, revokedBy: decidedBy, requestedBy: args.requestedBy },
+      detail: {
+        hookId: args.id,
+        source: args.source,
+        acquisition: hookAcquisition(updated),
+        ...(remediation ? { remediation } : {}),
+        keysScrubbed: scrubbed,
+        ...(skipped ? { keysLeftInPlace: skipped } : {}),
+        revokedBy: decidedBy,
+        requestedBy: args.requestedBy,
+      },
     });
     emitTelemetry("oe.feature.used", { "oe.feature": "webhook_revoked", "oe.outcome": "ok" });
-    return `webhook "${args.source}" revoked — its endpoint now behaves exactly as if it had never existed.`;
+    return (
+      `webhook "${args.source}" revoked — its endpoint now behaves exactly as if it had never existed. ` +
+      revokeRemediationNote(remediation, webhookScheme(updated))
+    );
   },
 };
 
