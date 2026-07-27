@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { hookSecretRefs, type WebhookHook } from "./config.js";
+import { hookSecretRefs } from "./config.js";
 import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
@@ -28,8 +28,14 @@ export type WebhookGateOutcome =
   | { readonly ok: true; readonly keyIndex: number | null; readonly replayKey?: string }
   | { readonly ok: false; readonly rejection: WebhookRejection };
 
+export interface GateableHook {
+  readonly id: string;
+  readonly source: string;
+  readonly secretRef: string | readonly string[];
+}
+
 export interface WebhookGateInput {
-  readonly hook: WebhookHook | undefined;
+  readonly hook: GateableHook | undefined;
   readonly secretValues: readonly string[];
   readonly rawBody: string;
   readonly bodyBytes: number;

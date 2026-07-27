@@ -30,6 +30,7 @@ export interface NormalizedEvent {
   readonly occurredAt?: string;
   readonly summary: string;
   readonly pointer?: EntityPointer;
+  readonly redacted?: boolean;
 }
 
 export interface TriggerDelivery {
@@ -38,6 +39,7 @@ export interface TriggerDelivery {
   readonly body: string;
   readonly deliveryId?: string;
   readonly receivedAt: string;
+  readonly redactPayload?: boolean;
 }
 
 export type FilterClause =
@@ -140,5 +142,16 @@ export function normalizeDelivery(d: TriggerDelivery, onReject?: (reason: string
   }
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(ev.fields)) fields[k] = v.length > FIELD_VALUE_MAX ? v.slice(0, FIELD_VALUE_MAX) : v;
-  return { ...ev, fields };
+  return d.redactPayload ? redactEvent({ ...ev, fields }, d.source) : { ...ev, fields };
+}
+
+export function redactEvent(ev: NormalizedEvent, declaredSource: string): NormalizedEvent {
+  const { url: _url, ...fields } = ev.fields as Record<string, string>;
+  const { pointer: _pointer, actor: _actor, ...rest } = ev;
+  return {
+    ...rest,
+    fields,
+    summary: `${declaredSource} webhook fired (payload withheld — this hook is trigger-only)`,
+    redacted: true,
+  };
 }

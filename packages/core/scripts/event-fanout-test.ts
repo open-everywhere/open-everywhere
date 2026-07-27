@@ -22,6 +22,7 @@ const { registerRoutineDispatch, resolveRoutineTarget } = await import("../agent
 const { fanOutDelivery, deliveryDedupeKey } = await import("../agent/routines/github-fanout.js");
 const { routineFireAttributes } = await import("../agent/routines/fire-auth.js");
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 type AuditInput = import("../agent/operational/store.js").AuditInput;
@@ -132,11 +133,18 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   const dest = resolveRoutineTarget(r)!;
   const h = harness([r]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-  const expected = routineFireAttributes(r, dest.attributes, dest.mode, true);
+  const shared = routineFireAttributes(r, dest.attributes, dest.mode, true);
+  const actual = h.fired[0]!.auth.attributes as Record<string, string>;
+  const { [OE_TAINTED_FIRE_ATTR]: taint, ...rest } = actual;
   ok(
-    JSON.stringify(h.fired[0]!.auth.attributes) === JSON.stringify(expected),
-    "OPE-143: the fan-out's attribute bag is EXACTLY routineFireAttributes — not a parallel shape that can drift",
+    JSON.stringify(rest) === JSON.stringify(shared),
+    "OPE-143: the fan-out's attribute bag is EXACTLY routineFireAttributes plus the declared delta — not a parallel shape that can drift",
   );
+  ok(
+    taint === "true",
+    "OPE-159: a NON-redacted (content-bearing) event fire stamps the taint attribute — its prompt carries an outside party's bytes, so the fired session must not run with a clean taint signal",
+  );
+  ok(Object.keys(actual).length === Object.keys(shared).length + 1, "…and the taint stamp is the ONLY thing added to the shared bag");
 }
 
 {

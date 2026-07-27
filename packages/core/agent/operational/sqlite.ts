@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
+import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -174,6 +175,21 @@ function getDb(): DatabaseSync {
       used_at      TEXT,                      -- ISO-8601 when consumed; NULL = still open (single-use)
       PRIMARY KEY (org_id, id)
     );
+    -- webhook_hook (OPE-150): a CHAT-CREATED inbound webhook ingress. The routine table's shape --
+    -- the whole row lives in one JSON data column, with only the lookup keys promoted. Three
+    -- lookups exist and each has its key: by id (the URL -- CROSS-ORG, see the store port's note),
+    -- by (org, source) (every tool addresses a hook by source), and all-of-an-org (list_webhooks).
+    -- The PRIMARY KEY is the bare id, NOT (org_id, id): the id IS the URL path segment, so it must
+    -- be globally unique across tenants or one org's hook could shadow another's on the shared
+    -- ingress. NO SECRET HERE: data.secretRef is a pointer into stored_credential.
+    CREATE TABLE IF NOT EXISTS webhook_hook (
+      org_id     TEXT NOT NULL,
+      id         TEXT NOT NULL,                -- hk_<base32> -- globally unique, IS the URL segment
+      source     TEXT NOT NULL,                -- the model-facing handle; unique per org
+      data       TEXT NOT NULL,                -- the whole RuntimeWebhookHook, JSON
+      PRIMARY KEY (id)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS webhook_hook_org_source ON webhook_hook (org_id, source);
     -- github_installation (scm/installations.ts): owner → installation id, learned from the App's own
     -- signature-verified "installation" webhook so a new org installing the App self-registers instead
     -- of needing an OE_GITHUB_INSTALLATIONS env edit + redeploy. NOT a secret (an installation id is a
@@ -1265,6 +1281,36 @@ export const sqliteOperationalStore: OperationalStore = {
       expiresAt: row.expires_at,
       ...(row.used_at ? { usedAt: row.used_at } : {}),
     };
+  },
+
+  async addWebhookHook(hook) {
+    getDb()
+      .prepare("INSERT INTO webhook_hook (org_id, id, source, data) VALUES (?, ?, ?, ?)")
+      .run(hook.org, hook.id, hook.source, JSON.stringify(hook));
+  },
+
+  async getWebhookHookById(id) {
+    const row = getDb().prepare("SELECT data FROM webhook_hook WHERE id = ?").get(id) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
+  },
+
+  async getWebhookHookBySource(org, source) {
+    const row = getDb().prepare("SELECT data FROM webhook_hook WHERE org_id = ? AND source = ?").get(org, source) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
+  },
+
+  async listWebhookHooks(org) {
+    const rows = getDb().prepare("SELECT data FROM webhook_hook WHERE org_id = ? ORDER BY source ASC").all(org) as { data: string }[];
+    return rows.map((r) => JSON.parse(r.data) as RuntimeWebhookHook);
+  },
+
+  async updateWebhookHook(org, id, patch) {
+    const handle = getDb();
+    const row = handle.prepare("SELECT data FROM webhook_hook WHERE org_id = ? AND id = ?").get(org, id) as { data: string } | undefined;
+    if (!row) return null;
+    const updated: RuntimeWebhookHook = { ...(JSON.parse(row.data) as RuntimeWebhookHook), ...patch, org, id };
+    handle.prepare("UPDATE webhook_hook SET source = ?, data = ? WHERE org_id = ? AND id = ?").run(updated.source, JSON.stringify(updated), org, id);
+    return updated;
   },
 
   async consumeCredentialIntake(org, id, usedAt) {

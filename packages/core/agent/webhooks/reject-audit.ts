@@ -1,6 +1,5 @@
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
-import type { WebhookHook } from "./config.js";
 import type { WebhookRejection } from "./gate.js";
 import { webhookOrg } from "./dispatch.js";
 
@@ -8,7 +7,12 @@ export const REJECTION_WINDOW_MS = 60_000;
 
 export const REJECTION_ID_MAX_CHARS = 100;
 
-export function rejectionThrottleKey(hook: WebhookHook | undefined, status: number): string {
+export interface AuditableHook {
+  readonly id: string;
+  readonly target?: string;
+}
+
+export function rejectionThrottleKey(hook: AuditableHook | undefined, status: number): string {
   return hook ? `hookrej:${hook.id}:${status}` : `hookrej:unknown:${status}`;
 }
 
@@ -27,7 +31,7 @@ export interface RejectionAuditDeps {
 
 export async function auditWebhookRejection(
   id: string,
-  hook: WebhookHook | undefined,
+  hook: AuditableHook | undefined,
   rejection: WebhookRejection,
   deps: RejectionAuditDeps = {},
 ): Promise<boolean> {
@@ -52,12 +56,12 @@ export async function auditWebhookRejection(
 
   const carried = suppressed.get(key) ?? 0;
   suppressed.delete(key);
-  const target = hook?.target.split("/") ?? [];
+  const target = hook?.target?.split("/") ?? [];
   await audit({
     org,
     platform: "slack",
-    workspace: hook ? (target[1] ?? "unknown") : "unknown",
-    surface: hook ? (target[2] ?? "unknown") : "unknown",
+    workspace: target[1] ?? "unknown",
+    surface: target[2] ?? "unknown",
     action: "webhook.rejected",
     detail: {
       hookId: id.slice(0, REJECTION_ID_MAX_CHARS),

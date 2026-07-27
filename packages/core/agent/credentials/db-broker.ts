@@ -3,6 +3,7 @@ import { CredentialError, registerBroker, registeredBrokerNames, type Credential
 import { getOperationalStore } from "../operational/provider.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { registerCredentialHome } from "./home.js";
+import { reservedRefNamespace, reservedRefRefusal } from "./reserved-refs.js";
 
 export const DB_BROKER = "db";
 
@@ -92,6 +93,8 @@ export async function storeDbSecret(input: StoreDbSecretInput): Promise<void> {
 export function makeDbCredentialBroker(): CredentialBroker {
   return {
     async getSecret(ref) {
+      const reserved = reservedRefNamespace(ref);
+      if (reserved) throw new CredentialError(reservedRefRefusal(ref, reserved));
       const row = await getOperationalStore().getStoredCredential(deploymentOrg(), ref);
       if (!row) {
         throw new CredentialError(`secret not found for ref "${ref}" (no stored credential — store one via the "Set API key" flow)`);

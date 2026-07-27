@@ -1,5 +1,6 @@
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
+import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { UnifiedWakeRecord } from "../channels/unified-window.js";
@@ -19,6 +20,7 @@ export const OPERATIONAL_TABLES = [
   "slack_attachment",
   "stored_credential",
   "credential_intake",
+  "webhook_hook",
   "github_installation",
   "pr_session_approval",
   "pending_actions",
@@ -379,6 +381,12 @@ export interface OperationalStore {
   addCredentialIntake(row: CredentialIntakeRow): Promise<void>;
   getCredentialIntake(org: string, id: string): Promise<CredentialIntakeRow | null>;
   consumeCredentialIntake(org: string, id: string, usedAt: string): Promise<boolean>;
+
+  addWebhookHook(hook: RuntimeWebhookHook): Promise<void>;
+  getWebhookHookById(id: string): Promise<RuntimeWebhookHook | null>;
+  getWebhookHookBySource(org: string, source: string): Promise<RuntimeWebhookHook | null>;
+  listWebhookHooks(org: string): Promise<readonly RuntimeWebhookHook[]>;
+  updateWebhookHook(org: string, id: string, patch: Partial<RuntimeWebhookHook>): Promise<RuntimeWebhookHook | null>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

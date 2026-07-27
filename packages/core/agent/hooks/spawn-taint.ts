@@ -1,18 +1,25 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { OE_SPAWN_TAINTED_ATTR } from "../channels/unified.js";
-import { markUntrustedIngestedThisTurn } from "../access/taint-signal.js";
+import { markUntrustedIngestedThisTurn, OE_TAINTED_FIRE_ATTR } from "../access/taint-signal.js";
 
-function seedIfSpawnTainted(ctx: HookContext): void {
+export const TAINT_SEED_ATTRS: readonly string[] = [OE_SPAWN_TAINTED_ATTR, OE_TAINTED_FIRE_ATTR];
+
+export function seedIfTainted(ctx: HookContext): void {
   try {
     const attrs = (ctx as { session?: { auth?: { current?: { attributes?: Record<string, unknown> } | null } } }).session?.auth?.current?.attributes;
-    const v = attrs?.[OE_SPAWN_TAINTED_ATTR];
-    if (v === "true" || v === true) markUntrustedIngestedThisTurn();
+    for (const name of TAINT_SEED_ATTRS) {
+      const v = attrs?.[name];
+      if (v === "true" || v === true) {
+        markUntrustedIngestedThisTurn();
+        return;
+      }
+    }
   } catch {
   }
 }
 
 export default defineHook({
   events: {
-    "turn.started": (_event, ctx) => seedIfSpawnTainted(ctx),
+    "turn.started": (_event, ctx) => seedIfTainted(ctx),
   },
 });

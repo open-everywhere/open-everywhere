@@ -1,3 +1,6 @@
+import { RUNTIME_HOOK_ID_PREFIX } from "./runtime-hook.js";
+import { reservedRefNamespace } from "../credentials/reserved-refs.js";
+
 export interface WebhookHook {
   readonly id: string;
   readonly source: string;
@@ -11,7 +14,7 @@ export function defineWebhook(hook: WebhookHook): WebhookHook {
   return hook;
 }
 
-export function hookSecretRefs(hook: WebhookHook): readonly string[] {
+export function hookSecretRefs(hook: Pick<WebhookHook, "secretRef">): readonly string[] {
   return typeof hook.secretRef === "string" ? [hook.secretRef] : hook.secretRef;
 }
 
@@ -22,6 +25,12 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
   for (const h of hooks) {
     if (!h.id || !ID_RE.test(h.id)) {
       throw new Error(`webhook hook id ${JSON.stringify(h.id)} must be a non-empty url-safe token ([a-zA-Z0-9_-]+)`);
+    }
+    if (h.id.startsWith(RUNTIME_HOOK_ID_PREFIX)) {
+      throw new Error(
+        `webhook hook id "${h.id}" starts with the reserved "${RUNTIME_HOOK_ID_PREFIX}" prefix — that namespace belongs to hooks created from chat ` +
+          `(they are minted host-side and never appear in config). Rename it.`,
+      );
     }
     if (seen.has(h.id)) throw new Error(`duplicate webhook hook id "${h.id}"`);
     seen.add(h.id);
@@ -37,6 +46,13 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
     for (const [i, ref] of refs.entries()) {
       if (typeof ref !== "string" || !ref.trim()) {
         throw new Error(`webhook "${h.id}" secretRef[${i}] is blank — each entry must name where the shared secret lives (a ref, never the value)`);
+      }
+      const reserved = reservedRefNamespace(ref);
+      if (reserved) {
+        throw new Error(
+          `webhook "${h.id}" secretRef[${i}] is in the reserved "${reserved}" namespace — that namespace holds secret material this ` +
+            `deployment minted for itself (a chat-created hook's signing secret, an OAuth token). Point at your own ref instead.`,
+        );
       }
     }
     if (new Set(refs).size !== refs.length) {

@@ -16,3 +16,9 @@ export function untrustedIngestedThisTurn(): boolean {
     return false;
   }
 }
+
+export const OE_TAINTED_FIRE_ATTR = "oe_tainted_fire";
+
+export function taintedFireAttrs(tainted: boolean): Record<string, string> {
+  return tainted ? { [OE_TAINTED_FIRE_ATTR]: "true" } : {};
+}

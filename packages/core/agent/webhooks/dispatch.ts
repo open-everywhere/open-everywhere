@@ -4,6 +4,7 @@ import { NO_REPLY_SENTINEL } from "../channels/turn-delivery.js";
 import { scopeOverBudget } from "../spend/check.js";
 import type { Partition } from "../memory/partition.js";
 import { ingestUntrusted } from "../access/untrusted.js";
+import { taintedFireAttrs } from "../access/taint-signal.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { webhookFireAttributes } from "../routines/fire-auth.js";
 import { checkFireDisclosure } from "../routines/fire-disclosure.js";
@@ -83,7 +84,7 @@ export async function fireWebhook(
     authenticator: "webhook",
     principalType: "service",
     principalId: `webhook:${hook.id}`,
-    attributes: webhookFireAttributes(hook.id, teamId, channelId, isDm, internal),
+    attributes: { ...webhookFireAttributes(hook.id, teamId, channelId, isDm, internal), ...taintedFireAttrs(true) },
   };
 
   const message = renderWebhookMessage(hook, rawBody);
