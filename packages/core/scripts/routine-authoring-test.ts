@@ -65,7 +65,7 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
 
 const ctx = {
   channel: { kind: "slack" },
-  session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel" }, principalId: "U1", principalType: "slack-user" } } },
+  session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", is_ext_shared: "false", trust_checked: "true" }, principalId: "U1", principalType: "slack-user" } } },
 } as never;
 const P = resolvePartition(ctx);
 const partition = P as never;

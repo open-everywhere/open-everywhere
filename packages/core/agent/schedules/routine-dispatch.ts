@@ -2,7 +2,7 @@ import type { Channel } from "eve/channels";
 import type { TelegramReceiveTarget } from "eve/channels/telegram";
 import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
-import type { Routine } from "../routines/routine.js";
+import { reportDestinationOf, type Routine } from "../routines/routine.js";
 import type { UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { bridgeSlackChannel } from "../channels/slack-bridge.js";
@@ -17,6 +17,7 @@ export interface DispatchTarget {
 
 export interface RoutineDispatchProvider {
   readonly resolveTarget: (routine: Routine) => DispatchTarget | null;
+  readonly reportTargetFor?: (surfaceKey: string) => Readonly<Record<string, unknown>> | null;
 }
 
 const ROUTINE_DISPATCH: Map<string, RoutineDispatchProvider> = new Map();
@@ -55,14 +56,29 @@ function resolveSlackTarget(r: Routine): DispatchTarget | null {
 }
 
 export function resolveRoutineTarget(routine: Routine): DispatchTarget | null {
-  const platform = routine.surfaceKey.split("/")[0];
+  const r = reportDestinationOf(routine);
+  const platform = r.surfaceKey.split("/")[0];
   if (platform === undefined) return null;
   const provider = resolveRegisteredRoutineDispatch(platform);
-  if (provider) return provider.resolveTarget(routine);
+  if (provider) return provider.resolveTarget(r);
   switch (platform) {
     case "slack":
-      return resolveSlackTarget(routine);
+      return resolveSlackTarget(r);
     default:
       return null;
   }
+}
+
+export function canDispatchRoutinesOn(platform: string): boolean {
+  return platform === "slack" || resolveRegisteredRoutineDispatch(platform) !== undefined;
+}
+
+export function reportTargetForSurface(surfaceKey: string): Readonly<Record<string, unknown>> | null {
+  const segs = surfaceKey.split("/");
+  const platform = segs[0];
+  const surface = segs[2];
+  if (platform === undefined || surface === undefined || surface.length === 0 || segs.length !== 3) return null;
+  const provider = resolveRegisteredRoutineDispatch(platform);
+  if (provider) return provider.reportTargetFor ? provider.reportTargetFor(surfaceKey) : null;
+  return platform === "slack" ? { channelId: surface } : null;
 }

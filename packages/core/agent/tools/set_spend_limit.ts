@@ -18,7 +18,7 @@ export function approvalPostDeps(platform: string): RequestApprovalDeps {
 }
 
 export function hasApprovalCardPath(platform: string): boolean {
-  return platform === "slack" || platform === "discord";
+  return platform === "slack" || cardPosterFor(platform) !== undefined;
 }
 
 export interface SetSpendLimitInput {

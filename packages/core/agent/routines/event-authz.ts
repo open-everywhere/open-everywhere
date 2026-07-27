@@ -62,13 +62,17 @@ export function eventGrantPartitions(r: Routine): readonly Partition[] {
   switch (report.kind) {
     case "silent":
       return [own];
+    case "surface":
+      return [own, routinePartition({ org: r.org, surfaceKey: report.surfaceKey })];
+    default: {
+      const exhaustive: never = report;
+      throw new Error(
+        `unhandled RoutineReport kind "${String((exhaustive as { kind?: unknown }).kind)}" — a report arm that names its OWN destination must contribute ` +
+          "that destination's partition here, or the event read-grant check would authorize delivery into a room on the " +
+          "strength of a different domain's grant.",
+      );
+    }
   }
-  const exhaustive: never = report.kind;
-  throw new Error(
-    `unhandled RoutineReport kind "${String(exhaustive)}" — a report arm that names its OWN destination must contribute ` +
-      "that destination's partition here, or the event read-grant check would authorize delivery into a room on the " +
-      "strength of a different domain's grant.",
-  );
 }
 
 export function checkEventReadGrant(

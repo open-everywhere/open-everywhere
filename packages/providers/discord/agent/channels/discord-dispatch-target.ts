@@ -22,3 +22,9 @@ export function resolveDiscordTarget(r: Routine): DispatchTarget | null {
     },
   };
 }
+
+export function discordReportTargetFor(surfaceKey: string): Readonly<Record<string, unknown>> | null {
+  const segs = surfaceKey.split("/");
+  const channelId = segs.length === 3 && segs[0] === "discord" ? segs[2] : undefined;
+  return channelId && channelId.length > 0 ? { channelId } : null;
+}

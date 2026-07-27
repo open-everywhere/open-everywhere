@@ -12,7 +12,22 @@ export type RoutineTrigger =
       readonly filter?: SubscriptionFilter;
     };
 
-export type RoutineReport = { readonly kind: "silent" };
+export type RoutineReport =
+  | { readonly kind: "silent" }
+  | {
+      readonly kind: "surface";
+      readonly surfaceKey: string;
+      readonly target: Readonly<Record<string, unknown>>;
+    };
+
+export function reportDestinationOf(r: Routine): Routine {
+  const rep = r.report;
+  return rep?.kind === "surface" ? { ...r, surfaceKey: rep.surfaceKey, target: rep.target } : r;
+}
+
+export function routineReportSurfaceKey(r: Pick<Routine, "surfaceKey" | "report">): string {
+  return r.report?.kind === "surface" ? r.report.surfaceKey : r.surfaceKey;
+}
 
 export type RoutineStatus = "active" | "disabled" | "done";
 export type RunOutcome = "ok" | "failed" | "skipped";
@@ -126,6 +141,11 @@ export function routineManualStamped(attributes: Attrs): boolean {
 
 export function describeTrigger(t: RoutineTrigger, report?: RoutineReport): string {
   const silent = report?.kind === "silent";
+  const where = report?.kind === "surface" ? ` → posts into ${report.surfaceKey}` : "";
+  return describeTriggerCore(t, silent) + where;
+}
+
+function describeTriggerCore(t: RoutineTrigger, silent: boolean): string {
   switch (t.kind) {
     case "cron":
       return `cron "${t.expr}" (UTC; ${silent ? "posts nothing" : "posts every run"})`;

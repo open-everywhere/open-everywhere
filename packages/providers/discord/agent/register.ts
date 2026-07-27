@@ -13,7 +13,7 @@ import {
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
-import { resolveDiscordTarget } from "./channels/discord-dispatch-target.js";
+import { resolveDiscordTarget, discordReportTargetFor } from "./channels/discord-dispatch-target.js";
 import { bindDiscord } from "./channels/discord-identity.js";
 import { discordPostArm } from "./channels/discord-post-arm.js";
 import { discordWakeOriginCodec } from "./channels/discord-origin-codec.js";
@@ -32,7 +32,7 @@ export function registerDiscordProvider(): void {
   registerReactionSurface("discord");
   registerSurfaceMessageOps(discordMessageOps);
   registerCardPoster("discord", postDiscordApprovalCard);
-  registerRoutineDispatch("discord", { resolveTarget: resolveDiscordTarget });
+  registerRoutineDispatch("discord", { resolveTarget: resolveDiscordTarget, reportTargetFor: discordReportTargetFor });
   registerNativeAdminCheck("discord", async (scopeKey, principalId) => {
     const guildId = guildIdFromScopeKey(scopeKey);
     return guildId ? isGuildAdminViaRest(guildId, principalId) : false;

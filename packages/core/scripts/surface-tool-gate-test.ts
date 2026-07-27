@@ -4,6 +4,9 @@ import forget from "../agent/tools/forget.js";
 import requestAccess from "../agent/tools/request_access.js";
 import react from "../agent/tools/react.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { registerCardPoster } from "../agent/approvals/flow.js";
+
+registerCardPoster("discord", async () => undefined);
 
 delete process.env.OE_PLATFORM;
 

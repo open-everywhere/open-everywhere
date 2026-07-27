@@ -58,6 +58,7 @@ export interface Domain {
   readonly sandbox?: SandboxPreset;
   readonly admins?: readonly string[];
   readonly governance?: boolean;
+  readonly reportChannel?: string;
   readonly requestorEntitlementChecks?: boolean;
   readonly governanceDelivery?: GovernanceDeliveryMode;
 }
@@ -143,7 +144,7 @@ export function assertUnifiedDomainTrust(domains: readonly Domain[]): void {
   }
 }
 
-const BINDING_TRUSTED_PLATFORMS: ReadonlySet<string> = new Set(["slack", "local"]);
+export const BINDING_TRUSTED_PLATFORMS: ReadonlySet<string> = new Set(["slack", "local"]);
 
 export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: readonly string[]): void {
   const vset = new Set(vouched);
@@ -231,6 +232,28 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
         bad.join("\n") +
         "\n(memory/domain.ts assertGovernanceDomains).",
     );
+  }
+}
+
+export function reportChannelFor(channelKey: string, domains: readonly Domain[]): string | undefined {
+  return domainForChannel(channelKey, domains)?.reportChannel;
+}
+
+export function assertReportChannels(domains: readonly Domain[]): void {
+  const bad: string[] = [];
+  for (const d of domains) {
+    const rc = d.reportChannel;
+    if (rc === undefined) continue;
+    if (d.channels === undefined || d.match !== undefined) {
+      bad.push(`  "${d.name}" sets reportChannel but is not an explicit channels domain — a report redirect must name a concrete room inside a concrete domain, never a match/pseudo-domain`);
+      continue;
+    }
+    if (!d.channels.includes(rc)) {
+      bad.push(`  "${d.name}" sets reportChannel "${rc}", which is not one of its own channels — a routine may only be redirected INSIDE its domain (add "${rc}" to "${d.name}".channels, or point reportChannel at one of: ${d.channels.join(", ")})`);
+    }
+  }
+  if (bad.length > 0) {
+    throw new Error("open-everywhere: invalid domain reportChannel(s):\n" + bad.join("\n") + "\n(memory/domain.ts assertReportChannels — OPE-148).");
   }
 }
 

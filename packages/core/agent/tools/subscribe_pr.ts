@@ -17,6 +17,7 @@ import {
   resolveReadToken,
 } from "../scm/pr-status.js";
 import { diffPrFingerprint, prFingerprint, MAX_CHECKS_PER_SUBSCRIPTION } from "../scm/pr-watch.js";
+import { canDispatchRoutinesOn } from "../schedules/routine-dispatch.js";
 
 export const DEFAULT_CHECK_INTERVAL_MINUTES = 15;
 export const MIN_CHECK_INTERVAL_MINUTES = 5;
@@ -105,6 +106,13 @@ export default defineTool({
       throw new Error("Group DMs are execution-only — subscribe from a channel or DM instead.");
     }
 
+    const subscribeBinding = bindFrom(ctx);
+    if (!canDispatchRoutinesOn(subscribeBinding.platform)) {
+      throw new Error(
+        `I can't watch a PR from here — "${subscribeBinding.platform}" has no wired post-back, so the check would come due and never report. Ask me from Slack, Discord, Teams or Telegram.`,
+      );
+    }
+
     const access = resolveAccessFor(ctx);
     if (!repoAllowed(input.repo, access.repos)) {
       throw new Error(
@@ -144,7 +152,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const now = new Date();
     const at = new Date(now.getTime() + interval * 60_000);
-    const target = bindFrom(ctx).target;
+    const target = subscribeBinding.target;
     const checksRemaining = budget - 1;
 
     const createdBy = principalIdOf(ctx);

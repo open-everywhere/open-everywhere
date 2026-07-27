@@ -5,6 +5,7 @@ import { planRevokeConnector } from "../agent/tools/revoke_connector.js";
 import { planClearConnectorOverride } from "../agent/tools/clear_connector_override.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
 import { registerConfig } from "../agent/access/config.js";
+import { registerCardPoster, cardPosterFor } from "../agent/approvals/flow.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
 let passed = 0;
@@ -81,6 +82,8 @@ const uncapped = { tokens: null, usd: null } as const;
   ok(plan.args.scopeKey === "slack/T123/COTHER", "planSetSpendLimit honours an explicit scopeKey override");
 }
 {
+  registerCardPoster("discord", async () => undefined);
+  ok(cardPosterFor("discord") !== undefined, "a registered card poster is what makes a platform card-capable");
   const plan = planSetSpendLimit(slackBinding({ platform: "discord", workspace: "G123", surface: "C456" }), { monthlyTokens: 1, reason: "x" }, uncapped, null);
   ok(plan.args.scopeKey === "discord/G123/C456", "planSetSpendLimit accepts a Discord binding (card path exists) and scopes to the guild surface");
 }

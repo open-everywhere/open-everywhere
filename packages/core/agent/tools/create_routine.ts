@@ -12,8 +12,13 @@ import { validateSubscription } from "../routines/event-match.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval } from "../approvals/flow.js";
+import { approvalVenueFor, describeVenueRefusal } from "../approvals/card-venue.js";
+import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
+import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
+import { domainKeyOf } from "../memory/partition.js";
+import { getConfig } from "../access/config.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 const SCOPE_KINDS_TUPLE = SCOPE_KINDS as unknown as [ScopeKind, ...ScopeKind[]];
@@ -127,7 +132,7 @@ export function storedReport(t: z.infer<typeof trigger>): RoutineReport | undefi
 
 export default defineTool({
   description:
-    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/everyMinutes, with a required post policy — every run, only when something changed, or never, for work whose product is an action rather than a message), a ONE-SHOT (`at`, an ISO 8601 UTC instant — fires exactly once, then disables itself; e.g. 'check back on this in an hour' -> create a once routine for now+1h, and just create another one-shot to check again if nothing's changed — no re-arm state to manage), or an event subscription. Use this when the user asks for recurring, scheduled, one-time-later, or 'let me know when…' work. When talking to users, describe the policy in plain words ('I'll check every hour and only post when something changes', or 'I'll check back in an hour'), never internal jargon. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
+    "Create a durable ROUTINE so you act without being re-tagged: a scheduled job (cron/everyMinutes, with a required post policy — every run, only when something changed, or never, for work whose product is an action rather than a message), a ONE-SHOT (`at`, an ISO 8601 UTC instant — fires exactly once, then disables itself; e.g. 'check back on this in an hour' -> create a once routine for now+1h, and just create another one-shot to check again if nothing's changed — no re-arm state to manage), or an event subscription. Use this when the user asks for recurring, scheduled, one-time-later, or 'let me know when…' work. When talking to users, describe the policy in plain words ('I'll check every hour and only post when something changes', or 'I'll check back in an hour'), never internal jargon. Routines belong to this surface and survive their creator leaving; cancel with cancel_routine. If this surface can't host an approval card, the card goes to a card-capable channel in the same domain — the `message` field then names it, and you MUST relay that to the user, or the confirmation is somewhere they can't see. The prompt can invoke skills by name (e.g. 'run the <skill> skill, then …') — a fired routine sees this surface's domain and granted skills just like a normal turn, so a whole workflow can be one skill cron'd via a one-line prompt.",
   inputSchema: z.object({
     prompt: z.string().min(1).describe("What you should DO each time it fires, written as a self-contained instruction (an ordinary fire has no prior thread context; a durable job — see `job` — DOES, and accumulates it)."),
     trigger,
@@ -170,7 +175,7 @@ export default defineTool({
           "uses, so it cannot drift. Read it before telling the user what you've set up: if the protocol " +
           "block contradicts what they asked for, the trigger or the post policy is wrong, not the prompt.",
       ),
-    message: z.string(),
+    message: z.string().describe("Relay the substance of this to the user. When the approval card had to be posted in a DIFFERENT channel (this surface can't host one), it names that channel — say so explicitly, or they'll think nothing happened."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -179,11 +184,19 @@ export default defineTool({
     if (mode === "mpim") {
       throw new Error("Group DMs are execution-only — create routines in a channel or DM instead.");
     }
+    const binding = bindFrom(ctx);
+    if (mode === "channel" && binding.trust === "external" && BINDING_TRUSTED_PLATFORMS.has(binding.platform)) {
+      throw new Error(
+        "I can't set up a routine in an externally-shared or guest-bearing channel — a routine fires unattended with standing authority, and this channel isn't confirmed all-in-org. Ask me in an internal channel.",
+      );
+    }
     const p = resolvePartition(ctx);
     const t = storedTrigger(input.trigger as z.infer<typeof trigger>);
-    const report = storedReport(input.trigger as z.infer<typeof trigger>);
-    assertReportConsistent(t, report);
-
+    if (mode === "dm" && t.kind !== "once") {
+      throw new Error(
+        "I can't set up a standing schedule from a DM — it would fire unattended forever with nobody but you ever seeing it run, and you'd be the only person who could approve it. Ask me in a channel and I'll set it up there; or ask for a one-off reminder here (\"check back in an hour\") and I'll do that.",
+      );
+    }
     const expr = t.kind === "cron" ? t.expr : t.kind === "watch" ? t.expr : undefined;
     if (expr !== undefined) {
       try {
@@ -202,10 +215,36 @@ export default defineTool({
       throw new Error("`at` must be in the future — a one-shot routine can't fire in the past.");
     }
 
-    const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(`create_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and arm the routine before it can fire unattended.`);
+    const venueResult = approvalVenueFor(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform));
     }
+    const venue = venueResult.venue;
+
+    const canPostHere = canDispatchRoutinesOn(binding.platform);
+    let report = storedReport(input.trigger as z.infer<typeof trigger>);
+    if (!canPostHere) {
+      if (report?.kind === "silent") {
+        throw new Error(
+          `A "never"-posting routine still has to run somewhere, and "${binding.platform}" has no wired post-back at all, so there is nowhere to run it. Create it from a surface that can post (Slack, Discord, Teams, Telegram).`,
+        );
+      }
+      const configured = reportChannelFor(domainKeyOf(p), getConfig().loadDomains());
+      if (!configured) {
+        throw new Error(
+          `A routine created here couldn't post anything — "${binding.platform}" has no wired post-back, so it would come due forever and never report. Set \`reportChannel\` on this channel's domain (agent/config/domains.ts) to one of that domain's own Slack/Discord channels, and I can run it from here and report there; or ask me in a channel that can post.`,
+        );
+      }
+      const reportTarget = reportTargetForSurface(configured);
+      if (!reportTarget) {
+        throw new Error(
+          `This domain's \`reportChannel\` is "${configured}", but that surface's post-back target can't be derived from its key alone (Telegram chat ids are sign-encoded, and Teams needs a stored conversation reference), so a routine reporting there would never post. Point \`reportChannel\` at a Slack or Discord channel in the same domain (agent/config/domains.ts).`,
+        );
+      }
+      report = { kind: "surface", surfaceKey: configured, target: reportTarget };
+    }
+    assertReportConsistent(t, report);
+
     if (input.job) {
       if (binding.platform !== "slack") {
         throw new Error(`Durable jobs are Slack-only for now — this is "${binding.platform}". Create a plain routine here, or a job from Slack.`);
@@ -213,15 +252,15 @@ export default defineTool({
       if (t.kind === "event") {
         throw new Error("A durable job fires on a schedule (cron / everyMinutes / a one-shot), not on an external event — drop `job`, or use a scheduled trigger.");
       }
+      if (mode === "dm") {
+        throw new Error("I can't run a durable job from a DM — a job keeps going until it decides it's finished, with nobody but you ever seeing it. Ask me in a channel and I'll set it up there.");
+      }
     }
     const createdBy = principalIdOf(ctx);
     if (!createdBy) {
       throw new Error("create_routine needs a verified sender to gate the write — no principal id resolved, so there's no requester to show on the approval card.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("create_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
-    }
+    const channelId = venue.channelId;
 
     const target = binding.target;
     const tainted = untrustedIngestedThisTurn();
@@ -236,10 +275,10 @@ export default defineTool({
         domain: null,
         requestedBy: createdBy,
         channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const preview = renderFireMessage({
@@ -258,7 +297,9 @@ export default defineTool({
       trigger: describeTrigger(t, report),
       nextRunAt: next ? next.toISOString() : null,
       preview,
-      message: `card posted — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
+      message:
+        `card posted${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).` +
+        (venue.sameRoom ? "" : ` This surface can't host an approval card, so it went to the card-capable channel in this domain — tell the user where it is, by name, and that someone there has to arm it.`),
     };
   },
 });

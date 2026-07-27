@@ -8,7 +8,7 @@ import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.j
 import { foldRoutineOutcome } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
-import { isClockScheduled, isJobRoutine, routineGrantGeneration, type Routine } from "../routines/routine.js";
+import { isClockScheduled, isJobRoutine, routineGrantGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
@@ -79,7 +79,8 @@ export async function dispatchTick(
   let declined = 0;
   for (const r of due) {
     const dest = resolveRoutineTarget(r);
-    const firePlatform = r.surfaceKey.split("/")[0];
+    const fireSurfaceKey = routineReportSurfaceKey(r);
+    const firePlatform = fireSurfaceKey.split("/")[0];
     if (!dest) {
       dryRun++;
       log(`DUE (dry-run, unresolvable channel/target): ${r.id} on ${r.surfaceKey} — "${r.prompt.slice(0, 60)}"`);
@@ -161,7 +162,7 @@ export async function dispatchTick(
         if (fireOrigin) {
           const diverted = await divertTriggeredFire(
             receive,
-            { message, surfaceKey: r.surfaceKey, origin: fireOrigin, seatKey, auth: markedAuth, wakeId: fireWakeId },
+            { message, surfaceKey: fireSurfaceKey, origin: fireOrigin, seatKey, auth: markedAuth, wakeId: fireWakeId },
           );
           if (diverted) return;
         }
