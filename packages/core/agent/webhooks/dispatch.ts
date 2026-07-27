@@ -6,6 +6,7 @@ import type { Partition } from "../memory/partition.js";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { webhookFireAttributes } from "../routines/fire-auth.js";
+import { checkFireDisclosure } from "../routines/fire-disclosure.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId } from "../channels/unified-window.js";
 import type { WebhookHook } from "./config.js";
@@ -31,6 +32,11 @@ export interface WebhookFireResult {
   readonly reason?: string;
 }
 
+export const WEBHOOK_AUDIENCE_FLOOR_REASON =
+  'audience floor "guest": the target channel is externally shared (Slack Connect / org-shared) or carries an observed ' +
+  "guest member, so a config hook must not fire sender-controlled payload content into it. Point the hook at an internal " +
+  "channel, or remove the external members — it resumes by itself on the next delivery.";
+
 export async function fireWebhook(
   hook: WebhookHook,
   rawBody: string,
@@ -55,6 +61,12 @@ export async function fireWebhook(
   const partition: Partition = { org, platform: "slack", workspace: teamId, surface: channelId, workspaceKey, surfaceKey, key: surfaceKey };
   const isDm = channelId.startsWith("D");
   const mode = "channel" as const;
+
+  const disclosure = await checkFireDisclosure(surfaceKey);
+  if (!disclosure.ok) {
+    emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "failed" });
+    return { fired: false, reason: WEBHOOK_AUDIENCE_FLOOR_REASON };
+  }
 
   try {
     const verdict = await scopeOverBudget(partition, mode, now.toISOString());
