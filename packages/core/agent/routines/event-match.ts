@@ -30,12 +30,14 @@ function clauseValues(c: FilterClause): readonly string[] {
   return "in" in c ? c.in : c.notIn;
 }
 
-export function validateSubscription(source: string, filter: SubscriptionFilter | undefined): void {
-  const n = eventNormalizer(source);
+const OPEN_MATCH_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+export function validateSubscription(source: string, filter: SubscriptionFilter | undefined, scheme: string = source): void {
+  const n = eventNormalizer(scheme);
   if (!n) {
     const known = registeredEventSources();
     throw new Error(
-      `Unknown event source "${source}" — ` +
+      `Unknown event source "${source}"${scheme === source ? "" : ` (it resolves to the "${scheme}" contract, which has no normalizer here)`} — ` +
         (known.length ? `known sources: ${known.join(", ")}.` : "no event source is registered in this deployment.") +
         " A subscription to an unknown source can never match anything, so it is refused rather than armed.",
     );
@@ -62,7 +64,15 @@ export function validateSubscription(source: string, filter: SubscriptionFilter 
     const hasIn = "in" in c;
     const hasNotIn = "notIn" in c;
     if (hasIn === hasNotIn) throw new Error(`Filter clause for "${c.key}" must carry exactly one of \`in\` or \`notIn\`.`);
-    if (!n.matchKeys.includes(c.key)) {
+    if (n.matchKeysOpen) {
+      if (!OPEN_MATCH_KEY_RE.test(c.key)) {
+        throw new Error(
+          `"${c.key}" isn't a usable field name on "${source}" — this source's fields are named by whatever sends to it, ` +
+            `so any short name works (letters, digits, "_", "-", "."), but this one can't be one. ` +
+            `Its own always-present fields are: ${n.matchKeys.join(", ") || "none"}.`,
+        );
+      }
+    } else if (!n.matchKeys.includes(c.key)) {
       throw new Error(`"${c.key}" is not a filterable field on "${source}" — filterable: ${n.matchKeys.join(", ") || "none"}.`);
     }
     const values = clauseValues(c);
@@ -71,7 +81,7 @@ export function validateSubscription(source: string, filter: SubscriptionFilter 
     for (const v of values) if (typeof v !== "string") throw new Error(`Filter values must be strings; "${c.key}" carries a ${typeof v}.`);
   }
 
-  if (n.scopeKinds.includes("container")) {
+  if (n.scopeKinds.includes("container") && !n.scopeHookConstant) {
     const narrows = selectors.length > 0 || clauses.some((c) => "in" in c && n.scopeKeys.includes(c.key));
     if (!narrows) {
       throw new Error(
@@ -125,7 +135,7 @@ function validateSubscriptionAtFire(scheme: string, filter: SubscriptionFilter |
     if (!n.scopeKinds.includes(s.kind)) throw new Error(`source "${source}" no longer proves scope kind "${s.kind}"`);
   }
   for (const c of filter?.all ?? []) {
-    if (!n.matchKeys.includes(c.key)) throw new Error(`"${c.key}" is no longer a filterable field on "${source}"`);
+    if (!n.matchKeysOpen && !n.matchKeys.includes(c.key)) throw new Error(`"${c.key}" is no longer a filterable field on "${source}"`);
   }
 }
 

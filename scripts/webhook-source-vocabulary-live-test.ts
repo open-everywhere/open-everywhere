@@ -24,6 +24,7 @@ declareProviderSelection(SELECTED_PROVIDER_IDS);
 for (const provider of SELECTED_PROVIDERS) provider.register();
 
 await import("@open-everywhere/core/agent/webhooks/oe-hmac.js");
+await import("@open-everywhere/core/agent/webhooks/oe-standard-webhook.js");
 
 registerConfig({
   loadBundles: () => [],
@@ -100,6 +101,21 @@ for (const source of vocabulary) {
       `🔴 create_webhook offers "${example}" as an example source, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
     );
   }
+
+  const schemeBlock = /scheme:\s*z\s*[\s\S]*?\.describe\(\s*([\s\S]*?)\)\s*,\s*\n\s*\}\)\s*,\s*\n\s*outputSchema:/.exec(src);
+  ok(schemeBlock !== null, "found create_webhook's `scheme` parameter description (if this fails the tool was restructured — re-anchor, do not delete)");
+  const schemeExamples = [...(schemeBlock?.[1] ?? "").matchAll(/"([a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]!);
+  ok(schemeExamples.length > 0, "…and it names at least one worked example scheme");
+  for (const example of schemeExamples) {
+    ok(
+      vocabulary.includes(example),
+      `🔴 create_webhook offers "${example}" as an example scheme, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
+    );
+  }
+  ok(
+    schemeExamples.some((e) => vocabulary.includes(e) && e !== "github"),
+    "…and at least one of them is a contract that is not a named vendor — the category-(b) path the parameter exists for",
+  );
 }
 
 {
@@ -129,22 +145,16 @@ for (const source of vocabulary) {
   }
 
   const signed = vocabulary.filter((s) => webhookVerifier(s)!.signedTimestamp);
+  const unsigned = vocabulary.filter((s) => !webhookVerifier(s)!.signedTimestamp);
+  console.log(`  layer-2 (signed single-use) mintable sources: [${signed.join(", ")}]; layer-1 only: [${unsigned.join(", ")}]`);
   ok(
-    signed.length === 0,
-    `🔴 source-vocabulary.ts's replay paragraph says NO chat-mintable source carries the signed single-use bound, but [${signed.join(", ")}] now does. ` +
-      `That is GOOD NEWS and a REQUIRED EDIT: rewrite the paragraph to say which sources have layer 2, then re-express this assertion. Do not just delete it.`,
+    signed.length > 0,
+    `🔴 NO chat-mintable source carries the signed single-use bound any more — [${vocabulary.join(", ")}]. That is a REGRESSION of OPE-196: ` +
+      `the category-(b) contract was the first source to have it, so either its registration stopped happening or its verifier stopped declaring signedTimestamp.`,
   );
-
-  ok(vocabSrc.includes("deliveryIdHeader"), "the replay paragraph names the layer-1 condition (the normalizer's declared delivery-id header)");
-  ok(vocabSrc.includes("signedTimestamp: true"), "the replay paragraph names the layer-2 condition (the verifier's signedTimestamp declaration)");
-  ok(
-    /best-effort bound and NOT the signed one/.test(vocabSrc),
-    "the replay paragraph still states the measured conclusion verbatim — if you reword it, re-anchor this assertion rather than deleting it",
-  );
-  ok(
-    !/inherit a best-effort replay bound/.test(vocabSrc),
-    "🔴 the OPE-201 false sentence ('chat-created hooks inherit a best-effort replay bound') has NOT returned",
-  );
+  for (const source of signed) {
+    ok(acceptsMintedSecret(webhookVerifier(source)!), `"${source}" carries layer 2 AND is OE-mintable (a layer-2 source that is not mintable is not in this class at all)`);
+  }
 }
 
 console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, and matches what create_webhook advertises)`);

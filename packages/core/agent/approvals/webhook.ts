@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
+import { getConfig } from "../access/config.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { encryptedKvVault } from "../credentials/kv-vault.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -70,6 +71,7 @@ async function deliverReveal(
 export interface WebhookCreateArgs {
   readonly org: string;
   readonly source: string;
+  readonly scheme?: string;
   readonly posture: WebhookPosture;
   readonly surfaceKey: string;
   readonly requestedBy: string;
@@ -82,7 +84,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
   policy: "member",
   summarize(args) {
     return [
-      `Create an inbound webhook — ${describeRuntimeHook({ source: args.source, posture: args.posture, status: "active" })}`,
+      `Create an inbound webhook — ${describeRuntimeHook({ source: args.source, ...(args.scheme ? { scheme: args.scheme } : {}), posture: args.posture, status: "active" })}`,
       ...(args.posture === "content-bearing"
         ? [
             "⚠ CONTENT-BEARING: whatever this sender posts becomes part of the prompt, on every delivery, indefinitely — treat it like an untrusted person typing into the channel. Anything the agent then tries to do off that content is treated as tainted and re-asks you.",
@@ -98,15 +100,22 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
     const secretRef = runtimeHookSecretRef(id);
     const store = getOperationalStore();
 
+    const ownerDomain = getConfig().domainsForSurface({
+      workspaceKey: args.surfaceKey.split("/").slice(0, 2).join("/"),
+      surface: args.surfaceKey.split("/")[2] ?? "",
+    })[0];
+
     const hook: RuntimeWebhookHook = {
       org: args.org,
       id,
       source: args.source,
+      ...(args.scheme && args.scheme !== args.source ? { scheme: args.scheme } : {}),
       posture: args.posture,
       secretRef,
       status: "active",
       createdBy: decidedBy,
       createdIn: args.surfaceKey,
+      ...(ownerDomain ? { ownerDomain } : {}),
       createdAt: now.toISOString(),
     };
 
@@ -136,7 +145,16 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       surface: args.surfaceKey.split("/")[2] ?? "-",
       principalId: decidedBy,
       action: "webhook.created",
-      detail: { hookId: id, source: args.source, posture: args.posture, createdBy: decidedBy, requestedBy: args.requestedBy, revealDelivered: delivered },
+      detail: {
+        hookId: id,
+        source: args.source,
+        ...(hook.scheme ? { scheme: hook.scheme } : {}),
+        ...(ownerDomain ? { ownerDomain } : {}),
+        posture: args.posture,
+        createdBy: decidedBy,
+        requestedBy: args.requestedBy,
+        revealDelivered: delivered,
+      },
     });
     const createdOutcome = delivered ? "ok" : "failed";
     emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": createdOutcome });

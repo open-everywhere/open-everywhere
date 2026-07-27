@@ -43,6 +43,7 @@ export interface TriggerDelivery {
   readonly deliveryId?: string;
   readonly receivedAt: string;
   readonly redactPayload?: boolean;
+  readonly ownerDomain?: string;
 }
 
 export type FilterClause =
@@ -75,8 +76,10 @@ export interface EventNormalizer {
   readonly source: string;
   readonly provider?: string;
   readonly matchKeys: readonly string[];
+  readonly matchKeysOpen?: boolean;
   readonly scopeKeys: readonly string[];
   readonly scopeKinds: readonly ScopeKind[];
+  readonly scopeHookConstant?: boolean;
   readonly resolvesActor: boolean;
   readonly deliveryIdHeader?: string;
   normalize(d: TriggerDelivery): NormalizedEvent | null;

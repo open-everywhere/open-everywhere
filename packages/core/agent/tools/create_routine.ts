@@ -9,6 +9,8 @@ import { assertReportConsistent, describeTrigger, type RoutineReport, type Routi
 import { renderFireMessage } from "../routines/fire-message.js";
 import { SCOPE_KINDS, type FilterClause, type ScopeKind, type ScopeSelector, type SubscriptionFilter } from "../routines/event-model.js";
 import { validateSubscription } from "../routines/event-match.js";
+import { webhookScheme } from "../routines/scheme-name.js";
+import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -99,10 +101,10 @@ export function eventFilterFrom(t: { under?: readonly ScopeSelector[]; all?: rea
   return { ...(under.length ? { under } : {}), ...(clauses.length ? { all: clauses } : {}) };
 }
 
-export function storedTrigger(t: z.infer<typeof trigger>): RoutineTrigger {
+export function storedTrigger(t: z.infer<typeof trigger>, eventScheme?: string): RoutineTrigger {
   if (t.kind === "event") {
     const filter = eventFilterFrom(t);
-    validateSubscription(t.source, filter);
+    validateSubscription(t.source, filter, eventScheme ?? t.source);
     return { kind: "event", source: t.source, ...(filter ? { filter } : {}) };
   }
   const present = [t.cron !== undefined, t.everyMinutes !== undefined, t.at !== undefined].filter(Boolean).length;
@@ -191,7 +193,12 @@ export default defineTool({
       );
     }
     const p = resolvePartition(ctx);
-    const t = storedTrigger(input.trigger as z.infer<typeof trigger>);
+    const eventTrigger = input.trigger as z.infer<typeof trigger>;
+    const eventScheme =
+      eventTrigger.kind === "event"
+        ? webhookScheme((await getOperationalStore().getWebhookHookBySource(p.org, eventTrigger.source)) ?? { source: eventTrigger.source })
+        : undefined;
+    const t = storedTrigger(eventTrigger, eventScheme);
     if (mode === "dm" && t.kind !== "once") {
       throw new Error(
         "I can't set up a standing schedule from a DM — it would fire unattended forever with nobody but you ever seeing it run, and you'd be the only person who could approve it. Ask me in a channel and I'll set it up there; or ask for a one-off reminder here (\"check back in an hour\") and I'll do that.",

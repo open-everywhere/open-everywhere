@@ -14,6 +14,7 @@ process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
 process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
+await import("./_register-test-config.js");
 const vocab = await import("../agent/webhooks/source-vocabulary.js");
 const verifierMod = await import("../agent/webhooks/verifier.js");
 type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
