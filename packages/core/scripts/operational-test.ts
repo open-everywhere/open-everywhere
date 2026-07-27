@@ -803,5 +803,26 @@ const store = makeOperationalPostgresStore(client);
   ok(left.length === 1 && left[0]!.owner === "acme", "installations: delete removes exactly the named owner");
 }
 
+{
+  const hook = (over: { org?: string; id: string; source: string; status?: "active" | "revoked" }) => ({
+    org: over.org ?? "default",
+    id: over.id,
+    source: over.source,
+    posture: "trigger-only" as const,
+    secretRef: `hook:${over.id}`,
+    status: over.status ?? ("active" as const),
+    createdBy: "U-DECIDER",
+    createdIn: "slack/T1/C1",
+    createdAt: "2026-07-27T00:00:00.000Z",
+  });
+  ok((await store.addWebhookHook(hook({ id: "hk_" + "a".repeat(26), source: "github" }))) === true, "webhook_hook: a fresh (org, source) inserts");
+  ok((await store.addWebhookHook(hook({ id: "hk_" + "b".repeat(26), source: "github" }))) === false, "webhook_hook: a duplicate (org, source) returns FALSE rather than raising a unique violation");
+  ok((await store.getWebhookHookById("hk_" + "b".repeat(26))) === null, "webhook_hook: the losing row was never written");
+  ok((await store.getWebhookHookBySource("default", "github"))!.id === "hk_" + "a".repeat(26), "webhook_hook: the incumbent is untouched");
+  ok((await store.addWebhookHook(hook({ org: "acme", id: "hk_" + "c".repeat(26), source: "github" }))) === true, "webhook_hook: the claim is per-ORG, not global");
+  await store.updateWebhookHook("default", "hk_" + "a".repeat(26), { status: "revoked" });
+  ok((await store.addWebhookHook(hook({ id: "hk_" + "d".repeat(26), source: "github" }))) === false, "webhook_hook: a REVOKED row still holds its (org, source) — revoking retires the name");
+}
+
 await db.close();
 console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);

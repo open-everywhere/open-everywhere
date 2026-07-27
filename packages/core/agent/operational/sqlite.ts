@@ -1284,9 +1284,10 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async addWebhookHook(hook) {
-    getDb()
-      .prepare("INSERT INTO webhook_hook (org_id, id, source, data) VALUES (?, ?, ?, ?)")
+    const info = getDb()
+      .prepare("INSERT INTO webhook_hook (org_id, id, source, data) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, source) DO NOTHING")
       .run(hook.org, hook.id, hook.source, JSON.stringify(hook));
+    return Number(info.changes) > 0;
   },
 
   async getWebhookHookById(id) {

@@ -1591,12 +1591,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async addWebhookHook(hook: RuntimeWebhookHook) {
-      await client.query("INSERT INTO webhook_hook (org_id, id, source, data) VALUES ($1, $2, $3, $4)", [
-        hook.org,
-        hook.id,
-        hook.source,
-        JSON.stringify(hook),
-      ]);
+      const { rows } = await client.query(
+        "INSERT INTO webhook_hook (org_id, id, source, data) VALUES ($1, $2, $3, $4) ON CONFLICT (org_id, source) DO NOTHING RETURNING id",
+        [hook.org, hook.id, hook.source, JSON.stringify(hook)],
+      );
+      return rows.length > 0;
     },
 
     async getWebhookHookById(id: string) {

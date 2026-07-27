@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -19,7 +20,7 @@ type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
 const rh = await import("../agent/webhooks/runtime-hook.js");
 const ri = await import("../agent/webhooks/runtime-ingress.js");
 const revealMod = await import("../agent/webhooks/reveal-page.js");
-const { hasPrivateDeliveryPath } = await import("../agent/tools/create_webhook.js");
+const { hasPrivateDeliveryPath, claimedSourceRefusal } = await import("../agent/tools/create_webhook.js");
 const { hasApprovalCardPath } = await import("../agent/tools/set_spend_limit.js");
 const { registerCardPoster } = await import("../agent/approvals/flow.js");
 const { setRevealDeliveryDepsForTest } = await import("../agent/approvals/webhook.js");
@@ -245,6 +246,64 @@ let createdId = "";
   );
   ok(/no active/.test(rot), "🔴 rotating a REVOKED hook is refused — it never comes back to life");
   eq((await store.getWebhookHookById(createdId))!.status, "revoked", "…and it stays revoked");
+}
+
+{
+  console.log("\n8. duplicate source (OPE-188):");
+
+  eq(claimedSourceRefusal("github", null), null, "no row ⇒ no refusal");
+  const activeRefusal = claimedSourceRefusal("github", { status: "active" })!;
+  const revokedRefusal = claimedSourceRefusal("github", { status: "revoked" })!;
+  ok(activeRefusal.includes("already") && /rotate_webhook/.test(activeRefusal), "a LIVE incumbent refuses and names rotate_webhook — the real path when a secret was lost");
+  ok(/revoked/.test(revokedRefusal), "🔴 a REVOKED row refuses TOO (the row is retained, so the source is still claimed) and names the status");
+  ok(!/use rotate_webhook|use create_webhook/.test(revokedRefusal), "🔴 …and does NOT send the user to a verb that bounces straight back (rotate refuses a non-active hook)");
+  ok(/rotate_webhook won't help/.test(revokedRefusal), "…it says why rotation is not the answer, because a refusal that only says no teaches nothing");
+  ok(/operator/.test(revokedRefusal), "…and names the only remedy that actually exists today");
+
+  const credentialRows = () => {
+    const db = new DatabaseSync(process.env.OE_SQLITE_PATH!);
+    try {
+      return Number((db.prepare("SELECT COUNT(*) AS c FROM stored_credential").get() as { c: number | bigint }).c);
+    } finally {
+      db.close();
+    }
+  };
+  const args = { org: ORG, source: "notion", posture: "trigger-only" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" };
+  const credsBefore = credentialRows();
+  const rowsBefore = (await store.listWebhookHooks(ORG)).length;
+  delivered.length = 0;
+  let declined = "";
+  try {
+    declined = await createKind.execute(args, DECIDER);
+  } catch (err) {
+    assert.fail(`clicking a card for an already-claimed source must DECLINE, not throw: ${String(err)}`);
+  }
+  n++;
+  ok(/already exists/.test(declined) && declined.includes("notion"), "🔴 the decided card carries a stated decline naming the source");
+  ok(/[Nn]othing was minted/.test(declined), "…and says plainly that nothing was created");
+  eq((await store.listWebhookHooks(ORG)).length, rowsBefore, "no second row was written");
+  eq((await store.getWebhookHookBySource(ORG, "notion"))!.id, createdId, "the incumbent row is untouched — same hook, still the revoked one");
+  eq(credentialRows(), credsBefore, "🔴 NO ORPHANED VAULT ENTRY: a declined create writes no ciphertext at all (the row goes in FIRST, so the loser mints nothing)");
+  eq(delivered.length, 0, "nothing was delivered privately — there is no secret to deliver");
+  eq((await readAudit({ org: ORG, action: "webhook.created" })).length, 1, "no webhook.created audit row for a create that did not happen");
+
+  const live = { ...args, source: "github", posture: "content-bearing" as const };
+  delivered.length = 0;
+  const first = await createKind.execute(live, DECIDER);
+  ok(/created/.test(first), "the first click for a fresh source creates it");
+  eq(delivered.length, 1, "…and delivers its one-time link");
+  const credsAfterFirst = credentialRows();
+  delivered.length = 0;
+  const second = await createKind.execute(live, DECIDER);
+  ok(/already exists/.test(second), "🔴 a SECOND click for the same source declines instead of throwing a unique violation");
+  eq(delivered.length, 0, "…and issues no second reveal link");
+  eq(credentialRows(), credsAfterFirst, "🔴 …and mints no second secret");
+  eq((await store.listWebhookHooks(ORG)).filter((h) => h.source === "github").length, 1, "…leaving exactly one github row");
+
+  const revokeCard = revokeKind.summarize({ org: ORG, id: createdId, source: "notion", surfaceKey: SURFACE, requestedBy: REQUESTER }).join("\n");
+  ok(/NOT reversible/i.test(revokeCard), "🔴 the revoke card says the revocation is NOT reversible");
+  ok(/retires/.test(revokeCard) && revokeCard.includes("notion"), "…and that it retires that specific source name");
+  ok(!/Reversible only by creating a new webhook/.test(revokeCard), "🔴 the old, false reversibility promise is gone");
 }
 
 rmSync(dir, { recursive: true, force: true });

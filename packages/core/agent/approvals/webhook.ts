@@ -96,8 +96,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
     const now = new Date();
     const id = mintRuntimeHookId();
     const secretRef = runtimeHookSecretRef(id);
-    const secret = mintSecret();
-    await encryptedKvVault().write(secretRef, secret, { provider: "webhook", domain: args.source, createdBy: decidedBy });
+    const store = getOperationalStore();
 
     const hook: RuntimeWebhookHook = {
       org: args.org,
@@ -110,7 +109,23 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       createdIn: args.surfaceKey,
       createdAt: now.toISOString(),
     };
-    await getOperationalStore().addWebhookHook(hook);
+
+    if (!(await store.addWebhookHook(hook))) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "declined" });
+      return (
+        `no webhook created — a "${args.source}" webhook already exists here (one per source per org). ` +
+        `Nothing was minted and nothing changed. Check list_webhooks: if it's live, point the sender at that one, or rotate its secret.`
+      );
+    }
+
+    const secret = mintSecret();
+    try {
+      await encryptedKvVault().write(secretRef, secret, { provider: "webhook", domain: args.source, createdBy: decidedBy });
+    } catch {
+      await store.updateWebhookHook(args.org, id, { status: "revoked", revokedBy: decidedBy, revokedAt: new Date().toISOString() });
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "failed" });
+      return `couldn't create the "${args.source}" webhook — its signing secret could not be stored, so I've disabled the half-built hook rather than leave an endpoint nothing can authenticate. Nothing is live and no secret was issued.`;
+    }
 
     const delivered = await deliverReveal({ org: args.org, ref: secretRef, source: args.source, to: decidedBy, platform: args.platform, channelId: args.channelId }, "created");
 
@@ -210,7 +225,7 @@ const webhookRevoke: ActionKind<WebhookRevokeArgs> = {
   summarize(args) {
     return [
       `Revoke the "${args.source}" webhook — the endpoint stops accepting anything, immediately`,
-      "Whatever is sending to it will start failing. Reversible only by creating a new webhook, which means a new URL and a new secret for the sender.",
+      `Whatever is sending to it will start failing. NOT reversible: the row is kept so the endpoint stays dead, and that retires the "${args.source}" name — no replacement webhook can be created for it afterwards. If the secret leaked but you want the integration, cancel this and rotate instead.`,
       `Requested by ${args.requestedBy}`,
     ];
   },

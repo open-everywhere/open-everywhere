@@ -382,7 +382,7 @@ export interface OperationalStore {
   getCredentialIntake(org: string, id: string): Promise<CredentialIntakeRow | null>;
   consumeCredentialIntake(org: string, id: string, usedAt: string): Promise<boolean>;
 
-  addWebhookHook(hook: RuntimeWebhookHook): Promise<void>;
+  addWebhookHook(hook: RuntimeWebhookHook): Promise<boolean>;
   getWebhookHookById(id: string): Promise<RuntimeWebhookHook | null>;
   getWebhookHookBySource(org: string, source: string): Promise<RuntimeWebhookHook | null>;
   listWebhookHooks(org: string): Promise<readonly RuntimeWebhookHook[]>;
