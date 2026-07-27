@@ -11,6 +11,7 @@ import {
   type TriggerDelivery,
 } from "../routines/event-model.js";
 import { registerEventScopeGrant, type EventScopeGrant } from "../routines/event-authz.js";
+import { registerWebhookProvisioning, type SetupExchange, type WebhookProvisioning } from "./provisioning.js";
 
 export const OE_STANDARD_WEBHOOK_SCHEME = "oe-standard-webhook";
 
@@ -159,6 +160,14 @@ export const standardWebhookScopeGrant: EventScopeGrant = {
   },
 };
 
+export const standardWebhookProvisioning: WebhookProvisioning = {
+  source: OE_STANDARD_WEBHOOK_SCHEME,
+  acquisition: "mint",
+  cardinality: "per-hook",
+  remediation: "remint",
+};
+
 registerWebhookVerifier(standardWebhookVerifier);
 registerEventNormalizer(standardWebhookNormalizer);
 registerEventScopeGrant(standardWebhookScopeGrant);
+registerWebhookProvisioning(standardWebhookProvisioning);
