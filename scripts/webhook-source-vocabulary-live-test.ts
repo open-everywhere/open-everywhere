@@ -11,7 +11,7 @@ import {
   registeredWebhookVerifiers,
   webhookVerifier,
 } from "@open-everywhere/core/agent/webhooks/verifier.js";
-import { eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
+import { declaredDeliveryId, eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
 import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
 
 let n = 0;
@@ -108,4 +108,43 @@ for (const source of vocabulary) {
   ok(/PR|merge/i.test(refusal), "the refusal names the PR path (an 'ask an admin' with no WHAT is a dead end)");
 }
 
-console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, and matches what create_webhook advertises)`);
+{
+  const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+  for (const source of vocabulary) {
+    const norm = eventNormalizer(source)!;
+    ok(
+      typeof norm.deliveryIdHeader === "string" && norm.deliveryIdHeader.length > 0,
+      `🔴 "${source}" is chat-mintable but its normalizer declares NO deliveryIdHeader — the durable delivery dedupe cannot run for it, ` +
+        `and its verifier's signedTimestamp=${webhookVerifier(source)!.signedTimestamp} decides the other layer. A source with neither has ZERO replay defence (OPE-201).`,
+    );
+  }
+  for (const source of vocabulary) {
+    const header = eventNormalizer(source)!.deliveryIdHeader!;
+    ok(
+      declaredDeliveryId(source, { [header]: "SENTINEL-DELIVERY-ID" }) === "SENTINEL-DELIVERY-ID",
+      `"${source}"'s declared header is actually READ by declaredDeliveryId (the seam every ingress uses)`,
+    );
+    ok(declaredDeliveryId(source, {}) === undefined, `"${source}" with the header ABSENT yields no id (not deduped, never synthesised)`);
+  }
+
+  const signed = vocabulary.filter((s) => webhookVerifier(s)!.signedTimestamp);
+  ok(
+    signed.length === 0,
+    `🔴 source-vocabulary.ts's replay paragraph says NO chat-mintable source carries the signed single-use bound, but [${signed.join(", ")}] now does. ` +
+      `That is GOOD NEWS and a REQUIRED EDIT: rewrite the paragraph to say which sources have layer 2, then re-express this assertion. Do not just delete it.`,
+  );
+
+  ok(vocabSrc.includes("deliveryIdHeader"), "the replay paragraph names the layer-1 condition (the normalizer's declared delivery-id header)");
+  ok(vocabSrc.includes("signedTimestamp: true"), "the replay paragraph names the layer-2 condition (the verifier's signedTimestamp declaration)");
+  ok(
+    /best-effort bound and NOT the signed one/.test(vocabSrc),
+    "the replay paragraph still states the measured conclusion verbatim — if you reword it, re-anchor this assertion rather than deleting it",
+  );
+  ok(
+    !/inherit a best-effort replay bound/.test(vocabSrc),
+    "🔴 the OPE-201 false sentence ('chat-created hooks inherit a best-effort replay bound') has NOT returned",
+  );
+}
+
+console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, and matches what create_webhook advertises)`);

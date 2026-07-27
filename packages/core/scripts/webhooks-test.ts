@@ -22,7 +22,7 @@ const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs } = awai
 const { oeHmacSignature, OE_HMAC_SOURCE, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } = await import("../agent/webhooks/oe-hmac.js");
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackTestBridge();
-const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes } = await import("../agent/webhooks/gate.js");
+const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes, acceptedUnverified } = await import("../agent/webhooks/gate.js");
 const { renderWebhookMessage, fireWebhook, webhookOrg } = await import("../agent/webhooks/dispatch.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
@@ -142,6 +142,34 @@ ok(
   !(await gateWebhookDelivery({ ...baseArgs, secretValues: [""] })).ok,
   "empty-string secret value is treated as unset -> rejected",
 );
+
+{
+  const runtimeShaped = { ...goodHook, id: "hk_" + "a".repeat(26) };
+  const runtimeHatch = await gateWebhookDelivery({ ...baseArgs, hook: runtimeShaped, secretValues: [], allowUnverified: true });
+  ok(
+    !runtimeHatch.ok && runtimeHatch.rejection.status === 401,
+    "🔴 the escape hatch is NOT honoured for a CHAT-CREATED hook — no resolvable key there means the vault read failed, not a laptop without a secret (401, not 200)",
+  );
+  ok(
+    !runtimeHatch.ok && !runtimeHatch.rejection.reason.includes("OE_ALLOW_UNVERIFIED_WEBHOOK"),
+    "…and the refusal does not point the operator at a lever that no longer moves for this class",
+  );
+  const configHatch = await gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true });
+  ok(configHatch.ok && configHatch.keyIndex === null, "…while a CONFIG hook with the same args still takes the hatch (the change is narrow)");
+
+  const runtimeSigned = await gateWebhookDelivery({ ...baseArgs, hook: runtimeShaped });
+  ok(runtimeSigned.ok && runtimeSigned.keyIndex === 0, "a chat-created hook with a real key + valid signature is accepted exactly as before");
+
+  const oldKey = "retired-s3cr3t";
+  const prevKeyProbe = await gateWebhookDelivery({ ...baseArgs, secretValues: [secret, oldKey], headers: signedFor(oldKey) });
+  ok(acceptedUnverified(configHatch), "the hatch acceptance IS the unverified grade");
+  ok(!acceptedUnverified(runtimeSigned), "a signature-verified acceptance is NOT the unverified grade");
+  ok(
+    prevKeyProbe.ok && prevKeyProbe.keyIndex === 1 && !acceptedUnverified(prevKeyProbe),
+    "🔴 a PREVIOUS-key acceptance is NOT the unverified grade — the two facts are independent, and conflating them is the confusion the stamp exists to end",
+  );
+  ok(!acceptedUnverified(runtimeHatch), "a rejection is never the unverified grade");
+}
 
 const previous = "old-s3cr3t";
 const prevAccepted = await gateWebhookDelivery({ ...baseArgs, secretValues: [secret, previous], headers: signedFor(previous) });

@@ -8,6 +8,8 @@ export const GITHUB_EVENT_SOURCE = "github";
 
 const EVENT_HEADER = "x-github-event";
 
+const DELIVERY_ID_HEADER = "x-github-delivery";
+
 function obj(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" ? (v as Record<string, unknown>) : undefined;
 }
@@ -73,6 +75,7 @@ export const githubEventNormalizer: EventNormalizer = {
   scopeKeys: ["repo"],
   scopeKinds: ["tenant", "container", "entity", "sub"],
   resolvesActor: true,
+  deliveryIdHeader: DELIVERY_ID_HEADER,
   normalize(d: TriggerDelivery): NormalizedEvent | null {
     const eventType = d.headers[EVENT_HEADER] ?? "";
     if (!eventType) return null;

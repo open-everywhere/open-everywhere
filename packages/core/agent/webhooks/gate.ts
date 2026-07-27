@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { hookSecretRefs } from "./config.js";
+import { isRuntimeHookId } from "./runtime-hook.js";
 import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
@@ -27,6 +28,10 @@ export interface WebhookRejection {
 export type WebhookGateOutcome =
   | { readonly ok: true; readonly keyIndex: number | null; readonly replayKey?: string }
   | { readonly ok: false; readonly rejection: WebhookRejection };
+
+export function acceptedUnverified(outcome: WebhookGateOutcome): boolean {
+  return outcome.ok && outcome.keyIndex === null;
+}
 
 export interface GateableHook {
   readonly id: string;
@@ -64,10 +69,16 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
 
   const keys = secretValues.filter((k) => k);
   if (keys.length === 0) {
+    const hatch = allowUnverified && !isRuntimeHookId(hook.id);
     const currentRef = hookSecretRefs(hook)[0] ?? "(none)";
-    return allowUnverified
-      ? { ok: true, keyIndex: null }
-      : reject(401, `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`);
+    if (hatch) return { ok: true, keyIndex: null };
+    return reject(
+      401,
+      isRuntimeHookId(hook.id)
+        ?
+          `${currentRef} did not resolve — rejecting unverified delivery (a chat-created hook's secret is minted at creation; rotate the hook to mint a new one)`
+        : `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
+    );
   }
 
   let verdict;

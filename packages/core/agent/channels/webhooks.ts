@@ -1,7 +1,7 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
-import { gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
+import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import { resolveRuntimeHook, resolveRuntimeHookKeys, deliverRuntimeHook, type ResolvedRuntimeHook } from "../webhooks/runtime-ingress.js";
 import "../webhooks/oe-hmac.js";
 import { resolveHookKeys } from "../webhooks/secrets.js";
@@ -22,6 +22,7 @@ async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArg
   const result = await fireWebhook(hook, body, { receive });
   const [, teamId, channelId] = hook.target.split("/");
   const previousKey = keyIndex !== null && keyIndex > 0;
+  const unverified = acceptedUnverified({ ok: true, keyIndex });
   await appendAudit({
     org: webhookOrg(),
     platform: "slack",
@@ -34,10 +35,13 @@ async function deliver(hook: WebhookHook, body: string, receive: RouteHandlerArg
       source: hook.source,
       bytes: Buffer.byteLength(body, "utf8"),
       ...(previousKey ? { keyIndex, previousKey: true } : {}),
+      ...(unverified ? { unverified: true } : {}),
       ...(result.reason ? { reason: result.reason } : {}),
     },
   });
   if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);
+  if (unverified)
+    log(`WARN "${hook.id}": accepted UNVERIFIED (OE_ALLOW_UNVERIFIED_WEBHOOK=1, no resolvable secret) — nothing authenticated this sender but the URL`);
   log(`"${hook.id}": ${result.fired ? "fired" : `declined (${result.reason})`}`);
 }
 

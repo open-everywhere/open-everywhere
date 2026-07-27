@@ -75,6 +75,7 @@ export interface EventNormalizer {
   readonly scopeKeys: readonly string[];
   readonly scopeKinds: readonly ScopeKind[];
   readonly resolvesActor: boolean;
+  readonly deliveryIdHeader?: string;
   normalize(d: TriggerDelivery): NormalizedEvent | null;
 }
 
@@ -88,6 +89,13 @@ export function registerEventNormalizer(normalizer: EventNormalizer): boolean {
 
 export function eventNormalizer(source: string | undefined): EventNormalizer | undefined {
   return source === undefined ? undefined : NORMALIZERS.get(source);
+}
+
+export function declaredDeliveryId(source: string, headers: Readonly<Record<string, string>>): string | undefined {
+  const header = eventNormalizer(source)?.deliveryIdHeader;
+  if (!header) return undefined;
+  const value = headers[header.toLowerCase()];
+  return value ? value : undefined;
 }
 
 export function registeredEventSources(): readonly string[] {
