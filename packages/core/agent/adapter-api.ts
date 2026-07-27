@@ -268,7 +268,7 @@ export {
   registeredWebhookVerifiers,
   resetWebhookVerifiersForTest,
 } from "./webhooks/verifier.js";
-export type { WebhookVerifier, WebhookVerifyInput, WebhookVerdict, WebhookVerifyFailure } from "./webhooks/verifier.js";
+export type { WebhookVerifier, WebhookVerifyInput, WebhookVerdict, WebhookVerifyFailure, WebhookSenderGuidance } from "./webhooks/verifier.js";
 
 export {
   registerWebhookProvisioning,

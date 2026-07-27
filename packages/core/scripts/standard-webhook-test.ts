@@ -508,4 +508,72 @@ async function post(
   eq(generalPurposeSchemeHint("jenkins", "jenkins", ["jenkins"], false), "", "…and never offers the very string that was just refused");
 }
 
+{
+  console.log("\n11. minted secret format + sender guidance:");
+  const oeHmac = await import("../agent/webhooks/oe-hmac.js");
+
+  const minted = sw.mintStandardWebhookSecret();
+  ok(minted.startsWith(sw.SW_SECRET_PREFIX), "a minted secret carries the spec's whsec_ prefix");
+  const encoded = minted.slice(sw.SW_SECRET_PREFIX.length);
+  eq(encoded.length, 44, "…followed by exactly 44 base64 characters");
+  ok(!encoded.includes("="), "🔴 …with NO `=` padding — 33 bytes is a multiple of 3, which is the one form strict and lenient base64 decoders read identically");
+  ok(!/[-_]/.test(encoded), "🔴 …in the STANDARD base64 alphabet, never base64url (the spec's reference libraries decode strictly and would produce different key bytes)");
+  eq(sw.standardWebhookKey(minted).length, 33, "…decoding to 33 key bytes (264 bits)");
+  ok(sw.mintStandardWebhookSecret() !== sw.mintStandardWebhookSecret(), "each mint is fresh — it is a KEY, not an identifier");
+  eq(sw.mintStandardWebhookSecret(Buffer.from("0123456789abcdefghijklmnopqrstuvw")).slice(sw.SW_SECRET_PREFIX.length), Buffer.from("0123456789abcdefghijklmnopqrstuvw").toString("base64"), "the encoding is plain base64 over the given bytes — pinned against a fixed input so a re-spelling cannot hide");
+
+  {
+    const body = '{"event":"deploy"}';
+    const ts = String(nowSec());
+    const h = new Headers({
+      "webhook-id": "msg_mintcheck",
+      "webhook-timestamp": ts,
+      "webhook-signature": sw.standardWebhookSignature(minted, "msg_mintcheck", ts, body),
+    });
+    eq((await sw.standardWebhookVerifier.verify({ rawBody: body, headers: h, keys: [minted], nowMs: Date.now() })).ok, true, "🔴 a delivery signed with a FRESHLY MINTED secret verifies — the mint format and the key rule agree");
+    const legacy = randomBytes(32).toString("base64url");
+    const h2 = new Headers({
+      "webhook-id": "msg_legacycheck",
+      "webhook-timestamp": ts,
+      "webhook-signature": sw.standardWebhookSignature(legacy, "msg_legacycheck", ts, body),
+    });
+    eq((await sw.standardWebhookVerifier.verify({ rawBody: body, headers: h2, keys: [legacy], nowMs: Date.now() })).ok, true, "🔴 …and a PRE-PREFIX raw secret still verifies — the change is not wire-breaking");
+  }
+
+  eq(typeof sw.standardWebhookVerifier.mintSecret, "function", "the scheme declares its own minter on its verifier, where the mint site resolves it");
+  ok(sw.standardWebhookVerifier.mintSecret!().startsWith(sw.SW_SECRET_PREFIX), "…and the declared minter is the prefixed one");
+
+  eq(oeHmac.oeHmacVerifier.mintSecret, undefined, "🔴 oe-hmac declares NO minter — its key is the secret's own text, so the spec's prefix would be an actively false label");
+  ok(
+    createHmac("sha256", "whsec_AAAA").update(oeHmac.oeHmacBasestring("1", "b"), "utf8").digest("hex") ===
+      oeHmac.oeHmacSignature("whsec_AAAA", "1", "b").slice("sha256=".length),
+    "…demonstrated: oe-hmac HMACs the prefix as key material rather than stripping it",
+  );
+
+  eq(
+    sw.standardWebhookSignature("whsec_MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3", "msg_abc123", "1614265330", '{"event":"build"}'),
+    "v1,5hHn6U/z/A/EbSUbbmrZZL1ZLHts/O12/QJyBrnv3wI=",
+    "the documented `base64 -d | od | -macopt hexkey:` shell recipe reaches our verifier byte for byte",
+  );
+
+  const g = sw.standardWebhookSenderGuidance();
+  eq(g.headers.map((h) => h.name), [sw.SW_ID_HEADER, sw.SW_TIMESTAMP_HEADER, sw.SW_SIGNATURE_HEADER], "the guidance names exactly the three headers the verifier reads");
+  ok(g.headers[2]!.value.startsWith(`${sw.SW_SIGNATURE_VERSION},`), "…and shows the signature header's version tag as the verifier requires it");
+  eq(
+    g.signedContent,
+    sw.standardWebhookSignedContent(`<${sw.SW_ID_HEADER}>`, `<${sw.SW_TIMESTAMP_HEADER}>`, "<the raw request body, byte for byte>"),
+    "🔴 the guidance's basestring IS the builder's output — one definition, not a second spelling of it",
+  );
+  ok(g.notes.some((t) => t.includes(String(webhookMaxSkewSeconds()))), "…and states the LIVE skew window rather than a hardcoded number");
+  ok(g.notes.some((t) => t.includes(sw.SW_SECRET_PREFIX)), "…and states the TOTAL key rule, so a reader holding a pre-prefix secret is not told to decode it");
+  ok(!JSON.stringify(g).includes(minted), "🔴 the guidance carries no live value — every string in it is a template");
+
+  const gh = oeHmac.oeHmacVerifier.senderGuidance!();
+  eq(gh.headers.map((h) => h.name), [oeHmac.OE_HMAC_TIMESTAMP_HEADER, oeHmac.OE_HMAC_SIGNATURE_HEADER], "oe-hmac's guidance names exactly the two headers ITS verifier reads");
+  eq(gh.signedContent, oeHmac.oeHmacBasestring(`<${oeHmac.OE_HMAC_TIMESTAMP_HEADER}>`, "<the raw request body, byte for byte>"), "…and its basestring is ITS builder's output");
+
+  ok(!g.headers.some((a) => gh.headers.some((b) => a.name === b.name)), "🔴 the two schemes share NOT ONE header name — a generic instruction block would be wrong for one of them");
+  ok(g.signedContent !== gh.signedContent, "…nor a basestring");
+}
+
 console.log(`\n✅ standard-webhook (OPE-196 / S3): ${n} checks passed`);

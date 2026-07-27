@@ -3,6 +3,8 @@ import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
 import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken } from "../credentials/page-token.js";
+import { webhookScheme } from "../routines/scheme-name.js";
+import { webhookVerifier, type WebhookSenderGuidance } from "./verifier.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
 export const REVEAL_PAGE_PATH = "/connect/v1/reveal";
@@ -78,7 +80,19 @@ function confirmPage(token: string, label: string): Response {
   return htmlResponse(200, "Show a webhook signing secret", inner);
 }
 
-function secretPage(label: string, endpointUrl: string | undefined, secret: string): Response {
+function guidanceHtml(g: WebhookSenderGuidance): string {
+  const headers = g.headers.map((h) => `<li><code>${esc(h.name)}</code>: ${esc(h.value)}</li>`).join("");
+  const notes = g.notes.map((t) => `<li style="margin-bottom:.35rem">${esc(t)}</li>`).join("");
+  return (
+    `<p style="margin-top:1.5rem">…and make it send these headers on every delivery:</p>` +
+    `<ul style="padding-left:1.2rem">${headers}</ul>` +
+    `<p>The signature is computed over exactly this, with no separator or whitespace of its own:</p>` +
+    `<pre style="${CODE_BLOCK_STYLE}"><code>${esc(g.signedContent)}</code></pre>` +
+    `<ul style="padding-left:1.2rem">${notes}</ul>`
+  );
+}
+
+function secretPage(label: string, endpointUrl: string | undefined, secret: string, guidance?: WebhookSenderGuidance): Response {
   const endpoint = endpointUrl
     ? `<p style="margin-top:1.5rem">Point the sender at this URL:</p>` +
       `<pre style="${CODE_BLOCK_STYLE}"><code>${esc(endpointUrl)}</code></pre>`
@@ -88,6 +102,7 @@ function secretPage(label: string, endpointUrl: string | undefined, secret: stri
     `and the secret cannot be shown again.</p>` +
     `<pre style="${CODE_BLOCK_STYLE}"><code>${esc(secret)}</code></pre>` +
     endpoint +
+    (guidance ? guidanceHtml(guidance) : "") +
     `<p style="margin-top:1.5rem;color:#666">This link is now used up. You can close this tab.</p>`;
   return htmlResponse(200, "Webhook signing secret", inner);
 }
@@ -95,6 +110,7 @@ function secretPage(label: string, endpointUrl: string | undefined, secret: stri
 export interface RevealPageDeps extends RevealGrantDeps {
   readonly readSecret?: (ref: string) => Promise<string | null>;
   readonly endpointUrl?: (ref: string) => string | undefined;
+  readonly senderGuidance?: (ref: string, org: string) => Promise<WebhookSenderGuidance | undefined>;
 }
 
 function grantOpen(row: CredentialIntakeRow | null, boundTo: string, nowMs: number): row is CredentialIntakeRow {
@@ -172,7 +188,22 @@ export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}):
     },
   });
 
-  return secretPage(row.domain ?? "webhook", (deps.endpointUrl ?? ((r) => revealEndpointUrl(r, env)))(row.ref), value);
+  let guidance: WebhookSenderGuidance | undefined;
+  try {
+    guidance = await (deps.senderGuidance ?? liveSenderGuidance)(row.ref, claims.org);
+  } catch {
+    guidance = undefined;
+  }
+
+  return secretPage(row.domain ?? "webhook", (deps.endpointUrl ?? ((r) => revealEndpointUrl(r, env)))(row.ref), value, guidance);
+}
+
+async function liveSenderGuidance(ref: string, org: string): Promise<WebhookSenderGuidance | undefined> {
+  const hookId = revealedHookId(ref);
+  if (!hookId) return undefined;
+  const hook = await getOperationalStore().getWebhookHookById(hookId);
+  if (!hook || hook.org !== org) return undefined;
+  return webhookVerifier(webhookScheme(hook))?.senderGuidance?.();
 }
 
 export function revealEndpointUrl(ref: string, env: NodeJS.ProcessEnv = process.env): string | undefined {

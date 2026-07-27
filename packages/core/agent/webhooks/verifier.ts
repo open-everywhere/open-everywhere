@@ -20,6 +20,12 @@ export type WebhookVerdict =
   | { readonly ok: true; readonly keyIndex: number; readonly replayKey?: string }
   | { readonly ok: false; readonly failure: WebhookVerifyFailure };
 
+export interface WebhookSenderGuidance {
+  readonly headers: readonly { readonly name: string; readonly value: string }[];
+  readonly signedContent: string;
+  readonly notes: readonly string[];
+}
+
 export interface WebhookVerifier {
   readonly source: string;
   readonly provider?: string;
@@ -27,6 +33,8 @@ export interface WebhookVerifier {
   readonly keyOrigin: "receiver-minted" | "vendor-issued";
   readonly signedTimestamp: boolean;
   verify(input: WebhookVerifyInput): Promise<WebhookVerdict> | WebhookVerdict;
+  readonly mintSecret?: () => string;
+  readonly senderGuidance?: () => WebhookSenderGuidance;
 }
 
 const VERIFIERS = new Map<string, WebhookVerifier>();

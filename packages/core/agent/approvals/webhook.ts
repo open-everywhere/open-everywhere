@@ -19,6 +19,7 @@ import {
   type WebhookPosture,
 } from "../webhooks/runtime-hook.js";
 import { webhookScheme } from "../routines/scheme-name.js";
+import { webhookVerifier } from "../webhooks/verifier.js";
 import {
   hookRemediation,
   revokeRemediationNote,
@@ -34,6 +35,10 @@ const SECRET_BYTES = 32;
 
 function mintSecret(): string {
   return randomBytes(SECRET_BYTES).toString("base64url");
+}
+
+function mintSecretFor(scheme: string): string {
+  return webhookVerifier(scheme)?.mintSecret?.() ?? mintSecret();
 }
 
 export interface RevealDeliveryDeps {
@@ -206,7 +211,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       );
     }
 
-    const secret = mintSecret();
+    const secret = mintSecretFor(webhookScheme(hook));
     try {
       await encryptedKvVault().write(secretRef, secret, { provider: "webhook", domain: args.source, createdBy: decidedBy });
     } catch {
@@ -303,7 +308,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     const outgoing = await vault.read(existing.secretRef);
     if (outgoing) await vault.write(prevRef, outgoing, { provider: "webhook", domain: `${args.source} (superseded)`, createdBy: decidedBy });
 
-    const secret = mintSecret();
+    const secret = mintSecretFor(webhookScheme(existing));
     await vault.write(existing.secretRef, secret, { provider: "webhook", domain: args.source, createdBy: decidedBy });
 
     const overlapUntil = new Date(now.getTime() + rotationOverlapMs()).toISOString();

@@ -220,5 +220,76 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq(reveal.revealEndpointUrl("db:notion-key"), undefined, "a non-hook ref resolves to nothing");
 }
 
+{
+  console.log("\n8. sender guidance (success path only, per scheme):");
+  const swMod = await import("../agent/webhooks/oe-standard-webhook.js");
+  const hmacMod = await import("../agent/webhooks/oe-hmac.js");
+
+  let hookSeq = 0;
+  async function grantForHook(scheme: string | undefined, opts: { org?: string } = {}): Promise<string> {
+    const id = `hk_${randomBytes(8).toString("hex")}`;
+    const ref = `hook:${id}`;
+    await vault.write(ref, SENTINEL);
+    const added = await store.addWebhookHook({
+      org: opts.org ?? ORG,
+      id,
+      source: `my-ci-${++hookSeq}`,
+      ...(scheme ? { scheme } : {}),
+      posture: "trigger-only",
+      secretRef: ref,
+      status: "active",
+      createdBy: USER,
+      createdIn: "slack/T1/C1",
+      createdAt: new Date().toISOString(),
+    });
+    assert.ok(added, "fixture hook row was inserted");
+    const link = await reveal.issueRevealLink({ org: opts.org ?? ORG, ref, revealTo: USER, label: "my-ci" });
+    return new URL(link!.url).searchParams.get("t")!;
+  }
+
+  const swGuide = swMod.standardWebhookSenderGuidance();
+  const swHtml = await (await reveal.handleRevealPost(postReq(await grantForHook(swMod.OE_STANDARD_WEBHOOK_SCHEME)), { readSecret: async () => SENTINEL })).text();
+  for (const h of swGuide.headers) ok(swHtml.includes(`<code>${h.name}</code>`), `the page names the "${h.name}" header the sender must set`);
+  ok(swHtml.includes(swGuide.signedContent.replace(/</g, "&lt;").replace(/>/g, "&gt;")), "🔴 …and shows the exact basestring the signature covers, escaped");
+  ok(swGuide.notes.every((t) => swHtml.includes(t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"))), "…and every note, escaped");
+  eq(swHtml.split(SENTINEL).length - 1, 1, "🔴 the secret STILL appears exactly once with the guidance rendered");
+  ok(![...swHtml.matchAll(/\w+="([^"]*)"/g)].map((m) => m[1]!).some((v) => v.includes(SENTINEL)), "🔴 …and still in NO attribute value");
+  ok(!swHtml.includes(`type="hidden"`), "…and the page still carries no hidden fields");
+
+  const hmacGuide = hmacMod.oeHmacVerifier.senderGuidance!();
+  const hmacHtml = await (await reveal.handleRevealPost(postReq(await grantForHook(hmacMod.OE_HMAC_SOURCE)), { readSecret: async () => SENTINEL })).text();
+  for (const h of hmacGuide.headers) ok(hmacHtml.includes(`<code>${h.name}</code>`), `an oe-hmac hook's page names "${h.name}" instead`);
+  for (const h of swGuide.headers) ok(!hmacHtml.includes(`<code>${h.name}</code>`), `🔴 …and NOT the (b) contract's "${h.name}"`);
+  for (const h of hmacGuide.headers) ok(!swHtml.includes(`<code>${h.name}</code>`), `🔴 …and the (b) page does not carry oe-hmac's "${h.name}"`);
+
+  const unknownRes = await reveal.handleRevealPost(postReq(await grantForHook("no-such-scheme")), { readSecret: async () => SENTINEL });
+  eq(unknownRes.status, 200, "a scheme with no registered guidance still reveals");
+  const unknownHtml = await unknownRes.text();
+  ok(unknownHtml.includes(SENTINEL) && !unknownHtml.includes("must send these headers"), "…with the secret and no instruction block at all");
+
+  const orphanRes = await reveal.handleRevealPost(postReq((await freshGrant()).token), { readSecret: async () => SENTINEL });
+  eq(orphanRes.status, 200, "a grant whose hook row no longer exists still reveals");
+  ok((await orphanRes.text()).includes(SENTINEL), "…with the secret");
+
+  const boomRes = await reveal.handleRevealPost(postReq(await grantForHook(swMod.OE_STANDARD_WEBHOOK_SCHEME)), {
+    readSecret: async () => SENTINEL,
+    senderGuidance: async () => {
+      throw new Error("store exploded");
+    },
+  });
+  eq(boomRes.status, 200, "🔴 a guidance lookup that THROWS still reveals — it costs the instructions, never the disclosure");
+  ok((await boomRes.text()).includes(SENTINEL), "…and the secret is still shown");
+
+  const crossHtml = await (await reveal.handleRevealPost(postReq(await grantForHook(swMod.OE_STANDARD_WEBHOOK_SCHEME, { org: ORG })), { readSecret: async () => SENTINEL })).text();
+  ok(crossHtml.includes(`<code>${swMod.SW_ID_HEADER}</code>`), "a same-org hook resolves its guidance (the org check is not vacuously refusing everything)");
+
+  const guidedToken = await grantForHook(swMod.OE_STANDARD_WEBHOOK_SCHEME);
+  const confirmHtml = await (await reveal.handleRevealGet(getReq(guidedToken))).text();
+  for (const h of swGuide.headers) ok(!confirmHtml.includes(`<code>${h.name}</code>`), `🔴 the GET confirm page leaks no guidance ("${h.name}")`);
+  await reveal.handleRevealPost(postReq(guidedToken), { readSecret: async () => SENTINEL });
+  const burnedHtml = await (await reveal.handleRevealPost(postReq(guidedToken), { readSecret: async () => SENTINEL })).text();
+  eq(burnedHtml, await (await reveal.handleRevealGet(getReq("garbage"))).text(), "🔴 a burned grant's 404 is STILL byte-identical to every other failure — the guidance changed no failure page");
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✅ webhook-reveal: ${n} checks passed`);
