@@ -40,6 +40,10 @@ export type { GitHubInstallationRow } from "./operational/store.js";
 export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
 
+export { captureHandshakeSecret, secretFingerprint, HANDSHAKE_REVEAL_PRINCIPAL } from "./webhooks/handshake-capture.js";
+export type { CaptureHandshakeSecretInput, CaptureHandshakeSecretDeps, CaptureHandshakeSecretOutcome } from "./webhooks/handshake-capture.js";
+export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";
+
 export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
 

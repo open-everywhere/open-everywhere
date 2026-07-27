@@ -1,4 +1,6 @@
-export const RESERVED_REF_NAMESPACES: readonly string[] = ["hook:", "oe-oauth:"] as const;
+export const NOTION_HANDSHAKE_REF_NAMESPACE = "notion-handshake:";
+
+export const RESERVED_REF_NAMESPACES: readonly string[] = ["hook:", "oe-oauth:", NOTION_HANDSHAKE_REF_NAMESPACE] as const;
 
 export function reservedRefNamespace(ref: string): string | undefined {
   return RESERVED_REF_NAMESPACES.find((ns) => ref.startsWith(ns));

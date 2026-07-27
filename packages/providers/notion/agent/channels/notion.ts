@@ -17,6 +17,8 @@ import {
   mintRotationToken,
   grainUsesUnifiedWindow,
   divertToUnifiedWindow,
+  captureHandshakeSecret,
+  NOTION_HANDSHAKE_REF_NAMESPACE,
   type SupervisorGrain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
@@ -189,9 +191,14 @@ export default defineChannel<NotionState, { state: NotionState }>({
       });
 
       if (outcome.action === "handshake") {
-        log(
-          `subscription handshake received — verification_token (set NOTION_WEBHOOK_SECRET to this AND paste it into Notion's verify form): ${handshakeToken(rawBody)}`,
-        );
+        try {
+          await captureHandshakeSecret(
+            { refNamespace: NOTION_HANDSHAKE_REF_NAMESPACE, label: "Notion webhook (verification_token)", value: handshakeToken(rawBody) },
+            { log },
+          );
+        } catch (err) {
+          log(`handshake secret could NOT be captured (${err instanceof Error ? err.message : String(err)}) — the value is NOT logged; delete and recreate the Notion subscription once fixed.`);
+        }
       } else if (outcome.action === "dispatched") {
         log(`comment.created → dispatched (${outcome.detail})`);
       } else if (outcome.action === "rejected") {
@@ -257,8 +264,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
 function handshakeToken(rawBody: string): string {
   try {
     const t = (JSON.parse(rawBody) as { verification_token?: unknown }).verification_token;
-    return typeof t === "string" ? t : "(unparseable)";
+    return typeof t === "string" ? t : "";
   } catch {
-    return "(unparseable)";
+    return "";
   }
 }
