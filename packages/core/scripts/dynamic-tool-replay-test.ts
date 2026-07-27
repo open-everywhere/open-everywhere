@@ -56,6 +56,12 @@ const CASES: readonly ToolCase[] = [
   { slug: "forget", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_connector_override", entryKey: "_single", ctx: slackCtx },
   { slug: "clear_spend_limit", entryKey: "_single", ctx: slackCtx },
+  {
+    slug: "read_routine_transcript",
+    entryKey: "_single",
+    ctx: slackCtx,
+    env: { OE_TRANSCRIPT_RELAY_SECRET: "fixture-relay-secret", OE_PUBLIC_BASE_URL: "https://fixture.invalid" },
+  },
   { slug: "browser_tools", entryKey: "browser_navigate", ctx: slackCtx },
   { slug: "browser_tools", entryKey: "browser_screenshot", ctx: slackCtx },
 ];

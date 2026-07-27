@@ -158,7 +158,7 @@ export interface TranscriptEvent {
   readonly data: unknown;
 }
 
-interface SourceStreamEvent {
+export interface SourceStreamEvent {
   readonly type: string;
   readonly data?: unknown;
   readonly meta?: { readonly at?: string };
@@ -179,7 +179,7 @@ function posIntCappedParam(raw: string | null, def: number, cap: number): number
   return Math.min(n, cap);
 }
 
-async function drainSessionStream(
+export async function drainSessionStream(
   stream: ReadableStream<SourceStreamEvent>,
   startIndex: number,
   maxEvents: number,

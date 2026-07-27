@@ -109,6 +109,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   describe_image: open("read/vision over an attachment already in the room"),
   list_repos: open("read of this channel's own grant"),
   list_routines: open("read of this surface's own routines"),
+  read_routine_transcript: open(
+    "read of a routine run that happened IN THIS CHANNEL (OPE-153). Tiered against read_channel, deliberately, because it is the same shape: a read of content this room could already see, into the room that could already see it — membership is the ACL, and the reach is narrower than read_channel's (that one reads any channel the DOMAIN grants; this one is pinned to the caller's own partition by the scope of the fire lookup, routines/fire-audit.ts listRoutineFires). It escapes nothing, changes nothing, and reaches no external host. It is NOT open on a 'reads are always open' reflex: the transcript is a SUPERSET of what the room saw (it carries what the fire INGESTED), so the control that matters is not a tier but the untrusted fence re-applied on the way out, plus the OPE-73 projection that makes the fence reach the model — both in tools/read_routine_transcript.ts, both tested. A tier would have gated WHO may read; neither the tier nor the approver would have neutralised the ingested bytes",
+  ),
   list_skills: open("read of the domain's own skills"),
   read_docs: open(
     "read of OE's OWN shipped manual, compiled into the bundle (OPE-138). First-party prose about the product, identical for every member of every deployment that carries the same bundles — it discloses nothing about this org, reaches no external host, and changes nothing, so it fails all three rubric axes harder than any other read here. The provider scoping it applies is a RELEVANCE + non-disclosure boundary (a deployment without the Notion bundle is never handed Notion's runbook), not an access tier",

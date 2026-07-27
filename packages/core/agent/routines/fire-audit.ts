@@ -263,3 +263,46 @@ export async function readRoutineForensics(
   }
   return out;
 }
+
+export interface RoutineFireRow {
+  readonly routineId: string;
+  readonly sessionId: string;
+  readonly at: string;
+  readonly outcome: string | null;
+  readonly silent: boolean;
+}
+
+export async function listRoutineFires(
+  scope: {
+    readonly org: string;
+    readonly platform: string;
+    readonly workspace: string;
+    readonly surface: string;
+  },
+  routineId: string,
+  now: Date = new Date(),
+): Promise<RoutineFireRow[]> {
+  const rows = await readAudit({
+    org: scope.org,
+    platform: scope.platform,
+    workspace: scope.workspace,
+    surface: scope.surface,
+    action: ROUTINE_AUDIT.fire,
+    since: new Date(now.getTime() - FORENSIC_WINDOW_MS).toISOString(),
+    limit: FORENSIC_SCAN_LIMIT,
+  });
+  const out: RoutineFireRow[] = [];
+  for (const row of rows) {
+    if (detailString(row.detail, "routineId") !== routineId) continue;
+    const sessionId = detailString(row.detail, "sessionId");
+    if (sessionId === undefined) continue;
+    out.push({
+      routineId,
+      sessionId,
+      at: row.ts,
+      outcome: detailString(row.detail, "outcome") ?? null,
+      silent: row.detail?.silent === true,
+    });
+  }
+  return out;
+}

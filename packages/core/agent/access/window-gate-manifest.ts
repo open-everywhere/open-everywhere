@@ -35,6 +35,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "describe_image",
   "list_repos",
   "list_routines",
+  "read_routine_transcript",
   "list_skills",
   "read_docs",
   "read_file_upload",
