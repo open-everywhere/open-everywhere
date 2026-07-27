@@ -58,6 +58,7 @@ export interface NotionDeliveryOutcome {
     | "no-api-key"
     | "error";
   readonly detail?: string;
+  readonly verified: boolean;
 }
 
 export async function handleNotionDelivery(
@@ -65,6 +66,15 @@ export async function handleNotionDelivery(
   signatureHeader: string | null,
   deps: HandleNotionDeliveryDeps,
 ): Promise<NotionDeliveryOutcome> {
+  const out = await deliver(rawBody, signatureHeader, deps);
+  return { ...out, verified: Boolean(deps.secret) && out.action !== "handshake" && out.action !== "rejected" };
+}
+
+async function deliver(
+  rawBody: string,
+  signatureHeader: string | null,
+  deps: HandleNotionDeliveryDeps,
+): Promise<Omit<NotionDeliveryOutcome, "verified">> {
   const handshake = parseVerificationHandshake(rawBody);
   if (handshake) {
     deps.onHandshakeToken?.(handshake);

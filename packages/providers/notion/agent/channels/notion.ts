@@ -18,9 +18,11 @@ import {
   grainUsesUnifiedWindow,
   divertToUnifiedWindow,
   captureHandshakeSecret,
+  admitTrigger,
   NOTION_HANDSHAKE_REF_NAMESPACE,
   type SupervisorGrain,
 } from "@open-everywhere/core/agent/adapter-api.js";
+import { NOTION_EVENT_SOURCE, notionEventDeliveryId } from "./notion-event-normalizer.js";
 import { createCommentReply, resolveNotionApiKey, retrieveBotUser } from "./notion-api.js";
 import { notionWorkspaceKey } from "./notion-identity.js";
 import { handleNotionDelivery, type NotionReplyTarget, type NotionSessionState } from "./notion-webhook.js";
@@ -189,6 +191,27 @@ export default defineChannel<NotionState, { state: NotionState }>({
         engagementTier: (surfaceKey) => engagementTierFor(surfaceKey, getConfig().loadDomains()),
         dispatch,
       });
+
+      if (outcome.verified) {
+        const deliveryId = notionEventDeliveryId(rawBody);
+        waitUntil(
+          admitTrigger(
+            {
+              source: NOTION_EVENT_SOURCE,
+              headers: {},
+              body: rawBody,
+              receivedAt: new Date().toISOString(),
+              ...(deliveryId ? { deliveryId } : {}),
+            },
+            { receive },
+          ).then(
+            (report) => {
+              if (report.matched > 0) log(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);
+            },
+            (err) => log(`event plane: admitTrigger threw (routing lost for this delivery): ${String(err)}`),
+          ),
+        );
+      }
 
       if (outcome.action === "handshake") {
         try {

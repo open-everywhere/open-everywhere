@@ -285,6 +285,10 @@ export {
   resetEventScopeGrantsForTest,
 } from "./routines/event-authz.js";
 export type { EventScopeGrant } from "./routines/event-authz.js";
+export { checkEventReadGrant } from "./routines/event-authz.js";
+export { admitTrigger } from "./routines/ingress.js";
+export { validateSubscription, evaluateFilter } from "./routines/event-match.js";
+export type { SubscriptionFilter, FilterClause, ScopeSelector } from "./routines/event-model.js";
 
 export { unifiedSupervisorToken } from "./channels/unified-supervisor.js";
 
