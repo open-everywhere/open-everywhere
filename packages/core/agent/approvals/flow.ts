@@ -14,6 +14,7 @@ import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
+import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
@@ -109,6 +110,20 @@ export async function requestApproval(input: RequestApprovalInput, deps: Request
   const kindDef = actionKind(input.kind);
   if (!kindDef) {
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);
+  }
+
+  if (input.postedTo) {
+    const disclosure = await checkCardDisclosure(input.postedTo);
+    if (!disclosure.ok) {
+      await appendAudit({
+        ...whereFromScope(input.org, input.scopeKey),
+        principalId: input.requestedBy,
+        action: "approval.denied",
+        detail: { kind: input.kind, scopeKey: input.scopeKey, postedTo: input.postedTo, reason: disclosure.reason, at: "propose" },
+      }).catch(() => undefined);
+      emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "withheld" });
+      throw new Error(cardDisclosureRefusalNotice());
+    }
   }
 
   const post = deps.post ?? bridgeSlackForm;

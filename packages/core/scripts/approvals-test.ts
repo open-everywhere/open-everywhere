@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { rmSync, readFileSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import type { PendingActionRow } from "../agent/approvals/types.js";
 import type { UnifiedWakeOrigin } from "../agent/channels/unified-window.js";
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 const dir = join(tmpdir(), `open-everywhere-approvals-${process.pid}`);
 rmSync(dir, { recursive: true, force: true });
@@ -894,7 +896,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-admin", { channel: "C_GUEST", user: "U_ORG_ADMIN" }), { post });
   ok(
     adminExecuted.includes("U_ORG_ADMIN"),
-    "clicker gate: an ADMIN-tier kind EXECUTES under an observed-guest roster — the audience-floor legs are member-tier only; admin standing is already checked, and the residual GUEST-AUDIENCE exposure is a disclosure question this ticket deliberately does not answer",
+    "clicker gate: an ADMIN-tier kind EXECUTES under an observed-guest roster — the clicker legs are member-tier only, admin standing is already checked, and the GUEST-AUDIENCE exposure is answered at PROPOSE time by OPE-220, never by refusing a click on a card that is already in the room",
   );
 
   benefitExecuted.length = 0;
@@ -928,4 +930,139 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   _resetAudienceFloorCacheForTest();
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate)\n`);
+{
+  const { registerGovernanceMemberSupplier, _resetAudienceFloorCacheForTest, _resetGovernanceMemberSupplierForTest } = await import("../agent/access/audience-floor.js");
+  const { classifyCardDisclosure, cardDisclosureRefusalNotice } = await import("../agent/approvals/card-disclosure.js");
+  const store = getOperationalStore();
+
+  const roster = (over: Partial<{ resolved: boolean; hasGuest: boolean; isPrivate: boolean }> = {}) => ({
+    humanMemberIds: ["U1"],
+    resolved: true,
+    isPrivate: true,
+    hasGuest: false,
+    ...over,
+  });
+
+  ok(classifyCardDisclosure({ floor: "guest", roster: roster({ hasGuest: true }) }).ok === false, "classifyCardDisclosure: an OBSERVED guest floor refuses the card");
+  ok(classifyCardDisclosure({ floor: "guest", roster: roster({ resolved: false }) }).ok === true, "classifyCardDisclosure: an UNOBSERVABLE roster (floor \"guest\" by fail-closed default) is INERT, not a refusal — the anti-outage pin");
+  ok(classifyCardDisclosure({ floor: "member", roster: roster() }).ok === true, "classifyCardDisclosure: a resolved, guest-free room allows");
+  ok(classifyCardDisclosure({ floor: "admin", roster: roster() }).ok === true, "classifyCardDisclosure: an all-admin private room allows");
+
+  const notice = cardDisclosureRefusalNotice();
+  ok(notice.length > 0 && !/spend|token|\$|domain|scope|forget|memory\b/i.test(notice), "cardDisclosureRefusalNotice: CONTENT-FREE — it names no action kind, figure, domain or scope");
+  ok(/extern|guest/i.test(notice) && /channel/i.test(notice), "cardDisclosureRefusalNotice: names the room property and the concrete fix, not merely the blockage");
+
+  _resetAudienceFloorCacheForTest();
+  const CARD_ROSTERS: Record<string, ReturnType<typeof roster>> = {
+    "slack/T7/C_SHARED": roster({ hasGuest: true }),
+    "slack/T7/C_PRIVATE": roster(),
+  };
+  registerGovernanceMemberSupplier(async (key: string) => CARD_ROSTERS[key]);
+
+  const posts: { method: string; body: string }[] = [];
+  const post = async (method: string, body: string) => {
+    posts.push({ method, body });
+    return { ok: true, ts: "777.888" };
+  };
+  const propose = (over: Record<string, unknown>) =>
+    requestApproval(
+      {
+        org: "default",
+        kind: "spend.set",
+        args: { org: "default", scopeKey: "slack/T7/C_SHARED", level: "surface", monthlyTokens: 9001, currentCap: null },
+        scopeKey: "slack/T7/C_SHARED",
+        requestedBy: "U_ADMIN",
+        channelId: "C_SHARED",
+        ...over,
+      } as Parameters<typeof requestApproval>[0],
+      { post },
+    );
+  const proposeThrew = async (over: Record<string, unknown>): Promise<boolean> => {
+    try {
+      await propose(over);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const proposeDenials = async () =>
+    (await readAudit({ org: "default", action: "approval.denied" })).filter((e) => e.detail?.at === "propose");
+
+  const beforeRows = (await store.listPendingActions("default")).length;
+  posts.length = 0;
+  ok(await proposeThrew({ postedTo: "slack/T7/C_SHARED" }), "card disclosure: proposing into an OBSERVED-guest room throws rather than posting a card");
+  ok(posts.length === 0, "card disclosure: the refused proposal posts NOTHING — the disclosure is prevented, not merely audited after the fact");
+  ok((await store.listPendingActions("default")).length === beforeRows, "card disclosure: the refusal mints NO pending row (the gate runs before addPendingAction, so there is nothing to expire)");
+  const denial = (await proposeDenials()).find((e) => e.detail?.postedTo === "slack/T7/C_SHARED");
+  ok(denial?.detail?.reason === "audience-floor", "card disclosure: the refusal audits approval.denied naming the audience-floor reason");
+  ok(denial?.detail?.id === undefined && denial?.principalId === "U_ADMIN", "card disclosure: the propose-time row carries NO pending id (none was created) and names the REQUESTER as principal");
+
+  posts.length = 0;
+  const okProposal = await propose({
+    channelId: "C_PRIVATE",
+    scopeKey: "slack/T7/C_PRIVATE",
+    args: { org: "default", scopeKey: "slack/T7/C_PRIVATE", level: "surface", monthlyTokens: 9002, currentCap: null },
+    postedTo: "slack/T7/C_PRIVATE",
+  });
+  ok(typeof okProposal.id === "string" && okProposal.id.length > 0, "card disclosure: an internal room proposes normally");
+  ok(posts.some((c) => c.method === "chat.postMessage"), "card disclosure: the allowed proposal actually posts its card");
+
+  posts.length = 0;
+  const opaque = await propose({
+    channelId: "C_OPAQUE",
+    scopeKey: "slack/T7/C_OPAQUE",
+    args: { org: "default", scopeKey: "slack/T7/C_OPAQUE", level: "surface", monthlyTokens: 9003, currentCap: null },
+    postedTo: "slack/T7/C_OPAQUE",
+  });
+  ok(typeof opaque.id === "string", "card disclosure: an UNRESOLVED roster proposes normally — every non-Slack surface stays byte-identical to the pre-OPE-220 path");
+
+  posts.length = 0;
+  const legacy = await propose({
+    args: { org: "default", scopeKey: "slack/T7/C_SHARED", level: "surface", monthlyTokens: 9004, currentCap: null },
+  });
+  ok(typeof legacy.id === "string", "card disclosure: a proposal with NO postedTo is INERT even with a GUEST roster registered — \"we could not ask\" never refuses");
+
+  registerActionKind({
+    kind: "test.member.disclosive",
+    policy: "member",
+    summarize: () => ["a member-tier card carrying content"],
+    async execute() {
+      return "ok";
+    },
+  });
+  posts.length = 0;
+  const memberRefused = await proposeThrew({
+    kind: "test.member.disclosive",
+    args: { marker: "member-tier-into-shared-room" },
+    postedTo: "slack/T7/C_SHARED",
+  });
+  ok(memberRefused, "card disclosure: a MEMBER-tier card refuses in the SAME room an admin-tier card refuses in — the gate is tier-blind, so a per-tier fix could not have left this open");
+  ok(posts.length === 0, "card disclosure: the member-tier refusal posts nothing either");
+  ok(actionKind("spend.set")?.policy === "admin" && actionKind("test.member.disclosive")?.policy === "member", "card disclosure: the two refusals above genuinely straddle the tier boundary (the differential is real, not two admin kinds)");
+
+  posts.length = 0;
+  const dedupArgs = {
+    channelId: "C_LATERSHARED",
+    scopeKey: "slack/T7/C_LATERSHARED",
+    args: { org: "default", scopeKey: "slack/T7/C_LATERSHARED", level: "surface", monthlyTokens: 9005, currentCap: null },
+    postedTo: "slack/T7/C_LATERSHARED",
+  };
+  CARD_ROSTERS["slack/T7/C_LATERSHARED"] = roster();
+  const armed = await propose(dedupArgs);
+  ok(typeof armed.id === "string", "card disclosure ordering: the first proposal lands while the room is still internal");
+  CARD_ROSTERS["slack/T7/C_LATERSHARED"] = roster({ hasGuest: true });
+  _resetAudienceFloorCacheForTest();
+  ok(await proposeThrew(dedupArgs), "card disclosure ordering: an IDENTICAL re-proposal after the room goes externally shared REFUSES — it is not handed back the live card by the dedup path");
+
+  {
+    const src = readFileSync(join(REPO, "packages/core/agent/approvals/card-disclosure.ts"), "utf8");
+    ok(/from "\.\.\/access\/audience-floor\.js"/.test(src), "single-source: consumer #5 (approvals/card-disclosure.ts) imports the audience-floor seam");
+    ok(/export function computeAudienceFloor\b/.test(src) === false, "single-source: consumer #5 does NOT re-roll the floor computation");
+    ok(/clicker-floor/.test(src) === false || /from "\.\/clicker-floor\.js"/.test(src) === false, "separation: the card gate does not import the clicker gate — \"who clicked\" and \"who was in the room\" stay distinct planes");
+  }
+
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate)\n`);
