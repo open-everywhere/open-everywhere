@@ -100,6 +100,17 @@ const HOOK = defineWebhook({
   ok(zeroDomain.unreachable.length === 1, "🔴 a target channel in NO domain is reported — the zero-domain shape, caught where a human is reading a diff instead of as silence at every fire");
   ok(zeroDomain.unreachable[0]!.includes("no memory domain"), "…and says so in those words");
 
+  for (const [label, grant] of [
+    ["org", [{ level: "org" as const }]],
+    ["tenant", [{ level: "tenant" as const, tenant: "slack/T1" }]],
+    ["surface", [{ level: "surface" as const, surface: "slack/T1/C_NOWHERE" }]],
+  ] as const) {
+    const reach = readGrantReach("slack/T1/C_NOWHERE", grant, DOMAINS);
+    const fireTime = scopeGrantsRead(grant, { tenantKey: "slack/T1", surfaceKey: "slack/T1/C_NOWHERE", domains: [] });
+    ok(fireTime, `a ${label}-level grant DOES grant at fire time on a domainless surface (the premise — if this flips, the case below is vacuous)`);
+    eq(reach, { impossible: [], unreachable: [] }, `🔴 …so the diagnostic must report it CLEAN: a ${label}-level grant needs no domain, and refusing it would refuse something that works`);
+  }
+
   const warnings: string[] = [];
   assertWebhooksValid([{ ...HOOK, target: "slack/T1/C_PAY" }], { domains: DOMAINS, warn: (m) => warnings.push(m) });
   ok(warnings.length === 1 && warnings[0]!.includes("deploy-status"), "🔴 an unreachable finding WARNS and validation PASSES — a probably is not worth a boot failure, and the warning names the hook");

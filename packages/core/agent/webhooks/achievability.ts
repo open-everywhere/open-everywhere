@@ -23,21 +23,24 @@ export function readGrantReach(surfaceKey: string, readableBy: ReadableBy | unde
     return inert("this ingress declares no read grant of its own, so authorization is decided per-delivery by its source's scope-grant adapter");
   }
   const routing = resolveDomainForChannel(surfaceKey, domains);
+
+  const granted = scopeGrantsRead(readableBy, {
+    tenantKey: tenantKeyOf(surfaceKey),
+    surfaceKey,
+    domains: routing.domain ? [routing.domain.name] : [],
+  });
+  if (granted) return DECIDED_CLEAN;
+
   if (!routing.domain) {
     return {
       impossible: [],
       unreachable: [
-        `${surfaceKey} belongs to no memory domain, so no routine armed there can ever read this ingress's events ` +
-          `(the grant is ${describeReadableBy(readableBy)}). Add the channel to a domain in the app's memory/domains.ts, or point this at a channel that is already in one.`,
+        `${surfaceKey} belongs to no memory domain, and this ingress grants ${describeReadableBy(readableBy)} — which names no domain-independent level ` +
+          `(an org-, tenant- or surface-level grant would still reach it). So no routine armed there can read this ingress's events. ` +
+          `Add the channel to a domain in the app's memory/domains.ts, point this at a channel already in one, or widen the grant.`,
       ],
     };
   }
-  const granted = scopeGrantsRead(readableBy, {
-    tenantKey: tenantKeyOf(surfaceKey),
-    surfaceKey,
-    domains: [routing.domain.name],
-  });
-  if (granted) return DECIDED_CLEAN;
   return {
     impossible: [],
     unreachable: [

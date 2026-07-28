@@ -143,7 +143,7 @@ export const standardWebhookNormalizer: EventNormalizer = {
   matchKeys: ["event", "action"],
   matchKeysOpen: true,
   scopeKeys: [],
-  scopeKinds: ["tenant", "container"],
+  scopeKinds: ["container"],
   scopeHookConstant: true,
   resolvesActor: false,
   deliveryIdHeader: SW_ID_HEADER,

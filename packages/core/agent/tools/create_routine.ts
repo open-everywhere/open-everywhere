@@ -199,6 +199,12 @@ export default defineTool({
         grant = undefined;
         domains = undefined;
       }
+      if (hookRow && hookReadableBy(hookRow).length === 0) {
+        throw new Error(
+          `The hook "${t.source}" carries no read grant, so no routine can ever read its events — it predates readableBy. ` +
+            `An operator must re-declare it (or rotate it through declare_webhook) before a routine here can fire.`,
+        );
+      }
       const reach = readGrantReach(p.surfaceKey, grant, domains);
       const blocked = [...reach.impossible, ...reach.unreachable];
       if (blocked.length > 0) {
