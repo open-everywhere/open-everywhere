@@ -4,6 +4,8 @@ import {
   mintInstallationToken,
   loadGitHubAppConfig,
   resolveGitHubInstallationId,
+  warmCredential,
+  type BrokeredSecret,
   type PostArm,
   type UnifiedWakeOrigin,
   type UnifiedReplyDeps,
@@ -11,7 +13,31 @@ import {
 
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
 
-const tokenCache = new Map<string, { token: string; expiresAtMs: number }>();
+interface GitHubMintContext {
+  readonly appId: string;
+  readonly privateKeyPem: string;
+  readonly installationId: string;
+  readonly repo: string;
+}
+
+const installationToken = warmCredential<GitHubMintContext>({
+  name: "github.installation-token",
+  platform: "github",
+  auditAction: "github.token_mint_failed",
+  refresh: "re-mint",
+  fallbackTtlSeconds: 3600,
+  key: (ctx) => `${ctx.installationId} ${ctx.repo}`,
+  mint: async (ctx): Promise<BrokeredSecret> => {
+    const jwt = await signAppJwt(parsePrivateKey(ctx.privateKeyPem), ctx.appId, Math.floor(Date.now() / 1000));
+    const minted = await mintInstallationToken({ jwt, installationId: ctx.installationId, repoNames: [ctx.repo], permissions: { issues: "write" } });
+    const parsed = Date.parse(minted.expiresAt);
+    return { value: minted.token, expiresAtMs: Number.isFinite(parsed) ? parsed : undefined };
+  },
+});
+
+export function _resetGitHubInstallationTokenCache(): void {
+  installationToken.reset();
+}
 
 function githubAppCreds(): { appId: string; privateKeyPem: string; installations: Record<string, string> } | null {
   const scm = loadGitHubAppConfig();
@@ -33,13 +59,7 @@ async function installationTokenFor(origin: GitHubOrigin): Promise<string> {
       `unified reply couldn't post to GitHub — no installation id for owner "${origin.owner}" (the wake carried none, OE_GITHUB_INSTALLATIONS has no entry, and no installation webhook has registered one).`,
     );
   }
-  const cacheKey = `${installationId} ${origin.repo}`;
-  const cached = tokenCache.get(cacheKey);
-  if (cached && cached.expiresAtMs - 5 * 60_000 > Date.now()) return cached.token;
-  const jwt = await signAppJwt(parsePrivateKey(creds.privateKeyPem), creds.appId, Math.floor(Date.now() / 1000));
-  const minted = await mintInstallationToken({ jwt, installationId, repoNames: [origin.repo], permissions: { issues: "write" } });
-  tokenCache.set(cacheKey, { token: minted.token, expiresAtMs: Date.parse(minted.expiresAt) });
-  return minted.token;
+  return installationToken.get({ appId: creds.appId, privateKeyPem: creds.privateKeyPem, installationId, repo: origin.repo });
 }
 
 async function liveGitHubPost(origin: GitHubOrigin, text: string): Promise<string> {

@@ -89,8 +89,8 @@ try {
     ok(linearCredentialsConfigured() === true, "linearCredentialsConfigured: true when the client-credentials pair is set");
     const { fetch, calls } = mkFetch([{ body: { access_token: "minted-token-1", expires_in: 3600 } }]);
     const minted = await mintLinearAppActorToken("client-abc", "secret-xyz", fetch);
-    ok(minted.token === "minted-token-1", "mintLinearAppActorToken: returns the response's access_token");
-    ok(minted.expiresAtMs > Date.now(), "mintLinearAppActorToken: computes a future expiry from expires_in");
+    ok(minted.value === "minted-token-1", "mintLinearAppActorToken: returns the response's access_token as a BrokeredSecret value");
+    ok((minted.expiresAtMs ?? 0) > Date.now(), "mintLinearAppActorToken: computes a future expiry from expires_in");
     ok(calls.length === 1, "mintLinearAppActorToken: exactly one token-endpoint call");
     const params = new URLSearchParams(calls[0]);
     ok(params.get("grant_type") === "client_credentials", "mint request: grant_type=client_credentials");
@@ -103,7 +103,7 @@ try {
     const { fetch } = mkFetch([{ body: { access_token: "no-ttl-token" } }]);
     const before = Date.now();
     const minted = await mintLinearAppActorToken("c", "s", fetch);
-    const days = (minted.expiresAtMs - before) / (24 * 60 * 60 * 1000);
+    const days = ((minted.expiresAtMs ?? 0) - before) / (24 * 60 * 60 * 1000);
     ok(days > 29 && days < 31, "mintLinearAppActorToken: missing expires_in defaults to ~30 days");
   }
 

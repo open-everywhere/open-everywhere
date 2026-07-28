@@ -2,8 +2,14 @@ import type { Connection, CredentialAuthorizationDetail, CredentialType, CustomH
 
 export class CredentialError extends Error {}
 
+export interface BrokeredSecret {
+  readonly value: string;
+  readonly expiresAtMs?: number;
+}
+
 export interface CredentialBroker {
   getSecret(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<string>;
+  getSecretWithLifetime?(ref: string, authorizationDetails?: readonly CredentialAuthorizationDetail[]): Promise<BrokeredSecret>;
 }
 
 export const envBroker: CredentialBroker = {
@@ -50,13 +56,23 @@ export async function getSecretVia(
   ref: string,
   authorizationDetails?: readonly CredentialAuthorizationDetail[],
 ): Promise<string> {
+  return (await getSecretWithLifetimeVia(broker, ref, authorizationDetails)).value;
+}
+
+export async function getSecretWithLifetimeVia(
+  broker: string | undefined,
+  ref: string,
+  authorizationDetails?: readonly CredentialAuthorizationDetail[],
+): Promise<BrokeredSecret> {
   if (broker === undefined) {
     throw new CredentialError(
       `no credential broker for ref "${ref}" — every credential must name its home broker ` +
         `(\`broker: "env" | "db" | ...\`); there is no selected default. Stamp the credential's broker.`,
     );
   }
-  return brokerFor(broker).getSecret(ref, authorizationDetails);
+  const resolved = brokerFor(broker);
+  if (resolved.getSecretWithLifetime) return resolved.getSecretWithLifetime(ref, authorizationDetails);
+  return { value: await resolved.getSecret(ref, authorizationDetails) };
 }
 
 async function resolveCustomHeaders(

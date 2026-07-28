@@ -1,7 +1,7 @@
-import { appendAudit, deploymentOrg } from "@open-everywhere/core/agent/adapter-api.js";
+import { warmCredential } from "@open-everywhere/core/agent/adapter-api.js";
+import type { BrokeredSecret } from "@open-everywhere/core/agent/adapter-api.js";
 
 const TOKEN_ENDPOINT = "https://api.linear.app/oauth/token";
-const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 const DEFAULT_TTL_SEC = 30 * 24 * 60 * 60;
 
 export type LinearMintFetch = (
@@ -9,17 +9,17 @@ export type LinearMintFetch = (
   init: { method: string; headers: Record<string, string>; body: string },
 ) => Promise<{ ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> }>;
 
-interface CachedToken {
-  readonly token: string;
-  readonly expiresAtMs: number;
-}
-
-let cached: CachedToken | undefined;
-let inflight: Promise<string> | undefined;
+const linearAppActorToken = warmCredential<{ clientId: string; clientSecret: string }>({
+  name: "linear.app-actor",
+  platform: "linear",
+  auditAction: "linear.token_mint_failed",
+  refresh: "re-mint",
+  fallbackTtlSeconds: DEFAULT_TTL_SEC,
+  mint: ({ clientId, clientSecret }) => mintLinearAppActorToken(clientId, clientSecret),
+});
 
 export function _resetLinearMintCache(): void {
-  cached = undefined;
-  inflight = undefined;
+  linearAppActorToken.reset();
 }
 
 export function staticLinearToken(): string | undefined {
@@ -41,7 +41,7 @@ export async function mintLinearAppActorToken(
   clientId: string,
   clientSecret: string,
   fetchFn: LinearMintFetch = globalThis.fetch as unknown as LinearMintFetch,
-): Promise<CachedToken> {
+): Promise<BrokeredSecret> {
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     actor: "app",
@@ -68,37 +68,7 @@ export async function mintLinearAppActorToken(
     throw new Error("Linear client-credentials mint failed — response carried no access_token.");
   }
   const ttlSec = typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in > 0 ? data.expires_in : DEFAULT_TTL_SEC;
-  return { token: data.access_token, expiresAtMs: Date.now() + ttlSec * 1000 };
-}
-
-async function auditMintFailure(message: string): Promise<void> {
-  console.error(`[open-everywhere:linear-credentials] token mint failed: ${message}`);
-  await appendAudit({
-    org: deploymentOrg(),
-    platform: "linear",
-    workspace: "unknown",
-    action: "linear.token_mint_failed",
-    detail: { error: message.slice(0, 300) },
-  }).catch(() => undefined);
-}
-
-async function mintedAppActorToken(clientId: string, clientSecret: string): Promise<string> {
-  if (cached && cached.expiresAtMs - REFRESH_MARGIN_MS > Date.now()) return cached.token;
-  if (inflight) return inflight;
-  inflight = (async () => {
-    try {
-      const minted = await mintLinearAppActorToken(clientId, clientSecret);
-      cached = minted;
-      return minted.token;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await auditMintFailure(message);
-      throw err;
-    } finally {
-      inflight = undefined;
-    }
-  })();
-  return inflight;
+  return { value: data.access_token, expiresAtMs: Date.now() + ttlSec * 1000 };
 }
 
 export async function resolveLinearAccessTokenSeam(): Promise<string> {
@@ -106,7 +76,7 @@ export async function resolveLinearAccessTokenSeam(): Promise<string> {
   if (staticToken) return staticToken;
   const clientId = process.env.LINEAR_CLIENT_ID;
   const clientSecret = process.env.LINEAR_CLIENT_SECRET;
-  if (clientId && clientSecret) return mintedAppActorToken(clientId, clientSecret);
+  if (clientId && clientSecret) return linearAppActorToken.get({ clientId, clientSecret });
   return "";
 }
 

@@ -8,6 +8,7 @@ import { tierRelDir, safeName, seedFor } from "./layout.js";
 import { makeSelector, normalizeSelection } from "./selection.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { getGitHubApp } from "../scm/provider.js";
+import { warmCredential } from "../credentials/warm.js";
 
 const DEFAULT_BRANCH = process.env.OE_MEMORY_GIT_BRANCH || "main";
 
@@ -111,30 +112,32 @@ export function makeGitHubProvider(deps: GitHubMemoryDeps): MemoryProvider {
   };
 }
 
-interface CachedToken {
-  token: string;
-  expiresMs: number;
-}
-
 export function registerGitHubMemory(): boolean {
   const app = getGitHubApp();
   if (!app) return false;
-  const cache = new Map<string, CachedToken>();
-  const provider = makeGitHubProvider({
-    contents: new GitHubContents(),
-    committer: () => app.committer(),
-    async mintToken(repo: string): Promise<string> {
-      const hit = cache.get(repo);
-      if (hit && hit.expiresMs > Date.now() + 60_000) return hit.token;
+  const memoryToken = warmCredential<string>({
+    name: "github.memory-installation-token",
+    platform: "github",
+    auditAction: "github.token_mint_failed",
+    refresh: "re-mint",
+    refreshMarginMs: 60_000,
+    fallbackTtlSeconds: 3600,
+    key: (repo) => repo,
+    mint: async (repo) => {
       const out = await app.tokensForRepos([repo]);
       const owner = repo.slice(0, repo.indexOf("/"));
       const minted = out.tokens.get(owner);
       if (!minted) {
         throw new Error(`memory repo "${repo}" has no linked GitHub App installation (scm config).`);
       }
-      cache.set(repo, { token: minted.token, expiresMs: Date.parse(minted.expiresAt) });
-      return minted.token;
+      const parsed = Date.parse(minted.expiresAt);
+      return { value: minted.token, expiresAtMs: Number.isFinite(parsed) ? parsed : undefined };
     },
+  });
+  const provider = makeGitHubProvider({
+    contents: new GitHubContents(),
+    committer: () => app.committer(),
+    mintToken: (repo: string) => memoryToken.get(repo),
   });
   registerProvider(provider);
   return true;

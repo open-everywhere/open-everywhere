@@ -5,6 +5,7 @@ import {
   sanitizeTeamsChannelId,
   allowedTeamsChannelIds,
   teamsReadAdapter,
+  _resetTeamsGraphTokenCache,
   type TeamsGraphRequester,
 } from "../agent/channels/teams-read.js";
 import { registerTeamsProvider } from "../agent/register.js";
@@ -14,6 +15,8 @@ import {
   resolveReadAdapter,
   registerConfig,
   defineDomain,
+  readAudit,
+  deploymentOrg,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { buildTeamsAuth, type TeamsIdentityInput } from "../agent/channels/teams-identity.js";
@@ -177,16 +180,27 @@ const engCtx = teamsCtx({
   delete process.env.TEAMS_APP_ID;
   delete process.env.MICROSOFT_APP_PASSWORD;
   delete process.env.TEAMS_APP_PASSWORD;
+  const org = deploymentOrg();
+  const before = (await readAudit({ org, platform: "teams", action: "teams.token_mint_failed" })).length;
+  _resetTeamsGraphTokenCache();
   await assert.rejects(
     () => teamsReadAdapter.readChannel(engCtx, RAW_ENG, 50),
     /MICROSOFT_APP_ID or TEAMS_APP_ID is required/u,
     "readChannel: the DEFAULT (live) requester fails loud on missing app credentials before any network call",
   );
   n++;
+  const after = await readAudit({ org, platform: "teams", action: "teams.token_mint_failed" });
+  assert.ok(after.length > before, "a failed Graph token mint appends a durable teams.token_mint_failed audit row (never a silent stale token)");
+  n++;
+  assert.equal(after[0]!.detail?.credential, "teams.graph-app-only", "…naming which credential failed");
+  n++;
+  assert.ok(typeof after[0]!.detail?.error === "string" && (after[0]!.detail!.error as string).length > 0, "…with a non-empty error detail");
+  n++;
   if (saved.id !== undefined) process.env.MICROSOFT_APP_ID = saved.id;
   if (saved.teamsId !== undefined) process.env.TEAMS_APP_ID = saved.teamsId;
   if (saved.pw !== undefined) process.env.MICROSOFT_APP_PASSWORD = saved.pw;
   if (saved.teamsPw !== undefined) process.env.TEAMS_APP_PASSWORD = saved.teamsPw;
+  _resetTeamsGraphTokenCache();
 }
 
 {

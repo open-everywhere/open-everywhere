@@ -6,7 +6,9 @@ import {
   domainForChannel,
   getConfig,
   ChannelScopeError,
+  warmCredential,
   type BindableContext,
+  type BrokeredSecret,
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -14,21 +16,14 @@ const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const GRAPH_TOKEN_SCOPE = "https://graph.microsoft.com/.default";
 const TOKEN_LOGIN_BASE = "https://login.microsoftonline.com";
 const TOKEN_SKEW_MS = 60_000;
+const GRAPH_TOKEN_FALLBACK_TTL_SEC = 3600;
 
 const TEAMS_CHANNEL_DEFAULT_LIMIT = 50;
 const TEAMS_THREAD_DEFAULT_LIMIT = 100;
 const TEAMS_GRAPH_PAGE_SIZE = 50;
 const TEAMS_GRAPH_MAX_PAGES = 5;
 
-interface CachedGraphToken {
-  readonly token: string;
-  readonly expiresAt: number;
-}
-
-let cachedGraphToken: CachedGraphToken | undefined;
-
-async function mintTeamsGraphToken(): Promise<string> {
-  if (cachedGraphToken && Date.now() < cachedGraphToken.expiresAt - TOKEN_SKEW_MS) return cachedGraphToken.token;
+async function mintTeamsGraphTokenOnce(): Promise<BrokeredSecret> {
   const [appId, appPassword, tenantId] = await Promise.all([resolveTeamsAppId(), resolveTeamsAppPassword(), resolveTeamsTenantId()]);
   if (!tenantId) {
     throw new Error(
@@ -46,14 +41,27 @@ async function mintTeamsGraphToken(): Promise<string> {
   if (!res.ok || !json.access_token) {
     throw new Error(`read: Teams Graph token request failed — ${json.error_description ?? json.error ?? `HTTP ${res.status}`}.`);
   }
-  cachedGraphToken = { token: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000 };
-  return json.access_token;
+  return { value: json.access_token, expiresAtMs: Date.now() + (json.expires_in ?? GRAPH_TOKEN_FALLBACK_TTL_SEC) * 1000 };
+}
+
+const teamsGraphToken = warmCredential({
+  name: "teams.graph-app-only",
+  platform: "teams",
+  auditAction: "teams.token_mint_failed",
+  refresh: "re-mint",
+  refreshMarginMs: TOKEN_SKEW_MS,
+  fallbackTtlSeconds: GRAPH_TOKEN_FALLBACK_TTL_SEC,
+  mint: mintTeamsGraphTokenOnce,
+});
+
+export function _resetTeamsGraphTokenCache(): void {
+  teamsGraphToken.reset();
 }
 
 export type TeamsGraphRequester = (url: string) => Promise<unknown>;
 
 const liveTeamsGraphRequest: TeamsGraphRequester = async (url) => {
-  const token = await mintTeamsGraphToken();
+  const token = await teamsGraphToken.get();
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
