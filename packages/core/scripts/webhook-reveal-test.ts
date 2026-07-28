@@ -219,7 +219,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   ok(reveal.revealPageAvailable(), "armed: signing key + base url present");
   const saved = process.env.OE_INTAKE_PAGE_SIGNING_KEY;
   delete process.env.OE_INTAKE_PAGE_SIGNING_KEY;
-  ok(!reveal.revealPageAvailable(), "no signing key ⇒ not available (create_webhook refuses at propose time)");
+  ok(!reveal.revealPageAvailable(), "no signing key ⇒ not available (declare_webhook refuses at propose time)");
   eq((await reveal.handleRevealGet(getReq(token))).status, 404, "no signing key ⇒ GET 404 (route effectively absent)");
   eq((await reveal.handleRevealPost(postReq(token))).status, 404, "no signing key ⇒ POST 404");
   eq(await reveal.issueRevealLink({ org: ORG, ref: "hook:x", revealTo: USER, label: "x" }), undefined, "…and no link can be minted");

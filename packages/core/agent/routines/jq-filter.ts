@@ -18,6 +18,8 @@ export const FILTER_MAX_LENGTH = 1000;
 
 export const FILTER_PROBE_BUDGET_MS = 250;
 
+const PROBE_RUNS = 3;
+
 export const JQ_LIMITS: ExecutionLimits = {
   maxJqIterations: 1_000,
   maxCommandCount: 2,
@@ -137,9 +139,7 @@ export function assertFilterShape(expression: string): void {
 export async function probeFilter(expression: string, source: string, matchKeys: readonly string[]): Promise<void> {
   assertFilterShape(expression);
   const doc = probeDocument(source, matchKeys);
-  const started = Date.now();
   const outcome = await evaluateJqFilter(expression, doc);
-  const elapsed = Date.now() - started;
   if ("error" in outcome) {
     throw new Error(
       `That filter isn't a usable jq predicate on "${source}": ${outcome.error}. ` +
@@ -147,9 +147,15 @@ export async function probeFilter(expression: string, source: string, matchKeys:
         `The event exposes .event, .action, .source, .fields.<name> and .scope.<${SCOPE_KINDS.join("|")}>.`,
     );
   }
+  let elapsed = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < PROBE_RUNS; i++) {
+    const started = Date.now();
+    await evaluateJqFilter(expression, doc);
+    elapsed = Math.min(elapsed, Date.now() - started);
+  }
   if (elapsed > FILTER_PROBE_BUDGET_MS) {
     throw new Error(
-      `That filter took ${elapsed}ms to evaluate once, over the ${FILTER_PROBE_BUDGET_MS}ms limit — it would run on every delivery this source makes. Express it as a comparison over .fields / .scope rather than a search over the whole document.`,
+      `That filter took ${elapsed}ms to evaluate, over the ${FILTER_PROBE_BUDGET_MS}ms limit — it would run on every delivery this source makes. Express it as a comparison over .fields / .scope rather than a search over the whole document.`,
     );
   }
 }
