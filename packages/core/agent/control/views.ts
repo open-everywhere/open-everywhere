@@ -8,7 +8,7 @@ import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
-import { windowedSupervisorEnabled, windowModeFor } from "../memory/domain.js";
+import { windowedSupervisorEnabled, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
@@ -688,9 +688,11 @@ export async function accessView(q: AccessQuery = {}) {
     principalId: q.principalId,
   };
   const access = resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry);
+  const routing = resolveDomainForChannel(`${platform}/${workspace}/${channel}`, cfg.loadDomains());
   return {
     scopeKey: access.scopeKey,
     mode: access.mode,
+    routing: { domain: routing.domain?.name ?? null, via: routing.via },
     reachableHosts: access.reachableHosts,
     connections: access.connections.map((c) => ({
       id: c.id,

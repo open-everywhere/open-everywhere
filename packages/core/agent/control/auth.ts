@@ -72,7 +72,7 @@ export function scopeDenial(roles: readonly string[], scope: ScopeRequest): stri
 }
 
 export function siloCoveringDomains(siloName: string, domains: readonly Domain[]): string[] {
-  return domains.filter((d) => d.channels !== undefined && memoryRefs(d).includes(siloName)).map((d) => d.name);
+  return domains.filter((d) => d.match === undefined && memoryRefs(d).includes(siloName)).map((d) => d.name);
 }
 
 export function siloScopeDenial(roles: readonly string[], org: string, siloName: string, domains: readonly Domain[]): string | null {

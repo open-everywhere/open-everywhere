@@ -33,6 +33,7 @@ import {
   completeSupervisorTurn,
   auditSupervisorFailure,
   appendAudit,
+  auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
   isVouchedInternal,
@@ -328,7 +329,10 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
   const c = await enrichComment(signal.commentId);
   if (!c || !c.teamId || !c.issueId) return;
   const surfaceKey = `linear/${signal.organizationId}/${c.teamId}`;
-  if (!linearAmbientEnabled(surfaceKey)) return;
+  if (!linearAmbientEnabled(surfaceKey)) {
+    await auditAmbientSkip({ platform: "linear", workspace: signal.organizationId, surfaceKey, log: slog });
+    return;
+  }
   const viewer = await resolveViewer();
   const cls = classifyLinearAmbientComment(
     { body: c.body, authorId: c.authorId, parentAuthorId: c.parentAuthorId },

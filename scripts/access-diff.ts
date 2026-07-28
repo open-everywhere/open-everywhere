@@ -3,7 +3,8 @@ import "../agent/lib/register-config.js";
 import { loadBaseBundles, loadBaseBindings } from "../agent/access/bundles.js";
 import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
-import { domainsForSurface } from "../agent/memory/domains.js";
+import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
+import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { parseGrantsText, type GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";
 
@@ -76,7 +77,8 @@ for (const surfaceKey of [...scopes].sort((x, y) => x.localeCompare(y))) {
   const grantsChanged = scopeEntries(before, surfaceKey) !== scopeEntries(after, surfaceKey);
   if (lines.length === 0) continue;
   changedScopes++;
-  out.push(`### \`${surfaceKey}\``, "", "```diff", ...lines, "```", "");
+  const routing = resolveDomainForChannel(surfaceKey, loadDomains());
+  out.push(`### \`${surfaceKey}\`  — domain: ${routing.domain?.name ?? "none"} (via ${routing.via})`, "", "```diff", ...lines, "```", "");
   if (!grantsChanged) {
     invariantBreaches++;
     out.push(`> ⚠️ **INVARIANT BREACH** — this scope's effective access changed but its own overlay entries did not.`, "");

@@ -228,8 +228,10 @@ export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
 export { isVouchedInternal, isVouchedSurface } from "./identity/trust.js";
 
-export { ambientSupervisorEnabled, engagementTierFor, domainForChannel } from "./memory/domain.js";
-export type { EngagementTier, Domain } from "./memory/domain.js";
+export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, ambientSkipFor } from "./memory/domain.js";
+export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";
+export { auditAmbientSkip, resetAmbientSkipSightings } from "./channels/ambient-skip.js";
+export type { AmbientSkipRecord } from "./channels/ambient-skip.js";
 
 export { windowTopologyEnabled } from "./access/capabilities.js";
 

@@ -58,5 +58,5 @@ export function requireDomainAdminOrOrg(ctx: BindableContext): Role {
 export function adminControlRoles(principalId: string | undefined, domains: readonly Domain[]): string[] {
   if (!principalId) return [];
   if (criteriaDomain("org", domains)?.admins?.includes(principalId) === true) return ["admin"];
-  return domains.filter((d) => d.channels !== undefined && d.admins?.includes(principalId) === true).map((d) => `domain:${d.name}`);
+  return domains.filter((d) => d.match === undefined && d.admins?.includes(principalId) === true).map((d) => `domain:${d.name}`);
 }

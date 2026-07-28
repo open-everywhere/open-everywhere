@@ -42,6 +42,7 @@ export interface Domain {
   readonly name: string;
   readonly title?: string;
   readonly channels?: readonly string[];
+  readonly containers?: readonly string[];
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
@@ -75,8 +76,32 @@ export function defineDomain(domain: Domain): Domain {
   return domain;
 }
 
+export type DomainVia = "roster" | `container:${string}` | "none";
+
+export interface DomainRouting {
+  readonly domain: Domain | undefined;
+  readonly via: DomainVia;
+}
+
+function tenantKeyOf(channelKey: string): string | undefined {
+  const segs = channelKey.split("/");
+  if (segs.length < 2 || !segs[0] || !segs[1]) return undefined;
+  return `${segs[0]}/${segs[1]}`;
+}
+
+export function resolveDomainForChannel(channelKey: string, domains: readonly Domain[]): DomainRouting {
+  const roster = domains.find((d) => d.channels?.includes(channelKey));
+  if (roster) return { domain: roster, via: "roster" };
+  const tenantKey = tenantKeyOf(channelKey);
+  if (tenantKey) {
+    const claim = domains.find((d) => d.containers?.includes(tenantKey));
+    if (claim) return { domain: claim, via: `container:${tenantKey}` };
+  }
+  return { domain: undefined, via: "none" };
+}
+
 export function domainForChannel(channelKey: string, domains: readonly Domain[]): Domain | undefined {
-  return domains.find((d) => d.channels?.includes(channelKey));
+  return resolveDomainForChannel(channelKey, domains).domain;
 }
 
 export function criteriaDomain(match: DomainMatch, domains: readonly Domain[]): Domain | undefined {
@@ -100,6 +125,21 @@ export function ambientSupervisorEnabled(channelKey: string, domains: readonly D
   const explicit = domainForChannel(channelKey, domains);
   if (explicit) return explicit.ambientSupervisor === true;
   return criteriaDomain("org", domains)?.ambientSupervisor === true;
+}
+
+export type AmbientSkip = "no-domain" | "domain-refused";
+
+export function ambientSkipFor(
+  channelKey: string,
+  domains: readonly Domain[],
+): { readonly reason: AmbientSkip; readonly domain?: string; readonly via: DomainVia } | undefined {
+  const routing = resolveDomainForChannel(channelKey, domains);
+  if (routing.domain) {
+    if (routing.domain.ambientSupervisor === true) return undefined;
+    return { reason: "domain-refused", domain: routing.domain.name, via: routing.via };
+  }
+  if (criteriaDomain("org", domains)?.ambientSupervisor === true) return undefined;
+  return { reason: "no-domain", via: routing.via };
 }
 
 export function awarenessWakeEnabled(channelKey: string, domains: readonly Domain[]): boolean {
@@ -213,6 +253,9 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
     }
     if (!d.admins || d.admins.length === 0) {
       bad.push(`  "${d.name}" is governance but has an empty admins roster — a governance venue with no admins unlocks nothing (add the org's admin principal ids to its admins list)`);
+    }
+    if (d.containers !== undefined) {
+      bad.push(`  "${d.name}" is governance but claims tenant container(s) [${d.containers.join(", ")}] — a governance venue is a SMALL, enumerated, individually-vouched audience, and neither the ${GOVERNANCE_CHANNEL_MAX}-channel cap nor the per-channel vouch can be decided over an unbounded claim (list the concrete channels, or drop governance from this domain)`);
     }
     if (channels.length > GOVERNANCE_CHANNEL_MAX) {
       bad.push(`  "${d.name}" is governance with ${channels.length} channels — that exceeds the ${GOVERNANCE_CHANNEL_MAX}-channel governance cap (a governance domain is a SMALL uniformly-privileged venue; split it or re-tag)`);
@@ -426,6 +469,24 @@ export function assertChannelExclusivity(domains: readonly Domain[]): void {
       }
     }
   }
+  const claimant = new Map<string, string>();
+  for (const d of domains) {
+    for (const key of d.containers ?? []) {
+      const roster = owner.get(key);
+      if (roster !== undefined) {
+        clashes.push(
+          `  "${key}" is claimed as a container by "${d.name}" but is also a channels entry of "${roster}" — a roster entry and a tenant claim are different things; say which you meant`,
+        );
+        continue;
+      }
+      const prev = claimant.get(key);
+      if (prev !== undefined && prev !== d.name) {
+        clashes.push(`  the tenant "${key}" is claimed in containers by both "${prev}" and "${d.name}"`);
+      } else {
+        claimant.set(key, d.name);
+      }
+    }
+  }
   if (clashes.length > 0) {
     throw new Error(
       "open-everywhere: a channel may belong to at most one memory domain, but:\n" +
@@ -440,10 +501,19 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
   const byMatch = new Map<DomainMatch, string>();
   let hasOrg = false;
   for (const d of domains) {
-    const hasChannels = d.channels !== undefined;
+    const hasExplicit = d.channels !== undefined || d.containers !== undefined;
     const hasMatch = d.match !== undefined;
-    if (hasChannels === hasMatch) {
-      bad.push(`  "${d.name}" must have EITHER channels (explicit) OR match (criteria), not ${hasChannels ? "both" : "neither"}`);
+    if (hasExplicit === hasMatch) {
+      bad.push(`  "${d.name}" must have EITHER explicit membership (channels and/or containers) OR match (criteria), not ${hasExplicit ? "both" : "neither"}`);
+    }
+    for (const key of d.containers ?? []) {
+      const segs = key.split("/");
+      if (segs.length === 2 && segs[0] && segs[1]) continue;
+      bad.push(
+        segs.length > 2
+          ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported yet — a containers entry must be a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>"), never a deeper path. List the concrete surfaces in channels instead.`
+          : `  "${d.name}" claims container "${key}", which is not a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>")`,
+      );
     }
     if (hasMatch) {
       if (d.match === "org") hasOrg = true;

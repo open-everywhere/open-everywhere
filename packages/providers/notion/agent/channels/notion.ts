@@ -1,6 +1,7 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   appendAudit,
+  auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
   finalMessageActionForTurn,
@@ -224,6 +225,16 @@ export default defineChannel<NotionState, { state: NotionState }>({
         }
       } else if (outcome.action === "dispatched") {
         log(`comment.created → dispatched (${outcome.detail})`);
+      } else if (outcome.action === "ambient-disabled") {
+        const surfaceKey = outcome.detail ?? "";
+        waitUntil(
+          auditAmbientSkip({
+            platform: "notion",
+            workspace: surfaceKey.split("/")[1] ?? "unknown",
+            surfaceKey,
+            log,
+          }),
+        );
       } else if (outcome.action === "rejected") {
         log(`delivery rejected (${outcome.status}): ${outcome.detail}`);
         waitUntil(

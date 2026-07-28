@@ -3,6 +3,7 @@ import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
+import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 
@@ -42,6 +43,12 @@ function boundScopes(): { platform: string; workspace: string; channel: string; 
         const parts = splitSurfaceKey(key);
         if (parts) add(parts.platform, parts.workspace, parts.channel, `domain binding "${b.bundle}" via ${s.domain}`);
       }
+      for (const key of domain?.containers ?? []) {
+        const [platform, workspace] = key.split("/");
+        if (platform && workspace) {
+          add(platform, workspace, "C__PROBE__", `domain binding "${b.bundle}" via ${s.domain} (containers claim "${key}", probe channel)`);
+        }
+      }
     }
     if (s.level === "org") add("slack", "T__PROBE__", "C__PROBE__", `org binding "${b.bundle}" (probe scope)`);
   }
@@ -63,7 +70,8 @@ for (const scope of boundScopes()) {
       fail(`${scope.via}: no reachable hosts but policy is not "deny-all" (${JSON.stringify(policy)}) — fail-closed broken`);
     }
     checked++;
-    console.log(`  ✓ ${scope.platform}/${scope.workspace}/${scope.channel}  (${scope.via}) — ${access.reachableHosts.length} host(s), ${access.connections.length} credential(s)`);
+    const routedVia = resolveDomainForChannel(`${scope.platform}/${scope.workspace}/${scope.channel}`, domains);
+    console.log(`  ✓ ${scope.platform}/${scope.workspace}/${scope.channel}  (${scope.via}; domain ${routedVia.domain?.name ?? "none"} via ${routedVia.via}) — ${access.reachableHosts.length} host(s), ${access.connections.length} credential(s)`);
   } catch (err) {
     fail(`${scope.via}: compileNetworkPolicy threw — ${err instanceof Error ? err.message : String(err)}`);
   }

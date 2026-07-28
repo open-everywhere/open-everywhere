@@ -2,7 +2,8 @@ import "../agent/lib/register-config.js";
 import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
-import { domainsForSurface } from "../agent/memory/domains.js";
+import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
+import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "@open-everywhere/core/agent/access/resolver.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
 import { resolveHeaders } from "@open-everywhere/core/agent/access/credentials.js";
@@ -28,6 +29,12 @@ const req: ResolveRequest = {
 const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadProviders());
 
 console.log(`\nScope: ${access.scopeKey}  (mode: ${access.mode})`);
+const routing = resolveDomainForChannel(`${platform}/${workspace}/${channel}`, loadDomains());
+console.log(
+  routing.domain
+    ? `Domain: ${routing.domain.name}  (via ${routing.via})`
+    : `Domain: (none — no channels entry and no containers claim covers ${platform}/${workspace}/${channel})`,
+);
 console.log("─".repeat(60));
 
 console.log("\nReachable hosts (everything else is denied):");

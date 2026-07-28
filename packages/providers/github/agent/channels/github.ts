@@ -27,6 +27,7 @@ import {
   auditSupervisorFailure,
   capabilitiesForPlatform,
   appendAudit,
+  auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
   getConfig,
@@ -178,7 +179,10 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
   const ev = extractGitHubAmbientEvent(eventType, payload);
   if (!ev) return;
   const surfaceKey = `github/${ev.owner}/${ev.repo}`;
-  if (!githubAmbientEnabled(surfaceKey)) return;
+  if (!githubAmbientEnabled(surfaceKey)) {
+    await auditAmbientSkip({ platform: "github", workspace: ev.owner, surfaceKey, log: slog });
+    return;
+  }
   const singleWindow = grainUsesUnifiedWindow(githubGrainFor(surfaceKey));
   const vouched = githubRepoVouched(ev.owner, ev.repo);
   const cls = classifyGitHubAmbientComment(ev.comment, BOT_NAME, { treatMentionAsDirect: singleWindow, vouched });
