@@ -645,22 +645,65 @@ export function runtimeRoleGrantsSql(role: string): string[] {
   if (!/^[a-z_][a-z0-9_]*$/.test(role)) {
     throw new Error(`runtimeRoleGrantsSql: "${role}" is not a plain lowercase identifier`);
   }
-  const mutable =
-    "spend_ledger, routine, spend_limit, connector_override, thread_engagement, " +
-    "channel_session, event_dedupe, pending_actions, domain_skill, domain_model, instance_meta, " +
-    "thread_ownership, task_result, slack_attachment, " +
-    "stored_credential, credential_intake, " +
-    "webhook_hook, " +
-    "unified_wake_target";
   return [
     `GRANT USAGE ON SCHEMA public TO ${role}`,
     `REVOKE CREATE ON SCHEMA public FROM ${role}`,
     `GRANT SELECT, INSERT ON audit_entry, usage_events TO ${role}`,
     `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events FROM ${role}`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
-    `GRANT SELECT, INSERT, UPDATE, DELETE ON ${mutable} TO ${role}`,
+    ...mutableTableGrantsSql(role),
     `GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO ${role}`,
+    `REVOKE TRUNCATE, REFERENCES, TRIGGER ON memory_file, memory_tier FROM ${role}`,
   ];
+}
+
+const DML_VERBS = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
+type DmlVerb = (typeof DML_VERBS)[number];
+
+const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
+  spend_ledger: ["SELECT", "INSERT", "UPDATE"],
+  routine: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  spend_limit: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  connector_override: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  thread_engagement: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  channel_session: ["SELECT", "INSERT", "UPDATE"],
+  event_dedupe: ["SELECT", "INSERT", "DELETE"],
+  pending_actions: ["SELECT", "INSERT", "UPDATE"],
+  domain_skill: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  domain_model: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  instance_meta: ["SELECT", "INSERT", "UPDATE"],
+  thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  slack_attachment: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  stored_credential: ["SELECT", "INSERT", "UPDATE"],
+  credential_intake: ["SELECT", "INSERT", "UPDATE"],
+  webhook_hook: ["SELECT", "INSERT", "UPDATE"],
+  unified_wake_target: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+};
+
+function mutableTableGrantsSql(role: string): string[] {
+  const groups = new Map<string, { verbs: readonly DmlVerb[]; tables: string[] }>();
+  for (const [table, verbs] of Object.entries(MUTABLE_TABLE_VERBS)) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(table)) {
+      throw new Error(`runtimeRoleGrantsSql: "${table}" is not a plain lowercase identifier`);
+    }
+    if (!verbs.includes("SELECT")) {
+      throw new Error(`runtimeRoleGrantsSql: ${table} must grant SELECT (every read, and every WHERE/RETURNING, needs it)`);
+    }
+    const canonical = DML_VERBS.filter((v) => verbs.includes(v));
+    const key = canonical.join(", ");
+    const group = groups.get(key);
+    if (group) group.tables.push(table);
+    else groups.set(key, { verbs: canonical, tables: [table] });
+  }
+  const out: string[] = [];
+  for (const [key, { verbs, tables }] of groups) {
+    const list = tables.join(", ");
+    out.push(`GRANT ${key} ON ${list} TO ${role}`);
+    const revoked = [...DML_VERBS.filter((v) => !verbs.includes(v)), "TRUNCATE", "REFERENCES", "TRIGGER"];
+    out.push(`REVOKE ${revoked.join(", ")} ON ${list} FROM ${role}`);
+  }
+  return out;
 }
 
 const UPSERT_SPEND =

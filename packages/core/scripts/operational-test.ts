@@ -632,6 +632,17 @@ const store = makeOperationalPostgresStore(client);
     await denied("UPDATE audit_entry SET action = 'tampered'", "permission denied", "two-role: UPDATE audit_entry is permission-DENIED for the runtime role");
     await denied("DELETE FROM audit_entry", "permission denied", "two-role: DELETE audit_entry is permission-DENIED for the runtime role");
 
+    await denied("DELETE FROM webhook_hook", "permission denied", "two-role: DELETE webhook_hook is permission-DENIED (OPE-221 — no delete path exists for a hook)");
+    ok(((await client.query("SELECT count(*)::int AS n FROM webhook_hook")).rows as { n: number }[])[0].n >= 0, "two-role: …while SELECT on webhook_hook still works (the narrowing is per-VERB, not a lockout)");
+    await denied("UPDATE event_dedupe SET seen_at = '2026-01-01T00:00:00Z'", "permission denied", "two-role: UPDATE event_dedupe is permission-DENIED (a dedupe row is written once, never edited)");
+    await client.query("DELETE FROM event_dedupe WHERE org_id = 'nobody'");
+    ok(true, "two-role: …while DELETE on event_dedupe is permitted (the org-scoped TTL prune still runs)");
+    await denied("DELETE FROM pending_actions", "permission denied", "two-role: DELETE pending_actions is permission-DENIED (a decided action is retained)");
+    await denied("DELETE FROM stored_credential", "permission denied", "two-role: DELETE stored_credential is permission-DENIED (revocation flips status, never deletes)");
+    await denied("DELETE FROM spend_ledger", "permission denied", "two-role: DELETE spend_ledger is permission-DENIED (deleting a period would silently lower spend against a limit)");
+    await denied("TRUNCATE spend_ledger", "permission denied", "two-role: TRUNCATE on a mutable table is permission-DENIED (RLS does not filter TRUNCATE — privileges are the only gate)");
+    await denied("TRUNCATE routine", "permission denied", "two-role: TRUNCATE is denied even where DELETE is granted (routine has full CRUD)");
+
     await denied("DROP POLICY audit_select ON audit_entry", "must be owner", "two-role: DROP POLICY is refused (not owner)");
     await denied("ALTER TABLE audit_entry DISABLE ROW LEVEL SECURITY", "must be owner", "two-role: DISABLE ROW LEVEL SECURITY is refused (not owner)");
     await denied("ALTER TABLE audit_entry NO FORCE ROW LEVEL SECURITY", "must be owner", "two-role: NO FORCE ROW LEVEL SECURITY is refused (not owner)");

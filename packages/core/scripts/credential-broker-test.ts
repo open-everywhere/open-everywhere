@@ -175,9 +175,21 @@ function recorder() {
 
 {
   const grants = runtimeRoleGrantsSql("oe_runtime");
-  const dml = grants.find((g) => g.startsWith("GRANT SELECT, INSERT, UPDATE, DELETE") && g.includes("spend_ledger"));
-  ok(!!dml && dml.includes("stored_credential"), "runtime-role: stored_credential is in the mutable DML grant");
-  ok(!!dml && dml.includes("credential_intake"), "runtime-role: credential_intake is in the mutable DML grant");
+  const verbsFor = (table: string, kind: "GRANT" | "REVOKE"): Set<string> => {
+    const found = new Set<string>();
+    for (const stmt of grants) {
+      const m = stmt.match(/^(GRANT|REVOKE) (.+?) ON (.+?) (?:TO|FROM) \w+$/);
+      if (!m || m[1] !== kind) continue;
+      if (!m[3].split(", ").includes(table)) continue;
+      for (const v of m[2].split(", ")) found.add(v);
+    }
+    return found;
+  };
+  for (const table of ["stored_credential", "credential_intake"]) {
+    const granted = verbsFor(table, "GRANT");
+    ok(granted.has("SELECT") && granted.has("INSERT") && granted.has("UPDATE"), `runtime-role: ${table} is granted SELECT+INSERT+UPDATE (the broker upserts and then rotates/stamps)`);
+    ok(!granted.has("DELETE") && verbsFor(table, "REVOKE").has("DELETE"), `runtime-role: ${table} is NOT granted DELETE, and DELETE is explicitly revoked (tightens a role provisioned by an older build)`);
+  }
 }
 
 {
