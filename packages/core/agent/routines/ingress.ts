@@ -15,6 +15,8 @@ import { eventPrompt } from "./events.js";
 import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription, isEventTrigger, storedJq } from "./event-match.js";
 import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
+import { captureDocument } from "../webhooks/capture-window.js";
+import { CAPTURE_MAX_DELIVERIES } from "../operational/store.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
 import {
   announceFireWithheld,
@@ -67,6 +69,7 @@ export interface TriggerAdmitDeps {
   readonly disclosure?: FireDisclosureDeps;
   readonly notice?: FireWithheldNoticeDeps;
   readonly matchStamp?: MatchStampDeps;
+  readonly captureDelivery?: (...args: CaptureArgs) => Promise<boolean>;
 }
 
 export interface TriggerReport {
@@ -325,6 +328,24 @@ export async function admitTrigger(d: TriggerDelivery, deps: TriggerAdmitDeps): 
       return { accepted: false, reason: "replay of an already-routed delivery", ...none };
     }
   }
+  await captureIfArmed(d, ev, deps);
+
   const tally = await fanOut(ev, deps);
   return { accepted: true, ...id, ...tally };
 }
+
+async function captureIfArmed(d: TriggerDelivery, ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<void> {
+  if (!d.captureUntil) return;
+  const documentJson = captureDocument(ev);
+  if (!documentJson) return;
+  try {
+    const org = deps.org ?? deploymentOrg();
+    const at = (deps.now?.() ?? new Date()).toISOString();
+    const capture = deps.captureDelivery ?? ((...a: CaptureArgs) => getOperationalStore().captureDelivery(...a));
+    await capture(org, ev.source, documentJson, at, d.captureUntil, CAPTURE_MAX_DELIVERIES);
+  } catch (err) {
+    log(`capture window write failed for "${ev.source}": ${String(err)}`);
+  }
+}
+
+type CaptureArgs = [org: string, source: string, documentJson: string, at: string, captureUntil: string, maxRows: number];

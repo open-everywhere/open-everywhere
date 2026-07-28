@@ -2,7 +2,7 @@ import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -94,6 +94,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      key     text NOT NULL,
      seen_at text NOT NULL,
      PRIMARY KEY (org_id, key)
+   )`,
+  `CREATE TABLE IF NOT EXISTS webhook_capture (
+     org_id      text   NOT NULL,
+     source      text   NOT NULL,
+     seq         integer NOT NULL,
+     captured_at text   NOT NULL,
+     document    text   NOT NULL,
+     PRIMARY KEY (org_id, source, seq)
    )`,
   `CREATE TABLE IF NOT EXISTS unified_wake_target (
      org_id           text NOT NULL,
@@ -274,6 +282,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE thread_engagement ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE channel_session ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE event_dedupe ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE webhook_capture ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE unified_wake_target ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE thread_ownership ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE task_result ENABLE ROW LEVEL SECURITY`,
@@ -298,6 +307,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS thread_engagement_org_isolation ON thread_engagement`,
   `DROP POLICY IF EXISTS channel_session_org_isolation ON channel_session`,
   `DROP POLICY IF EXISTS event_dedupe_org_isolation ON event_dedupe`,
+  `DROP POLICY IF EXISTS webhook_capture_org_isolation ON webhook_capture`,
   `DROP POLICY IF EXISTS unified_wake_target_org_isolation ON unified_wake_target`,
   `DROP POLICY IF EXISTS thread_ownership_org_isolation ON thread_ownership`,
   `DROP POLICY IF EXISTS task_result_org_isolation ON task_result`,
@@ -333,6 +343,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY event_dedupe_org_isolation ON event_dedupe
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY webhook_capture_org_isolation ON webhook_capture
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY unified_wake_target_org_isolation ON unified_wake_target
@@ -652,6 +665,8 @@ export function runtimeRoleGrantsSql(role: string): string[] {
     `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events FROM ${role}`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
     ...mutableTableGrantsSql(role),
+    `GRANT SELECT, INSERT, DELETE ON webhook_capture TO ${role}`,
+    `REVOKE UPDATE, TRUNCATE, REFERENCES, TRIGGER ON webhook_capture FROM ${role}`,
     `GRANT SELECT, INSERT, UPDATE, DELETE ON memory_file, memory_tier TO ${role}`,
     `REVOKE TRUNCATE, REFERENCES, TRIGGER ON memory_file, memory_tier FROM ${role}`,
   ];
@@ -1373,6 +1388,47 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org, key, at],
       );
       return rows.length > 0;
+    },
+
+    async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
+      const atMs = Date.parse(at);
+      if (!Number.isFinite(atMs)) return false;
+      const maxCutoff = new Date(atMs - CAPTURE_MAX_RETENTION_MS).toISOString();
+      await client.query("DELETE FROM webhook_capture WHERE org_id = $1 AND captured_at < $2", [org, maxCutoff]);
+      const untilMs = Date.parse(captureUntil);
+      if (!Number.isFinite(untilMs) || atMs >= untilMs) return false;
+      const { rows } = await client.query(
+        "SELECT COUNT(*) AS n, COALESCE(MAX(seq), 0) AS max_seq FROM webhook_capture WHERE org_id = $1 AND source = $2",
+        [org, source],
+      );
+      const agg = (rows[0] ?? {}) as { n?: unknown; max_seq?: unknown };
+      const n = Number(agg.n ?? 0);
+      const maxSeq = Number(agg.max_seq ?? 0);
+      if (!Number.isFinite(n) || n >= maxRows) return false;
+      await client.query("INSERT INTO webhook_capture (org_id, source, seq, captured_at, document) VALUES ($1, $2, $3, $4, $5)", [
+        org,
+        source,
+        maxSeq + 1,
+        at,
+        documentJson,
+      ]);
+      return true;
+    },
+
+    async listCapturedDeliveries(org, source, limit) {
+      const { rows } = await client.query(
+        "SELECT seq, captured_at, document FROM webhook_capture WHERE org_id = $1 AND source = $2 ORDER BY seq ASC LIMIT $3",
+        [org, source, limit],
+      );
+      return (rows as { seq: number | string; captured_at: string; document: string }[]).map((r) => ({
+        seq: Number(r.seq),
+        capturedAt: r.captured_at,
+        documentJson: r.document,
+      }));
+    },
+
+    async clearCapturedDeliveries(org, source) {
+      await client.query("DELETE FROM webhook_capture WHERE org_id = $1 AND source = $2", [org, source]);
     },
 
     async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken) {

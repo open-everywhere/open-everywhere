@@ -105,14 +105,14 @@ function count(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-interface ResolvedHook {
+export interface ResolvedHook {
   readonly id: string;
   readonly source: string;
   readonly hookClass: "config" | "runtime";
   readonly readableBy: ReadableBy;
 }
 
-async function resolveHook(org: string, handle: string, deps: DeliveryHistoryDeps): Promise<ResolvedHook | undefined> {
+export async function resolveHook(org: string, handle: string, deps: DeliveryHistoryDeps): Promise<ResolvedHook | undefined> {
   const configured = (deps.configHooks ?? (() => getConfig().loadWebhooks?.() ?? []))();
   const cfg = findWebhook(configured, handle);
   if (cfg) return { id: cfg.id, source: cfg.id, hookClass: "config", readableBy: cfg.readableBy };

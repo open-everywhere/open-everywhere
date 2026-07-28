@@ -28,9 +28,22 @@ export const OPERATIONAL_TABLES = [
   "domain_model",
   "usage_events",
   "instance_meta",
+  "webhook_capture",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+
+export const CAPTURE_MAX_DELIVERIES = 50;
+
+export const CAPTURE_MAX_WINDOW_MS = 60 * 60_000;
+
+export const CAPTURE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+
+export interface CapturedDeliveryRow {
+  readonly seq: number;
+  readonly capturedAt: string;
+  readonly documentJson: string;
+}
 
 export interface AuditEntry {
   readonly ts: string;
@@ -336,6 +349,17 @@ export interface OperationalStore {
   runAnalyticsQuery(compiled: CompiledAnalyticsQuery): Promise<Record<string, unknown>[]>;
 
   markEventSeen(org: string, key: string, at: string, ttlMs: number): Promise<boolean>;
+
+  captureDelivery(
+    org: string,
+    source: string,
+    documentJson: string,
+    at: string,
+    captureUntil: string,
+    maxRows: number,
+  ): Promise<boolean>;
+  listCapturedDeliveries(org: string, source: string, limit: number): Promise<readonly CapturedDeliveryRow[]>;
+  clearCapturedDeliveries(org: string, source: string): Promise<void>;
 
   putUnifiedWakeTarget(org: string, wakeId: string, targetJson: string, at: string, ttlMs: number, windowToken?: string): Promise<void>;
   getUnifiedWakeTarget(org: string, wakeId: string): Promise<string | null>;

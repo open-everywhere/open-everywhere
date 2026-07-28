@@ -47,6 +47,7 @@ export interface TriggerDelivery {
   readonly receivedAt: string;
   readonly redactPayload?: boolean;
   readonly project?: readonly string[];
+  readonly captureUntil?: string;
   readonly readableBy?: readonly Scope[];
 }
 

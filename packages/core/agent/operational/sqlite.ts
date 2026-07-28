@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
-import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -108,6 +108,20 @@ function getDb(): DatabaseSync {
       key     TEXT NOT NULL,                  -- Slack event_id (or channel:ts fallback)
       seen_at TEXT NOT NULL,                  -- ISO-8601 (lexicographic = chronological)
       PRIMARY KEY (org_id, key)
+    );
+    -- webhook_capture: the BOUNDED CAPTURE WINDOW (OPE-211 + OPE-184 Half 2). The only table here
+    -- that holds bytes an outside party authored — see webhooks/capture-window.ts for what the
+    -- document column is (the jq filter document, NOT the raw body) and why that is the safety
+    -- property rather than a redaction step. Mutable + self-pruning, like event_dedupe: rows are
+    -- swept on write and a whole window is cleared on re-arm. Never UPDATEd.
+    -- (No backticks in this block: it is inside a template literal and one would close it.)
+    CREATE TABLE IF NOT EXISTS webhook_capture (
+      org_id      TEXT    NOT NULL,
+      source      TEXT    NOT NULL,         -- the hook HANDLE a routine subscribes to (never the hk_ id)
+      seq         INTEGER NOT NULL,         -- 1-based ordinal within the current window; the number a human says
+      captured_at TEXT    NOT NULL,         -- ISO-8601 receive time (OUR clock; prune key)
+      document    TEXT    NOT NULL,         -- serialized EventFilterDocument (opaque to the store)
+      PRIMARY KEY (org_id, source, seq)
     );
     CREATE TABLE IF NOT EXISTS unified_wake_target (
       org_id           TEXT NOT NULL,
@@ -1033,6 +1047,35 @@ export const sqliteOperationalStore: OperationalStore = {
       .run(org, maxCutoff, key, ttlCutoff);
     const info = handle.prepare("INSERT OR IGNORE INTO event_dedupe (org_id, key, seen_at) VALUES (?, ?, ?)").run(org, key, at);
     return info.changes > 0;
+  },
+
+  async captureDelivery(org, source, documentJson, at, captureUntil, maxRows) {
+    const handle = getDb();
+    const atMs = Date.parse(at);
+    if (!Number.isFinite(atMs)) return false;
+    const maxCutoff = new Date(atMs - CAPTURE_MAX_RETENTION_MS).toISOString();
+    handle.prepare("DELETE FROM webhook_capture WHERE org_id = ? AND captured_at < ?").run(org, maxCutoff);
+    const untilMs = Date.parse(captureUntil);
+    if (!Number.isFinite(untilMs) || atMs >= untilMs) return false;
+    const row = handle
+      .prepare("SELECT COUNT(*) AS n, COALESCE(MAX(seq), 0) AS maxSeq FROM webhook_capture WHERE org_id = ? AND source = ?")
+      .get(org, source) as { n: number; maxSeq: number };
+    if (row.n >= maxRows) return false;
+    handle
+      .prepare("INSERT INTO webhook_capture (org_id, source, seq, captured_at, document) VALUES (?, ?, ?, ?, ?)")
+      .run(org, source, row.maxSeq + 1, at, documentJson);
+    return true;
+  },
+
+  async listCapturedDeliveries(org, source, limit) {
+    const rows = getDb()
+      .prepare("SELECT seq, captured_at, document FROM webhook_capture WHERE org_id = ? AND source = ? ORDER BY seq ASC LIMIT ?")
+      .all(org, source, limit) as { seq: number; captured_at: string; document: string }[];
+    return rows.map((r) => ({ seq: r.seq, capturedAt: r.captured_at, documentJson: r.document }));
+  },
+
+  async clearCapturedDeliveries(org, source) {
+    getDb().prepare("DELETE FROM webhook_capture WHERE org_id = ? AND source = ?").run(org, source);
   },
 
   async putUnifiedWakeTarget(org, wakeId, targetJson, at, ttlMs, windowToken) {
