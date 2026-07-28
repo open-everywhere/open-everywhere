@@ -58,6 +58,8 @@ function readAppVersion(): string {
 registerAppInfo({ version: readAppVersion(), primaryModel: DEFAULT_MODEL, utilityModel: UTILITY_MODEL });
 
 export default defineAgent({
+  build: { externalDependencies: ["just-bash"] },
+
   model: defineDynamic({
     fallback: DEFAULT_MODEL,
     events: {
