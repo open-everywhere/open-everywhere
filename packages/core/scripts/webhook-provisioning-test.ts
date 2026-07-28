@@ -249,6 +249,75 @@ let createdId = "";
 }
 
 {
+  console.log("\n6b. webhook.rotate — the config arm:");
+  const configRef = "db:webhook:ci-status";
+  const declared = {
+    id: "ci-status",
+    source: "oe-standard-webhook",
+    secretRef: configRef,
+    broker: "db",
+    readableBy: [{ level: "domain" as const, domain: "eng" }],
+  };
+  const envHook = { ...declared, id: "env-status", secretRef: "OE_WEBHOOK_ENV_STATUS_SECRET", broker: "env" };
+  const twinA = { ...declared, id: "twin-a" };
+  const twinB = { ...declared, id: "twin-b" };
+  const withHooks = (hooks: readonly unknown[]) => {
+    const cur = getTestConfig();
+    registerTestConfig({ ...cur, loadWebhooks: () => hooks as never });
+  };
+  const rotateArgs = (id: string) => ({
+    org: ORG,
+    configId: id,
+    id,
+    source: id,
+    posture: "content-bearing" as const,
+    surfaceKey: SURFACE,
+    requestedBy: REQUESTER,
+    platform: "slack",
+    channelId: "C1",
+  });
+
+  const card = rotateKind.summarize(rotateArgs("ci-status")).join("\n");
+  ok(!/24h/.test(card) && !/grace period/i.test(card), "🔴 the config card promises NO timed grace period — a declared hook's overlap is a second `secretRef` in a config file, not a clock we own");
+  ok(/second `secretRef`/.test(card), "…it names what the overlap actually is, so the human can tell whether they have one");
+  ok(/never had one/.test(card), "…and covers the ARM case, because a `broker: \"db\"` hook has no value at all until this runs");
+
+  withHooks([declared, envHook]);
+  delivered.length = 0;
+  const armed = await rotateKind.execute(rotateArgs("ci-status"), DECIDER);
+  const first = await vault.read(configRef);
+  ok(typeof first === "string" && first.length > 0, "arming stored a secret at the DECLARED ref");
+  ok(!armed.includes(first!), "🔴 the public outcome line does not contain the secret");
+  ok(/nothing needed redeploying/i.test(armed), "…and says the property the db home exists for");
+  eq(delivered.length, 1, "one private one-time link was delivered");
+  ok(!delivered[0]!.text.includes(first!), "…carrying only the link, never the value");
+
+  const { resolveHookKeys } = await import("../agent/webhooks/secrets.js");
+  const { registerDbCredentialBroker } = await import("../agent/credentials/db-broker.js");
+  registerDbCredentialBroker();
+  eq(await resolveHookKeys(declared as never), [first], "🔴 the gate resolves exactly the armed value through the hook's declared broker — no redeploy, no env var");
+
+  const rotated = await rotateKind.execute(rotateArgs("ci-status"), DECIDER);
+  const second = await vault.read(configRef);
+  ok(second !== first, "rotating replaced the value");
+  ok(/stopped being accepted just now/.test(rotated), "🔴 with one declared ref the outcome says the old value is dead NOW — a card that implied an overlap it does not have would strand a live sender");
+
+  const refusedEnv = await rotateKind.execute(rotateArgs("env-status"), DECIDER);
+  ok(/can't issue a secret/.test(refusedEnv) && /redeploys/.test(refusedEnv), "🔴 a `broker: \"env\"` hook is refused by name, and the refusal states the operator's actual next step");
+  ok(await vault.read("OE_WEBHOOK_ENV_STATUS_SECRET") === null, "…and nothing was written anywhere");
+
+  withHooks([twinA, twinB]);
+  const before = await vault.read(configRef);
+  const refusedShare = await rotateKind.execute(rotateArgs("twin-a"), DECIDER);
+  ok(/twin-b/.test(refusedShare), "🔴 a ref another declaration also names is refused, naming the hook that would have broken");
+  eq(await vault.read(configRef), before, "…and NOTHING was written — the refusal is before every write, not after the first");
+
+  withHooks([]);
+  const gone = await rotateKind.execute(rotateArgs("ci-status"), DECIDER);
+  ok(/no longer|any more/.test(gone), "a hook whose declaration was removed while the card waited declines rather than throwing");
+}
+
+{
   console.log("\n7. webhook.revoke:");
   const liveSecret = (await vault.read(rh.runtimeHookSecretRef(createdId)))!;
   ok((await ri.resolveRuntimeHook(createdId)) !== undefined, "before: the endpoint resolves");

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
+import { configHookPosture, findWebhook, hookSecretRefs, hooksSharingSecretRef } from "../webhooks/config.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { encryptedKvVault } from "../credentials/kv-vault.js";
@@ -187,6 +188,7 @@ export interface WebhookRotateArgs {
   readonly org: string;
   readonly id: string;
   readonly source: string;
+  readonly configId?: string;
   readonly posture: WebhookPosture;
   readonly scheme?: string;
   readonly surfaceKey: string;
@@ -195,11 +197,98 @@ export interface WebhookRotateArgs {
   readonly channelId: string;
 }
 
+function summarizeConfigRotate(args: WebhookRotateArgs): string[] {
+  return [
+    `Issue a new signing secret for the declared "${args.source}" webhook`,
+    "If it has never had one, this is what makes it start authenticating — no redeploy, and no secret in the config diff.",
+    "If it already has one, that value stops being accepted the moment this runs, UNLESS its declaration lists a second `secretRef` — that list IS the overlap, and it ends when a PR removes the entry, not on a timer.",
+    "You get a ONE-TIME link to read the new secret. The old one is not recoverable and is never shown again.",
+    `Requested by ${args.requestedBy}`,
+  ];
+}
+
+async function executeConfigRotate(args: WebhookRotateArgs, decidedBy: string): Promise<string> {
+  const hooks = getConfig().loadWebhooks?.() ?? [];
+  const hook = findWebhook(hooks, args.configId!);
+  if (!hook) {
+    return `no webhook "${args.source}" is declared on this deployment any more — nothing to rotate. A declared hook only disappears when a PR removes it, so someone merged that while this card was waiting.`;
+  }
+  if (hook.broker !== "db") {
+    return (
+      `I can't issue a secret for "${hook.id}" — its declaration says the value lives under the "${hook.broker}" broker, which is set outside this deployment. ` +
+      `An operator sets it there (for \`env\`, the variable \`${hookSecretRefs(hook)[0]}\`) and redeploys. Nothing was minted and nothing changed. ` +
+      `To make this rotatable from here instead, the declaration has to be changed to \`broker: "db"\` by PR.`
+    );
+  }
+  const refs = hookSecretRefs(hook);
+  const currentRef = refs[0]!;
+  const shared = hooksSharingSecretRef(hooks, hook.id, currentRef);
+  if (shared.length > 0) {
+    emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": "declined" });
+    return (
+      `I can't rotate "${hook.id}": its signing secret is stored under a ref that ${shared.length > 1 ? "webhooks" : "the webhook"} ${shared.map((h) => `"${h}"`).join(", ")} also ${shared.length > 1 ? "declare" : "declares"}, ` +
+      `so re-minting it would silently break ${shared.length > 1 ? "them" : "it"} too. Nothing was minted and nothing changed — give each hook its own ref, by PR, first.`
+    );
+  }
+
+  const vault = encryptedKvVault();
+  const outgoing = await vault.read(currentRef);
+  const overlapRef = refs[1];
+  let overlapped = false;
+  if (outgoing && overlapRef && hooksSharingSecretRef(hooks, hook.id, overlapRef).length === 0) {
+    await vault.write(overlapRef, outgoing, { provider: "webhook", domain: `${hook.id} (superseded)`, createdBy: decidedBy });
+    overlapped = true;
+  }
+
+  const secret = mintSecretFor(hook.source);
+  await vault.write(currentRef, secret, { provider: "webhook", domain: hook.id, createdBy: decidedBy });
+
+  const delivered = await deliverReveal(
+    { org: args.org, ref: currentRef, source: hook.id, to: decidedBy, platform: args.platform, channelId: args.channelId },
+    outgoing ? "rotated" : "created",
+  );
+
+  await appendAudit({
+    org: args.org,
+    platform: args.surfaceKey.split("/")[0] ?? "webhook",
+    workspace: args.surfaceKey.split("/")[1] ?? "-",
+    surface: args.surfaceKey.split("/")[2] ?? "-",
+    principalId: decidedBy,
+    action: "webhook.rotated",
+    detail: {
+      hookId: hook.id,
+      source: hook.id,
+      hookClass: "config",
+      posture: configHookPosture(hook),
+      first: !outgoing,
+      overlapped,
+      rotatedBy: decidedBy,
+      requestedBy: args.requestedBy,
+      revealDelivered: delivered,
+    },
+  });
+  const outcome = delivered ? "ok" : "failed";
+  emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": outcome });
+  if (!delivered) {
+    return (
+      `webhook "${hook.id}" has a new signing secret, but I couldn't hand you the one-time link — so nobody has the new value and the endpoint won't authenticate anything until this is run again from a surface where I can message you privately.` +
+      (overlapped ? " Its declared previous-key ref still holds the old value, so an existing sender keeps working meanwhile." : "")
+    );
+  }
+  return outgoing
+    ? `webhook "${hook.id}" rotated — I've sent you a private one-time link with the new secret.` +
+        (overlapped
+          ? " The old value moved to the second `secretRef` its declaration lists, so it keeps being accepted until a PR removes that entry."
+          : " Its declaration lists one `secretRef`, so the old value stopped being accepted just now — update the sender before it retries.")
+    : `webhook "${hook.id}" now has a signing secret — I've sent you a private one-time link with it. Paste it into the sender and the endpoint starts authenticating; nothing needed redeploying.`;
+}
+
 const webhookRotate: ActionKind<WebhookRotateArgs> = {
   kind: "webhook.rotate",
   policy: "member",
   beneficiaryClicker: true,
   summarize(args) {
+    if (args.configId) return summarizeConfigRotate(args);
     const hours = Math.round(rotationOverlapMs() / 3_600_000);
     return [
       `Rotate the signing secret for the "${args.source}" webhook`,
@@ -209,6 +298,7 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     ];
   },
   async execute(args, decidedBy) {
+    if (args.configId) return executeConfigRotate(args, decidedBy);
     const store = getOperationalStore();
     const existing = await store.getWebhookHookById(args.id);
     if (!existing || existing.org !== args.org) {

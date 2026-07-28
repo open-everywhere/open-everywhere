@@ -148,6 +148,16 @@ const HOOK = defineWebhook({
 
   const both = webhookReach({ id: "h", target: "slack/T1/C_NOWHERE", readableBy: [{ level: "domain", domain: "nope" }] }, DOMAINS);
   ok(both.impossible.length === 1 && both.unreachable.length === 1, "webhookReach reports the unknown domain AND the un-domained target — a declaration with two problems should not have to be fixed twice to see the second");
+
+  {
+    const emitClean = webhookReach({ id: "h", readableBy: [{ level: "domain", domain: "eng" }] }, DOMAINS);
+    ok(emitClean.impossible.length === 0 && emitClean.unreachable.length === 0, "🔴 an emit-only hook granting a REAL domain reports nothing — no target means no room to warn about, not a room that cannot read");
+    ok(emitClean.undecidable === undefined, "…and it is DECIDED-clean rather than undecidable: the domain-existence arm ran and answered, and undecidable is not contagious");
+    const emitBadDomain = webhookReach({ id: "h", readableBy: [{ level: "domain", domain: "nope" }] }, DOMAINS);
+    ok(emitBadDomain.impossible.length === 1, "🔴 …but a grant naming a domain that does not exist is STILL impossible for an emit-only hook — dropping the target must not drop the one arm that produces a refusal");
+    const emitNoRegistry = webhookReach({ id: "h", readableBy: [{ level: "domain", domain: "eng" }] }, undefined);
+    ok(emitNoRegistry.undecidable !== undefined, "with no registry AND no target, EVERY arm was unable to ask — which is the only case that reports undecidable");
+  }
 }
 
 {

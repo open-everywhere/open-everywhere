@@ -18,7 +18,8 @@ rmSync(dir, { recursive: true, force: true });
 process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
 
-const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs, configHookPosture, configHookDisclosure } = await import("../agent/webhooks/config.js");
+const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs, configHookPosture, configHookDisclosure, isFusedHook, hooksSharingSecretRef } = await import("../agent/webhooks/config.js");
+type FusedWebhookHook = import("../agent/webhooks/config.js").FusedWebhookHook;
 const { standardWebhookSignature, OE_STANDARD_WEBHOOK_SCHEME, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } = await import(
   "../agent/webhooks/oe-standard-webhook.js"
 );
@@ -30,7 +31,7 @@ const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js")
 const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
 const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
 
-const goodHook = defineWebhook({
+const goodHook: FusedWebhookHook = defineWebhook({
   id: "deploy-status",
   source: OE_STANDARD_WEBHOOK_SCHEME,
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
@@ -71,6 +72,40 @@ ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" 
 ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }])), "a target missing the channel segment is rejected");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, instruction: "  " }])), "a blank instruction is rejected");
 ok(!throws(() => assertWebhooksValid([])), "an empty registry is valid (the safe default)");
+
+{
+  const { target: _t, instruction: _i, ...emitOnly } = goodHook;
+  ok(!throws(() => assertWebhooksValid([emitOnly])), "🔴 a hook with NEITHER target nor instruction is VALID — that is the emit-only shape, and it is the point of the whole change");
+  ok(
+    throws(() => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1" }])),
+    "🔴 a target with NO instruction is REFUSED, not defaulted — it would fire a channel with nothing to say, and nothing about watching it work would reveal that",
+  );
+  ok(
+    throws(() => assertWebhooksValid([{ ...emitOnly, instruction: "do a thing" }])),
+    "🔴 an instruction with NO target is REFUSED for the mirror reason — there is nowhere for it to run",
+  );
+  ok(
+    throws(() => assertWebhooksValid([{ ...emitOnly, target: "slack/T1/C1", instruction: "   " }])),
+    "a BLANK instruction beside a target is the half-declared case too, not the emit-only one — whitespace must not smuggle a hook past the pair rule",
+  );
+  ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }])), "a present-but-malformed target is still refused");
+
+  ok(isFusedHook(goodHook) === true, "isFusedHook: both halves present ⇒ fused");
+  ok(isFusedHook(emitOnly) === false, "isFusedHook: neither half ⇒ not fused (no declared fire to run)");
+  ok(
+    isFusedHook({ ...emitOnly, target: "slack/T1/C1" }) === false && isFusedHook({ ...emitOnly, instruction: "x" }) === false,
+    "🔴 isFusedHook: a HALF-declared hook (reachable from the overlay path and from a fixture, which the validator never saw) answers NO — the fail-safe direction is an emit-only delivery, never a half-rendered prompt",
+  );
+}
+
+{
+  const other = { ...goodHook, id: "other", secretRef: ["DEPLOY_STATUS_WEBHOOK_SECRET", "SPARE"] as const };
+  const solo = { ...goodHook, id: "solo", secretRef: "SOLO_SECRET" };
+  ok(hooksSharingSecretRef([goodHook, other, solo], "deploy-status", "DEPLOY_STATUS_WEBHOOK_SECRET").join(",") === "other", "a ref another hook also declares is reported BY NAME, so a refusal can say what it would have broken");
+  ok(hooksSharingSecretRef([goodHook, other, solo], "solo", "SOLO_SECRET").length === 0, "a ref nothing else declares is unshared");
+  ok(hooksSharingSecretRef([goodHook, other, solo], "deploy-status", "SPARE").join(",") === "other", "the check reads the WHOLE ordered list, not just the current key — a rotation overlap ref is shareable too");
+  ok(hooksSharingSecretRef([goodHook], "deploy-status", "DEPLOY_STATUS_WEBHOOK_SECRET").length === 0, "a hook never counts as sharing with ITSELF");
+}
 
 ok(findWebhook([goodHook], "deploy-status") === goodHook, "findWebhook finds a configured hook by id");
 ok(findWebhook([goodHook], "no-such-id") === undefined, "findWebhook returns undefined for an unknown id (the 404 case)");

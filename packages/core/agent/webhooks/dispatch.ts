@@ -11,7 +11,7 @@ import { checkFireDisclosure } from "../routines/fire-disclosure.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId } from "../channels/unified-window.js";
 import { normalizeDelivery } from "../routines/event-model.js";
-import { configHookDisclosure, configHookPosture, type WebhookHook } from "./config.js";
+import { configHookDisclosure, configHookPosture, type FusedWebhookHook, type WebhookHook } from "./config.js";
 
 export function webhookOrg(): string {
   return process.env.OE_ORG?.trim() || "default";
@@ -43,7 +43,7 @@ function renderPayloadBlock(hook: WebhookHook, rawBody: string, headers: Readonl
   return ingestUntrusted(ev.summary, { source: `webhook:${hook.id}` });
 }
 
-export function renderWebhookMessage(hook: WebhookHook, rawBody: string, headers: Readonly<Record<string, string>> = {}): string {
+export function renderWebhookMessage(hook: FusedWebhookHook, rawBody: string, headers: Readonly<Record<string, string>> = {}): string {
   return [
     `[webhook] The "${hook.id}" webhook just fired. Judge whether this warrants a reply in this ` +
       `channel: if the payload doesn't need action, comment, or acknowledgement, output exactly ` +
@@ -66,7 +66,7 @@ export const WEBHOOK_AUDIENCE_FLOOR_REASON =
   "channel, or remove the external members — it resumes by itself on the next delivery.";
 
 export async function fireWebhook(
-  hook: WebhookHook,
+  hook: FusedWebhookHook,
   rawBody: string,
   args: {
     readonly receive: RouteHandlerArgs["receive"];

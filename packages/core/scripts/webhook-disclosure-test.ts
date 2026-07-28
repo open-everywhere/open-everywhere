@@ -30,6 +30,7 @@ const { registerGovernanceMemberSupplier, _resetGovernanceMemberSupplierForTest,
 );
 type RoomRoster = import("../agent/access/audience-floor.js").RoomRoster;
 type WebhookHook = import("../agent/webhooks/config.js").WebhookHook;
+type FusedWebhookHook = import("../agent/webhooks/config.js").FusedWebhookHook;
 
 const PAYLOAD = JSON.stringify({ note: "deploy 42 finished", who: "ci" });
 
@@ -81,7 +82,7 @@ function captureReceive(): { calls: Captured[]; receive: never } {
   return { calls, receive: receive as never };
 }
 
-const hook: WebhookHook = defineWebhook({
+const hook: FusedWebhookHook = defineWebhook({
   id: "deploy-status",
   source: "oe-standard-webhook",
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
@@ -91,7 +92,7 @@ const hook: WebhookHook = defineWebhook({
   instruction: "A deploy just finished. Summarise it.",
 });
 
-async function fire(h: WebhookHook, facts: SlackFacts | "no-supplier" | "throws"): Promise<{ fired: boolean; reason?: string; calls: Captured[] }> {
+async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "throws"): Promise<{ fired: boolean; reason?: string; calls: Captured[] }> {
   arm(facts);
   const { calls, receive } = captureReceive();
   const internal = typeof facts === "string" ? false : internalFrom(facts);
@@ -131,10 +132,10 @@ async function fire(h: WebhookHook, facts: SlackFacts | "no-supplier" | "throws"
   const dispatchSrc = readFileSync(join(REPO, "packages/core/agent/webhooks/dispatch.ts"), "utf8");
 
   ok(
-    /action:\s*result\.fired\s*\?\s*"webhook\.fired"\s*:\s*"webhook\.declined"/.test(routeSrc),
-    "vocabulary: the route still maps `fired === false` onto the EXISTING `webhook.declined` action",
+    /action:\s*fired\s*\?\s*"webhook\.fired"\s*:\s*"webhook\.declined"/.test(routeSrc),
+    "vocabulary: the route still maps a non-fire onto the EXISTING `webhook.declined` action and a fire onto `webhook.fired`",
   );
-  ok(/result\.reason\s*\?\s*\{\s*reason:\s*result\.reason\s*\}/.test(routeSrc), "vocabulary: …and still carries the decline's reason into that row's detail");
+  ok(/result\?\.reason\s*\?\s*\{\s*reason:\s*result\.reason\s*\}/.test(routeSrc), "vocabulary: …and still carries the decline's reason into that row's detail");
 
   const actions = new Set(
     [routeSrc, dispatchSrc, readFileSync(join(REPO, "packages/core/agent/webhooks/reject-audit.ts"), "utf8")].flatMap((s) =>
@@ -219,7 +220,7 @@ async function fire(h: WebhookHook, facts: SlackFacts | "no-supplier" | "throws"
   );
 
   for (const h of shipped) {
-    const real: WebhookHook = defineWebhook({ ...hook, id: h.id, target: h.target });
+    const real: FusedWebhookHook = defineWebhook({ ...hook, id: h.id, target: h.target });
     for (const [label, facts] of [
       ["internal", INTERNAL],
       ["internal + private", INTERNAL_PRIVATE],

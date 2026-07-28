@@ -72,13 +72,16 @@ export function inlineForReview(text: string): string {
 }
 
 export function declarationSentence(d: HookDeclaration): string {
-  return `Declare webhook "${inlineForReview(d.id)}" (${inlineForReview(d.source)}) firing into ${inlineForReview(d.target)}, readable by ${describeReadableBy(d.readableBy)}`;
+  const consequence = d.target === undefined ? "emitting to `event` routines only" : `firing into ${inlineForReview(d.target)}`;
+  return `Declare webhook "${inlineForReview(d.id)}" (${inlineForReview(d.source)}) ${consequence}, readable by ${describeReadableBy(d.readableBy)}`;
 }
 
 export function posturePayloadLine(d: HookDeclaration): string {
   switch (configHookPosture(d)) {
     case "trigger-only":
-      return "📦 Payload: DISCARDED (trigger-only) — the instruction runs on the fact that it fired. Nothing the sender writes ever reaches the model.";
+      return d.target === undefined
+        ? "📦 Payload: DISCARDED (trigger-only) — subscribed routines run on the fact that it fired. Nothing the sender writes ever reaches the model."
+        : "📦 Payload: DISCARDED (trigger-only) — the instruction runs on the fact that it fired. Nothing the sender writes ever reaches the model.";
     case "projection":
       return `📦 Payload: ONLY these fields (projection) — ${inlineForReview((d.project ?? []).join(", "))}. Everything else the sender writes is dropped before the prompt.`;
     case "content-bearing":
@@ -102,7 +105,9 @@ export function secretSetupLine(d: HookDeclaration): string {
   const ref = typeof d.secretRef === "string" ? d.secretRef : d.secretRef[0]!;
   return d.broker === "env"
     ? `After merging, an operator sets the shared secret as the environment variable \`${ref}\` and redeploys. Generate it with \`openssl rand -hex 32\` and paste the SAME value into the sender — it must never appear in this PR, in chat, or in any log.`
-    : `After merging, an operator stores the shared secret under the \`${d.broker}\` broker at ref \`${ref}\`. It must never appear in this PR, in chat, or in any log.`;
+    : d.broker === "db"
+      ? `After merging, NOTHING NEEDS REDEPLOYING: ask the agent to rotate the "${d.id}" webhook and a freshly generated secret is stored here at ref \`${ref}\` and shown ONCE, on a private one-time link, to paste into the sender. It must never appear in this PR, in chat, or in any log.`
+      : `After merging, an operator stores the shared secret under the \`${d.broker}\` broker at ref \`${ref}\`. It must never appear in this PR, in chat, or in any log.`;
 }
 
 function prBody(args: WebhookDeclareArgs, decidedBy: string): string {
@@ -198,7 +203,7 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
       requestId: args.requestId,
       hookId: args.declaration.id,
       source: args.declaration.source,
-      target: args.declaration.target,
+      ...(args.declaration.target !== undefined ? { target: args.declaration.target } : {}),
       readableBy: describeReadableBy(args.declaration.readableBy),
       sentence,
       repo,
@@ -239,9 +244,15 @@ const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
   summarize(args) {
     const d = args.declaration;
     return [
-      `Open a PR declaring an inbound webhook — ${inlineForReview(d.id)} (${inlineForReview(d.source)}) → ${inlineForReview(d.target)}`,
-      `It will run this standing instruction, unattended, on every accepted delivery: "${inlineForReview(d.instruction)}"`,
-      `⚠ That instruction runs with ${inlineForReview(d.target)}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
+      `Open a PR declaring an inbound webhook — ${inlineForReview(d.id)} (${inlineForReview(d.source)})${d.target === undefined ? " — emit-only" : ` → ${inlineForReview(d.target)}`}`,
+      ...(d.instruction !== undefined && d.target !== undefined
+        ? [
+            `It will run this standing instruction, unattended, on every accepted delivery: "${inlineForReview(d.instruction)}"`,
+            `⚠ That instruction runs with ${inlineForReview(d.target)}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
+          ]
+        : [
+            "It runs NOTHING by itself: no channel, no instruction, no prompt. Accepted deliveries are handed to the event plane, and what happens is whatever `event` routines someone creates and approves separately — each with its own filter and its own room.",
+          ]),
       `Readable by: ${describeReadableBy(d.readableBy)} — the whole confidentiality boundary; anything narrower is a separate webhook.`,
       posturePayloadLine(d),
       ...(achievabilityNote(d) ? [achievabilityNote(d)!] : []),

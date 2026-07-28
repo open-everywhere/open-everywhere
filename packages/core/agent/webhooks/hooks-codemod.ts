@@ -47,8 +47,12 @@ export function parseHooksFile(value: unknown): HooksFile {
     if (typeof h.source !== "string" || !h.source) throw new HooksCodemodError(`overlay hook "${h.id}" needs a string \`source\` (the signature scheme)`);
     if (!isStringOrStringArray(h.secretRef)) throw new HooksCodemodError(`overlay hook "${h.id}" needs \`secretRef\` (a ref or an ordered list of refs — never a value)`);
     if (typeof h.broker !== "string" || !h.broker) throw new HooksCodemodError(`overlay hook "${h.id}" needs a string \`broker\``);
-    if (typeof h.target !== "string" || !h.target) throw new HooksCodemodError(`overlay hook "${h.id}" needs a string \`target\``);
-    if (typeof h.instruction !== "string" || !h.instruction) throw new HooksCodemodError(`overlay hook "${h.id}" needs a string \`instruction\``);
+    if (h.target !== undefined && (typeof h.target !== "string" || !h.target)) {
+      throw new HooksCodemodError(`overlay hook "${h.id}" has a non-string \`target\` — omit it entirely to declare an emit-only hook`);
+    }
+    if (h.instruction !== undefined && (typeof h.instruction !== "string" || !h.instruction)) {
+      throw new HooksCodemodError(`overlay hook "${h.id}" has a non-string \`instruction\` — omit it entirely to declare an emit-only hook`);
+    }
     if (!isScopeArray(h.readableBy)) {
       throw new HooksCodemodError(`overlay hook "${h.id}" needs a non-empty \`readableBy\` array — who may read this hook's events is required and has no default`);
     }

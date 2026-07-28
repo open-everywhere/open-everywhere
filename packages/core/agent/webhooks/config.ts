@@ -9,11 +9,17 @@ export interface WebhookHook {
   readonly source: string;
   readonly secretRef: string | readonly string[];
   readonly broker: string;
-  readonly target: string;
-  readonly instruction: string;
+  readonly target?: string;
+  readonly instruction?: string;
   readonly readableBy: ReadableBy;
   readonly posture?: WebhookPosture;
   readonly project?: readonly string[];
+}
+
+export type FusedWebhookHook = WebhookHook & { readonly target: string; readonly instruction: string };
+
+export function isFusedHook(hook: WebhookHook): hook is FusedWebhookHook {
+  return typeof hook.target === "string" && hook.target.length > 0 && typeof hook.instruction === "string" && hook.instruction.trim().length > 0;
 }
 
 export function configHookPosture(hook: Pick<WebhookHook, "posture">): WebhookPosture {
@@ -34,7 +40,7 @@ export function configHookDisclosure(hook: Pick<WebhookHook, "posture" | "projec
   }
 }
 
-export function defineWebhook(hook: WebhookHook): WebhookHook {
+export function defineWebhook<T extends WebhookHook>(hook: T): T {
   return hook;
 }
 
@@ -89,11 +95,21 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
     if (!h.broker || !h.broker.trim()) {
       throw new Error(`webhook "${h.id}" is missing broker — name the ONE home its secretRef(s) resolve through (\`broker: "env" | "db" | ...\`); there is no default`);
     }
-    const parts = h.target.split("/");
-    if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
-      throw new Error(`webhook "${h.id}" target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(h.target)}`);
+    const hasTarget = h.target !== undefined;
+    const hasInstruction = h.instruction !== undefined && h.instruction.trim().length > 0;
+    if (hasTarget !== hasInstruction) {
+      throw new Error(
+        hasTarget
+          ? `webhook "${h.id}" declares a target (${JSON.stringify(h.target)}) but no instruction — a fired channel with nothing to say. Add the instruction, or drop the target to declare an EMIT-ONLY hook whose consequences are decided by \`event\` routines.`
+          : `webhook "${h.id}" declares an instruction but no target — there is nowhere for it to run. Add the "slack/TEAM/CHANNEL" target, or drop the instruction to declare an EMIT-ONLY hook whose consequences are decided by \`event\` routines.`,
+      );
     }
-    if (!h.instruction || !h.instruction.trim()) throw new Error(`webhook "${h.id}" is missing an instruction (what the agent should do when it fires)`);
+    if (h.target !== undefined) {
+      const parts = h.target.split("/");
+      if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
+        throw new Error(`webhook "${h.id}" target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(h.target)}`);
+      }
+    }
     const grantDefects = readableByDefects(h.readableBy);
     if (grantDefects.length > 0) {
       throw new Error(
@@ -141,6 +157,10 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
       (deps.warn ?? ((m: string) => console.warn(m)))(`[open-everywhere:webhooks] "${h.id}": ${warning}`);
     }
   }
+}
+
+export function hooksSharingSecretRef(hooks: readonly WebhookHook[], hookId: string, ref: string): readonly string[] {
+  return hooks.filter((h) => h.id !== hookId && hookSecretRefs(h).includes(ref)).map((h) => h.id);
 }
 
 export function findWebhook(hooks: readonly WebhookHook[], id: string): WebhookHook | undefined {

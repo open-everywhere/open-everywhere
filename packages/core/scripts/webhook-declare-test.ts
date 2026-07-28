@@ -16,7 +16,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 await import("../agent/approvals/flow.js");
 const { executeWebhookDeclare, requireWebhookDeclareConfig, declarationSentence, secretSetupLine, inlineForReview } = await import("../agent/approvals/webhook-declare.js");
-const { secretRefForHookId } = await import("../agent/tools/declare_webhook.js");
+const { secretRefForHookId, dbSecretRefForHookId } = await import("../agent/tools/declare_webhook.js");
 const codemod = await import("../agent/webhooks/hooks-codemod.js");
 
 let n = 0;
@@ -113,9 +113,18 @@ const ARGS = {
   const { readableBy: _dropped, ...noGrant } = DECL;
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [noGrant] }), "readableBy", "🔴 an overlay hook with NO readableBy is refused — required, no default, at the JSON boundary too");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, readableBy: [] }] }), "readableBy", "…and an EMPTY one is refused for the same reason");
-  for (const field of ["source", "secretRef", "broker", "target", "instruction"] as const) {
+  for (const field of ["source", "secretRef", "broker"] as const) {
     const { [field]: _gone, ...missing } = DECL as unknown as Record<string, unknown>;
     rejectsWithSync(() => codemod.parseHooksFile({ hooks: [missing] }), field, `a missing \`${field}\` is refused`);
+  }
+
+  {
+    const { target: _t, instruction: _i, ...emitOnly } = DECL as unknown as Record<string, unknown>;
+    const parsed = codemod.parseHooksFile({ hooks: [emitOnly] });
+    ok(parsed.hooks.length === 1 && parsed.hooks[0]!.target === undefined && parsed.hooks[0]!.instruction === undefined, "🔴 a hook with NEITHER target nor instruction parses — that is the emit-only shape, not a malformed hook");
+    eq(codemod.stringifyHooks(codemod.parseHooksText(codemod.stringifyHooks(parsed))), codemod.stringifyHooks(parsed), "…and it still round-trips byte-identically through the canonical form");
+    rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, target: 7 }] }), "target", "a non-string `target` is still refused at the JSON boundary");
+    rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, instruction: 7 }] }), "instruction", "a non-string `instruction` is still refused at the JSON boundary");
   }
 }
 
@@ -163,11 +172,31 @@ const ARGS = {
   ok(kind!.beneficiaryClicker !== true, "🔴 it is NOT beneficiaryClicker: approving reveals nothing to the clicker (no secret is minted or delivered), so the OPE-185 floor correctly does not apply");
   const card = kind!.summarize(ARGS).join("\n");
   ok(card.includes("deploy-status") && card.includes("slack/T1/C-DEPLOYS"), "the card names the hook and where it fires");
-  ok(card.includes(DECL.instruction), "🔴 the card shows the EXACT standing instruction — it is the thing being armed, and a card that hid it would be asking for a click on an unread prompt");
+  ok(card.includes(DECL.instruction!), "🔴 the card shows the EXACT standing instruction — it is the thing being armed, and a card that hid it would be asking for a click on an unread prompt");
   ok(/runs with .* full existing access/.test(card), "…and states the authority that instruction runs with");
   ok(card.includes('domain "eng"') && card.includes('domain "ops"'), "the card names every domain that will be able to read the hook's events");
   ok(/No secret is created or shown/.test(card), "the card says outright that nothing secret happens here");
   ok(card.includes("acme/agent-config") && /nothing is declared/.test(card), "…and that a PR, not this click, is what changes anything");
+
+  {
+    const { target: _t, instruction: _i, ...emitDecl } = DECL as unknown as Record<string, unknown>;
+    const emitCard = kind!.summarize({ ...ARGS, declaration: emitDecl as unknown as typeof DECL }).join("\n");
+    ok(emitCard.includes("emit-only"), "the emit-only card says so in its first line, where the fused card names a channel");
+    ok(/runs NOTHING by itself/.test(emitCard), "🔴 …and states the consequence positively: no channel, no instruction, no prompt");
+    ok(/`event` routines someone creates and approves separately/.test(emitCard), "…and names where the consequences WILL be decided, so 'nothing happens' is not read as 'this is useless'");
+    ok(!emitCard.includes(DECL.instruction!), "🔴 the emit-only card carries NO standing instruction — there is none, and printing the fused copy would describe an unattended prompt that does not exist");
+    ok(!/full existing access/.test(emitCard), "…nor the authority sentence that only a standing instruction earns");
+    ok(emitCard.includes('domain "eng"'), "the read grant is still stated — it is the whole confidentiality decision for BOTH shapes");
+  }
+
+  {
+    const envLine = secretSetupLine(DECL);
+    ok(/environment variable/.test(envLine) && /redeploys/.test(envLine), "an `env` declaration still tells the operator to set a variable and redeploy");
+    const dbLine = secretSetupLine({ ...DECL, broker: "db", secretRef: dbSecretRefForHookId(DECL.id) });
+    ok(/NOTHING NEEDS REDEPLOYING/.test(dbLine), "🔴 a `db` declaration says outright that no redeploy is needed — the property the whole home exists for");
+    ok(/one-time link/.test(dbLine) && dbLine.includes(dbSecretRefForHookId(DECL.id)), "…and names both the ref and how the value gets there");
+    ok(!dbLine.includes("openssl"), "…and does NOT tell them to generate one themselves: under `db` the secret is minted here, and two sources of truth for one key is how a hook 401s");
+  }
 
   await rejectsWith(() => requireWebhookDeclareConfig({ ...cfg(), adminChannel: undefined }), "aren't enabled", "config: a missing admin channel fails closed");
   await rejectsWith(() => requireWebhookDeclareConfig({ ...cfg(), configRepo: undefined }), "aren't enabled", "config: a missing config repo fails closed");

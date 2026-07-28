@@ -89,8 +89,13 @@ export function mergeReach(...parts: readonly TriggerReach[]): TriggerReach {
 }
 
 export function webhookReach(
-  hook: { readonly id: string; readonly target: string; readonly readableBy: ReadableBy },
+  hook: { readonly id: string; readonly target?: string; readonly readableBy: ReadableBy },
   domains: readonly Domain[] | undefined,
 ): TriggerReach {
-  return mergeReach(grantDomainsExist(hook.readableBy, domains), readGrantReach(hook.target, hook.readableBy, domains));
+  return mergeReach(
+    grantDomainsExist(hook.readableBy, domains),
+    hook.target === undefined
+      ? inert("this hook declares no target, so there is no room whose ability to read its events could be checked (an emit-only hook's consequences live in `event` routines, anywhere the grant reaches)")
+      : readGrantReach(hook.target, hook.readableBy, domains),
+  );
 }

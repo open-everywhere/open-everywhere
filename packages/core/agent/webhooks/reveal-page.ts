@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getOperationalStore } from "../operational/provider.js";
+import { getConfig } from "../access/config.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
 import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken } from "../credentials/page-token.js";
 import { webhookScheme } from "../routines/scheme-name.js";
@@ -201,6 +202,13 @@ export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}):
 async function liveSenderGuidance(ref: string, org: string): Promise<WebhookSenderGuidance | undefined> {
   const hookId = revealedHookId(ref);
   if (!hookId) return undefined;
+  let declared: { readonly source: string } | undefined;
+  try {
+    declared = (getConfig().loadWebhooks?.() ?? []).find((h) => h.id === hookId);
+  } catch {
+    declared = undefined;
+  }
+  if (declared) return webhookVerifier(declared.source)?.senderGuidance?.();
   const hook = await getOperationalStore().getWebhookHookById(hookId);
   if (!hook || hook.org !== org) return undefined;
   return webhookVerifier(webhookScheme(hook))?.senderGuidance?.();
@@ -213,6 +221,11 @@ export function revealEndpointUrl(ref: string, env: NodeJS.ProcessEnv = process.
 }
 
 export function revealedHookId(ref: string): string | undefined {
+  const dbHook = "db:webhook:";
+  if (ref.startsWith(dbHook)) {
+    const rest = ref.slice(dbHook.length);
+    return rest.length > 0 && !rest.includes(":") ? rest : undefined;
+  }
   if (!ref.startsWith("hook:")) return undefined;
   const rest = ref.slice("hook:".length);
   return rest.length > 0 && !rest.includes(":") ? rest : undefined;

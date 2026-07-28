@@ -1,6 +1,6 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
-import { configHookDisclosure, configHookPosture, findWebhook, type WebhookHook } from "../webhooks/config.js";
+import { configHookDisclosure, configHookPosture, findWebhook, isFusedHook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import { resolveRuntimeHook, resolveRuntimeHookKeys, deliverRuntimeHook, type ResolvedRuntimeHook } from "../webhooks/runtime-ingress.js";
 import "../webhooks/oe-standard-webhook.js";
@@ -22,18 +22,19 @@ async function auditRejection(id: string, hook: WebhookHook | { readonly id: str
 
 async function deliver(hook: WebhookHook, body: string, headers: Headers, receive: RouteHandlerArgs["receive"], keyIndex: number | null): Promise<void> {
   const flat = lowercaseHeaders(headers);
-  const result = await fireWebhook(hook, body, { receive, headers: flat });
+  const result = isFusedHook(hook) ? await fireWebhook(hook, body, { receive, headers: flat }) : undefined;
   const emitted = await emitConfigHookEvent(hook, body, flat, receive);
-  const [, teamId, channelId] = hook.target.split("/");
+  const [, teamId, channelId] = hook.target?.split("/") ?? [];
   const previousKey = keyIndex !== null && keyIndex > 0;
   const unverified = acceptedUnverified({ ok: true, keyIndex });
+  const fired = result ? result.fired : (emitted?.accepted ?? false);
   await appendAudit({
     org: webhookOrg(),
-    platform: "slack",
-    workspace: teamId,
-    surface: channelId,
+    platform: teamId ? "slack" : "webhook",
+    workspace: teamId ?? "-",
+    surface: channelId ?? "-",
     principalId: `webhook:${hook.id}`,
-    action: result.fired ? "webhook.fired" : "webhook.declined",
+    action: fired ? "webhook.fired" : "webhook.declined",
     detail: {
       hookId: hook.id,
       source: hook.source,
@@ -41,7 +42,7 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, receiv
       bytes: Buffer.byteLength(body, "utf8"),
       ...(previousKey ? { keyIndex, previousKey: true } : {}),
       ...(unverified ? { unverified: true } : {}),
-      ...(result.reason ? { reason: result.reason } : {}),
+      ...(result?.reason ? { reason: result.reason } : {}),
       ...(emitted ? { matched: emitted.matched, fired: emitted.fired, skipped: emitted.skipped } : {}),
       ...(emitted?.deliveryId ? { deliveryId: emitted.deliveryId } : {}),
       ...(emitted && !emitted.accepted && emitted.reason ? { routingReason: emitted.reason } : {}),
@@ -51,7 +52,7 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, receiv
   if (unverified)
     log(`WARN "${hook.id}": accepted UNVERIFIED (OE_ALLOW_UNVERIFIED_WEBHOOK=1, no resolvable secret) — nothing authenticated this sender but the URL`);
   log(
-    `"${hook.id}" (${configHookPosture(hook)}): ${result.fired ? "fired" : `declined (${result.reason})`}` +
+    `"${hook.id}" (${configHookPosture(hook)}): ${result ? (result.fired ? "fired" : `declined (${result.reason})`) : "emit-only"}` +
       `${emitted ? `; routines matched ${emitted.matched}, fired ${emitted.fired}` : ""}`,
   );
 }

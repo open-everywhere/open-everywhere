@@ -11,12 +11,14 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { hasPrivateDeliveryPath } from "./create_webhook.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
+import { getConfig } from "../access/config.js";
+import { configHookPosture, findWebhook } from "../webhooks/config.js";
 
 export default defineTool({
   description:
-    "Issue a NEW signing secret for a webhook that already exists here, and send it privately as a one-time link. Use when someone lost the secret, thinks it leaked, or is rotating on a schedule. The old secret keeps working for a grace period so whatever is sending doesn't break while they update it. There is deliberately no way to re-show an existing secret — rotating IS the way to recover one. A card is posted for a human to approve first.",
+    "Issue a signing secret for a webhook that exists here, and send it privately as a one-time link. Use when someone lost the secret, thinks it leaked, is rotating on a schedule, or when a newly declared webhook needs its FIRST secret so it can start authenticating — that last case needs no redeploy. There is deliberately no way to re-show an existing secret; issuing a new one IS the way to recover from a lost one. A card is posted for a human to approve first, and it says exactly what stops working and when.",
   inputSchema: z.object({
-    source: z.string().min(1).describe("Which webhook, by the source name it was set up under (see list_webhooks)."),
+    source: z.string().min(1).describe("Which webhook — the name it is listed under (see list_webhooks)."),
   }),
   outputSchema: z.object({
     rotated: z.boolean(),
@@ -50,6 +52,54 @@ export default defineTool({
 
     const p = resolvePartition(ctx);
     const source = input.source.trim().toLowerCase();
+
+    const declared = findWebhook(getConfig().loadWebhooks?.() ?? [], source);
+    if (declared) {
+      if (declared.broker !== "db") {
+        const ref = typeof declared.secretRef === "string" ? declared.secretRef : declared.secretRef[0];
+        throw new Error(
+          `The "${declared.id}" webhook keeps its secret outside this deployment (broker "${declared.broker}"), so I can't issue one for it. ` +
+            `An operator sets ${declared.broker === "env" ? `the environment variable \`${ref}\`` : `ref \`${ref}\``} and redeploys. ` +
+            `If you'd rather rotate it from here in future, its declaration needs changing to \`broker: "db"\` — that's a PR, and I can propose one.`,
+        );
+      }
+      const requestedByConfig = principalIdOf(ctx);
+      if (!requestedByConfig) throw new Error("rotate_webhook needs a verified sender — there's no requester to show on the approval card.");
+      const channelIdConfig = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
+      if (!channelIdConfig) throw new Error("rotate_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
+      const postedConfig = await requestApproval(
+        {
+          org: p.org,
+          kind: "webhook.rotate",
+          args: {
+            org: p.org,
+            configId: declared.id,
+            id: declared.id,
+            source: declared.id,
+            posture: configHookPosture(declared),
+            surfaceKey: p.surfaceKey,
+            requestedBy: requestedByConfig,
+            platform: binding.platform,
+            channelId: channelIdConfig,
+          },
+          scopeKey: p.surfaceKey,
+          domain: null,
+          requestedBy: requestedByConfig,
+          channelId: channelIdConfig,
+          threadTs: binding.threadTs ?? null,
+          postedTo: postedToSurfaceKey(binding, channelIdConfig),
+        },
+        approvalPostDeps(binding.platform),
+      );
+      return {
+        rotated: false,
+        pending: true,
+        pendingId: postedConfig.id,
+        source: declared.id,
+        message: `card posted — issuing a fresh signing secret for the declared "${declared.id}" webhook, awaiting a human to approve it (pending ${postedConfig.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
+      };
+    }
+
     const hook = await getOperationalStore().getWebhookHookBySource(p.org, source);
     if (!hook) {
       throw new Error(`There's no "${source}" webhook here. Use list_webhooks to see what exists, or create_webhook to set one up.`);

@@ -23,9 +23,13 @@ export function secretRefForHookId(id: string): string {
   return `OE_WEBHOOK_${id.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_SECRET`;
 }
 
+export function dbSecretRefForHookId(id: string): string {
+  return `db:webhook:${id}`;
+}
+
 export default defineTool({
   description:
-    "Propose a config-declared inbound webhook: an endpoint that, when an outside system POSTs to it, runs ONE standing instruction in ONE channel. Use when someone wants an external system to drive a fixed, repeatable action here (\"when CI finishes, post the result in #deploys\"). This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. Prefer create_webhook instead when the caller wants an ingress whose consequences will be decided later by routines rather than a fixed instruction. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events. `posture` is required too: it decides how much of the sender's payload ever reaches the prompt — none of it, only named fields, or all of it.",
+    "Propose an inbound webhook: an endpoint an outside system can POST to. It comes in two shapes and you pick by whether you pass `target` + `instruction` together. WITH them, every accepted delivery runs that ONE standing instruction in that ONE channel — right when the consequence is a single fixed thing (\"when CI finishes, post the result in #deploys\"). WITHOUT them the hook is EMIT-ONLY: it just becomes a door, and what happens is decided afterwards by `event` routines someone creates separately — right when the consequences aren't settled yet, are likely to change, or are several different reactions to one system. Pass both fields or neither; one alone is refused. This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events. `posture` is required too: it decides how much of the sender's payload ever reaches the prompt — none of it, only named fields, or all of it.",
   inputSchema: z.object({
     id: z
       .string()
@@ -37,8 +41,24 @@ export default defineTool({
       .describe(
         'WHICH SIGNATURE SCHEME its sender signs with. Use "oe-standard-webhook" for a sender you configure or can script (CI, a build box, an internal service) — that is a contract WE define and THEY implement. Name a vendor instead ("github") when the vendor signs in its own scheme. Unknown schemes are refused, naming the registered set.',
       ),
-    target: z.string().min(1).describe('The fully-qualified "slack/TEAM/CHANNEL" surface the hook fires into.'),
-    instruction: z.string().min(1).describe("What the agent should DO on every accepted delivery. It runs unattended, with that channel's full access, forever — write it as narrowly as the job allows."),
+    target: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('The fully-qualified "slack/TEAM/CHANNEL" surface the hook fires into. Omit it (together with `instruction`) for an emit-only hook that fires nothing by itself.'),
+    instruction: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "What the agent should DO on every accepted delivery. It runs unattended, with that channel's full access, forever — write it as narrowly as the job allows. Omit it (together with `target`) for an emit-only hook.",
+      ),
+    secretHome: z
+      .enum(["env", "db"])
+      .optional()
+      .describe(
+        'Where the signing secret will live. "env" (the default) means an operator sets an environment variable and redeploys — right when they already hold the secret, e.g. a vendor gave it to them. "db" means the secret is stored here instead: after the PR merges, someone asks to rotate this webhook and gets a one-time link with a freshly generated secret to paste into the sender — no redeploy. Ask for "db" when the sender is something the org configures itself (CI, a script, an internal service).',
+      ),
     posture: z
       .enum(WEBHOOK_POSTURES as unknown as [WebhookPosture, ...WebhookPosture[]])
       .describe(
@@ -96,9 +116,20 @@ export default defineTool({
     const vocabulary = runtimeHookSourceVocabulary();
     if (!vocabulary.includes(source)) throw new Error(unknownSourceRefusal(source, vocabulary));
 
-    const parts = input.target.trim().split("/");
-    if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
-      throw new Error(`The target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(input.target)}. Config-hook targets are Slack-only today.`);
+    const target = input.target?.trim() || undefined;
+    const instruction = input.instruction?.trim() || undefined;
+    if ((target === undefined) !== (instruction === undefined)) {
+      throw new Error(
+        target !== undefined
+          ? "A target with no instruction would fire that channel with nothing to say. Either tell me what it should do there, or drop the target and I'll declare an emit-only hook — a door whose consequences you decide later with `event` routines."
+          : "An instruction with no target has nowhere to run. Either name the \"slack/TEAM/CHANNEL\" surface it should run in, or drop the instruction and I'll declare an emit-only hook — a door whose consequences you decide later with `event` routines.",
+      );
+    }
+    if (target !== undefined) {
+      const parts = target.split("/");
+      if (parts.length !== 3 || parts[0] !== "slack" || !parts[1] || !parts[2]) {
+        throw new Error(`The target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(input.target)}. Config-hook targets are Slack-only today.`);
+      }
     }
 
     const wantsOrg = input.readableBy.some((d) => d.trim() === "*");
@@ -147,16 +178,17 @@ export default defineTool({
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error("declare_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
 
+    const secretHome = input.secretHome ?? "env";
     const declaration: HookDeclaration = {
       id,
       source,
-      secretRef: secretRefForHookId(id),
-      broker: "env",
-      target: input.target.trim(),
+      secretRef: secretHome === "db" ? dbSecretRefForHookId(id) : secretRefForHookId(id),
+      broker: secretHome,
+      ...(target !== undefined ? { target } : {}),
       readableBy,
       posture: input.posture,
       ...(project.length > 0 ? { project } : {}),
-      instruction: input.instruction.trim(),
+      ...(instruction !== undefined ? { instruction } : {}),
     };
 
     const posted = await requestApproval(
@@ -191,9 +223,13 @@ export default defineTool({
       id,
       readableBy: describeReadableBy(readableBy),
       message:
-        `card posted — approving it opens a PR against ${cfg.configRepo} declaring webhook "${id}" (pending ${posted.id}). ` +
+        `card posted — approving it opens a PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}" (pending ${posted.id}). ` +
         `Its events will be readable by ${describeReadableBy(readableBy)}. ` +
-        `Nothing exists until an admin merges the PR, and nothing can authenticate until an operator sets the secret in \`${declaration.secretRef}\` — I never see that value.`,
+        (target === undefined ? "It fires nothing by itself — create an `event` routine subscribed to it to decide what happens. " : "") +
+        `Nothing exists until an admin merges the PR, and nothing can authenticate until the secret is set` +
+        (secretHome === "db"
+          ? ` — after the merge, ask me to rotate the "${id}" webhook and you'll get a one-time link with a freshly generated secret to paste into the sender. No redeploy, and I never see the value.`
+          : ` in \`${declaration.secretRef}\` — I never see that value.`),
     };
   },
 });

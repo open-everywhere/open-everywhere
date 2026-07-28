@@ -221,6 +221,9 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq(reveal.revealEndpointUrl("hook:hk_abc"), "https://oe.example.test/webhooks/hk_abc", "a current ref resolves to the ingress url");
   eq(reveal.revealEndpointUrl("hook:hk_abc:prev"), undefined, "a SUPERSEDED ref resolves to nothing (a reveal only ever discloses the current key)");
   eq(reveal.revealEndpointUrl("db:notion-key"), undefined, "a non-hook ref resolves to nothing");
+  eq(reveal.revealEndpointUrl("db:webhook:deploy-status"), "https://oe.example.test/webhooks/deploy-status", "a config hook's db ref resolves to its ingress url");
+  eq(reveal.revealEndpointUrl("db:webhook:deploy:status"), undefined, "…and a ref with a second colon is refused rather than truncated into some other hook's URL");
+  eq(reveal.revealEndpointUrl("db:webhook:"), undefined, "…as is an empty id");
 }
 
 {
@@ -409,6 +412,8 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq(reveal.revealedHookId("hook:hk_abc"), "hk_abc", "a current hook ref yields its id");
   eq(reveal.revealedHookId("hook:hk_abc:prev"), undefined, "a SUPERSEDED ref yields none (it is not a current hook)");
   eq(reveal.revealedHookId("notion-handshake:ws1"), undefined, "a handshake ref names no runtime hook at all");
+  eq(reveal.revealedHookId("db:webhook:deploy-status"), "deploy-status", "a config hook's db ref yields its declared id (OPE-224) — public by construction, since it is the path segment of a URL in a merged diff");
+  eq(reveal.revealedHookId("db:notion:key"), undefined, "…and an ordinary stored-credential ref under some other provider names no hook");
 }
 
 
