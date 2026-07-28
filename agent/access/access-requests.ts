@@ -1,6 +1,7 @@
 import type { AccessRequestsConfig } from "@open-everywhere/core/agent/access/config.js";
 import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
 import { loadBaseProviders } from "./providers.js";
+import { loadBaseWebhooks } from "../webhooks/hooks.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {
   return {
@@ -12,5 +13,7 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     baseBundles: loadBaseBundles,
     baseBindings: loadBaseBindings,
     baseProviders: loadBaseProviders,
+    hooksPath: process.env.OE_WEBHOOK_HOOKS_PATH || undefined,
+    baseWebhooks: loadBaseWebhooks,
   };
 }

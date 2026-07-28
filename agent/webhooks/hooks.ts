@@ -1,4 +1,5 @@
 import { defineWebhook, assertWebhooksValid, type WebhookHook } from "@open-everywhere/core/agent/webhooks/config.js";
+import { loadHooksOverlay } from "./hooks-overlay.js";
 
 const hooks: WebhookHook[] = [
   defineWebhook({
@@ -26,8 +27,14 @@ const hooks: WebhookHook[] = [
   }),
 ];
 
-assertWebhooksValid(hooks);
+const merged: WebhookHook[] = [...hooks, ...loadHooksOverlay().hooks];
+
+assertWebhooksValid(merged);
 
 export function loadWebhooks(): readonly WebhookHook[] {
+  return merged;
+}
+
+export function loadBaseWebhooks(): readonly WebhookHook[] {
   return hooks;
 }

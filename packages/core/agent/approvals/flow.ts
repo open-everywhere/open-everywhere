@@ -29,6 +29,7 @@ import "./skill-delete.js";
 import "./routine-cancel.js";
 import "./routine-lifecycle.js";
 import "./webhook.js";
+import "./webhook-declare.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./session-checkpoint.js";

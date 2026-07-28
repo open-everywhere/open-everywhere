@@ -17,6 +17,8 @@ export interface AccessRequestsConfig {
   readonly configRepo?: string;
   readonly configBase?: string;
   readonly grantsPath?: string;
+  readonly hooksPath?: string;
+  baseWebhooks?(): readonly WebhookHook[];
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];

@@ -41,6 +41,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "create_webhook",
   "rotate_webhook",
   "revoke_webhook",
+  "declare_webhook",
   "read_docs",
   "read_file_upload",
   "read_notion_page",
