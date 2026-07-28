@@ -36,10 +36,10 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "org", scope: { level: "org" } },
-    { bundle: "pay", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "pay", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
   const a = resolveAccess(chan("T1", "C1"), bundles, bindings);
-  ok(a.repos.length === 2 && a.repos.includes("acme/shared") && a.repos.includes("acme/payments"), "repos union across org + channel");
+  ok(a.repos.length === 2 && a.repos.includes("acme/shared") && a.repos.includes("acme/payments"), "repos union across org + surface");
   const b = resolveAccess(chan("T1", "C2"), bundles, bindings);
   ok(b.repos.length === 1 && b.repos[0] === "acme/shared", "new channel inherits only the broad baseline (default-deny on channel grants)");
 }
@@ -47,8 +47,8 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 {
   const bundles: Bundle[] = [{ name: "basket", repos: ["acme/web"] }];
   const bindings: Binding[] = [
-    { bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-    { bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "C2" } },
+    { bundle: "basket", scope: { level: "surface", surface: "slack/T1/C1" } },
+    { bundle: "basket", scope: { level: "surface", surface: "slack/T1/C2" } },
   ];
   ok(resolveAccess(chan("T1", "C1"), bundles, bindings).repos[0] === "acme/web", "one bundle bound to C1");
   ok(resolveAccess(chan("T1", "C2"), bundles, bindings).repos[0] === "acme/web", "same bundle reused on C2 (define once, bind many)");
@@ -65,16 +65,16 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "o", scope: { level: "org" } },
-    { bundle: "w", scope: { level: "workspace", workspace: "T1" } },
-    { bundle: "d", scope: { level: "domain", workspace: "T1", domain: "pay" } },
-    { bundle: "c", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "w", scope: { level: "tenant", tenant: "slack/T1" } },
+    { bundle: "d", scope: { level: "domain", domain: "pay" } },
+    { bundle: "c", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
   const a = resolveAccess(chan("T1", "C1", ["pay"]), bundles, bindings);
-  ok(a.connections.length === 1 && a.connections[0].secretRef === "CHAN", "channel beats domain/workspace/org for same connection id");
+  ok(a.connections.length === 1 && a.connections[0].secretRef === "CHAN", "surface beats domain/tenant/org for same connection id");
   const noChan = resolveAccess(chan("T1", "C9", ["pay"]), bundles, bindings);
-  ok(noChan.connections[0].secretRef === "DOMAIN", "domain beats workspace/org when no channel binding");
+  ok(noChan.connections[0].secretRef === "DOMAIN", "domain beats tenant/org when no surface binding");
   const noDomain = resolveAccess(chan("T1", "C9"), bundles, bindings);
-  ok(noDomain.connections[0].secretRef === "WS", "workspace beats org when surface is in no domain");
+  ok(noDomain.connections[0].secretRef === "WS", "tenant beats org when surface is in no domain");
 }
 
 {
@@ -84,7 +84,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "org", scope: { level: "org" } },
-    { bundle: "ch", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "ch", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
   const a = resolveAccess(chan("T1", "C1"), bundles, bindings);
   ok(a.reachableHosts.find((h) => h.host === "api.linear.app")?.viaConnection === "linear", "credentialed host carries its connection id");
@@ -93,18 +93,21 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 
 {
   const bundles: Bundle[] = [{ name: "pay-tools", repos: ["acme/payments"] }];
-  const bindings: Binding[] = [{ bundle: "pay-tools", scope: { level: "domain", workspace: "T1", domain: "payments" } }];
+  const bindings: Binding[] = [{ bundle: "pay-tools", scope: { level: "domain", domain: "payments" } }];
   ok(resolveAccess(chan("T1", "C1", ["payments"]), bundles, bindings).repos[0] === "acme/payments", "domain-scoped bundle applies to a member surface");
   ok(resolveAccess(chan("T1", "C1", ["other"]), bundles, bindings).repos.length === 0, "domain-scoped bundle does NOT apply to a non-member surface");
   ok(resolveAccess(chan("T1", "C1"), bundles, bindings).repos.length === 0, "no domains on the request -> domain bundle doesn't apply");
-  ok(resolveAccess(chan("T2", "C1", ["payments"]), bundles, bindings).repos.length === 0, "domain is workspace-scoped: same domain name in another workspace doesn't match");
+  ok(
+    resolveAccess(chan("T2", "C1", ["payments"]), bundles, bindings).repos[0] === "acme/payments",
+    "a domain grant follows its domain across tenants — membership, not workspace, is the test",
+  );
 }
 
 {
   const bundles: Bundle[] = [{ name: "ws", repos: ["acme/ws"] }];
-  const bindings: Binding[] = [{ bundle: "ws", scope: { level: "workspace", workspace: "T1" } }];
-  ok(resolveAccess(chan("T1", "C1"), bundles, bindings).repos.length === 1, "workspace bundle applies inside its workspace");
-  ok(resolveAccess(chan("T2", "C1"), bundles, bindings).repos.length === 0, "workspace bundle does NOT leak to another workspace");
+  const bindings: Binding[] = [{ bundle: "ws", scope: { level: "tenant", tenant: "slack/T1" } }];
+  ok(resolveAccess(chan("T1", "C1"), bundles, bindings).repos.length === 1, "tenant bundle applies inside its tenant");
+  ok(resolveAccess(chan("T2", "C1"), bundles, bindings).repos.length === 0, "tenant bundle does NOT leak to another tenant");
 }
 
 {
@@ -115,8 +118,8 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "org", scope: { level: "org" } },
-    { bundle: "ch", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-    { bundle: "personal", scope: { level: "workspace", workspace: "dm:U1" } },
+    { bundle: "ch", scope: { level: "surface", surface: "slack/T1/C1" } },
+    { bundle: "personal", scope: { level: "principal", principal: "U1" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -135,13 +138,13 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     { name: "w", instructions: "ws rule" },
   ];
   const bindings: Binding[] = [
-    { bundle: "c", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "c", scope: { level: "surface", surface: "slack/T1/C1" } },
     { bundle: "o", scope: { level: "org" } },
-    { bundle: "d", scope: { level: "domain", workspace: "T1", domain: "pay" } },
-    { bundle: "w", scope: { level: "workspace", workspace: "T1" } },
+    { bundle: "d", scope: { level: "domain", domain: "pay" } },
+    { bundle: "w", scope: { level: "tenant", tenant: "slack/T1" } },
   ];
   const a = resolveAccess(chan("T1", "C1", ["pay"]), bundles, bindings);
-  ok(a.instructionStack.map((l) => l.text).join("|") === "org rule|ws rule|domain rule|channel rule", "instructions ordered org -> workspace -> domain -> channel regardless of declaration order");
+  ok(a.instructionStack.map((l) => l.text).join("|") === "org rule|ws rule|domain rule|channel rule", "instructions ordered org -> tenant -> domain -> surface regardless of declaration order");
 }
 
 {
@@ -149,7 +152,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     { id: "a", credentialType: "bearer", secretRef: "A", allowedWebsites: ["api.example.com"] },
     { id: "b", credentialType: "bearer", secretRef: "B", allowedWebsites: ["api.example.com"] },
   ] }];
-  const bindings: Binding[] = [{ bundle: "dup", scope: { level: "channel", workspace: "T1", channel: "C1" } }];
+  const bindings: Binding[] = [{ bundle: "dup", scope: { level: "surface", surface: "slack/T1/C1" } }];
   ok(resolveAccess(chan("T1", "C1"), bundles, bindings).warnings.some((w) => w.includes("claiming host")), "two connections claiming the same host in one scope warns");
 }
 
@@ -161,9 +164,9 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 {
   const bundles: Bundle[] = [{ name: "Build", repos: ["acme/a", "acme/b"] }];
   ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "org" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("repo")), "repos at org scope raise a broad-grant warning");
-  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "workspace", workspace: "T1" } }]).warnings.some((w) => w.startsWith("broad grant")), "repos at workspace scope raise a broad-grant warning");
-  ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Build", scope: { level: "domain", workspace: "T1", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "domain scope is an intended grouping -> NO broad-grant warning");
-  ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "channel", workspace: "T1", channel: "C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "channel scope -> NO broad-grant warning");
+  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "tenant", tenant: "slack/T1" } }]).warnings.some((w) => w.startsWith("broad grant")), "repos at tenant scope raise a broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Build", scope: { level: "domain", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "domain scope is an intended grouping -> NO broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Build", scope: { level: "surface", surface: "slack/T1/C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "surface scope -> NO broad-grant warning");
 }
 
 {
@@ -173,10 +176,10 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "base", scope: { level: "org" } },
-    { bundle: "pay", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "pay", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
   const a = resolveAccess(chan("T1", "C1"), bundles, bindings);
-  ok(a.connectors.length === 2 && a.connectors.includes("notion") && a.connectors.includes("linear-mcp"), "connectors union across org + channel (deduped)");
+  ok(a.connectors.length === 2 && a.connectors.includes("notion") && a.connectors.includes("linear-mcp"), "connectors union across org + surface (deduped)");
   const b = resolveAccess(chan("T1", "C2"), bundles, bindings);
   ok(b.connectors.length === 1 && b.connectors[0] === "notion", "sibling channel gets only the org baseline connector (default-deny on channel grants)");
   ok(resolveAccess(chan("T1", "C3"), [{ name: "empty" }], [{ bundle: "empty", scope: { level: "org" } }]).connectors.length === 0, "no connectors granted -> empty array (fail-closed)");
@@ -189,7 +192,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "svc", scope: { level: "org" } },
-    { bundle: "mine", scope: { level: "channel", workspace: "dm:U_me", channel: "U_me" } },
+    { bundle: "mine", scope: { level: "principal", principal: "U_me" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U_me" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -200,9 +203,9 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 {
   const bundles: Bundle[] = [{ name: "Conn", connectors: ["notion"] }];
   ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "org" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at org scope raise a broad-grant warning");
-  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "workspace", workspace: "T1" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at workspace scope raise a broad-grant warning");
-  ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Conn", scope: { level: "domain", workspace: "T1", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at domain scope -> NO broad-grant warning");
-  ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "channel", workspace: "T1", channel: "C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at channel scope -> NO broad-grant warning");
+  ok(resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "tenant", tenant: "slack/T1" } }]).warnings.some((w) => w.startsWith("broad grant") && w.includes("connector")), "connectors at tenant scope raise a broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1", ["d"]), bundles, [{ bundle: "Conn", scope: { level: "domain", domain: "d" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at domain scope -> NO broad-grant warning");
+  ok(!resolveAccess(chan("T1", "C1"), bundles, [{ bundle: "Conn", scope: { level: "surface", surface: "slack/T1/C1" } }]).warnings.some((w) => w.startsWith("broad grant")), "connectors at surface scope -> NO broad-grant warning");
 }
 
 {
@@ -216,7 +219,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "base", scope: { level: "org" } },
-    { bundle: "team", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+    { bundle: "team", scope: { level: "surface", surface: "slack/T1/C1" } },
   ];
   const a = resolveAccess(chan("T1", "C1"), bundles, bindings, registry);
   ok(
@@ -250,7 +253,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const u = resolveAccess(
     chan("T1", "C1"),
     [{ name: "x", plugins: ["ghost"] }],
-    [{ bundle: "x", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+    [{ bundle: "x", scope: { level: "surface", surface: "slack/T1/C1" } }],
     registry,
   );
   ok(
@@ -261,7 +264,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const e = resolveAccess(
     chan("T1", "C1"),
     [{ name: "x", plugins: ["acme"] }],
-    [{ bundle: "x", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+    [{ bundle: "x", scope: { level: "surface", surface: "slack/T1/C1" } }],
   );
   ok(
     e.skills.length === 0 && e.warnings.some((w) => w.includes("unknown plugin")),
@@ -282,10 +285,10 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     !resolveAccess(
       chan("T1", "C1"),
       bundles,
-      [{ bundle: "P", scope: { level: "channel", workspace: "T1", channel: "C1" } }],
+      [{ bundle: "P", scope: { level: "surface", surface: "slack/T1/C1" } }],
       registry,
     ).warnings.some((w) => w.startsWith("broad grant")),
-    "plugins at channel scope -> NO broad-grant warning",
+    "plugins at surface scope -> NO broad-grant warning",
   );
 }
 
@@ -340,13 +343,14 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const bundles: Bundle[] = [{ name: "basket" }];
   const good: Binding[] = [
     { bundle: "basket", scope: { level: "org" } },
-    { bundle: "basket", scope: { level: "workspace", workspace: "T1" } },
-    { bundle: "basket", scope: { level: "domain", workspace: "T1", domain: "payments" } },
-    { bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-    { bundle: "basket", scope: { level: "workspace", workspace: "dm:U1" } },
+    { bundle: "basket", scope: { level: "tenant", tenant: "slack/T1" } },
+    { bundle: "basket", scope: { level: "domain", domain: "payments" } },
+    { bundle: "basket", scope: { level: "surface", surface: "slack/T1/C1" } },
+    { bundle: "basket", scope: { level: "surface", surface: "teams/tid/19-x-thread.tacv2" } },
+    { bundle: "basket", scope: { level: "principal", principal: "U1" } },
   ];
   assertBindingsValid(good, bundles);
-  ok(true, "well-formed bindings at every level validate (incl. dm:U1 personal scope)");
+  ok(true, "well-formed bindings at every level validate (org/tenant/domain/surface/principal)");
 
   throwsWith(
     () => assertBindingsValid([{ bundle: "ghost", scope: { level: "org" } }], bundles),
@@ -354,29 +358,102 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "a binding to an undefined bundle throws at config load",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "workspace" } }], bundles),
-    "needs scope.workspace",
-    "a workspace-level binding without workspace throws",
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "tenant" } }], bundles),
+    "needs scope.tenant",
+    "a tenant-level binding without tenant throws",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain", workspace: "T1" } }], bundles),
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain" } }], bundles),
     "needs scope.domain",
     "a domain-level binding without domain throws",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "T1" } }], bundles),
-    "needs scope.channel",
-    "a channel-level binding without channel throws",
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "surface" } }], bundles),
+    "needs scope.surface",
+    "a surface-level binding without surface throws",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "slack/T1", channel: "C1" } }], bundles),
-    "BARE platform id",
-    'a "slack/T…" surface-key workspace throws (bindings take bare team_id)',
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal" } }], bundles),
+    "needs scope.principal",
+    "a principal-level binding without principal throws",
+  );
+
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "tenant", tenant: "T1" } }], bundles),
+    "PLATFORM-QUALIFIED tenant key",
+    "a bare workspace id at tenant scope throws (it has no platform, so it can never match)",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "channel", workspace: "T1", channel: "T1/C1" } }], bundles),
-    'scope.channel "T1/C1" contains "/"',
-    "a slash-bearing channel id throws (bare channel_id required)",
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "surface", surface: "C1" } }], bundles),
+    "fully-qualified surface key",
+    "a bare channel id at surface scope throws",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "surface", surface: "slack/T1" } }], bundles),
+    "fully-qualified surface key",
+    "a two-segment (tenant-shaped) key at surface scope throws",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain", domain: "slack/T1/payments" } }], bundles),
+    'scope.domain "slack/T1/payments" contains "/"',
+    "a qualified domain key throws — domains are cross-platform, so the name is bare",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "dm:U1" } }], bundles),
+    "the old `workspace: \"dm:<id>\"` sentinel",
+    "the retired dm: sentinel throws with the migration instruction",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain", domain: "payments", tenant: "slack/T1" } }], bundles),
+    "also sets scope.tenant",
+    "a domain scope carrying a tenant qualifier throws (a domain is org-global)",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "org", surface: "slack/T1/C1" } }], bundles),
+    "also sets scope.surface",
+    "an org scope carrying an address field throws",
+  );
+}
+
+{
+  const bundles: Bundle[] = [{ name: "unified", repos: ["acme/web"] }];
+  const bindings: Binding[] = [{ bundle: "unified", scope: { level: "domain", domain: "e2e-unified" } }];
+  const slackSide: ResolveRequest = { mode: "channel", platform: "slack", workspace: "T1", channel: "C1", domains: ["e2e-unified"] };
+  const discordSide: ResolveRequest = { mode: "channel", platform: "discord", workspace: "G9", channel: "CH9", domains: ["e2e-unified"] };
+  ok(resolveAccess(slackSide, bundles, bindings).repos[0] === "acme/web", "ONE domain binding covers the domain's Slack member");
+  ok(resolveAccess(discordSide, bundles, bindings).repos[0] === "acme/web", "…and its Discord member, with no second binding");
+  ok(
+    resolveAccess({ ...discordSide, domains: ["other"] }, bundles, bindings).repos.length === 0,
+    "membership is still the only thing that matches — a non-member surface gets nothing",
+  );
+
+  const tenantBinding: Binding[] = [{ bundle: "unified", scope: { level: "tenant", tenant: "slack/T1" } }];
+  ok(resolveAccess(chan("T1", "C1"), bundles, tenantBinding).repos.length === 1, "tenant binding applies on its own platform");
+  ok(
+    resolveAccess({ mode: "channel", platform: "discord", workspace: "T1", channel: "C1" }, bundles, tenantBinding).repos.length === 0,
+    "a same-looking id on another platform does NOT match (platform is part of the address)",
+  );
+  const surfaceBinding: Binding[] = [{ bundle: "unified", scope: { level: "surface", surface: "slack/T1/C1" } }];
+  ok(
+    resolveAccess({ mode: "channel", platform: "discord", workspace: "T1", channel: "C1" }, bundles, surfaceBinding).repos.length === 0,
+    "same for a surface binding — the key carries its platform",
+  );
+
+  const personal: Binding[] = [{ bundle: "unified", scope: { level: "principal", principal: "U1" } }];
+  ok(resolveAccess(chan("T1", "C1"), bundles, personal).repos.length === 0, "a principal binding grants nothing in a channel");
+  ok(
+    resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" }, bundles, personal).repos.length === 1,
+    "…and everything in its own principal's DM",
+  );
+  ok(
+    !resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" }, bundles, [
+      { bundle: "unified", scope: { level: "org" } },
+    ]).repos.length,
+    "an org binding still grants nothing in a DM (two connector universes, unchanged)",
+  );
+  ok(
+    !resolveAccess(chan("T1", "C1"), bundles, personal).warnings.some((w) => w.startsWith("broad grant")),
+    "a principal scope is never 'broad' — with no dm:-prefix special case left to carry it",
   );
 }
 

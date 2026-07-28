@@ -78,23 +78,23 @@ const bundles: Bundle[] = [
 const bindings: Binding[] = [
   defineBinding({ bundle: "org-default", scope: { level: "org" } }),
 
-  defineBinding({ bundle: "coding", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
+  defineBinding({ bundle: "coding", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
 
-  defineBinding({ bundle: "notion-connectors", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXGENRL" } }),
+  defineBinding({ bundle: "notion-connectors", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXGENRL" } }),
 
-  defineBinding({ bundle: "e2e-access-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
+  defineBinding({ bundle: "e2e-access-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
-  defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "channel", workspace: "T0EXAMPLE", channel: "C0EXCHAN003" } }),
+  defineBinding({ bundle: "e2e-pr-fixture", scope: { level: "surface", surface: "slack/T0EXAMPLE/C0EXCHAN003" } }),
 
   defineBinding({
     bundle: "notion-connectors",
-    scope: { level: "workspace", workspace: "1300000000000000100" },
+    scope: { level: "tenant", tenant: "discord/1300000000000000100" },
     allowBroad: "single-operator Discord test guild — every channel in it is the operator's own live-test surface",
   }),
 
   defineBinding({
     bundle: "notion-personal",
-    scope: { level: "workspace", workspace: "dm:U0EXOWNER" },
+    scope: { level: "principal", principal: "U0EXOWNER" },
   }),
 
 ];

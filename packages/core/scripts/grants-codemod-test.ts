@@ -48,15 +48,15 @@ const codeBundles: Bundle[] = [
 ];
 const codeBindings: Binding[] = [
   { bundle: "org-default", scope: { level: "org" } },
-  { bundle: "notion", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-  { bundle: "linear-basket", scope: { level: "channel", workspace: "T1", channel: "C9" } },
+  { bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } },
+  { bundle: "linear-basket", scope: { level: "surface", surface: "slack/T1/C9" } },
 ];
 
-const scope = { workspace: "T1", channel: "C1" } as const;
+const scope = { surface: "slack/T1/C1" } as const;
 
 function ctxFor(workspace: string, channel: string): PlanContext {
   return {
-    scope: { workspace, channel },
+    scope: { surface: `slack/${workspace}/${channel}` },
     access: resolveAccess({ mode: "channel", platform: "slack", workspace, channel }, codeBundles, codeBindings),
     bundles: codeBundles,
   };
@@ -69,7 +69,7 @@ function ctxFor(workspace: string, channel: string): PlanContext {
     ok(d.addMethods.length === 1 && d.addMethods[0] === "PATCH", "widen: method uppercased + validated");
     ok(d.addPathPrefixes.length === 1 && d.addPathPrefixes[0] === "/v1/pages", "widen: prefix accepted");
     ok(d.baseConnection.id === "notion-rest" && d.baseConnection.secretRef === "NOTION_API_KEY", "widen: base connection frozen into the delta");
-    ok(d.scope.workspace === "T1" && d.scope.channel === "C1", "widen: scope is the requesting scope");
+    ok(d.scope.surface === "slack/T1/C1", "widen: scope is the requesting surface key");
   }
 
   const d2 = planAccessDelta({ kind: "widen-connection", connection: "notion-rest", addMethods: ["GET", "PATCH"] }, ctxFor("T1", "C1"));
@@ -107,7 +107,7 @@ function ctxFor(workspace: string, channel: string): PlanContext {
 {
   const open: Connection = { id: "open", credentialType: "bearer", secretRef: "X", allowedWebsites: ["api.example.com"] };
   const bundles: Bundle[] = [{ name: "b", connections: [open] }];
-  const bindings: Binding[] = [{ bundle: "b", scope: { level: "channel", workspace: "T1", channel: "C1" } }];
+  const bindings: Binding[] = [{ bundle: "b", scope: { level: "surface", surface: "slack/T1/C1" } }];
   const ctx: PlanContext = {
     scope,
     access: resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1" }, bundles, bindings),
@@ -127,14 +127,14 @@ function ctxFor(workspace: string, channel: string): PlanContext {
 
 throwsWith(() => planAccessDelta({ kind: "add-repo" }, ctxFor("T1", "C1")), OUT_OF_VOCABULARY, "vocabulary: unknown kind (e.g. add-repo) refuses with the human-PR fallback");
 throwsWith(
-  () => planAccessDelta({ kind: "grant-connector", connector: "linear" }, { ...ctxFor("T1", "C1"), scope: { workspace: "slack/T1", channel: "C1" } }),
-  "bare platform ids",
-  "vocabulary: a surface-key scope (contains /) is refused defensively",
+  () => planAccessDelta({ kind: "grant-connector", connector: "linear" }, { ...ctxFor("T1", "C1"), scope: { surface: "C1" } }),
+  "fully-qualified surface key",
+  "vocabulary: a BARE channel-id scope is refused defensively (OPE-219 inverted this check — the qualified key is now the syntax)",
 );
 
 {
   const d = planAccessDelta({ kind: "grant-connector", connector: "linear" }, ctxFor("T1", "C1"));
-  ok(grantSentence(d) === 'Grant connector "linear" to channel C1 (workspace T1)', "grantSentence: connector form");
+  ok(grantSentence(d) === 'Grant connector "linear" to surface slack/T1/C1', "grantSentence: connector form");
   const w = planAccessDelta({ kind: "widen-connection", connection: "notion-rest", addMethods: ["PATCH"], addPathPrefixes: ["/v1/pages"] }, ctxFor("T1", "C1"));
   ok(grantSentence(w).includes("PATCH") && grantSentence(w).includes("/v1/pages") && grantSentence(w).includes("notion-rest"), "grantSentence: widen form names methods, prefixes, connection");
   ok(renderDelta(w).join("\n").includes("+ methods: PATCH"), "renderDelta: shows the exact additions");
@@ -149,17 +149,17 @@ throwsWith(
   throwsWith(() => parseGrantsFile({ bundles: [], bindings: [], extra: 1 }), "unknown top-level key", "parse: unknown top-level key refuses");
   throwsWith(() => parseGrantsFile({ bundles: [{ name: "sneaky" }], bindings: [] }), '"grants:"-prefixed name', "parse: non-namespaced bundle name refuses");
   throwsWith(
-    () => parseGrantsFile({ bundles: [{ name: "grants:T1/C1", repos: ["a/b"] }], bindings: [] }),
+    () => parseGrantsFile({ bundles: [{ name: "grants:slack/T1/C1", repos: ["a/b"] }], bindings: [] }),
     'has field "repos"',
     "parse: an overlay bundle carrying repos (outside v1 vocabulary) refuses",
   );
   throwsWith(
-    () => parseGrantsFile({ bundles: [], bindings: [{ bundle: "grants:T1/C1", scope: { level: "workspace", workspace: "T1" } }] }),
-    "must be channel-scoped",
-    "parse: a non-channel overlay binding refuses (the overlay never binds wider)",
+    () => parseGrantsFile({ bundles: [], bindings: [{ bundle: "grants:slack/T1/C1", scope: { level: "tenant", tenant: "slack/T1" } }] }),
+    "must be surface-scoped",
+    "parse: a non-surface overlay binding refuses (the overlay never binds wider)",
   );
   throwsWith(
-    () => parseGrantsFile({ bundles: [{ name: "grants:T1/C1", connections: [{ id: "x" }] }], bindings: [] }),
+    () => parseGrantsFile({ bundles: [{ name: "grants:slack/T1/C1", connections: [{ id: "x" }] }], bindings: [] }),
     "malformed connection",
     "parse: a malformed connection refuses",
   );
@@ -168,17 +168,17 @@ throwsWith(
 {
   const messy: GrantsFile = {
     bundles: [
-      { name: "grants:T1/C2", connectors: ["zeta", "alpha"] },
-      { name: "grants:T1/C1", connections: [{ ...notionRest, methods: ["POST", "GET"], pathPrefixes: ["/v1/search", "/a"] }] },
+      { name: "grants:slack/T1/C2", connectors: ["zeta", "alpha"] },
+      { name: "grants:slack/T1/C1", connections: [{ ...notionRest, methods: ["POST", "GET"], pathPrefixes: ["/v1/search", "/a"] }] },
     ],
     bindings: [
-      { bundle: "grants:T1/C2", scope: { level: "channel", workspace: "T1", channel: "C2" } },
-      { bundle: "grants:T1/C1", scope: { level: "channel", workspace: "T1", channel: "C1" } },
+      { bundle: "grants:slack/T1/C2", scope: { level: "surface", surface: "slack/T1/C2" } },
+      { bundle: "grants:slack/T1/C1", scope: { level: "surface", surface: "slack/T1/C1" } },
     ],
   };
   const text = stringifyGrants(messy);
   ok(text.endsWith("}\n"), "stringify: trailing newline");
-  ok(text.indexOf('"grants:T1/C1"') < text.indexOf('"grants:T1/C2"'), "stringify: bundles sorted by name");
+  ok(text.indexOf('"grants:slack/T1/C1"') < text.indexOf('"grants:slack/T1/C2"'), "stringify: bundles sorted by name");
   ok(text.indexOf('"GET"') < text.indexOf('"POST"'), "stringify: methods in canonical HTTP order");
   ok(text.indexOf('"alpha"') < text.indexOf('"zeta"'), "stringify: connectors sorted");
   ok(text.indexOf('"/a"') < text.indexOf('"/v1/search"'), "stringify: pathPrefixes sorted");
@@ -192,9 +192,9 @@ const grantLinear: AccessDelta = { kind: "grant-connector", scope, connector: "l
 {
   const r1 = applyDelta(emptyGrantsFile(), grantLinear);
   ok(r1.changed, "apply(grant): empty file → changed");
-  ok(r1.bundleName === "grants:T1/C1" && overlayBundleName(scope) === "grants:T1/C1", "apply(grant): canonical overlay bundle name");
+  ok(r1.bundleName === "grants:slack/T1/C1" && overlayBundleName(scope) === "grants:slack/T1/C1", "apply(grant): canonical overlay bundle name");
   ok(r1.grants.bundles.length === 1 && r1.grants.bundles[0].connectors?.join() === "linear", "apply(grant): connector landed in the overlay bundle");
-  ok(r1.grants.bindings.length === 1 && r1.grants.bindings[0].scope.channel === "C1", "apply(grant): a channel binding for the requesting scope was created");
+  ok(r1.grants.bindings.length === 1 && r1.grants.bindings[0].scope.surface === "slack/T1/C1", "apply(grant): a surface binding for the requesting scope was created");
 
   ok(stringifyGrants(applyDelta(emptyGrantsFile(), grantLinear).grants) === stringifyGrants(r1.grants), "apply(grant): deterministic bytes");
 
@@ -205,8 +205,8 @@ const grantLinear: AccessDelta = { kind: "grant-connector", scope, connector: "l
   const r3 = applyDelta(r1.grants, { kind: "grant-connector", scope, connector: "asana" });
   ok(r3.changed && r3.grants.bundles.length === 1 && r3.grants.bundles[0].connectors?.join(",") === "asana,linear", "apply(grant): second connector joins the same overlay bundle, sorted");
 
-  const r4 = applyDelta(r3.grants, { kind: "grant-connector", scope: { workspace: "T1", channel: "C2" }, connector: "linear" });
-  ok(r4.changed && r4.grants.bundles.length === 2 && r4.bundleName === "grants:T1/C2", "apply(grant): a different scope gets its own overlay bundle");
+  const r4 = applyDelta(r3.grants, { kind: "grant-connector", scope: { surface: "slack/T1/C2" }, connector: "linear" });
+  ok(r4.changed && r4.grants.bundles.length === 2 && r4.bundleName === "grants:slack/T1/C2", "apply(grant): a different scope gets its own overlay bundle");
 
   assertBundlesValid([...codeBundles, ...r4.grants.bundles]);
   assertBindingsValid([...codeBindings, ...r4.grants.bindings], [...codeBundles, ...r4.grants.bundles]);
@@ -215,22 +215,22 @@ const grantLinear: AccessDelta = { kind: "grant-connector", scope, connector: "l
 
 {
   const multiBound: GrantsFile = {
-    bundles: [{ name: "grants:T1/C1", connectors: ["linear"] }],
+    bundles: [{ name: "grants:slack/T1/C1", connectors: ["linear"] }],
     bindings: [
-      { bundle: "grants:T1/C1", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-      { bundle: "grants:T1/C1", scope: { level: "channel", workspace: "T1", channel: "C7" } },
+      { bundle: "grants:slack/T1/C1", scope: { level: "surface", surface: "slack/T1/C1" } },
+      { bundle: "grants:slack/T1/C1", scope: { level: "surface", surface: "slack/T1/C7" } },
     ],
   };
   const before = stringifyGrants(multiBound);
 
   const r = applyDelta(multiBound, { kind: "grant-connector", scope, connector: "asana" });
   ok(r.changed, "invariant: delta against a multi-bound canonical bundle still applies");
-  ok(r.bundleName === "grants:T1/C1#2", "invariant: ...but into a FRESH single-bound clone bundle (#2), never the multi-bound one");
-  const untouched = r.grants.bundles.find((b) => b.name === "grants:T1/C1");
+  ok(r.bundleName === "grants:slack/T1/C1#2", "invariant: ...but into a FRESH single-bound clone bundle (#2), never the multi-bound one");
+  const untouched = r.grants.bundles.find((b) => b.name === "grants:slack/T1/C1");
   ok(JSON.stringify(untouched) === JSON.stringify(multiBound.bundles[0]), "invariant: the multi-bound bundle is byte-identical after the codemod");
   ok(stringifyGrants(multiBound) === before, "invariant: input file object untouched (pure)");
-  const newBindings = r.grants.bindings.filter((b) => b.bundle === "grants:T1/C1#2");
-  ok(newBindings.length === 1 && newBindings[0].scope.channel === "C1" && newBindings[0].scope.workspace === "T1", "invariant: the clone is bound to exactly the requesting scope");
+  const newBindings = r.grants.bindings.filter((b) => b.bundle === "grants:slack/T1/C1#2");
+  ok(newBindings.length === 1 && newBindings[0].scope.surface === "slack/T1/C1", "invariant: the clone is bound to exactly the requesting scope");
 
   const r2 = applyDelta(multiBound, { kind: "grant-connector", scope, connector: "linear" });
   ok(!r2.changed && stringifyGrants(r2.grants) === before, "invariant: an already-effective grant via a multi-bound bundle is a no-op (no clone created)");
@@ -291,9 +291,9 @@ throwsWith(
   "apply: refuses adding prefixes to an unrestricted base (that would narrow)",
 );
 throwsWith(
-  () => applyDelta(emptyGrantsFile(), { kind: "grant-connector", scope: { workspace: "slack/T1", channel: "C1" }, connector: "x" }),
-  "bare platform ids",
-  "apply: refuses a surface-key scope",
+  () => applyDelta(emptyGrantsFile(), { kind: "grant-connector", scope: { surface: "C1" }, connector: "x" }),
+  "fully-qualified surface key",
+  "apply: refuses a bare (unqualified) scope",
 );
 ok(new GrantsCodemodError("x") instanceof Error, "GrantsCodemodError is an Error (refusal type is catchable)");
 

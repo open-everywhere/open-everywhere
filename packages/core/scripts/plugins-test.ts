@@ -161,7 +161,7 @@ const byPath = (p: string) => files.find((f) => f.path === p);
 {
   const registry: PluginRegistry = { [pluginName]: registryEntry };
   const bundles: Bundle[] = [{ name: "acme-grant", plugins: [pluginName] }];
-  const bindings: Binding[] = [{ bundle: "acme-grant", scope: { level: "channel", workspace: "T1", channel: "granted-channel" } }];
+  const bindings: Binding[] = [{ bundle: "acme-grant", scope: { level: "surface", surface: "slack/T1/granted-channel" } }];
   const chan = (channel: string): ResolveRequest => ({ mode: "channel", platform: "slack", workspace: "T1", channel });
 
   const granted = resolveAccess(chan("granted-channel"), bundles, bindings, registry);

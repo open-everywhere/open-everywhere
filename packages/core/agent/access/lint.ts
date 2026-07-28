@@ -13,7 +13,7 @@ export function lintBroadGrants(bundles: readonly Bundle[], bindings: readonly B
   const byName = new Map(bundles.map((b) => [b.name, b]));
   const problems: string[] = [];
   for (const binding of bindings) {
-    const broad = (binding.scope.level === "org" || binding.scope.level === "workspace") && !binding.scope.workspace?.startsWith("dm:");
+    const broad = binding.scope.level === "org" || binding.scope.level === "tenant";
     if (binding.allowBroad !== undefined && !broad) {
       problems.push(
         `binding "${binding.bundle}" (${binding.scope.level} scope) sets allowBroad but isn't a broad scope — remove the escape (it suggests the binding means something it doesn't)`,
@@ -31,8 +31,8 @@ export function lintBroadGrants(bundles: readonly Bundle[], bindings: readonly B
     }
     if (binding.allowBroad === undefined) {
       problems.push(
-        `broad credentialed grant: bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at ${binding.scope.level} scope — every channel beneath it (incl. future/public ones) inherits that capability. ` +
-          `Bind it to a domain or specific channel instead, or accept it deliberately with allowBroad: "<reason>" on the binding (access/bundle.ts).`,
+        `broad credentialed grant: bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at ${binding.scope.level} scope — every surface beneath it (incl. future/public ones) inherits that capability. ` +
+          `Bind it to a domain or specific surface instead, or accept it deliberately with allowBroad: "<reason>" on the binding (access/bundle.ts).`,
       );
     }
   }

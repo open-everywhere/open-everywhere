@@ -1,4 +1,4 @@
-import type { Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
 import { HTTP_METHODS, type AccessDelta, type RequestingScope } from "./delta.js";
 
 export interface GrantsFile {
@@ -13,7 +13,7 @@ export function emptyGrantsFile(): GrantsFile {
 }
 
 export function overlayBundleName(scope: RequestingScope): string {
-  return `grants:${scope.workspace}/${scope.channel}`;
+  return `grants:${scope.surface}`;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -63,8 +63,8 @@ export function parseGrantsFile(value: unknown): GrantsFile {
       throw new GrantsCodemodError("every grants binding needs { bundle, scope }");
     }
     const scope = bd.scope as Record<string, unknown>;
-    if (scope.level !== "channel" || typeof scope.workspace !== "string" || typeof scope.channel !== "string") {
-      throw new GrantsCodemodError(`grants binding for "${bd.bundle}" must be channel-scoped with bare workspace/channel ids (the overlay never binds wider)`);
+    if (scope.level !== "surface" || typeof scope.surface !== "string") {
+      throw new GrantsCodemodError(`grants binding for "${bd.bundle}" must be surface-scoped with a fully-qualified "platform/<tenant-id>/<container-id>" key (the overlay never binds wider)`);
     }
     bindings.push(bd as unknown as Binding);
   }
@@ -85,7 +85,7 @@ export function parseGrantsText(text: string): GrantsFile {
 const BUNDLE_KEYS = ["name", "connections", "connectors"];
 const CONNECTION_KEYS = ["id", "credentialType", "secretRef", "allowedWebsites", "pathPrefixes", "customHeaders", "methods", "authorizationDetails"];
 const BINDING_KEYS = ["bundle", "scope"];
-const SCOPE_KEYS = ["level", "workspace", "domain", "channel"];
+const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "principal"];
 
 function orderKeys(obj: Record<string, unknown>, order: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -117,7 +117,7 @@ function canonicalBinding(bd: Binding): Record<string, unknown> {
 }
 
 function scopeSortKey(s: Scope): string {
-  return `${s.workspace ?? ""}/${s.channel ?? ""}/${s.domain ?? ""}/${s.level}`;
+  return `${s.surface ?? ""}/${s.tenant ?? ""}/${s.domain ?? ""}/${s.principal ?? ""}/${s.level}`;
 }
 
 export function stringifyGrants(grants: GrantsFile): string {
@@ -136,7 +136,7 @@ export interface ApplyDeltaResult {
 }
 
 function scopeEquals(s: Scope, scope: RequestingScope): boolean {
-  return s.level === "channel" && s.workspace === scope.workspace && s.channel === scope.channel;
+  return s.level === "surface" && s.surface === scope.surface;
 }
 
 function bundlesBoundToScope(grants: GrantsFile, scope: RequestingScope): readonly Bundle[] {
@@ -161,13 +161,15 @@ function withBundle(grants: GrantsFile, name: string, next: Bundle, hadBundle: b
     bundles: hadBundle ? grants.bundles.map((b) => (b.name === name ? next : b)) : [...grants.bundles, next],
     bindings: hadBinding
       ? grants.bindings
-      : [...grants.bindings, { bundle: name, scope: { level: "channel", workspace: scope.workspace, channel: scope.channel } }],
+      : [...grants.bindings, { bundle: name, scope: { level: "surface", surface: scope.surface } }],
   };
 }
 
 export function applyDelta(grants: GrantsFile, delta: AccessDelta): ApplyDeltaResult {
-  if (!delta.scope.workspace || !delta.scope.channel || delta.scope.workspace.includes("/") || delta.scope.channel.includes("/")) {
-    throw new GrantsCodemodError(`delta scope must be bare platform ids (got workspace="${delta.scope.workspace}", channel="${delta.scope.channel}")`);
+  if (!SURFACE_KEY.test(delta.scope.surface ?? "")) {
+    throw new GrantsCodemodError(
+      `delta scope must be a fully-qualified surface key "platform/<tenant-id>/<container-id>" (got surface="${delta.scope.surface}")`,
+    );
   }
 
   if (delta.kind === "grant-connector") {

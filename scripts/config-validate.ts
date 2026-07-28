@@ -14,14 +14,12 @@ function fail(msg: string): void {
 }
 
 const domains = loadDomains();
-const platformByWorkspace = new Map<string, string>();
-for (const d of domains) {
-  for (const key of d.channels ?? []) {
-    const [platform, workspace] = key.split("/");
-    if (platform && workspace) platformByWorkspace.set(workspace, platform);
-  }
+
+function splitSurfaceKey(key: string): { platform: string; workspace: string; channel: string } | undefined {
+  const [platform, workspace, ...rest] = key.split("/");
+  if (!platform || !workspace || rest.length === 0 || !rest.join("/")) return undefined;
+  return { platform, workspace, channel: rest.join("/") };
 }
-const platformFor = (workspace: string): string => platformByWorkspace.get(workspace) ?? "slack";
 
 function boundScopes(): { platform: string; workspace: string; channel: string; via: string }[] {
   const out = new Map<string, { platform: string; workspace: string; channel: string; via: string }>();
@@ -30,13 +28,19 @@ function boundScopes(): { platform: string; workspace: string; channel: string; 
 
   for (const b of loadBindings()) {
     const s = b.scope;
-    if (s.level === "channel") add(platformFor(s.workspace!), s.workspace!, s.channel!, `channel binding "${b.bundle}"`);
-    if (s.level === "workspace") add(platformFor(s.workspace!), s.workspace!, "C__PROBE__", `workspace binding "${b.bundle}" (probe channel)`);
+    if (s.level === "surface") {
+      const parts = splitSurfaceKey(s.surface!);
+      if (parts) add(parts.platform, parts.workspace, parts.channel, `surface binding "${b.bundle}"`);
+    }
+    if (s.level === "tenant") {
+      const [platform, workspace] = s.tenant!.split("/");
+      if (platform && workspace) add(platform, workspace, "C__PROBE__", `tenant binding "${b.bundle}" (probe channel)`);
+    }
     if (s.level === "domain") {
       const domain = domains.find((d) => d.name === s.domain);
       for (const key of domain?.channels ?? []) {
-        const [platform, workspace, surface] = key.split("/");
-        if (platform && workspace && surface) add(platform, workspace, surface, `domain binding "${b.bundle}" via ${s.domain}`);
+        const parts = splitSurfaceKey(key);
+        if (parts) add(parts.platform, parts.workspace, parts.channel, `domain binding "${b.bundle}" via ${s.domain}`);
       }
     }
     if (s.level === "org") add("slack", "T__PROBE__", "C__PROBE__", `org binding "${b.bundle}" (probe scope)`);

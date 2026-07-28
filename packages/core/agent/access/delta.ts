@@ -1,4 +1,4 @@
-import type { Binding, Bundle, Connection, HttpMethod } from "./bundle.js";
+import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
 import type { EffectiveAccess } from "./resolver.js";
 
 export const OUT_OF_VOCABULARY =
@@ -7,8 +7,7 @@ export const OUT_OF_VOCABULARY =
 export const HTTP_METHODS: readonly HttpMethod[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
 export interface RequestingScope {
-  readonly workspace: string;
-  readonly channel: string;
+  readonly surface: string;
 }
 
 export interface WidenConnectionDelta {
@@ -127,8 +126,10 @@ function planGrantConnector(ask: AccessAsk, ctx: PlanContext): GrantConnectorDel
 }
 
 export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
-  if (!ctx.scope.workspace || !ctx.scope.channel || ctx.scope.workspace.includes("/") || ctx.scope.channel.includes("/")) {
-    throw new Error(`invalid requesting scope (workspace="${ctx.scope.workspace}", channel="${ctx.scope.channel}") — bare platform ids required.`);
+  if (!SURFACE_KEY.test(ctx.scope.surface ?? "")) {
+    throw new Error(
+      `invalid requesting scope (surface="${ctx.scope.surface}") — the fully-qualified surface key "platform/<tenant-id>/<container-id>" is required.`,
+    );
   }
   switch (ask.kind) {
     case "widen-connection":
@@ -141,7 +142,7 @@ export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
 }
 
 export function grantSentence(delta: AccessDelta): string {
-  const where = `channel ${delta.scope.channel} (workspace ${delta.scope.workspace})`;
+  const where = `surface ${delta.scope.surface}`;
   if (delta.kind === "grant-connector") {
     return `Grant connector "${delta.connector}" to ${where}`;
   }
@@ -153,10 +154,10 @@ export function grantSentence(delta: AccessDelta): string {
 
 export function renderDelta(delta: AccessDelta): string[] {
   if (delta.kind === "grant-connector") {
-    return [`\`\`\`grant-connector: ${delta.connector} → ${delta.scope.workspace}/${delta.scope.channel}\`\`\``];
+    return [`\`\`\`grant-connector: ${delta.connector} → ${delta.scope.surface}\`\`\``];
   }
   const lines = [
-    `widen-connection: ${delta.connectionId} → ${delta.scope.workspace}/${delta.scope.channel}`,
+    `widen-connection: ${delta.connectionId} → ${delta.scope.surface}`,
     ...(delta.addMethods.length > 0 ? [`  + methods: ${delta.addMethods.join(", ")}`] : []),
     ...(delta.addPathPrefixes.length > 0 ? [`  + pathPrefixes: ${delta.addPathPrefixes.join(", ")}`] : []),
     `  base: ${delta.baseConnection.allowedWebsites.join(", ")} (methods: ${delta.baseConnection.methods?.join(",") ?? "all"}; paths: ${delta.baseConnection.pathPrefixes?.join(",") ?? "all"})`,

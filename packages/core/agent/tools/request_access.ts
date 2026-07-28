@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom, channelPlatform, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { buildResolveRequest, principalIdOf, resolveAccessFor } from "../access/request.js";
+import { surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext } from "../access/delta.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
@@ -119,7 +120,7 @@ const requestAccessEntry = defineTool({
 
           const req = buildResolveRequest(ctx);
           const planCtx: PlanContext = {
-            scope: { workspace: req.workspace, channel: req.channel },
+            scope: { surface: surfaceKeyOf(req) },
             access: resolveAccessFor(ctx),
             bundles: cfg.loadBundles(),
           };

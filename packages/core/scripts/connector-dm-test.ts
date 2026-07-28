@@ -22,7 +22,7 @@ registerConfig({
   ],
   loadBindings: () => [
     defineBinding({ bundle: "svc", scope: { level: "org" } }),
-    defineBinding({ bundle: "personal", scope: { level: "workspace", workspace: "dm:U_caller" } }),
+    defineBinding({ bundle: "personal", scope: { level: "principal", principal: "U_caller" } }),
   ],
   pluginRegistry: {},
   skillContent: {},

@@ -59,8 +59,8 @@ const codeBundles: Bundle[] = [
   { name: "linear-basket", connectors: ["linear"] },
 ];
 const codeBindings: Binding[] = [
-  { bundle: "notion", scope: { level: "channel", workspace: "T1", channel: "C1" } },
-  { bundle: "linear-basket", scope: { level: "channel", workspace: "T1", channel: "C9" } },
+  { bundle: "notion", scope: { level: "surface", surface: "slack/T1/C1" } },
+  { bundle: "linear-basket", scope: { level: "surface", surface: "slack/T1/C9" } },
 ];
 
 function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
@@ -102,7 +102,7 @@ function slackBinding(overrides: Partial<SurfaceBinding> = {}): SurfaceBinding {
 
 function planCtxFor(channel: string): PlanContext {
   return {
-    scope: { workspace: "T1", channel },
+    scope: { surface: `slack/T1/${channel}` },
     access: resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel }, codeBundles, codeBindings),
     bundles: codeBundles,
   };
@@ -143,7 +143,7 @@ const args: RequestAccessArgs = planRequestAccess(
   { ...extras, permalink: "https://acme.slack.com/archives/C1/p1720000000000100" },
 );
 ok(args.delta.kind === "grant-connector" && args.delta.kind === "grant-connector" && args.delta.connector === "linear", "plan: delta planned from the ask");
-ok(args.delta.scope.workspace === "T1" && args.delta.scope.channel === "C1", "plan: delta scope is the REQUESTING scope (from the resolve request, not model input)");
+ok(args.delta.scope.surface === "slack/T1/C1", "plan: delta scope is the REQUESTING surface key (from the resolve request, not model input)");
 ok(args.requestedBy === "U_ASK" && args.org === "default" && args.scopeKey === "slack/T1/C1", "plan: requester/org/scopeKey frozen from the binding");
 ok(/^[0-9a-f-]{36}$/.test(args.requestId), "plan: a host-minted requestId (uuid) names the PR branch");
 ok(args.reason === "triage needs Linear", "plan: reason trimmed into the frozen args");
@@ -160,7 +160,7 @@ ok(kind !== undefined && kind.policy === "member", "kind: access.request registe
 {
   const lines = kind!.summarize(args);
   ok(lines[0].includes("Request wider access") && lines[0].includes('"linear"'), "kind: summary opens with the deterministic grant sentence");
-  ok(lines.some((l: string) => l.includes("grant-connector: linear → T1/C1")), "kind: summary renders the exact machine delta");
+  ok(lines.some((l: string) => l.includes("grant-connector: linear → slack/T1/C1")), "kind: summary renders the exact machine delta");
   ok(lines.some((l: string) => l.includes("triage needs Linear")), "kind: summary shows the reason");
   ok(lines.some((l: string) => l.includes("acme/agent-config") && l.includes("nothing is granted until")), "kind: summary names the config repo + the merge-is-the-gate contract");
 }
@@ -224,7 +224,7 @@ function fakeDeps(state: FakeState) {
   ok(state.puts.length === 1, "execute: exactly one grants.json commit");
   ok(state.puts[0] === stringifyGrants(applyDelta(emptyGrantsFile(), args.delta).grants), "execute: committed bytes are EXACTLY the deterministic codemod output");
   ok(state.prs.length === 1 && state.prs[0].head === branch && state.prs[0].base === "main", "execute: PR opened head→base");
-  ok(state.prs[0].title === 'Access request: Grant connector "linear" to channel C1 (workspace T1)', "execute: PR title is the grant sentence");
+  ok(state.prs[0].title === 'Access request: Grant connector "linear" to surface slack/T1/C1', "execute: PR title is the grant sentence");
   ok(
     state.prs[0].body.includes("U_ASK") && state.prs[0].body.includes("U_TAP") && state.prs[0].body.includes("slack.com") && state.prs[0].body.includes("Merging this PR IS the approval"),
     "execute: PR body carries requester, sender, thread link, and the merge-is-the-gate doctrine",
@@ -246,7 +246,7 @@ function fakeDeps(state: FakeState) {
 
 {
   const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
-  const poisoned = arConfig({ baseBundles: () => [...codeBundles, { name: "grants:T1/C1" }] });
+  const poisoned = arConfig({ baseBundles: () => [...codeBundles, { name: "grants:slack/T1/C1" }] });
   await rejectsWith(
     () => executeAccessRequest(args, "U_TAP", { config: poisoned, ...fakeDeps(state) }),
     "defined more than once",

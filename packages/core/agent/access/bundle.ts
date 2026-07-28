@@ -1,12 +1,13 @@
 import type { ProviderGrant } from "./providers.js";
 
-export type ScopeLevel = "org" | "workspace" | "domain" | "channel";
+export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "principal";
 
 export interface Scope {
   readonly level: ScopeLevel;
-  readonly workspace?: string;
+  readonly tenant?: string;
   readonly domain?: string;
-  readonly channel?: string;
+  readonly surface?: string;
+  readonly principal?: string;
 }
 
 export type CredentialType = "bearer" | "basic" | "github-app";
@@ -107,24 +108,58 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
   }
 }
 
+type ScopeAddressField = "tenant" | "domain" | "surface" | "principal";
+const LEVEL_FIELD: Record<string, ScopeAddressField | null | undefined> = {
+  org: null,
+  tenant: "tenant",
+  domain: "domain",
+  surface: "surface",
+  principal: "principal",
+};
+
+export const TENANT_KEY = /^[^/\s]+\/[^/\s]+$/u;
+export const SURFACE_KEY = /^[^/\s]+\/[^/\s]+\/\S+$/u;
+
 export function assertBindingsValid(bindings: readonly Binding[], bundles: readonly Bundle[]): void {
   const known = new Set(bundles.map((b) => b.name));
   const bad: string[] = [];
   for (const b of bindings) {
     const where = `binding "${b.bundle}" (${b.scope.level} scope)`;
     if (!known.has(b.bundle)) bad.push(`  ${where} references unknown bundle "${b.bundle}" — define it in the bundles list or fix the name`);
-    const { level, workspace, domain, channel } = b.scope;
-    if ((level === "workspace" || level === "domain" || level === "channel") && !workspace) {
-      bad.push(`  ${where} needs scope.workspace — a ${level}-level binding can never match without one`);
+    const { level, tenant, domain, surface, principal } = b.scope;
+    const required = LEVEL_FIELD[level];
+    if (required === undefined) {
+      bad.push(`  ${where} has an unknown scope.level "${level}" — the levels are org | tenant | domain | surface | principal`);
+      continue;
     }
-    if (level === "domain" && !domain) bad.push(`  ${where} needs scope.domain (a memory/domains.ts name)`);
-    if (level === "channel" && !channel) bad.push(`  ${where} needs scope.channel`);
-    for (const [field, value] of [["workspace", workspace], ["channel", channel]] as const) {
-      if (value?.includes("/")) {
+    for (const [field, value] of [["tenant", tenant], ["domain", domain], ["surface", surface], ["principal", principal]] as const) {
+      if (field === required) {
+        if (!value) bad.push(`  ${where} needs scope.${field} — a ${level}-level binding can never match without one`);
+      } else if (value !== undefined) {
         bad.push(
-          `  ${where} scope.${field} "${value}" contains "/" — bindings take the BARE platform id (Slack: team_id like "T0123ABC" / channel_id like "C0123ABC"), not the "platform/…" surface key memory domains use; a "/" value will NEVER match`,
+          `  ${where} also sets scope.${field} — a ${level}-level scope carries ${required ? `only scope.${required}` : "no address field"}; drop it or change the level`,
         );
       }
+    }
+    if (tenant && !TENANT_KEY.test(tenant)) {
+      bad.push(
+        `  ${where} scope.tenant "${tenant}" must be the PLATFORM-QUALIFIED tenant key "platform/<tenant-id>" (e.g. "slack/T0123ABC", "discord/1300000000000000100", "github/acme") — a bare vendor id has no platform and will NEVER match`,
+      );
+    }
+    if (surface && !SURFACE_KEY.test(surface)) {
+      bad.push(
+        `  ${where} scope.surface "${surface}" must be the fully-qualified surface key "platform/<tenant-id>/<container-id>" (e.g. "slack/T0123ABC/C0123ABC") — the SAME form memory domains' \`channels\` use; a bare channel id will NEVER match`,
+      );
+    }
+    if (domain?.includes("/")) {
+      bad.push(
+        `  ${where} scope.domain "${domain}" contains "/" — a domain scope takes the BARE domain name from memory/domains.ts ("payments"), deliberately NOT tenant-qualified: domains are cross-platform, so one grant is one binding`,
+      );
+    }
+    if (principal?.includes("/") || principal?.startsWith("dm:")) {
+      bad.push(
+        `  ${where} scope.principal "${principal}" must be the BARE platform principal id (e.g. a Slack member id "U0123ABC") — the old \`workspace: "dm:<id>"\` sentinel is now the first-class \`principal\` level, so drop the "dm:" prefix`,
+      );
     }
   }
   if (bad.length > 0) {

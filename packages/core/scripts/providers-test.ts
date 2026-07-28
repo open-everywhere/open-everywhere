@@ -109,7 +109,7 @@ throws(
   ];
   const bindings: Binding[] = [
     { bundle: "org-notion", scope: { level: "org" } },
-    { bundle: "payments-notion", scope: { level: "domain", workspace: "T1", domain: "payments" } },
+    { bundle: "payments-notion", scope: { level: "domain", domain: "payments" } },
   ];
   const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "T1", channel: "C", domains: ["payments"] };
   const eff = resolveAccess(req, bundles, bindings, {}, [tightProvider]);
@@ -122,10 +122,10 @@ throws(
 
 {
   const bundles: Bundle[] = [{ name: "b", providers: [{ provider: "notion", credential: "team-key" }] }];
-  const bindings: Binding[] = [{ bundle: "b", scope: { level: "workspace", workspace: "T1" } }];
+  const bindings: Binding[] = [{ bundle: "b", scope: { level: "tenant", tenant: "slack/T1" } }];
   const req: ResolveRequest = { mode: "channel", platform: "slack", workspace: "T1", channel: "C" };
   const eff = resolveAccess(req, bundles, bindings, {}, [notion]);
-  ok(eff.warnings.some((w) => w.includes("broad grant") && w.includes("provider credential")), "provider grant at workspace scope warns (broad blast radius)");
+  ok(eff.warnings.some((w) => w.includes("broad grant") && w.includes("provider credential")), "provider grant at tenant scope warns (broad blast radius)");
 }
 
 console.log(`✓ providers: ${passed} assertions passed (validation, allowlist, universe gate, narrowest-wins credential)`);

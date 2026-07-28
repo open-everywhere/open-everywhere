@@ -20,21 +20,26 @@ const conn = (over: Partial<Connection> = {}): Connection => ({
 const credentialed: Bundle = defineBundle({ name: "creds", connections: [conn()] });
 const credentialless: Bundle = defineBundle({ name: "safe", domains: ["raw.githubusercontent.com"], instructions: "be careful" });
 
-const at = (bundle: string, level: "org" | "workspace" | "domain" | "channel", over: Partial<Binding> = {}): Binding =>
+const at = (bundle: string, level: "org" | "tenant" | "domain" | "surface", over: Partial<Binding> = {}): Binding =>
   defineBinding({
     bundle,
-    scope: { level, ...(level === "org" ? {} : { workspace: "T1" }), ...(level === "domain" ? { domain: "eng" } : {}), ...(level === "channel" ? { channel: "C1" } : {}) },
+    scope: {
+      level,
+      ...(level === "tenant" ? { tenant: "slack/T1" } : {}),
+      ...(level === "domain" ? { domain: "eng" } : {}),
+      ...(level === "surface" ? { surface: "slack/T1/C1" } : {}),
+    },
     ...over,
   });
 
 ok(lintBroadGrants([credentialed], [at("creds", "org")]).some((p) => p.includes("broad credentialed grant")), "a credentialed bundle bound at ORG scope FAILS");
-ok(lintBroadGrants([credentialed], [at("creds", "workspace")]).some((p) => p.includes("workspace scope")), "a credentialed bundle bound at WORKSPACE scope FAILS");
+ok(lintBroadGrants([credentialed], [at("creds", "tenant")]).some((p) => p.includes("tenant scope")), "a credentialed bundle bound at TENANT scope FAILS");
 ok(lintBroadGrants([credentialed], [at("creds", "domain")]).length === 0, "the same bundle at DOMAIN scope is clean (the intended path)");
-ok(lintBroadGrants([credentialed], [at("creds", "channel")]).length === 0, "…and at CHANNEL scope");
+ok(lintBroadGrants([credentialed], [at("creds", "surface")]).length === 0, "…and at SURFACE scope");
 ok(lintBroadGrants([credentialless], [at("safe", "org")]).length === 0, "a credential-LESS bundle at org scope stays warn-only (not a CI failure)");
 ok(
-  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "workspace", workspace: "dm:U123" } })]).length === 0,
-  "a dm: workspace is one person's own scope — not broad",
+  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "principal", principal: "U123" } })]).length === 0,
+  "a principal scope is one person's own — not broad (OPE-219: a level now, not a dm: sentinel the lint had to sniff for)",
 );
 
 for (const [field, bundle] of [
@@ -42,19 +47,19 @@ for (const [field, bundle] of [
   ["repos", defineBundle({ name: "b", repos: ["acme/web"] })],
   ["connectors", defineBundle({ name: "b", connectors: ["notion"] })],
 ] as const) {
-  ok(lintBroadGrants([bundle], [at("b", "workspace")]).length === 1, `broad ${field} grants FAIL like connections do`);
+  ok(lintBroadGrants([bundle], [at("b", "tenant")]).length === 1, `broad ${field} grants FAIL like connections do`);
 }
 
 ok(
-  lintBroadGrants([credentialed], [at("creds", "workspace", { allowBroad: "single-operator test workspace" })]).length === 0,
+  lintBroadGrants([credentialed], [at("creds", "tenant", { allowBroad: "single-operator test workspace" })]).length === 0,
   "allowBroad with a real reason accepts the broad grant deliberately",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "workspace", { allowBroad: "  " })]).some((p) => p.includes("EMPTY allowBroad")),
+  lintBroadGrants([credentialed], [at("creds", "tenant", { allowBroad: "  " })]).some((p) => p.includes("EMPTY allowBroad")),
   "an empty/whitespace allowBroad FAILS — the escape must name the reason",
 );
 ok(
-  lintBroadGrants([credentialed], [at("creds", "channel", { allowBroad: "why is this here" })]).some((p) => p.includes("isn't a broad scope")),
+  lintBroadGrants([credentialed], [at("creds", "surface", { allowBroad: "why is this here" })]).some((p) => p.includes("isn't a broad scope")),
   "allowBroad on a narrow binding FAILS (a stray escape suggests a misunderstanding)",
 );
 ok(lintBroadGrants([credentialed], [defineBinding({ bundle: "ghost", scope: { level: "org" } })]).length === 0, "an unknown bundle ref is assertBindingsValid's problem, not this lint's");

@@ -19,19 +19,21 @@ function arg(name: string): string {
 const before: GrantsFile = parseGrantsText(readFileSync(arg("before"), "utf8"));
 const after: GrantsFile = parseGrantsText(readFileSync(arg("after"), "utf8"));
 
-const scopes = new Map<string, { workspace: string; channel: string }>();
+const scopes = new Set<string>();
 for (const g of [before, after]) {
-  for (const b of g.bindings) scopes.set(`${b.scope.workspace}/${b.scope.channel}`, { workspace: b.scope.workspace!, channel: b.scope.channel! });
+  for (const b of g.bindings) if (b.scope.surface) scopes.add(b.scope.surface);
 }
 
-function resolveWith(grants: GrantsFile, workspace: string, channel: string): EffectiveAccess {
+function resolveWith(grants: GrantsFile, surfaceKey: string): EffectiveAccess {
+  const [platform, workspace, ...rest] = surfaceKey.split("/");
+  const channel = rest.join("/");
   return resolveAccess(
     {
       mode: "channel",
-      platform: "slack",
+      platform,
       workspace,
       channel,
-      domains: domainsForSurface({ workspaceKey: `slack/${workspace}`, surface: channel }),
+      domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
     },
     [...loadBaseBundles(), ...grants.bundles],
     [...loadBaseBindings(), ...grants.bindings],
@@ -60,8 +62,8 @@ function diffLines(b: Record<string, string[]>, a: Record<string, string[]>): st
   return lines;
 }
 
-function scopeEntries(g: GrantsFile, workspace: string, channel: string): string {
-  const names = new Set(g.bindings.filter((b) => b.scope.workspace === workspace && b.scope.channel === channel).map((b) => b.bundle));
+function scopeEntries(g: GrantsFile, surfaceKey: string): string {
+  const names = new Set(g.bindings.filter((b) => b.scope.surface === surfaceKey).map((b) => b.bundle));
   return JSON.stringify(g.bundles.filter((b) => names.has(b.name)));
 }
 
@@ -69,12 +71,12 @@ const out: string[] = ["## Effective-access diff (grants overlay)", ""];
 let changedScopes = 0;
 let invariantBreaches = 0;
 
-for (const { workspace, channel } of [...scopes.values()].sort((x, y) => `${x.workspace}/${x.channel}`.localeCompare(`${y.workspace}/${y.channel}`))) {
-  const lines = diffLines(snapshot(resolveWith(before, workspace, channel)), snapshot(resolveWith(after, workspace, channel)));
-  const grantsChanged = scopeEntries(before, workspace, channel) !== scopeEntries(after, workspace, channel);
+for (const surfaceKey of [...scopes].sort((x, y) => x.localeCompare(y))) {
+  const lines = diffLines(snapshot(resolveWith(before, surfaceKey)), snapshot(resolveWith(after, surfaceKey)));
+  const grantsChanged = scopeEntries(before, surfaceKey) !== scopeEntries(after, surfaceKey);
   if (lines.length === 0) continue;
   changedScopes++;
-  out.push(`### \`${workspace}/${channel}\``, "", "```diff", ...lines, "```", "");
+  out.push(`### \`${surfaceKey}\``, "", "```diff", ...lines, "```", "");
   if (!grantsChanged) {
     invariantBreaches++;
     out.push(`> ⚠️ **INVARIANT BREACH** — this scope's effective access changed but its own overlay entries did not.`, "");

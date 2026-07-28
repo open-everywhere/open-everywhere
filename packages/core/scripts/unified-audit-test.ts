@@ -44,7 +44,7 @@ registerConfig({
   ],
   loadBindings: () => [
     defineBinding({ bundle: "base", scope: { level: "org" } }),
-    defineBinding({ bundle: "gh-extra", scope: { level: "channel", workspace: "acme", channel: "repo" } }),
+    defineBinding({ bundle: "gh-extra", scope: { level: "surface", surface: "github/acme/repo" } }),
   ],
   pluginRegistry: {},
   skillContent: {},

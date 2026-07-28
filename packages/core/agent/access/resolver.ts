@@ -41,25 +41,43 @@ export interface EffectiveAccess {
   readonly warnings: readonly string[];
 }
 
-const SPECIFICITY: Record<Scope["level"], number> = { org: 0, workspace: 1, domain: 2, channel: 3 };
+const SPECIFICITY: Record<Scope["level"], number> = { org: 0, tenant: 1, domain: 2, surface: 3, principal: 4 };
+
+export function tenantKeyOf(req: Pick<ResolveRequest, "platform" | "workspace">): string {
+  return `${req.platform}/${req.workspace}`;
+}
+
+export function surfaceKeyOf(req: Pick<ResolveRequest, "platform" | "workspace" | "channel">): string {
+  return `${req.platform}/${req.workspace}/${req.channel}`;
+}
 
 function scopeLabel(s: Scope): string {
-  if (s.level === "org") return "org";
-  if (s.level === "workspace") return `workspace:${s.workspace}`;
-  if (s.level === "domain") return `domain:${s.workspace}/${s.domain}`;
-  return `channel:${s.workspace}/${s.channel}`;
+  switch (s.level) {
+    case "org":
+      return "org";
+    case "tenant":
+      return `tenant:${s.tenant}`;
+    case "domain":
+      return `domain:${s.domain}`;
+    case "surface":
+      return `surface:${s.surface}`;
+    case "principal":
+      return `principal:${s.principal}`;
+  }
 }
 
 function scopeMatches(s: Scope, req: ResolveRequest): boolean {
   switch (s.level) {
     case "org":
       return true;
-    case "workspace":
-      return s.workspace === req.workspace;
+    case "tenant":
+      return s.tenant === tenantKeyOf(req);
     case "domain":
-      return s.workspace === req.workspace && (req.domains?.includes(s.domain!) ?? false);
-    case "channel":
-      return s.workspace === req.workspace && s.channel === req.channel;
+      return req.domains?.includes(s.domain!) ?? false;
+    case "surface":
+      return s.surface === surfaceKeyOf(req);
+    case "principal":
+      return false;
   }
 }
 
@@ -77,13 +95,13 @@ export function resolveAccess(
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));
 
-  const principalWorkspace = req.principalId ? `dm:${req.principalId}` : undefined;
-
   const applied: { scope: Scope; bundle: Bundle }[] = [];
   for (const binding of bindings) {
     const inScope =
       req.mode === "dm"
-        ? principalWorkspace !== undefined && binding.scope.workspace === principalWorkspace
+        ? req.principalId !== undefined &&
+          binding.scope.level === "principal" &&
+          binding.scope.principal === req.principalId
         : scopeMatches(binding.scope, req);
     if (!inScope) continue;
     const bundle = byName.get(binding.bundle);
@@ -183,32 +201,31 @@ export function resolveAccess(
     .map(({ scope, bundle }) => ({ source: scopeLabel(scope), text: bundle.instructions!.trim() }));
 
   for (const { scope, bundle } of ordered) {
-    if (scope.level === "channel" || scope.level === "domain") continue;
-    if (scope.workspace?.startsWith("dm:")) continue;
+    if (scope.level !== "org" && scope.level !== "tenant") continue;
     const where = scopeLabel(scope);
     if ((bundle.repos?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.repos!.length} repo(s) at ${where} scope — every channel under it inherits them (incl. future/public channels). Bind repo grants to a domain or specific channel instead.`,
+        `broad grant: bundle "${bundle.name}" grants ${bundle.repos!.length} repo(s) at ${where} scope — every surface under it inherits them (incl. future/public surfaces). Bind repo grants to a domain or specific surface instead.`,
       );
     }
     if ((bundle.connections?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" binds ${bundle.connections!.length} credential(s) at ${where} scope — their credentials are reachable from every channel under it. Bind sensitive credentials to a domain or specific channel instead.`,
+        `broad grant: bundle "${bundle.name}" binds ${bundle.connections!.length} credential(s) at ${where} scope — their credentials are reachable from every surface under it. Bind sensitive credentials to a domain or specific surface instead.`,
       );
     }
     if ((bundle.connectors?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every channel under it may invoke those host-side connections. Bind connector grants to a domain or specific channel instead.`,
+        `broad grant: bundle "${bundle.name}" grants ${bundle.connectors!.length} connector(s) at ${where} scope — every surface under it may invoke those host-side connections. Bind connector grants to a domain or specific surface instead.`,
       );
     }
     if ((bundle.providers?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.providers!.length} provider credential(s) at ${where} scope — every channel under it authenticates to those providers with that credential. Bind provider grants to a domain or specific channel instead.`,
+        `broad grant: bundle "${bundle.name}" grants ${bundle.providers!.length} provider credential(s) at ${where} scope — every surface under it authenticates to those providers with that credential. Bind provider grants to a domain or specific surface instead.`,
       );
     }
     if ((bundle.plugins?.length ?? 0) > 0) {
       warnings.push(
-        `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every channel under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific channel instead.`,
+        `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every surface under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific surface instead.`,
       );
     }
   }
