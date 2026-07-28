@@ -1,4 +1,5 @@
 
+import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { initOperationalSchema, makeOperationalPostgresStore, setOrgContext, type PgClient } from "../agent/operational/postgres.js";
 import type { Routine } from "../agent/routines/routine.js";
@@ -611,6 +612,48 @@ const store = makeOperationalPostgresStore(client);
 
   await db.exec("CREATE ROLE oe_runtime NOSUPERUSER");
   for (const stmt of runtimeRoleGrantsSql("oe_runtime")) await client.query(stmt);
+
+  {
+    const { OPERATIONAL_TABLES } = await import("../agent/operational/store.js");
+    const DML = ["SELECT", "INSERT", "UPDATE", "DELETE"] as const;
+    const fmt = (s: ReadonlySet<string>): string => DML.filter((v) => s.has(v)).join("+") || "NOTHING";
+    const grantRows = (
+      await client.query(
+        "SELECT table_name, privilege_type FROM information_schema.table_privileges WHERE grantee = 'oe_runtime' AND table_schema = 'public'",
+      )
+    ).rows as { table_name: string; privilege_type: string }[];
+    const granted = new Map<string, Set<string>>();
+    for (const r of grantRows) (granted.get(r.table_name) ?? granted.set(r.table_name, new Set()).get(r.table_name)!).add(r.privilege_type);
+
+    const ungranted = OPERATIONAL_TABLES.filter((t) => !granted.has(t));
+    ok(ungranted.length === 0, `two-role: the runtime role holds SOME privilege on every table in OPERATIONAL_TABLES (holds NOTHING on: ${ungranted.join(", ") || "none"})`);
+
+    const src = readFileSync(new URL("../agent/operational/postgres.ts", import.meta.url), "utf8");
+    const required = new Map<string, Set<string>>();
+    const need = (t: string, ...verbs: string[]): void => {
+      const s = required.get(t) ?? required.set(t, new Set()).get(t)!;
+      for (const v of verbs) s.add(v);
+    };
+    for (const m of src.matchAll(/\bINSERT\s+INTO\s+([a-z_][a-z0-9_]*)/g)) {
+      need(m[1]!, "INSERT", "SELECT");
+      const rest = src.slice(m.index ?? 0);
+      const end = rest.search(/[`"]/);
+      if (/ON\s+CONFLICT[\s\S]*?DO\s+UPDATE/i.test(end === -1 ? rest : rest.slice(0, end))) need(m[1]!, "UPDATE");
+    }
+    for (const m of src.matchAll(/\bDELETE\s+FROM\s+([a-z_][a-z0-9_]*)/g)) need(m[1]!, "DELETE", "SELECT");
+    for (const m of src.matchAll(/\bUPDATE\s+([a-z_][a-z0-9_]*)\s+SET\b/g)) need(m[1]!, "UPDATE", "SELECT");
+
+    const phantom = [...required.keys()].filter((t) => !(OPERATIONAL_TABLES as readonly string[]).includes(t));
+    const unscanned = OPERATIONAL_TABLES.filter((t) => !required.has(t));
+    ok(phantom.length === 0 && unscanned.length === 0, `two-role: the SQL scan sees a write for exactly OPERATIONAL_TABLES (phantom: ${phantom.join(", ") || "none"}; unscanned: ${unscanned.join(", ") || "none"})`);
+
+    const mismatched = [...required.keys()]
+      .sort()
+      .filter((t) => DML.some((v) => required.get(t)!.has(v) !== (granted.get(t)?.has(v) ?? false)))
+      .map((t) => `${t} (code issues ${fmt(required.get(t)!)}, role holds ${fmt(granted.get(t) ?? new Set())})`);
+    ok(mismatched.length === 0, `two-role: every table's granted verbs EQUAL the verbs its SQL issues — ${mismatched.join("; ") || "all match"}`);
+  }
+
   await client.query("SELECT set_config('app.current_org', '', false)");
 
   try {
@@ -642,6 +685,16 @@ const store = makeOperationalPostgresStore(client);
     await denied("DELETE FROM spend_ledger", "permission denied", "two-role: DELETE spend_ledger is permission-DENIED (deleting a period would silently lower spend against a limit)");
     await denied("TRUNCATE spend_ledger", "permission denied", "two-role: TRUNCATE on a mutable table is permission-DENIED (RLS does not filter TRUNCATE — privileges are the only gate)");
     await denied("TRUNCATE routine", "permission denied", "two-role: TRUNCATE is denied even where DELETE is granted (routine has full CRUD)");
+
+    await store.putGitHubInstallation("acme", { owner: "acme-org", installationId: "42", updatedAt: "2026-07-28T00:00:00Z" });
+    await store.putGitHubInstallation("acme", { owner: "acme-org", installationId: "43", updatedAt: "2026-07-28T00:01:00Z" });
+    const installs = await store.listGitHubInstallations("acme");
+    ok(installs.length === 1 && installs[0]!.installationId === "43", "two-role: the runtime role can upsert + read github_installation (the App-install delivery path)");
+    ok((await store.deleteGitHubInstallation("acme", "acme-org")) === true, "two-role: …and DELETE it (the uninstall delivery revokes for real)");
+
+    await store.setSessionApproval({ org: "acme", sessionId: "sess-1", kind: "pr.open", grantedBy: "U1", createdAt: "2026-07-28T00:00:00Z", expiresAt: "2026-07-29T00:00:00Z" });
+    ok((await store.getSessionApproval("acme", "sess-1", "pr.open", "2026-07-28T01:00:00Z"))?.grantedBy === "U1", "two-role: the runtime role can write + read pr_session_approval (the \"Approve for session\" path)");
+    ok((await store.revokeSessionApprovals("acme", "sess-1")) === 1, "two-role: …and revoke it (OPE-152 — withdrawing a standing routine grant is a real DELETE)");
 
     await denied("DROP POLICY audit_select ON audit_entry", "must be owner", "two-role: DROP POLICY is refused (not owner)");
     await denied("ALTER TABLE audit_entry DISABLE ROW LEVEL SECURITY", "must be owner", "two-role: DISABLE ROW LEVEL SECURITY is refused (not owner)");

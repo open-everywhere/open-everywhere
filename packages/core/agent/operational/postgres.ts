@@ -694,6 +694,8 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   credential_intake: ["SELECT", "INSERT", "UPDATE"],
   webhook_hook: ["SELECT", "INSERT", "UPDATE"],
   unified_wake_target: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  github_installation: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  pr_session_approval: ["SELECT", "INSERT", "UPDATE", "DELETE"],
 };
 
 function mutableTableGrantsSql(role: string): string[] {
