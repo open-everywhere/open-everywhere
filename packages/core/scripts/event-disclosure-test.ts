@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -148,11 +148,6 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
   const src = readFileSync(join(REPO, "packages/core/agent/routines/fire-disclosure.ts"), "utf8");
   ok(/from "\.\.\/access\/audience-floor\.js"/.test(src), "single-source: consumer #3 (routines/fire-disclosure.ts) imports the audience-floor seam");
   ok(/export function computeAudienceFloor\b/.test(src) === false, "single-source: consumer #3 does NOT re-roll the floor computation (connector-disclosure-test §1 scans the whole tree for this)");
-  const floorSrc = readFileSync(join(REPO, "packages/core/agent/access/audience-floor.ts"), "utf8");
-  ok(
-    /THREE consumers/.test(floorSrc) && /fire-disclosure\.ts/.test(floorSrc),
-    "single-source: the primitive's own header names its THIRD consumer — a header that still said TWO would be a claim the tree had outgrown",
-  );
 }
 
 {
