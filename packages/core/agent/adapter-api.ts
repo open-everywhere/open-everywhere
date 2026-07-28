@@ -273,24 +273,6 @@ export {
 export type { WebhookVerifier, WebhookVerifyInput, WebhookVerdict, WebhookVerifyFailure, WebhookSenderGuidance } from "./webhooks/verifier.js";
 
 export {
-  registerWebhookProvisioning,
-  webhookProvisioning,
-  registeredProvisioningSources,
-  registeredWebhookProvisionings,
-  registerSetupExchange,
-  setupExchange,
-  registeredSetupExchangeSources,
-  resetWebhookProvisioningForTest,
-  setupWindowMs,
-  hostSetupWindowMs,
-  admitSetupEcho,
-  looksLikeSetupDelivery,
-  interpretSetupDelivery,
-  provisioningMints,
-} from "./webhooks/provisioning.js";
-export type { WebhookProvisioning, SetupExchange, SetupDeliveryInput, SetupInterpretation } from "./webhooks/provisioning.js";
-
-export {
   registerEventNormalizer,
   eventNormalizer,
   registeredEventSources,

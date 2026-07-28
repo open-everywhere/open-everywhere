@@ -1,7 +1,6 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
-import { isDeletableHookStatus } from "../webhooks/runtime-hook.js";
 import type { PgClient } from "../memory/postgres.js";
 import { assertSpendLimitAmount, assertDomainModelPick, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -1623,15 +1622,6 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       const updated: RuntimeWebhookHook = { ...(JSON.parse(row.data) as RuntimeWebhookHook), ...patch, org, id };
       await client.query("UPDATE webhook_hook SET source = $1, data = $2 WHERE org_id = $3 AND id = $4", [updated.source, JSON.stringify(updated), org, id]);
       return updated;
-    },
-
-    async deleteWebhookHook(org: string, id: string, expectedStatus: string) {
-      if (!isDeletableHookStatus(expectedStatus)) return false;
-      const { rows } = await client.query(
-        "DELETE FROM webhook_hook WHERE org_id = $1 AND id = $2 AND (data::jsonb ->> 'status') = $3 RETURNING id",
-        [org, id, expectedStatus],
-      );
-      return rows.length > 0;
     },
 
     async addPendingAction(row: PendingActionRow) {

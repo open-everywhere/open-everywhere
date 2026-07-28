@@ -11,9 +11,6 @@ import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { hasPrivateDeliveryPath } from "./create_webhook.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
-import { hookAcquisition, isDeletableHookStatus } from "../webhooks/runtime-hook.js";
-import { rotateAcquisitionRefusal } from "../webhooks/provisioning.js";
-import { webhookScheme } from "../routines/scheme-name.js";
 
 export default defineTool({
   description:
@@ -57,18 +54,9 @@ export default defineTool({
     if (!hook) {
       throw new Error(`There's no "${source}" webhook here. Use list_webhooks to see what exists, or create_webhook to set one up.`);
     }
-    if (isDeletableHookStatus(hook.status)) {
-      throw new Error(
-        `The "${source}" webhook is ${hook.status} — its setup was started but never finished, so there's no signing secret to rotate yet. Finish setting it up; rotation only applies to a live hook.`,
-      );
-    }
     if (hook.status !== "active") {
       throw new Error(`There's no active "${source}" webhook here — it's ${hook.status}. Use list_webhooks to see what exists, or create_webhook to set one up.`);
     }
-
-    const acquisition = hookAcquisition(hook);
-    const refusal = rotateAcquisitionRefusal(acquisition, hook.source, webhookScheme(hook));
-    if (refusal) throw new Error(refusal);
 
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) throw new Error("rotate_webhook needs a verified sender — there's no requester to show on the approval card.");
@@ -84,7 +72,6 @@ export default defineTool({
           id: hook.id,
           source: hook.source,
           ...(hook.scheme && hook.scheme !== hook.source ? { scheme: hook.scheme } : {}),
-          ...(acquisition !== "mint" ? { provisioning: acquisition } : {}),
           posture: hook.posture,
           surfaceKey: p.surfaceKey,
           requestedBy,

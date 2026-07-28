@@ -17,7 +17,10 @@ const SENTINEL = "FAKE-HOOK-SIGNING-SECRET-1a2b3c-DO-NOT-USE";
 
 const reveal = await import("../agent/webhooks/reveal-page.js");
 const intakePage = await import("../agent/credentials/intake-page.js");
-const { mintPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
+const rh = await import("../agent/webhooks/runtime-hook.js");
+const { readAudit } = await import("../agent/audit/audit.js");
+const { PAGE_AUDIENCES, mintPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
+type PageAudience = import("../agent/credentials/page-token.js").PageAudience;
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
@@ -290,6 +293,106 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   const burnedHtml = await (await reveal.handleRevealPost(postReq(guidedToken), { readSecret: async () => SENTINEL })).text();
   eq(burnedHtml, await (await reveal.handleRevealGet(getReq("garbage"))).text(), "🔴 a burned grant's 404 is STILL byte-identical to every other failure — the guidance changed no failure page");
 }
+
+{
+  console.log("\n9. the N×N cross-audience replay matrix:");
+
+  interface MatrixCase {
+    readonly mint: () => Promise<{ token: string; id: string }>;
+    readonly get: (token: string) => Promise<Response>;
+    readonly post: (token: string) => Promise<Response>;
+  }
+
+  const formPost = (path: string, handler: (r: Request) => Promise<Response>) => (token: string) =>
+    handler(
+      new Request(`https://oe.example.test${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ t: token, k: "FAKE-MATRIX-VALUE" }).toString(),
+      }),
+    );
+
+  let seq = 0;
+  const table: Record<PageAudience, MatrixCase> = {
+    intake: {
+      mint: async () => {
+        const id = `matrix-intake-${seq++}`;
+        await store.addCredentialIntake({ org: ORG, id, ref: "db:matrix-key", provider: "notion", requestedBy: USER, channelId: "C1", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString() });
+        return { token: mintPageToken({ v: 1, aud: "intake", org: ORG, id, rb: USER, exp: Date.now() + 60_000 }, KEY), id };
+      },
+      get: (t) => intakePage.handleIntakePageGet(new Request(`https://oe.example.test${intakePage.INTAKE_PAGE_PATH}?t=${encodeURIComponent(t)}`)),
+      post: formPost(intakePage.INTAKE_PAGE_PATH, (r) => intakePage.handleIntakePagePost(r)),
+    },
+    reveal: {
+      mint: async () => {
+        const g = await freshGrant();
+        return { token: g.token, id: g.id };
+      },
+      get: (t) => reveal.handleRevealGet(getReq(t)),
+      post: formPost(reveal.REVEAL_PAGE_PATH, (r) => reveal.handleRevealPost(r)),
+    },
+  };
+
+  eq(Object.keys(table).length, PAGE_AUDIENCES.length, "the matrix table covers EVERY audience (a third one is a compile error until it is added here)");
+
+  for (const mintedFor of PAGE_AUDIENCES) {
+    for (const redeemedAt of PAGE_AUDIENCES) {
+      const grant = await table[mintedFor].mint();
+      const route = table[redeemedAt];
+      const getRes = await route.get(grant.token);
+      const postRes = await route.post(grant.token);
+      if (mintedFor === redeemedAt) {
+        eq(getRes.status, 200, `✔ ${mintedFor} → ${redeemedAt}: the matching route ACCEPTS (otherwise this matrix would pass vacuously)`);
+        eq(postRes.status, 200, `✔ ${mintedFor} → ${redeemedAt}: …and redeems`);
+      } else {
+        eq(getRes.status, 404, `🔴 ${mintedFor} token at the ${redeemedAt} GET ⇒ refused`);
+        eq(postRes.status, 404, `🔴 ${mintedFor} token at the ${redeemedAt} POST ⇒ refused`);
+        eq((await store.getCredentialIntake(ORG, grant.id))!.usedAt, undefined, `…and the ${mintedFor} grant is untouched by the attempt`);
+      }
+    }
+  }
+}
+
+{
+  console.log("\n10. webhook.secret_revealed (OPE-199):");
+  const id = rh.mintRuntimeHookId();
+  const ref = rh.runtimeHookSecretRef(id);
+  await vault.write(ref, SENTINEL);
+  const link = (await reveal.issueRevealLink({ org: ORG, ref, revealTo: USER, label: "audited" }))!;
+  const token = new URL(link.url).searchParams.get("t")!;
+
+  await reveal.handleRevealGet(getReq(token));
+  eq((await readAudit({ org: ORG, action: "webhook.secret_revealed" })).filter((r) => (r.detail as Record<string, unknown>).hookId === id).length, 0, "🔴 a GET writes NO disclosure row — nothing was disclosed");
+
+  eq((await reveal.handleRevealPost(postReq(token))).status, 200, "the POST reveals");
+  const rows = (await readAudit({ org: ORG, action: "webhook.secret_revealed" })).filter((r) => (r.detail as Record<string, unknown>).hookId === id);
+  eq(rows.length, 1, "🔴 exactly one webhook.secret_revealed row");
+  const d = rows[0]!.detail as Record<string, unknown>;
+  eq(d.grantId, link.id, "…naming the grant that was burned");
+  ok(typeof d.revealedAt === "string", "…and when");
+  ok(!JSON.stringify(rows[0]).includes(SENTINEL), "🔴🔴 the row does NOT contain the secret");
+  eq(rows[0]!.principalId, USER, "attributed to the bound principal");
+
+  eq((await reveal.handleRevealPost(postReq(token))).status, 404, "the second POST is refused…");
+  eq((await readAudit({ org: ORG, action: "webhook.secret_revealed" })).filter((r) => (r.detail as Record<string, unknown>).hookId === id).length, 1, "…and writes no second row");
+
+  const dead = rh.mintRuntimeHookId();
+  const deadLink = (await reveal.issueRevealLink({ org: ORG, ref: rh.runtimeHookSecretRef(dead), revealTo: USER, label: "dead" }))!;
+  const deadToken = new URL(deadLink.url).searchParams.get("t")!;
+  const boom = await reveal.handleRevealPost(postReq(deadToken), {
+    readSecret: async () => {
+      throw new Error("vault exploded");
+    },
+  });
+  eq(boom.status, 404, "a vault failure renders the generic 404");
+  eq((await readAudit({ org: ORG, action: "webhook.secret_revealed" })).filter((r) => (r.detail as Record<string, unknown>).grantId === deadLink.id).length, 0, "🔴 …and writes NO disclosure row, because nothing was shown to anybody");
+  ok(typeof (await store.getCredentialIntake(ORG, deadLink.id))!.usedAt === "string", "…while the grant is still SPENT (recovery is rotation, not retry)");
+
+  eq(reveal.revealedHookId("hook:hk_abc"), "hk_abc", "a current hook ref yields its id");
+  eq(reveal.revealedHookId("hook:hk_abc:prev"), undefined, "a SUPERSEDED ref yields none (it is not a current hook)");
+  eq(reveal.revealedHookId("notion-handshake:ws1"), undefined, "a handshake ref names no runtime hook at all");
+}
+
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✅ webhook-reveal: ${n} checks passed`);

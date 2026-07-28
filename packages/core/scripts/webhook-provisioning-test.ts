@@ -90,17 +90,12 @@ const revokeKind = actionKind("webhook.revoke")!;
   ok(verifierMod.acceptsMintedSecret(fake("x", "vendor-issued")) === false, "acceptsMintedSecret: a vendor-ISSUED shared secret does not (we cannot choose the value)");
   ok(verifierMod.acceptsMintedSecret(fake("x", "receiver-minted", "public-key")) === false, "acceptsMintedSecret: an ASYMMETRIC scheme does not (there is no shared secret to mint)");
 
-  const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"], []);
+  const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"]);
   ok(refusal.includes("github, notion"), "🔴 the refusal NAMES the legal set — the error message IS the vocabulary");
   ok(/PR|merge/i.test(refusal), "…and names the PR path (an 'ask an admin' with no WHAT is a dead end)");
-  ok(vocab.unknownSourceRefusal("stripe", [], []).includes("No sources are available"), "an empty vocabulary refuses honestly rather than naming an empty list");
-  ok(
-    refusal.includes("none of those can be set up this way on this deployment"),
-    "with NO collectable source the refusal scopes its claim to this deployment rather than to the world",
-  );
-  const collectable = vocab.unknownSourceRefusal("stripe", ["github"], ["linear", "pagerduty"]);
-  ok(collectable.includes("linear, pagerduty"), "🔴 with a collectable source the refusal NAMES it — the message IS the second vocabulary too");
-  ok(!/can't be set up this way at all/.test(collectable), "…and stops claiming vendor-issued secrets are impossible, because on that deployment they are not");
+  ok(vocab.unknownSourceRefusal("stripe", []).includes("No sources are available"), "an empty vocabulary refuses honestly rather than naming an empty list");
+  ok(refusal.includes("none of those can be set up this way"), "a vendor-issued secret is refused plainly, with the config route named");
+  ok(/configuration/.test(refusal), "…and the refusal says WHERE the alternative lives rather than just saying no");
 
   eq(rh.runtimeHookSourceDefect("notion"), null, "a plain lowercase token is a valid source");
   ok(rh.runtimeHookSourceDefect("Notion") !== null, "uppercase is refused (the tool lowercases first; the grammar is the floor)");
@@ -313,7 +308,8 @@ let createdId = "";
   ok(/NOT reversible/i.test(revokeCard), "🔴 the revoke card says the revocation is NOT reversible");
   ok(/retires/.test(revokeCard) && revokeCard.includes("notion"), "…and that it retires that specific source name");
   ok(!/Reversible only by creating a new webhook/.test(revokeCard), "🔴 the old, false reversibility promise is gone");
-  ok(/no record/.test(revokeCard) && /do not read this as remediation/.test(revokeCard), "🔴 a card with no known remediation says so, rather than implying revoking is enough");
+  ok(/minted here/.test(revokeCard), "🔴 the revoke card states what revoking invalidates rather than only what it stops");
+  ok(/nothing outside this deployment is left holding a key that still works/.test(revokeCard), "…and says so in terms of who is left holding a working key");
 }
 
 rmSync(dir, { recursive: true, force: true });

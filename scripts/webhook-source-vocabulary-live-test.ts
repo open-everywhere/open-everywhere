@@ -12,8 +12,7 @@ import {
   webhookVerifier,
 } from "@open-everywhere/core/agent/webhooks/verifier.js";
 import { declaredDeliveryId, eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
-import { runtimeHookCollectVocabulary, runtimeHookSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
-import { webhookProvisioning } from "@open-everywhere/core/agent/webhooks/provisioning.js";
+import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -120,31 +119,17 @@ for (const source of vocabulary) {
 }
 
 {
-  const collectVocabulary = runtimeHookCollectVocabulary();
-  console.log(`  live COLLECT vocabulary: [${collectVocabulary.join(", ")}]`);
-  const refusal = unknownSourceRefusal("definitely-not-a-registered-source", vocabulary, collectVocabulary);
+  const refusal = unknownSourceRefusal("definitely-not-a-registered-source", vocabulary);
   for (const source of vocabulary) ok(refusal.includes(source), `the refusal names the live member "${source}"`);
   ok(/PR|merge/i.test(refusal), "the refusal names the PR path (an 'ask an admin' with no WHAT is a dead end)");
 
-  if (collectVocabulary.length === 0) {
-    ok(
-      refusal.includes("none of those can be set up this way on this deployment"),
-      "with no collectable source the refusal says so ABOUT THIS DEPLOYMENT rather than claiming it is impossible in general",
-    );
-    ok(!/paste in the one they show you/.test(refusal), "…and does not offer an arm that has no members here");
-  } else {
-    for (const source of collectVocabulary) ok(refusal.includes(source), `the refusal names the collectable source "${source}"`);
-    ok(!/can't be set up this way at all/.test(refusal), "🔴 the refusal no longer claims vendor-issued secrets are impossible — this deployment has an arm for some of them");
+  ok(
+    refusal.includes("none of those can be set up this way"),
+    "the refusal states plainly that a vendor-issued secret cannot be set up from chat",
+  );
+  for (const source of vocabulary) {
+    ok(acceptsMintedSecret(webhookVerifier(source)!), `live member "${source}" accepts an OE-MINTED key — which is what makes the refusal's vendor-issued sentence true`);
   }
-
-  for (const source of collectVocabulary) {
-    ok(webhookVerifier(source) !== undefined, `collectable "${source}" has a registered VERIFIER`);
-    ok(eventNormalizer(source) !== undefined, `🔴 collectable "${source}" has a registered NORMALIZER (without one the captured key authenticates deliveries that then cause nothing, forever)`);
-    ok(webhookProvisioning(source)?.acquisition === "collect", `collectable "${source}" positively DECLARES acquisition: "collect" (absence is not a default)`);
-    ok(!acceptsMintedSecret(webhookVerifier(source)!), `collectable "${source}" is vendor-issued — it could never have taken a key we minted`);
-  }
-
-  for (const source of collectVocabulary) ok(!vocabulary.includes(source), `"${source}" is in exactly ONE arm, not both`);
 }
 
 {
