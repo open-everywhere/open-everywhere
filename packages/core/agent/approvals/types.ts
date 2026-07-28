@@ -24,6 +24,7 @@ export type ApproverPolicy = "admin" | "member";
 export interface ActionKind<A = unknown> {
   readonly kind: string;
   readonly policy: ApproverPolicy;
+  readonly beneficiaryClicker?: true;
   summarize(args: A): string[];
   execute(args: A, decidedBy: string): Promise<string>;
 }

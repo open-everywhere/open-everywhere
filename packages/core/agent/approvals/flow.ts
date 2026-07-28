@@ -13,6 +13,7 @@ import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
+import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
@@ -277,6 +278,7 @@ export type ApprovalClickResolution =
   | { readonly outcome: "expired-race" }
   | { readonly outcome: "unregistered-kind" }
   | { readonly outcome: "denied"; readonly row: PendingActionRow }
+  | { readonly outcome: "clicker-denied"; readonly row: PendingActionRow; readonly reason: ClickerFloorRefusal }
   | { readonly outcome: "lost-race" }
   | { readonly outcome: "decided"; readonly row: PendingActionRow; readonly summaryLines: string[]; readonly outcomeLine: string };
 
@@ -286,6 +288,16 @@ export interface ResolveApprovalClickInput {
   readonly decision: ApprovalDecision;
   readonly clickerId: string;
   readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
+  readonly clickContext?: { readonly surfaceKey: string };
+}
+
+async function auditClickerDenial(org: string, row: PendingActionRow, clickerId: string, reason: ClickerFloorRefusal | "not-admin"): Promise<void> {
+  await appendAudit({
+    ...whereFromScope(org, row.scopeKey),
+    principalId: clickerId,
+    action: "approval.denied",
+    detail: { id: row.id, kind: row.kind, reason },
+  }).catch(() => undefined);
 }
 
 export async function resolveApprovalClick(input: ResolveApprovalClickInput): Promise<ApprovalClickResolution> {
@@ -316,7 +328,23 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     return { outcome: "unregistered-kind" };
   }
 
+  if (input.clickContext) {
+    const { surfaceKey } = input.clickContext;
+    if (!clickRoomMatches(row, surfaceKey)) {
+      await auditClickerDenial(input.org, row, input.clickerId, "foreign-room");
+      return { outcome: "clicker-denied", row, reason: "foreign-room" };
+    }
+    if (kindDef.policy === "member") {
+      const verdict = await checkClickerFloor(surfaceKey, { beneficiaryClicker: kindDef.beneficiaryClicker === true });
+      if (!verdict.ok) {
+        await auditClickerDenial(input.org, row, input.clickerId, verdict.reason);
+        return { outcome: "clicker-denied", row, reason: verdict.reason };
+      }
+    }
+  }
+
   if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId) && (await input.platformAdmin?.(row)) !== true) {
+    await auditClickerDenial(input.org, row, input.clickerId, "not-admin");
     return { outcome: "denied", row };
   }
 
@@ -543,7 +571,13 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       return true;
     }
 
-    const res = await resolveApprovalClick({ org, id: parsed.id, decision: parsed.decision, clickerId });
+    const res = await resolveApprovalClick({
+      org,
+      id: parsed.id,
+      decision: parsed.decision,
+      clickerId,
+      ...(teamId ? { clickContext: { surfaceKey: `slack/${teamId}/${channelId}` } } : {}),
+    });
     switch (res.outcome) {
       case "unknown":
         await updateCardText(post, channelId, messageTs, "This approval request is no longer known (it may have already been decided or has aged out).");
@@ -570,6 +604,9 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       }
       case "denied":
         await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> only a domain/org admin can decide this request.`);
+        return true;
+      case "clicker-denied":
+        await postThreadNote(post, channelId, res.row.threadTs ?? messageTs, `<@${clickerId}> ${clickerFloorRefusalNotice(res.reason)}`);
         return true;
       case "decided": {
         await updateCard(post, channelId, messageTs, decidedCardBlocks(res.row, res.summaryLines, res.outcomeLine));

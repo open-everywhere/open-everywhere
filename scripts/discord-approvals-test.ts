@@ -35,6 +35,7 @@ const { postDiscordApprovalCard, parseDiscordComponentClick, discordResponseFor,
   "@open-everywhere/provider-discord/agent/approvals/discord-flow.js"
 );
 const { guildIdFromScopeKey, isGuildAdminViaRest } = await import("@open-everywhere/provider-discord/agent/approvals/discord-admin.js");
+const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   PUBLIC_DISCORD_ROUTE,
   INTERNAL_DISCORD_ROUTE,
@@ -336,6 +337,14 @@ const signedHeaders = (body: string, timestamp: string): Headers =>
   ok((discordResponseFor({ outcome: "unregistered-kind" }) as { type: number }).type === 6, "unregistered-kind → deferred update");
   const unknown = discordResponseFor({ outcome: "unknown" }) as { type: number; data: { flags: number } };
   ok(unknown.type === 4 && unknown.data.flags === 64, "unknown → ephemeral note (type 4, flags 64)");
+
+  const refused = discordResponseFor({ outcome: "clicker-denied", row: row({ id: "p-cf" }), reason: "audience-floor" }) as { type: number; data: { content: string; flags: number } };
+  ok(refused.type === 4 && refused.data.flags === 64, "clicker-denied → ephemeral note, card untouched (same UX as denied; the row stays pending)");
+  ok(refused.data.content === clickerFloorRefusalNotice("audience-floor"), "clicker-denied renders the ONE shared refusal copy (core approvals/clicker-floor.ts) — Slack and Discord cannot drift");
+  ok(
+    (discordResponseFor({ outcome: "clicker-denied", row: row({ id: "p-cf" }), reason: "foreign-room" }) as { data: { content: string } }).data.content !== refused.data.content,
+    "clicker-denied renders per-REASON copy, not one generic refusal",
+  );
 }
 
 type Resp = { type: number; data?: { content?: string; components?: unknown[]; flags?: number } };

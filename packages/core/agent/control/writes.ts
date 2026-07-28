@@ -219,6 +219,8 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             return errorResult(`decide_pending_action: pending action "${a.id}" has no registered ActionKind ("${row.kind}") — cannot decide.`);
           case "denied":
             return errorResult(`decide_pending_action: not authorized to decide "${a.id}".`);
+          case "clicker-denied":
+            return errorResult(`decide_pending_action: the click for "${a.id}" was refused (${res.reason}).`);
           case "not-pending":
           case "lost-race":
             return jsonResult({ ok: true, outcome: "already-decided", org: a.org, id: a.id });

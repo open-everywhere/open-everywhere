@@ -119,6 +119,7 @@ export interface WebhookCreateArgs {
 const webhookCreate: ActionKind<WebhookCreateArgs> = {
   kind: "webhook.create",
   policy: "member",
+  beneficiaryClicker: true,
   summarize(args) {
     const statusOnApproval = hookAcquisition({ provisioning: args.provisioning }) === "mint" ? "active" : "pending-secret";
     return [
@@ -264,6 +265,7 @@ export interface WebhookRotateArgs {
 const webhookRotate: ActionKind<WebhookRotateArgs> = {
   kind: "webhook.rotate",
   policy: "member",
+  beneficiaryClicker: true,
   summarize(args) {
     const refusal = rotateAcquisitionRefusal(hookAcquisition({ provisioning: args.provisioning }), args.source, args.scheme ?? args.source);
     if (refusal) {

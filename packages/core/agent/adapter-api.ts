@@ -248,6 +248,8 @@ export {
   postDiscordDecisionNotice,
 } from "./approvals/flow.js";
 export type { CardPoster, ApprovalClickResolution, DecisionWakeDeps } from "./approvals/flow.js";
+export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
+export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
 export type { ApprovalOutcome } from "./approvals/decision-wake.js";
 
 export { registerNativeAdminCheck } from "./access/native-admin.js";

@@ -302,7 +302,7 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const post = async () => ({ ok: true });
   const handled = await handleApprovalPayload(payloadFor("oe_approval:approve:p-member", { user: "U_RANDOM_MEMBER" }), { post });
   ok(handled === true, "handleApprovalPayload: member-policy click handled");
-  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "handleApprovalPayload: a member-policy kind executes for ANY clicker, no admin check");
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "handleApprovalPayload: a member-policy kind runs NO admin-standing check on the clicker (this payload carries no team.id ⇒ no clickContext ⇒ the OPE-185 gate is inert)");
   ok((await store.getPendingAction("default", "p-member"))?.status === "approved", "handleApprovalPayload: member-policy approval decides the row");
 }
 
@@ -318,6 +318,8 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   ok(handled === true, "handleApprovalPayload: an admin-policy click by a non-admin still returns true");
   ok((await store.getPendingAction("default", "p-admin-denied"))?.status === "pending", "handleApprovalPayload: a denied admin click leaves the row PENDING (not consumed)");
   ok(calls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("only a domain/org admin")), "handleApprovalPayload: a denial posts an explanatory note");
+  const adminDenied = (await readAudit({ org: "default", action: "approval.denied" })).find((e) => e.detail?.id === "p-admin-denied");
+  ok(adminDenied?.detail?.reason === "not-admin" && adminDenied?.principalId === "U_RANDOM_MEMBER", "a refused ADMIN-tier click audits approval.denied (reason \"not-admin\") — it audited nothing at all before OPE-185");
 
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN") === true, "clickerMayDecide: org admin covers a domain-less scope");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
@@ -774,4 +776,156 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   }
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback)\n`);
+{
+  const { registerGovernanceMemberSupplier, _resetAudienceFloorCacheForTest, _resetGovernanceMemberSupplierForTest } = await import("../agent/access/audience-floor.js");
+  const { classifyClickerFloor, clickRoomMatches, clickerFloorRefusalNotice } = await import("../agent/approvals/clicker-floor.js");
+  const store = getOperationalStore();
+
+  const benefitExecuted: string[] = [];
+  registerActionKind({
+    kind: "test.beneficiary",
+    policy: "member",
+    beneficiaryClicker: true,
+    summarize: () => ["a beneficiary member-policy test action"],
+    async execute(_args: unknown, decidedBy: string) {
+      benefitExecuted.push(decidedBy);
+      return `executed by ${decidedBy}`;
+    },
+  });
+  const adminExecuted: string[] = [];
+  registerActionKind({
+    kind: "test.admin",
+    policy: "admin",
+    summarize: () => ["an admin-policy test action"],
+    async execute(_args: unknown, decidedBy: string) {
+      adminExecuted.push(decidedBy);
+      return `executed by ${decidedBy}`;
+    },
+  });
+
+  const roster = (over: Partial<{ resolved: boolean; hasGuest: boolean; isPrivate: boolean }> = {}) => ({
+    humanMemberIds: ["U1"],
+    resolved: true,
+    isPrivate: true,
+    hasGuest: false,
+    ...over,
+  });
+  ok(
+    classifyClickerFloor({ floor: "guest", roster: roster({ hasGuest: true }), beneficiaryClicker: false }).ok === false,
+    "classifyClickerFloor: an OBSERVED guest floor refuses",
+  );
+  ok(
+    classifyClickerFloor({ floor: "guest", roster: roster({ resolved: false }), beneficiaryClicker: false }).ok === true,
+    "classifyClickerFloor: an UNOBSERVABLE roster (floor \"guest\" by fail-closed default) is INERT, not a refusal — the anti-outage pin",
+  );
+  ok(classifyClickerFloor({ floor: "member", roster: roster(), beneficiaryClicker: false }).ok === true, "classifyClickerFloor: a resolved non-guest room allows");
+  const unattested = classifyClickerFloor({ floor: "guest", roster: roster({ resolved: false }), beneficiaryClicker: true });
+  ok(unattested.ok === false && unattested.reason === "unattested-room", "classifyClickerFloor: leg B — a BENEFICIARY kind refuses on an unattested roster the witness arm allows");
+  ok(classifyClickerFloor({ floor: "member", roster: roster(), beneficiaryClicker: true }).ok === true, "classifyClickerFloor: leg B — a beneficiary kind allows once the roster is positively resolved");
+  const guestBeneficiary = classifyClickerFloor({ floor: "guest", roster: roster({ hasGuest: true }), beneficiaryClicker: true });
+  ok(guestBeneficiary.ok === false && guestBeneficiary.reason === "audience-floor", "classifyClickerFloor: an observed guest is reported as the stronger tier-wide reason even on a beneficiary kind");
+
+  ok(clickRoomMatches(row({ channelId: "C_A" }), "slack/T1/C_A") === true, "clickRoomMatches: a click in the card's own room matches");
+  ok(clickRoomMatches(row({ channelId: "C_A" }), "slack/T1/C_B") === false, "clickRoomMatches: a click from another room does not");
+  ok(clickRoomMatches(row({ channelId: "C_A" }), "slack/T99/C_A") === true, "clickRoomMatches: only the CHANNEL segment is compared — a venue-routed card's config-authored workspace segment must never cause a refusal");
+  ok(clickRoomMatches(row({ channelId: "C_A" }), "not-a-surface-key") === true, "clickRoomMatches: a key with no channel segment is INERT, never a refusal");
+
+  const notices = (["audience-floor", "unattested-room", "foreign-room"] as const).map((r) => clickerFloorRefusalNotice(r));
+  ok(new Set(notices).size === 3, "clickerFloorRefusalNotice: each refusal reason gets its own copy");
+  ok(notices.every((t) => t.toLowerCase().includes("still pending")), "clickerFloorRefusalNotice: every refusal says the request is STILL PENDING (the card is not consumed)");
+
+  _resetAudienceFloorCacheForTest();
+  const ROSTERS: Record<string, ReturnType<typeof roster>> = {
+    "slack/T1/C_GUEST": roster({ hasGuest: true }),
+    "slack/T1/C_INTERNAL": roster(),
+  };
+  let supplierCalls = 0;
+  registerGovernanceMemberSupplier(async (key: string) => {
+    supplierCalls++;
+    return ROSTERS[key];
+  });
+
+  const post = async () => ({ ok: true });
+  const clickPayload = (actionId: string, opts: { user?: string; channel: string; team?: string | null }) => ({
+    actions: [{ action_id: actionId, value: "default" }],
+    user: { id: opts.user ?? "U_RANDOM_MEMBER" },
+    channel: { id: opts.channel },
+    message: { ts: "111.222" },
+    ...(opts.team === null ? {} : { team: { id: opts.team ?? "T1" } }),
+  });
+  const deniedAudit = async (id: string) => (await readAudit({ org: "default", action: "approval.denied" })).find((e) => e.detail?.id === id);
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-guest", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_GUEST", postedTo: null }));
+  const guestCalls: { method: string; body: string }[] = [];
+  const handledGuest = await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-guest", { channel: "C_GUEST" }), {
+    post: async (method: string, body: string) => {
+      guestCalls.push({ method, body });
+      return { ok: true };
+    },
+  });
+  ok(handledGuest === true, "clicker gate: a refused click still returns true (the handler owns it; Slack always gets its 200)");
+  ok(memberExecuted.length === 0, "clicker gate: an OBSERVED-guest room does NOT execute the member-tier kind");
+  ok((await store.getPendingAction("default", "p-cf-guest"))?.status === "pending", "clicker gate: a refused click leaves the row PENDING — the same card can still be decided from an internal room");
+  ok((await deniedAudit("p-cf-guest"))?.detail?.reason === "audience-floor", "clicker gate: the refusal writes ONE approval.denied audit row naming the reason");
+  ok(guestCalls.some((c) => c.method === "chat.postMessage" && (bodyField(c.body, "text") ?? "").includes("still pending")), "clicker gate: the clicker gets the one-renderer refusal note in-thread");
+  ok(guestCalls.every((c) => c.method !== "chat.update"), "clicker gate: the card itself is left untouched (nothing was decided)");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-unknown", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_UNKNOWN", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-unknown", { channel: "C_UNKNOWN" }), { post });
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "clicker gate: an UNRESOLVED roster EXECUTES — \"we could not ask\" must never become a silent product outage");
+  ok((await store.getPendingAction("default", "p-cf-unknown"))?.status === "approved", "clicker gate: the unresolved-roster click decides the row normally");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-internal", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-internal", { channel: "C_INTERNAL" }), { post });
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "clicker gate: a resolved, guest-free room executes");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-nocontext", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_GUEST", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-nocontext", { channel: "C_GUEST", team: null }), { post });
+  ok(memberExecuted.includes("U_RANDOM_MEMBER"), "clicker gate: NO clickContext executes even with a GUEST roster registered — the headless control plane must keep working");
+
+  ok((await store.getPendingAction("default", "p-cf-guest"))?.postedTo === null, "clicker gate: the refused row had postedTo === null and the gate handled it without throwing (legacy rows stay clickable)");
+
+  adminExecuted.length = 0;
+  await store.addPendingAction(row({ id: "p-cf-admin", kind: "test.admin", argsJson: "{}", domain: null, channelId: "C_GUEST", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-admin", { channel: "C_GUEST", user: "U_ORG_ADMIN" }), { post });
+  ok(
+    adminExecuted.includes("U_ORG_ADMIN"),
+    "clicker gate: an ADMIN-tier kind EXECUTES under an observed-guest roster — the audience-floor legs are member-tier only; admin standing is already checked, and the residual GUEST-AUDIENCE exposure is a disclosure question this ticket deliberately does not answer",
+  );
+
+  benefitExecuted.length = 0;
+  await store.addPendingAction(row({ id: "p-cf-benefit-unknown", kind: "test.beneficiary", argsJson: "{}", domain: null, channelId: "C_UNKNOWN", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-benefit-unknown", { channel: "C_UNKNOWN" }), { post });
+  ok(benefitExecuted.length === 0, "clicker gate leg B: a BENEFICIARY kind REFUSES on the very roster the witness arm executes on (p-cf-unknown, same channel)");
+  ok((await store.getPendingAction("default", "p-cf-benefit-unknown"))?.status === "pending", "clicker gate leg B: the beneficiary refusal leaves the row pending");
+  ok((await deniedAudit("p-cf-benefit-unknown"))?.detail?.reason === "unattested-room", "clicker gate leg B: the refusal audits reason \"unattested-room\"");
+
+  await store.addPendingAction(row({ id: "p-cf-benefit-ok", kind: "test.beneficiary", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-benefit-ok", { channel: "C_INTERNAL" }), { post });
+  ok(benefitExecuted.includes("U_RANDOM_MEMBER"), "clicker gate leg B: a beneficiary kind executes in an ATTESTED room");
+
+  ok(actionKind("webhook.create")?.beneficiaryClicker === true && actionKind("webhook.rotate")?.beneficiaryClicker === true, "clicker gate leg B: webhook.create/webhook.rotate carry beneficiaryClicker (their execute reveals a live signing secret to the DECIDER)");
+  ok(actionKind("webhook.revoke")?.beneficiaryClicker === undefined && actionKind("pr.open")?.beneficiaryClicker === undefined, "clicker gate leg B: witness kinds (webhook.revoke, pr.open) do NOT carry it — narrowing and attesting hand the clicker nothing");
+
+  memberExecuted = [];
+  await store.addPendingAction(row({ id: "p-cf-foreign", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-foreign", { channel: "C_ELSEWHERE" }), { post });
+  ok(memberExecuted.length === 0 && (await store.getPendingAction("default", "p-cf-foreign"))?.status === "pending", "clicker gate leg C: a click from a room that isn't the card's does not decide the row");
+  ok((await deniedAudit("p-cf-foreign"))?.detail?.reason === "foreign-room", "clicker gate leg C: the refusal audits reason \"foreign-room\"");
+
+  adminExecuted.length = 0;
+  await store.addPendingAction(row({ id: "p-cf-foreign-admin", kind: "test.admin", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));
+  await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-foreign-admin", { channel: "C_ELSEWHERE", user: "U_ORG_ADMIN" }), { post });
+  ok(adminExecuted.length === 0, "clicker gate leg C: the room binding is TIER-INDEPENDENT — it is a claim about the click's provenance, not about standing");
+
+  ok(supplierCalls > 0, "clicker gate: the member supplier was actually consulted (the wired legs are not silently short-circuiting)");
+
+  _resetGovernanceMemberSupplierForTest();
+  _resetAudienceFloorCacheForTest();
+}
+
+console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate)\n`);

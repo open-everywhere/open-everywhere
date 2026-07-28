@@ -3,6 +3,7 @@ import {
   deliverDecisionFeedback,
   discordDecisionWakeTarget,
   postDiscordDecisionNotice,
+  clickerFloorRefusalNotice,
   type ApprovalClickResolution,
   type DecisionWakeDeps,
   type ApprovalOutcome,
@@ -123,6 +124,8 @@ export function discordResponseFor(res: ApprovalClickResolution): DiscordInterac
     }
     case "denied":
       return ephemeral("Only a domain/org admin — or a server administrator, for this server's own scopes — can decide this request.");
+    case "clicker-denied":
+      return ephemeral(clickerFloorRefusalNotice(res.reason));
     case "decided": {
       const card = decidedDiscordCard(res.row, res.summaryLines, res.outcomeLine);
       return { type: RESPONSE_UPDATE_MESSAGE, data: { content: card.content, components: card.components } };
