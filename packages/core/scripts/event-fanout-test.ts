@@ -286,16 +286,33 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
 }
 
 {
-  const drifted = routine({ id: "r-drift", trigger: { kind: "event", source: "github", filter: { all: [{ key: "branch", in: ["main"] }] } } });
-  const h = harness([drifted]);
+  const broken = routine({ id: "r-broken", trigger: { kind: "event", source: "github", jq: '.scope.container == "me/proj" and' } });
+  const h = harness([broken]);
   await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
-  ok(h.fired.length === 0, "filter drift: a stored filter naming an unknown field does NOT fire");
-  ok(h.audited.length === 1 && h.audited[0]!.action === "routine.skip", "filter drift: the skip is audited, not silent");
-  ok(h.audited[0]!.detail?.["reason"] === "filter_invalid", "filter drift: the reason distinguishes config drift from a genuine non-match");
+  ok(h.fired.length === 0, "filter error: a filter that will not parse does NOT fire — fail-closed, never fail-open");
+  ok(h.audited.length === 1 && h.audited[0]!.action === "routine.skip", "filter error: the skip is audited, not silent");
+  ok(h.audited[0]!.detail?.["reason"] === "filter_invalid", "filter error: the reason distinguishes a broken filter from a genuine non-match");
+  ok(String(h.audited[0]!.detail?.["why"] ?? "").length > 0, "filter error: the row carries jq's own message");
   ok(
-    String(h.audited[0]!.detail?.["why"] ?? "").includes("branch"),
-    "filter drift: the row names the offending key, so the operator can fix the routine",
+    String(h.audited[0]!.detail?.["filter"] ?? "").includes(".scope.container"),
+    "filter error: …AND the expression that produced it — without it the reader has a message with nothing to attach it to",
   );
+}
+
+{
+  const nonBool = routine({ id: "r-nonbool", trigger: { kind: "event", source: "github", jq: ".fields.action" } });
+  const h = harness([nonBool]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+  ok(h.fired.length === 0, "filter error: a non-boolean result is NOT coerced to truthy — it does not fire");
+  ok(h.audited[0]?.detail?.["reason"] === "filter_invalid", "filter error: …and it is audited the same way");
+}
+
+{
+  const undeclared = routine({ id: "r-undeclared", trigger: { kind: "event", source: "github", filter: { all: [{ key: "branch", in: ["main"] }] } } });
+  const h = harness([undeclared]);
+  await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+  ok(h.fired.length === 0, "undeclared field: a filter on a field the source does not emit does NOT fire");
+  ok(h.audited.length === 0, "undeclared field: …and it is a CLEAN non-match, not an audited error — there is no key vocabulary left to drift against");
 }
 
 {

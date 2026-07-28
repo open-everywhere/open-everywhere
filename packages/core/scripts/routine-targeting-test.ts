@@ -262,7 +262,7 @@ const ORG = "default";
     normalize: () => null,
   } as never);
   await refuses(
-    () => createTool.execute({ prompt: "p", trigger: { kind: "event", source: "fake", under: [{ kind: "container", id: "me/proj" }] } } as never, slackCtx(dmAttrs)),
+    () => createTool.execute({ prompt: "p", trigger: { kind: "event", source: "fake", jq: '.scope.container == "me/proj"' } } as never, slackCtx(dmAttrs)),
     /standing schedule from a DM/,
     "dm: an EVENT subscription in a DM is refused too — no clock, but every bit as standing",
   );

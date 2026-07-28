@@ -8,6 +8,7 @@ export type RoutineTrigger =
   | {
       readonly kind: "event";
       readonly source: string;
+      readonly jq?: string;
       readonly match?: Readonly<Record<string, string>>;
       readonly filter?: SubscriptionFilter;
     };
@@ -158,6 +159,6 @@ function describeTriggerCore(t: RoutineTrigger, silent: boolean): string {
     case "once":
       return `once at ${t.at} (fires once, then disables)`;
     case "event":
-      return describeFilter(t.source, t.filter, t.match);
+      return describeFilter(t.source, t);
   }
 }

@@ -16,6 +16,14 @@ function throws(fn: () => unknown): string | null {
     return err instanceof Error ? err.message : String(err);
   }
 }
+async function throwsAsync(fn: () => Promise<unknown>): Promise<string | null> {
+  try {
+    await fn();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 const {
   SCOPE_KINDS,
@@ -32,9 +40,10 @@ type EventNormalizer = import("../agent/routines/event-model.js").EventNormalize
 type SubscriptionFilter = import("../agent/routines/event-model.js").SubscriptionFilter;
 type TriggerDelivery = import("../agent/routines/event-model.js").TriggerDelivery;
 
-const { evaluateFilter, evaluateSubscription, storedFilter, validateSubscription } = await import("../agent/routines/event-match.js");
+const { evaluateSubscription, filterToJq, narrowsScope, storedJq, validateSubscription } = await import("../agent/routines/event-match.js");
+const { evaluateJqFilter, filterDocument, probeFilter, FILTER_MAX_LENGTH } = await import("../agent/routines/jq-filter.js");
 const { liftGithubEvent, githubEventNormalizer } = await import("../agent/routines/github-normalizer.js");
-const { storedTrigger, eventFilterFrom } = await import("../agent/tools/create_routine.js");
+const { storedTrigger } = await import("../agent/tools/create_routine.js");
 const { describeTrigger } = await import("../agent/routines/routine.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 
@@ -149,89 +158,145 @@ ok(normalizeDelivery({ ...ghDelivery(PR_PAYLOAD), body: "not json" }) === null, 
   ok(lifted.fields["title"]!.length === 200, "fields: an over-long value is truncated to the cap");
 }
 
-ok(evaluateFilter(push, { all: [{ key: "action", in: ["opened"] }] }) === false, "absent field: every `in` is FALSE (a push has no action)");
-ok(evaluateFilter(push, { all: [{ key: "action", notIn: ["opened"] }] }) === true, "absent field: every `notIn` is TRUE — which is what makes notIn usable as an actor exclusion");
-ok(evaluateFilter(pr, { all: [{ key: "action", in: ["opened", "reopened"] }] }) === true, "`in` matches any value in the set");
-ok(evaluateFilter(pr, { all: [{ key: "sender", notIn: ["alice"] }] }) === false, "`notIn` excludes the value it names");
-ok(evaluateFilter(pr, undefined) === true, "no filter evaluates to a match at FIRE time (stored legacy rows keep their meaning)");
-
-ok(evaluateFilter(pr, { under: [{ kind: "container", id: "me/proj" }] }) === true, "`under` matches the delivery's container");
-ok(evaluateFilter(pr, { under: [{ kind: "container", id: "other/repo" }] }) === false, "`under` naming another container does not match");
-ok(evaluateFilter(pr, { under: [{ kind: "tenant", id: "me" }] }) === true, "`under` on an OUTER step matches — a path makes containment structural");
-ok(
-  evaluateFilter(pr, { under: [{ kind: "container", id: "me/proj" }], all: [{ key: "action", in: ["closed"] }] }) === false,
-  "everything is AND-ed: one failing clause fails the filter",
-);
-ok(evaluateFilter(push, { under: [{ kind: "entity", id: "1" }] }) === false, "`under` on a level the delivery never proved does not match (never a wildcard)");
-
+const ev = (e: NormalizedEvent, expression: string) => evaluateJqFilter(expression, filterDocument(e));
 {
-  const legacy = { kind: "event", source: "github", match: { event: "pull_request", action: "opened" } } as const;
-  const coerced = storedFilter(legacy)!;
-  ok(coerced.all!.length === 2 && "in" in coerced.all![0]!, "legacy: `match` coerces to single-value `in` clauses at READ time (no row migration)");
-  ok(evaluateFilter(pr, coerced) === true, "legacy: the coerced filter matches exactly what the old exact-equality matcher matched");
-  ok(evaluateFilter(pr, storedFilter({ kind: "event", source: "github", match: { action: "closed" } })!) === false, "legacy: a mismatching legacy filter still does not match");
-  ok(storedFilter({ kind: "event", source: "github" }) === undefined, "legacy: a filter-less stored row is 'no filter', not an empty filter");
+  ok("match" in (await ev(pr, '.event == "pull_request"')), "jq: a boolean-true predicate is a MATCH");
+  const t = await ev(pr, '.event == "pull_request"');
+  ok("match" in t && t.match === true, "jq: …and it is true, not merely well-formed");
+  const fa = await ev(pr, '.event == "push"');
+  ok("match" in fa && fa.match === false, "jq: a boolean-false predicate is a clean NO MATCH, never an error");
+
+  ok("error" in (await ev(pr, ".event")), "jq: a STRING result is an error, never truthiness");
+  ok("error" in (await ev(pr, ".fields.nope")), "jq: a NULL result is an error, not a silent false");
+  ok("error" in (await ev(pr, "1")), "jq: a NUMBER result is an error");
+  ok("error" in (await ev(pr, "empty")), "jq: NO output is an error — a filter must produce exactly one boolean");
+  ok("error" in (await ev(pr, "(true, false)")), "jq: MORE THAN ONE output is an error, not first-wins");
+  const parse = await ev(pr, ".event ==");
+  ok("error" in parse && parse.error.length > 0, "jq: a PARSE ERROR is an error carrying a reason, and never a match");
+  ok("error" in (await ev(pr, "input_filename")), "jq: an unknown function is an error (input/input_filename/halt_error are not implemented — a match predicate has no business with I/O)");
 }
 
 {
-  const drifted = eventRoutine({ kind: "event", source: "github", filter: { all: [{ key: "branch", in: ["main"] }] } });
-  const verdict = evaluateSubscription(drifted, pr);
-  ok("invalid" in verdict && verdict.match === false, "fire-time: a filter naming a key the source no longer declares is INVALID, not a match");
-  ok("invalid" in verdict && verdict.invalid.includes("branch"), "fire-time: the invalid verdict names the offending key");
+  const inj = await ev(pr, '.event == "$(echo pwned)"');
+  ok("match" in inj && inj.match === false, "sandbox: `$(…)` in a filter is a literal string, not command substitution");
+  const tick = await ev(pr, '.event == "`echo pwned`"');
+  ok("match" in tick && tick.match === false, "sandbox: backticks likewise");
+  process.env["OE_FILTER_PROBE_SECRET"] = "canary";
+  const envLeak = await ev(pr, '(env | has("OE_FILTER_PROBE_SECRET")) == false and ($ENV.OE_FILTER_PROBE_SECRET == null)');
+  ok("match" in envLeak && envLeak.match === true, "sandbox: neither `env` nor `$ENV` can see a variable this process really has — the isolation is by construction, not by a scrub");
+  delete process.env["OE_FILTER_PROBE_SECRET"];
+  ok("error" in (await ev(pr, "$x")), "sandbox: an undefined variable yields null — a real fidelity gap (jq itself errors) that the boolean contract turns into an ERROR, so it fails toward NO MATCH either way");
 
-  const unknownSource = eventRoutine({ kind: "event", source: "gitlab", filter: { all: [{ key: "x", in: ["y"] }] } });
-  ok(evaluateSubscription(unknownSource, pr).match === false, "fire-time: a routine on a different source never matches");
-  ok(evaluateSubscription(eventRoutine({ kind: "interval", everyMinutes: 5 }), pr).match === false, "fire-time: a clock routine never matches an event");
-  ok(
-    evaluateSubscription(eventRoutine({ kind: "event", source: "github", filter: { under: [{ kind: "group", id: "g" }] } }), pr).match === false,
-    "fire-time: an `under` on a kind the source cannot prove is invalid, never a silent all-match",
-  );
+  const bomb = await ev(pr, "[limit(100000000; repeat(1))] | length > 0");
+  ok("error" in bomb && /iteration/i.test(bomb.error), "bound: an unbounded jq construct hits the ITERATION limit and returns an error — it never hangs and never matches");
 }
 
 {
-  const good: SubscriptionFilter = { under: [{ kind: "container", id: "me/proj" }] };
-  ok(throws(() => validateSubscription("github", good)) === null, "create: a well-formed subscription passes");
+  const inAbsent = await ev(push, '(.fields["action"] | IN("opened"))');
+  ok("match" in inAbsent && inAbsent.match === false, "absent field: every `in` is FALSE (a push has no action)");
+  const notInAbsent = await ev(push, '(.fields["action"] | IN("opened") | not)');
+  ok("match" in notInAbsent && notInAbsent.match === true, "absent field: every `notIn` is TRUE — which is what makes notIn usable as an actor exclusion");
+  const inSet = await ev(pr, '(.fields["action"] | IN("opened", "reopened"))');
+  ok("match" in inSet && inSet.match === true, "`in` matches any value in the set");
+  const notInHit = await ev(pr, '(.fields["sender"] | IN("alice") | not)');
+  ok("match" in notInHit && notInHit.match === false, "`notIn` excludes the value it names");
+}
+
+{
+  const here = await ev(pr, '.scope.container == "me/proj"');
+  ok("match" in here && here.match === true, "scope: an equality on the proved container matches");
+  const other = await ev(pr, '.scope.container == "other/repo"');
+  ok("match" in other && other.match === false, "scope: naming another container does not match");
+  const outer = await ev(pr, '.scope.tenant == "me"');
+  ok("match" in outer && outer.match === true, "scope: an OUTER step matches — a path makes containment structural");
+  const anded = await ev(pr, '.scope.container == "me/proj" and (.fields["action"] | IN("closed"))');
+  ok("match" in anded && anded.match === false, "scope: AND still ANDs — one failing conjunct fails the filter");
+  const never = await ev(push, '.scope.entity == "1"');
+  ok("match" in never && never.match === false, "scope: a level the delivery never proved is null, so an equality on it is false — never a wildcard");
+
+  const documented = await ev(pr, '.scope.container == "me/proj" and (.fields.action | IN("opened","reopened"))');
+  ok("match" in documented && documented.match === true, "docs: the exact expression shape the manual prints as its worked example evaluates true on a real PR delivery");
+
+  const or = await ev(push, '.scope.container == "me/proj" and ((.fields["action"] | IN("opened")) or (.fields["sender"] | IN("bob")))');
+  ok("match" in or && or.match === true, "jq subsumes any/all: an OR across clauses is one routine, not two");
+
+  const noSummary = await ev(pr, ".summary == null and .actor == null and .pointer == null");
+  ok("match" in noSummary && noSummary.match === true, "document: summary / actor / pointer are NOT exposed to filters — prose and identity stay out of the match surface");
+  const redaction = await ev(pr, ".redacted == false and (.fields | type) == \"object\" and (.scopePath | length) > 0");
+  ok("match" in redaction && redaction.match === true, "document: a filter still sees fields + scope, which is what keeps a trigger-only (redacted) delivery matchable");
+}
+
+{
+  const legacy = { match: { event: "pull_request", action: "opened" } } as const;
+  const compiled = storedJq(legacy)!;
+  ok(compiled === '(.fields["event"] | IN("pull_request")) and (.fields["action"] | IN("opened"))', "legacy: `match` compiles to single-value IN clauses at READ time (no row migration)");
+  const hit = await ev(pr, compiled);
+  ok("match" in hit && hit.match === true, "legacy: the compiled filter matches exactly what the old exact-equality matcher matched");
+  const missCompiled = storedJq({ match: { action: "closed" } })!;
+  const miss = await ev(pr, missCompiled);
+  ok("match" in miss && miss.match === false, "legacy: a mismatching legacy filter still does not match");
+  ok(storedJq({}) === undefined, "legacy: a filter-less stored row is 'no filter', not an empty filter");
+
+  ok(filterToJq({ under: [{ kind: "container", id: "me/proj" }] }) === '(.scope.container == "me/proj")', "legacy: an `under` selector compiles to a plain scope equality");
+  ok(filterToJq({ all: [{ key: "action", notIn: ["opened"] }] }) === '(.fields["action"] | IN("opened") | not)', "legacy: `notIn` compiles to IN | not — which is where the absent-field reading comes from for free");
+  ok(filterToJq({}) === "true", "legacy: an EMPTY clause shape compiles to `true`, preserving its all-events meaning");
+  const both = await ev(pr, filterToJq({ under: [{ kind: "container", id: "me/proj" }], all: [{ key: "action", in: ["opened"] }] }));
+  ok("match" in both && both.match === true, "legacy: under + all compile to one AND-ed expression that still matches");
+  ok(filterToJq({ all: [{ key: 'a"b', in: ['x") or (true'] }] }) === '(.fields["a\\"b"] | IN("x\\") or (true"))', "legacy: keys and values are JSON-quoted — a stored value carrying jq syntax stays a string literal");
+  const quoted = await ev(pr, filterToJq({ all: [{ key: "action", in: ['x") or (true'] }] }));
+  ok("match" in quoted && quoted.match === false, "legacy: …and it evaluates as data — the smuggled `or (true)` does not make it match");
+}
+
+{
+  const broken = eventRoutine({ kind: "event", source: "github", jq: ".fields.action ==" });
+  const verdict = await evaluateSubscription(broken, pr);
+  ok("invalid" in verdict && verdict.match === false, "fire-time: a filter that will not parse is INVALID, never a match");
+  ok("invalid" in verdict && verdict.invalid.length > 0, "fire-time: the invalid verdict carries a reason to put in the audit row");
+
+  const nonBool = await evaluateSubscription(eventRoutine({ kind: "event", source: "github", jq: ".fields.action" }), pr);
+  ok("invalid" in nonBool && nonBool.match === false, "fire-time: a filter yielding a STRING is invalid, not a truthy match");
+
+  const bombed = await evaluateSubscription(eventRoutine({ kind: "event", source: "github", jq: "[limit(100000000; repeat(1))] | length > 0" }), pr);
+  ok("invalid" in bombed && bombed.match === false, "fire-time: an expression that blows the iteration bound is invalid — bounded, not hung, not fired");
+
+  const unknownSource = eventRoutine({ kind: "event", source: "gitlab", jq: "true" });
+  ok((await evaluateSubscription(unknownSource, pr)).match === false, "fire-time: a routine on a different source never matches");
+  ok((await evaluateSubscription(eventRoutine({ kind: "interval", everyMinutes: 5 }), pr)).match === false, "fire-time: a clock routine never matches an event");
+
+  const legacyRow = await evaluateSubscription(eventRoutine({ kind: "event", source: "github", filter: { under: [{ kind: "container", id: "me/proj" }] } }), pr);
+  ok(legacyRow.match === true, "fire-time: a stored OPE-163 clause row still matches, via the read-time compiler");
+}
+
+{
+  const good = '.scope.container == "me/proj"';
+  ok(throws(() => validateSubscription("github", good)) === null, "create: a well-formed subscription passes the static gate");
+  ok((await throwsAsync(() => probeFilter(good, "github", ["event", "action", "repo", "sender"]))) === null, "create: …and the compile probe too");
 
   const unknown = throws(() => validateSubscription("gitlab", good));
   ok(unknown !== null && unknown.includes("github"), "create: an UNKNOWN SOURCE is refused, naming the known set — this is what kills the typo'd-source silent-no-op class");
 
-  const badKey = throws(() => validateSubscription("github", { under: good.under, all: [{ key: "branch", in: ["main"] }] }));
-  ok(badKey !== null && badKey.includes("event, action, repo, sender"), "create: an unknown field is refused, naming the filterable set");
+  const badSyntax = await throwsAsync(() => probeFilter(".fields.action ==", "github", ["action"]));
+  ok(badSyntax !== null && badSyntax.includes("github"), "create: an expression that will not PARSE is refused at authoring time, naming the source");
+  ok((await throwsAsync(() => probeFilter(".fields.action", "github", ["action"]))) !== null, "create: an expression that yields a STRING is refused — it could never fire");
+  ok((await throwsAsync(() => probeFilter("input_filename", "github", ["action"]))) !== null, "create: an unknown function is refused");
+  ok((await throwsAsync(() => probeFilter("(true, false)", "github", ["action"]))) !== null, "create: an expression yielding two values is refused");
+  ok((await throwsAsync(() => probeFilter("[limit(100000000; repeat(1))] | length > 0", "github", ["action"]))) !== null, "create: an expression that blows the iteration bound is refused BEFORE it is ever armed");
 
-  const badKind = throws(() => validateSubscription("github", { under: [{ kind: "group", id: "g" }] }));
-  ok(badKind !== null && badKind.includes("group"), "create: an `under` naming a kind this source never proves is refused — it could only ever match nothing");
-
-  ok(throws(() => validateSubscription("github", { under: good.under, all: [{ key: "action", in: [] }] })) !== null, "create: an empty value list is refused");
-  ok(
-    throws(() => validateSubscription("github", { under: good.under, all: [{ key: "action", in: ["a"], notIn: ["b"] } as never] })) !== null,
-    "create: a clause carrying BOTH in and notIn is refused rather than given a made-up precedence",
-  );
-  ok(throws(() => validateSubscription("github", { under: good.under, all: [{ key: "action" } as never] })) !== null, "create: a clause carrying NEITHER in nor notIn is refused");
-  ok(
-    throws(() => validateSubscription("github", { under: [{ kind: "container", id: "a" }, { kind: "container", id: "b" }] })) !== null,
-    "create: two `under` selectors on the same kind are refused (a scope path holds at most one step per kind)",
-  );
-  ok(
-    throws(() => validateSubscription("github", { under: good.under, all: [{ key: "action", in: Array.from({ length: 21 }, (_, i) => String(i)) }] })) !== null,
-    "create: an over-long value list is refused (the evaluator's cost bound is a contract, not an accident)",
-  );
-  ok(
-    throws(() => validateSubscription("github", { under: good.under, all: Array.from({ length: 9 }, () => ({ key: "action", in: ["x"] })) })) !== null,
-    "create: more than 8 clauses is refused",
-  );
+  ok(throws(() => validateSubscription("github", "")) !== null, "create: an empty expression is refused");
+  ok(throws(() => validateSubscription("github", "x".repeat(FILTER_MAX_LENGTH + 1))) !== null, "create: an over-long expression is refused — past that it is not a predicate a human can check on a card");
 }
 
 {
   const naked = throws(() => validateSubscription("github", undefined));
   ok(naked !== null && naked.includes("narrow"), "narrowing: a filter-less subscription is REFUSED at create — 'every event in the tenant' has to be spelled out");
-  ok(throws(() => validateSubscription("github", { all: [{ key: "action", in: ["opened"] }] })) !== null, "narrowing: narrowing only by a NON-scope field is not narrowing");
-  ok(throws(() => validateSubscription("github", { all: [{ key: "repo", in: ["me/proj"] }] })) === null, "narrowing: an `in` on a SCOPE key satisfies the rule");
-  ok(throws(() => validateSubscription("github", { under: [{ kind: "container", id: "me/proj" }] })) === null, "narrowing: an `under` selector satisfies the rule");
-  ok(
-    throws(() => validateSubscription("github", { all: [{ key: "repo", notIn: ["me/proj"] }] })) !== null,
-    "narrowing: a NEGATIVE clause on a scope key is not narrowing — 'every repo except one' is still every repo",
-  );
-  ok(evaluateSubscription(eventRoutine({ kind: "event", source: "github" }), pr).match === true, "narrowing: a STORED filter-less row still matches at fire time (the reversal is not retroactive)");
+  ok(throws(() => validateSubscription("github", "true")) !== null, "narrowing: `true` is refused — subscribing to everything is exactly what the rule exists to make deliberate");
+  ok(throws(() => validateSubscription("github", '(.fields["action"] | IN("opened"))')) !== null, "narrowing: narrowing only by a NON-scope field is not narrowing");
+  ok(throws(() => validateSubscription("github", '(.fields["repo"] | IN("me/proj"))')) === null, "narrowing: a clause on a declared SCOPE key satisfies the rule");
+  ok(throws(() => validateSubscription("github", '.fields.repo == "me/proj"')) === null, "narrowing: …in either jq spelling — `.fields.repo` as well as `.fields[\"repo\"]`");
+  ok(throws(() => validateSubscription("github", '.scope.container == "me/proj"')) === null, "narrowing: a `.scope.<kind>` reference satisfies the rule");
+  ok(throws(() => validateSubscription("github", '(.scopePath | any(.id == "me/proj"))')) === null, "narrowing: the ordered `.scopePath` form counts too");
+  ok(narrowsScope('.fields.repository == "x"', githubEventNormalizer) === false, "narrowing: the scope-key check is word-bounded — a LONGER field that merely starts with a scope key does not count");
+  ok((await evaluateSubscription(eventRoutine({ kind: "event", source: "github" }), pr)).match === true, "narrowing: a STORED filter-less row still matches at fire time (the reversal is not retroactive)");
 }
 
 {
@@ -243,27 +308,25 @@ ok(evaluateFilter(push, { under: [{ kind: "entity", id: "1" }] }) === false, "`u
     resolvesActor: true,
     normalize: () => null,
   });
-  ok(throws(() => validateSubscription("flat", { all: [{ key: "event", in: ["x"] }] })) === null, "narrowing: a source with no container level is not asked to narrow below one");
+  ok(throws(() => validateSubscription("flat", '(.fields["event"] | IN("x"))')) === null, "narrowing: a source with no container level is not asked to narrow below one");
 }
 
 {
-  const t = storedTrigger({ kind: "event", source: "github", under: [{ kind: "container", id: "me/proj" }], all: [{ key: "action", in: ["opened", "reopened"] }] } as never);
-  ok(t.kind === "event" && t.filter?.under?.[0]?.id === "me/proj" && t.filter?.all?.length === 1, "authoring: under + all land on the stored filter");
-  ok((t as { match?: unknown }).match === undefined, "authoring: nothing new is ever written in the LEGACY match shape");
+  const t = storedTrigger({ kind: "event", source: "github", jq: '.scope.container == "me/proj" and (.fields.action | IN("opened","reopened"))' } as never);
+  ok(t.kind === "event" && t.jq?.includes(".scope.container") === true, "authoring: the jq expression lands on the stored trigger verbatim");
+  ok((t as { match?: unknown; filter?: unknown }).match === undefined && (t as { filter?: unknown }).filter === undefined, "authoring: nothing new is ever written in either LEGACY shape");
 
-  const legacyAuthored = storedTrigger({ kind: "event", source: "github", match: { repo: "me/proj", action: "opened" } } as never);
-  ok(legacyAuthored.kind === "event" && legacyAuthored.filter?.all?.length === 2, "authoring: the deprecated `match` shorthand is coerced AT THE BOUNDARY, not stored raw");
-
-  ok(throws(() => storedTrigger({ kind: "event", source: "typo-hub", match: { event: "push" } } as never)) !== null, "authoring: create_routine REFUSES a typo'd source (it used to accept any string and arm a dead routine)");
-  ok(throws(() => storedTrigger({ kind: "event", source: "github", all: [{ key: "action", in: ["opened"] }] } as never)) !== null, "authoring: create_routine enforces the narrowing rule");
-  ok(eventFilterFrom({}) === undefined, "authoring: no under/all/match is 'no filter', which the validator then refuses for a containered source");
+  ok(throws(() => storedTrigger({ kind: "event", source: "typo-hub", jq: '.scope.container == "x"' } as never)) !== null, "authoring: create_routine REFUSES a typo'd source (it used to accept any string and arm a dead routine)");
+  ok(throws(() => storedTrigger({ kind: "event", source: "github", jq: '(.fields.action | IN("opened"))' } as never)) !== null, "authoring: create_routine enforces the narrowing rule");
+  ok(throws(() => storedTrigger({ kind: "event", source: "github", jq: '.scope.container == "me/proj" and' } as never)) === null, "authoring: storedTrigger is the STATIC half — a parse error passes it and is caught by the async probe execute() awaits");
 }
 
 {
-  const d = describeTrigger({ kind: "event", source: "github", filter: { under: [{ kind: "container", id: "me/proj" }], all: [{ key: "action", in: ["opened", "reopened"] }] } });
-  ok(d.includes("container=me/proj") && d.includes("action in [opened, reopened]"), "describe: the arm card renders the scope AND the clauses");
-  ok(describeTrigger({ kind: "event", source: "github", match: { action: "opened" } }).includes("action in [opened]"), "describe: a legacy row describes itself the way it BEHAVES (as its coercion), never differently");
-  ok(describeFilter("github", undefined).includes("EVERY event"), "describe: an unnarrowed subscription says so loudly");
+  const expression = '.scope.container == "me/proj" and (.fields.action | IN("opened","reopened"))';
+  const d = describeTrigger({ kind: "event", source: "github", jq: expression });
+  ok(d.includes(expression), "describe: the arm card renders the EXACT expression that will be evaluated");
+  ok(describeTrigger({ kind: "event", source: "github", match: { action: "opened" } }).includes('(.fields["action"] | IN("opened"))'), "describe: a legacy row describes itself as the jq it COMPILES to — never differently from how it behaves");
+  ok(describeFilter("github", {}).includes("EVERY event"), "describe: an unnarrowed subscription says so loudly");
 }
 
 resetEventNormalizersForTest();

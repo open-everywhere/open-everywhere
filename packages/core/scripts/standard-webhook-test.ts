@@ -49,6 +49,7 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 const { normalizeDelivery } = await import("../agent/routines/event-model.js");
 const { checkEventReadGrant, eventGrantPartitions, eventScopeGrant } = await import("../agent/routines/event-authz.js");
 const { validateSubscription, evaluateSubscription } = await import("../agent/routines/event-match.js");
+const { probeFilter } = await import("../agent/routines/jq-filter.js");
 const { admitTrigger, deliveryDedupeKey } = await import("../agent/routines/ingress.js");
 await import("../agent/routines/github-normalizer.js");
 
@@ -460,32 +461,28 @@ async function post(
   const evAlpha = normalizeDelivery(delivery({ source: "ci-alpha", body }))!;
   eq(evAlpha.scheme, sw.OE_STANDARD_WEBHOOK_SCHEME, "the event carries the CONTRACT in `scheme`…");
   eq(evAlpha.source, "ci-alpha", "…and the HOOK in `source`");
-  eq(evaluateSubscription(rAlpha, evAlpha).match, true, "the matching subscription matches");
-  eq(evaluateSubscription(rBeta, evAlpha).match, false, "the sibling on the SAME contract does not");
-  ok(!("invalid" in evaluateSubscription(rBeta, evAlpha)), "…and it is a clean non-match, NOT a fire-time `invalid` (which would mean the vocabulary was resolved by the name)");
+  eq((await evaluateSubscription(rAlpha, evAlpha)).match, true, "the matching subscription matches");
+  eq((await evaluateSubscription(rBeta, evAlpha)).match, false, "the sibling on the SAME contract does not");
+  ok(!("invalid" in (await evaluateSubscription(rBeta, evAlpha))), "…and it is a clean non-match, NOT a fire-time `invalid` (which would mean the contract was resolved by the name)");
 }
 
 {
   console.log("\n9. authoring a (b) subscription:");
   const SCHEME = sw.OE_STANDARD_WEBHOOK_SCHEME;
 
-  await throws(() => validateSubscription("my-ci", { all: [{ key: "status", in: ["failed"] }] }), /Unknown event source/, "resolving by the NAME alone refuses a perfectly valid (b) subscription…");
-  validateSubscription("my-ci", { all: [{ key: "status", in: ["failed"] }] }, SCHEME);
+  const FILTER = '(.fields.status | IN("failed"))';
+  await throws(() => validateSubscription("my-ci", FILTER), /Unknown event source/, "resolving by the NAME alone refuses a perfectly valid (b) subscription…");
+  validateSubscription("my-ci", FILTER, SCHEME);
   n++;
   console.log("   ✓ …and passing the SCHEME makes it creatable (the create_routine fix)");
 
-  validateSubscription("my-ci", { all: [{ key: "branch", notIn: ["main"] }] }, SCHEME);
+  validateSubscription("my-ci", '(.fields.branch | IN("main") | not)', SCHEME);
   n++;
   eq(sw.standardWebhookNormalizer.matchKeysOpen, true, "the normalizer DECLARES its key space is the sender's");
-  eq(sw.standardWebhookNormalizer.matchKeys, ["event", "action"], "…and still names the RESERVED keys it always emits, for the refusal copy");
-  await throws(() => validateSubscription("my-ci", { all: [{ key: "not a key!", in: ["x"] }] }, SCHEME), /isn't a usable field name/, "a key that could never be a JSON key is still refused");
-  await throws(() => validateSubscription("my-ci", { all: [{ key: "status", in: [] }] }, SCHEME), /empty value list/, "an empty value list is still refused");
-  await throws(
-    () => validateSubscription("my-ci", { all: [{ key: "status", in: ["a"], notIn: ["b"] }] as never }, SCHEME),
-    /exactly one of/,
-    "a clause carrying both `in` and `notIn` is still refused — no made-up precedence",
-  );
-  await throws(() => validateSubscription("my-ci", { under: [{ kind: "entity", id: "x" }] }, SCHEME), /never proves a "entity" scope/, "an `under` on a scope kind the contract never proves is still refused");
+  eq(sw.standardWebhookNormalizer.matchKeys, ["event", "action"], "…and still names the RESERVED keys it always emits, for the tool description and the probe document");
+  await throws(() => probeFilter(".fields.status ==", "my-ci", sw.standardWebhookNormalizer.matchKeys), /isn't a usable jq predicate/, "an expression that will not parse is refused");
+  await throws(() => probeFilter(".fields.status", "my-ci", sw.standardWebhookNormalizer.matchKeys), /isn't a usable jq predicate/, "an expression that yields a STRING rather than a boolean is refused — it could never fire");
+  await throws(() => validateSubscription("my-ci", "", SCHEME), /non-empty jq expression/, "an empty expression is refused");
 
   validateSubscription("my-ci", undefined, SCHEME);
   n++;

@@ -220,22 +220,22 @@ const routine = (source: string): Routine =>
     id: `r-${source}`,
     surfaceKey: "slack/T1/C1",
     status: "active",
-    trigger: { kind: "event", source, filter: { all: [{ key: "status", in: ["failed"] }] } },
+    trigger: { kind: "event", source, jq: '(.fields.status | IN("failed"))' },
   }) as unknown as Routine;
 
 {
   const ev = normalizeDelivery(delivery({}))!;
-  const mine = evaluateSubscription(routine("ci-a"), ev);
-  const theirs = evaluateSubscription(routine("ci-b"), ev);
-  const wrong = evaluateSubscription(routine(SCHEME), ev);
+  const mine = await evaluateSubscription(routine("ci-a"), ev);
+  const theirs = await evaluateSubscription(routine("ci-b"), ev);
+  const wrong = await evaluateSubscription(routine(SCHEME), ev);
 
   ok(mine.match, "match: the routine subscribed to THIS hook's name matches");
-  ok(!("invalid" in mine), `match: …and is NOT reported invalid, even though no normalizer is registered under "ci-a" — the fire-time vocabulary re-check resolves by SCHEME`);
+  ok(!("invalid" in mine), `match: …and is NOT reported invalid, even though no normalizer is registered under "ci-a" — the fire-time registration re-check resolves by SCHEME`);
   ok(!theirs.match, "match: a routine subscribed to a SIBLING hook on the SAME SCHEME does NOT match — one scheme, many senders, each independently subscribable");
   ok(!wrong.match, "match: a routine subscribed to the SCHEME ITSELF does not match either — subscriptions name hooks, not contracts");
 
   const ev2 = normalizeDelivery(delivery({ body: JSON.stringify({ event: "build", status: "ok" }) }))!;
-  ok(!evaluateSubscription(routine("ci-a"), ev2).match, "match: the filter still decides — same hook, non-matching status, no fire");
+  ok(!(await evaluateSubscription(routine("ci-a"), ev2)).match, "match: the filter still decides — same hook, non-matching status, no fire");
 }
 
 {

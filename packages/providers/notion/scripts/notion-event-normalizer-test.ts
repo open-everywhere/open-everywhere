@@ -8,7 +8,8 @@ import {
   resetEventScopeGrantsForTest,
   checkEventReadGrant,
   validateSubscription,
-  evaluateFilter,
+  evaluateJqFilter,
+  filterDocument,
   declareProviderSelection,
   defineBundle,
   defineBinding,
@@ -248,34 +249,11 @@ function normalize(body: string): NormalizedEvent | null {
   ok(registerEventNormalizer(notionEventNormalizer) === true, "the normalizer registers THROUGH THE BARREL from the bundle — the first bundle-resident one in the tree");
   ok(eventNormalizer("notion") === notionEventNormalizer, "…and resolves back out of core's registry");
 
-  let refusal = "";
-  try {
-    validateSubscription("notion", { all: [{ key: "page_title", in: ["x"] }] });
-  } catch (err) {
-    refusal = String(err);
-  }
-  ok(refusal.includes("not a filterable field") && refusal.includes("entity_type"), `an undeclared filter key is refused with the legal set named (${refusal.slice(0, 80)}…)`);
-
-  let kindRefusal = "";
-  try {
-    validateSubscription("notion", { under: [{ kind: "galaxy" as never, id: "x" }] });
-  } catch (err) {
-    kindRefusal = String(err);
-  }
-  ok(kindRefusal.includes("Unknown scope kind"), "an `under` naming a kind outside the vocabulary is refused");
-  for (const kind of ["tenant", "group", "container", "entity", "sub"] as const) {
-    let threw = false;
-    try {
-      validateSubscription("notion", { under: [{ kind, id: "x" }] });
-    } catch {
-      threw = true;
-    }
-    ok(!threw, `\`under\` on "${kind}" is accepted — every declared kind is authorable`);
-  }
+  ok(notionEventNormalizer.matchKeys.includes("entity_type"), "the normalizer still DECLARES the fields it emits — that is what the tool description and the probe document quote");
 
   let narrowRefusal = "";
   try {
-    validateSubscription("notion", { all: [{ key: "workspace", in: [WS] }] });
+    validateSubscription("notion", '(.fields.workspace | IN("' + WS + '"))');
   } catch (err) {
     narrowRefusal = String(err);
   }
@@ -285,18 +263,30 @@ function normalize(body: string): NormalizedEvent | null {
   );
   let ok2 = true;
   try {
-    validateSubscription("notion", { all: [{ key: "parent", in: [DB] }] });
+    validateSubscription("notion", '(.fields.parent | IN("' + DB + '"))');
   } catch {
     ok2 = false;
   }
-  ok(ok2, "…while an `in` clause on `parent` (a scope key) DOES narrow");
+  ok(ok2, "…while a clause on `parent` (a declared scope key) DOES narrow");
+  let ok3 = true;
+  try {
+    validateSubscription("notion", '.scope.sub == "' + BLOCK + '"');
+  } catch {
+    ok3 = false;
+  }
+  ok(ok3, "…as does a `.scope.<kind>` reference — including `sub`, the fifth level, which is live rather than decorative");
 
   const ev = normalize(structural({ type: "page.content_updated", data: { parent: { id: DB, type: "database" }, updated_blocks: [{ id: BLOCK }] } }))!;
-  ok(evaluateFilter(ev, { under: [{ kind: "container", id: DB }] }), "an `under` on the proved container matches");
-  ok(!evaluateFilter(ev, { under: [{ kind: "container", id: "db-other" }] }), "…and does not match another database");
-  ok(evaluateFilter(ev, { under: [{ kind: "sub", id: BLOCK }] }), "an `under` on the innermost step matches — the fifth kind is live, not decorative");
-  ok(evaluateFilter(ev, { all: [{ key: "action", in: ["content_updated"] }] }), "the split-out verb is filterable across families");
-  ok(!evaluateFilter(ev, { all: [{ key: "entity_type", in: ["database"] }] }), "the family is filterable and discriminates");
+  const match = async (expression: string): Promise<boolean> => {
+    const outcome = await evaluateJqFilter(expression, filterDocument(ev));
+    return "match" in outcome && outcome.match;
+  };
+  ok(await match('.scope.container == "' + DB + '"'), "an equality on the proved container matches");
+  ok(!(await match('.scope.container == "db-other"')), "…and does not match another database");
+  ok(await match('.scope.sub == "' + BLOCK + '"'), "the innermost step matches — the fifth kind is live, not decorative");
+  ok(await match('(.fields.action | IN("content_updated"))'), "the split-out verb is filterable across families");
+  ok(!(await match('(.fields.entity_type | IN("database"))')), "the family is filterable and discriminates");
+  ok(await match('.scope.container == "' + DB + '" and ((.fields.action | IN("content_updated")) or (.fields.entity_type | IN("database")))'), "…and an OR across clauses is now one routine, not two");
 }
 
 {

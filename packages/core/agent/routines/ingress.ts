@@ -13,7 +13,7 @@ import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from ".
 import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
 import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
-import { evaluateSubscription } from "./event-match.js";
+import { evaluateSubscription, isEventTrigger, storedJq } from "./event-match.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
 import {
   announceFireWithheld,
@@ -127,11 +127,21 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   const matches: Routine[] = [];
   let invalid = 0;
   for (const r of candidates) {
-    const verdict = evaluateSubscription(r, ev);
+    const verdict = await evaluateSubscription(r, ev);
     if ("invalid" in verdict) {
       invalid++;
-      log(`event ${ev.summary} skipped ${r.id}: stored filter no longer valid (${verdict.invalid})`);
-      await auditRoutineSkip(r, "filter_invalid", { why: verdict.invalid, event: ev.event }, auditDeps);
+      log(`event ${ev.summary} skipped ${r.id}: filter did not evaluate (${verdict.invalid})`);
+      await auditRoutineSkip(
+        r,
+        "filter_invalid",
+        {
+          why: verdict.invalid,
+          event: ev.event,
+          ...(isEventTrigger(r.trigger) ? { filter: storedJq(r.trigger) ?? "(none)", source: r.trigger.source } : {}),
+          note: "the subscription's filter could not be evaluated to a boolean, so the routine was skipped rather than fired",
+        },
+        auditDeps,
+      );
       continue;
     }
     if (verdict.match) matches.push(r);

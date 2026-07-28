@@ -101,12 +101,13 @@ ok(computeNextRun({ kind: "once", at: "2026-07-08T09:00:00.000Z" }, from) === nu
   try { st({ kind: "scheduled", at: "not-a-real-timestamp" }); } catch { threw++; }
   try { st({ kind: "scheduled", cron: "0 9 * * *" }); } catch { threw++; }
   ok(threw === 5, "neither / both / all-three of cron+everyMinutes+at, an invalid `at`, and a missing postPolicy are all refused");
-  const ev = st({ kind: "event", source: "github", match: { repo: "me/proj", event: "push" } });
+  const ev = st({ kind: "event", source: "github", jq: '.fields.repo == "me/proj" and (.fields.event | IN("push"))' });
   ok(ev.kind === "event", "event maps to the stored event kind");
-  ok(ev.kind === "event" && ev.filter?.all?.length === 2, "OPE-163: the deprecated `match` shorthand is coerced into the stored filter at the boundary");
+  ok(ev.kind === "event" && ev.jq?.includes(".fields.repo") === true, "OPE-210: the jq expression is stored verbatim on the trigger");
+  ok(ev.kind === "event" && (ev as { filter?: unknown; match?: unknown }).filter === undefined && (ev as { match?: unknown }).match === undefined, "OPE-210: neither legacy shape is ever written");
   let evThrew = 0;
-  try { st({ kind: "event", source: "typo-hub", match: { repo: "me/proj" } }); } catch { evThrew++; }
-  try { st({ kind: "event", source: "github", match: { event: "push" } }); } catch { evThrew++; }
+  try { st({ kind: "event", source: "typo-hub", jq: '.fields.repo == "me/proj"' }); } catch { evThrew++; }
+  try { st({ kind: "event", source: "github", jq: '(.fields.event | IN("push"))' }); } catch { evThrew++; }
   ok(evThrew === 2, "OPE-163: a typo'd source and an unnarrowed subscription are both refused at CREATE (they used to arm a routine that could never match)");
 }
 

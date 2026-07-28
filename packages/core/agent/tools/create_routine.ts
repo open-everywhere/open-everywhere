@@ -7,8 +7,9 @@ import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
 import { renderFireMessage } from "../routines/fire-message.js";
-import { SCOPE_KINDS, type FilterClause, type ScopeKind, type ScopeSelector, type SubscriptionFilter } from "../routines/event-model.js";
+import { SCOPE_KINDS, eventNormalizer } from "../routines/event-model.js";
 import { validateSubscription } from "../routines/event-match.js";
+import { FILTER_MAX_LENGTH, probeFilter } from "../routines/jq-filter.js";
 import { webhookScheme } from "../routines/scheme-name.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
@@ -23,7 +24,7 @@ import { getConfig } from "../access/config.js";
 import { approvalPostDeps } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
-const SCOPE_KINDS_TUPLE = SCOPE_KINDS as unknown as [ScopeKind, ...ScopeKind[]];
+const SCOPE_KINDS_LIST = SCOPE_KINDS.join(" | ");
 
 const trigger = z.discriminatedUnion("kind", [
   z.object({
@@ -64,48 +65,26 @@ const trigger = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("event"),
     source: z.string().describe("External event source. Must be one registered in this deployment — an unknown source is refused, naming the known set."),
-    under: z
-      .array(z.object({ kind: z.enum(SCOPE_KINDS_TUPLE), id: z.string() }))
+    jq: z
+      .string()
+      .max(FILTER_MAX_LENGTH)
       .optional()
       .describe(
-        'WHERE to subscribe, structurally: the container path the event must sit under, e.g. [{ "kind": "container", "id": "acme/web" }]. ' +
-          "Required unless you narrow with an `in` clause on a scope field — a subscription must say what it is scoped to.",
+        "WHICH events, as a **jq expression** that must evaluate to exactly true or false, e.g. " +
+          '`.scope.container == "acme/web" and (.fields.action | IN("opened","reopened"))`. ' +
+          `The event is an object with .source, .event, .action, .fields.<name> (the source's matchable scalars) and .scope.<${SCOPE_KINDS_LIST}> (the container path; an absent level is null). ` +
+          "Use `and` / `or` / `not` freely — OR is expressible here, so a disjunction does NOT need two routines. " +
+          "An absent field is null, so `(.fields.x | IN(\"a\"))` is false when x is missing and `(.fields.x | IN(\"a\") | not)` is true. " +
+          "REQUIRED to reference a scope (`.scope.<kind>` or a scope field) for any source that spans many containers — subscribing to a whole tenant has to be spelled out. " +
+          "The expression is compiled and run once at creation, so a typo is refused here rather than arming a routine that silently never fires.",
       ),
-    all: z
-      .array(
-        z.object({
-          key: z.string(),
-          in: z.array(z.string()).optional(),
-          notIn: z.array(z.string()).optional(),
-        }),
-      )
-      .optional()
-      .describe(
-        'WHICH events, as AND-ed clauses over the source\'s filterable fields, e.g. [{ "key": "event", "in": ["pull_request"] }, ' +
-          '{ "key": "action", "in": ["opened", "reopened"] }]. Exactly one of `in`/`notIn` per clause. An absent field makes `in` ' +
-          "false and `notIn` true. No wildcards, no regex, no substring matching — these compare ids exactly.",
-      ),
-    match: z
-      .record(z.string(), z.string())
-      .optional()
-      .describe("DEPRECATED shorthand for single-value `all` clauses — prefer `all`/`under`. Same validation applies."),
   }),
 ]);
 
-export function eventFilterFrom(t: { under?: readonly ScopeSelector[]; all?: readonly { key: string; in?: readonly string[]; notIn?: readonly string[] }[]; match?: Readonly<Record<string, string>> }): SubscriptionFilter | undefined {
-  const clauses: FilterClause[] = [];
-  for (const c of t.all ?? []) clauses.push(c as unknown as FilterClause);
-  if (t.match) for (const [key, value] of Object.entries(t.match)) clauses.push({ key, in: [value] });
-  const under = t.under ?? [];
-  if (clauses.length === 0 && under.length === 0) return undefined;
-  return { ...(under.length ? { under } : {}), ...(clauses.length ? { all: clauses } : {}) };
-}
-
 export function storedTrigger(t: z.infer<typeof trigger>, eventScheme?: string): RoutineTrigger {
   if (t.kind === "event") {
-    const filter = eventFilterFrom(t);
-    validateSubscription(t.source, filter, eventScheme ?? t.source);
-    return { kind: "event", source: t.source, ...(filter ? { filter } : {}) };
+    validateSubscription(t.source, t.jq, eventScheme ?? t.source);
+    return { kind: "event", source: t.source, ...(t.jq ? { jq: t.jq } : {}) };
   }
   const present = [t.cron !== undefined, t.everyMinutes !== undefined, t.at !== undefined].filter(Boolean).length;
   if (present !== 1) {
@@ -199,6 +178,9 @@ export default defineTool({
         ? webhookScheme((await getOperationalStore().getWebhookHookBySource(p.org, eventTrigger.source)) ?? { source: eventTrigger.source })
         : undefined;
     const t = storedTrigger(eventTrigger, eventScheme);
+    if (t.kind === "event" && t.jq !== undefined) {
+      await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);
+    }
     if (mode === "dm" && t.kind !== "once") {
       throw new Error(
         "I can't set up a standing schedule from a DM — it would fire unattended forever with nobody but you ever seeing it run, and you'd be the only person who could approve it. Ask me in a channel and I'll set it up there; or ask for a one-off reminder here (\"check back in an hour\") and I'll do that.",

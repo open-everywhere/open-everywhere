@@ -60,16 +60,40 @@ export interface SubscriptionFilter {
   readonly under?: readonly ScopeSelector[];
 }
 
-export function describeFilter(
-  source: string,
-  filter: SubscriptionFilter | undefined,
-  legacyMatch?: Readonly<Record<string, string>>,
-): string {
+export interface StoredSubscriptionShapes {
+  readonly jq?: string;
+  readonly filter?: SubscriptionFilter;
+  readonly match?: Readonly<Record<string, string>>;
+}
+
+function jqString(v: string): string {
+  return JSON.stringify(v);
+}
+
+function clauseToJq(c: FilterClause): string {
+  const key = `.fields[${jqString(c.key)}]`;
+  if ("in" in c) return `(${key} | IN(${c.in.map(jqString).join(", ")}))`;
+  return `(${key} | IN(${c.notIn.map(jqString).join(", ")}) | not)`;
+}
+
+export function filterToJq(filter: SubscriptionFilter): string {
   const parts: string[] = [];
-  for (const s of filter?.under ?? []) parts.push(`${s.kind}=${s.id}`);
-  for (const c of filter?.all ?? []) parts.push("in" in c ? `${c.key} in [${c.in.join(", ")}]` : `${c.key} not in [${c.notIn.join(", ")}]`);
-  if (parts.length === 0 && legacyMatch) for (const [k, v] of Object.entries(legacyMatch)) parts.push(`${k} in [${v}]`);
-  return `on ${source} event${parts.length ? ` where ${parts.join(" AND ")}` : " (EVERY event from this source)"}`;
+  for (const s of filter.under ?? []) parts.push(`(.scope.${s.kind} == ${jqString(s.id)})`);
+  for (const c of filter.all ?? []) parts.push(clauseToJq(c));
+  return parts.length === 0 ? "true" : parts.join(" and ");
+}
+
+export function storedJq(t: StoredSubscriptionShapes): string | undefined {
+  if (t.jq) return t.jq;
+  if (t.filter) return filterToJq(t.filter);
+  if (!t.match) return undefined;
+  const clauses = Object.entries(t.match).map(([key, value]) => ({ key, in: [value] }) as FilterClause);
+  return clauses.length > 0 ? clauses.map(clauseToJq).join(" and ") : undefined;
+}
+
+export function describeFilter(source: string, t: StoredSubscriptionShapes): string {
+  const expression = storedJq(t);
+  return `on ${source} event${expression === undefined ? " (EVERY event from this source)" : ` where ${expression}`}`;
 }
 
 export interface EventNormalizer {
