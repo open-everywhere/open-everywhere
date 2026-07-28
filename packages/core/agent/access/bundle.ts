@@ -39,6 +39,7 @@ export interface Connection {
 
 export interface Bundle {
   readonly name: string;
+  readonly title?: string;
   readonly connections?: readonly Connection[];
   readonly connectors?: readonly string[];
   readonly providers?: readonly ProviderGrant[];

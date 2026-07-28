@@ -1,5 +1,7 @@
 import { bridgeFetchChannelDisplayName } from "../channels/slack-bridge.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
+import { getConfig } from "../access/config.js";
+import { displayTitle } from "../identity/display-title.js";
 
 function parseScopeKey(scopeKey: string): { platform: string; workspace: string; surface?: string } | null {
   const parts = scopeKey.split("/");
@@ -18,6 +20,10 @@ export function registerScopeLabelResolver(platform: string, resolver: ScopeLabe
 
 export async function friendlyScopeLabel(scopeKey: string): Promise<string | undefined> {
   try {
+    if (!scopeKey.includes("/")) {
+      const domain = getConfig().loadDomains().find((d) => d.name === scopeKey);
+      return domain?.title?.trim() ? displayTitle(domain) : undefined;
+    }
     const parsed = parseScopeKey(scopeKey);
     if (!parsed) return undefined;
     if (parsed.platform === "slack" && parsed.surface) {

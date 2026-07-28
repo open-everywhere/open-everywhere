@@ -10,6 +10,7 @@ import type { SurfaceBinding } from "../identity/binding.js";
 
 export interface Role {
   readonly name: string;
+  readonly title?: string;
   readonly instructions?: string;
   readonly persona?: string;
   readonly statusVerbs?: readonly string[];

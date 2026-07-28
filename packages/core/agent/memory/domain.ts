@@ -40,6 +40,7 @@ export interface SandboxPreset {
 
 export interface Domain {
   readonly name: string;
+  readonly title?: string;
   readonly channels?: readonly string[];
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
