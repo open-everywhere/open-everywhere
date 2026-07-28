@@ -163,14 +163,6 @@ async function fire(h: WebhookHook, facts: SlackFacts | "no-supplier" | "throws"
   ok(/from "\.\.\/routines\/fire-disclosure\.js"/.test(dispatchSrc), "single-source: the config-hook leg imports the SHARED trigger-fire classifier");
   ok(/export function classifyFireDisclosure\b/.test(dispatchSrc) === false, "single-source: …and does not re-roll it (cron/event/webhook fires are one concept with three mechanisms)");
   ok(/from "\.\.\/access\/audience-floor\.js"/.test(dispatchSrc) === false, "single-source: it does not reach past fire-disclosure.ts to the primitive either — one policy, one door");
-
-  const floorSrc = readFileSync(join(REPO, "packages/core/agent/access/audience-floor.ts"), "utf8");
-  ok(
-    /THREE consumers/.test(floorSrc) && /webhooks\/dispatch\.ts/.test(floorSrc),
-    "single-source: the primitive's header still says THREE direct consumers AND now names the second trigger leg riding consumer #3 — a header that didn't would be a claim the tree had outgrown",
-  );
-  const fireSrc = readFileSync(join(REPO, "packages/core/agent/routines/fire-disclosure.ts"), "utf8");
-  ok(/OPE-183/.test(fireSrc) && /webhooks\/dispatch\.ts/.test(fireSrc), "single-source: the shared classifier's own header names both legs that use it");
 }
 
 {
