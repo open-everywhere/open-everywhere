@@ -46,7 +46,7 @@ ok(normalizers.length > 0, "the live NORMALIZER registry is non-empty (otherwise
 
 ok(
   vocabulary.length > 0,
-  `🔴 the live vocabulary is EMPTY — create_webhook would refuse EVERY source on this deployment and look like a user error. ` +
+  `🔴 the live vocabulary is EMPTY — declare_webhook would refuse EVERY source on this deployment and look like a user error. ` +
     `verifiers=[${verifiers.map((v) => v.source).sort().join(", ")}] normalizers=[${normalizers.join(", ")}]`,
 );
 
@@ -98,30 +98,19 @@ for (const source of vocabulary) {
 
 {
   const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const src = readFileSync(join(REPO_ROOT, "packages", "core", "agent", "tools", "create_webhook.ts"), "utf8");
-  const describeBlock = /source:\s*z\s*[\s\S]*?\.describe\(\s*([\s\S]*?)\)\s*,\s*\n\s*posture:/.exec(src);
-  ok(describeBlock !== null, "found create_webhook's `source` parameter description (if this fails the tool was restructured — re-anchor, do not delete)");
+  const src = readFileSync(join(REPO_ROOT, "packages", "core", "agent", "tools", "declare_webhook.ts"), "utf8");
+  const describeBlock = /source:\s*z\s*[\s\S]*?\.describe\(\s*([\s\S]*?)\)\s*,\s*\n\s*target:/.exec(src);
+  ok(describeBlock !== null, "found declare_webhook's `source` parameter description (if this fails the tool was restructured — re-anchor, do not delete)");
   const examples = [...(describeBlock?.[1] ?? "").matchAll(/"([a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]!);
   ok(examples.length > 0, "…and it names at least one worked example (an example is what the model reaches for first)");
   for (const example of examples) {
     ok(
       vocabulary.includes(example),
-      `🔴 create_webhook offers "${example}" as an example source, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
-    );
-  }
-
-  const schemeBlock = /scheme:\s*z\s*[\s\S]*?\.describe\(\s*([\s\S]*?)\)\s*,\s*\n\s*\}\)\s*,\s*\n\s*outputSchema:/.exec(src);
-  ok(schemeBlock !== null, "found create_webhook's `scheme` parameter description (if this fails the tool was restructured — re-anchor, do not delete)");
-  const schemeExamples = [...(schemeBlock?.[1] ?? "").matchAll(/"([a-z0-9][a-z0-9-]*)"/g)].map((m) => m[1]!);
-  ok(schemeExamples.length > 0, "…and it names at least one worked example scheme");
-  for (const example of schemeExamples) {
-    ok(
-      vocabulary.includes(example),
-      `🔴 create_webhook offers "${example}" as an example scheme, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
+      `🔴 declare_webhook offers "${example}" as an example source, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
     );
   }
   ok(
-    schemeExamples.some((e) => vocabulary.includes(e) && e !== "github"),
+    examples.some((e) => vocabulary.includes(e) && e !== "github"),
     "…and at least one of them is a contract that is not a named vendor — the category-(b) path the parameter exists for",
   );
 }
@@ -173,4 +162,4 @@ for (const source of vocabulary) {
   }
 }
 
-console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, and matches what create_webhook advertises)`);
+console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, and matches what declare_webhook advertises)`);

@@ -1,7 +1,7 @@
 import { getConfig } from "../access/config.js";
 import { acceptsMintedSecret, registeredWebhookVerifiers, type WebhookVerifier } from "./verifier.js";
 import { registeredEventSources } from "../routines/event-model.js";
-import type { WebhookPosture } from "./runtime-hook.js";
+import type { WebhookPosture } from "./config.js";
 
 export interface SourceVocabularyDeps {
   readonly verifiers?: () => readonly WebhookVerifier[];

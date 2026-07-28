@@ -42,8 +42,11 @@ const sw = await import("../agent/webhooks/oe-standard-webhook.js");
 const { gateWebhookDelivery, webhookMaxBodyBytes } = await import("../agent/webhooks/gate.js");
 const { firstSightingOfWebhookDelivery, webhookReplayStoreKey } = await import("../agent/webhooks/replay-dedupe.js");
 const { webhookMaxSkewSeconds } = await import("../agent/webhooks/gate.js");
-const rh = await import("../agent/webhooks/runtime-hook.js");
-const ri = await import("../agent/webhooks/runtime-ingress.js");
+const { resolveHookKeys } = await import("../agent/webhooks/secrets.js");
+const { configHookDisclosure } = await import("../agent/webhooks/config.js");
+const { declaredDeliveryId } = await import("../agent/routines/event-model.js");
+const { registerDbCredentialBroker } = await import("../agent/credentials/db-broker.js");
+registerDbCredentialBroker();
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { normalizeDelivery } = await import("../agent/routines/event-model.js");
@@ -57,7 +60,9 @@ await import("../agent/routines/github-normalizer.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 type AuditInput = import("../agent/operational/store.js").AuditInput;
 type TriggerDelivery = import("../agent/routines/event-model.js").TriggerDelivery;
-type RuntimeWebhookHook = import("../agent/webhooks/runtime-hook.js").RuntimeWebhookHook;
+type WebhookHook = import("../agent/webhooks/config.js").WebhookHook;
+
+const DECLARED = new Map<string, WebhookHook>();
 
 const SLACK_CHANNEL = { __fixture: "slack" } as never;
 registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
@@ -332,40 +337,38 @@ interface Posted {
   readonly target: unknown;
 }
 
-async function makeHook(over: Partial<RuntimeWebhookHook> = {}): Promise<RuntimeWebhookHook> {
-  const id = rh.mintRuntimeHookId();
-  const hook: RuntimeWebhookHook = {
-    org: ORG,
-    id,
-    source: "my-ci",
-    scheme: sw.OE_STANDARD_WEBHOOK_SCHEME,
+function makeHook(over: Partial<WebhookHook> = {}): WebhookHook {
+  const id = over.id ?? "my-ci";
+  const hook: WebhookHook = {
+    source: sw.OE_STANDARD_WEBHOOK_SCHEME,
     posture: "content-bearing",
-    secretRef: rh.runtimeHookSecretRef(id),
-    status: "active",
-    createdBy: "U-DECIDER",
-    createdIn: "slack/T1/C-ENG",
     readableBy: [{ level: "domain", domain: "eng" }],
-    createdAt: "2026-07-27T00:00:00.000Z",
     ...over,
+    id,
+    secretRef: `db:webhook:${id}`,
+    broker: "db",
   };
-  await store.addWebhookHook(hook);
-  await vault.write(hook.secretRef, SECRET, { provider: "webhook", domain: hook.source, createdBy: "U-DECIDER" });
+  DECLARED.set(hook.id, hook);
   return hook;
 }
 
+async function armSecret(hook: WebhookHook): Promise<void> {
+  const ref = typeof hook.secretRef === "string" ? hook.secretRef : hook.secretRef[0]!;
+  await vault.write(ref, SECRET, { provider: "webhook", domain: hook.id, createdBy: "U-DECIDER" });
+}
+
 async function post(
-  hook: RuntimeWebhookHook,
+  hook: WebhookHook,
   body: string,
   headers: Headers,
   routines: readonly Routine[],
   sink: Posted[],
   audited: AuditInput[],
 ): Promise<{ status: number; report?: Awaited<ReturnType<typeof admitTrigger>> }> {
-  const resolved = await ri.resolveRuntimeHook(hook.id);
-  if (!resolved) return { status: 404 };
-  const keys = await ri.resolveRuntimeHookKeys(resolved);
+  if (!DECLARED.has(hook.id)) return { status: 404 };
+  const keys = await resolveHookKeys(hook);
   const outcome = await gateWebhookDelivery({
-    hook: resolved.gateable,
+    hook,
     secretValues: keys,
     rawBody: body,
     bodyBytes: Buffer.byteLength(body, "utf8"),
@@ -379,23 +382,41 @@ async function post(
     const first = await firstSightingOfWebhookDelivery(ORG, hook.id, outcome.replayKey);
     if (!first) return { status: 409 };
   }
-  const report = await ri.deliverRuntimeHook(resolved, body, headers, {
-    receive: ((_channel: unknown, opts: { message: string; target?: unknown }) => {
-      sink.push({ message: opts.message, target: opts.target });
-      return Promise.resolve();
-    }) as never,
-    org: ORG,
-    listRoutines: async () => [...routines],
-    audit: async (e: AuditInput) => {
-      audited.push(e);
-    },
+  const flat: Record<string, string> = {};
+  headers.forEach((v, k) => {
+    flat[k.toLowerCase()] = v;
   });
+  const deliveryId = declaredDeliveryId(hook.source, flat);
+  const report = await admitTrigger(
+    {
+      source: hook.id,
+      scheme: hook.source,
+      headers: flat,
+      body,
+      ...(deliveryId ? { deliveryId } : {}),
+      receivedAt: new Date().toISOString(),
+      readableBy: hook.readableBy,
+      ...configHookDisclosure(hook),
+    },
+    {
+      receive: ((_channel: unknown, opts: { message: string; target?: unknown }) => {
+        sink.push({ message: opts.message, target: opts.target });
+        return Promise.resolve();
+      }) as never,
+      org: ORG,
+      listRoutines: async () => [...routines],
+      audit: async (e: AuditInput) => {
+        audited.push(e);
+      },
+    },
+  );
   return { status: 200, report };
 }
 
 {
   console.log("\n6. end to end (real store, real fire):");
-  const hook = await makeHook();
+  const hook = makeHook();
+  await armSecret(hook);
   const failedRoutine = routine({ id: "r-failed" });
   const okRoutine = routine({ id: "r-ok", trigger: { kind: "event", source: "my-ci", filter: { all: [{ key: "status", in: ["ok"] }] } } });
 
@@ -404,7 +425,7 @@ async function post(
   const audited: AuditInput[] = [];
   const res = await post(hook, body, headersFor({}, body, SECRET, "msg_e2e_1"), [failedRoutine, okRoutine], sink, audited);
 
-  eq(res.status, 200, "a signed delivery to a chat-created (b) hook is accepted");
+  eq(res.status, 200, "a signed delivery to a declared (b) hook is accepted");
   eq(res.report?.accepted, true, "…and enters the routing plane");
   eq(res.report?.matched, 1, "🔴 exactly ONE of the two routines matched — `status: failed` did, `status: ok` did not");
   eq(res.report?.fired, 1, "…and it fired");
@@ -432,7 +453,8 @@ async function post(
 
 {
   console.log("\n7. replay (real stores, both layers):");
-  const hook = await makeHook({ source: "ci-replay" });
+  const hook = makeHook({ id: "ci-replay" });
+  await armSecret(hook);
   const r = routine({ id: "r-replay", trigger: { kind: "event", source: "ci-replay", filter: { all: [{ key: "status", in: ["failed"] }] } } });
   const body = JSON.stringify({ event: "build", fields: { status: "failed" } });
   const headers = headersFor({}, body, SECRET, "msg_replay_1");
@@ -463,7 +485,8 @@ async function post(
 
 {
   console.log("\n8. two hooks on one contract:");
-  const ciA = await makeHook({ source: "ci-alpha" });
+  const ciA = makeHook({ id: "ci-alpha" });
+  await armSecret(ciA);
   const rAlpha = routine({ id: "r-alpha", trigger: { kind: "event", source: "ci-alpha", filter: { all: [{ key: "status", in: ["failed"] }] } } });
   const rBeta = routine({ id: "r-beta", trigger: { kind: "event", source: "ci-beta", filter: { all: [{ key: "status", in: ["failed"] }] } } });
   const body = JSON.stringify({ event: "build", fields: { status: "failed" } });
@@ -507,7 +530,7 @@ async function post(
 
 {
   console.log("\n10. the unknown-source refusal names the (b) escape:");
-  const { generalPurposeSchemeHint } = await import("../agent/tools/create_webhook.js");
+  const { generalPurposeSchemeHint } = await import("../agent/tools/declare_webhook.js");
   const vocab = ["github", sw.OE_STANDARD_WEBHOOK_SCHEME];
 
   const hint = generalPurposeSchemeHint("jenkins", "jenkins", vocab, false);

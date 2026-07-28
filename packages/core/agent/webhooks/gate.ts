@@ -1,6 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { hookSecretRefs } from "./config.js";
-import { isRuntimeHookId } from "./runtime-hook.js";
 import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
 import { webhookScheme } from "../routines/scheme-name.js";
 
@@ -50,6 +49,7 @@ export interface GateableHook {
   readonly source: string;
   readonly scheme?: string;
   readonly secretRef: string | readonly string[];
+  readonly broker: string;
 }
 
 export interface WebhookGateInput {
@@ -83,14 +83,14 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
 
   const keys = secretValues.filter((k) => k);
   if (keys.length === 0) {
-    const hatch = allowUnverified && !isRuntimeHookId(hook.id);
+    const hatch = allowUnverified && hook.broker === "env";
     const currentRef = hookSecretRefs(hook)[0] ?? "(none)";
     if (hatch) return { ok: true, keyIndex: null };
     return reject(
       401,
-      isRuntimeHookId(hook.id)
+      hook.broker !== "env"
         ?
-          `${currentRef} did not resolve — rejecting unverified delivery (a chat-created hook's secret is minted at creation; rotate the hook to mint a new one)`
+          `${currentRef} did not resolve through the "${hook.broker}" broker — rejecting unverified delivery (issue this hook a signing secret with rotate_webhook, which stores one and shows it once)`
         : `${currentRef} is not set — rejecting unverified delivery (set the secret, or OE_ALLOW_UNVERIFIED_WEBHOOK=1 for local dev)`,
     );
   }

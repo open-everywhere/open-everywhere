@@ -1,5 +1,4 @@
 import type { WebhookHook } from "./config.js";
-import { RUNTIME_HOOK_ID_PREFIX } from "./runtime-hook.js";
 import type { ReadableBy } from "../access/read-grant.js";
 
 export interface HooksFile {
@@ -40,9 +39,6 @@ export function parseHooksFile(value: unknown): HooksFile {
       if (!HOOK_KEYS.includes(k)) {
         throw new HooksCodemodError(`overlay hook "${h.id}" has unknown field "${k}" — the overlay carries exactly the declared webhook vocabulary (${HOOK_KEYS.join(", ")})`);
       }
-    }
-    if (h.id.startsWith(RUNTIME_HOOK_ID_PREFIX)) {
-      throw new HooksCodemodError(`overlay hook "${h.id}" uses the reserved "${RUNTIME_HOOK_ID_PREFIX}" prefix — that namespace belongs to hooks minted host-side, and a config hook wins every lookup`);
     }
     if (typeof h.source !== "string" || !h.source) throw new HooksCodemodError(`overlay hook "${h.id}" needs a string \`source\` (the signature scheme)`);
     if (!isStringOrStringArray(h.secretRef)) throw new HooksCodemodError(`overlay hook "${h.id}" needs \`secretRef\` (a ref or an ordered list of refs — never a value)`);
@@ -106,9 +102,6 @@ export interface ApplyHookResult {
 }
 
 export function applyHookDeclaration(file: HooksFile, decl: HookDeclaration, baseIds: readonly string[] = []): ApplyHookResult {
-  if (decl.id.startsWith(RUNTIME_HOOK_ID_PREFIX)) {
-    throw new HooksCodemodError(`hook id "${decl.id}" uses the reserved "${RUNTIME_HOOK_ID_PREFIX}" prefix — that namespace belongs to hooks minted host-side`);
-  }
   if (baseIds.includes(decl.id)) {
     throw new HooksCodemodError(
       `a webhook "${decl.id}" is already declared in code (agent/webhooks/hooks.ts) — the overlay cannot edit it, and two hooks with one id is a boot failure. Pick a different id, or edit the code declaration directly in a PR.`,

@@ -1,8 +1,11 @@
-import { RUNTIME_HOOK_ID_PREFIX, WEBHOOK_POSTURES, type WebhookPosture } from "./runtime-hook.js";
 import { reservedRefNamespace } from "../credentials/reserved-refs.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { webhookReach } from "./achievability.js";
 import type { Domain } from "../memory/domain.js";
+
+export type WebhookPosture = "trigger-only" | "content-bearing" | "projection";
+
+export const WEBHOOK_POSTURES: readonly WebhookPosture[] = ["trigger-only", "content-bearing", "projection"] as const;
 
 export interface WebhookHook {
   readonly id: string;
@@ -60,12 +63,6 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
     if (!h.id || !ID_RE.test(h.id)) {
       throw new Error(`webhook hook id ${JSON.stringify(h.id)} must be a non-empty url-safe token ([a-zA-Z0-9_-]+)`);
     }
-    if (h.id.startsWith(RUNTIME_HOOK_ID_PREFIX)) {
-      throw new Error(
-        `webhook hook id "${h.id}" starts with the reserved "${RUNTIME_HOOK_ID_PREFIX}" prefix — that namespace belongs to hooks created from chat ` +
-          `(they are minted host-side and never appear in config). Rename it.`,
-      );
-    }
     if (seen.has(h.id)) throw new Error(`duplicate webhook hook id "${h.id}"`);
     seen.add(h.id);
     if (!h.source || !h.source.trim()) {
@@ -85,7 +82,7 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
       if (reserved) {
         throw new Error(
           `webhook "${h.id}" secretRef[${i}] is in the reserved "${reserved}" namespace — that namespace holds secret material this ` +
-            `deployment minted for itself (a chat-created hook's signing secret, an OAuth token). Point at your own ref instead.`,
+            `deployment minted or captured for itself (an OAuth token, a vendor handshake key). Point at your own ref instead.`,
         );
       }
     }

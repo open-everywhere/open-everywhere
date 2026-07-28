@@ -13,7 +13,6 @@ import type { EffectiveAccess } from "../agent/access/resolver.js";
 import type { Partition } from "../agent/memory/partition.js";
 import type { Routine } from "../agent/routines/routine.js";
 import type { WebhookHook } from "../agent/webhooks/config.js";
-import type { RuntimeWebhookHook } from "../agent/webhooks/runtime-hook.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -59,19 +58,6 @@ const CONFIG_HOOK: WebhookHook = {
   readableBy: [{ level: "domain", domain: "payments" }],
 } as unknown as WebhookHook;
 
-const RUNTIME_HOOK: RuntimeWebhookHook = {
-  org: ORG,
-  id: "hk_secreturlsegment",
-  source: "vendor-alerts",
-  posture: "trigger-only",
-  secretRef: "hook:hk_secreturlsegment",
-  status: "active",
-  createdBy: "U1",
-  createdIn: "slack/T1/C1",
-  createdAt: at(10_000),
-  readableBy: [{ level: "domain", domain: "payments" }],
-} as unknown as RuntimeWebhookHook;
-
 const routine = (id: string, source: string, over: Partial<Routine> = {}): Routine =>
   ({
     id,
@@ -102,7 +88,6 @@ function harness(over: {
   rows?: Record<string, AuditEntry[]>;
   routines?: Routine[];
   config?: readonly WebhookHook[];
-  runtime?: readonly RuntimeWebhookHook[];
   domains?: readonly string[];
   throwOnResolve?: boolean;
 }): Harness {
@@ -112,7 +97,6 @@ function harness(over: {
     written,
     deps: {
       configHooks: () => over.config ?? [CONFIG_HOOK],
-      runtimeHooks: async () => over.runtime ?? [RUNTIME_HOOK],
       routines: async () => over.routines ?? [],
       read: async (f = {}) => (rows[f.action ?? ""] ?? []) as AuditEntry[],
       audit: async (e) => {
@@ -348,17 +332,18 @@ function harness(over: {
 {
   const h = harness({
     rows: {
-      "webhook.fired": [row("webhook.fired", at(5), { hookId: "hk_secreturlsegment", source: "vendor-alerts", bytes: 12, matched: 0, fired: 0, skipped: 0 })],
+      "webhook.fired": [row("webhook.fired", at(5), { hookId: "deploy-status", source: "deploy-status", bytes: 12, matched: 0, fired: 0, skipped: 0 })],
     },
   });
-  const res = await readDeliveryHistory({ partition: PARTITION, source: "vendor-alerts" }, h.deps);
-  ok(res.ok, "11a: a chat-created hook is addressable by its source handle");
+  const unknown = await readDeliveryHistory({ partition: PARTITION, source: "vendor-alerts" }, h.deps);
+  ok(!unknown.ok && unknown.reason === "unknown-hook", "11a: a handle no declaration carries is UNKNOWN — with one registry there is no second store that might still have it");
+
+  const res = await readDeliveryHistory({ partition: PARTITION, source: "deploy-status" }, h.deps);
+  ok(res.ok, "11b: a declared hook is addressable by the handle a routine subscribes to");
   if (!res.ok) process.exit(1);
-  ok(res.history.hookClass === "runtime" && res.history.source === "vendor-alerts", "11b: class + handle");
-  ok(res.history.deliveries.length === 1, "11c: its rows are joined on the hook id host-side");
+  ok(res.history.hookClass === "config" && res.history.source === "deploy-status", "11c: class + handle");
   const out = JSON.stringify(res.history) + renderDeliveryHistory(res.history);
-  ok(!out.includes("hk_secreturlsegment"), "11d: the hook id (which IS the URL) never reaches the model-facing result");
-  ok(h.written[0].detail?.["hookId"] === "hk_secreturlsegment", "11e: …while the OPERATOR-plane audit row does carry it, as the join key");
+  ok(!out.includes("DEPLOY_STATUS_WEBHOOK_SECRET"), "🔴 11d: the SECRET REF never reaches the model-facing result — a pointer straight at the vault row is the thing that still must not travel");
 }
 
 {

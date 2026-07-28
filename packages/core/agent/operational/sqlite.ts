@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import { assertSpendLimitAmount, assertDomainModelPick, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -117,7 +116,7 @@ function getDb(): DatabaseSync {
     -- (No backticks in this block: it is inside a template literal and one would close it.)
     CREATE TABLE IF NOT EXISTS webhook_capture (
       org_id      TEXT    NOT NULL,
-      source      TEXT    NOT NULL,         -- the hook HANDLE a routine subscribes to (never the hk_ id)
+      source      TEXT    NOT NULL,         -- the hook HANDLE a routine subscribes to (= the declared id)
       seq         INTEGER NOT NULL,         -- 1-based ordinal within the current window; the number a human says
       captured_at TEXT    NOT NULL,         -- ISO-8601 receive time (OUR clock; prune key)
       document    TEXT    NOT NULL,         -- serialized EventFilterDocument (opaque to the store)
@@ -189,25 +188,20 @@ function getDb(): DatabaseSync {
       used_at      TEXT,                      -- ISO-8601 when consumed; NULL = still open (single-use)
       PRIMARY KEY (org_id, id)
     );
-    -- webhook_hook (OPE-150): a CHAT-CREATED inbound webhook ingress. The routine table's shape --
-    -- the whole row lives in one JSON data column, with only the lookup keys promoted. Three
-    -- lookups exist and each has its key: by id (the URL -- CROSS-ORG, see the store port's note),
-    -- by (org, name) (every tool addresses a hook by its handle), and all-of-an-org (list_webhooks).
-    -- The PRIMARY KEY is the bare id, NOT (org_id, id): the id IS the URL path segment, so it must
-    -- be globally unique across tenants or one org's hook could shadow another's on the shared
-    -- ingress. NO SECRET HERE: data.secretRef is a pointer into stored_credential.
-    -- ⭐ The source column holds the NAME (OPE-198 S2). The SCHEME -- the verifier/normalizer/
-    -- grant registry key -- lives unpromoted in the JSON blob as data.scheme, because nothing looks
-    -- a hook up by it. The column keeps its spelling: (org, source) and (org, name) are the same
-    -- pair of values, and renaming it would be a migration buying nothing. See the postgres twin.
-    CREATE TABLE IF NOT EXISTS webhook_hook (
-      org_id     TEXT NOT NULL,
-      id         TEXT NOT NULL,                -- hk_<base32> -- globally unique, IS the URL segment
-      source     TEXT NOT NULL,                -- the NAME: the model-facing handle; unique per org
-      data       TEXT NOT NULL,                -- the whole RuntimeWebhookHook, JSON
-      PRIMARY KEY (id)
+    -- webhook_capture_window (OPE-211, re-homed by OPE-224): the ONLY mutable state a DECLARED
+    -- webhook has -- when its capture window closes and who opened it. Keyed by (org_id, hook_id):
+    -- a hook id is unique within an org's config, unlike the deleted chat-created class's ids which
+    -- were globally-unique URL segments and therefore keyed on the bare id. Nothing here is secret
+    -- and nothing here is authority -- the hook's identity, posture and read grant are re-read from
+    -- the config registry at arm and at delivery time. See the postgres twin.
+    CREATE TABLE IF NOT EXISTS webhook_capture_window (
+      org_id        TEXT NOT NULL,
+      hook_id       TEXT NOT NULL,             -- the DECLARED hook's id (= webhook_capture.source)
+      capture_until TEXT NOT NULL,             -- ISO-8601, already clamped by the arming path
+      armed_by      TEXT NOT NULL,
+      armed_at      TEXT NOT NULL,
+      PRIMARY KEY (org_id, hook_id)
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS webhook_hook_org_source ON webhook_hook (org_id, source);
     -- github_installation (scm/installations.ts): owner → installation id, learned from the App's own
     -- signature-verified "installation" webhook so a new org installing the App self-registers instead
     -- of needing an OE_GITHUB_INSTALLATIONS env edit + redeploy. NOT a secret (an installation id is a
@@ -1330,35 +1324,20 @@ export const sqliteOperationalStore: OperationalStore = {
     };
   },
 
-  async addWebhookHook(hook) {
-    const info = getDb()
-      .prepare("INSERT INTO webhook_hook (org_id, id, source, data) VALUES (?, ?, ?, ?) ON CONFLICT (org_id, source) DO NOTHING")
-      .run(hook.org, hook.id, hook.source, JSON.stringify(hook));
-    return Number(info.changes) > 0;
+  async armWebhookCaptureWindow(org, hookId, captureUntil, armedBy, at) {
+    getDb()
+      .prepare(
+        `INSERT INTO webhook_capture_window (org_id, hook_id, capture_until, armed_by, armed_at) VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (org_id, hook_id) DO UPDATE SET capture_until = excluded.capture_until, armed_by = excluded.armed_by, armed_at = excluded.armed_at`,
+      )
+      .run(org, hookId, captureUntil, armedBy, at);
   },
 
-  async getWebhookHookById(id) {
-    const row = getDb().prepare("SELECT data FROM webhook_hook WHERE id = ?").get(id) as { data: string } | undefined;
-    return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
-  },
-
-  async getWebhookHookBySource(org, source) {
-    const row = getDb().prepare("SELECT data FROM webhook_hook WHERE org_id = ? AND source = ?").get(org, source) as { data: string } | undefined;
-    return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
-  },
-
-  async listWebhookHooks(org) {
-    const rows = getDb().prepare("SELECT data FROM webhook_hook WHERE org_id = ? ORDER BY source ASC").all(org) as { data: string }[];
-    return rows.map((r) => JSON.parse(r.data) as RuntimeWebhookHook);
-  },
-
-  async updateWebhookHook(org, id, patch) {
-    const handle = getDb();
-    const row = handle.prepare("SELECT data FROM webhook_hook WHERE org_id = ? AND id = ?").get(org, id) as { data: string } | undefined;
-    if (!row) return null;
-    const updated: RuntimeWebhookHook = { ...(JSON.parse(row.data) as RuntimeWebhookHook), ...patch, org, id };
-    handle.prepare("UPDATE webhook_hook SET source = ?, data = ? WHERE org_id = ? AND id = ?").run(updated.source, JSON.stringify(updated), org, id);
-    return updated;
+  async getWebhookCaptureWindow(org, hookId) {
+    const row = getDb()
+      .prepare("SELECT hook_id, capture_until, armed_by, armed_at FROM webhook_capture_window WHERE org_id = ? AND hook_id = ?")
+      .get(org, hookId) as { hook_id: string; capture_until: string; armed_by: string; armed_at: string } | undefined;
+    return row ? { hookId: row.hook_id, captureUntil: row.capture_until, armedBy: row.armed_by, armedAt: row.armed_at } : null;
   },
 
   async consumeCredentialIntake(org, id, usedAt) {

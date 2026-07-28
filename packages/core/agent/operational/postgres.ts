@@ -1,6 +1,5 @@
 import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import type { PgClient } from "../memory/postgres.js";
 import { assertSpendLimitAmount, assertDomainModelPick, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
@@ -164,14 +163,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      used_at      text,
      PRIMARY KEY (org_id, id)
    )`,
-  `CREATE TABLE IF NOT EXISTS webhook_hook (
-     org_id text NOT NULL,
-     id     text NOT NULL,
-     source text NOT NULL,
-     data   text NOT NULL,
-     PRIMARY KEY (id)
+  `CREATE TABLE IF NOT EXISTS webhook_capture_window (
+     org_id        text NOT NULL,
+     hook_id       text NOT NULL,
+     capture_until text NOT NULL,
+     armed_by      text NOT NULL,
+     armed_at      text NOT NULL,
+     PRIMARY KEY (org_id, hook_id)
    )`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS webhook_hook_org_source ON webhook_hook (org_id, source)`,
   `CREATE TABLE IF NOT EXISTS github_installation (
      org_id               text NOT NULL,
      owner                text NOT NULL,
@@ -289,7 +288,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE slack_attachment ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE stored_credential ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE credential_intake ENABLE ROW LEVEL SECURITY`,
-  `ALTER TABLE webhook_hook ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE webhook_capture_window ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE github_installation ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
@@ -314,7 +313,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS slack_attachment_org_isolation ON slack_attachment`,
   `DROP POLICY IF EXISTS stored_credential_org_isolation ON stored_credential`,
   `DROP POLICY IF EXISTS credential_intake_org_isolation ON credential_intake`,
-  `DROP POLICY IF EXISTS webhook_hook_org_isolation ON webhook_hook`,
+  `DROP POLICY IF EXISTS webhook_capture_window_org_isolation ON webhook_capture_window`,
   `DROP POLICY IF EXISTS github_installation_org_isolation ON github_installation`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
@@ -366,7 +365,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY credential_intake_org_isolation ON credential_intake
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
-  `CREATE POLICY webhook_hook_org_isolation ON webhook_hook
+  `CREATE POLICY webhook_capture_window_org_isolation ON webhook_capture_window
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY github_installation_org_isolation ON github_installation
@@ -692,7 +691,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   slack_attachment: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   stored_credential: ["SELECT", "INSERT", "UPDATE"],
   credential_intake: ["SELECT", "INSERT", "UPDATE"],
-  webhook_hook: ["SELECT", "INSERT", "UPDATE"],
+  webhook_capture_window: ["SELECT", "INSERT", "UPDATE"],
   unified_wake_target: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   github_installation: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   pr_session_approval: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1691,38 +1690,18 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return rows.length > 0;
     },
 
-    async addWebhookHook(hook: RuntimeWebhookHook) {
-      const { rows } = await client.query(
-        "INSERT INTO webhook_hook (org_id, id, source, data) VALUES ($1, $2, $3, $4) ON CONFLICT (org_id, source) DO NOTHING RETURNING id",
-        [hook.org, hook.id, hook.source, JSON.stringify(hook)],
+    async armWebhookCaptureWindow(org: string, hookId: string, captureUntil: string, armedBy: string, at: string) {
+      await client.query(
+        `INSERT INTO webhook_capture_window (org_id, hook_id, capture_until, armed_by, armed_at) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (org_id, hook_id) DO UPDATE SET capture_until = EXCLUDED.capture_until, armed_by = EXCLUDED.armed_by, armed_at = EXCLUDED.armed_at`,
+        [org, hookId, captureUntil, armedBy, at],
       );
-      return rows.length > 0;
     },
 
-    async getWebhookHookById(id: string) {
-      const { rows } = await client.query("SELECT data FROM webhook_hook WHERE id = $1", [id]);
-      const row = (rows as { data: string }[])[0];
-      return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
-    },
-
-    async getWebhookHookBySource(org: string, source: string) {
-      const { rows } = await client.query("SELECT data FROM webhook_hook WHERE org_id = $1 AND source = $2", [org, source]);
-      const row = (rows as { data: string }[])[0];
-      return row ? (JSON.parse(row.data) as RuntimeWebhookHook) : null;
-    },
-
-    async listWebhookHooks(org: string) {
-      const { rows } = await client.query("SELECT data FROM webhook_hook WHERE org_id = $1 ORDER BY source ASC", [org]);
-      return (rows as { data: string }[]).map((r) => JSON.parse(r.data) as RuntimeWebhookHook);
-    },
-
-    async updateWebhookHook(org: string, id: string, patch: Partial<RuntimeWebhookHook>) {
-      const { rows } = await client.query("SELECT data FROM webhook_hook WHERE org_id = $1 AND id = $2", [org, id]);
-      const row = (rows as { data: string }[])[0];
-      if (!row) return null;
-      const updated: RuntimeWebhookHook = { ...(JSON.parse(row.data) as RuntimeWebhookHook), ...patch, org, id };
-      await client.query("UPDATE webhook_hook SET source = $1, data = $2 WHERE org_id = $3 AND id = $4", [updated.source, JSON.stringify(updated), org, id]);
-      return updated;
+    async getWebhookCaptureWindow(org: string, hookId: string) {
+      const { rows } = await client.query("SELECT hook_id, capture_until, armed_by, armed_at FROM webhook_capture_window WHERE org_id = $1 AND hook_id = $2", [org, hookId]);
+      const row = (rows as { hook_id: string; capture_until: string; armed_by: string; armed_at: string }[])[0];
+      return row ? { hookId: row.hook_id, captureUntil: row.capture_until, armedBy: row.armed_by, armedAt: row.armed_at } : null;
     },
 
     async addPendingAction(row: PendingActionRow) {

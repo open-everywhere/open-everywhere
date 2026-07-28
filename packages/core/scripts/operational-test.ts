@@ -675,8 +675,11 @@ const store = makeOperationalPostgresStore(client);
     await denied("UPDATE audit_entry SET action = 'tampered'", "permission denied", "two-role: UPDATE audit_entry is permission-DENIED for the runtime role");
     await denied("DELETE FROM audit_entry", "permission denied", "two-role: DELETE audit_entry is permission-DENIED for the runtime role");
 
-    await denied("DELETE FROM webhook_hook", "permission denied", "two-role: DELETE webhook_hook is permission-DENIED (OPE-221 — no delete path exists for a hook)");
-    ok(((await client.query("SELECT count(*)::int AS n FROM webhook_hook")).rows as { n: number }[])[0].n >= 0, "two-role: …while SELECT on webhook_hook still works (the narrowing is per-VERB, not a lockout)");
+    await denied("DELETE FROM webhook_capture_window", "permission denied", "two-role: DELETE webhook_capture_window is permission-DENIED (OPE-221 — no delete path exists for an arm-state row)");
+    ok(
+      ((await client.query("SELECT count(*)::int AS n FROM webhook_capture_window")).rows as { n: number }[])[0].n >= 0,
+      "two-role: …while SELECT on webhook_capture_window still works (the narrowing is per-VERB, not a lockout)",
+    );
     await denied("UPDATE event_dedupe SET seen_at = '2026-01-01T00:00:00Z'", "permission denied", "two-role: UPDATE event_dedupe is permission-DENIED (a dedupe row is written once, never edited)");
     await client.query("DELETE FROM event_dedupe WHERE org_id = 'nobody'");
     ok(true, "two-role: …while DELETE on event_dedupe is permitted (the org-scoped TTL prune still runs)");
@@ -868,24 +871,20 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
-  const hook = (over: { org?: string; id: string; source: string; status?: "active" | "revoked" }) => ({
-    org: over.org ?? "default",
-    id: over.id,
-    source: over.source,
-    posture: "trigger-only" as const,
-    secretRef: `hook:${over.id}`,
-    status: over.status ?? ("active" as const),
-    createdBy: "U-DECIDER",
-    createdIn: "slack/T1/C1",
-    createdAt: "2026-07-27T00:00:00.000Z",
-  });
-  ok((await store.addWebhookHook(hook({ id: "hk_" + "a".repeat(26), source: "github" }))) === true, "webhook_hook: a fresh (org, source) inserts");
-  ok((await store.addWebhookHook(hook({ id: "hk_" + "b".repeat(26), source: "github" }))) === false, "webhook_hook: a duplicate (org, source) returns FALSE rather than raising a unique violation");
-  ok((await store.getWebhookHookById("hk_" + "b".repeat(26))) === null, "webhook_hook: the losing row was never written");
-  ok((await store.getWebhookHookBySource("default", "github"))!.id === "hk_" + "a".repeat(26), "webhook_hook: the incumbent is untouched");
-  ok((await store.addWebhookHook(hook({ org: "acme", id: "hk_" + "c".repeat(26), source: "github" }))) === true, "webhook_hook: the claim is per-ORG, not global");
-  await store.updateWebhookHook("default", "hk_" + "a".repeat(26), { status: "revoked" });
-  ok((await store.addWebhookHook(hook({ id: "hk_" + "d".repeat(26), source: "github" }))) === false, "webhook_hook: a REVOKED row still holds its (org, source) — revoking retires the name");
+  ok((await store.getWebhookCaptureWindow("default", "deploy-status")) === null, "capture window: a hook nobody armed has NO row — absence is the closed state, so creation is not consent to retention");
+
+  await store.armWebhookCaptureWindow("default", "deploy-status", "2026-07-28T01:00:00.000Z", "U-ARMER", "2026-07-28T00:00:00.000Z");
+  const first = (await store.getWebhookCaptureWindow("default", "deploy-status"))!;
+  ok(first.captureUntil === "2026-07-28T01:00:00.000Z" && first.armedBy === "U-ARMER", "capture window: arming stores the deadline and who opened it");
+
+  await store.armWebhookCaptureWindow("default", "deploy-status", "2026-07-28T02:00:00.000Z", "U-OTHER", "2026-07-28T01:30:00.000Z");
+  const second = (await store.getWebhookCaptureWindow("default", "deploy-status"))!;
+  ok(second.captureUntil === "2026-07-28T02:00:00.000Z" && second.armedBy === "U-OTHER", "🔴 capture window: RE-ARMING REPLACES — one hook has at most one window, so the numbering a human reads is never ambiguous across a boundary they cannot see");
+
+  ok((await store.getWebhookCaptureWindow("acme", "deploy-status")) === null, "capture window: the row is per-ORG — another tenant arming the same hook id is a different row");
+
+  await store.armWebhookCaptureWindow("default", "old-hook", "2020-01-01T00:00:00.000Z", "U-ARMER", "2020-01-01T00:00:00.000Z");
+  ok((await store.getWebhookCaptureWindow("default", "old-hook"))?.captureUntil === "2020-01-01T00:00:00.000Z", "capture window: an ELAPSED deadline is returned unchanged, never filtered out by the store");
 }
 
 await db.close();

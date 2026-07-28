@@ -109,7 +109,7 @@ const ARGS = {
   );
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, posture: 3 }] }), "posture", "a non-string posture is refused at the JSON boundary");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, project: [1, 2] }] }), "project", "a malformed project list is refused at the JSON boundary");
-  rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, id: "hk_abc" }] }), "reserved", '🔴 an "hk_" id is refused — a config hook wins every lookup, so squatting on that namespace SHADOWS a live minted ingress');
+  ok(codemod.parseHooksFile({ hooks: [{ ...DECL, id: "hk_abc" }] }).hooks[0]!.id === "hk_abc", 'an "hk_"-prefixed id is now an ordinary id — the namespace it was reserved against no longer exists');
   const { readableBy: _dropped, ...noGrant } = DECL;
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [noGrant] }), "readableBy", "🔴 an overlay hook with NO readableBy is refused — required, no default, at the JSON boundary too");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, readableBy: [] }] }), "readableBy", "…and an EMPTY one is refused for the same reason");

@@ -95,15 +95,23 @@ for (const [engine, store] of engines) {
   ok(rows[9].seq === 10, "postgres bounds: seq is numeric, not a bigint string, so the numbering is usable");
 }
 
+const namesIn = (stmt: string): string[] =>
+  (/ ON ([a-z0-9_, ]+) (?:TO|FROM) /.exec(stmt)?.[1] ?? "").split(",").map((t) => t.trim());
 {
   ok(OPERATIONAL_TABLES.includes("webhook_capture"), "registry: webhook_capture is in OPERATIONAL_TABLES (or the migrator would leave it behind)");
+  ok(OPERATIONAL_TABLES.includes("webhook_capture_window"), "registry: webhook_capture_window (the arm state) is in OPERATIONAL_TABLES too");
   const grants = runtimeRoleGrantsSql("oe_runtime");
-  const grant = grants.find((g) => g.startsWith("GRANT") && g.includes("webhook_capture"));
+  const grant = grants.find((g) => g.startsWith("GRANT") && namesIn(g).includes("webhook_capture"));
   ok(grant !== undefined, "grants: the runtime role is granted webhook_capture");
   ok(grant!.includes("SELECT") && grant!.includes("INSERT") && grant!.includes("DELETE"), "grants: exactly the three verbs the code uses");
   ok(!grant!.includes("UPDATE"), "grants: NO UPDATE — a captured row is never edited, and a grant with no caller is a hole with no alarm");
+
+  const armGrant = grants.find((g) => g.startsWith("GRANT") && namesIn(g).includes("webhook_capture_window"));
+  ok(armGrant !== undefined, "grants: the runtime role is granted webhook_capture_window");
+  ok(armGrant!.includes("SELECT") && armGrant!.includes("INSERT") && armGrant!.includes("UPDATE"), "grants: SELECT+INSERT+UPDATE — the upsert re-arming needs all three");
+  ok(!armGrant!.includes("DELETE"), "🔴 grants: NO DELETE on the arm state — re-arming REPLACES and a window closes by its deadline elapsing, so nothing ever deletes a row");
   ok(
-    grants.some((g) => g.startsWith("REVOKE") && g.includes("webhook_capture") && g.includes("UPDATE")),
+    grants.some((g) => g.startsWith("REVOKE") && namesIn(g).includes("webhook_capture") && g.includes("UPDATE")),
     "grants: UPDATE is explicitly REVOKED, so adding the table to the blanket list by reflex cannot silently re-grant it",
   );
   await pgClient.query("CREATE ROLE oe_runtime NOLOGIN");
@@ -119,21 +127,37 @@ const hook = (over: Record<string, unknown> = {}) =>
   ok(refuseCaptureArm(hook({ posture: "content-bearing" })) === undefined, "refusal: a content-bearing hook may be armed");
   ok(refuseCaptureArm(hook({ posture: "projection" })) === undefined, "refusal: a PROJECTION hook may be armed — narrowed is not redacted");
 
+  const openWindow = async () => ({ captureUntil: iso(T0 + 60_000) });
   ok(
-    captureDeclaration(hook({ posture: "trigger-only" }), new Date(T0)) === undefined,
-    "refusal 2/3: a trigger-only row DECLARES no window even when its own captureUntil is in the future",
+    (await captureDeclaration("acme", { id: "deploy-status", source: "deploy-status", posture: "trigger-only" }, new Date(T0), { getWindow: openWindow })) === undefined,
+    "refusal 2/3: a trigger-only hook DECLARES no window even when an open one is armed for it — and it never even asks the store",
   );
-  ok(captureDeclaration(hook(), new Date(T0)) !== undefined, "refusal: a content-bearing row with an open window declares one");
+  ok(
+    (await captureDeclaration("acme", { id: "deploy-status", source: "deploy-status", posture: "content-bearing" }, new Date(T0), { getWindow: openWindow })) !== undefined,
+    "refusal: a content-bearing hook with an open window declares one",
+  );
+  ok(
+    (await captureDeclaration("acme", { id: "deploy-status", source: "deploy-status", posture: "content-bearing" }, new Date(T0), { getWindow: async () => null })) === undefined,
+    "🔴 a hook that was NEVER armed declares nothing — absence is the closed state, so creation is not consent to retention",
+  );
+  ok(
+    (await captureDeclaration("acme", { id: "deploy-status", source: "deploy-status", posture: "content-bearing" }, new Date(T0), {
+      getWindow: async () => {
+        throw new Error("store down");
+      },
+    })) === undefined,
+    "🔴 a store that cannot answer means NO capture, never a thrown delivery — retention is the optional half of this path and routing is not",
+  );
 
   const redacted = { source: "x", event: "e", scope: [], fields: {}, summary: "s", redacted: true } as NormalizedEvent;
   ok(captureDocument(redacted) === undefined, "refusal 3/3: a REDACTED event is never serialized, whatever the declaration said");
 }
 
 {
-  ok(captureWindowOpen({}, new Date(T0)) === false, "window: ABSENT captureUntil is closed (the default for every hook that exists)");
-  ok(captureWindowOpen({ captureUntil: "nonsense" }, new Date(T0)) === false, "window: an unparseable deadline is closed");
-  ok(captureWindowOpen({ captureUntil: iso(T0 - 1) }, new Date(T0)) === false, "window: an elapsed deadline is closed");
-  ok(captureWindowOpen({ captureUntil: iso(T0 + 1) }, new Date(T0)) === true, "window: a future deadline is open");
+  ok(captureWindowOpen(undefined, new Date(T0)) === false, "window: an ABSENT deadline is closed (the default for every hook that exists)");
+  ok(captureWindowOpen("nonsense", new Date(T0)) === false, "window: an unparseable deadline is closed");
+  ok(captureWindowOpen(iso(T0 - 1), new Date(T0)) === false, "window: an elapsed deadline is closed");
+  ok(captureWindowOpen(iso(T0 + 1), new Date(T0)) === true, "window: a future deadline is open");
 
   const clamped = Date.parse(captureDeadline(new Date(T0), CAPTURE_MAX_WINDOW_MS * 100));
   ok(clamped === T0 + CAPTURE_MAX_WINDOW_MS, "window: an over-long request is CLAMPED to the ceiling, not honoured");

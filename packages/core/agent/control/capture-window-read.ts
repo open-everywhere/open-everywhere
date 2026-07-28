@@ -6,7 +6,8 @@ import { evaluateJqFilter, type EventFilterDocument } from "../routines/jq-filte
 import { CAPTURE_MAX_DELIVERIES, type CapturedDeliveryRow } from "../operational/store.js";
 import { resolveHook, type DeliveryHistoryDeps } from "./delivery-history.js";
 import { captureDeadline, refuseCaptureArm } from "../webhooks/capture-window.js";
-import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
+import { configHookPosture, findWebhook } from "../webhooks/config.js";
+import { getConfig } from "../access/config.js";
 import type { Partition } from "../memory/partition.js";
 
 export const WEBHOOK_CAPTURE_READ = "webhook.capture_read";
@@ -140,11 +141,10 @@ export type CaptureArmResult =
   | { readonly ok: false; readonly message: string };
 
 export async function armCaptureWindow(
-  request: { readonly partition: Partition; readonly source: string; readonly windowMs?: number },
+  request: { readonly partition: Partition; readonly source: string; readonly windowMs?: number; readonly armedBy?: string },
   deps: CaptureReadDeps & {
     readonly now?: () => Date;
-    readonly getHook?: (org: string, source: string) => Promise<RuntimeWebhookHook | null>;
-    readonly patch?: (org: string, id: string, patch: Partial<RuntimeWebhookHook>) => Promise<RuntimeWebhookHook | null>;
+    readonly arm?: (org: string, hookId: string, until: string, armedBy: string, at: string) => Promise<void>;
     readonly clear?: (org: string, source: string) => Promise<void>;
   } = {},
 ): Promise<CaptureArmResult> {
@@ -153,14 +153,10 @@ export async function armCaptureWindow(
   if (!resolved) {
     return { ok: false, message: `no inbound webhook named "${request.source.slice(0, 80)}" exists for this org — check the name with list_webhooks.` };
   }
-  if (resolved.hookClass === "config") {
-    return {
-      ok: false,
-      message:
-        `"${resolved.source}" is declared in this deployment's config, not created from chat, so there is no row here to arm. ` +
-        "Its senders are known at review time — write the filter against the declaration, or add a capture window to the hook's config in a PR.",
-    };
-  }
+
+  const declared = findWebhook((deps.configHooks ?? (() => getConfig().loadWebhooks?.() ?? []))(), resolved.id)!;
+  const refusal = refuseCaptureArm({ source: resolved.source, posture: configHookPosture(declared) });
+  if (refusal) return { ok: false, message: refusal };
 
   let granted: boolean;
   try {
@@ -178,25 +174,17 @@ export async function armCaptureWindow(
     };
   }
 
-  const getHook = deps.getHook ?? ((o: string, s: string) => getOperationalStore().getWebhookHookBySource(o, s));
-  const hook = await getHook(org, resolved.source);
-  if (!hook) return { ok: false, message: `"${resolved.source}" could not be loaded — it may have just been revoked.` };
-  if (hook.status !== "active") {
-    return {
-      ok: false,
-      message: `"${resolved.source}" is revoked, so no delivery will ever reach it — arming a window on it would only look like it was working.`,
-    };
-  }
-  const refusal = refuseCaptureArm(hook);
-  if (refusal) return { ok: false, message: refusal };
-
   const now = deps.now?.() ?? new Date();
   const until = captureDeadline(now, request.windowMs);
 
   const clear = deps.clear ?? ((o: string, s: string) => getOperationalStore().clearCapturedDeliveries(o, s));
   await clear(org, resolved.source);
-  const patch = deps.patch ?? ((o: string, id: string, p: Partial<RuntimeWebhookHook>) => getOperationalStore().updateWebhookHook(o, id, p));
-  await patch(org, hook.id, { captureUntil: until });
+  const arm = deps.arm ?? ((o: string, h: string, u: string, by: string, at: string) => getOperationalStore().armWebhookCaptureWindow(o, h, u, by, at));
+  try {
+    await arm(org, resolved.id, until, request.armedBy ?? "unknown", now.toISOString());
+  } catch (err) {
+    return { ok: false, message: `"${resolved.source}" could not be armed — the store refused the write (${String(err instanceof Error ? err.message : err)}). Nothing is being captured.` };
+  }
 
   await (deps.audit ?? appendAudit)({
     org,
@@ -204,7 +192,7 @@ export async function armCaptureWindow(
     workspace: request.partition.workspace,
     surface: request.partition.surface,
     action: WEBHOOK_CAPTURE_ARM,
-    detail: { hookId: hook.id, source: resolved.source, posture: hook.posture, until, readableBy: grantText },
+    detail: { hookId: resolved.id, source: resolved.source, posture: configHookPosture(declared), until, readableBy: grantText },
   }).catch(() => undefined);
 
   return { ok: true, until, cleared: true };

@@ -17,8 +17,20 @@ const SENTINEL = "FAKE-HOOK-SIGNING-SECRET-1a2b3c-DO-NOT-USE";
 
 const reveal = await import("../agent/webhooks/reveal-page.js");
 const intakePage = await import("../agent/credentials/intake-page.js");
-const rh = await import("../agent/webhooks/runtime-hook.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+type WebhookHook = import("../agent/webhooks/config.js").WebhookHook;
+const DECLARED: WebhookHook[] = [];
+const { registerConfig } = await import("../agent/access/config.js");
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadDomains: () => [],
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+  loadWebhooks: () => DECLARED,
+} as never);
 const { PAGE_AUDIENCES, mintPageToken, pageTokenSigningKey } = await import("../agent/credentials/page-token.js");
 type PageAudience = import("../agent/credentials/page-token.js").PageAudience;
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
@@ -251,23 +263,18 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
 
   let hookSeq = 0;
   async function grantForHook(scheme: string | undefined, opts: { org?: string } = {}): Promise<string> {
-    const id = `hk_${randomBytes(8).toString("hex")}`;
-    const ref = `hook:${id}`;
+    const id = `my-ci-${++hookSeq}`;
+    const ref = `db:webhook:${id}`;
     await vault.write(ref, SENTINEL);
-    const added = await store.addWebhookHook({
-      org: opts.org ?? ORG,
+    DECLARED.push({
       id,
-      source: `my-ci-${++hookSeq}`,
-      ...(scheme ? { scheme } : {}),
-      posture: "trigger-only",
+      source: scheme ?? "unregistered-scheme",
       secretRef: ref,
-      status: "active",
-      createdBy: USER,
-      createdIn: "slack/T1/C1",
-      createdAt: new Date().toISOString(),
+      broker: "db",
+      posture: "trigger-only",
+      readableBy: [{ level: "domain", domain: "eng" }],
     });
-    assert.ok(added, "fixture hook row was inserted");
-    const link = await reveal.issueRevealLink({ org: opts.org ?? ORG, ref, revealTo: USER, label: "my-ci" });
+    const link = await reveal.issueRevealLink({ org: opts.org ?? ORG, ref, revealTo: USER, label: id });
     return new URL(link!.url).searchParams.get("t")!;
   }
 
@@ -376,8 +383,8 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
 
 {
   console.log("\n10. webhook.secret_revealed (OPE-199):");
-  const id = rh.mintRuntimeHookId();
-  const ref = rh.runtimeHookSecretRef(id);
+  const id = "audited-hook";
+  const ref = `db:webhook:${id}`;
   await vault.write(ref, SENTINEL);
   const link = (await reveal.issueRevealLink({ org: ORG, ref, revealTo: USER, label: "audited" }))!;
   const token = new URL(link.url).searchParams.get("t")!;
@@ -397,8 +404,7 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   eq((await reveal.handleRevealPost(postReq(token))).status, 404, "the second POST is refused…");
   eq((await readAudit({ org: ORG, action: "webhook.secret_revealed" })).filter((r) => (r.detail as Record<string, unknown>).hookId === id).length, 1, "…and writes no second row");
 
-  const dead = rh.mintRuntimeHookId();
-  const deadLink = (await reveal.issueRevealLink({ org: ORG, ref: rh.runtimeHookSecretRef(dead), revealTo: USER, label: "dead" }))!;
+  const deadLink = (await reveal.issueRevealLink({ org: ORG, ref: "db:webhook:dead-hook", revealTo: USER, label: "dead" }))!;
   const deadToken = new URL(deadLink.url).searchParams.get("t")!;
   const boom = await reveal.handleRevealPost(postReq(deadToken), {
     readSecret: async () => {

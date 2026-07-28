@@ -1,7 +1,13 @@
 import { filterDocument, type EventFilterDocument } from "../routines/jq-filter.js";
 import type { NormalizedEvent } from "../routines/event-model.js";
 import { CAPTURE_MAX_WINDOW_MS } from "../operational/store.js";
-import type { RuntimeWebhookHook } from "./runtime-hook.js";
+import { getOperationalStore } from "../operational/provider.js";
+import type { WebhookPosture } from "./config.js";
+
+export interface CaptureSubject {
+  readonly source: string;
+  readonly posture: WebhookPosture;
+}
 
 export const CAPTURE_WINDOW_DEFAULT_MS = 15 * 60_000;
 
@@ -15,29 +21,40 @@ export function captureDeadline(now: Date, requestedMs: number = CAPTURE_WINDOW_
   return new Date(now.getTime() + ms).toISOString();
 }
 
-export function refuseCaptureArm(hook: Pick<RuntimeWebhookHook, "source" | "posture">): CaptureArmRefusal | undefined {
+export function refuseCaptureArm(hook: CaptureSubject): CaptureArmRefusal | undefined {
   if (hook.posture === "trigger-only") {
     return (
       `"${hook.source}" is a trigger-only webhook: its payload is discarded at the door and is never rendered, stored or ` +
       "shown to anyone. A capture window would be a storage back door around exactly that guarantee, so it is refused rather " +
-      "than quietly recording nothing. If this hook's payload genuinely should be readable, re-create it as content-bearing " +
-      "— that is a decision with an approval behind it, which is the point."
+      "than quietly recording nothing. If this hook's payload genuinely should be readable, its declaration has to say so — " +
+      "changing the posture is a reviewed diff, which is the point."
     );
   }
   return undefined;
 }
 
-export function captureWindowOpen(hook: Pick<RuntimeWebhookHook, "captureUntil">, now: Date): boolean {
-  const until = hook.captureUntil;
+export function captureWindowOpen(until: string | undefined, now: Date): boolean {
   if (!until) return false;
   const ms = Date.parse(until);
   return Number.isFinite(ms) && now.getTime() < ms;
 }
 
-export function captureDeclaration(hook: Pick<RuntimeWebhookHook, "posture" | "captureUntil">, now: Date): string | undefined {
+export async function captureDeclaration(
+  org: string,
+  hook: CaptureSubject & { readonly id: string },
+  now: Date,
+  deps: { readonly getWindow?: (org: string, hookId: string) => Promise<{ readonly captureUntil: string } | null> } = {},
+): Promise<string | undefined> {
   if (hook.posture === "trigger-only") return undefined;
-  if (!captureWindowOpen(hook, now)) return undefined;
-  return hook.captureUntil;
+  let until: string | undefined;
+  try {
+    const row = await (deps.getWindow ?? ((o: string, h: string) => getOperationalStore().getWebhookCaptureWindow(o, h)))(org, hook.id);
+    until = row?.captureUntil;
+  } catch {
+    return undefined;
+  }
+  if (!captureWindowOpen(until, now)) return undefined;
+  return until;
 }
 
 export function captureDocument(ev: NormalizedEvent): string | undefined {

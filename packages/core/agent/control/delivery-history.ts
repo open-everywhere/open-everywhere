@@ -8,7 +8,6 @@ import { resolveAccessForPartition } from "../routines/event-authz.js";
 import { FORENSIC_SCAN_LIMIT, FORENSIC_WINDOW_MS, ROUTINE_AUDIT } from "../routines/fire-audit.js";
 import { isEventTrigger } from "../routines/event-match.js";
 import { listAllRoutines } from "../routines/store.js";
-import { hookReadableBy, type RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import type { Partition } from "../memory/partition.js";
 import type { Routine } from "../routines/routine.js";
@@ -65,7 +64,7 @@ export interface SubscriberOutcome {
 
 export interface DeliveryHistory {
   readonly source: string;
-  readonly hookClass: "config" | "runtime";
+  readonly hookClass: "config";
   readonly readableBy: string;
   readonly sinceIso: string;
   readonly deliveries: readonly DeliveryRecord[];
@@ -85,7 +84,6 @@ export type DeliveryHistoryResult =
 
 export interface DeliveryHistoryDeps {
   readonly configHooks?: () => readonly WebhookHook[];
-  readonly runtimeHooks?: (org: string) => Promise<readonly RuntimeWebhookHook[]>;
   readonly routines?: () => Promise<Routine[]>;
   readonly read?: typeof readAudit;
   readonly audit?: (entry: AuditInput) => Promise<void>;
@@ -108,18 +106,14 @@ function count(v: unknown): number {
 export interface ResolvedHook {
   readonly id: string;
   readonly source: string;
-  readonly hookClass: "config" | "runtime";
+  readonly hookClass: "config";
   readonly readableBy: ReadableBy;
 }
 
 export async function resolveHook(org: string, handle: string, deps: DeliveryHistoryDeps): Promise<ResolvedHook | undefined> {
   const configured = (deps.configHooks ?? (() => getConfig().loadWebhooks?.() ?? []))();
   const cfg = findWebhook(configured, handle);
-  if (cfg) return { id: cfg.id, source: cfg.id, hookClass: "config", readableBy: cfg.readableBy };
-  const runtime = await (deps.runtimeHooks ?? ((o: string) => getOperationalStore().listWebhookHooks(o)))(org);
-  const row = runtime.find((h) => h.source === handle);
-  if (!row) return undefined;
-  return { id: row.id, source: row.source, hookClass: "runtime", readableBy: hookReadableBy(row) };
+  return cfg ? { id: cfg.id, source: cfg.id, hookClass: "config", readableBy: cfg.readableBy } : undefined;
 }
 
 async function scan(deps: DeliveryHistoryDeps, org: string, action: string, since: string): Promise<readonly AuditEntry[]> {

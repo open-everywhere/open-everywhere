@@ -8,9 +8,11 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { getOperationalStore } from "../operational/provider.js";
-import { hasPrivateDeliveryPath } from "./create_webhook.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
+
+export function hasPrivateDeliveryPath(platform: string): boolean {
+  return platform === "slack";
+}
 import { getConfig } from "../access/config.js";
 import { configHookPosture, findWebhook } from "../webhooks/config.js";
 
@@ -51,61 +53,18 @@ export default defineTool({
     }
 
     const p = resolvePartition(ctx);
-    const source = input.source.trim().toLowerCase();
-
-    const declared = findWebhook(getConfig().loadWebhooks?.() ?? [], source);
-    if (declared) {
-      if (declared.broker !== "db") {
-        const ref = typeof declared.secretRef === "string" ? declared.secretRef : declared.secretRef[0];
-        throw new Error(
-          `The "${declared.id}" webhook keeps its secret outside this deployment (broker "${declared.broker}"), so I can't issue one for it. ` +
-            `An operator sets ${declared.broker === "env" ? `the environment variable \`${ref}\`` : `ref \`${ref}\``} and redeploys. ` +
-            `If you'd rather rotate it from here in future, its declaration needs changing to \`broker: "db"\` — that's a PR, and I can propose one.`,
-        );
-      }
-      const requestedByConfig = principalIdOf(ctx);
-      if (!requestedByConfig) throw new Error("rotate_webhook needs a verified sender — there's no requester to show on the approval card.");
-      const channelIdConfig = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-      if (!channelIdConfig) throw new Error("rotate_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
-      const postedConfig = await requestApproval(
-        {
-          org: p.org,
-          kind: "webhook.rotate",
-          args: {
-            org: p.org,
-            configId: declared.id,
-            id: declared.id,
-            source: declared.id,
-            posture: configHookPosture(declared),
-            surfaceKey: p.surfaceKey,
-            requestedBy: requestedByConfig,
-            platform: binding.platform,
-            channelId: channelIdConfig,
-          },
-          scopeKey: p.surfaceKey,
-          domain: null,
-          requestedBy: requestedByConfig,
-          channelId: channelIdConfig,
-          threadTs: binding.threadTs ?? null,
-          postedTo: postedToSurfaceKey(binding, channelIdConfig),
-        },
-        approvalPostDeps(binding.platform),
+    const id = input.source.trim().toLowerCase();
+    const declared = findWebhook(getConfig().loadWebhooks?.() ?? [], id);
+    if (!declared) {
+      throw new Error(`There's no "${id}" webhook declared here. Use list_webhooks to see what exists, or declare_webhook to propose a new one.`);
+    }
+    if (declared.broker !== "db") {
+      const ref = typeof declared.secretRef === "string" ? declared.secretRef : declared.secretRef[0];
+      throw new Error(
+        `The "${declared.id}" webhook keeps its secret outside this deployment (broker "${declared.broker}"), so I can't issue one for it. ` +
+          `An operator sets ${declared.broker === "env" ? `the environment variable \`${ref}\`` : `ref \`${ref}\``} and redeploys. ` +
+          `If you'd rather issue it from here in future, its declaration needs changing to \`broker: "db"\` — that's a PR, and I can propose one.`,
       );
-      return {
-        rotated: false,
-        pending: true,
-        pendingId: postedConfig.id,
-        source: declared.id,
-        message: `card posted — issuing a fresh signing secret for the declared "${declared.id}" webhook, awaiting a human to approve it (pending ${postedConfig.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
-      };
-    }
-
-    const hook = await getOperationalStore().getWebhookHookBySource(p.org, source);
-    if (!hook) {
-      throw new Error(`There's no "${source}" webhook here. Use list_webhooks to see what exists, or create_webhook to set one up.`);
-    }
-    if (hook.status !== "active") {
-      throw new Error(`There's no active "${source}" webhook here — it's ${hook.status}. Use list_webhooks to see what exists, or create_webhook to set one up.`);
     }
 
     const requestedBy = principalIdOf(ctx);
@@ -119,10 +78,8 @@ export default defineTool({
         kind: "webhook.rotate",
         args: {
           org: p.org,
-          id: hook.id,
-          source: hook.source,
-          ...(hook.scheme && hook.scheme !== hook.source ? { scheme: hook.scheme } : {}),
-          posture: hook.posture,
+          hookId: declared.id,
+          posture: configHookPosture(declared),
           surfaceKey: p.surfaceKey,
           requestedBy,
           platform: binding.platform,
@@ -142,8 +99,8 @@ export default defineTool({
       rotated: false,
       pending: true,
       pendingId: posted.id,
-      source,
-      message: `card posted — rotating the "${source}" webhook's secret, awaiting a human to approve it (pending ${posted.id}). On approval they get a private one-time link with the new secret.`,
+      source: declared.id,
+      message: `card posted — issuing a fresh signing secret for the "${declared.id}" webhook, awaiting a human to approve it (pending ${posted.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
     };
   },
 });

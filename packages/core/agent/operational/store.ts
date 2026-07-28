@@ -1,6 +1,5 @@
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import type { RuntimeWebhookHook } from "../webhooks/runtime-hook.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { UnifiedWakeRecord } from "../channels/unified-window.js";
@@ -20,7 +19,7 @@ export const OPERATIONAL_TABLES = [
   "slack_attachment",
   "stored_credential",
   "credential_intake",
-  "webhook_hook",
+  "webhook_capture_window",
   "github_installation",
   "pr_session_approval",
   "pending_actions",
@@ -38,6 +37,13 @@ export const CAPTURE_MAX_DELIVERIES = 50;
 export const CAPTURE_MAX_WINDOW_MS = 60 * 60_000;
 
 export const CAPTURE_MAX_RETENTION_MS = 24 * 60 * 60_000;
+
+export interface WebhookCaptureWindowRow {
+  readonly hookId: string;
+  readonly captureUntil: string;
+  readonly armedBy: string;
+  readonly armedAt: string;
+}
 
 export interface CapturedDeliveryRow {
   readonly seq: number;
@@ -406,11 +412,8 @@ export interface OperationalStore {
   getCredentialIntake(org: string, id: string): Promise<CredentialIntakeRow | null>;
   consumeCredentialIntake(org: string, id: string, usedAt: string): Promise<boolean>;
 
-  addWebhookHook(hook: RuntimeWebhookHook): Promise<boolean>;
-  getWebhookHookById(id: string): Promise<RuntimeWebhookHook | null>;
-  getWebhookHookBySource(org: string, source: string): Promise<RuntimeWebhookHook | null>;
-  listWebhookHooks(org: string): Promise<readonly RuntimeWebhookHook[]>;
-  updateWebhookHook(org: string, id: string, patch: Partial<RuntimeWebhookHook>): Promise<RuntimeWebhookHook | null>;
+  armWebhookCaptureWindow(org: string, hookId: string, captureUntil: string, armedBy: string, at: string): Promise<void>;
+  getWebhookCaptureWindow(org: string, hookId: string): Promise<WebhookCaptureWindowRow | null>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

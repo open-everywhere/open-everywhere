@@ -13,7 +13,7 @@ import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
 import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "../webhooks/source-vocabulary.js";
-import { RUNTIME_HOOK_ID_PREFIX, WEBHOOK_POSTURES, type WebhookPosture } from "../webhooks/runtime-hook.js";
+import { WEBHOOK_POSTURES, type WebhookPosture } from "../webhooks/config.js";
 import { eventNormalizer } from "../routines/event-model.js";
 import type { HookDeclaration } from "../webhooks/hooks-codemod.js";
 
@@ -25,6 +25,17 @@ export function secretRefForHookId(id: string): string {
 
 export function dbSecretRefForHookId(id: string): string {
   return `db:webhook:${id}`;
+}
+
+export function generalPurposeSchemeHint(source: string, scheme: string, vocabulary: readonly string[], schemeWasExplicit: boolean): string {
+  if (schemeWasExplicit) return "";
+  const alternatives = vocabulary.filter((s) => s !== scheme && s !== source);
+  if (alternatives.length === 0) return "";
+  return (
+    `\n\nBefore asking for that PR: if "${source}" is something you control or can script (a CI job, a build, an internal service), it does NOT need an adapter of its own. ` +
+    `Keep "${source}" as the \`source\` — it is just a label — and set \`scheme\` to a general-purpose contract this deployment already has (${alternatives.join(", ")}). ` +
+    `The sender then implements our signing contract instead of us implementing theirs.`
+  );
 }
 
 export default defineTool({
@@ -105,16 +116,13 @@ export default defineTool({
 
     const id = input.id.trim().toLowerCase();
     if (!ID_RE.test(id)) throw new Error(`A hook id is a short lowercase url-safe token (letters, digits, "_" or "-"), got ${JSON.stringify(input.id)}.`);
-    if (id.startsWith(RUNTIME_HOOK_ID_PREFIX)) {
-      throw new Error(`"${RUNTIME_HOOK_ID_PREFIX}" is reserved for hooks minted host-side by create_webhook — pick a different id.`);
-    }
     if (cfg.baseWebhooks!().some((h) => h.id === id)) {
       throw new Error(`A webhook "${id}" is already declared in this deployment's config. Point the sender at that one, or pick a different id — I can only add hooks, never redirect a live one.`);
     }
 
     const source = input.source.trim().toLowerCase();
     const vocabulary = runtimeHookSourceVocabulary();
-    if (!vocabulary.includes(source)) throw new Error(unknownSourceRefusal(source, vocabulary));
+    if (!vocabulary.includes(source)) throw new Error(unknownSourceRefusal(source, vocabulary) + generalPurposeSchemeHint(source, source, vocabulary, false));
 
     const target = input.target?.trim() || undefined;
     const instruction = input.instruction?.trim() || undefined;

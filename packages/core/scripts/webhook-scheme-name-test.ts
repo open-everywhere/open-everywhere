@@ -14,6 +14,7 @@ const {
   webhookIdentity,
   isSingleStringIdentity,
 } = await import("../agent/routines/scheme-name.js");
+type WebhookHook = import("../agent/webhooks/config.js").WebhookHook;
 type SchemeNamed = import("../agent/routines/scheme-name.js").SchemeNamed;
 
 const { normalizeDelivery, registerEventNormalizer, resetEventNormalizersForTest, declaredDeliveryId } = await import("../agent/routines/event-model.js");
@@ -29,7 +30,6 @@ type Routine = import("../agent/routines/routine.js").Routine;
 const { gateWebhookDelivery } = await import("../agent/webhooks/gate.js");
 const { registerWebhookVerifier, resetWebhookVerifiersForTest } = await import("../agent/webhooks/verifier.js");
 type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
-type RuntimeWebhookHook = import("../agent/webhooks/runtime-hook.js").RuntimeWebhookHook;
 
 const { resolveAccess } = await import("../agent/access/resolver.js");
 const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
@@ -49,36 +49,32 @@ const eq = (a: unknown, b: unknown, label: string) => {
 const OLD_registryKey = (x: SchemeNamed): string => x.source;
 const OLD_handle = (x: SchemeNamed): string => x.source;
 
-const STORED_ACTIVE: RuntimeWebhookHook = {
-  org: "acme",
-  id: "hk_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+const DECLARED_IMPLICIT: WebhookHook = {
+  id: "github",
   source: "github",
+  secretRef: "OE_WEBHOOK_GITHUB_SECRET",
+  broker: "env",
+  readableBy: [{ level: "domain", domain: "eng" }],
   posture: "trigger-only",
-  secretRef: "hook:hk_aaaaaaaaaaaaaaaaaaaaaaaaaa",
-  status: "active",
-  createdBy: "slack:U1",
-  createdIn: "slack/T1/C1",
-  createdAt: "2026-07-27T00:00:00.000Z",
 };
-const STORED_REVOKED: RuntimeWebhookHook = {
-  ...STORED_ACTIVE,
-  id: "hk_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+const DECLARED_EMIT_ONLY: WebhookHook = {
+  id: "deploy-status",
+  source: "oe-standard-webhook",
+  secretRef: "db:webhook:deploy-status",
+  broker: "db",
+  readableBy: [{ level: "org" }],
   posture: "content-bearing",
-  secretRef: "hook:hk_bbbbbbbbbbbbbbbbbbbbbbbbbb",
-  status: "revoked",
-  revokedBy: "slack:U2",
-  revokedAt: "2026-07-27T01:00:00.000Z",
 };
 
 const CORPUS: readonly { readonly note: string; readonly value: SchemeNamed }[] = [
-  { note: "RuntimeWebhookHook (chat-created, approvals/webhook.ts)", value: STORED_ACTIVE },
-  { note: "RuntimeWebhookHook (revoked — the retained name claim)", value: STORED_REVOKED },
+  { note: "WebhookHook (declared, implicit scheme)", value: DECLARED_IMPLICIT },
+  { note: "WebhookHook (declared, emit-only, db-homed secret)", value: DECLARED_EMIT_ONLY },
   { note: "GateableHook (runtime, resolveRuntimeHook)", value: { source: "github", scheme: "github" } },
   { note: "config WebhookHook (a scheme with no normalizer of its own)", value: { source: "verifier-only" } },
   { note: "config WebhookHook (github)", value: { source: "github" } },
   { note: "config WebhookHook (notion)", value: { source: "notion" } },
   { note: "TriggerDelivery (github-fanout.ts, the NATIVE ingress)", value: { source: "github" } },
-  { note: "TriggerDelivery (deliverRuntimeHook, chat-created)", value: { source: "github", scheme: "github" } },
+  { note: "TriggerDelivery (emitConfigHookEvent — NAME=hook id, SCHEME=declared source)", value: { source: "deploy-status", scheme: "deploy-status" } },
   { note: "NormalizedEvent (github-normalizer.ts)", value: { source: "github" } },
 ];
 
@@ -107,61 +103,9 @@ ok(CORPUS.every((c) => isSingleStringIdentity(c.value)), "golden: EVERY shape sh
   eq(webhookName({ source: "a", scheme: "b" }), "a", "precedence: the handle never consults the scheme");
 }
 
-const hook = (over: Partial<RuntimeWebhookHook> & { readonly id: string; readonly source: string }): RuntimeWebhookHook => ({
-  org: "acme",
-  posture: "trigger-only",
-  secretRef: `hook:${over.id}`,
-  status: "active",
-  createdBy: "slack:U1",
-  createdIn: "slack/T1/C1",
-  createdAt: "2026-07-27T00:00:00.000Z",
-  ...over,
-});
-
-const ID = (c: string) => `hk_${c.repeat(26)}`;
-
-async function driveIndex(store: OperationalStore, engine: string): Promise<void> {
-  eq(await store.addWebhookHook(hook({ id: ID("a"), source: "github" })), true, `${engine}: a pre-split row (no \`scheme\` field) inserts unchanged`);
-  const readBack = await store.getWebhookHookBySource("acme", "github");
-  ok(readBack !== null && readBack.scheme === undefined, `${engine}: …and reads back with \`scheme\` still absent — no migration, no rewrite`);
-  ok(readBack !== null && webhookScheme(readBack) === "github", `${engine}: …and the codec derives its scheme from its name, so every registry resolves exactly as before`);
-
-  eq(await store.addWebhookHook(hook({ id: ID("b"), source: "github" })), false, `${engine}: a second hook with the SAME NAME is refused by the real unique index`);
-
-  eq(await store.addWebhookHook(hook({ id: ID("c"), source: "ci-a", scheme: "acme-scheme" })), true, `${engine}: a hook naming an explicit scheme inserts`);
-  eq(await store.addWebhookHook(hook({ id: ID("d"), source: "ci-b", scheme: "acme-scheme" })), true, `${engine}: a SECOND hook on the SAME SCHEME with a DIFFERENT NAME coexists — the constraint is on the name`);
-
-  eq(await store.addWebhookHook(hook({ id: ID("e"), source: "ci-a", scheme: "some-other-scheme" })), false, `${engine}: the same NAME under a DIFFERENT scheme is still refused — the handle, not the contract, is unique`);
-
-  const c = await store.getWebhookHookBySource("acme", "ci-a");
-  ok(c !== null && c.id === ID("c"), `${engine}: by-name lookup finds the row whose NAME matches`);
-  eq(c?.scheme, "acme-scheme", `${engine}: the scheme round-trips through the JSON blob (it is not a promoted column, and does not need to be)`);
-  eq(webhookIdentity(c!), { name: "ci-a", scheme: "acme-scheme" }, `${engine}: …so both halves survive a real store round-trip`);
-
-  const revoked = await store.updateWebhookHook("acme", ID("c"), { status: "revoked" });
-  ok(revoked?.status === "revoked", `${engine}: revoke flips status in place`);
-  eq(revoked?.scheme, "acme-scheme", `${engine}: …and a patch that says nothing about the scheme does not drop it`);
-  eq(await store.addWebhookHook(hook({ id: ID("f"), source: "ci-a", scheme: "acme-scheme" })), false, `${engine}: a REVOKED row still claims its name — revoking retires the name, as the refusal copy says`);
-
-  eq(await store.addWebhookHook(hook({ id: ID("g"), source: "ci-a", org: "other" })), true, `${engine}: another tenant may hold the same name — the index is (org, name)`);
-
-  const listed = (await store.listWebhookHooks("acme")).map((h) => h.source);
-  eq([...listed].sort(), listed.slice(), `${engine}: listWebhookHooks orders by NAME ascending`);
-}
-
-{
-  await driveIndex(getOperationalStore(), "sqlite");
-}
-{
-  resetOperationalStore();
-  process.env.OE_PGLITE_DIR = join(TMP, "pglite");
-  const pg = await registerOperationalPglite();
-  registerOperationalStore(pg);
-  await driveIndex(pg, "postgres(pglite)");
-  resetOperationalStore();
-}
-
 const SCHEME = "acme-scheme";
+
+const ID = (c: string) => `hook-${c}`;
 
 const acmeNormalizer: EventNormalizer = {
   source: SCHEME,
@@ -267,20 +211,20 @@ const routine = (source: string): Routine =>
   const base = { rawBody: "{}", bodyBytes: 2, headers: new Headers(), nowMs: 0, allowUnverified: false, maxBodyBytes: 1_000_000 };
   const accepted = await gateWebhookDelivery({
     ...base,
-    hook: { id: ID("a"), source: "ci-a", scheme: SCHEME, secretRef: "hook:x" },
+    hook: { id: ID("a"), source: "ci-a", scheme: SCHEME, secretRef: "OE_X_SECRET", broker: "env" },
     secretValues: ["k"],
   });
   ok(accepted.ok, "gate: the verifier is resolved by SCHEME — a hook named `ci-a` authenticates under `acme-scheme`");
 
   const refused = await gateWebhookDelivery({
     ...base,
-    hook: { id: ID("a"), source: "ci-a", secretRef: "hook:x" },
+    hook: { id: ID("a"), source: "ci-a", secretRef: "OE_X_SECRET", broker: "env" },
     secretValues: ["k"],
   });
   ok(!refused.ok && refused.rejection.status === 401, "gate: FAIL CLOSED — with no scheme the NAME is the key, nothing is registered under it, and the delivery 401s");
   ok(!refused.ok && refused.rejection.reason.includes('"ci-a"'), "gate: …and the refusal names the key it actually tried, so an operator is not sent after the wrong string");
 
-  const legacy = await gateWebhookDelivery({ ...base, hook: { id: ID("a"), source: SCHEME, secretRef: "hook:x" }, secretValues: ["k"] });
+  const legacy = await gateWebhookDelivery({ ...base, hook: { id: ID("a"), source: SCHEME, secretRef: "OE_X_SECRET", broker: "env" }, secretValues: ["k"] });
   ok(legacy.ok, "gate: a pre-split hook (name === scheme, no `scheme` field) resolves exactly as it always did");
 }
 

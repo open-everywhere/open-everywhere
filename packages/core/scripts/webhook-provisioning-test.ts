@@ -25,10 +25,8 @@ registerTestConfig({
 const vocab = await import("../agent/webhooks/source-vocabulary.js");
 const verifierMod = await import("../agent/webhooks/verifier.js");
 type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
-const rh = await import("../agent/webhooks/runtime-hook.js");
-const ri = await import("../agent/webhooks/runtime-ingress.js");
 const revealMod = await import("../agent/webhooks/reveal-page.js");
-const { hasPrivateDeliveryPath, claimedSourceRefusal } = await import("../agent/tools/create_webhook.js");
+const { hasPrivateDeliveryPath } = await import("../agent/tools/rotate_webhook.js");
 const { hasApprovalCardPath } = await import("../agent/tools/set_spend_limit.js");
 const { registerCardPoster } = await import("../agent/approvals/flow.js");
 const { setRevealDeliveryDepsForTest } = await import("../agent/approvals/webhook.js");
@@ -64,9 +62,7 @@ setRevealDeliveryDepsForTest({
   },
 });
 
-const createKind = actionKind("webhook.create")!;
 const rotateKind = actionKind("webhook.rotate")!;
-const revokeKind = actionKind("webhook.revoke")!;
 
 {
   console.log("\n1. source vocabulary (OPE-159):");
@@ -104,26 +100,24 @@ const revokeKind = actionKind("webhook.revoke")!;
   ok(refusal.includes("none of those can be set up this way"), "a vendor-issued secret is refused plainly, with the config route named");
   ok(/configuration/.test(refusal), "…and the refusal says WHERE the alternative lives rather than just saying no");
 
-  eq(rh.runtimeHookSourceDefect("notion"), null, "a plain lowercase token is a valid source");
-  ok(rh.runtimeHookSourceDefect("Notion") !== null, "uppercase is refused (the tool lowercases first; the grammar is the floor)");
-  ok(rh.runtimeHookSourceDefect("no tion") !== null, "whitespace is refused");
-  ok(rh.runtimeHookSourceDefect("") !== null, "empty is refused");
-  ok(rh.runtimeHookSourceDefect("a".repeat(65)) !== null, "an over-long source is refused");
 }
 
 {
   console.log("\n2. tiers + manifests:");
-  eq(createKind.policy, "member", "webhook.create is MEMBER (OPE-159 supersedes the OPE-150 flat admin tier)");
-  eq(rotateKind.policy, "member", "webhook.rotate is MEMBER");
-  eq(revokeKind.policy, "member", "webhook.revoke is MEMBER (narrowing-only fast lane)");
+  eq(rotateKind.policy, "member", "webhook.rotate is MEMBER (OPE-159 supersedes the OPE-150 flat admin tier)");
   eq(vocab.runtimeHookTier("trigger-only"), "member", "tier table: trigger-only, in vocabulary ⇒ member");
   eq(vocab.runtimeHookTier("content-bearing"), "member", "tier table: content-bearing, in vocabulary ⇒ member (the control is the fence + taint, not a second approver)");
 
-  for (const t of ["create_webhook", "rotate_webhook", "revoke_webhook"]) {
-    ok(TOOL_CONSEQUENCE[t] !== undefined, `${t} has a consequence row`);
-    ok(WINDOW_UNGATED_TOOLS.has(t), `${t} mounts on every grain (its control is consequence, not hands)`);
-    ok(!JOB_WAKE_TOOLS.has(t), `🔴 ${t} is NOT in the job-wake kit — an unattended wake must not mint or rotate an ingress`);
+  ok(actionKind("webhook.create") === undefined, "🔴 there is no `webhook.create` kind — a hook is created by a merged PR, never by a click");
+  ok(actionKind("webhook.revoke") === undefined, "🔴 …and no `webhook.revoke` — a hook is removed by another PR");
+  for (const t of ["create_webhook", "revoke_webhook"]) {
+    ok(TOOL_CONSEQUENCE[t] === undefined, `🔴 ${t} has NO consequence row — the tool is gone, and a row describing a tool that does not exist is how a deleted capability quietly comes back`);
+    ok(!WINDOW_UNGATED_TOOLS.has(t), `🔴 ${t} is mounted on no grain`);
   }
+
+  ok(TOOL_CONSEQUENCE["rotate_webhook"] !== undefined, "rotate_webhook has a consequence row");
+  ok(WINDOW_UNGATED_TOOLS.has("rotate_webhook"), "rotate_webhook mounts on every grain (its control is consequence, not hands)");
+  ok(!JOB_WAKE_TOOLS.has("rotate_webhook"), "🔴 rotate_webhook is NOT in the job-wake kit — an unattended wake has nobody to hand a secret to");
   ok(TOOL_CONSEQUENCE["list_webhooks"] !== undefined, "list_webhooks has a consequence row");
   ok(WINDOW_UNGATED_TOOLS.has("list_webhooks") && JOB_WAKE_TOOLS.has("list_webhooks"), "list_webhooks is a read and is available everywhere");
 }
@@ -138,118 +132,8 @@ const revokeKind = actionKind("webhook.revoke")!;
   ok(revealMod.revealPageAvailable(), "the reveal page is armed in this test deployment");
 }
 
-let createdId = "";
 {
-  console.log("\n4. webhook.create — the mint:");
-  const args = { org: ORG, source: "notion", posture: "content-bearing" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" };
-
-  const card = createKind.summarize(args).join("\n");
-  ok(card.includes("notion"), "the card names the source");
-  ok(/CONTENT-BEARING/.test(card), "🔴 the card spells out the content-bearing exposure — this is the human's one chance to notice");
-  ok(card.includes("ONE-TIME") || card.includes("one-time") || card.includes("ONE-TIME link") || /once/i.test(card), "the card says the secret is shown once");
-  const triggerCard = createKind.summarize({ ...args, posture: "trigger-only" }).join("\n");
-  ok(/TRIGGER-ONLY/.test(triggerCard) && !/CONTENT-BEARING/.test(triggerCard), "a trigger-only card says the payload is discarded");
-
-  delivered.length = 0;
-  const outcome = await createKind.execute(args, DECIDER);
-
-  const hook = await store.getWebhookHookBySource(ORG, "notion");
-  ok(hook !== null, "the hook row exists after the click");
-  createdId = hook!.id;
-  ok(rh.RUNTIME_HOOK_ID_RE.test(createdId), "the id was minted host-side, in the right grammar");
-  eq(hook!.createdBy, DECIDER, "🔴 the hook is attributed to the DECIDER, not the asker (only the decider read the card)");
-  eq(hook!.status, "active", "armed active");
-  eq(hook!.secretRef, rh.runtimeHookSecretRef(createdId), "the row points at the vault, and carries no value");
-
-  const secret = await vault.read(hook!.secretRef);
-  ok(typeof secret === "string" && secret.length >= 40, "a real secret was minted into the vault");
-  ok(!outcome.includes(secret!), "🔴 the PUBLIC decided-card outcome line does NOT contain the secret");
-  ok(!JSON.stringify(hook).includes(secret!), "🔴 the stored row does NOT contain the secret");
-  ok(!card.includes(secret!), "🔴 the card does not contain the secret");
-  const rows = await readAudit({ org: ORG, action: "webhook.created" });
-  eq(rows.length, 1, "one webhook.created audit row");
-  ok(!JSON.stringify(rows[0]).includes(secret!), "🔴 the AUDIT row does not contain the secret");
-  eq((rows[0]!.detail as Record<string, unknown>).revealDelivered, true, "the audit records that the reveal was delivered");
-
-  eq(delivered.length, 1, "exactly one private delivery");
-  eq(delivered[0]!.userId, DECIDER, "🔴 delivered to the DECIDER");
-  eq(delivered[0]!.channelId, "C1", "…in the frozen channel");
-  ok(delivered[0]!.text.includes(`${revealMod.REVEAL_PAGE_PATH}?t=`), "the private message carries the one-time LINK");
-  ok(!delivered[0]!.text.includes(secret!), "🔴 even the PRIVATE message carries only the link, never the secret itself");
-
-  const idRe = /hk_[a-z2-7]{26}/;
-  ok(!idRe.test(card), "🔴 the pending card contains no hook id");
-  ok(!idRe.test(outcome), "🔴 the decided outcome line contains no hook id");
-  ok(!idRe.test(delivered[0]!.text.split("?t=")[0]!), "the private message's prose carries no bare id (only the opaque token)");
-
-  eq(hook!.readableBy, [{ level: "domain", domain: "eng" }], "🔴 the click FROZE the creating channel's domain as a `readableBy` Scope list — not a bare `ownerDomain` string");
-  eq(hook!.ownerDomain, undefined, "…and the legacy single-domain field is never written again");
-  ok(card.includes("readable by the memory domain"), "the card states WHO will be able to read the hook's events, before anyone clicks");
-  eq((rows[0]!.detail as Record<string, unknown>).readableBy, 'domain "eng"', "the audit row records the grant in words, on the operator plane");
-}
-
-{
-  console.log("\n4b. the zero-domain refusal (OPE-206):");
-  domainlessDeployment = true;
-  const before = await store.listWebhookHooks(ORG);
-  const outcome = await createKind.execute(
-    { org: ORG, source: "zero-domain-probe", posture: "trigger-only" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" },
-    DECIDER,
-  );
-  domainlessDeployment = false;
-  eq(await store.getWebhookHookBySource(ORG, "zero-domain-probe"), null, "🔴 NO hook row exists — a hook readable by nobody is refused at the click, not created and left mute");
-  eq((await store.listWebhookHooks(ORG)).length, before.length, "…and nothing else changed either");
-  ok(/doesn't belong to any memory domain/.test(outcome), "the outcome SAYS WHY, in the place the human who clicked is looking");
-  ok(/refuses every routine/.test(outcome), "…and names the consequence that used to be silent");
-  ok(!/hk_[a-z2-7]{26}/.test(outcome), "the refusal leaks no id");
-}
-
-{
-  console.log("\n5. list_webhooks projection (the id-invisibility invariant):");
-  const hooks = await store.listWebhookHooks(ORG);
-  const projected = hooks.map((h) => ({ source: h.source, posture: h.posture, status: h.status, createdBy: h.createdBy, createdAt: h.createdAt, description: rh.describeRuntimeHook(h) }));
-  const blob = JSON.stringify(projected);
-  ok(!/hk_[a-z2-7]{26}/.test(blob), "🔴 the projection contains NO hook id");
-  ok(!blob.includes("hook:"), "🔴 …and no secret ref");
-  ok(!blob.includes("/webhooks/"), "🔴 …and no endpoint URL");
-  ok(blob.includes("notion"), "…but it does name the source, which is the handle every other tool uses");
-  ok(rh.describeRuntimeHook({ source: "notion", posture: "trigger-only", status: "active" }).includes("payload discarded"), "the description explains the posture in consequences");
-  ok(rh.describeRuntimeHook({ source: "notion", posture: "content-bearing", status: "revoked" }).includes("REVOKED"), "a revoked hook says so");
-}
-
-{
-  console.log("\n6. webhook.rotate:");
-  const before = (await vault.read(rh.runtimeHookSecretRef(createdId)))!;
-  delivered.length = 0;
-  const outcome = await rotateKind.execute(
-    { org: ORG, id: createdId, source: "notion", posture: "content-bearing" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" },
-    DECIDER,
-  );
-  const after = (await vault.read(rh.runtimeHookSecretRef(createdId)))!;
-  ok(after !== before, "the current secret changed");
-  eq(await vault.read(rh.runtimeHookPrevSecretRef(createdId)), before, "the SUPERSEDED secret is preserved at the :prev ref for the overlap");
-
-  const row = (await store.getWebhookHookById(createdId))!;
-  ok(row.prevSecretRef === rh.runtimeHookPrevSecretRef(createdId), "the row records the overlap ref");
-  ok(typeof row.prevExpiresAt === "string", "…and its expiry");
-  const overlapMs = Date.parse(row.prevExpiresAt!) - Date.now();
-  ok(overlapMs > 23 * 3_600_000 && overlapMs <= 24 * 3_600_000 + 5_000, "🔴 the overlap is the HOST-CLAMPED 24h default (not model-chosen)");
-  eq(rh.activeSecretRefs(row, Date.now()), [row.secretRef, row.prevSecretRef], "during the overlap both refs are active, current first");
-  eq(rh.activeSecretRefs(row, Date.parse(row.prevExpiresAt!) + 1), [row.secretRef], "after the overlap only the current ref is");
-
-  ok(!outcome.includes(after), "🔴 the public outcome line does not contain the new secret");
-  eq(delivered.length, 1, "one fresh private delivery");
-  ok(!delivered[0]!.text.includes(after), "…carrying only the link");
-
-  const exported = Object.keys(revealMod);
-  ok(!exported.some((k) => /reReveal|showSecret|revealAgain/i.test(k)), "🔴 no re-reveal export exists in the reveal module");
-  const provisioning = Object.keys(await import("../agent/approvals/webhook.js"));
-  ok(!provisioning.some((k) => /reveal(Again)?Existing|showSecret/i.test(k)), "🔴 no re-reveal ActionKind is registered");
-  ok(actionKind("webhook.reveal") === undefined, "🔴 there is deliberately no `webhook.reveal` kind — rotation IS the recovery path");
-}
-
-{
-  console.log("\n6b. webhook.rotate — the config arm:");
+  console.log("\n6b. webhook.rotate — arming and rotating a declared hook's secret:");
   const configRef = "db:webhook:ci-status";
   const declared = {
     id: "ci-status",
@@ -267,9 +151,7 @@ let createdId = "";
   };
   const rotateArgs = (id: string) => ({
     org: ORG,
-    configId: id,
-    id,
-    source: id,
+    hookId: id,
     posture: "content-bearing" as const,
     surfaceKey: SURFACE,
     requestedBy: REQUESTER,
@@ -278,7 +160,7 @@ let createdId = "";
   });
 
   const card = rotateKind.summarize(rotateArgs("ci-status")).join("\n");
-  ok(!/24h/.test(card) && !/grace period/i.test(card), "🔴 the config card promises NO timed grace period — a declared hook's overlap is a second `secretRef` in a config file, not a clock we own");
+  ok(!/24h/.test(card) && !/grace period/i.test(card), "🔴 the card promises NO timed grace period — a declared hook's overlap is a second `secretRef` in a config file, not a clock we own");
   ok(/second `secretRef`/.test(card), "…it names what the overlap actually is, so the human can tell whether they have one");
   ok(/never had one/.test(card), "…and covers the ARM case, because a `broker: \"db\"` hook has no value at all until this runs");
 
@@ -315,98 +197,6 @@ let createdId = "";
   withHooks([]);
   const gone = await rotateKind.execute(rotateArgs("ci-status"), DECIDER);
   ok(/no longer|any more/.test(gone), "a hook whose declaration was removed while the card waited declines rather than throwing");
-}
-
-{
-  console.log("\n7. webhook.revoke:");
-  const liveSecret = (await vault.read(rh.runtimeHookSecretRef(createdId)))!;
-  ok((await ri.resolveRuntimeHook(createdId)) !== undefined, "before: the endpoint resolves");
-
-  const outcome = await revokeKind.execute({ org: ORG, id: createdId, source: "notion", surfaceKey: SURFACE, requestedBy: REQUESTER }, DECIDER);
-  ok(outcome.includes("revoked"), "the outcome line says so");
-
-  const row = (await store.getWebhookHookById(createdId))!;
-  eq(row.status, "revoked", "the row is revoked (RETAINED, so the refusal stays auditable)");
-  eq(row.revokedBy, DECIDER, "attributed to the clicker");
-  eq(await ri.resolveRuntimeHook(createdId), undefined, "🔴 the endpoint no longer resolves — 404, indistinguishable from never-existed");
-
-  const nowStored = await vault.read(rh.runtimeHookSecretRef(createdId));
-  ok(nowStored !== liveSecret, "🔴 the vault ref was OVERWRITTEN with fresh random that is never revealed");
-  ok((await vault.read(rh.runtimeHookPrevSecretRef(createdId))) !== null, "the overlap ref was scrubbed too, not left holding a live key");
-
-  const rows = await readAudit({ org: ORG, action: "webhook.revoked" });
-  eq(rows.length, 1, "one webhook.revoked audit row");
-  ok(!JSON.stringify(rows[0]).includes(liveSecret), "the audit row carries no secret");
-
-  const again = await revokeKind.execute({ org: ORG, id: createdId, source: "notion", surfaceKey: SURFACE, requestedBy: REQUESTER }, DECIDER);
-  ok(typeof again === "string", "a second revoke returns an outcome line rather than throwing");
-  const rot = await rotateKind.execute(
-    { org: ORG, id: createdId, source: "notion", posture: "content-bearing" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" },
-    DECIDER,
-  );
-  ok(/is revoked, not live/.test(rot) && /nothing to rotate/.test(rot), "🔴 rotating a REVOKED hook is refused, naming the status — it never comes back to life");
-  ok(/[Nn]othing was minted/.test(rot), "…and says outright that no secret was created, because a post-click line is the last thing anybody reads about this hook");
-  eq((await store.getWebhookHookById(createdId))!.status, "revoked", "…and it stays revoked");
-}
-
-{
-  console.log("\n8. duplicate source (OPE-188):");
-
-  eq(claimedSourceRefusal("github", null), null, "no row ⇒ no refusal");
-  const activeRefusal = claimedSourceRefusal("github", { status: "active" })!;
-  const revokedRefusal = claimedSourceRefusal("github", { status: "revoked" })!;
-  ok(activeRefusal.includes("already") && /rotate_webhook/.test(activeRefusal), "a LIVE incumbent refuses and names rotate_webhook — the real path when a secret was lost");
-  ok(/revoked/.test(revokedRefusal), "🔴 a REVOKED row refuses TOO (the row is retained, so the source is still claimed) and names the status");
-  ok(!/use rotate_webhook|use create_webhook/.test(revokedRefusal), "🔴 …and does NOT send the user to a verb that bounces straight back (rotate refuses a non-active hook)");
-  ok(/rotate_webhook won't help/.test(revokedRefusal), "…it says why rotation is not the answer, because a refusal that only says no teaches nothing");
-  ok(/operator/.test(revokedRefusal), "…and names the only remedy that actually exists today");
-
-  const credentialRows = () => {
-    const db = new DatabaseSync(process.env.OE_SQLITE_PATH!);
-    try {
-      return Number((db.prepare("SELECT COUNT(*) AS c FROM stored_credential").get() as { c: number | bigint }).c);
-    } finally {
-      db.close();
-    }
-  };
-  const args = { org: ORG, source: "notion", posture: "trigger-only" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" };
-  const credsBefore = credentialRows();
-  const rowsBefore = (await store.listWebhookHooks(ORG)).length;
-  delivered.length = 0;
-  let declined = "";
-  try {
-    declined = await createKind.execute(args, DECIDER);
-  } catch (err) {
-    assert.fail(`clicking a card for an already-claimed source must DECLINE, not throw: ${String(err)}`);
-  }
-  n++;
-  ok(/already exists/.test(declined) && declined.includes("notion"), "🔴 the decided card carries a stated decline naming the source");
-  ok(/[Nn]othing was minted/.test(declined), "…and says plainly that nothing was created");
-  eq((await store.listWebhookHooks(ORG)).length, rowsBefore, "no second row was written");
-  eq((await store.getWebhookHookBySource(ORG, "notion"))!.id, createdId, "the incumbent row is untouched — same hook, still the revoked one");
-  eq(credentialRows(), credsBefore, "🔴 NO ORPHANED VAULT ENTRY: a declined create writes no ciphertext at all (the row goes in FIRST, so the loser mints nothing)");
-  eq(delivered.length, 0, "nothing was delivered privately — there is no secret to deliver");
-  eq((await readAudit({ org: ORG, action: "webhook.created" })).length, 1, "no webhook.created audit row for a create that did not happen");
-
-  const live = { ...args, source: "github", posture: "content-bearing" as const };
-  delivered.length = 0;
-  const first = await createKind.execute(live, DECIDER);
-  ok(/created/.test(first), "the first click for a fresh source creates it");
-  eq(delivered.length, 1, "…and delivers its one-time link");
-  const credsAfterFirst = credentialRows();
-  delivered.length = 0;
-  const second = await createKind.execute(live, DECIDER);
-  ok(/already exists/.test(second), "🔴 a SECOND click for the same source declines instead of throwing a unique violation");
-  eq(delivered.length, 0, "…and issues no second reveal link");
-  eq(credentialRows(), credsAfterFirst, "🔴 …and mints no second secret");
-  eq((await store.listWebhookHooks(ORG)).filter((h) => h.source === "github").length, 1, "…leaving exactly one github row");
-
-  const revokeCard = revokeKind.summarize({ org: ORG, id: createdId, source: "notion", surfaceKey: SURFACE, requestedBy: REQUESTER }).join("\n");
-  ok(/NOT reversible/i.test(revokeCard), "🔴 the revoke card says the revocation is NOT reversible");
-  ok(/retires/.test(revokeCard) && revokeCard.includes("notion"), "…and that it retires that specific source name");
-  ok(!/Reversible only by creating a new webhook/.test(revokeCard), "🔴 the old, false reversibility promise is gone");
-  ok(/minted here/.test(revokeCard), "🔴 the revoke card states what revoking invalidates rather than only what it stops");
-  ok(/nothing outside this deployment is left holding a key that still works/.test(revokeCard), "…and says so in terms of who is left holding a working key");
 }
 
 rmSync(dir, { recursive: true, force: true });

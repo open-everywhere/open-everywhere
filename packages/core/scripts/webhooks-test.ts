@@ -189,31 +189,33 @@ ok(
 );
 
 {
-  const runtimeShaped = { ...goodHook, id: "hk_" + "a".repeat(26) };
-  const runtimeHatch = await gateWebhookDelivery({ ...baseArgs, hook: runtimeShaped, secretValues: [], allowUnverified: true });
+  const dbHomed = { ...goodHook, secretRef: "db:webhook:deploy-status", broker: "db" };
+  const dbHatch = await gateWebhookDelivery({ ...baseArgs, hook: dbHomed, secretValues: [], allowUnverified: true });
   ok(
-    !runtimeHatch.ok && runtimeHatch.rejection.status === 401,
-    "🔴 the escape hatch is NOT honoured for a CHAT-CREATED hook — no resolvable key there means the vault read failed, not a laptop without a secret (401, not 200)",
+    !dbHatch.ok && dbHatch.rejection.status === 401,
+    "🔴 the escape hatch is NOT honoured for a `db`-homed hook — no resolvable key there means the vault read failed or nobody armed it, not a laptop without a secret (401, not 200)",
   );
   ok(
-    !runtimeHatch.ok && !runtimeHatch.rejection.reason.includes("OE_ALLOW_UNVERIFIED_WEBHOOK"),
-    "…and the refusal does not point the operator at a lever that no longer moves for this class",
+    !dbHatch.ok && !dbHatch.rejection.reason.includes("OE_ALLOW_UNVERIFIED_WEBHOOK"),
+    "…and the refusal does not point the operator at a lever that no longer moves for this home",
   );
-  const configHatch = await gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true });
-  ok(configHatch.ok && configHatch.keyIndex === null, "…while a CONFIG hook with the same args still takes the hatch (the change is narrow)");
+  ok(!dbHatch.ok && /rotate_webhook/.test(dbHatch.rejection.reason), "…it names the act that WOULD fix it instead — issuing the secret, which needs no redeploy");
 
-  const runtimeSigned = await gateWebhookDelivery({ ...baseArgs, hook: runtimeShaped });
-  ok(runtimeSigned.ok && runtimeSigned.keyIndex === 0, "a chat-created hook with a real key + valid signature is accepted exactly as before");
+  const configHatch = await gateWebhookDelivery({ ...baseArgs, secretValues: [], allowUnverified: true });
+  ok(configHatch.ok && configHatch.keyIndex === null, "…while an `env`-homed hook with the same args still takes the hatch (the change is narrow)");
+
+  const dbSigned = await gateWebhookDelivery({ ...baseArgs, hook: dbHomed });
+  ok(dbSigned.ok && dbSigned.keyIndex === 0, "a db-homed hook with a real key + valid signature is accepted exactly as an env-homed one");
 
   const oldKey = "retired-s3cr3t";
   const prevKeyProbe = await gateWebhookDelivery({ ...baseArgs, secretValues: [secret, oldKey], headers: signedFor(oldKey) });
   ok(acceptedUnverified(configHatch), "the hatch acceptance IS the unverified grade");
-  ok(!acceptedUnverified(runtimeSigned), "a signature-verified acceptance is NOT the unverified grade");
+  ok(!acceptedUnverified(dbSigned), "a signature-verified acceptance is NOT the unverified grade");
   ok(
     prevKeyProbe.ok && prevKeyProbe.keyIndex === 1 && !acceptedUnverified(prevKeyProbe),
     "🔴 a PREVIOUS-key acceptance is NOT the unverified grade — the two facts are independent, and conflating them is the confusion the stamp exists to end",
   );
-  ok(!acceptedUnverified(runtimeHatch), "a rejection is never the unverified grade");
+  ok(!acceptedUnverified(dbHatch), "a rejection is never the unverified grade");
 }
 
 const previous = "old-s3cr3t";

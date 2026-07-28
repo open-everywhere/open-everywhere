@@ -910,8 +910,9 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   await handleApprovalPayload(clickPayload("oe_approval:approve:p-cf-benefit-ok", { channel: "C_INTERNAL" }), { post });
   ok(benefitExecuted.includes("U_RANDOM_MEMBER"), "clicker gate leg B: a beneficiary kind executes in an ATTESTED room");
 
-  ok(actionKind("webhook.create")?.beneficiaryClicker === true && actionKind("webhook.rotate")?.beneficiaryClicker === true, "clicker gate leg B: webhook.create/webhook.rotate carry beneficiaryClicker (their execute reveals a live signing secret to the DECIDER)");
-  ok(actionKind("webhook.revoke")?.beneficiaryClicker === undefined && actionKind("pr.open")?.beneficiaryClicker === undefined, "clicker gate leg B: witness kinds (webhook.revoke, pr.open) do NOT carry it — narrowing and attesting hand the clicker nothing");
+  ok(actionKind("webhook.rotate")?.beneficiaryClicker === true, "clicker gate leg B: webhook.rotate carries beneficiaryClicker (its execute reveals a live signing secret to the DECIDER)");
+  ok(actionKind("webhook.create") === undefined && actionKind("webhook.revoke") === undefined, "clicker gate leg B: webhook.create/webhook.revoke are GONE (OPE-224) — a hook is created and removed by merged PRs");
+  ok(actionKind("webhook.declare")?.beneficiaryClicker === undefined && actionKind("pr.open")?.beneficiaryClicker === undefined, "clicker gate leg B: witness kinds (webhook.declare, pr.open) do NOT carry it — opening a PR hands the clicker nothing");
 
   memberExecuted = [];
   await store.addPendingAction(row({ id: "p-cf-foreign", kind: "test.member", argsJson: "{}", domain: null, channelId: "C_INTERNAL", postedTo: null }));

@@ -12,7 +12,6 @@ import { validateSubscription } from "../routines/event-match.js";
 import { FILTER_MAX_LENGTH, probeFilter } from "../routines/jq-filter.js";
 import { webhookScheme } from "../routines/scheme-name.js";
 import { readGrantReach } from "../webhooks/achievability.js";
-import { hookReadableBy } from "../webhooks/runtime-hook.js";
 import { findWebhook } from "../webhooks/config.js";
 import type { ReadableBy } from "../access/read-grant.js";
 import type { Domain } from "../memory/domain.js";
@@ -178,8 +177,15 @@ export default defineTool({
     }
     const p = resolvePartition(ctx);
     const eventTrigger = input.trigger as z.infer<typeof trigger>;
-    const hookRow = eventTrigger.kind === "event" ? await getOperationalStore().getWebhookHookBySource(p.org, eventTrigger.source) : undefined;
-    const eventScheme = eventTrigger.kind === "event" ? webhookScheme(hookRow ?? { source: eventTrigger.source }) : undefined;
+    const declaredHooks = (() => {
+      try {
+        return getConfig().loadWebhooks?.() ?? [];
+      } catch {
+        return [];
+      }
+    })();
+    const hookRow = eventTrigger.kind === "event" ? findWebhook(declaredHooks, eventTrigger.source) : undefined;
+    const eventScheme = eventTrigger.kind === "event" ? webhookScheme(hookRow ? { source: hookRow.source } : { source: eventTrigger.source }) : undefined;
     const t = storedTrigger(eventTrigger, eventScheme);
     if (t.kind === "event" && t.jq !== undefined) {
       await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);
@@ -193,17 +199,11 @@ export default defineTool({
       let grant: ReadableBy | undefined;
       let domains: readonly Domain[] | undefined;
       try {
-        grant = hookRow ? hookReadableBy(hookRow) : findWebhook(getConfig().loadWebhooks?.() ?? [], t.source)?.readableBy;
+        grant = hookRow?.readableBy ?? findWebhook(getConfig().loadWebhooks?.() ?? [], t.source)?.readableBy;
         domains = getConfig().loadDomains();
       } catch {
         grant = undefined;
         domains = undefined;
-      }
-      if (hookRow && hookReadableBy(hookRow).length === 0) {
-        throw new Error(
-          `The hook "${t.source}" carries no read grant, so no routine can ever read its events — it predates readableBy. ` +
-            `An operator must re-declare it (or rotate it through declare_webhook) before a routine here can fire.`,
-        );
       }
       const reach = readGrantReach(p.surfaceKey, grant, domains);
       const blocked = [...reach.impossible, ...reach.unreachable];

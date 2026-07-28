@@ -4,7 +4,6 @@ import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { escapeHtml as esc, securePageResponse, BUTTON_STYLE, CODE_BLOCK_STYLE } from "../credentials/page-chrome.js";
 import { mintPageToken, pageBaseUrl, pageTokenSigningKey, verifyPageToken } from "../credentials/page-token.js";
-import { webhookScheme } from "../routines/scheme-name.js";
 import { webhookVerifier, type WebhookSenderGuidance } from "./verifier.js";
 import type { CredentialIntakeRow } from "../operational/store.js";
 
@@ -199,7 +198,7 @@ export async function handleRevealPost(req: Request, deps: RevealPageDeps = {}):
   return secretPage(row.domain ?? "webhook", (deps.endpointUrl ?? ((r) => revealEndpointUrl(r, env)))(row.ref), value, guidance);
 }
 
-async function liveSenderGuidance(ref: string, org: string): Promise<WebhookSenderGuidance | undefined> {
+async function liveSenderGuidance(ref: string, _org: string): Promise<WebhookSenderGuidance | undefined> {
   const hookId = revealedHookId(ref);
   if (!hookId) return undefined;
   let declared: { readonly source: string } | undefined;
@@ -208,10 +207,7 @@ async function liveSenderGuidance(ref: string, org: string): Promise<WebhookSend
   } catch {
     declared = undefined;
   }
-  if (declared) return webhookVerifier(declared.source)?.senderGuidance?.();
-  const hook = await getOperationalStore().getWebhookHookById(hookId);
-  if (!hook || hook.org !== org) return undefined;
-  return webhookVerifier(webhookScheme(hook))?.senderGuidance?.();
+  return declared ? webhookVerifier(declared.source)?.senderGuidance?.() : undefined;
 }
 
 export function revealEndpointUrl(ref: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
