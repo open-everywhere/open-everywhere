@@ -38,6 +38,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "read_routine_transcript",
   "list_skills",
   "list_webhooks",
+  "read_webhook_history",
   "create_webhook",
   "rotate_webhook",
   "revoke_webhook",

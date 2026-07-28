@@ -52,7 +52,7 @@ export function requestForPartition(p: Partition): ResolveRequest {
   };
 }
 
-function liveResolve(p: Partition): EffectiveAccess {
+export function resolveAccessForPartition(p: Partition): EffectiveAccess {
   const cfg = getConfig();
   return resolveAccess(requestForPartition(p), cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []);
 }
@@ -87,7 +87,7 @@ export function checkEventReadGrant(
   if (!declared && !adapter) return { ok: false, reason: "no-grant-adapter" };
   if (!innermostScope(ev.scope)) return { ok: false, reason: "no-scope" };
   if (partitions.length === 0) return { ok: false, reason: "unresolvable" };
-  const resolve = deps.resolve ?? liveResolve;
+  const resolve = deps.resolve ?? resolveAccessForPartition;
   for (const p of partitions) {
     let access: EffectiveAccess;
     try {

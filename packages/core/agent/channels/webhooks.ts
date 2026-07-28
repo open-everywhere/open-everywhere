@@ -41,6 +41,8 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, receiv
       ...(unverified ? { unverified: true } : {}),
       ...(result.reason ? { reason: result.reason } : {}),
       ...(emitted ? { matched: emitted.matched, fired: emitted.fired, skipped: emitted.skipped } : {}),
+      ...(emitted?.deliveryId ? { deliveryId: emitted.deliveryId } : {}),
+      ...(emitted && !emitted.accepted && emitted.reason ? { routingReason: emitted.reason } : {}),
     },
   });
   if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);
@@ -54,7 +56,7 @@ async function emitConfigHookEvent(
   body: string,
   headers: Headers,
   receive: RouteHandlerArgs["receive"],
-): Promise<{ matched: number; fired: number; skipped: number } | undefined> {
+): Promise<{ matched: number; fired: number; skipped: number; accepted: boolean; reason?: string; deliveryId?: string } | undefined> {
   const flat: Record<string, string> = {};
   headers.forEach((v, k) => {
     flat[k.toLowerCase()] = v;
@@ -73,7 +75,14 @@ async function emitConfigHookEvent(
       },
       { receive, org: webhookOrg() },
     );
-    return { matched: report.matched, fired: report.fired, skipped: report.skipped };
+    return {
+      matched: report.matched,
+      fired: report.fired,
+      skipped: report.skipped,
+      accepted: report.accepted,
+      ...(report.reason ? { reason: report.reason } : {}),
+      ...(report.deliveryId ? { deliveryId: report.deliveryId } : {}),
+    };
   } catch (err) {
     log(`WARN "${hook.id}": event fan-out failed — ${String(err instanceof Error ? err.message : err)}`);
     return undefined;
@@ -113,6 +122,7 @@ async function deliverRuntime(
       ...(previousKey ? { keyIndex, previousKey: true } : {}),
       ...(report?.reason ? { reason: report.reason } : {}),
       ...(error ? { reason: error } : {}),
+      ...(report?.deliveryId ? { deliveryId: report.deliveryId } : {}),
     },
   });
   if (previousKey) log(`WARN "${hook.source}": verified against the SUPERSEDED key — the sender has not moved to the rotated secret yet`);

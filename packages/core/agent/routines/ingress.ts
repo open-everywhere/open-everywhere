@@ -46,6 +46,8 @@ function eventMaxFanOut(): number {
 
 export const DELIVERY_DEDUPE_TTL_MS = 10 * 60_000;
 
+export const DELIVERY_ID_MAX_CHARS = 200;
+
 export function deliveryDedupeKey(source: string, deliveryId: string): string {
   return `trigger:${source}:${deliveryId}`;
 }
@@ -70,6 +72,7 @@ export interface TriggerAdmitDeps {
 export interface TriggerReport {
   readonly accepted: boolean;
   readonly reason?: string;
+  readonly deliveryId?: string;
   readonly matched: number;
   readonly fired: number;
   readonly skipped: number;
@@ -303,7 +306,8 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
 }
 
 export async function admitTrigger(d: TriggerDelivery, deps: TriggerAdmitDeps): Promise<TriggerReport> {
-  const none = { matched: 0, fired: 0, skipped: 0 } as const;
+  const id = d.deliveryId ? { deliveryId: d.deliveryId.slice(0, DELIVERY_ID_MAX_CHARS) } : {};
+  const none = { ...id, matched: 0, fired: 0, skipped: 0 } as const;
   let rejection: string | undefined;
   const ev = normalizeDelivery(d, (reason) => {
     rejection = reason;
@@ -322,5 +326,5 @@ export async function admitTrigger(d: TriggerDelivery, deps: TriggerAdmitDeps): 
     }
   }
   const tally = await fanOut(ev, deps);
-  return { accepted: true, ...tally };
+  return { accepted: true, ...id, ...tally };
 }

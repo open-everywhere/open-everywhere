@@ -182,6 +182,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   list_webhooks: open(
     "read of this org's OWN event-source inventory: source name, posture, status, creator, created-at. NEVER the hook id, the endpoint URL, or any secret ref — the id IS the URL, so it stays host-side and every write tool addresses a hook by its `source` name instead (tools/list_webhooks.ts projects field-by-field so a new column can't silently join the disclosure). Same tier and same reasoning as list_routines: membership IS the read tier for a surface's own standing behaviour",
   ),
+  read_webhook_history: open(
+    "read of ONE hook's delivery metadata over the last 7 days (OPE-212) — timestamps, byte counts, verification grade, delivery ids, fan-out counts, and the closed skip reasons its subscribed routines recorded. It escapes nothing, changes nothing and reaches no external host, and it is strictly narrower than list_webhooks next to it: that one enumerates the whole inventory to any member, this one answers about a SINGLE hook and only when the hook's own `readableBy` grants this surface — the SAME check (`resolveAccessForPartition` + `scopeGrantsRead`) that decides whether a routine here could have been FIRED by it. So the tier is not the control here and would be the wrong one: `readableBy` is a per-hook confidentiality decision an admin already made, and a member/admin gate on top would either shadow it or contradict it. No payload body exists to disclose (none is ever stored); the two off-host strings it can echo — a vendor rejection text, jq's evaluator message — are length-capped and the whole page ships through the untrusted fence",
+  ),
 
   record_watch_state: open("writes watch bookkeeping onto the calling routine's OWN row, located via the dispatcher-stamped marker"),
   report_run_failed: open(
