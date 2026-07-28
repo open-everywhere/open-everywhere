@@ -34,6 +34,7 @@ export interface NormalizedEvent {
   readonly summary: string;
   readonly pointer?: EntityPointer;
   readonly redacted?: boolean;
+  readonly projected?: readonly string[];
   readonly readableBy?: readonly Scope[];
 }
 
@@ -45,6 +46,7 @@ export interface TriggerDelivery {
   readonly deliveryId?: string;
   readonly receivedAt: string;
   readonly redactPayload?: boolean;
+  readonly project?: readonly string[];
   readonly readableBy?: readonly Scope[];
 }
 
@@ -184,16 +186,35 @@ export function normalizeDelivery(d: TriggerDelivery, onReject?: (reason: string
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(ev.fields)) fields[k] = v.length > FIELD_VALUE_MAX ? v.slice(0, FIELD_VALUE_MAX) : v;
   const out: NormalizedEvent = { ...ev, fields, source: d.source, scheme, ...(d.readableBy ? { readableBy: d.readableBy } : {}) };
-  return d.redactPayload ? redactEvent(out, d.source) : out;
+  if (d.redactPayload) return redactEvent(out, d.source);
+  if (d.project && d.project.length > 0) return projectEvent(out, d.source, d.project);
+  return out;
 }
 
 export function redactEvent(ev: NormalizedEvent, declaredSource: string): NormalizedEvent {
   const { url: _url, ...fields } = ev.fields as Record<string, string>;
-  const { pointer: _pointer, actor: _actor, ...rest } = ev;
+  const { pointer: _pointer, actor: _actor, projected: _projected, ...rest } = ev;
   return {
     ...rest,
     fields,
     summary: `${declaredSource} webhook fired (payload withheld — this hook is trigger-only)`,
     redacted: true,
+  };
+}
+
+export function projectEvent(ev: NormalizedEvent, declaredSource: string, keys: readonly string[]): NormalizedEvent {
+  const { url: _url, ...matchable } = ev.fields as Record<string, string>;
+  const url = ev.fields["url"];
+  const fields = keys.includes("url") && url !== undefined ? { ...matchable, url } : matchable;
+  const { pointer: _pointer, actor: _actor, ...rest } = ev;
+  const shown = keys.filter((k) => ev.fields[k] !== undefined).map((k) => `${k}: ${ev.fields[k]}`);
+  return {
+    ...rest,
+    fields,
+    summary:
+      shown.length > 0
+        ? `${declaredSource} webhook fired — ${shown.join("; ")}`
+        : `${declaredSource} webhook fired (none of this hook's projected fields were present in the delivery)`,
+    projected: keys,
   };
 }

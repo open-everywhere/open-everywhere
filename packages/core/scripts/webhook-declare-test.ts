@@ -99,7 +99,16 @@ const ARGS = {
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [], extra: 1 }), "unknown top-level key", "an unknown top-level key is refused");
   rejectsWithSync(() => codemod.parseHooksFile({}), "needs a `hooks` array", "a missing hooks array is refused");
   rejectsWithSync(() => codemod.parseHooksText("{"), "not valid JSON", "malformed JSON is refused, loudly");
-  rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, posture: "trigger-only" }] }), "unknown field", "a field outside the vocabulary is refused — a hand-edit that means something we do not implement must not half-load");
+  rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, retryPolicy: "exponential" }] }), "unknown field", "a field outside the vocabulary is refused — a hand-edit that means something we do not implement must not half-load");
+  eq(codemod.parseHooksFile({ hooks: [{ ...DECL, posture: "trigger-only" }] }).hooks[0]!.posture, "trigger-only", "`posture` is in the overlay vocabulary (OPE-214) and round-trips");
+  eq(codemod.parseHooksFile({ hooks: [DECL] }).hooks[0]!.posture, undefined, "an overlay written BEFORE posture existed still parses — absence is a fact about the file's age, not a defect");
+  eq(
+    codemod.parseHooksFile({ hooks: [{ ...DECL, posture: "projection", project: ["status"] }] }).hooks[0]!.project,
+    ["status"],
+    "`project` is in the vocabulary and round-trips",
+  );
+  rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, posture: 3 }] }), "posture", "a non-string posture is refused at the JSON boundary");
+  rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, project: [1, 2] }] }), "project", "a malformed project list is refused at the JSON boundary");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, id: "hk_abc" }] }), "reserved", '🔴 an "hk_" id is refused — a config hook wins every lookup, so squatting on that namespace SHADOWS a live minted ingress');
   const { readableBy: _dropped, ...noGrant } = DECL;
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [noGrant] }), "readableBy", "🔴 an overlay hook with NO readableBy is refused — required, no default, at the JSON boundary too");

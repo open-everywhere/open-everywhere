@@ -1,6 +1,6 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import { getConfig } from "../access/config.js";
-import { findWebhook, type WebhookHook } from "../webhooks/config.js";
+import { configHookDisclosure, configHookPosture, findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import { resolveRuntimeHook, resolveRuntimeHookKeys, deliverRuntimeHook, type ResolvedRuntimeHook } from "../webhooks/runtime-ingress.js";
 import "../webhooks/oe-standard-webhook.js";
@@ -21,8 +21,9 @@ async function auditRejection(id: string, hook: WebhookHook | { readonly id: str
 }
 
 async function deliver(hook: WebhookHook, body: string, headers: Headers, receive: RouteHandlerArgs["receive"], keyIndex: number | null): Promise<void> {
-  const result = await fireWebhook(hook, body, { receive });
-  const emitted = await emitConfigHookEvent(hook, body, headers, receive);
+  const flat = lowercaseHeaders(headers);
+  const result = await fireWebhook(hook, body, { receive, headers: flat });
+  const emitted = await emitConfigHookEvent(hook, body, flat, receive);
   const [, teamId, channelId] = hook.target.split("/");
   const previousKey = keyIndex !== null && keyIndex > 0;
   const unverified = acceptedUnverified({ ok: true, keyIndex });
@@ -36,6 +37,7 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, receiv
     detail: {
       hookId: hook.id,
       source: hook.source,
+      posture: configHookPosture(hook),
       bytes: Buffer.byteLength(body, "utf8"),
       ...(previousKey ? { keyIndex, previousKey: true } : {}),
       ...(unverified ? { unverified: true } : {}),
@@ -48,19 +50,26 @@ async function deliver(hook: WebhookHook, body: string, headers: Headers, receiv
   if (previousKey) log(`WARN "${hook.id}": verified against a PREVIOUS key (secretRef index ${keyIndex}) — a sender has not moved to the current key yet`);
   if (unverified)
     log(`WARN "${hook.id}": accepted UNVERIFIED (OE_ALLOW_UNVERIFIED_WEBHOOK=1, no resolvable secret) — nothing authenticated this sender but the URL`);
-  log(`"${hook.id}": ${result.fired ? "fired" : `declined (${result.reason})`}${emitted ? `; routines matched ${emitted.matched}, fired ${emitted.fired}` : ""}`);
+  log(
+    `"${hook.id}" (${configHookPosture(hook)}): ${result.fired ? "fired" : `declined (${result.reason})`}` +
+      `${emitted ? `; routines matched ${emitted.matched}, fired ${emitted.fired}` : ""}`,
+  );
+}
+
+function lowercaseHeaders(headers: Headers): Record<string, string> {
+  const flat: Record<string, string> = {};
+  headers.forEach((v, k) => {
+    flat[k.toLowerCase()] = v;
+  });
+  return flat;
 }
 
 async function emitConfigHookEvent(
   hook: WebhookHook,
   body: string,
-  headers: Headers,
+  flat: Readonly<Record<string, string>>,
   receive: RouteHandlerArgs["receive"],
 ): Promise<{ matched: number; fired: number; skipped: number; accepted: boolean; reason?: string; deliveryId?: string } | undefined> {
-  const flat: Record<string, string> = {};
-  headers.forEach((v, k) => {
-    flat[k.toLowerCase()] = v;
-  });
   const deliveryId = declaredDeliveryId(hook.source, flat);
   try {
     const report = await admitTrigger(
@@ -72,6 +81,7 @@ async function emitConfigHookEvent(
         ...(deliveryId ? { deliveryId } : {}),
         receivedAt: new Date().toISOString(),
         readableBy: hook.readableBy,
+        ...configHookDisclosure(hook),
       },
       { receive, org: webhookOrg() },
     );

@@ -13,7 +13,8 @@ import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
 import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "../webhooks/source-vocabulary.js";
-import { RUNTIME_HOOK_ID_PREFIX } from "../webhooks/runtime-hook.js";
+import { RUNTIME_HOOK_ID_PREFIX, WEBHOOK_POSTURES, type WebhookPosture } from "../webhooks/runtime-hook.js";
+import { eventNormalizer } from "../routines/event-model.js";
 import type { HookDeclaration } from "../webhooks/hooks-codemod.js";
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
@@ -24,7 +25,7 @@ export function secretRefForHookId(id: string): string {
 
 export default defineTool({
   description:
-    "Propose a config-declared inbound webhook: an endpoint that, when an outside system POSTs to it, runs ONE standing instruction in ONE channel. Use when someone wants an external system to drive a fixed, repeatable action here (\"when CI finishes, post the result in #deploys\"). This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. Prefer create_webhook instead when the caller wants an ingress whose consequences will be decided later by routines rather than a fixed instruction. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events.",
+    "Propose a config-declared inbound webhook: an endpoint that, when an outside system POSTs to it, runs ONE standing instruction in ONE channel. Use when someone wants an external system to drive a fixed, repeatable action here (\"when CI finishes, post the result in #deploys\"). This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. Prefer create_webhook instead when the caller wants an ingress whose consequences will be decided later by routines rather than a fixed instruction. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events. `posture` is required too: it decides how much of the sender's payload ever reaches the prompt — none of it, only named fields, or all of it.",
   inputSchema: z.object({
     id: z
       .string()
@@ -38,6 +39,15 @@ export default defineTool({
       ),
     target: z.string().min(1).describe('The fully-qualified "slack/TEAM/CHANNEL" surface the hook fires into.'),
     instruction: z.string().min(1).describe("What the agent should DO on every accepted delivery. It runs unattended, with that channel's full access, forever — write it as narrowly as the job allows."),
+    posture: z
+      .enum(WEBHOOK_POSTURES as unknown as [WebhookPosture, ...WebhookPosture[]])
+      .describe(
+        'How much of the payload reaches the prompt, on every delivery, forever. "trigger-only": none of it — the instruction runs on the FACT that the hook fired. "projection": only the fields named in `project`. "content-bearing": the entire raw body as untrusted data. Ask for the narrowest one that lets the instruction work; if the instruction only needs two fields, that is "projection", not "content-bearing".',
+      ),
+    project: z
+      .array(z.string().min(1))
+      .optional()
+      .describe('With posture "projection" only: the field key names to render, e.g. ["status","branch"]. Required for that posture and refused for the others. Keys are checked against what this source\'s adapter can actually produce, and an unknown one is refused naming the available set.'),
     readableBy: z
       .array(z.string().min(1))
       .min(1)
@@ -109,6 +119,28 @@ export default defineTool({
     const grantDefects = readableByDefects(readableBy);
     if (grantDefects.length > 0) throw new Error(`That read grant isn't usable: ${grantDefects.join("; ")}`);
 
+    const project = input.project?.map((k) => k.trim()).filter((k) => k.length > 0) ?? [];
+    if (input.posture === "projection" && project.length === 0) {
+      throw new Error(
+        'Posture "projection" needs `project` — the field names to put in the prompt. A projection with no fields renders nothing, which is what posture "trigger-only" is for.',
+      );
+    }
+    if (input.posture !== "projection" && project.length > 0) {
+      throw new Error(`\`project\` is only read under posture "projection" — with posture "${input.posture}" it narrows nothing, so I won't declare a hook that implies otherwise.`);
+    }
+    if (input.posture === "projection") {
+      const normalizer = eventNormalizer(source);
+      if (normalizer && !normalizer.matchKeysOpen) {
+        const unknownKeys = project.filter((k) => !normalizer.matchKeys.includes(k));
+        if (unknownKeys.length > 0) {
+          throw new Error(
+            `The "${source}" adapter can't produce ${unknownKeys.map((k) => `"${k}"`).join(", ")}, so a projection over ${unknownKeys.length > 1 ? "those fields" : "that field"} would put nothing in the prompt on every delivery. ` +
+              `It produces: ${[...normalizer.matchKeys].sort().join(", ") || "no fields at all"}.`,
+          );
+        }
+      }
+    }
+
     const p = resolvePartition(ctx);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) throw new Error("declare_webhook needs a verified sender — there's no requester to show on the approval card.");
@@ -122,6 +154,8 @@ export default defineTool({
       broker: "env",
       target: input.target.trim(),
       readableBy,
+      posture: input.posture,
+      ...(project.length > 0 ? { project } : {}),
       instruction: input.instruction.trim(),
     };
 

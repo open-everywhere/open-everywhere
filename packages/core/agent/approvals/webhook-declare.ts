@@ -1,6 +1,6 @@
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { describeReadableBy } from "../access/read-grant.js";
-import { assertWebhooksValid } from "../webhooks/config.js";
+import { assertWebhooksValid, configHookPosture } from "../webhooks/config.js";
 import { applyHookDeclaration, emptyHooksFile, parseHooksText, stringifyHooks, type HookDeclaration } from "../webhooks/hooks-codemod.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
@@ -69,6 +69,17 @@ export function declarationSentence(d: HookDeclaration): string {
   return `Declare webhook "${d.id}" (${d.source}) firing into ${d.target}, readable by ${describeReadableBy(d.readableBy)}`;
 }
 
+export function posturePayloadLine(d: HookDeclaration): string {
+  switch (configHookPosture(d)) {
+    case "trigger-only":
+      return "📦 Payload: DISCARDED (trigger-only) — the instruction runs on the fact that it fired. Nothing the sender writes ever reaches the model.";
+    case "projection":
+      return `📦 Payload: ONLY these fields (projection) — ${(d.project ?? []).join(", ")}. Everything else the sender writes is dropped before the prompt.`;
+    case "content-bearing":
+      return "⚠ Payload: THE WHOLE BODY (content-bearing) — everything the sender writes enters the prompt as untrusted data, on every delivery, forever. Narrow it to `projection` if the instruction only needs a few fields.";
+  }
+}
+
 export function secretSetupLine(d: HookDeclaration): string {
   const ref = typeof d.secretRef === "string" ? d.secretRef : d.secretRef[0]!;
   return d.broker === "env"
@@ -86,6 +97,8 @@ function prBody(args: WebhookDeclareArgs, decidedBy: string): string {
     "```",
     "",
     `**Who may read its events:** ${describeReadableBy(d.readableBy)}. This is the whole confidentiality boundary for this ingress — a routine in any other domain is refused. Anything finer-grained than this is a separate webhook, not a narrower grant.`,
+    "",
+    `**${posturePayloadLine(d)}**`,
     "",
     `**The secret is not in this diff, and never will be.** ${secretSetupLine(d)}`,
     "",
@@ -205,6 +218,7 @@ const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
       `It will run this standing instruction, unattended, on every accepted delivery: "${d.instruction}"`,
       `⚠ That instruction runs with ${d.target}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
       `Readable by: ${describeReadableBy(d.readableBy)} — the whole confidentiality boundary; anything narrower is a separate webhook.`,
+      posturePayloadLine(d),
       `🔒 No secret is created or shown by this. ${secretSetupLine(d)}`,
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is declared, and nothing can authenticate, until they do.`,

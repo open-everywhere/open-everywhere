@@ -10,13 +10,40 @@ import { webhookFireAttributes } from "../routines/fire-auth.js";
 import { checkFireDisclosure } from "../routines/fire-disclosure.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "../routines/fire-window.js";
 import { mintWakeId } from "../channels/unified-window.js";
-import type { WebhookHook } from "./config.js";
+import { normalizeDelivery } from "../routines/event-model.js";
+import { configHookDisclosure, configHookPosture, type WebhookHook } from "./config.js";
 
 export function webhookOrg(): string {
   return process.env.OE_ORG?.trim() || "default";
 }
 
-export function renderWebhookMessage(hook: WebhookHook, rawBody: string): string {
+function renderPayloadBlock(hook: WebhookHook, rawBody: string, headers: Readonly<Record<string, string>>): string {
+  const posture = configHookPosture(hook);
+  if (posture === "content-bearing") return ingestUntrusted(rawBody, { source: `webhook:${hook.id}` });
+  if (posture === "trigger-only") {
+    return `(payload withheld — the "${hook.id}" webhook is declared trigger-only, so nothing the sender wrote is available to you. Act on the fact that it fired.)`;
+  }
+  const ev = normalizeDelivery(
+    {
+      source: hook.id,
+      scheme: hook.source,
+      headers,
+      body: rawBody,
+      receivedAt: new Date().toISOString(),
+      ...configHookDisclosure(hook),
+    },
+    (reason) => console.log(`[open-everywhere:webhooks] "${hook.id}": projection produced nothing — ${reason}`),
+  );
+  if (!ev) {
+    return (
+      `(payload withheld — the "${hook.id}" webhook is declared projection-only over ${(hook.project ?? []).join(", ")}, ` +
+      `and this delivery could not be read into those fields. Act on the fact that it fired.)`
+    );
+  }
+  return ingestUntrusted(ev.summary, { source: `webhook:${hook.id}` });
+}
+
+export function renderWebhookMessage(hook: WebhookHook, rawBody: string, headers: Readonly<Record<string, string>> = {}): string {
   return [
     `[webhook] The "${hook.id}" webhook just fired. Judge whether this warrants a reply in this ` +
       `channel: if the payload doesn't need action, comment, or acknowledgement, output exactly ` +
@@ -24,7 +51,7 @@ export function renderWebhookMessage(hook: WebhookHook, rawBody: string): string
     "",
     hook.instruction,
     "",
-    ingestUntrusted(rawBody, { source: `webhook:${hook.id}` }),
+    renderPayloadBlock(hook, rawBody, headers),
   ].join("\n");
 }
 
@@ -46,6 +73,7 @@ export async function fireWebhook(
     readonly now?: Date;
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
     readonly fireWindow?: FireWindowDeps;
+    readonly headers?: Readonly<Record<string, string>>;
   },
 ): Promise<WebhookFireResult> {
   const now = args.now ?? new Date();
@@ -84,10 +112,10 @@ export async function fireWebhook(
     authenticator: "webhook",
     principalType: "service",
     principalId: `webhook:${hook.id}`,
-    attributes: { ...webhookFireAttributes(hook.id, teamId, channelId, isDm, internal), ...taintedFireAttrs(true) },
+    attributes: { ...webhookFireAttributes(hook.id, teamId, channelId, isDm, internal), ...taintedFireAttrs(configHookPosture(hook) !== "trigger-only") },
   };
 
-  const message = renderWebhookMessage(hook, rawBody);
+  const message = renderWebhookMessage(hook, rawBody, args.headers ?? {});
   const fireWakeId = mintWakeId();
   const diverted = await divertTriggeredFire(
     args.receive,
