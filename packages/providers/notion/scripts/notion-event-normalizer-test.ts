@@ -13,7 +13,10 @@ import {
   declareProviderSelection,
   defineBundle,
   defineBinding,
+  defineDomain,
+  resolveDomainForChannel,
   scopeIdOf,
+  type Domain,
   type EffectiveAccess,
   type NormalizedEvent,
   type Partition,
@@ -55,15 +58,22 @@ const PAGE_DOMAINS: Record<string, readonly string[]> = {
   [TEAMSPACE]: ["security"],
 };
 
+let CLAIM_REGISTRY: readonly Domain[] = [];
+
 registerConfig({
   loadBundles: () => [defineBundle({ name: "org-default" })],
   loadBindings: () => [defineBinding({ bundle: "org-default", scope: { level: "org" } })],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [],
+  loadDomains: () => CLAIM_REGISTRY,
   loadSilos: () => [],
-  domainsForSurface: ({ workspaceKey, surface }) =>
-    workspaceKey === `notion/${WS}` ? (PAGE_DOMAINS[surface] ?? []) : [],
+  domainsForSurface: ({ workspaceKey, surface }) => {
+    if (workspaceKey !== `notion/${WS}`) return [];
+    const roster = PAGE_DOMAINS[surface];
+    if (roster) return roster;
+    const claimed = resolveDomainForChannel(`${workspaceKey}/${surface}`, CLAIM_REGISTRY).domain;
+    return claimed ? [claimed.name] : [];
+  },
 });
 
 function accessIn(...domains: string[]): EffectiveAccess {
@@ -321,7 +331,30 @@ function normalize(body: string): NormalizedEvent | null {
 
   const tenantOnly = normalize(structural({ type: "page.created", entity: undefined, data: {} }))!;
   ok(tenantOnly.scope.length === 1 && tenantOnly.scope[0]!.kind === "tenant", "…the tenant-only delivery really does prove only a tenant");
-  ok(checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("payments") }).ok === false, "a workspace-only delivery is refused — a workspace is not a surface anybody configured");
+  ok(checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("payments") }).ok === false, "a workspace-only delivery is refused — the delivery never said WHICH surface it was about");
+
+  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`notion/${WS}`], bundle: "org-default" })];
+
+  const claimedPage = normalize(structural({ type: "page.created", entity: { id: "page-never-listed", type: "page" }, data: { parent: { id: "db-never-listed", type: "database" } } }))!;
+  ok(
+    checkEventReadGrant(claimedPage, [PARTITION], { resolve: () => accessIn("eng") }).ok === true,
+    "a claim-only domain ALREADY grants read on a page nobody enumerated — this is Stage 1 behaviour, with no `tenant` step admitted",
+  );
+  ok(
+    checkEventReadGrant(claimedPage, [PARTITION], { resolve: () => accessIn("payments") }).ok === false,
+    "…and the claim grants it to the CLAIMING domain only — a claim is not a global unlock",
+  );
+  const listedPage = normalize(structural({ type: "page.created", entity: { id: PAGE, type: "page" } }))!;
+  ok(
+    checkEventReadGrant(listedPage, [PARTITION], { resolve: () => accessIn("eng") }).ok === false &&
+      checkEventReadGrant(listedPage, [PARTITION], { resolve: () => accessIn("payments") }).ok === true,
+    "a page in another domain's `channels` stays with its roster owner even under a workspace claim (tier order, memory/domain.ts)",
+  );
+  ok(
+    checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("eng") }).ok === false,
+    "a workspace-only delivery is STILL refused even for the domain that claims that very workspace — the claim confers reach, it does not make a subject-less delivery self-identifying",
+  );
+  CLAIM_REGISTRY = [];
 
   const empty: NormalizedEvent = { source: "notion", event: "page.created", scope: [], fields: {}, summary: "x" };
   const noScope = checkEventReadGrant(empty, [PARTITION], { resolve: () => accessIn("payments") });
