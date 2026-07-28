@@ -70,6 +70,8 @@ function accessIn(...domains: string[]): EffectiveAccess {
   return {
     mode: "channel",
     scopeKey: "notion/test",
+    tenantKey: "notion/test",
+    surfaceKey: "notion/test/page",
     domains,
     connections: [],
     reachableHosts: [],

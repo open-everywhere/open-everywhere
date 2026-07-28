@@ -1,5 +1,6 @@
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { webhookScheme } from "./scheme-name.js";
+import type { Scope } from "../access/bundle.js";
 
 export type ScopeKind = "tenant" | "group" | "container" | "entity" | "sub";
 
@@ -33,6 +34,7 @@ export interface NormalizedEvent {
   readonly summary: string;
   readonly pointer?: EntityPointer;
   readonly redacted?: boolean;
+  readonly readableBy?: readonly Scope[];
 }
 
 export interface TriggerDelivery {
@@ -43,7 +45,7 @@ export interface TriggerDelivery {
   readonly deliveryId?: string;
   readonly receivedAt: string;
   readonly redactPayload?: boolean;
-  readonly ownerDomain?: string;
+  readonly readableBy?: readonly Scope[];
 }
 
 export type FilterClause =
@@ -181,7 +183,7 @@ export function normalizeDelivery(d: TriggerDelivery, onReject?: (reason: string
   }
   const fields: Record<string, string> = {};
   for (const [k, v] of Object.entries(ev.fields)) fields[k] = v.length > FIELD_VALUE_MAX ? v.slice(0, FIELD_VALUE_MAX) : v;
-  const out: NormalizedEvent = { ...ev, fields, source: d.source, scheme };
+  const out: NormalizedEvent = { ...ev, fields, source: d.source, scheme, ...(d.readableBy ? { readableBy: d.readableBy } : {}) };
   return d.redactPayload ? redactEvent(out, d.source) : out;
 }
 

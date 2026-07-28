@@ -142,6 +142,7 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
     secretRef: "VENDOR_HOOK_SECRET",
     broker: "env",
     target: "slack/T1/C1",
+    readableBy: [{ level: "domain", domain: "eng" }],
     instruction: "handle it",
   });
   const args = {

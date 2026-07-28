@@ -285,6 +285,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
     secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
     broker: "env",
     target: SURFACE,
+    readableBy: [{ level: "domain", domain: "eng" }],
     instruction: "A deploy just finished. Summarise it.",
   });
 
@@ -319,6 +320,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
     secretRef: "DM_HOOK_SECRET",
     broker: "env",
     target: "slack/T_FIRE/D_ALICE",
+    readableBy: [{ level: "domain", domain: "eng" }],
     instruction: "Ping me.",
   });
   assertWebhooksValid([dmHook]);

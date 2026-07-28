@@ -15,6 +15,13 @@ process.env.OE_INTAKE_PAGE_SIGNING_KEY = randomBytes(32).toString("base64");
 process.env.OE_PUBLIC_BASE_URL = "https://oe.example.test";
 
 await import("./_register-test-config.js");
+const { registerConfig: registerTestConfig, getConfig: getTestConfig } = await import("../agent/access/config.js");
+const bootstrapped = getTestConfig();
+let domainlessDeployment = false;
+registerTestConfig({
+  ...bootstrapped,
+  domainsForSurface: ({ workspaceKey, surface }) => (domainlessDeployment || `${workspaceKey}/${surface}` !== "slack/T1/C1" ? [] : ["eng"]),
+});
 const vocab = await import("../agent/webhooks/source-vocabulary.js");
 const verifierMod = await import("../agent/webhooks/verifier.js");
 type WebhookVerifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
@@ -174,6 +181,27 @@ let createdId = "";
   ok(!idRe.test(card), "🔴 the pending card contains no hook id");
   ok(!idRe.test(outcome), "🔴 the decided outcome line contains no hook id");
   ok(!idRe.test(delivered[0]!.text.split("?t=")[0]!), "the private message's prose carries no bare id (only the opaque token)");
+
+  eq(hook!.readableBy, [{ level: "domain", domain: "eng" }], "🔴 the click FROZE the creating channel's domain as a `readableBy` Scope list — not a bare `ownerDomain` string");
+  eq(hook!.ownerDomain, undefined, "…and the legacy single-domain field is never written again");
+  ok(card.includes("readable by the memory domain"), "the card states WHO will be able to read the hook's events, before anyone clicks");
+  eq((rows[0]!.detail as Record<string, unknown>).readableBy, 'domain "eng"', "the audit row records the grant in words, on the operator plane");
+}
+
+{
+  console.log("\n4b. the zero-domain refusal (OPE-206):");
+  domainlessDeployment = true;
+  const before = await store.listWebhookHooks(ORG);
+  const outcome = await createKind.execute(
+    { org: ORG, source: "zero-domain-probe", posture: "trigger-only" as const, surfaceKey: SURFACE, requestedBy: REQUESTER, platform: "slack", channelId: "C1" },
+    DECIDER,
+  );
+  domainlessDeployment = false;
+  eq(await store.getWebhookHookBySource(ORG, "zero-domain-probe"), null, "🔴 NO hook row exists — a hook readable by nobody is refused at the click, not created and left mute");
+  eq((await store.listWebhookHooks(ORG)).length, before.length, "…and nothing else changed either");
+  ok(/doesn't belong to any memory domain/.test(outcome), "the outcome SAYS WHY, in the place the human who clicked is looking");
+  ok(/refuses every routine/.test(outcome), "…and names the consequence that used to be silent");
+  ok(!/hk_[a-z2-7]{26}/.test(outcome), "the refusal leaks no id");
 }
 
 {

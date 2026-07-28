@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
+import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { encryptedKvVault } from "../credentials/kv-vault.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -98,6 +99,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
             "⚠ CONTENT-BEARING: whatever this sender posts becomes part of the prompt, on every delivery, indefinitely — treat it like an untrusted person typing into the channel. Anything the agent then tries to do off that content is treated as tainted and re-asks you.",
           ]
         : ["🔒 TRIGGER-ONLY: the payload is discarded. Deliveries can only cause a routine you already approved to run — nothing the sender writes reaches the agent."]),
+      "Its events will be readable by the memory domain(s) this channel belongs to, and by nothing else. If it belongs to none, approving is refused rather than creating a hook nothing can ever act on.",
       "A signing secret is generated when you approve. You get a ONE-TIME link to read it — it is never shown in chat and cannot be shown again; a lost secret means rotating.",
       `Requested by ${args.requestedBy}`,
     ];
@@ -108,10 +110,19 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
     const secretRef = runtimeHookSecretRef(id);
     const store = getOperationalStore();
 
-    const ownerDomain = getConfig().domainsForSurface({
+    const domains = getConfig().domainsForSurface({
       workspaceKey: args.surfaceKey.split("/").slice(0, 2).join("/"),
       surface: args.surfaceKey.split("/")[2] ?? "",
-    })[0];
+    });
+    const readableBy: ReadableBy = domains.map((domain) => ({ level: "domain", domain }));
+    if (readableByDefects(readableBy).length > 0) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_created", "oe.outcome": "declined" });
+      return (
+        `no webhook created — this channel doesn't belong to any memory domain, so there is nobody the hook's events could be read by. ` +
+        `A webhook with an empty read grant accepts deliveries and then refuses every routine, forever, silently; I won't create one. ` +
+        `An operator needs to add this channel to a domain in the app's \`memory/domains.ts\` (merged by PR), then ask again. Nothing was minted.`
+      );
+    }
 
     const hook: RuntimeWebhookHook = {
       org: args.org,
@@ -123,7 +134,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
       status: "active",
       createdBy: decidedBy,
       createdIn: args.surfaceKey,
-      ...(ownerDomain ? { ownerDomain } : {}),
+      readableBy,
       createdAt: now.toISOString(),
     };
 
@@ -157,7 +168,7 @@ const webhookCreate: ActionKind<WebhookCreateArgs> = {
         hookId: id,
         source: args.source,
         ...(hook.scheme ? { scheme: hook.scheme } : {}),
-        ...(ownerDomain ? { ownerDomain } : {}),
+        readableBy: describeReadableBy(readableBy),
         posture: args.posture,
         createdBy: decidedBy,
         requestedBy: args.requestedBy,

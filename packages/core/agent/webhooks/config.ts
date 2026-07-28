@@ -1,5 +1,6 @@
 import { RUNTIME_HOOK_ID_PREFIX } from "./runtime-hook.js";
 import { reservedRefNamespace } from "../credentials/reserved-refs.js";
+import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 
 export interface WebhookHook {
   readonly id: string;
@@ -8,6 +9,7 @@ export interface WebhookHook {
   readonly broker: string;
   readonly target: string;
   readonly instruction: string;
+  readonly readableBy: ReadableBy;
 }
 
 export function defineWebhook(hook: WebhookHook): WebhookHook {
@@ -66,6 +68,14 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
       throw new Error(`webhook "${h.id}" target must be a fully-qualified "slack/TEAM/CHANNEL" surface, got ${JSON.stringify(h.target)}`);
     }
     if (!h.instruction || !h.instruction.trim()) throw new Error(`webhook "${h.id}" is missing an instruction (what the agent should do when it fires)`);
+    const grantDefects = readableByDefects(h.readableBy);
+    if (grantDefects.length > 0) {
+      throw new Error(
+        `webhook "${h.id}" has an invalid readableBy (which surfaces may read this hook's events — there is no default):\n` +
+          grantDefects.map((d) => `  ${d}`).join("\n") +
+          `\n  as written it would grant: ${describeReadableBy(h.readableBy)}`,
+      );
+    }
   }
 }
 

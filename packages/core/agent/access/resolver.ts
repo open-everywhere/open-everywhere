@@ -29,6 +29,8 @@ export interface EffectiveAccess {
   readonly mode: SessionMode;
   readonly scopeKey: string;
   readonly domains: readonly string[];
+  readonly tenantKey: string;
+  readonly surfaceKey: string;
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
@@ -239,6 +241,8 @@ export function resolveAccess(
     mode: req.mode,
     scopeKey,
     domains: req.domains ?? [],
+    tenantKey: tenantKeyOf(req),
+    surfaceKey: surfaceKeyOf(req),
     connections,
     reachableHosts,
     repos,

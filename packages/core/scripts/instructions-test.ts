@@ -18,6 +18,8 @@ function ok(cond: boolean, label: string): void {
 const base: EffectiveAccess = {
   mode: "channel",
   scopeKey: "slack/T1/C1",
+  tenantKey: "slack/T1",
+  surfaceKey: "slack/T1/C1",
   domains: [],
   connections: [],
   connectorCredentials: {},

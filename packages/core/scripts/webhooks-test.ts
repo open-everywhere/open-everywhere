@@ -35,6 +35,7 @@ const goodHook = defineWebhook({
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
   broker: "env",
   target: "slack/T1/C1",
+  readableBy: [{ level: "domain", domain: "eng" }],
   instruction: "A deploy just finished. Summarise it.",
 });
 

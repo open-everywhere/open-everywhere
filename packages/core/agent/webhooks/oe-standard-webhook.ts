@@ -4,13 +4,11 @@ import { webhookMaxSkewSeconds } from "./gate.js";
 import {
   FIELDS_MAX_KEYS,
   registerEventNormalizer,
-  scopeIdOf,
   type EventNormalizer,
   type NormalizedEvent,
   type ScopeStep,
   type TriggerDelivery,
 } from "../routines/event-model.js";
-import { registerEventScopeGrant, type EventScopeGrant } from "../routines/event-authz.js";
 
 export const OE_STANDARD_WEBHOOK_SCHEME = "oe-standard-webhook";
 
@@ -132,11 +130,8 @@ function mergeScalarFields(into: Record<string, string>, raw: unknown): void {
   }
 }
 
-export function standardWebhookScope(d: Pick<TriggerDelivery, "source" | "ownerDomain">): ScopeStep[] {
-  const scope: ScopeStep[] = [];
-  if (d.ownerDomain) scope.push({ kind: "tenant", id: d.ownerDomain });
-  scope.push({ kind: "container", id: d.source });
-  return scope;
+export function standardWebhookScope(d: Pick<TriggerDelivery, "source">): ScopeStep[] {
+  return [{ kind: "container", id: d.source }];
 }
 
 function summarize(name: string, event: string, action: string | undefined): string {
@@ -180,14 +175,5 @@ export const standardWebhookNormalizer: EventNormalizer = {
   },
 };
 
-export const standardWebhookScopeGrant: EventScopeGrant = {
-  source: OE_STANDARD_WEBHOOK_SCHEME,
-  grantsRead(scope, access) {
-    const owner = scopeIdOf(scope, "tenant");
-    return owner !== undefined && access.domains.includes(owner);
-  },
-};
-
 registerWebhookVerifier(standardWebhookVerifier);
 registerEventNormalizer(standardWebhookNormalizer);
-registerEventScopeGrant(standardWebhookScopeGrant);

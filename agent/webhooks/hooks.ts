@@ -7,6 +7,7 @@ const hooks: WebhookHook[] = [
     secretRef: "OE_WEBHOOK_SMOKE_SECRET",
     broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",
+    readableBy: [{ level: "domain", domain: "e2e-unified" }],
     instruction:
       "This is the deployment's smoke-test webhook. Post one short line confirming the " +
       "webhook fired and quote the payload's `note` field verbatim if present.",
@@ -17,6 +18,7 @@ const hooks: WebhookHook[] = [
     secretRef: "OE_WEBHOOK_E2E_SECRET",
     broker: "env",
     target: "slack/T0EXAMPLE/C0EXCHAN003",
+    readableBy: [{ level: "domain", domain: "e2e-unified" }],
     instruction:
       "This is the e2e driver-bot pack's own smoke-test webhook. ALWAYS post one short line " +
       "confirming the webhook fired and quote the payload's `note` field verbatim — never stay " +

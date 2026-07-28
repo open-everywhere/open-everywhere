@@ -48,6 +48,7 @@ const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 const { normalizeDelivery } = await import("../agent/routines/event-model.js");
 const { checkEventReadGrant, eventGrantPartitions, eventScopeGrant } = await import("../agent/routines/event-authz.js");
+const { scopeGrantsRead, readableByDefects, describeReadableBy } = await import("../agent/access/read-grant.js");
 const { validateSubscription, evaluateSubscription } = await import("../agent/routines/event-match.js");
 const { probeFilter } = await import("../agent/routines/jq-filter.js");
 const { admitTrigger, deliveryDedupeKey } = await import("../agent/routines/ingress.js");
@@ -184,7 +185,7 @@ function delivery(over: Partial<TriggerDelivery> & { readonly body: string }): T
     scheme: sw.OE_STANDARD_WEBHOOK_SCHEME,
     headers: {},
     receivedAt: "2026-07-27T00:00:00.000Z",
-    ownerDomain: "eng",
+    readableBy: [{ level: "domain", domain: "eng" }],
     ...over,
   };
 }
@@ -234,6 +235,7 @@ function delivery(over: Partial<TriggerDelivery> & { readonly body: string }): T
       { kind: "container", id: "attacker-hook" },
     ],
     ownerDomain: "attacker-domain",
+    readableBy: [{ level: "org" }],
     source: "attacker-hook",
     repository: { full_name: "attacker/repo" },
     fields: { tenant: "attacker-domain", container: "attacker-hook" },
@@ -241,16 +243,13 @@ function delivery(over: Partial<TriggerDelivery> & { readonly body: string }): T
   const ev = normalizeDelivery(delivery({ body: hostile }))!;
   eq(
     ev.scope,
-    [
-      { kind: "tenant", id: "eng" },
-      { kind: "container", id: "my-ci" },
-    ],
-    "🔴 a payload declaring its own tenant/container/scope/ownerDomain changes NOTHING — the path is the ROW's owning domain and the ROW's hook name",
+    [{ kind: "container", id: "my-ci" }],
+    "🔴 a payload declaring its own tenant/container/scope changes NOTHING — the path is the ROW's hook name and nothing else",
   );
   eq(ev.source, "my-ci", "…and the event names the hook it arrived on, not the `source` the body claimed");
+  eq(ev.readableBy, [{ level: "domain", domain: "eng" }], "🔴 a payload declaring `readableBy: [{level:'org'}]` changes NOTHING — the grant is the INGRESS's, stamped, never the body's");
 
-  eq(sw.standardWebhookScope({ source: "my-ci", ownerDomain: "eng" }), ev.scope, "the scope builder takes ONLY the delivery's declared name + owning domain — there is no body parameter");
-  eq(sw.standardWebhookScope({ source: "my-ci" }), [{ kind: "container", id: "my-ci" }], "no owning domain ⇒ NO tenant step (which the grant below then refuses — fail closed, never 'any domain')");
+  eq(sw.standardWebhookScope({ source: "my-ci" }), ev.scope, "the scope builder takes ONLY the delivery's declared name — there is no body parameter, and since OPE-209 no authorization input either");
   eq(sw.standardWebhookNormalizer.scopeHookConstant, true, "the normalizer DECLARES its scope is hook-constant, which is what event-match.ts reads to skip mandatory narrowing");
 
   const a = normalizeDelivery(delivery({ body: '{"event":"a","fields":{"x":"1"}}' }))!;
@@ -273,36 +272,52 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
 }
 
 {
-  console.log("\n5. the read grant:");
-  const grant = eventScopeGrant(sw.OE_STANDARD_WEBHOOK_SCHEME);
-  ok(grant !== undefined, "a grant adapter IS registered for the contract — without one every (b) event is refused `no-grant-adapter`");
+  console.log("\n5. the read grant (readableBy — OPE-209):");
+  eq(eventScopeGrant(sw.OE_STANDARD_WEBHOOK_SCHEME), undefined, "🔴 no grant adapter is registered for the contract any more — the hook's own `readableBy` is the whole decision");
 
-  const scopeEng = sw.standardWebhookScope({ source: "my-ci", ownerDomain: "eng" });
-  ok(grant!.grantsRead(scopeEng, { domains: ["eng"] } as never), "the OWNING domain grants read");
-  ok(!grant!.grantsRead(scopeEng, { domains: ["ops"] } as never), "🔴 a DIFFERENT domain does not — the check refuses something real");
-  ok(!grant!.grantsRead(scopeEng, { domains: [] } as never), "a partition in NO domain does not");
-  ok(!grant!.grantsRead(sw.standardWebhookScope({ source: "my-ci" }), { domains: ["eng"] } as never), "a hook with NO owning domain is refused by every domain — absence fails CLOSED, never 'any'");
+  const engAccess = { domains: ["eng"], tenantKey: "slack/T1", surfaceKey: "slack/T1/C-ENG" } as never;
+  const opsAccess = { domains: ["ops"], tenantKey: "slack/T1", surfaceKey: "slack/T1/C-OPS" } as never;
+  const noDomain = { domains: [], tenantKey: "slack/T1", surfaceKey: "slack/T1/C-X" } as never;
+  ok(scopeGrantsRead([{ level: "domain", domain: "eng" }], engAccess), "a named domain grants read");
+  ok(!scopeGrantsRead([{ level: "domain", domain: "eng" }], opsAccess), "🔴 a DIFFERENT domain does not — the check refuses something real");
+  ok(!scopeGrantsRead([{ level: "domain", domain: "eng" }], noDomain), "a partition in NO domain does not");
+  ok(!scopeGrantsRead([], engAccess), "an EMPTY grant refuses everyone — the fail-closed floor, asserted standalone rather than trusted to the validator");
+  ok(!scopeGrantsRead(undefined, engAccess), "…and so does an absent one");
   ok(
-    grant!.grantsRead(scopeEng, { domains: ["eng"] } as never) !== grant!.grantsRead(scopeEng, { domains: ["ops"] } as never),
+    scopeGrantsRead([{ level: "domain", domain: "eng" }, { level: "domain", domain: "ops" }], engAccess) &&
+      scopeGrantsRead([{ level: "domain", domain: "eng" }, { level: "domain", domain: "ops" }], opsAccess),
+    "🔴 MANY domains may read ONE hook — the union the single frozen owning domain could not express",
+  );
+  ok(scopeGrantsRead([{ level: "org" }, { level: "domain", domain: "eng" }], opsAccess), "a broad entry is NOT revoked by a narrower sibling — this is a union, never narrowest-wins");
+  ok(scopeGrantsRead([{ level: "org" }], noDomain), '{ level: "org" } means EVERY domain — the sentinel `ALL_DOMAINS` is dissolved into a level that already meant it');
+  ok(scopeGrantsRead([{ level: "tenant", tenant: "slack/T1" }], opsAccess), "a tenant-level grant covers every domain in that tenant");
+  ok(!scopeGrantsRead([{ level: "tenant", tenant: "slack/T9" }], opsAccess), "…and not another tenant's");
+  ok(scopeGrantsRead([{ level: "surface", surface: "slack/T1/C-OPS" }], opsAccess), "a surface-level grant matches its own surface");
+  ok(!scopeGrantsRead([{ level: "principal", principal: "U1" }], engAccess), "🔴 a principal (DM) entry NEVER grants — a DM is a separate connector universe, refused structurally");
+  ok(
+    scopeGrantsRead([{ level: "domain", domain: "eng" }], engAccess) !== scopeGrantsRead([{ level: "domain", domain: "eng" }], opsAccess),
     "the grant DISCRIMINATES between two real domains — it is not a documented absence of a boundary",
   );
 
+  ok(/EVERY domain in the org/.test(describeReadableBy([{ level: "org" }])), '🔴 `{level:"org"}` renders as "EVERY domain in the org" — three tokens that mean everything must never read as the narrowest thing on the card');
+  ok(/NOBODY/.test(describeReadableBy([])), "…and an empty grant says NOBODY out loud rather than rendering blank");
+  ok(readableByDefects([]).length > 0, "🔴 an EMPTY readableBy is a validation DEFECT — this is the zero-domain trap (OPE-206) made unconstructable rather than merely fail-closed");
+  ok(readableByDefects([{ level: "domain", domain: "a/b" }]).length > 0, "a tenant-qualified domain name is refused — domains are bare, org-global names (OPE-219)");
+  ok(readableByDefects([{ level: "tenant", tenant: "T1" }]).length > 0, "a BARE tenant id is refused — tenant keys are platform-qualified");
+  eq(readableByDefects([{ level: "domain", domain: "eng" }]), [], "a well-formed grant has no defects");
+
   const evEng = normalizeDelivery(delivery({ body: '{"event":"build","fields":{"status":"failed"}}' }))!;
   const inEng = checkEventReadGrant(evEng, eventGrantPartitions(routine({ id: "r-eng" })));
-  eq(inEng, { ok: true }, "a routine in the OWNING domain is granted");
+  eq(inEng, { ok: true }, "a routine in a GRANTED domain is granted");
   const inOps = checkEventReadGrant(evEng, eventGrantPartitions(routine({ id: "r-ops", surfaceKey: "slack/T1/C-OPS", target: { channelId: "C-OPS" } })));
-  eq(inOps, { ok: false, reason: "refused", partition: "slack/T1/C-OPS" }, "🔴 a routine in a NON-OWNING domain is refused `refused` (NOT `no-grant-adapter`) and names the partition");
+  eq(inOps, { ok: false, reason: "refused", partition: "slack/T1/C-OPS" }, "🔴 a routine in a NON-granted domain is refused `refused` (NOT `no-grant-adapter`) and names the partition");
 
-  const evNoDomain = normalizeDelivery({ source: "my-ci", scheme: sw.OE_STANDARD_WEBHOOK_SCHEME, headers: {}, receivedAt: "2026-07-27T00:00:00.000Z", body: '{"event":"build"}' })!;
-  eq(checkEventReadGrant(evNoDomain, eventGrantPartitions(routine({ id: "r-eng" }))).ok, false, "a hook with no owning domain authorizes nothing at all");
-
-  const adapterSrc = readFileSync(join(REPO, "packages/core/agent/webhooks/oe-standard-webhook.ts"), "utf8")
-    .replace(/\n\s*(\*|\/\/)\s?/g, " ")
-    .replace(/\s+/g, " ");
-  ok(/swappable seam/.test(adapterSrc), "the adapter still names `loadDomains` as a SWAPPABLE SEAM — the assumption most likely to shift");
-  ok(/collapses to `true` in effect/.test(adapterSrc), "…and still states the honest one-domain limitation rather than implying a boundary it does not have there");
-  ok(/LATENCY OPTIMISATION ON AN ALREADY-GRANTED POLL/.test(adapterSrc), "…and still records WHY the shipped read-grant justification has no referent here, rather than silently reusing it");
-  ok(/no `\(\) => true` precedent/.test(adapterSrc), "…and still says out loud that this must not become the tree's first unconditional grant");
+  const evEmptyGrant = normalizeDelivery({ source: "my-ci", scheme: sw.OE_STANDARD_WEBHOOK_SCHEME, headers: {}, receivedAt: "2026-07-27T00:00:00.000Z", body: '{"event":"build"}', readableBy: [] })!;
+  eq(
+    checkEventReadGrant(evEmptyGrant, eventGrantPartitions(routine({ id: "r-eng" }))),
+    { ok: false, reason: "refused", partition: "slack/T1/C-ENG" },
+    "🔴 an EMPTY declared grant refuses BY NAME rather than falling through to a per-scheme adapter — the refusal is recordable, which is what the zero-domain trap never was",
+  );
 }
 
 {
@@ -329,7 +344,7 @@ async function makeHook(over: Partial<RuntimeWebhookHook> = {}): Promise<Runtime
     status: "active",
     createdBy: "U-DECIDER",
     createdIn: "slack/T1/C-ENG",
-    ownerDomain: "eng",
+    readableBy: [{ level: "domain", domain: "eng" }],
     createdAt: "2026-07-27T00:00:00.000Z",
     ...over,
   };

@@ -1,5 +1,6 @@
 import { getConfig } from "../access/config.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest } from "../access/resolver.js";
+import { scopeGrantsRead } from "../access/read-grant.js";
 import type { Partition } from "../memory/partition.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { innermostScope, type NormalizedEvent, type ScopeStep } from "./event-model.js";
@@ -81,8 +82,9 @@ export function checkEventReadGrant(
   partitions: readonly Partition[],
   deps: EventGrantDeps = {},
 ): EventGrantVerdict {
-  const adapter = eventScopeGrant(webhookScheme(ev));
-  if (!adapter) return { ok: false, reason: "no-grant-adapter" };
+  const declared = ev.readableBy;
+  const adapter = declared ? undefined : eventScopeGrant(webhookScheme(ev));
+  if (!declared && !adapter) return { ok: false, reason: "no-grant-adapter" };
   if (!innermostScope(ev.scope)) return { ok: false, reason: "no-scope" };
   if (partitions.length === 0) return { ok: false, reason: "unresolvable" };
   const resolve = deps.resolve ?? liveResolve;
@@ -95,7 +97,7 @@ export function checkEventReadGrant(
     }
     let granted: boolean;
     try {
-      granted = adapter.grantsRead(ev.scope, access);
+      granted = declared ? scopeGrantsRead(declared, access) : adapter!.grantsRead(ev.scope, access);
     } catch {
       return { ok: false, reason: "unresolvable", partition: p.surfaceKey };
     }
