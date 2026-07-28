@@ -60,6 +60,9 @@ export interface Routine {
   consecutiveFailures: number;
   lastStateHash?: string;
 
+  firstMatchAt?: string;
+  lastMatchAt?: string;
+
   sessionMode?: "job";
   jobSessionAnchor?: string;
   jobState?: string;

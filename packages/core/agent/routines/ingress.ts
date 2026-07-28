@@ -14,6 +14,7 @@ import { foldRoutineOutcome } from "./outcome-fold.js";
 import { eventPrompt } from "./events.js";
 import { normalizeDelivery, type NormalizedEvent, type TriggerDelivery } from "./event-model.js";
 import { evaluateSubscription, isEventTrigger, storedJq } from "./event-match.js";
+import { stampSubscriptionMatch, type MatchStampDeps } from "./match-stamp.js";
 import { checkEventReadGrant, eventGrantPartitions, type EventGrantDeps } from "./event-authz.js";
 import {
   announceFireWithheld,
@@ -63,6 +64,7 @@ export interface TriggerAdmitDeps {
   readonly hydrate?: HydrationDeps;
   readonly disclosure?: FireDisclosureDeps;
   readonly notice?: FireWithheldNoticeDeps;
+  readonly matchStamp?: MatchStampDeps;
 }
 
 export interface TriggerReport {
@@ -102,6 +104,11 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
     ...(deps.markSeen ? { markSeen: deps.markSeen } : {}),
     ...(deps.now ? { now: deps.now } : {}),
     principalId: `${ev.source}:webhook`,
+  };
+  const stampDeps: MatchStampDeps = {
+    ...(deps.markSeen ? { markSeen: deps.markSeen } : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.matchStamp ?? {}),
   };
 
   const loseFire = async (r: Routine, error: string): Promise<void> => {
@@ -144,7 +151,9 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       );
       continue;
     }
-    if (verdict.match) matches.push(r);
+    if (!verdict.match) continue;
+    await stampSubscriptionMatch(r, stampDeps);
+    matches.push(r);
   }
   const cap = eventMaxFanOut();
   const memo: HydrationMemo = newHydrationMemo();

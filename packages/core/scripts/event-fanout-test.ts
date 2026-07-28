@@ -378,5 +378,125 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   delete process.env.OE_EVENT_MAX_FANOUT;
 }
 
+{
+  interface Patch {
+    id: string;
+    org: string;
+    surfaceKey: string;
+    patch: Record<string, unknown>;
+  }
+  function stampHarness(routines: Routine[], repos: readonly string[] = ["me/proj"], t0 = Date.parse("2026-07-28T09:00:00.000Z")) {
+    const writes: Patch[] = [];
+    const clock = { ms: t0 };
+    const base = harness(routines, repos);
+    return {
+      ...base,
+      writes,
+      clock,
+      deps: {
+        ...base.deps,
+        matchStamp: {
+          now: () => new Date(clock.ms),
+          update: async (org: string, surfaceKey: string, id: string, patch: Record<string, unknown>) => {
+            writes.push({ id, org, surfaceKey, patch });
+            const row = routines.find((r) => r.id === id);
+            if (row) Object.assign(row, patch);
+            return row ?? null;
+          },
+        },
+      },
+    };
+  }
+
+  {
+    const r = routine({ id: "r-stamp" });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 1 && h.writes.length === 1, "match stamp: a matching subscription writes exactly one stamp");
+    const w = h.writes[0]!;
+    ok(w.id === "r-stamp" && w.org === "acme" && w.surfaceKey === "slack/T1/C1", "match stamp: the stamp is written against the matching routine's own (org, surfaceKey, id)");
+    ok(w.patch["firstMatchAt"] === "2026-07-28T09:00:00.000Z", "match stamp: the FIRST match sets firstMatchAt");
+    ok(w.patch["lastMatchAt"] === "2026-07-28T09:00:00.000Z", "match stamp: …and lastMatchAt");
+  }
+
+  {
+    const r = routine({ id: "r-stamp-nomatch", trigger: { kind: "event", source: "github", jq: '.scope.container == "other/repo"' } });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 0 && h.writes.length === 0, "match stamp: a filter that does not match writes NO stamp");
+  }
+
+  {
+    const r = routine({ id: "r-stamp-broken", trigger: { kind: "event", source: "github", jq: '.scope.container == "me/proj" and' } });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 0, "match stamp: a filter that will NOT EVALUATE never stamps — a broken filter must not look like a working one");
+    ok(
+      h.audited.length === 1 && h.audited[0]!.detail?.["reason"] === "filter_invalid",
+      "match stamp: …and it still reports itself through the existing filter_invalid skip row, so the failure is not silent either",
+    );
+  }
+  {
+    const r = routine({ id: "r-stamp-nonbool", trigger: { kind: "event", source: "github", jq: ".fields.action" } });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 0, "match stamp: a non-boolean filter result never stamps either");
+  }
+
+  {
+    const r = routine({ id: "r-stamp-ungranted" });
+    const h = stampHarness([r], []);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 0, "match stamp: the ungranted routine does not fire");
+    ok(h.writes.length === 1 && h.writes[0]!.patch["lastMatchAt"] !== undefined, "OPE-184: a GRANT-REFUSED match still stamps — the stamp is strictly BEFORE the read-grant check");
+    ok(h.audited.some((e) => e.detail?.["reason"] === "grant_refused"), "match stamp: …and the downstream reason keeps its own separate vocabulary (routine.skip/grant_refused)");
+  }
+
+  {
+    const r = routine({ id: "r-stamp-unwired", surfaceKey: "linear/W1/S1", target: { channelId: "S1" } });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 0, "match stamp: the unwired routine does not fire");
+    ok(h.writes.length === 1 && h.writes[0]!.id === "r-stamp-unwired", "OPE-184: an UNRESOLVED-TARGET match still stamps — the stamp is strictly BEFORE target resolution");
+  }
+
+  {
+    process.env.OE_EVENT_MAX_FANOUT = "1";
+    const rs = [routine({ id: "r-stamp-cap1" }), routine({ id: "r-stamp-cap2" })];
+    const h = stampHarness(rs);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 1, "match stamp: with a cap of 1 exactly one of the two fires");
+    ok(h.writes.length === 2, "OPE-184: BOTH matches stamp — the stamp is strictly BEFORE the fan-out cap");
+    ok(h.writes.map((w) => w.id).join(",") === "r-stamp-cap1,r-stamp-cap2", "match stamp: …including the routine that was skipped as over-cap");
+    delete process.env.OE_EVENT_MAX_FANOUT;
+  }
+
+  {
+    const r = routine({ id: "r-stamp-coalesce" });
+    const h = stampHarness([r]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 1, "coalesce: the first match writes");
+    h.clock.ms += 30_000;
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 1, "coalesce: a second match 30s later writes NOTHING — at most one row update per routine per minute");
+    h.clock.ms += 40_000;
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 2, "coalesce: past the window the next match writes again");
+    ok(h.writes[1]!.patch["lastMatchAt"] === "2026-07-28T09:01:10.000Z", "coalesce: the later write moves lastMatchAt forward");
+    ok(
+      h.writes[1]!.patch["firstMatchAt"] === undefined,
+      "coalesce: …and does NOT re-write firstMatchAt — a row that already carries one keeps its first-EVER instant",
+    );
+    ok(r.firstMatchAt === "2026-07-28T09:00:00.000Z" && r.lastMatchAt === "2026-07-28T09:01:10.000Z", "coalesce: the merged row carries the first instant and the latest one");
+  }
+
+  {
+    const r = routine({ id: "r-stamp-firstever" });
+    const h = stampHarness([r], ["me/proj"], Date.parse("2026-07-28T11:00:00.000Z"));
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.writes.length === 1 && h.writes[0]!.patch["firstMatchAt"] === "2026-07-28T11:00:00.000Z", "coalesce: a routine's FIRST-EVER match always writes — the throttle key is its own id");
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ event-fanout: ${passed} assertions passed`);

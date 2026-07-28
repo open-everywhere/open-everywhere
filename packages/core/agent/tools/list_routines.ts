@@ -9,7 +9,7 @@ import { listRoutinePermissions } from "../routines/grants.js";
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), and the standing permissions each one may use unattended without asking. Use when asked what proactive/recurring work is configured here, whether a routine actually ran, what one is costing, or what any of them are allowed to do on their own.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), and the standing permissions each one may use unattended without asking. Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether an event subscription's filter has ever matched anything, what one is costing, or what any of them are allowed to do on their own.",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -27,6 +27,8 @@ export default defineTool({
         nextRunAt: z.string().nullable(),
         lastRunAt: z.string().nullable(),
         lastOutcome: z.string().nullable(),
+        firstMatchAt: z.string().nullable(),
+        lastMatchAt: z.string().nullable(),
         consecutiveFailures: z.number(),
         taintedAtCreation: z.boolean(),
         lastSessionId: z.string().nullable(),
@@ -68,6 +70,8 @@ export default defineTool({
         nextRunAt: r.nextRunAt ?? null,
         lastRunAt: r.lastRunAt ?? null,
         lastOutcome: r.lastOutcome ?? null,
+        firstMatchAt: r.firstMatchAt ?? null,
+        lastMatchAt: r.lastMatchAt ?? null,
         consecutiveFailures: r.consecutiveFailures,
         taintedAtCreation: r.taintedAtCreation === true,
         lastSessionId: f.lastSessionId,

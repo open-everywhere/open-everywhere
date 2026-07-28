@@ -64,7 +64,7 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
     {
       title: "List routines",
       description:
-        'Every proactive routine across one org\'s surfaces (config-as-code\'s routines console) — id, trigger, next run, status, failure count and the routine\'s full PROMPT. onlyDue=true returns just those a tick would fire now. org defaults to the deployment\'s (OE_ORG / "default"); an org-wide listing requires the org-wide "admin" role, or pass surfaceKey to scope it to one channel (a covering "domain:<name>" role is enough for that). Read-only.',
+        'Every proactive routine across one org\'s surfaces (config-as-code\'s routines console) — id, trigger, next run, status, failure count, the routine\'s full PROMPT, and for an event subscription when its filter first/last matched a delivery. onlyDue=true returns just those a tick would fire now. org defaults to the deployment\'s (OE_ORG / "default"); an org-wide listing requires the org-wide "admin" role, or pass surfaceKey to scope it to one channel (a covering "domain:<name>" role is enough for that). Read-only.',
       inputSchema: { onlyDue: z.boolean().optional(), org: z.string().min(1).optional(), surfaceKey: z.string().min(1).optional() },
     },
     (args) =>

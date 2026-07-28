@@ -212,15 +212,15 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const capped = routine({ id: "r-throttled", trigger: { kind: "event", source: "github" } });
   const audited: AuditInput[] = [];
   const seenKeys: string[] = [];
-  let windowOpen = true;
+  const closed = new Set<string>();
   const deps = {
     receive: (() => Promise.resolve()) as never,
     listRoutines: async () => [routine({ id: "r-ev1", trigger: { kind: "event", source: "github" } }), capped],
     audit: async (e: AuditInput) => void audited.push(e),
     markSeen: async (_o: string, k: string) => {
       seenKeys.push(k);
-      if (!windowOpen) return false;
-      windowOpen = false;
+      if (closed.has(k)) return false;
+      closed.add(k);
       return true;
     },
     grant: { resolve: () => ({ repos: ["me/proj"] }) as never },
@@ -240,11 +240,19 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   ok(skips[0]!.principalId === "github:webhook", "throttle: the event leg stamps the WEBHOOK as the actor, not the clock dispatcher");
   ok(skips[0]!.detail?.["suppressed"] === undefined, "throttle: the FIRST row carries no suppressed count (its absence means 'exactly one')");
   ok(
-    seenKeys.every((k) => k === "routineskip:r-throttled:fanout_cap"),
+    seenKeys.filter((k) => k.startsWith("routineskip:")).every((k) => k === "routineskip:r-throttled:fanout_cap"),
     "throttle: the key is built ONLY from OE-minted parts (routine id + a closed reason set) — a hostile delivery stream cannot mint fresh keys to defeat it",
   );
+  ok(
+    seenKeys.every((k) => /^(routineskip:r-[A-Za-z0-9_-]+:[a-z_]+|routinematch:r-[A-Za-z0-9_-]+)$/.test(k)),
+    "throttle: every throttle key this leg mints is OE-minted parts only — the match stamp's included",
+  );
+  ok(
+    seenKeys.some((k) => k === "routinematch:r-throttled"),
+    "throttle: …and the OVER-CAP routine's match stamp really did run (the stamp is before the cap, so a capped subscription can still prove its filter works)",
+  );
 
-  windowOpen = true;
+  closed.clear();
   await fanOutDelivery(body, "pull_request", undefined, deps);
   delete process.env.OE_EVENT_MAX_FANOUT;
   const second = audited.filter((e) => e.action === ROUTINE_AUDIT.skip)[1];

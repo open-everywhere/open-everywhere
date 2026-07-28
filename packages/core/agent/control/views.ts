@@ -124,6 +124,8 @@ export interface RoutineRow {
   readonly lastOutcome?: string;
   readonly consecutiveFailures?: number;
   readonly disabledReason?: string;
+  readonly firstMatchAt?: string;
+  readonly lastMatchAt?: string;
 }
 export interface RoutinesView {
   readonly root: string;
@@ -153,6 +155,8 @@ export async function routinesView(opts: { onlyDue?: boolean; org?: string; surf
       ...(r.lastOutcome ? { lastOutcome: r.lastOutcome } : {}),
       ...(r.consecutiveFailures ? { consecutiveFailures: r.consecutiveFailures } : {}),
       ...(r.disabledReason ? { disabledReason: r.disabledReason } : {}),
+      ...(r.firstMatchAt ? { firstMatchAt: r.firstMatchAt } : {}),
+      ...(r.lastMatchAt ? { lastMatchAt: r.lastMatchAt } : {}),
     })),
   };
 }
