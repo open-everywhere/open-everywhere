@@ -67,8 +67,12 @@ export function requireWebhookDeclareConfig(override?: AccessRequestsConfig): En
   return cfg as EnabledWebhookDeclareConfig;
 }
 
+export function inlineForReview(text: string): string {
+  return text.replace(/[\r\n\u2028\u2029]+/g, " ").trim();
+}
+
 export function declarationSentence(d: HookDeclaration): string {
-  return `Declare webhook "${d.id}" (${d.source}) firing into ${d.target}, readable by ${describeReadableBy(d.readableBy)}`;
+  return `Declare webhook "${inlineForReview(d.id)}" (${inlineForReview(d.source)}) firing into ${inlineForReview(d.target)}, readable by ${describeReadableBy(d.readableBy)}`;
 }
 
 export function posturePayloadLine(d: HookDeclaration): string {
@@ -76,7 +80,7 @@ export function posturePayloadLine(d: HookDeclaration): string {
     case "trigger-only":
       return "📦 Payload: DISCARDED (trigger-only) — the instruction runs on the fact that it fired. Nothing the sender writes ever reaches the model.";
     case "projection":
-      return `📦 Payload: ONLY these fields (projection) — ${(d.project ?? []).join(", ")}. Everything else the sender writes is dropped before the prompt.`;
+      return `📦 Payload: ONLY these fields (projection) — ${inlineForReview((d.project ?? []).join(", "))}. Everything else the sender writes is dropped before the prompt.`;
     case "content-bearing":
       return "⚠ Payload: THE WHOLE BODY (content-bearing) — everything the sender writes enters the prompt as untrusted data, on every delivery, forever. Narrow it to `projection` if the instruction only needs a few fields.";
   }
@@ -91,7 +95,7 @@ export function achievabilityNote(d: HookDeclaration): string | undefined {
   }
   const reach = webhookReach(d, domains);
   const findings = [...reach.impossible, ...reach.unreachable];
-  return findings.length > 0 ? `⚠ Heads up: ${findings.join(" ")}` : undefined;
+  return findings.length > 0 ? `⚠ Heads up: ${inlineForReview(findings.join(" "))}` : undefined;
 }
 
 export function secretSetupLine(d: HookDeclaration): string {
@@ -118,7 +122,7 @@ function prBody(args: WebhookDeclareArgs, decidedBy: string): string {
     `**The secret is not in this diff, and never will be.** ${secretSetupLine(d)}`,
     "",
     `Requested by \`${args.requestedBy}\` · sent by \`${decidedBy}\` · scope \`${args.scopeKey}\``,
-    ...(args.reason ? [`Reason: ${args.reason}`] : []),
+    ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
     "",
     "---",
     "This diff was produced by the deterministic hooks codemod from a frozen, validated declaration — no model authored any",
@@ -212,7 +216,7 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
   adminBody.set(
     "text",
     `:link: Webhook declaration — ${sentence}.\nRequested by <@${args.requestedBy}> · sent by <@${decidedBy}>` +
-      `${args.reason ? ` · reason: ${args.reason}` : ""}\nReview and merge to declare it: ${pr.url}\n${secretSetupLine(args.declaration)}`,
+      `${args.reason ? ` · reason: ${inlineForReview(args.reason)}` : ""}\nReview and merge to declare it: ${pr.url}\n${secretSetupLine(args.declaration)}`,
   );
   const adminRes = await post("chat.postMessage", adminBody.toString());
   const adminOk = adminRes?.ok === true;
@@ -235,14 +239,14 @@ const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
   summarize(args) {
     const d = args.declaration;
     return [
-      `Open a PR declaring an inbound webhook — ${d.id} (${d.source}) → ${d.target}`,
-      `It will run this standing instruction, unattended, on every accepted delivery: "${d.instruction}"`,
-      `⚠ That instruction runs with ${d.target}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
+      `Open a PR declaring an inbound webhook — ${inlineForReview(d.id)} (${inlineForReview(d.source)}) → ${inlineForReview(d.target)}`,
+      `It will run this standing instruction, unattended, on every accepted delivery: "${inlineForReview(d.instruction)}"`,
+      `⚠ That instruction runs with ${inlineForReview(d.target)}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
       `Readable by: ${describeReadableBy(d.readableBy)} — the whole confidentiality boundary; anything narrower is a separate webhook.`,
       posturePayloadLine(d),
       ...(achievabilityNote(d) ? [achievabilityNote(d)!] : []),
       `🔒 No secret is created or shown by this. ${secretSetupLine(d)}`,
-      ...(args.reason ? [`Reason: ${args.reason}`] : []),
+      ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is declared, and nothing can authenticate, until they do.`,
       `Requested by ${args.requestedBy}`,
     ];

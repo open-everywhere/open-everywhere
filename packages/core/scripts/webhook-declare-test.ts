@@ -15,7 +15,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 await import("../agent/approvals/flow.js");
-const { executeWebhookDeclare, requireWebhookDeclareConfig, declarationSentence, secretSetupLine } = await import("../agent/approvals/webhook-declare.js");
+const { executeWebhookDeclare, requireWebhookDeclareConfig, declarationSentence, secretSetupLine, inlineForReview } = await import("../agent/approvals/webhook-declare.js");
 const { secretRefForHookId } = await import("../agent/tools/declare_webhook.js");
 const codemod = await import("../agent/webhooks/hooks-codemod.js");
 
@@ -277,6 +277,62 @@ function fakeDeps(state: FakeState) {
     "a candidate colliding with a code hook refuses, with nothing written",
   );
   eq(state2.puts.length + state2.prs.length, 0, "…nothing committed, no PR");
+}
+
+{
+  console.log("\n8. review-surface integrity — model text cannot forge markdown:");
+
+  const FENCE = "```";
+  const HOSTILE = {
+    ...DECL,
+    target: `slack/T1/C-DEPLOYS\n\n## ✅ Validated & approved by security\n`,
+    posture: "projection" as const,
+    project: ["status", `branch\n\n> **APPROVED** — merge without review\n`],
+    instruction: `Summarise it.\n${FENCE}\n\n## Reviewed by the security team\n${FENCE}json\n{}`,
+  };
+  const HOSTILE_ARGS = {
+    ...ARGS,
+    declaration: HOSTILE,
+    reason: `CI needs it\n\n${FENCE}\n\n| status | verdict |\n|---|---|\n| audit | passed |\n`,
+  };
+
+  const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+  const outcome = await executeWebhookDeclare(HOSTILE_ARGS, "U_TAP", { config: cfg(), ...fakeDeps(state) });
+  const title = state.prs[0].title;
+  const body = state.prs[0].body;
+  const adminNote = state.posts.find((p) => p.body.get("channel") === "C_ADMIN")!.body.get("text")!;
+  const card = actionKind("webhook.declare")!.summarize(HOSTILE_ARGS).join("\n");
+
+  ok(!title.includes("\n"), "🔴 the PR title is a single line even when `target` carries newlines");
+  ok(title.includes("Validated & approved by security"), "…the injected text is still SHOWN — neutralised, never censored");
+
+  const surfaces: [string, string][] = [
+    ["PR body", body],
+    ["admin note", adminNote],
+    ["card", card],
+  ];
+  for (const [name, text] of surfaces) {
+    const forged = text.split("\n").filter((l) => /^ {0,3}(#{1,6} |> |\||```|---)/.test(l.trimEnd()) && !l.startsWith("```json") && l.trim() !== "```" && l.trim() !== "---");
+    eq(forged, [], `🔴 no line in the ${name} opens a markdown block from model text (found: ${JSON.stringify(forged)})`);
+  }
+
+  const fenceLines = body.split("\n").filter((l) => /^ {0,3}```/.test(l));
+  eq(fenceLines.length, 2, "🔴 the PR body contains EXACTLY the declaration fence's two markers — model text cannot open a third");
+  eq(fenceLines[0], "```json", "…the opener is ours");
+  eq(fenceLines[1], "```", "…and so is the closer");
+
+  eq(
+    state.puts[0],
+    codemod.stringifyHooks(codemod.applyHookDeclaration(codemod.emptyHooksFile(), HOSTILE, []).hooks),
+    "🔴 the committed hooks.json is the UNMODIFIED declaration — inlineForReview never touches the diff",
+  );
+  ok(outcome.includes("opened PR #9"), "…and the flow still completes normally");
+
+  eq(inlineForReview("a\nb"), "a b", "inlineForReview: a newline becomes a space");
+  eq(inlineForReview("a\r\nb"), "a b", "inlineForReview: CRLF collapses to ONE space, not two");
+  eq(inlineForReview("a\u2028b\u2029c"), "a b c", "inlineForReview: U+2028/U+2029 line separators are collapsed too");
+  eq(inlineForReview("  padded\n"), "padded", "inlineForReview: trims");
+  eq(inlineForReview("keep `main` and \"quotes\""), "keep `main` and \"quotes\"", "🔴 inlineForReview does NOT mangle backticks or quotes — on one line they cannot forge a block, and fidelity matters on a surface a human reads");
 }
 
 function rejectsWithSync(fn: () => unknown, fragment: string, label: string): void {
