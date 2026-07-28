@@ -3,7 +3,9 @@ import { SURFACE_KEY, TENANT_KEY, type Scope } from "./bundle.js";
 
 export type ReadableBy = readonly Scope[];
 
-export function scopeGrantsRead(readableBy: ReadableBy | undefined, access: EffectiveAccess): boolean {
+export type ReadGrantSubject = Pick<EffectiveAccess, "tenantKey" | "domains" | "surfaceKey">;
+
+export function scopeGrantsRead(readableBy: ReadableBy | undefined, access: ReadGrantSubject): boolean {
   if (!readableBy || readableBy.length === 0) return false;
   return readableBy.some((s) => {
     switch (s.level) {

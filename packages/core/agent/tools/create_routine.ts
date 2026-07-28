@@ -11,6 +11,11 @@ import { SCOPE_KINDS, eventNormalizer } from "../routines/event-model.js";
 import { validateSubscription } from "../routines/event-match.js";
 import { FILTER_MAX_LENGTH, probeFilter } from "../routines/jq-filter.js";
 import { webhookScheme } from "../routines/scheme-name.js";
+import { readGrantReach } from "../webhooks/achievability.js";
+import { hookReadableBy } from "../webhooks/runtime-hook.js";
+import { findWebhook } from "../webhooks/config.js";
+import type { ReadableBy } from "../access/read-grant.js";
+import type { Domain } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
@@ -173,10 +178,8 @@ export default defineTool({
     }
     const p = resolvePartition(ctx);
     const eventTrigger = input.trigger as z.infer<typeof trigger>;
-    const eventScheme =
-      eventTrigger.kind === "event"
-        ? webhookScheme((await getOperationalStore().getWebhookHookBySource(p.org, eventTrigger.source)) ?? { source: eventTrigger.source })
-        : undefined;
+    const hookRow = eventTrigger.kind === "event" ? await getOperationalStore().getWebhookHookBySource(p.org, eventTrigger.source) : undefined;
+    const eventScheme = eventTrigger.kind === "event" ? webhookScheme(hookRow ?? { source: eventTrigger.source }) : undefined;
     const t = storedTrigger(eventTrigger, eventScheme);
     if (t.kind === "event" && t.jq !== undefined) {
       await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);
@@ -185,6 +188,25 @@ export default defineTool({
       throw new Error(
         "I can't set up a standing schedule from a DM — it would fire unattended forever with nobody but you ever seeing it run, and you'd be the only person who could approve it. Ask me in a channel and I'll set it up there; or ask for a one-off reminder here (\"check back in an hour\") and I'll do that.",
       );
+    }
+    if (t.kind === "event") {
+      let grant: ReadableBy | undefined;
+      let domains: readonly Domain[] | undefined;
+      try {
+        grant = hookRow ? hookReadableBy(hookRow) : findWebhook(getConfig().loadWebhooks?.() ?? [], t.source)?.readableBy;
+        domains = getConfig().loadDomains();
+      } catch {
+        grant = undefined;
+        domains = undefined;
+      }
+      const reach = readGrantReach(p.surfaceKey, grant, domains);
+      const blocked = [...reach.impossible, ...reach.unreachable];
+      if (blocked.length > 0) {
+        throw new Error(
+          `A routine here can't read "${t.source}" events, so it would be armed and then never fire: ${blocked.join(" ")} ` +
+            `Arm it from a channel that can read this source, or have an operator widen the hook's readableBy in a PR.`,
+        );
+      }
     }
     const expr = t.kind === "cron" ? t.expr : t.kind === "watch" ? t.expr : undefined;
     if (expr !== undefined) {

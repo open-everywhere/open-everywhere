@@ -1,6 +1,8 @@
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { describeReadableBy } from "../access/read-grant.js";
 import { assertWebhooksValid, configHookPosture } from "../webhooks/config.js";
+import { webhookReach } from "../webhooks/achievability.js";
+import type { Domain } from "../memory/domain.js";
 import { applyHookDeclaration, emptyHooksFile, parseHooksText, stringifyHooks, type HookDeclaration } from "../webhooks/hooks-codemod.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
@@ -80,6 +82,18 @@ export function posturePayloadLine(d: HookDeclaration): string {
   }
 }
 
+export function achievabilityNote(d: HookDeclaration): string | undefined {
+  let domains: readonly Domain[] | undefined;
+  try {
+    domains = getConfig().loadDomains();
+  } catch {
+    return undefined;
+  }
+  const reach = webhookReach(d, domains);
+  const findings = [...reach.impossible, ...reach.unreachable];
+  return findings.length > 0 ? `⚠ Heads up: ${findings.join(" ")}` : undefined;
+}
+
 export function secretSetupLine(d: HookDeclaration): string {
   const ref = typeof d.secretRef === "string" ? d.secretRef : d.secretRef[0]!;
   return d.broker === "env"
@@ -100,6 +114,7 @@ function prBody(args: WebhookDeclareArgs, decidedBy: string): string {
     "",
     `**${posturePayloadLine(d)}**`,
     "",
+    ...(achievabilityNote(d) ? [achievabilityNote(d)!, ""] : []),
     `**The secret is not in this diff, and never will be.** ${secretSetupLine(d)}`,
     "",
     `Requested by \`${args.requestedBy}\` · sent by \`${decidedBy}\` · scope \`${args.scopeKey}\``,
@@ -126,7 +141,13 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
   const validateMerged = (overlayText: string): ReturnType<typeof applyHookDeclaration> => {
     const overlay = overlayText ? parseHooksText(overlayText) : emptyHooksFile();
     const result = applyHookDeclaration(overlay, args.declaration, baseHooks.map((h) => h.id));
-    assertWebhooksValid([...baseHooks, ...result.hooks.hooks]);
+    let domains: readonly Domain[] | undefined;
+    try {
+      domains = getConfig().loadDomains();
+    } catch {
+      domains = undefined;
+    }
+    assertWebhooksValid([...baseHooks, ...result.hooks.hooks], { domains, warn: () => {} });
     return result;
   };
 
@@ -219,6 +240,7 @@ const webhookDeclare: ActionKind<WebhookDeclareArgs> = {
       `⚠ That instruction runs with ${d.target}'s full existing access, on anyone's POST, indefinitely — which is why it is reviewed as a diff rather than armed by this click.`,
       `Readable by: ${describeReadableBy(d.readableBy)} — the whole confidentiality boundary; anything narrower is a separate webhook.`,
       posturePayloadLine(d),
+      ...(achievabilityNote(d) ? [achievabilityNote(d)!] : []),
       `🔒 No secret is created or shown by this. ${secretSetupLine(d)}`,
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is declared, and nothing can authenticate, until they do.`,

@@ -1,6 +1,8 @@
 import { RUNTIME_HOOK_ID_PREFIX, WEBHOOK_POSTURES, type WebhookPosture } from "./runtime-hook.js";
 import { reservedRefNamespace } from "../credentials/reserved-refs.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
+import { webhookReach } from "./achievability.js";
+import type { Domain } from "../memory/domain.js";
 
 export interface WebhookHook {
   readonly id: string;
@@ -42,7 +44,11 @@ export function hookSecretRefs(hook: Pick<WebhookHook, "secretRef">): readonly s
 
 const ID_RE = /^[a-zA-Z0-9_-]+$/;
 
-export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
+export interface WebhookValidationDeps {
+  readonly domains?: readonly Domain[];
+  readonly warn?: (message: string) => void;
+}
+export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: WebhookValidationDeps = {}): void {
   const seen = new Set<string>();
   for (const h of hooks) {
     if (!h.id || !ID_RE.test(h.id)) {
@@ -122,6 +128,17 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
         `webhook "${h.id}" sets \`project\` but its posture is "${posture}" — the key list is only read under posture "projection". As written it narrows nothing: ` +
           (posture === "trigger-only" ? "a trigger-only hook renders no payload at all." : "a content-bearing hook renders the WHOLE body."),
       );
+    }
+    const reach = webhookReach(h, deps.domains);
+    if (reach.impossible.length > 0) {
+      throw new Error(
+        `webhook "${h.id}" declares a consequence that can never happen:\n` +
+          reach.impossible.map((d) => `  ${d}`).join("\n") +
+          `\n  This is refused rather than warned because it is decidable now and no later state makes it match.`,
+      );
+    }
+    for (const warning of reach.unreachable) {
+      (deps.warn ?? ((m: string) => console.warn(m)))(`[open-everywhere:webhooks] "${h.id}": ${warning}`);
     }
   }
 }
