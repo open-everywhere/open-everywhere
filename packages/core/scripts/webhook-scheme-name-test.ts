@@ -74,7 +74,7 @@ const CORPUS: readonly { readonly note: string; readonly value: SchemeNamed }[] 
   { note: "RuntimeWebhookHook (chat-created, approvals/webhook.ts)", value: STORED_ACTIVE },
   { note: "RuntimeWebhookHook (revoked — the retained name claim)", value: STORED_REVOKED },
   { note: "GateableHook (runtime, resolveRuntimeHook)", value: { source: "github", scheme: "github" } },
-  { note: "config WebhookHook (oe-hmac — signature scheme only, no normalizer)", value: { source: "oe-hmac" } },
+  { note: "config WebhookHook (a scheme with no normalizer of its own)", value: { source: "verifier-only" } },
   { note: "config WebhookHook (github)", value: { source: "github" } },
   { note: "config WebhookHook (notion)", value: { source: "notion" } },
   { note: "TriggerDelivery (github-fanout.ts, the NATIVE ingress)", value: { source: "github" } },

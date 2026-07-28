@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { registerWebhookVerifier, type WebhookSenderGuidance, type WebhookVerdict, type WebhookVerifier, type WebhookVerifyInput } from "./verifier.js";
-import { webhookMaxSkewSeconds } from "./oe-hmac.js";
+import { webhookMaxSkewSeconds } from "./gate.js";
 import {
   FIELDS_MAX_KEYS,
   registerEventNormalizer,

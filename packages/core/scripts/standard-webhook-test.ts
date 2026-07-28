@@ -41,7 +41,7 @@ registerConfig({
 const sw = await import("../agent/webhooks/oe-standard-webhook.js");
 const { gateWebhookDelivery, webhookMaxBodyBytes } = await import("../agent/webhooks/gate.js");
 const { firstSightingOfWebhookDelivery, webhookReplayStoreKey } = await import("../agent/webhooks/replay-dedupe.js");
-const { webhookMaxSkewSeconds } = await import("../agent/webhooks/oe-hmac.js");
+const { webhookMaxSkewSeconds } = await import("../agent/webhooks/gate.js");
 const rh = await import("../agent/webhooks/runtime-hook.js");
 const ri = await import("../agent/webhooks/runtime-ingress.js");
 const { encryptedKvVault } = await import("../agent/credentials/kv-vault.js");
@@ -442,7 +442,7 @@ async function post(
   const sink3: Posted[] = [];
   const distinct = await post(hook, body, headersFor({}, body, SECRET, "msg_replay_2"), [r], sink3, []);
   eq(distinct.status, 200, "a DIFFERENT message id carrying the IDENTICAL payload in the same second is accepted…");
-  eq(sink3.length, 1, "…and fires — the collision `oe-hmac`'s signature-derived nonce cannot avoid");
+  eq(sink3.length, 1, "…and fires — the collision a signature-derived nonce cannot avoid");
 }
 
 {
@@ -510,7 +510,6 @@ async function post(
 
 {
   console.log("\n11. minted secret format + sender guidance:");
-  const oeHmac = await import("../agent/webhooks/oe-hmac.js");
 
   const minted = sw.mintStandardWebhookSecret();
   ok(minted.startsWith(sw.SW_SECRET_PREFIX), "a minted secret carries the spec's whsec_ prefix");
@@ -543,12 +542,21 @@ async function post(
   eq(typeof sw.standardWebhookVerifier.mintSecret, "function", "the scheme declares its own minter on its verifier, where the mint site resolves it");
   ok(sw.standardWebhookVerifier.mintSecret!().startsWith(sw.SW_SECRET_PREFIX), "…and the declared minter is the prefixed one");
 
-  eq(oeHmac.oeHmacVerifier.mintSecret, undefined, "🔴 oe-hmac declares NO minter — its key is the secret's own text, so the spec's prefix would be an actively false label");
-  ok(
-    createHmac("sha256", "whsec_AAAA").update(oeHmac.oeHmacBasestring("1", "b"), "utf8").digest("hex") ===
-      oeHmac.oeHmacSignature("whsec_AAAA", "1", "b").slice("sha256=".length),
-    "…demonstrated: oe-hmac HMACs the prefix as key material rather than stripping it",
-  );
+  {
+    const generic = randomBytes(32).toString("base64url");
+    ok(!generic.startsWith(sw.SW_SECRET_PREFIX), "the generic mint carries no prefix (the fixture is not vacuous)");
+    const ts2 = String(nowSec());
+    const h3 = new Headers({
+      "webhook-id": "msg_genericmint",
+      "webhook-timestamp": ts2,
+      "webhook-signature": sw.standardWebhookSignature(generic, "msg_genericmint", ts2, '{"event":"deploy"}'),
+    });
+    eq(
+      (await sw.standardWebhookVerifier.verify({ rawBody: '{"event":"deploy"}', headers: h3, keys: [generic], nowMs: Date.now() })).ok,
+      true,
+      "🔴 an UNPREFIXED secret still verifies — an unarmed registry costs a convention, never a working hook",
+    );
+  }
 
   eq(
     sw.standardWebhookSignature("whsec_MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3", "msg_abc123", "1614265330", '{"event":"build"}'),
@@ -568,12 +576,6 @@ async function post(
   ok(g.notes.some((t) => t.includes(sw.SW_SECRET_PREFIX)), "…and states the TOTAL key rule, so a reader holding a pre-prefix secret is not told to decode it");
   ok(!JSON.stringify(g).includes(minted), "🔴 the guidance carries no live value — every string in it is a template");
 
-  const gh = oeHmac.oeHmacVerifier.senderGuidance!();
-  eq(gh.headers.map((h) => h.name), [oeHmac.OE_HMAC_TIMESTAMP_HEADER, oeHmac.OE_HMAC_SIGNATURE_HEADER], "oe-hmac's guidance names exactly the two headers ITS verifier reads");
-  eq(gh.signedContent, oeHmac.oeHmacBasestring(`<${oeHmac.OE_HMAC_TIMESTAMP_HEADER}>`, "<the raw request body, byte for byte>"), "…and its basestring is ITS builder's output");
-
-  ok(!g.headers.some((a) => gh.headers.some((b) => a.name === b.name)), "🔴 the two schemes share NOT ONE header name — a generic instruction block would be wrong for one of them");
-  ok(g.signedContent !== gh.signedContent, "…nor a basestring");
 }
 
 console.log(`\n✅ standard-webhook (OPE-196 / S3): ${n} checks passed`);

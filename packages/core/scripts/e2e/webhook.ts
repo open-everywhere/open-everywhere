@@ -1,14 +1,24 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import type { WebhookConfig } from "./env.js";
 
-export const WEBHOOK_TIMESTAMP_HEADER = "x-hook-timestamp";
+export const WEBHOOK_ID_HEADER = "webhook-id";
+export const WEBHOOK_TIMESTAMP_HEADER = "webhook-timestamp";
+export const WEBHOOK_SIGNATURE_HEADER = "webhook-signature";
 
-export function signWebhookBody(secret: string, rawBody: string, timestamp: string): string {
-  return "sha256=" + createHmac("sha256", secret).update(`v1:${timestamp}:${rawBody}`, "utf8").digest("hex");
+function keyBytes(secret: string): Buffer {
+  return secret.startsWith("whsec_") ? Buffer.from(secret.slice("whsec_".length), "base64") : Buffer.from(secret, "utf8");
+}
+
+export function signWebhookBody(secret: string, rawBody: string, timestamp: string, messageId: string): string {
+  return "v1," + createHmac("sha256", keyBytes(secret)).update(`${messageId}.${timestamp}.${rawBody}`, "utf8").digest("base64");
 }
 
 export function webhookTimestamp(nowMs: number = Date.now()): string {
   return String(Math.floor(nowMs / 1000));
+}
+
+export function webhookDeliveryId(): string {
+  return `e2e-${randomUUID()}`;
 }
 
 export interface WebhookPostResult {
@@ -23,13 +33,15 @@ export class WebhookDriver {
     return this.cfg.hookId;
   }
 
-  async post(payload: unknown, opts: { signed?: boolean; staleSeconds?: number } = {}): Promise<WebhookPostResult> {
+  async post(payload: unknown, opts: { signed?: boolean; staleSeconds?: number; deliveryId?: string } = {}): Promise<WebhookPostResult> {
     const rawBody = JSON.stringify(payload);
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.signed !== false) {
       const timestamp = webhookTimestamp(Date.now() - (opts.staleSeconds ?? 0) * 1000);
+      const messageId = opts.deliveryId ?? webhookDeliveryId();
+      headers[WEBHOOK_ID_HEADER] = messageId;
       headers[WEBHOOK_TIMESTAMP_HEADER] = timestamp;
-      headers["x-hook-signature-256"] = signWebhookBody(this.cfg.secret, rawBody, timestamp);
+      headers[WEBHOOK_SIGNATURE_HEADER] = signWebhookBody(this.cfg.secret, rawBody, timestamp, messageId);
     }
     const res = await fetch(`${this.cfg.targetUrl}/webhooks/${this.cfg.hookId}`, {
       method: "POST",

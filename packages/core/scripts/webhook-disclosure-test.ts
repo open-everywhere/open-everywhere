@@ -83,7 +83,7 @@ function captureReceive(): { calls: Captured[]; receive: never } {
 
 const hook: WebhookHook = defineWebhook({
   id: "deploy-status",
-  source: "oe-hmac",
+  source: "oe-standard-webhook",
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
   broker: "env",
   target: "slack/T1/C1",

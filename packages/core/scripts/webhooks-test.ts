@@ -19,7 +19,9 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 process.env.OE_ORG = "acme";
 
 const { defineWebhook, assertWebhooksValid, findWebhook, hookSecretRefs } = await import("../agent/webhooks/config.js");
-const { oeHmacSignature, OE_HMAC_SOURCE, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } = await import("../agent/webhooks/oe-hmac.js");
+const { standardWebhookSignature, OE_STANDARD_WEBHOOK_SCHEME, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } = await import(
+  "../agent/webhooks/oe-standard-webhook.js"
+);
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackTestBridge();
 const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes, acceptedUnverified } = await import("../agent/webhooks/gate.js");
@@ -29,7 +31,7 @@ const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrus
 
 const goodHook = defineWebhook({
   id: "deploy-status",
-  source: OE_HMAC_SOURCE,
+  source: OE_STANDARD_WEBHOOK_SCHEME,
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
   broker: "env",
   target: "slack/T1/C1",
@@ -91,8 +93,14 @@ delete process.env.OE_WEBHOOK_MAX_BODY_BYTES;
 const maxBodyBytes = 1024;
 const nowMs = Date.parse("2026-03-30T11:30:00.000Z");
 const ts = String(Math.floor(nowMs / 1000));
+const msgId = "msg_webhooks_test";
 const signedFor = (key: string, rawBody = body, timestamp = ts): Headers =>
-  new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: timestamp, [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(key, timestamp, rawBody) });
+  new Headers({
+    [SW_ID_HEADER]: msgId,
+    [SW_TIMESTAMP_HEADER]: timestamp,
+    [SW_SIGNATURE_HEADER]: standardWebhookSignature(key, msgId, timestamp, rawBody),
+  });
+const badSignatureHeaders = (): Headers => new Headers({ [SW_ID_HEADER]: msgId, [SW_TIMESTAMP_HEADER]: ts, [SW_SIGNATURE_HEADER]: "v1,ZGVhZGJlZWY=" });
 
 const baseArgs = {
   hook: goodHook,
@@ -116,7 +124,7 @@ ok(!oversized.ok && oversized.rejection.status === 413, "oversized payload -> 41
 const oversizedUnknown = await gateWebhookDelivery({ ...baseArgs, hook: undefined, bodyBytes: maxBodyBytes + 1 });
 ok(!oversizedUnknown.ok && oversizedUnknown.rejection.status === 404, "an unknown id is rejected as 404 even when also oversized (id checked first)");
 
-const badSig = await gateWebhookDelivery({ ...baseArgs, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: "sha256=deadbeef" }) });
+const badSig = await gateWebhookDelivery({ ...baseArgs, headers: badSignatureHeaders() });
 ok(!badSig.ok && badSig.rejection.status === 401, "bad signature -> 401");
 
 const noSecret = await gateWebhookDelivery({ ...baseArgs, secretValues: [] });
@@ -129,7 +137,7 @@ ok(
 ok(
   !(await gateWebhookDelivery({
     ...baseArgs,
-    headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: "sha256=deadbeef" }),
+    headers: badSignatureHeaders(),
     allowUnverified: true,
   })).ok,
   "the escape hatch does NOT bypass verification once a secret IS configured",
@@ -181,7 +189,7 @@ ok(
   "once the overlap ends, the retired key no longer verifies (401)",
 );
 ok(
-  !(await gateWebhookDelivery({ ...baseArgs, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts }) })).ok,
+  !(await gateWebhookDelivery({ ...baseArgs, headers: new Headers({ [SW_ID_HEADER]: msgId, [SW_TIMESTAMP_HEADER]: ts }) })).ok,
   "missing signature header -> rejected",
 );
 

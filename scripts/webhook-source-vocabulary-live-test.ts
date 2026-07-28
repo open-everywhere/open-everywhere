@@ -23,7 +23,6 @@ const ok = (cond: boolean, label: string) => {
 declareProviderSelection(SELECTED_PROVIDER_IDS);
 for (const provider of SELECTED_PROVIDERS) provider.register();
 
-await import("@open-everywhere/core/agent/webhooks/oe-hmac.js");
 await import("@open-everywhere/core/agent/webhooks/oe-standard-webhook.js");
 
 registerConfig({
@@ -78,14 +77,23 @@ for (const source of vocabulary) {
 }
 
 {
-  const verifierOnly = verifiers.map((v) => v.source).filter((s) => !normalizers.includes(s));
-  const normalizerOnly = normalizers.filter((s) => !verifiers.some((v) => v.source === s));
+  for (const s of [...verifiers.map((v) => v.source), ...normalizers]) {
+    const bothHalves = verifiers.some((v) => v.source === s) && normalizers.includes(s);
+    if (!bothHalves) ok(!vocabulary.includes(s), `half-registered "${s}" is NOT in the vocabulary`);
+  }
+
+  const probeVerifier = { source: "probe-verifier-only", keyKind: "shared-secret", keyOrigin: "receiver-minted", signedTimestamp: true, verify: () => ({ ok: false, failure: "missing-signature" }) } as const;
+  const withProbes = runtimeHookSourceVocabulary({
+    verifiers: () => [...verifiers, probeVerifier as unknown as (typeof verifiers)[number]],
+    normalizers: () => [...normalizers, "probe-normalizer-only"],
+    declared: () => undefined,
+  });
+  ok(!withProbes.includes("probe-verifier-only"), "🔴 a source with a VERIFIER and no normalizer is excluded — it would authenticate and then route nowhere");
+  ok(!withProbes.includes("probe-normalizer-only"), "🔴 a source with a NORMALIZER and no verifier is excluded — nothing could authenticate a delivery to it");
   ok(
-    verifierOnly.length + normalizerOnly.length > 0,
-    "this deployment really does carry HALF-registered sources (so the intersection is doing work). " +
-      "If every registered source ever gains both halves, re-express this leg rather than deleting it — the intersection is the point.",
+    withProbes.join(",") === vocabulary.join(","),
+    "…and neither probe changed the live answer, so the intersection is what decides membership rather than either list alone",
   );
-  for (const s of [...verifierOnly, ...normalizerOnly]) ok(!vocabulary.includes(s), `half-registered "${s}" is NOT in the vocabulary`);
 }
 
 {

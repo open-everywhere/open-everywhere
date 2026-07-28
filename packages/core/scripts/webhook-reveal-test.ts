@@ -226,7 +226,25 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
 {
   console.log("\n8. sender guidance (success path only, per scheme):");
   const swMod = await import("../agent/webhooks/oe-standard-webhook.js");
-  const hmacMod = await import("../agent/webhooks/oe-hmac.js");
+  const { registerWebhookVerifier } = await import("../agent/webhooks/verifier.js");
+
+  const OTHER_SCHEME = "reveal-guidance-fixture";
+  const OTHER_HEADERS = [
+    { name: "x-fixture-timestamp", value: "<unix seconds>" },
+    { name: "x-fixture-signature", value: "<hex>" },
+  ] as const;
+  registerWebhookVerifier({
+    source: OTHER_SCHEME,
+    keyKind: "shared-secret",
+    keyOrigin: "receiver-minted",
+    signedTimestamp: false,
+    verify: () => ({ ok: false, failure: "missing-signature" }),
+    senderGuidance: () => ({
+      headers: OTHER_HEADERS.map((h) => ({ ...h })),
+      signedContent: "fixture:<the raw request body, byte for byte>",
+      notes: ["A fixture scheme, registered by this test only."],
+    }),
+  });
 
   let hookSeq = 0;
   async function grantForHook(scheme: string | undefined, opts: { org?: string } = {}): Promise<string> {
@@ -259,11 +277,11 @@ async function freshGrant(opts: { to?: string } = {}): Promise<{ token: string; 
   ok(![...swHtml.matchAll(/\w+="([^"]*)"/g)].map((m) => m[1]!).some((v) => v.includes(SENTINEL)), "🔴 …and still in NO attribute value");
   ok(!swHtml.includes(`type="hidden"`), "…and the page still carries no hidden fields");
 
-  const hmacGuide = hmacMod.oeHmacVerifier.senderGuidance!();
-  const hmacHtml = await (await reveal.handleRevealPost(postReq(await grantForHook(hmacMod.OE_HMAC_SOURCE)), { readSecret: async () => SENTINEL })).text();
-  for (const h of hmacGuide.headers) ok(hmacHtml.includes(`<code>${h.name}</code>`), `an oe-hmac hook's page names "${h.name}" instead`);
-  for (const h of swGuide.headers) ok(!hmacHtml.includes(`<code>${h.name}</code>`), `🔴 …and NOT the (b) contract's "${h.name}"`);
-  for (const h of hmacGuide.headers) ok(!swHtml.includes(`<code>${h.name}</code>`), `🔴 …and the (b) page does not carry oe-hmac's "${h.name}"`);
+  const otherHtml = await (await reveal.handleRevealPost(postReq(await grantForHook(OTHER_SCHEME)), { readSecret: async () => SENTINEL })).text();
+  for (const h of OTHER_HEADERS) ok(otherHtml.includes(`<code>${h.name}</code>`), `a "${OTHER_SCHEME}" hook's page names "${h.name}" instead`);
+  for (const h of swGuide.headers) ok(!otherHtml.includes(`<code>${h.name}</code>`), `🔴 …and NOT the (b) contract's "${h.name}"`);
+  for (const h of OTHER_HEADERS) ok(!swHtml.includes(`<code>${h.name}</code>`), `🔴 …and the (b) page does not carry the other scheme's "${h.name}"`);
+  ok(!swGuide.headers.some((a) => OTHER_HEADERS.some((b) => a.name === b.name)), "the two schemes under test share NOT ONE header name (the exclusions above are not vacuous)");
 
   const unknownRes = await reveal.handleRevealPost(postReq(await grantForHook("no-such-scheme")), { readSecret: async () => SENTINEL });
   eq(unknownRes.status, 200, "a scheme with no registered guidance still reveals");

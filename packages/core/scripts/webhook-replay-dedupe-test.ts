@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -23,8 +24,8 @@ const {
   resetWebhookReplayWarnLatchForTest,
   WEBHOOK_REPLAY_KEY_PREFIX,
 } = await import("../agent/webhooks/replay-dedupe.js");
-const { oeHmacVerifier, oeHmacSignature, oeHmacReplayKey, OE_HMAC_SOURCE, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } =
-  await import("../agent/webhooks/oe-hmac.js");
+const { standardWebhookVerifier, standardWebhookSignature, standardWebhookReplayKey, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } =
+  await import("../agent/webhooks/oe-standard-webhook.js");
 const { registerWebhookVerifier, resetWebhookVerifiersForTest } = await import("../agent/webhooks/verifier.js");
 const { gateWebhookDelivery } = await import("../agent/webhooks/gate.js");
 const { defineWebhook } = await import("../agent/webhooks/config.js");
@@ -98,16 +99,26 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
 
 {
   const rawBody = JSON.stringify({ deploy: "ok" });
-  const sig = oeHmacSignature(SECRET, NOW_TS, rawBody);
-  const replayKeyA = oeHmacReplayKey(NOW_TS, sig);
-  const replayKeyB = oeHmacReplayKey(NOW_TS, sig);
-  ok(replayKeyA === replayKeyB, "I: replaying the IDENTICAL (ts, signature) pair always derives the identical replayKey — the property the dedupe store depends on");
+  const MSG = "msg_replay_dedupe";
+  const sig = standardWebhookSignature(SECRET, MSG, NOW_TS, rawBody);
+  const replayKeyA = standardWebhookReplayKey(MSG);
+  const replayKeyB = standardWebhookReplayKey(MSG);
+  ok(replayKeyA === replayKeyB, "I: replaying the IDENTICAL delivery id always derives the identical replayKey — the property the dedupe store depends on");
 
-  const otherSig = oeHmacSignature(SECRET, String(Number(NOW_TS) + 1), rawBody);
-  ok(oeHmacReplayKey(String(Number(NOW_TS) + 1), otherSig) !== replayKeyA, "I: a structurally different delivery (different timestamp+signature) derives a DIFFERENT replayKey");
+  ok(standardWebhookReplayKey(MSG + "-other") !== replayKeyA, "I: a different delivery id derives a DIFFERENT replayKey");
 
-  const verdict = oeHmacVerifier.verify({ rawBody, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: NOW_TS, [OE_HMAC_SIGNATURE_HEADER]: sig }), keys: [SECRET], nowMs: NOW_MS });
-  const resolved = await verdict;
+  ok(
+    standardWebhookReplayKey("msg_same_second_a") !== standardWebhookReplayKey("msg_same_second_b"),
+    "🔴 I: two identical payloads sent in the same second under DIFFERENT delivery ids are DIFFERENT deliveries, not a collision",
+  );
+  ok(standardWebhookReplayKey(MSG) === replayKeyA, "🔴 I: a re-signer cannot walk around the mark by re-stamping — the timestamp is NOT part of the key");
+
+  const resolved = await standardWebhookVerifier.verify({
+    rawBody,
+    headers: new Headers({ [SW_ID_HEADER]: MSG, [SW_TIMESTAMP_HEADER]: NOW_TS, [SW_SIGNATURE_HEADER]: sig }),
+    keys: [SECRET],
+    nowMs: NOW_MS,
+  });
   ok(resolved.ok && resolved.replayKey === replayKeyA, "I: the LIVE verifier's accepted verdict carries the same replayKey the standalone function derives");
 }
 
@@ -123,7 +134,7 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
     },
   };
   registerWebhookVerifier(untimestamped);
-  registerWebhookVerifier(oeHmacVerifier);
+  registerWebhookVerifier(standardWebhookVerifier);
 
   const hook = defineWebhook({
     id: "vendor-hook",

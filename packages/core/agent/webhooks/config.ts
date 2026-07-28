@@ -36,7 +36,7 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[]): void {
     seen.add(h.id);
     if (!h.source || !h.source.trim()) {
       throw new Error(
-        `webhook "${h.id}" is missing source — name the signature scheme its sender uses (\`source: "oe-hmac"\` for a sender you configure, or a vendor's source like "github"); there is no default`,
+        `webhook "${h.id}" is missing source — name the signature scheme its sender uses (\`source: "oe-standard-webhook"\` for a sender you configure, or a vendor's source like "github"); there is no default`,
       );
     }
     const refs = hookSecretRefs(h);

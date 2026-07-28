@@ -1,5 +1,5 @@
 import { getOperationalStore } from "../operational/provider.js";
-import { webhookMaxSkewSeconds } from "./oe-hmac.js";
+import { webhookMaxSkewSeconds } from "./gate.js";
 
 export function webhookReplayNonceTtlMs(): number {
   return (webhookMaxSkewSeconds() * 2 + 60) * 1000;

@@ -70,10 +70,10 @@ const revokeKind = actionKind("webhook.revoke")!;
     signedTimestamp: false,
     verify: () => ({ ok: false, failure: "signature-mismatch" }),
   });
-  const V = () => [fake("github"), fake("notion"), fake("oe-hmac")];
+  const V = () => [fake("github"), fake("notion"), fake("verifier-only")];
   const N = () => ["github", "notion", "linear"];
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }), ["github", "notion"], "the vocabulary is the INTERSECTION of verifiers ∩ normalizers");
-  ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("oe-hmac"), "a source with a verifier but NO normalizer is not mintable (nothing could subscribe)");
+  ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("verifier-only"), "a source with a verifier but NO normalizer is not mintable (nothing could subscribe)");
   ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("linear"), "a source with a normalizer but NO verifier is not mintable (it would 401 forever)");
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["notion"] }), ["notion"], "the operator's declared list NARROWS the intersection");
   eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["stripe"] }), [], "the declared list can NEVER ADD a source with no verifier (narrowing-only)");

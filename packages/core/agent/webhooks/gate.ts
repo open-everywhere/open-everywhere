@@ -13,6 +13,15 @@ export function webhookMaxBodyBytes(): number {
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_BODY_BYTES;
 }
 
+const DEFAULT_MAX_SKEW_SECONDS = 300;
+
+export function webhookMaxSkewSeconds(): number {
+  const raw = process.env.OE_WEBHOOK_MAX_SKEW_SECONDS;
+  if (raw === undefined) return DEFAULT_MAX_SKEW_SECONDS;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MAX_SKEW_SECONDS;
+}
+
 export function verifyWebhookSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {
   if (!signatureHeader) return false;
   const expected = "sha256=" + createHmac("sha256", secret).update(body, "utf8").digest("hex");

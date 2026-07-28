@@ -59,7 +59,7 @@ const {
   SETKEY_INPUT_BLOCK,
   SETKEY_INPUT_ACTION,
 } = await import("../packages/core/scripts/e2e/synthetic.js");
-const { signWebhookBody, webhookTimestamp } = await import("../packages/core/scripts/e2e/webhook.js");
+const { signWebhookBody, webhookTimestamp, webhookDeliveryId } = await import("../packages/core/scripts/e2e/webhook.js");
 const { runFallbackCheck, FallbackJudge, judge3, LlmJudge, buildJudgePrompt, parseJudgeResponse, judgeBannerTag } =
   await import("../packages/core/scripts/e2e/judge.js");
 const { SCENARIOS, skipReason, ScenarioSkip } = await import("../packages/core/scripts/e2e/scenarios.js");
@@ -72,7 +72,9 @@ const {
   SETKEY_INPUT_BLOCK: REAL_SETKEY_INPUT_BLOCK,
   SETKEY_INPUT_ACTION: REAL_SETKEY_INPUT_ACTION,
 } = await import("@open-everywhere/core/agent/credentials/intake.js");
-const { oeHmacVerifier, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } = await import("@open-everywhere/core/agent/webhooks/oe-hmac.js");
+const { standardWebhookVerifier, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } = await import(
+  "@open-everywhere/core/agent/webhooks/oe-standard-webhook.js"
+);
 const eveRootDir = (await import("node:path")).dirname(
   (await import("node:module")).createRequire(import.meta.url).resolve("eve/package.json"),
 );
@@ -946,19 +948,22 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   const body = JSON.stringify({ note: "hello-e2e" });
   const nowMs = Date.parse("2026-03-30T11:30:00.000Z");
   const ts = webhookTimestamp(nowMs);
-  const sig = signWebhookBody(secret, body, ts);
-  const headersFor = (signature: string, timestamp: string = ts): Headers =>
-    new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: timestamp, [OE_HMAC_SIGNATURE_HEADER]: signature });
+  const id = webhookDeliveryId();
+  const sig = signWebhookBody(secret, body, ts, id);
+  const headersFor = (signature: string, timestamp: string = ts, messageId: string = id): Headers =>
+    new Headers({ [SW_ID_HEADER]: messageId, [SW_TIMESTAMP_HEADER]: timestamp, [SW_SIGNATURE_HEADER]: signature });
   const verify = (rawBody: string, headers: Headers, keys: readonly string[] = [secret], at: number = nowMs): boolean =>
-    (oeHmacVerifier.verify({ rawBody, headers, keys, nowMs: at }) as { ok: boolean }).ok;
+    (standardWebhookVerifier.verify({ rawBody, headers, keys, nowMs: at }) as { ok: boolean }).ok;
 
-  ok(sig.startsWith("sha256="), 'webhook signature carries the "sha256=" prefix the verifier expects');
-  ok(verify(body, headersFor(sig)), "a signed synthetic webhook body verifies against the REAL registered oe-hmac verifier");
+  ok(sig.startsWith("v1,"), 'webhook signature carries the "v1," version prefix the verifier expects');
+  ok(verify(body, headersFor(sig)), "a signed synthetic webhook body verifies against the REAL registered oe-standard-webhook verifier");
   ok(!verify(body + "x", headersFor(sig)), "a tampered webhook body fails verification");
   ok(!verify(body, headersFor(sig), ["wrong-secret"]), "the wrong webhook secret fails verification");
-  ok(!verify(body, new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts })), "a missing signature header fails verification");
-  ok(!verify(body, headersFor("sha256=deadbeef")), "a garbage signature fails verification");
-  ok(!verify(body, new Headers({ [OE_HMAC_SIGNATURE_HEADER]: sig })), "a missing TIMESTAMP header fails verification (the v1 wire shape is gone, no compat path)");
+  ok(!verify(body, new Headers({ [SW_ID_HEADER]: id, [SW_TIMESTAMP_HEADER]: ts })), "a missing signature header fails verification");
+  ok(!verify(body, headersFor("v1,ZGVhZGJlZWY=")), "a garbage signature fails verification");
+  ok(!verify(body, new Headers({ [SW_ID_HEADER]: id, [SW_SIGNATURE_HEADER]: sig })), "a missing TIMESTAMP header fails verification");
+  ok(!verify(body, new Headers({ [SW_ID_HEADER]: webhookDeliveryId(), [SW_TIMESTAMP_HEADER]: ts, [SW_SIGNATURE_HEADER]: sig })), "🔴 swapping the DELIVERY ID invalidates the signature — the id is signed, not merely carried");
+  ok(!verify(body, new Headers({ [SW_TIMESTAMP_HEADER]: ts, [SW_SIGNATURE_HEADER]: sig })), "a missing delivery-id header fails verification");
   ok(!verify(body, headersFor(sig), [secret], nowMs + 301_000), "a delivery outside the 300s skew window fails — a captured POST does not replay forever");
 }
 

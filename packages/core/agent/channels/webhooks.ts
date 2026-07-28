@@ -3,7 +3,6 @@ import { getConfig } from "../access/config.js";
 import { findWebhook, type WebhookHook } from "../webhooks/config.js";
 import { acceptedUnverified, gateWebhookDelivery, webhookMaxBodyBytes, type GateableHook, type WebhookRejection } from "../webhooks/gate.js";
 import { resolveRuntimeHook, resolveRuntimeHookKeys, deliverRuntimeHook, type ResolvedRuntimeHook } from "../webhooks/runtime-ingress.js";
-import "../webhooks/oe-hmac.js";
 import "../webhooks/oe-standard-webhook.js";
 import { resolveHookKeys } from "../webhooks/secrets.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";

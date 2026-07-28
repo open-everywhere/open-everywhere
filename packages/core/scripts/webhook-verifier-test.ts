@@ -16,11 +16,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 const { registerWebhookVerifier, webhookVerifier, registeredWebhookVerifierSources, registeredWebhookVerifiers, resetWebhookVerifiersForTest } =
   await import("../agent/webhooks/verifier.js");
-const { oeHmacVerifier, oeHmacBasestring, oeHmacSignature, webhookMaxSkewSeconds, OE_HMAC_SOURCE, OE_HMAC_SIGNATURE_HEADER, OE_HMAC_TIMESTAMP_HEADER } =
-  await import("../agent/webhooks/oe-hmac.js");
-const { gateWebhookDelivery } = await import("../agent/webhooks/gate.js");
+const { standardWebhookVerifier, standardWebhookSignedContent, standardWebhookSignature, OE_STANDARD_WEBHOOK_SCHEME, SW_ID_HEADER, SW_SIGNATURE_HEADER, SW_TIMESTAMP_HEADER } =
+  await import("../agent/webhooks/oe-standard-webhook.js");
+const { gateWebhookDelivery, webhookMaxSkewSeconds } = await import("../agent/webhooks/gate.js");
 const { defineWebhook } = await import("../agent/webhooks/config.js");
 const { signWebhookBody, webhookTimestamp } = await import("./e2e/webhook.js");
+
+const MSG_ID = "msg_verifier_test";
 
 type Verifier = import("../agent/webhooks/verifier.js").WebhookVerifier;
 type Verdict = import("../agent/webhooks/verifier.js").WebhookVerdict;
@@ -32,7 +34,7 @@ const NOW_TS = String(Math.floor(NOW_MS / 1000));
 
 const hook = defineWebhook({
   id: "deploy-status",
-  source: OE_HMAC_SOURCE,
+  source: OE_STANDARD_WEBHOOK_SCHEME,
   secretRef: "DEPLOY_STATUS_WEBHOOK_SECRET",
   broker: "env",
   target: "slack/T1/C1",
@@ -54,23 +56,27 @@ function gateArgs(over: Partial<Parameters<typeof gateWebhookDelivery>[0]> = {})
   };
 }
 
-function signedHeaders(secret: string, rawBody: string, ts: string = NOW_TS): Headers {
-  return new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(secret, ts, rawBody) });
+function signedHeaders(secret: string, rawBody: string, ts: string = NOW_TS, messageId: string = MSG_ID): Headers {
+  return new Headers({
+    [SW_ID_HEADER]: messageId,
+    [SW_TIMESTAMP_HEADER]: ts,
+    [SW_SIGNATURE_HEADER]: standardWebhookSignature(secret, messageId, ts, rawBody),
+  });
 }
 
 async function failureOf(outcome: GateOutcome): Promise<string> {
   return outcome.ok ? "(accepted)" : outcome.rejection.reason;
 }
 
-ok(webhookVerifier(OE_HMAC_SOURCE) === oeHmacVerifier, "importing webhooks/oe-hmac.js REGISTERS our own scheme (module-load registration)");
+ok(webhookVerifier(OE_STANDARD_WEBHOOK_SCHEME) === standardWebhookVerifier, "importing webhooks/oe-standard-webhook.js REGISTERS our own scheme (module-load registration)");
 ok(webhookVerifier("no-such-source") === undefined, "an unregistered source resolves to undefined — the registry REFUSES, it does not throw or substitute");
 ok(webhookVerifier(undefined) === undefined, "an undefined source resolves to undefined (never a default scheme)");
-ok(registeredWebhookVerifierSources().includes(OE_HMAC_SOURCE), "registeredWebhookVerifierSources names our scheme");
+ok(registeredWebhookVerifierSources().includes(OE_STANDARD_WEBHOOK_SCHEME), "registeredWebhookVerifierSources names our scheme");
 ok(
   registeredWebhookVerifierSources().join(",") === [...registeredWebhookVerifierSources()].sort().join(","),
   "registeredWebhookVerifierSources is sorted (a stable refusal message, not registration-order-dependent)",
 );
-ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provider — it must never be gated by the deployment's provider selection");
+ok(standardWebhookVerifier.provider === undefined, "core's own verifier declares NO provider — it must never be gated by the deployment's provider selection");
 
 {
   const rawBody = JSON.stringify({ ok: true });
@@ -79,9 +85,9 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   ok(!outcome.ok && outcome.rejection.status === 401, "a hook whose source has NO registered verifier is 401 (not 404 — the hook id exists)");
   const reason = await failureOf(outcome);
   ok(reason.includes('"stripe"'), "the refusal names the source that could not be resolved");
-  ok(reason.includes(OE_HMAC_SOURCE), "the refusal names the REGISTERED set (brokerFor-grade: loud, named, no substitution)");
+  ok(reason.includes(OE_STANDARD_WEBHOOK_SCHEME), "the refusal names the REGISTERED set (brokerFor-grade: loud, named, no substitution)");
   ok(/fail closed/i.test(reason), "the refusal says it is failing closed");
-  ok(!outcome.ok, "a validly oe-hmac-signed body is STILL refused for an unregistered source (no cross-scheme fallback)");
+  ok(!outcome.ok, "a validly signed body is STILL refused for an unregistered source (no cross-scheme fallback)");
 }
 
 {
@@ -114,13 +120,13 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   const headers = new Headers({ "x-other-signature-256": otherSig });
 
   const outcome = await gateWebhookDelivery(gateArgs({ rawBody, headers }));
-  ok(!outcome.ok && outcome.rejection.status === 401, "a body signed under ANOTHER registered scheme, sent to an oe-hmac hook, is REFUSED");
-  ok((await failureOf(outcome)).includes("missing-signature"), "…as missing-signature — the oe-hmac verifier never saw its own header (no sniffing)");
+  ok(!outcome.ok && outcome.rejection.status === 401, "a body signed under ANOTHER registered scheme, sent to a hook declaring ours, is REFUSED");
+  ok((await failureOf(outcome)).includes("missing-signature"), "…as missing-signature — our verifier never saw its own header (no sniffing)");
 
   const declared = await gateWebhookDelivery(gateArgs({ hook: { ...hook, source: "test-other" }, rawBody, headers }));
   ok(declared.ok, "the SAME bytes verify when the hook declares that source — resolution is by declaration");
 
-  ok(otherVerifier.signedTimestamp === false && oeHmacVerifier.signedTimestamp === true, "the two registered verifiers DIFFER in strength (the downgrade sniffing would have enabled)");
+  ok(otherVerifier.signedTimestamp === false && standardWebhookVerifier.signedTimestamp === true, "the two registered verifiers DIFFER in strength (the downgrade sniffing would have enabled)");
 }
 
 {
@@ -162,25 +168,22 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   const rawBody = JSON.stringify({ ok: true });
   ok(webhookMaxSkewSeconds() === 300, "default skew window is 300s (Slack/Stripe/Discord's five minutes, not eve's Linear 60s)");
 
-  const at = (offsetSeconds: number): Headers => {
-    const ts = String(Math.floor(NOW_MS / 1000) + offsetSeconds);
-    return new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(SECRET, ts, rawBody) });
-  };
+  const at = (offsetSeconds: number): Headers => signedHeaders(SECRET, rawBody, String(Math.floor(NOW_MS / 1000) + offsetSeconds));
   ok((await gateWebhookDelivery(gateArgs({ rawBody, headers: at(299) }))).ok, "a delivery 299s in the future is accepted");
   ok((await gateWebhookDelivery(gateArgs({ rawBody, headers: at(-299) }))).ok, "a delivery 299s in the past is accepted");
   ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: at(301) })))).includes("stale-timestamp"), "a delivery 301s in the FUTURE is stale-timestamp");
   ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: at(-301) })))).includes("stale-timestamp"), "a delivery 301s in the PAST is stale-timestamp (the replay case)");
 
-  const noTs = new Headers({ [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(SECRET, NOW_TS, rawBody) });
-  ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: noTs })))).includes("missing-timestamp"), "a v1-style POST with NO timestamp header is missing-timestamp (the wire-breaking cutover, no compat flag)");
-  const badTs = new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: "abc", [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(SECRET, "abc", rawBody) });
+  const noTs = new Headers({ [SW_ID_HEADER]: MSG_ID, [SW_SIGNATURE_HEADER]: standardWebhookSignature(SECRET, MSG_ID, NOW_TS, rawBody) });
+  ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: noTs })))).includes("missing-timestamp"), "a POST with NO timestamp header is missing-timestamp (no compat flag)");
+  const badTs = new Headers({ [SW_ID_HEADER]: MSG_ID, [SW_TIMESTAMP_HEADER]: "abc", [SW_SIGNATURE_HEADER]: standardWebhookSignature(SECRET, MSG_ID, "abc", rawBody) });
   ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: badTs })))).includes("malformed-timestamp"), "a non-numeric timestamp is malformed-timestamp");
   for (const weird of ["1e3", "+" + NOW_TS, "0x7b", `${NOW_TS}.0`]) {
-    const h = new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: weird, [OE_HMAC_SIGNATURE_HEADER]: oeHmacSignature(SECRET, weird, rawBody) });
+    const h = new Headers({ [SW_ID_HEADER]: MSG_ID, [SW_TIMESTAMP_HEADER]: weird, [SW_SIGNATURE_HEADER]: standardWebhookSignature(SECRET, MSG_ID, weird, rawBody) });
     const got = await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: h })));
     ok(got.includes("malformed-timestamp"), `a non-wire-form timestamp (${JSON.stringify(weird)}) is malformed-timestamp, never coerced (got: ${got})`);
   }
-  const noSig = new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: NOW_TS });
+  const noSig = new Headers({ [SW_ID_HEADER]: MSG_ID, [SW_TIMESTAMP_HEADER]: NOW_TS });
   ok((await failureOf(await gateWebhookDelivery(gateArgs({ rawBody, headers: noSig })))).includes("missing-signature"), "no signature header at all is missing-signature");
 
   const boomKeys: readonly string[] = new Proxy(["k"], {
@@ -254,13 +257,19 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
   const rawBody = JSON.stringify({ note: "hello-e2e" });
   const ts = webhookTimestamp(NOW_MS);
   ok(ts === NOW_TS, "the forge's timestamp helper emits unix SECONDS");
-  const forged = signWebhookBody(SECRET, rawBody, ts);
-  ok(forged === oeHmacSignature(SECRET, ts, rawBody), "the e2e forge's signature is byte-identical to the real oe-hmac signature (the two independent basestrings agree)");
-  ok(oeHmacBasestring(ts, rawBody) === `v1:${ts}:${rawBody}`, "the basestring is v1:<ts>:<rawBody> (a scheme change is a BASESTRING change, not a header change)");
-  const outcome = await gateWebhookDelivery(gateArgs({ rawBody, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: forged }) }));
+  const forged = signWebhookBody(SECRET, rawBody, ts, MSG_ID);
+  ok(forged === standardWebhookSignature(SECRET, MSG_ID, ts, rawBody), "the e2e forge's signature is byte-identical to the real verifier's (the two independent implementations agree)");
+  ok(standardWebhookSignedContent(MSG_ID, ts, rawBody) === `${MSG_ID}.${ts}.${rawBody}`, "the signed content is <id>.<ts>.<rawBody> (a scheme change is a SIGNED-CONTENT change, not a header change)");
+  const prefixed = "whsec_MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3";
+  ok(
+    signWebhookBody(prefixed, rawBody, ts, MSG_ID) === standardWebhookSignature(prefixed, MSG_ID, ts, rawBody),
+    "🔴 the forge applies the SAME whsec_ key rule as the verifier (a UTF-8-bytes forge would 401 on every delivery with no stated reason)",
+  );
+  const headersFor = (signature: string): Headers => new Headers({ [SW_ID_HEADER]: MSG_ID, [SW_TIMESTAMP_HEADER]: ts, [SW_SIGNATURE_HEADER]: signature });
+  const outcome = await gateWebhookDelivery(gateArgs({ rawBody, headers: headersFor(forged) }));
   ok(outcome.ok, "a body signed by the e2e forge verifies through the live gate");
-  ok(!(await gateWebhookDelivery(gateArgs({ rawBody: rawBody + "x", bodyBytes: rawBody.length + 1, headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: forged }) }))).ok, "a tampered body fails");
-  ok(!(await gateWebhookDelivery(gateArgs({ rawBody, secretValues: ["wrong"], headers: new Headers({ [OE_HMAC_TIMESTAMP_HEADER]: ts, [OE_HMAC_SIGNATURE_HEADER]: forged }) }))).ok, "the wrong secret fails");
+  ok(!(await gateWebhookDelivery(gateArgs({ rawBody: rawBody + "x", bodyBytes: rawBody.length + 1, headers: headersFor(forged) }))).ok, "a tampered body fails");
+  ok(!(await gateWebhookDelivery(gateArgs({ rawBody, secretValues: ["wrong"], headers: headersFor(forged) }))).ok, "the wrong secret fails");
 }
 
 {
@@ -273,7 +282,7 @@ ok(oeHmacVerifier.provider === undefined, "core's own verifier declares NO provi
     undefended.join(",") === UNDEFENDED_REPLAY_SOURCES.join(","),
     `every signedTimestamp:false verifier is on the reviewed allowlist (expected ${UNDEFENDED_REPLAY_SOURCES.join(",")}, got ${undefended.join(",")})`,
   );
-  ok(!undefended.includes(OE_HMAC_SOURCE), "OUR OWN scheme is NOT on the undefended-replay allowlist (v2 signs a timestamp — OPE-157 D4 closed for oe-hmac)");
+  ok(!undefended.includes(OE_STANDARD_WEBHOOK_SCHEME), "OUR OWN scheme is NOT on the undefended-replay allowlist — it signs a timestamp AND a delivery id, which is what OPE-213 kept it for");
 }
 
 {
