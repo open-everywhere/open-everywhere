@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
 import { lintBroadGrants, lintMethodNarrowing, lintAccessConfig } from "../agent/access/lint.js";
+import { defineDomain } from "../agent/memory/domain.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -63,6 +64,61 @@ ok(
   "allowBroad on a narrow binding FAILS (a stray escape suggests a misunderstanding)",
 );
 ok(lintBroadGrants([credentialed], [defineBinding({ bundle: "ghost", scope: { level: "org" } })]).length === 0, "an unknown bundle ref is assertBindingsValid's problem, not this lint's");
+
+const rosterDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1", "github/acme/web"], bundle: "creds" });
+const claimDomain = defineDomain({ name: "eng", containers: ["github/acme"], bundle: "creds" });
+const bothDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], containers: ["github/acme"], bundle: "creds" });
+const otherClaimDomain = defineDomain({ name: "ops", containers: ["github/other"], bundle: "creds" });
+
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [rosterDomain]).length === 0,
+  "a domain binding onto a ROSTER domain stays clean — an enumerated membership is the intended narrow path",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain claim")),
+  "a domain binding onto a TENANT-CLAIMING domain FAILS — the width is real even though the binding reads as narrow",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("github/acme") && p.includes("containers")),
+  "…and the failure names the claimed tenant AND the field, because the fix may be in the domain file rather than the binding",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [bothDomain]).some((p) => p.includes("via domain claim")),
+  "a domain with BOTH a roster and a claim is broad — width is decided by the widest part, never excused by the narrow part",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [otherClaimDomain]).length === 0,
+  "a claim on a DIFFERENT domain does not taint this binding — the lint matches the domain the binding actually names",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "one-owner deployment, every repo is ours" })], [claimDomain]).length === 0,
+  "allowBroad on the binding accepts a claim-broad domain deliberately — ONE acknowledgement concept, not a second mechanism",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "  " })], [claimDomain]).some((p) => p.includes("EMPTY allowBroad")),
+  "an empty allowBroad fails on a claim-broad domain exactly as it does at tenant scope",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain", { allowBroad: "stale" })], [rosterDomain]).some((p) => p.includes("claims none")),
+  "allowBroad left behind after `containers` was REMOVED fails, and says why — otherwise narrowing your own domain looks like an unrelated regression",
+);
+ok(
+  lintBroadGrants([credentialless], [at("safe", "domain")], [defineDomain({ name: "eng", containers: ["github/acme"], bundle: "safe" })]).length === 0,
+  "a credential-LESS bundle on a claim-broad domain stays warn-only, exactly as it does at org/tenant scope",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")]).length === 0 &&
+    lintBroadGrants([credentialed], [at("creds", "domain")], []).length === 0,
+  "with no domain registry passed, a domain binding is never claim-broad — the lint declines to guess",
+);
+ok(
+  lintBroadGrants([credentialed], [at("creds", "domain")], [otherClaimDomain, rosterDomain]).length === 0,
+  "an unknown/absent domain name contributes no claim rather than a spurious failure",
+);
+ok(
+  lintAccessConfig([credentialed], [at("creds", "domain")], [claimDomain]).some((p) => p.includes("via domain claim")),
+  "lintAccessConfig threads the registry through — the CI gate sees claim-broadness, not just the unit test",
+);
 
 ok(
   lintMethodNarrowing([defineBundle({ name: "b", connections: [conn({ methods: undefined })] })]).some((p) => p.includes("declares no `methods`")),
