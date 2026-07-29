@@ -45,3 +45,7 @@ export async function firstSightingOfWebhookDelivery(
 }
 
 export const WEBHOOK_REPLAY_KEY_PREFIX = "webhook-replay:";
+
+export const REPLAYED_DELIVERY_AUDIT_REASON = "duplicate delivery rejected — an already-accepted delivery was replayed inside its skew window";
+
+export const REPLAYED_DELIVERY_CALLER_BODY = "delivery refused";

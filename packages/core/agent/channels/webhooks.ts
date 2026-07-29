@@ -8,7 +8,7 @@ import { admitTrigger } from "../routines/ingress.js";
 import { declaredDeliveryId } from "../routines/event-model.js";
 import { fireWebhook, webhookOrg } from "../webhooks/dispatch.js";
 import { auditWebhookRejection } from "../webhooks/reject-audit.js";
-import { firstSightingOfWebhookDelivery } from "../webhooks/replay-dedupe.js";
+import { firstSightingOfWebhookDelivery, REPLAYED_DELIVERY_AUDIT_REASON, REPLAYED_DELIVERY_CALLER_BODY } from "../webhooks/replay-dedupe.js";
 import { appendAudit } from "../audit/audit.js";
 
 function log(msg: string): void {
@@ -140,13 +140,10 @@ export default defineChannel({
       if (outcome.replayKey) {
         const firstSeen = await firstSightingOfWebhookDelivery(webhookOrg(), id, outcome.replayKey);
         if (!firstSeen) {
-          const rejection: WebhookRejection = {
-            status: 409,
-            reason: "duplicate delivery rejected — an already-accepted delivery was replayed inside its skew window",
-          };
+          const rejection: WebhookRejection = { status: 409, reason: REPLAYED_DELIVERY_AUDIT_REASON };
           log(`webhook "${id}" rejected (409): ${rejection.reason}`);
           waitUntil(auditRejection(id, gated, rejection));
-          return new Response(rejection.reason, { status: rejection.status });
+          return new Response(REPLAYED_DELIVERY_CALLER_BODY, { status: rejection.status });
         }
       }
 

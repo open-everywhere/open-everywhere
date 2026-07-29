@@ -1,8 +1,9 @@
 
 import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
-import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -470,6 +471,41 @@ await opStore.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 90, o
   });
   ok(emitted === true, "a throwing throttle store fails OPEN — a store blip never silences rejection auditing");
   resetRejectionThrottle();
+}
+
+{
+  const { REPLAYED_DELIVERY_AUDIT_REASON, REPLAYED_DELIVERY_CALLER_BODY } = await import("../agent/webhooks/replay-dedupe.js");
+  const { auditWebhookRejection, resetRejectionThrottle } = await import("../agent/webhooks/reject-audit.js");
+  type AuditInput = import("../agent/operational/store.js").AuditInput;
+
+  const oracleWords = [/duplicat/i, /replay/i, /already/i, /accept/i, /skew/i, /window/i, /\bseen\b/i, /dedup/i, /first/i, /again/i, /previous/i];
+  const leaked = oracleWords.filter((re) => re.test(REPLAYED_DELIVERY_CALLER_BODY));
+  ok(leaked.length === 0, `OPE-202: the 409 caller body confirms nothing about an earlier delivery (leaked: ${leaked.join(", ")})`);
+  ok(String(REPLAYED_DELIVERY_CALLER_BODY) !== String(REPLAYED_DELIVERY_AUDIT_REASON), "the caller body and the audit reason are TWO strings — the split is the whole fix");
+
+  ok(
+    /replayed/i.test(REPLAYED_DELIVERY_AUDIT_REASON) && /already-accepted/i.test(REPLAYED_DELIVERY_AUDIT_REASON),
+    "the operator-facing reason still names the replay AND that the original was accepted — the detail moved, it was not deleted",
+  );
+
+  resetRejectionThrottle();
+  const replayRows: AuditInput[] = [];
+  await auditWebhookRejection(
+    goodHook.id,
+    goodHook,
+    { status: 409, reason: REPLAYED_DELIVERY_AUDIT_REASON },
+    { audit: async (e: AuditInput) => void replayRows.push(e) },
+  );
+  ok(replayRows.length === 1 && replayRows[0]!.detail?.["status"] === 409, "a 409 replay rejection still writes an audit row");
+  ok(replayRows[0]!.detail?.["reason"] === REPLAYED_DELIVERY_AUDIT_REASON, "…and that row carries the FULL operator-facing reason, verbatim");
+  resetRejectionThrottle();
+
+  const routeSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "agent", "channels", "webhooks.ts"), "utf8");
+  const replayBranch = /if \(!firstSeen\) \{([\s\S]*?)\n {8}\}/.exec(routeSrc)?.[1] ?? "";
+  ok(replayBranch.length > 0, "the route still has an `if (!firstSeen)` replay branch to assert against");
+  ok(/new Response\(REPLAYED_DELIVERY_CALLER_BODY,/.test(replayBranch), "🔴 the live 409 answers the caller with the CONSTANT");
+  ok(!/new Response\(rejection\.reason/.test(replayBranch), "🔴 …and never echoes the rejection reason back to the caller");
+  ok(/auditRejection\(id, gated, rejection\)/.test(replayBranch), "…while the audit row still receives the full rejection object");
 }
 
 rmSync(dir, { recursive: true, force: true });
