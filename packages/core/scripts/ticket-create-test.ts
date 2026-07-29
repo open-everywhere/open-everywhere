@@ -137,6 +137,27 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   ok((await resolveTicketCreate(ctx("test-create-gated", {}), { target: "ok" }, [])).target === "ok", "checkAccess passing lets resolution through");
 }
 
+{
+  let seenDomains: unknown = "never called";
+  registerTicketCreateAdapter({
+    platform: "test-create-async",
+    checkAccess: async (_c, target, domains) => {
+      seenDomains = domains;
+      if (target === "forbidden") throw new Error("async refusal from create checkAccess");
+    },
+    create: async (target) => ({ ref: { platform: "test-create-async", id: `${target}#1` }, summary: "filed" }),
+  });
+  const marker = [{ name: "marker-domain" }] as unknown as Parameters<typeof resolveTicketCreate>[2];
+  await assert.rejects(
+    () => resolveTicketCreate(ctx("test-create-async", {}), { target: "forbidden" }, marker),
+    /async refusal from create checkAccess/,
+    "an ASYNC checkAccess's rejection propagates — resolveTicketCreate awaits it, so a refused destination can never be frozen onto a card",
+  );
+  n++;
+  ok(Array.isArray(seenDomains) && (seenDomains as { name: string }[])[0]?.name === "marker-domain", "the `domains` the resolver was given is handed to checkAccess unchanged");
+  ok((await resolveTicketCreate(ctx("test-create-async", {}), { target: "fine" }, marker)).target === "fine", "an async checkAccess that resolves lets creation through");
+}
+
 const created: { target: string; title: string }[] = [];
 registerTicketCreateAdapter({
   platform: "test-kind-platform",

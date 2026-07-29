@@ -100,6 +100,40 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 }
 
 {
+  let consulted = 0;
+  registerEntityActionAdapter({
+    platform: "test-async-checked",
+    checkAccess: async (_c, id) => {
+      consulted++;
+      if (id === "forbidden") throw new Error("async refusal from checkAccess");
+    },
+    assign: async (id, v) => `assigned:${id}:${v}`,
+  });
+  await assert.rejects(
+    () => resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "forbidden" }, []),
+    /async refusal from checkAccess/,
+    "an ASYNC checkAccess's rejection propagates — resolveEntityAction awaits it, so a refusal cannot float away unnoticed",
+  );
+  ok(consulted === 1, "…and the hook was actually consulted, not skipped");
+  n++;
+  const okRes = await resolveEntityAction(ctx("test-async-checked", {}), "assign", { platform: "test-async-checked", id: "fine" }, []);
+  ok(okRes.ref.id === "fine" && consulted === 2, "an async checkAccess that resolves lets resolution through");
+}
+
+{
+  let seen: unknown = "never called";
+  registerEntityActionAdapter({
+    platform: "test-domains-arg",
+    checkAccess: (_c, _id, domains) => void (seen = domains),
+    setState: async () => "ok",
+  });
+  const marker = [{ name: "marker-domain" }] as unknown as Parameters<typeof resolveEntityAction>[3];
+  await resolveEntityAction(ctx("test-domains-arg", {}), "setState", { platform: "test-domains-arg", id: "1" }, marker);
+  ok(Array.isArray(seen) && (seen as { name: string }[])[0]?.name === "marker-domain", "the `domains` the resolver was given is handed to checkAccess unchanged");
+  n++;
+}
+
+{
   ok(typeof entityActionFn("github", "setState") === "function", "entityActionFn resolves a real registered adapter's fn");
   ok(entityActionFn("bogus-platform", "setState") === undefined, "entityActionFn is undefined for an unregistered platform");
   ok(entityActionFn("test-verb-partial", "addLabel") === undefined, "entityActionFn is undefined for a verb the platform doesn't implement");

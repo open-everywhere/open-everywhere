@@ -1,3 +1,4 @@
+
 import assert from "node:assert/strict";
 import {
   assertLinearIssueWriteAllowed,
@@ -6,8 +7,6 @@ import {
   linearTeamScope,
 } from "../agent/channels/linear-scope.js";
 import { ChannelScopeError, defineDomain, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
-import { resolveEntityAction } from "@open-everywhere/core/agent/channels/entity-actions.js";
-import { resolveTicketCreate } from "@open-everywhere/core/agent/channels/ticket-create.js";
 import { linearEntityAdapter } from "../agent/channels/linear-actions.js";
 import { linearTicketCreateAdapter } from "../agent/channels/linear-create.js";
 import { registerLinearProvider } from "../agent/register.js";
@@ -159,30 +158,17 @@ for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API
 
 {
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
+  const entityFence = (id: string) => linearEntityAdapter.checkAccess!(turn, id, DOMAINS) as Promise<void>;
 
+  await assert.rejects(() => entityFence(ISSUE_ENG), ChannelScopeError, "the entity adapter's fence refuses a cross-domain issue (the FENCE, not a Linear API error)");
   await assert.rejects(
-    () => resolveEntityAction(turn, "addLabel", { platform: "linear", id: ISSUE_ENG }, DOMAINS),
+    () => linearTicketCreateAdapter.checkAccess!(turn, "ENG", DOMAINS) as Promise<void>,
     ChannelScopeError,
-    "add_label through the registry is refused by the FENCE (not a Linear API error) — open-tier, so this is its only gate",
-  );
-  await assert.rejects(
-    () => resolveEntityAction(turn, "setState", { platform: "linear", id: ISSUE_ENG }, DOMAINS),
-    ChannelScopeError,
-    "set_state is refused at PROPOSE time — before any approval card can name the foreign issue in this room",
-  );
-  await assert.rejects(
-    () => resolveEntityAction(turn, "assign", { platform: "linear", id: ISSUE_ENG }, DOMAINS),
-    ChannelScopeError,
-    "assign is refused at propose time too",
-  );
-  await assert.rejects(
-    () => resolveTicketCreate(turn, { platform: "linear", target: "ENG" }, DOMAINS),
-    ChannelScopeError,
-    "create_ticket is refused by the team-shaped fence before anything is frozen onto a card",
+    "the create adapter's fence refuses a destination team in another domain, before anything is frozen onto a card",
   );
 
-  const resolved = await resolveEntityAction(turn, "addLabel", { platform: "linear", id: ISSUE_OWN }, DOMAINS);
-  ok(resolved.ref.id === ISSUE_OWN && typeof resolved.run === "function", "the caller's OWN issue still resolves through the fence to a runnable action");
+  await entityFence(ISSUE_OWN);
+  ok(true, "the caller's OWN issue passes the adapter's fence with no credentials and no lookup");
 
   ok(typeof linearEntityAdapter.checkAccess === "function", "the entity adapter DECLARES checkAccess (it declared none before OPE-241)");
   ok(typeof linearTicketCreateAdapter.checkAccess === "function", "the create adapter DECLARES checkAccess");
