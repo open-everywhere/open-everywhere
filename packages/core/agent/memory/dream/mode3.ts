@@ -6,6 +6,8 @@ export const FAILURE_ACTIONS = [
   "webhook.rejected",
   "spend.cap_bypassed",
   "approval.failed",
+  "unified.supervisor_turn_failed",
+  "unified.supervisor_session_failed",
 ] as const;
 
 export type FailureAction = (typeof FAILURE_ACTIONS)[number];
@@ -41,9 +43,30 @@ export function exampleLine(row: AuditEntry): string {
       return `${where}: spend cap bypassed (${String(d["standing"] ?? "?")})${d["reason"] ? ` — ${String(d["reason"])}` : ""}`;
     case "approval.failed":
       return `${where}: "${String(d["kind"] ?? "?")}" approval execute() failed — ${String(d["error"] ?? "(no error)")}`;
+    case "unified.supervisor_turn_failed":
+    case "unified.supervisor_session_failed":
+      return `${where}: ${row.action === "unified.supervisor_turn_failed" ? "supervisor turn failed" : "supervisor session failed"} — ${String(d["message"] ?? "(no message)")}${failureDiagSuffix(d)}`;
     default:
       return `${where}: ${row.action}`;
   }
+}
+
+const FAILURE_DIAG_KEYS = [
+  "code",
+  "errorId",
+  "name",
+  "statusCode",
+  "generationId",
+  "gatewayName",
+  "gatewayType",
+  "upstreamType",
+  "upstreamStatusCode",
+  "upstreamMessage",
+] as const;
+
+function failureDiagSuffix(d: Record<string, unknown>): string {
+  const parts = FAILURE_DIAG_KEYS.filter((k) => d[k] !== undefined).map((k) => `${k}=${String(d[k])}`);
+  return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
 }
 
 export function bucketFailures(rows: readonly AuditEntry[], opts: BucketOptions = {}): FailureCluster[] {
@@ -91,6 +114,14 @@ const STATIC_FACET: Record<FailureAction, FailureFacet> = {
   "approval.failed": {
     label: "Approved actions failing at execute()",
     fixSketch: "Inspect the failing ActionKind's execute() error — likely an external dependency hiccup (GitHub/Slack) or a stale frozen arg.",
+  },
+  "unified.supervisor_turn_failed": {
+    label: "Unified-supervisor turn failures",
+    fixSketch: "Check the example's statusCode/gatewayType/upstreamType — a gateway 4xx/5xx names the failing provider; an EmptyModelResponse has no provider to attribute and may instead need a retry/backoff tweak.",
+  },
+  "unified.supervisor_session_failed": {
+    label: "Unified-supervisor session failures (force-rotated)",
+    fixSketch: "Same diagnostic fields as a turn failure, but the session is force-rotated on next wake — repeated occurrences on one domain may point to a bad delegated route or a persistently unhealthy provider.",
   },
 };
 

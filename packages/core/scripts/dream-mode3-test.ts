@@ -37,6 +37,8 @@ function row(action: string, ts: string, detail?: Record<string, unknown>): Audi
   ok(isFailureAction("webhook.rejected"), "isFailureAction: recognises webhook.rejected");
   ok(isFailureAction("spend.cap_bypassed"), "isFailureAction: recognises spend.cap_bypassed");
   ok(isFailureAction("approval.failed"), "isFailureAction: recognises approval.failed");
+  ok(isFailureAction("unified.supervisor_turn_failed"), "isFailureAction: recognises unified.supervisor_turn_failed");
+  ok(isFailureAction("unified.supervisor_session_failed"), "isFailureAction: recognises unified.supervisor_session_failed");
   ok(!isFailureAction("memory.write"), "isFailureAction: a non-failure action is NOT one");
   ok(!isFailureAction("approval.approved"), "isFailureAction: a SUCCESS-shaped action is NOT one");
 }
@@ -54,6 +56,27 @@ function row(action: string, ts: string, detail?: Record<string, unknown>): Audi
   ok(l5.includes("access.request") && l5.includes("GitHub 500"), "exampleLine: approval.failed carries kind + error");
   const l6 = exampleLine(row("spend.cap_bypassed", "t", { standing: "admin" }));
   ok(!l6.includes("undefined"), "exampleLine: an absent optional field never leaks 'undefined' into the line");
+  const l7 = exampleLine(
+    row("unified.supervisor_turn_failed", "t", {
+      message: "The model did not return a response.",
+      code: "EmptyModelResponse",
+      statusCode: "502",
+      gatewayType: "vercel-ai-gateway",
+      upstreamType: "anthropic",
+    }),
+  );
+  ok(
+    l7.includes("supervisor turn failed") &&
+      l7.includes("The model did not return a response.") &&
+      l7.includes("code=EmptyModelResponse") &&
+      l7.includes("statusCode=502") &&
+      l7.includes("gatewayType=vercel-ai-gateway") &&
+      l7.includes("upstreamType=anthropic") &&
+      l7.includes("T1/C1"),
+    "exampleLine: unified.supervisor_turn_failed surfaces failureDiag fields, not just the message",
+  );
+  const l8 = exampleLine(row("unified.supervisor_session_failed", "t", { message: "session died" }));
+  ok(l8.includes("supervisor session failed") && l8.includes("session died") && !l8.includes("[]"), "exampleLine: unified.supervisor_session_failed with no diag fields present renders cleanly (no empty bracket)");
 }
 
 {
@@ -159,6 +182,30 @@ function row(action: string, ts: string, detail?: Record<string, unknown>): Audi
   ok(text.includes("webhook.rejected"), "formatMode3Report: names the action");
   ok(text.includes(report!.clusters[0].fixSketch), "formatMode3Report: includes the fix sketch");
   ok(/discovery only/i.test(text), "formatMode3Report: says discovery-only (v1 has no auto-PR)");
+}
+
+{
+  const rows: AuditEntry[] = [
+    row("unified.supervisor_turn_failed", "2026-07-01T00:00:00Z", {
+      message: "The model did not return a response.",
+      code: "EmptyModelResponse",
+      statusCode: "502",
+      gatewayType: "vercel-ai-gateway",
+      upstreamType: "anthropic",
+    }),
+  ];
+  const report = await buildMode3Report("acme", rows, "2026-06-25T00:00:00Z", "2026-07-08T00:00:00Z");
+  ok(report !== null, "buildMode3Report: a unified.supervisor_turn_failed row produces a report (not silently dropped)");
+  const cluster = report?.clusters.find((c) => c.action === "unified.supervisor_turn_failed");
+  ok(cluster !== undefined, "buildMode3Report: unified.supervisor_turn_failed is bucketed as a failure cluster");
+  const text = formatMode3Report(report!);
+  ok(
+    text.includes("code=EmptyModelResponse") &&
+      text.includes("statusCode=502") &&
+      text.includes("gatewayType=vercel-ai-gateway") &&
+      text.includes("upstreamType=anthropic"),
+    "formatMode3Report: failureDiag's whitelisted fields reach the RENDERED digest text, not just the raw audit row",
+  );
 }
 
 const tmp = mkdtempSync(join(tmpdir(), "open-everywhere-dream-mode3-"));
