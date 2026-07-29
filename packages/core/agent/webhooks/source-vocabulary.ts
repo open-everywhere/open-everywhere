@@ -1,7 +1,6 @@
 import { getConfig } from "../access/config.js";
 import { acceptsMintedSecret, registeredWebhookVerifiers, type WebhookVerifier } from "./verifier.js";
 import { registeredEventSources } from "../routines/event-model.js";
-import type { WebhookPosture } from "./config.js";
 
 export interface SourceVocabularyDeps {
   readonly verifiers?: () => readonly WebhookVerifier[];
@@ -24,7 +23,7 @@ function admissibleSchemes(deps: SourceVocabularyDeps): readonly string[] {
   return [...out].sort();
 }
 
-export function runtimeHookSourceVocabulary(deps: SourceVocabularyDeps = {}): readonly string[] {
+export function mintableSourceVocabulary(deps: SourceVocabularyDeps = {}): readonly string[] {
   return admissibleSchemes(deps);
 }
 
@@ -38,8 +37,4 @@ export function unknownSourceRefusal(source: string, vocabulary: readonly string
     `Some systems sign with a secret THEY generate rather than one we choose — none of those can be set up this way, ` +
     `so an operator has to declare the hook in configuration instead. Ask an admin to open that PR.`
   );
-}
-
-export function runtimeHookTier(_posture: WebhookPosture): "member" | "admin" {
-  return "member";
 }

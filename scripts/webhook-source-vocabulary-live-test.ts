@@ -12,7 +12,7 @@ import {
   webhookVerifier,
 } from "@open-everywhere/core/agent/webhooks/verifier.js";
 import { declaredDeliveryId, eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
-import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
+import { mintableSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -35,7 +35,7 @@ registerConfig({
   domainsForSurface: () => [],
 });
 
-const vocabulary = runtimeHookSourceVocabulary();
+const vocabulary = mintableSourceVocabulary();
 const verifiers = registeredWebhookVerifiers();
 const normalizers = registeredEventSources();
 console.log(`  live registries: verifiers=[${verifiers.map((v) => v.source).sort().join(", ")}] normalizers=[${normalizers.join(", ")}]`);
@@ -83,7 +83,7 @@ for (const source of vocabulary) {
   }
 
   const probeVerifier = { source: "probe-verifier-only", keyKind: "shared-secret", keyOrigin: "receiver-minted", signedTimestamp: true, verify: () => ({ ok: false, failure: "missing-signature" }) } as const;
-  const withProbes = runtimeHookSourceVocabulary({
+  const withProbes = mintableSourceVocabulary({
     verifiers: () => [...verifiers, probeVerifier as unknown as (typeof verifiers)[number]],
     normalizers: () => [...normalizers, "probe-normalizer-only"],
     declared: () => undefined,

@@ -75,17 +75,17 @@ const rotateKind = actionKind("webhook.rotate")!;
   });
   const V = () => [fake("github"), fake("notion"), fake("verifier-only")];
   const N = () => ["github", "notion", "linear"];
-  eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }), ["github", "notion"], "the vocabulary is the INTERSECTION of verifiers ∩ normalizers");
-  ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("verifier-only"), "a source with a verifier but NO normalizer is not mintable (nothing could subscribe)");
-  ok(!vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("linear"), "a source with a normalizer but NO verifier is not mintable (it would 401 forever)");
-  eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["notion"] }), ["notion"], "the operator's declared list NARROWS the intersection");
-  eq(vocab.runtimeHookSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["stripe"] }), [], "the declared list can NEVER ADD a source with no verifier (narrowing-only)");
-  eq(vocab.runtimeHookSourceVocabulary({ verifiers: () => [], normalizers: N, declared: () => undefined }), [], "no verifiers ⇒ nothing is mintable");
+  eq(vocab.mintableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }), ["github", "notion"], "the vocabulary is the INTERSECTION of verifiers ∩ normalizers");
+  ok(!vocab.mintableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("verifier-only"), "a source with a verifier but NO normalizer is not mintable (nothing could subscribe)");
+  ok(!vocab.mintableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("linear"), "a source with a normalizer but NO verifier is not mintable (it would 401 forever)");
+  eq(vocab.mintableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["notion"] }), ["notion"], "the operator's declared list NARROWS the intersection");
+  eq(vocab.mintableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => ["stripe"] }), [], "the declared list can NEVER ADD a source with no verifier (narrowing-only)");
+  eq(vocab.mintableSourceVocabulary({ verifiers: () => [], normalizers: N, declared: () => undefined }), [], "no verifiers ⇒ nothing is mintable");
 
   const VK = () => [fake("github"), fake("vendor-token", "vendor-issued"), fake("asym", "receiver-minted", "public-key")];
   const NK = () => ["github", "vendor-token", "asym"];
   eq(
-    vocab.runtimeHookSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => undefined }),
+    vocab.mintableSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => undefined }),
     ["github"],
     "🔴 a source with BOTH halves is still NOT mintable when its verifier can't take an OE-minted secret",
   );
@@ -105,8 +105,22 @@ const rotateKind = actionKind("webhook.rotate")!;
 {
   console.log("\n2. tiers + manifests:");
   eq(rotateKind.policy, "member", "webhook.rotate is MEMBER (OPE-159 supersedes the OPE-150 flat admin tier)");
-  eq(vocab.runtimeHookTier("trigger-only"), "member", "tier table: trigger-only, in vocabulary ⇒ member");
-  eq(vocab.runtimeHookTier("content-bearing"), "member", "tier table: content-bearing, in vocabulary ⇒ member (the control is the fence + taint, not a second approver)");
+  eq(actionKind("webhook.declare")?.policy, "member", "webhook.declare is MEMBER — the card's tap is the injection gate, the MERGE is the privilege gate");
+
+  for (const [tool, kind] of [
+    ["declare_webhook", "webhook.declare"],
+    ["rotate_webhook", "webhook.rotate"],
+  ] as const) {
+    const entry = TOOL_CONSEQUENCE[tool]!;
+    eq(entry.tier, "gate:member", `${tool} declares gate:member`);
+    eq(entry.via.kind, "action-kind", `🔴 …through an ACTION-KIND mechanism, which is what subjects it to the cross-plane check`);
+    eq(entry.via.kind === "action-kind" ? entry.via.action : undefined, kind, `🔴 …naming "${kind}" specifically, so consequence.ts and the ActionKind cannot drift unnoticed`);
+  }
+
+  for (const kind of ["webhook.rotate", "webhook.declare", "routine.create", "memory.forget"]) {
+    const def = actionKind(kind);
+    ok(def !== undefined && typeof def.policy === "string", `🔴 ${kind}'s approver tier is a per-KIND constant, not a function of the frozen args`);
+  }
 
   ok(actionKind("webhook.create") === undefined, "🔴 there is no `webhook.create` kind — a hook is created by a merged PR, never by a click");
   ok(actionKind("webhook.revoke") === undefined, "🔴 …and no `webhook.revoke` — a hook is removed by another PR");

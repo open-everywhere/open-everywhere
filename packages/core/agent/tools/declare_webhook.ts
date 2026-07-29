@@ -12,7 +12,7 @@ import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
-import { runtimeHookSourceVocabulary, unknownSourceRefusal } from "../webhooks/source-vocabulary.js";
+import { mintableSourceVocabulary, unknownSourceRefusal } from "../webhooks/source-vocabulary.js";
 import { WEBHOOK_POSTURES, type WebhookPosture } from "../webhooks/config.js";
 import { eventNormalizer } from "../routines/event-model.js";
 import type { HookDeclaration } from "../webhooks/hooks-codemod.js";
@@ -121,7 +121,7 @@ export default defineTool({
     }
 
     const source = input.source.trim().toLowerCase();
-    const vocabulary = runtimeHookSourceVocabulary();
+    const vocabulary = mintableSourceVocabulary();
     if (!vocabulary.includes(source)) throw new Error(unknownSourceRefusal(source, vocabulary) + generalPurposeSchemeHint(source, source, vocabulary, false));
 
     const target = input.target?.trim() || undefined;

@@ -66,19 +66,6 @@ async function deliverReveal(
 
 export interface WebhookRotateArgs {
   readonly org: string;
-  readonly id: string;
-  readonly source: string;
-  readonly configId?: string;
-  readonly posture: WebhookPosture;
-  readonly scheme?: string;
-  readonly surfaceKey: string;
-  readonly requestedBy: string;
-  readonly platform: string;
-  readonly channelId: string;
-}
-
-export interface WebhookRotateArgs {
-  readonly org: string;
   readonly hookId: string;
   readonly posture: WebhookPosture;
   readonly surfaceKey: string;
