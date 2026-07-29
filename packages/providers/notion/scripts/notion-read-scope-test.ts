@@ -1,0 +1,199 @@
+import assert from "node:assert/strict";
+import {
+  assertNotionBlockAllowed,
+  assertNotionPageAllowed,
+  canonicalNotionId,
+  notionPageDomain,
+  notionReadScope,
+} from "../agent/channels/notion-scope.js";
+import { ChannelScopeError, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
+import { registerNotionProvider } from "../agent/register.js";
+import { readNotionPageEntry } from "../agent/tools/read_notion_page.js";
+import { readNotionCommentsEntry } from "../agent/tools/read_notion_comments.js";
+
+registerNotionProvider();
+
+let passed = 0;
+function ok(cond: boolean, label: string): void {
+  if (!cond) {
+    console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+const WS = "ws-1";
+const PAGE_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+const PAGE_A2 = "aaaaaaaa-2222-4222-8222-aaaaaaaaaaaa";
+const PAGE_B = "bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb";
+const PAGE_LOOSE = "cccccccc-1111-4111-8111-cccccccccccc";
+const WS2 = "ws-2";
+const PAGE_C = "dddddddd-1111-4111-8111-dddddddddddd";
+
+const DOMAINS: readonly Domain[] = [
+  defineDomain({ name: "payments", channels: [`notion/${WS}/${PAGE_A}`, `notion/${WS}/${PAGE_A2}`] }),
+  defineDomain({ name: "eng", channels: [`notion/${WS}/${PAGE_B}`] }),
+  defineDomain({ name: "claimed", containers: [`notion/${WS2}`] }),
+];
+
+const keyFor = (ws: string, page: string): string => `notion/${ws}/${page}`;
+
+{
+  const from = (page: string, ws = WS) => (target: string) => notionReadScope(keyFor(ws, page), target, DOMAINS);
+  const fromA = from(PAGE_A);
+
+  ok(fromA(PAGE_A).allowed && fromA(PAGE_A).reason === "own-page", "the session's OWN page is always readable");
+  const sibling = fromA(PAGE_A2);
+  ok(sibling.allowed && sibling.reason === "roster", "a SIBLING page in the same domain's roster is readable");
+
+  const cross = fromA(PAGE_B);
+  ok(!cross.allowed && cross.reason === "cross-domain", "a page in ANOTHER domain's roster is REFUSED");
+  ok(cross.callerDomain === "payments" && cross.targetDomain === "eng", "…and the verdict names both domains, so the audit row is actionable");
+
+  const loose = fromA(PAGE_LOOSE);
+  ok(!loose.allowed && loose.reason === "target-unassigned", "a page in NO domain is REFUSED (fail closed — 'we can't tell' is never 'yes')");
+
+  const fromLoose = from(PAGE_LOOSE);
+  ok(fromLoose(PAGE_LOOSE).allowed, "an unassigned session can still read its own page");
+  ok(!fromLoose(PAGE_A).allowed && fromLoose(PAGE_A).reason === "caller-unassigned", "an unassigned session cannot reach into a domain");
+
+  const unknown = notionReadScope("notion/unknown/unknown", PAGE_A, DOMAINS);
+  ok(!unknown.allowed, "an under-identified session (notion/unknown/unknown) is refused");
+}
+
+{
+  const fromClaimed = notionReadScope(keyFor(WS2, PAGE_C), "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", DOMAINS);
+  ok(fromClaimed.allowed && fromClaimed.reason === "container", "a claim-only domain may read an unenumerated page in its claimed workspace");
+
+  const outOfWorkspace = notionReadScope(keyFor(WS2, PAGE_C), PAGE_A, DOMAINS);
+  ok(!outOfWorkspace.allowed, "a claim over one workspace does not reach a page in another workspace");
+
+  const overlapping: readonly Domain[] = [
+    defineDomain({ name: "payments", channels: [`notion/${WS}/${PAGE_A}`] }),
+    defineDomain({ name: "wide", containers: [`notion/${WS}`] }),
+  ];
+  ok(notionPageDomain(WS, PAGE_A, overlapping).domain?.name === "payments", "roster beats claim for a listed page");
+  ok(notionPageDomain(WS, PAGE_LOOSE, overlapping).domain?.name === "wide", "…and the claim still covers the pages nobody listed");
+  const annex = notionReadScope(keyFor(WS, PAGE_LOOSE), PAGE_A, overlapping);
+  ok(!annex.allowed && annex.reason === "cross-domain", "a claiming domain cannot read a page another domain listed");
+}
+
+{
+  const bare = PAGE_A2.replace(/-/g, "").toUpperCase();
+  ok(canonicalNotionId(bare) === canonicalNotionId(PAGE_A2), "hyphen/case variants canonicalise equal");
+  ok(notionReadScope(keyFor(WS, PAGE_A), bare, DOMAINS).allowed, "a rostered page is readable in its bare/upper spelling too");
+  ok(!notionReadScope(keyFor(WS, PAGE_A), PAGE_B.replace(/-/g, ""), DOMAINS).allowed, "canonicalisation does not admit a DIFFERENT page");
+}
+
+const ctxFor = (page: string, ws = WS): BindableContext =>
+  ({
+    channel: { kind: "notion" },
+    session: {
+      auth: {
+        current: {
+          attributes: { workspace_id: ws, page_id: page },
+          principalId: "U_NOTION",
+          principalType: "notion-user",
+        },
+      },
+    },
+  }) as BindableContext;
+
+{
+  const quiet: unknown[] = [];
+  await assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_A2, DOMAINS, { audit: async (e) => void quiet.push(e) });
+  ok(quiet.length === 0, "an ALLOWED read appends no refusal row");
+
+  const rows: Array<{ action: string; platform: string; detail?: Record<string, unknown>; principalId?: string }> = [];
+  const audit = async (e: { action: string; platform: string; detail?: Record<string, unknown>; principalId?: string }) => void rows.push(e);
+  await assert.rejects(
+    () => assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_B, DOMAINS, { audit }),
+    ChannelScopeError,
+    "a cross-domain page read throws ChannelScopeError",
+  );
+  ok(true, "cross-domain read refused (ChannelScopeError)");
+
+  ok(rows.length === 1, "the refusal appended exactly one audit row");
+  const row = rows[0]!;
+  ok(row.action === "read.refused" && row.platform === "notion", "the row is a notion read.refused");
+  ok(row.detail?.reason === "cross-domain", "the row records WHY");
+  ok(row.detail?.target === PAGE_B && row.detail?.callerDomain === "payments" && row.detail?.targetDomain === "eng", "the row records the target and BOTH domains");
+  ok(row.principalId === "U_NOTION", "the row records WHO asked");
+  ok(!Object.prototype.hasOwnProperty.call(row.detail ?? {}, "text"), "the row carries no page content (nothing was fetched)");
+
+  rows.length = 0;
+  await assert.rejects(() => assertNotionPageAllowed(ctxFor(PAGE_A), PAGE_LOOSE, DOMAINS, { audit }), ChannelScopeError, "unassigned page refused");
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "target-unassigned", "the FAIL-CLOSED refusal is audited under its own reason");
+}
+
+{
+  const rows: Array<{ detail?: Record<string, unknown> }> = [];
+  const audit = async (e: { detail?: Record<string, unknown> }) => void rows.push(e);
+  const OWN_BLOCK = "11111111-1111-4111-8111-111111111111";
+  const FOREIGN_BLOCK = "22222222-2222-4222-8222-222222222222";
+  const owner = async (id: string): Promise<string | undefined> =>
+    id === OWN_BLOCK ? PAGE_A2 : id === FOREIGN_BLOCK ? PAGE_B : undefined;
+
+  await assertNotionBlockAllowed(ctxFor(PAGE_A), OWN_BLOCK, DOMAINS, owner, { audit });
+  ok(rows.length === 0, "a block whose owning page is in the domain is admitted");
+
+  await assert.rejects(
+    () => assertNotionBlockAllowed(ctxFor(PAGE_A), FOREIGN_BLOCK, DOMAINS, owner, { audit }),
+    ChannelScopeError,
+    "a block owned by ANOTHER domain's page is refused",
+  );
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "block:cross-domain", "…and the refusal is audited as a block cross-domain");
+
+  rows.length = 0;
+  await assert.rejects(
+    () => assertNotionBlockAllowed(ctxFor(PAGE_A), "99999999-9999-4999-8999-999999999999", DOMAINS, owner, { audit }),
+    ChannelScopeError,
+    "an unresolvable block is refused",
+  );
+  ok(rows.length === 1 && rows[0]!.detail?.reason === "block-unresolvable", "the unresolvable block refusal is audited (fail closed)");
+
+  rows.length = 0;
+  let lookups = 0;
+  await assertNotionBlockAllowed(
+    ctxFor(PAGE_A),
+    PAGE_A2,
+    DOMAINS,
+    async (id) => {
+      lookups++;
+      return owner(id);
+    },
+    { audit },
+  );
+  ok(rows.length === 0 && lookups === 0, "a page-level anchor is admitted by id alone (no parent lookup)");
+}
+
+{
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => DOMAINS,
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+  });
+  delete process.env.NOTION_CHANNEL_API_KEY;
+  const FOREIGN = "ffffffff-1111-4111-8111-ffffffffffff";
+  const turn = ctxFor(PAGE_A);
+
+  for (const [name, entry] of [
+    ["read_notion_page", readNotionPageEntry],
+    ["read_notion_comments", readNotionCommentsEntry],
+  ] as const) {
+    let err: unknown;
+    try {
+      await (entry as { execute: (i: unknown, c: unknown) => Promise<unknown> }).execute({ page: FOREIGN }, turn);
+    } catch (e) {
+      err = e;
+    }
+    if (!(err instanceof ChannelScopeError)) console.error(`  [debug] ${name} threw:`, err);
+    ok(err instanceof ChannelScopeError, `${name} refuses an out-of-domain page through the FENCE (not the missing-key error)`);
+  }
+}
+
+console.log(`✓ ${passed} notion read-scope assertions passed`);

@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readNotionPage, resolveNotionApiKey } from "../channels/notion-api.js";
+import { assertNotionPageAllowed } from "../channels/notion-scope.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -14,7 +15,7 @@ import {
 const MAX_CHARS = 20_000;
 const MAX_BLOCKS = 200;
 
-const readNotionPageEntry = defineTool({
+export const readNotionPageEntry = defineTool({
         description:
           "Read the text of a Notion page (this doc, or another page shared with the integration). " +
           "Use it when a reply needs the doc's own content — to answer a question about the page or " +
@@ -35,10 +36,11 @@ const readNotionPageEntry = defineTool({
         }),
         async execute(input, ctx2) {
           assertTurnSurface(ctx2 as BindableContext, "notion");
-          const apiKey = await resolveNotionApiKey();
-          if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the page.");
           const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
           if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
+          await assertNotionPageAllowed(ctx2 as BindableContext, page, getConfig().loadDomains());
+          const apiKey = await resolveNotionApiKey();
+          if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the page.");
           const res = await readNotionPage(page, { apiKey, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
           return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text };
         },

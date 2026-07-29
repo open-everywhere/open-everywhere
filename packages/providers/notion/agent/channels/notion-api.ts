@@ -153,6 +153,39 @@ export async function listBlockComments(blockId: string, opts: NotionCallOpts): 
   return Array.isArray(body.results) ? body.results : [];
 }
 
+export interface NotionBlockParent {
+  readonly id?: string;
+  readonly parent?: { readonly type?: string; readonly page_id?: string; readonly block_id?: string };
+}
+
+export async function retrieveBlock(blockId: string, opts: NotionCallOpts): Promise<NotionBlockParent> {
+  const f = opts.fetch ?? (globalThis.fetch as FetchLike);
+  const res = await f(`${NOTION_API_BASE}/v1/blocks/${encodeURIComponent(blockId)}`, { method: "GET", headers: notionHeaders(opts) });
+  if (!res.ok) throw new Error(`retrieveBlock ${blockId} failed: ${res.status} ${await safeText(res)}`);
+  return (await res.json()) as NotionBlockParent;
+}
+
+export const BLOCK_PARENT_MAX_HOPS = 5;
+export async function resolveBlockOwningPage(blockId: string, opts: NotionCallOpts): Promise<string | undefined> {
+  let id = blockId;
+  for (let hop = 0; hop < BLOCK_PARENT_MAX_HOPS; hop++) {
+    let block: NotionBlockParent;
+    try {
+      block = await retrieveBlock(id, opts);
+    } catch {
+      return undefined;
+    }
+    const parent = block.parent;
+    if (parent?.type === "page_id" && parent.page_id) return parent.page_id;
+    if (parent?.type === "block_id" && parent.block_id && parent.block_id !== id) {
+      id = parent.block_id;
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 export interface NotionCommentSummary {
   readonly discussionId?: string;
   readonly anchorId?: string;

@@ -1,6 +1,7 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { readNotionComments, resolveNotionApiKey, type NotionCommentSummary } from "../channels/notion-api.js";
+import { readNotionComments, resolveBlockOwningPage, resolveNotionApiKey, type NotionCommentSummary } from "../channels/notion-api.js";
+import { assertNotionBlockAllowed, assertNotionPageAllowed } from "../channels/notion-scope.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -68,10 +69,15 @@ export const readNotionCommentsEntry = defineTool({
   }),
   async execute(input, ctx2) {
     assertTurnSurface(ctx2 as BindableContext, "notion");
-    const apiKey = await resolveNotionApiKey();
-    if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the comments.");
     const page = input.page ?? bindFrom(ctx2 as BindableContext).surface;
     if (!page) throw new Error("No Notion page id available for this session — pass `page` explicitly.");
+    const domains = getConfig().loadDomains();
+    await assertNotionPageAllowed(ctx2 as BindableContext, page, domains);
+    const apiKey = await resolveNotionApiKey();
+    if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the comments.");
+    if (input.block) {
+      await assertNotionBlockAllowed(ctx2 as BindableContext, input.block, domains, (id) => resolveBlockOwningPage(id, { apiKey }));
+    }
     const res = await readNotionComments(page, {
       apiKey,
       block: input.block,
