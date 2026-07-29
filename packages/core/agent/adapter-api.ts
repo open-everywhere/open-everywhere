@@ -266,7 +266,7 @@ export type { ScopeLabelResolver } from "./approvals/scope-label.js";
 export { OE_COMMAND_NAME, runOeCommand } from "./commands/core.js";
 export type { OeCommand } from "./commands/core.js";
 
-export { verifyWebhookSignature } from "./webhooks/gate.js";
+export { verifyWebhookSignature, webhookMaxSkewSeconds } from "./webhooks/gate.js";
 
 export {
   registerWebhookVerifier,

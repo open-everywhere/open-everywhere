@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { POST, type Channel, type HttpRouteDefinition, type RouteHandlerArgs } from "eve/channels";
+import { SLACK_SIGNATURE_HEADER, SLACK_TIMESTAMP_HEADER, slackSignatureMatches } from "./slack-signature.js";
 import { callSlackApi, slackContinuationToken } from "eve/channels/slack";
 import {
   parseMessageEvent,
@@ -210,7 +210,6 @@ export function parseDmEnvelope(rawBody: string, contentType: string): ParsedMes
   return ev && !ev.botId ? ev : undefined;
 }
 
-
 const SLACK_MAX_SKEW_SECONDS = 60 * 5;
 
 export function verifySlackSignature(
@@ -219,15 +218,12 @@ export function verifySlackSignature(
   signingSecret: string | undefined,
   nowMs: number = Date.now(),
 ): boolean {
-  const timestamp = headers.get("x-slack-request-timestamp");
-  const signature = headers.get("x-slack-signature");
+  const timestamp = headers.get(SLACK_TIMESTAMP_HEADER);
+  const signature = headers.get(SLACK_SIGNATURE_HEADER);
   if (!signingSecret || !timestamp || !signature) return false;
   const ts = Number(timestamp);
   if (!Number.isFinite(ts) || Math.abs(nowMs / 1000 - ts) > SLACK_MAX_SKEW_SECONDS) return false;
-  const expected = `v0=${createHmac("sha256", signingSecret).update(`v0:${timestamp}:${rawBody}`).digest("hex")}`;
-  const a = Buffer.from(expected);
-  const b = Buffer.from(signature);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return slackSignatureMatches(signingSecret, timestamp, rawBody, signature);
 }
 
 export { EventDedupe, ThreadFifo };

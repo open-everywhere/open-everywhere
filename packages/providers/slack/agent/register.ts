@@ -7,6 +7,7 @@ import {
   registerReactionSurface,
   registerSlackBridge,
   registerProviderDocs,
+  registerWebhookVerifier,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { PROVIDER_DOCS } from "./docs-generated.js";
 import { bindSlack, partnerFactsFromInfo } from "./channels/slack-identity.js";
@@ -23,6 +24,7 @@ import {
   registerSlackGovernanceMembers,
 } from "./channels/slack-events.js";
 import slackChannel from "./channels/slack.js";
+import { slackWebhookVerifier } from "./channels/slack-webhook-verifier.js";
 import { registerSlackOps } from "./ops.js";
 
 export function registerSlackProvider(): void {
@@ -46,5 +48,6 @@ export function registerSlackProvider(): void {
     channel: slackChannel,
   });
   registerSlackOps();
+  registerWebhookVerifier(slackWebhookVerifier);
   registerProviderDocs("slack", PROVIDER_DOCS);
 }
