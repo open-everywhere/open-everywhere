@@ -5,7 +5,8 @@ import { routineFireAttributes } from "../routines/fire-auth.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
-import { foldRoutineOutcome } from "../routines/outcome-fold.js";
+import { checkBound } from "../routines/bound.js";
+import { foldRoutineOutcome, retireExhaustedRoutine } from "../routines/outcome-fold.js";
 import { listAllRoutines, updateRoutine } from "../routines/store.js";
 import { computeNextRun, isDue, DISPATCH_TICK_MINUTES } from "../routines/schedule.js";
 import { isClockScheduled, isJobRoutine, routineGrantGeneration, routineReportSurfaceKey, type Routine } from "../routines/routine.js";
@@ -77,7 +78,19 @@ export async function dispatchTick(
   let dryRun = 0;
   let deferred = 0;
   let declined = 0;
+  let retired = 0;
   for (const r of due) {
+    const bound = checkBound(r, now);
+    if (bound.exhausted) {
+      retired++;
+      log(`CEILING: ${r.id} on ${r.surfaceKey} stopped — ${bound.reason}`);
+      try {
+        await retireExhaustedRoutine({ routine: r, verdict: bound });
+      } catch (err) {
+        log(`ceiling retire failed for ${r.id} on ${r.surfaceKey}: ${String(err)}`);
+      }
+      continue;
+    }
     const dest = resolveRoutineTarget(r);
     const fireSurfaceKey = routineReportSurfaceKey(r);
     const firePlatform = fireSurfaceKey.split("/")[0];
@@ -118,6 +131,7 @@ export async function dispatchTick(
         lastOutcome: undefined,
         lastFailureReason: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
+        ...(r.bound ? { fireCount: (r.fireCount ?? 0) + 1 } : {}),
         ...onceDisablePatch(r, now, "fired"),
       });
       let fireTarget = dest.target;
@@ -196,7 +210,10 @@ export async function dispatchTick(
       emitTelemetry("oe.feature.used", { "oe.feature": "routine_fired", "oe.outcome": "failed" });
     }
   }
-  log(`tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${deferred} deferred (cap ${cap})`);
+  log(
+    `tick: ${due.length} due -> ${fired} fired, ${dryRun} dry-run, ${declined} declined, ${deferred} deferred` +
+      `${retired > 0 ? `, ${retired} retired at ceiling` : ""} (cap ${cap})`,
+  );
 }
 
 export default defineSchedule({

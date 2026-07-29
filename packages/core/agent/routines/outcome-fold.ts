@@ -1,8 +1,9 @@
 import { applyOutcome, settleOutcome } from "./lifecycle.js";
+import { boundExhaustedPatch, type BoundVerdict } from "./bound.js";
 import { auditRoutineDisabled, auditRoutineFire } from "./fire-audit.js";
-import { announceSelfDisable } from "./disable-notice.js";
+import { announceBoundExhausted, announceSelfDisable } from "./disable-notice.js";
 import { getRoutine, updateRoutine } from "./store.js";
-import type { RunOutcome } from "./routine.js";
+import type { Routine, RunOutcome } from "./routine.js";
 
 export interface RoutineOutcomeMarker {
   readonly id: string;
@@ -63,4 +64,22 @@ export async function foldRoutineOutcome(opts: {
     await announceSelfDisable(routine, updated.disabledReason ?? "auto-disabled", updated.consecutiveFailures);
   }
   return { folded: true, outcome: settled, consecutiveFailures: updated.consecutiveFailures, disabled };
+}
+
+export async function retireExhaustedRoutine(opts: {
+  readonly routine: Routine;
+  readonly verdict: Extract<BoundVerdict, { exhausted: true }>;
+}): Promise<boolean> {
+  const { routine, verdict } = opts;
+  const patch = boundExhaustedPatch(verdict);
+  const updated = await updateRoutine(routine.org, routine.surfaceKey, routine.id, patch);
+  if (!updated) return false;
+
+  await auditRoutineDisabled(routine, patch.disabledReason ?? "stopped at its ceiling", routine.consecutiveFailures, undefined, {
+    boundDimension: verdict.dimension,
+    fireCount: routine.fireCount ?? 0,
+    ...(routine.bound?.maxFires !== undefined ? { maxFires: routine.bound.maxFires } : {}),
+    ...(routine.bound?.until !== undefined ? { boundUntil: routine.bound.until } : {}),
+  });
+  return announceBoundExhausted(routine, verdict);
 }

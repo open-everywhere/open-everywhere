@@ -6,6 +6,7 @@ import { resolveMode, principalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { describeBoundPolicy } from "../routines/bound.js";
 import { renderFireMessage } from "../routines/fire-message.js";
 import { SCOPE_KINDS, eventNormalizer } from "../routines/event-model.js";
 import { validateSubscription } from "../routines/event-match.js";
@@ -287,7 +288,7 @@ export default defineTool({
       {
         org: p.org,
         kind: "routine.create",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const } : {}), ...(permissions.length ? { permissions } : {}) },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, target, trigger: t, ...(report ? { report } : {}), prompt: input.prompt.trim(), ...(createdBy ? { createdBy } : {}), tainted, ...(input.job ? { sessionMode: "job" as const, boundPolicy: describeBoundPolicy(t, new Date()) } : {}), ...(permissions.length ? { permissions } : {}) },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy: createdBy,

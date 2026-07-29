@@ -5,6 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { listRoutines } from "../routines/store.js";
 import { emptyRoutineForensics, readRoutineForensics } from "../routines/fire-audit.js";
 import { describeTrigger } from "../routines/routine.js";
+import { describeBound } from "../routines/bound.js";
 import { policyRules } from "../routines/policy.js";
 import { listRoutinePermissions } from "../routines/grants.js";
 
@@ -31,6 +32,7 @@ export default defineTool({
         firstMatchAt: z.string().nullable(),
         lastMatchAt: z.string().nullable(),
         consecutiveFailures: z.number(),
+        ceiling: z.string().nullable(),
         taintedAtCreation: z.boolean(),
         lastSessionId: z.string().nullable(),
         lastPostedAt: z.string().nullable(),
@@ -84,6 +86,7 @@ export default defineTool({
         firstMatchAt: r.firstMatchAt ?? null,
         lastMatchAt: r.lastMatchAt ?? null,
         consecutiveFailures: r.consecutiveFailures,
+        ceiling: describeBound(r),
         taintedAtCreation: r.taintedAtCreation === true,
         lastSessionId: f.lastSessionId,
         lastPostedAt: f.lastPostedAt,

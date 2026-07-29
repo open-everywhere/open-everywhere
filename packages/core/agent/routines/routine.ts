@@ -22,6 +22,11 @@ export type RoutineReport =
       readonly target: Readonly<Record<string, unknown>>;
     };
 
+export interface RoutineBound {
+  readonly until?: string;
+  readonly maxFires?: number;
+}
+
 export function reportDestinationOf(r: Routine): Routine {
   const rep = r.report;
   return rep?.kind === "surface" ? { ...r, surfaceKey: rep.surfaceKey, target: rep.target } : r;
@@ -70,6 +75,8 @@ export interface Routine {
   jobState?: string;
   jobTainted?: boolean;
   prWatch?: { readonly repo: string; readonly number: number; readonly checksRemaining: number };
+  bound?: RoutineBound;
+  fireCount?: number;
   completedAt?: string;
   completedReason?: string;
 }

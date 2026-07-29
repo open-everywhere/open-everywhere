@@ -1,4 +1,5 @@
 import { isSilentRoutine, type Routine } from "./routine.js";
+import type { BoundVerdict } from "./bound.js";
 import { resolveRoutineTarget } from "../schedules/routine-dispatch.js";
 import { postUnifiedReply } from "../channels/unified-reply.js";
 
@@ -18,6 +19,21 @@ export function disableNoticeText(r: Pick<Routine, "id" | "prompt" | "report">, 
   );
 }
 
+export function boundNoticeText(
+  r: Pick<Routine, "id" | "prompt" | "report" | "sessionMode">,
+  verdict: Extract<BoundVerdict, { exhausted: true }>,
+): string {
+  const what = r.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
+  const noun = r.sessionMode === "job" ? "Job" : "Routine";
+  return (
+    `⏹️ ${noun} \`${r.id}\` has STOPPED at its ceiling and will not run again — ${verdict.reason.slice(0, 200)}.\n` +
+    `> ${what}\n` +
+    `Nothing failed: it just never finished, so I stopped it rather than keep going unattended. ` +
+    (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
+    `Ask me to start it again if you still want it — it picks up from where it got to, with a fresh ceiling.`
+  );
+}
+
 export interface DisableNoticeDeps {
   readonly resolveTarget?: typeof resolveRoutineTarget;
   readonly post?: (origin: NonNullable<ReturnType<typeof resolveRoutineTarget>>["origin"], text: string) => Promise<string>;
@@ -29,21 +45,30 @@ export async function announceSelfDisable(
   consecutiveFailures: number,
   deps: DisableNoticeDeps = {},
 ): Promise<boolean> {
+  return postRoutineNotice(r, disableNoticeText(r, reason, consecutiveFailures), "self-disable", deps);
+}
+
+export async function announceBoundExhausted(
+  r: Routine,
+  verdict: Extract<BoundVerdict, { exhausted: true }>,
+  deps: DisableNoticeDeps = {},
+): Promise<boolean> {
+  return postRoutineNotice(r, boundNoticeText(r, verdict), "ceiling", deps);
+}
+
+async function postRoutineNotice(r: Routine, text: string, what: string, deps: DisableNoticeDeps): Promise<boolean> {
   try {
     const dest = (deps.resolveTarget ?? resolveRoutineTarget)(r);
     const origin = dest?.origin;
     if (!origin) {
-      log(`self-disable notice SKIPPED for ${r.id} [${r.surfaceKey}] — no post-back origin for this surface (audit row still written)`);
+      log(`${what} notice SKIPPED for ${r.id} [${r.surfaceKey}] — no post-back origin for this surface (audit row still written)`);
       return false;
     }
-    await (deps.post ?? ((o, text) => postUnifiedReply(o as NonNullable<typeof origin>, text)))(
-      origin,
-      disableNoticeText(r, reason, consecutiveFailures),
-    );
-    log(`self-disable notice posted for ${r.id} [${r.surfaceKey}]`);
+    await (deps.post ?? ((o, t) => postUnifiedReply(o as NonNullable<typeof origin>, t)))(origin, text);
+    log(`${what} notice posted for ${r.id} [${r.surfaceKey}]`);
     return true;
   } catch (err) {
-    log(`self-disable notice FAILED for ${r.id} [${r.surfaceKey}]: ${String(err)}`);
+    log(`${what} notice FAILED for ${r.id} [${r.surfaceKey}]: ${String(err)}`);
     return false;
   }
 }

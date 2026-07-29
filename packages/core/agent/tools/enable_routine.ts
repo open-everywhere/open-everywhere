@@ -82,6 +82,7 @@ export default defineTool({
           prompt: routine.prompt,
           trigger: routine.trigger,
           requestedBy,
+          ...(routine.bound ? { bounded: true } : {}),
         },
         scopeKey: p.surfaceKey,
         domain: null,

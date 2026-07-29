@@ -1,4 +1,5 @@
 import { updateRoutine } from "../routines/store.js";
+import { mintJobBound } from "../routines/bound.js";
 import { computeNextRun } from "../routines/schedule.js";
 import {
   assertReportConsistent,
@@ -102,6 +103,7 @@ export interface RoutineEnableArgs {
   readonly prompt: string;
   readonly trigger: RoutineTrigger;
   readonly requestedBy: string;
+  readonly bounded?: boolean;
 }
 
 const routineEnable: ActionKind<RoutineEnableArgs> = {
@@ -112,6 +114,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       `Re-arm routine ${args.id} — ${args.description} — will fire again WITHOUT a fresh @-mention`,
       `Stopped because: ${args.disabledReason} (${args.consecutiveFailures} consecutive failures)`,
       "↻ keeps everything it learned — a watch's baseline, a job's progress ledger and thread, its id and history",
+      ...(args.bounded ? ["⏹️ its run ceiling starts again from zero — it gets a fresh full allowance, not the remainder of the old one"] : []),
       `> ${clip(args.prompt)}`,
       `Target: ${args.surfaceKey}`,
     ];
@@ -124,6 +127,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       disabledReason: undefined,
       consecutiveFailures: 0,
       nextRunAt: next ? next.toISOString() : null,
+      ...(args.bounded ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
     });
     if (!updated) {
       return `routine ${args.id} is gone — it was cancelled before this re-arm was confirmed, so nothing changed.`;

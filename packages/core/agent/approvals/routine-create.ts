@@ -1,6 +1,7 @@
 import { addRoutine, newRoutineId } from "../routines/store.js";
 import { computeNextRun } from "../routines/schedule.js";
 import { describeTrigger, routineGrantGeneration, type Routine, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
+import { mintJobBound } from "../routines/bound.js";
 import { describeDeclaredPermissions, grantDeclaredRoutinePermissions } from "../routines/grants.js";
 import { describeGrantKind } from "./session-grant.js";
 import { appendAudit } from "../audit/audit.js";
@@ -19,6 +20,7 @@ export interface RoutineCreateArgs {
   readonly createdBy?: string;
   readonly tainted?: boolean;
   readonly sessionMode?: "job";
+  readonly boundPolicy?: string;
   readonly permissions?: readonly string[];
 }
 
@@ -40,6 +42,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.report?.kind === "surface" ? [`📤 posts into ${args.report.surfaceKey} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
       ...(args.sessionMode === "job" ? ["↻ keeps ONE persistent session across fires (accumulates context) until it calls complete_job"] : []),
+      ...(args.sessionMode === "job" && args.boundPolicy ? [`⏹️ ${args.boundPolicy} — it will say so here, and you can start it again`] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       ...permissionLines(args),
       `> ${args.prompt}`,
@@ -64,6 +67,7 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       consecutiveFailures: 0,
       ...(args.tainted ? { taintedAtCreation: true } : {}),
       ...(args.sessionMode === "job" ? { sessionMode: "job" as const } : {}),
+      ...(args.sessionMode === "job" ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
     };
     await addRoutine(args.partition, routine);
     const granted = await grantDeclaredRoutinePermissions({
