@@ -158,9 +158,6 @@ for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API
 }
 
 {
-  ok(typeof linearEntityAdapter.checkAccess === "function", "the entity adapter DECLARES checkAccess (it declared none before OPE-241)");
-  ok(typeof linearTicketCreateAdapter.checkAccess === "function", "the create adapter DECLARES checkAccess");
-
   const turn = ctxFor(TEAM_PAY, ISSUE_OWN);
 
   await assert.rejects(
@@ -186,6 +183,9 @@ for (const k of ["LINEAR_AGENT_ACCESS_TOKEN", "LINEAR_ACCESS_TOKEN", "LINEAR_API
 
   const resolved = await resolveEntityAction(turn, "addLabel", { platform: "linear", id: ISSUE_OWN }, DOMAINS);
   ok(resolved.ref.id === ISSUE_OWN && typeof resolved.run === "function", "the caller's OWN issue still resolves through the fence to a runnable action");
+
+  ok(typeof linearEntityAdapter.checkAccess === "function", "the entity adapter DECLARES checkAccess (it declared none before OPE-241)");
+  ok(typeof linearTicketCreateAdapter.checkAccess === "function", "the create adapter DECLARES checkAccess");
 }
 
 console.log(`✓ ${passed} linear write-scope assertions passed`);
