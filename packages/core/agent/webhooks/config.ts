@@ -1,6 +1,7 @@
 import { reservedRefNamespace } from "../credentials/reserved-refs.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
 import { webhookReach } from "./achievability.js";
+import { WEBHOOK_AUTH_GRADES, type WebhookAuthGrade } from "./verifier.js";
 import type { Domain } from "../memory/domain.js";
 
 export type WebhookPosture = "trigger-only" | "content-bearing" | "projection";
@@ -17,6 +18,7 @@ export interface WebhookHook {
   readonly readableBy: ReadableBy;
   readonly posture?: WebhookPosture;
   readonly project?: readonly string[];
+  readonly authFloor?: WebhookAuthGrade;
 }
 
 export type FusedWebhookHook = WebhookHook & { readonly target: string; readonly instruction: string };
@@ -140,6 +142,12 @@ export function assertWebhooksValid(hooks: readonly WebhookHook[], deps: Webhook
       throw new Error(
         `webhook "${h.id}" sets \`project\` but its posture is "${posture}" — the key list is only read under posture "projection". As written it narrows nothing: ` +
           (posture === "trigger-only" ? "a trigger-only hook renders no payload at all." : "a content-bearing hook renders the WHOLE body."),
+      );
+    }
+    if (h.authFloor !== undefined && !WEBHOOK_AUTH_GRADES.includes(h.authFloor)) {
+      throw new Error(
+        `webhook "${h.id}" has an unknown authFloor ${JSON.stringify(h.authFloor)} — the weakest acceptance a hook will take is ${WEBHOOK_AUTH_GRADES.join(" | ")}. ` +
+          `Omit it for no floor (what every config hook did before the field existed).`,
       );
     }
     const reach = webhookReach(h, deps.domains);

@@ -61,6 +61,18 @@ export function acceptsMintedSecret(verifier: WebhookVerifier): boolean {
   return verifier.keyOrigin === "receiver-minted" && verifier.keyKind === "shared-secret";
 }
 
+export type WebhookAuthGrade = "unverified" | "signed" | "signed-fresh";
+
+export const WEBHOOK_AUTH_GRADES: readonly WebhookAuthGrade[] = ["unverified", "signed", "signed-fresh"] as const;
+
+export function webhookAuthCeiling(verifier: WebhookVerifier): WebhookAuthGrade {
+  return verifier.signedTimestamp ? "signed-fresh" : "signed";
+}
+
+export function meetsWebhookAuthFloor(achieved: WebhookAuthGrade, floor: WebhookAuthGrade): boolean {
+  return WEBHOOK_AUTH_GRADES.indexOf(achieved) >= WEBHOOK_AUTH_GRADES.indexOf(floor);
+}
+
 export function resetWebhookVerifiersForTest(): void {
   VERIFIERS.clear();
 }

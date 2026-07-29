@@ -9,6 +9,7 @@ import { registerConfig } from "@open-everywhere/core/agent/access/config.js";
 import {
   acceptsMintedSecret,
   registeredWebhookVerifiers,
+  webhookAuthCeiling,
   webhookVerifier,
 } from "@open-everywhere/core/agent/webhooks/verifier.js";
 import { declaredDeliveryId, eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
@@ -214,4 +215,39 @@ for (const source of vocabulary) {
   }
 }
 
-console.log(`✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, and matches what declare_webhook advertises)`);
+{
+  console.log("\n7. the authentication-strength ladder, measured against the live registry:");
+  const verifiers = registeredWebhookVerifiers();
+  const byGrade = new Map<string, string[]>();
+  for (const v of verifiers) byGrade.set(webhookAuthCeiling(v), [...(byGrade.get(webhookAuthCeiling(v)) ?? []), v.source]);
+  for (const [grade, sources] of [...byGrade].sort()) console.log(`  ceiling "${grade}": [${sources.sort().join(", ")}]`);
+
+  ok(verifiers.length > 0, "the live registry has verifiers at all (otherwise everything below is vacuous)");
+  ok(
+    (byGrade.get("signed-fresh") ?? []).length > 0,
+    `🔴 NO registered source can reach the "signed-fresh" floor — a hook declaring it would 401 forever on every source. ` +
+      `Either the category-(b) contract stopped registering, or its verifier stopped declaring signedTimestamp.`,
+  );
+  ok(
+    (byGrade.get("signed") ?? []).length > 0,
+    `🔴 NO registered source sits at "signed" — every source reaching the top rung makes a declared floor decoration, ` +
+      `since nothing could ever be refused by one. The ladder must PARTITION the live set to be worth declaring.`,
+  );
+  ok(!byGrade.has("unverified"), '🔴 no registered scheme has an "unverified" CEILING — that grade is an ATTAINMENT (the dev hatch), never a property a scheme can offer');
+  for (const v of verifiers) {
+    ok(
+      webhookAuthCeiling(v) === (v.signedTimestamp ? "signed-fresh" : "signed"),
+      `"${v.source}"'s ceiling follows its OWN signedTimestamp declaration (signedTimestamp=${v.signedTimestamp}) — the gate reads the same function`,
+    );
+  }
+  for (const v of verifiers) {
+    ok(
+      (webhookAuthCeiling(v) === "signed-fresh") === v.signedTimestamp,
+      `"${v.source}" is at the "signed-fresh" ceiling exactly when it carries the signed single-use replay bound — the floor cannot promise a defence the source lacks`,
+    );
+  }
+}
+
+console.log(
+  `✓ webhook-source-vocabulary-live: ${n} assertions (the LIVE vocabulary is non-empty, doubly-registered, OE-mintable, replay-posture-measured, strength-ladder-partitioned, and matches what declare_webhook advertises)`,
+);

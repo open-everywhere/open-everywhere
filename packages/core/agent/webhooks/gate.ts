@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { hookSecretRefs } from "./config.js";
-import { webhookVerifier, registeredWebhookVerifierSources } from "./verifier.js";
+import { webhookVerifier, registeredWebhookVerifierSources, webhookAuthCeiling, meetsWebhookAuthFloor, type WebhookAuthGrade } from "./verifier.js";
 import { webhookScheme } from "../routines/scheme-name.js";
 
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
@@ -50,6 +50,7 @@ export interface GateableHook {
   readonly scheme?: string;
   readonly secretRef: string | readonly string[];
   readonly broker: string;
+  readonly authFloor?: WebhookAuthGrade;
 }
 
 export interface WebhookGateInput {
@@ -81,11 +82,35 @@ export async function gateWebhookDelivery(args: WebhookGateInput): Promise<Webho
     );
   }
 
+  const floor = hook.authFloor;
+  if (floor !== undefined) {
+    const ceiling = webhookAuthCeiling(verifier);
+    if (!meetsWebhookAuthFloor(ceiling, floor)) {
+      return reject(
+        401,
+        `webhook "${hook.id}" declares authFloor ${JSON.stringify(floor)}, and no delivery on scheme ${JSON.stringify(scheme)} can ever reach it — ` +
+          `the strongest acceptance that scheme offers is ${JSON.stringify(ceiling)} (its verifier declares signedTimestamp: ${verifier.signedTimestamp}). ` +
+          `Refusing every delivery rather than accepting one below the declared floor (fail closed). ` +
+          `Lower the floor, or declare a source whose scheme signs a timestamp.`,
+      );
+    }
+  }
+
   const keys = secretValues.filter((k) => k);
   if (keys.length === 0) {
     const hatch = allowUnverified && hook.broker === "env";
     const currentRef = hookSecretRefs(hook)[0] ?? "(none)";
-    if (hatch) return { ok: true, keyIndex: null };
+    if (hatch) {
+      if (floor !== undefined && !meetsWebhookAuthFloor("unverified", floor)) {
+        return reject(
+          401,
+          `webhook "${hook.id}" declares authFloor ${JSON.stringify(floor)}, so the local-dev hatch cannot accept this delivery — ` +
+            `an acceptance with no resolvable key checks no signature at all ("unverified"), which is below the declared floor. ` +
+            `Refusing rather than downgrading (fail closed). Set ${currentRef}, or drop the hook's authFloor.`,
+        );
+      }
+      return { ok: true, keyIndex: null };
+    }
     return reject(
       401,
       hook.broker !== "env"

@@ -58,6 +58,9 @@ export function parseHooksFile(value: unknown): HooksFile {
     if (h.project !== undefined && !(Array.isArray(h.project) && h.project.every((k) => typeof k === "string"))) {
       throw new HooksCodemodError(`overlay hook "${h.id}" has a malformed \`project\` — it is a list of normalizer field-key names`);
     }
+    if (h.authFloor !== undefined && typeof h.authFloor !== "string") {
+      throw new HooksCodemodError(`overlay hook "${h.id}" has a non-string \`authFloor\` — it names the weakest acceptance this hook will take`);
+    }
     hooks.push(h as unknown as WebhookHook);
   }
   return { hooks };
@@ -73,7 +76,7 @@ export function parseHooksText(text: string): HooksFile {
   return parseHooksFile(json);
 }
 
-const HOOK_KEYS = ["id", "source", "secretRef", "broker", "target", "readableBy", "posture", "project", "instruction"];
+const HOOK_KEYS = ["id", "source", "secretRef", "broker", "authFloor", "target", "readableBy", "posture", "project", "instruction"];
 const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "principal"];
 
 function orderKeys(obj: Record<string, unknown>, order: readonly string[]): Record<string, unknown> {

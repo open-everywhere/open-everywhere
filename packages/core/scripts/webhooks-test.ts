@@ -27,6 +27,7 @@ const { standardWebhookSignature, OE_STANDARD_WEBHOOK_SCHEME, SW_ID_HEADER, SW_S
 const { registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackTestBridge();
 const { verifyWebhookSignature, gateWebhookDelivery, webhookMaxBodyBytes, acceptedUnverified } = await import("../agent/webhooks/gate.js");
+const { registerWebhookVerifier, WEBHOOK_AUTH_GRADES, webhookAuthCeiling, meetsWebhookAuthFloor } = await import("../agent/webhooks/verifier.js");
 const { renderWebhookMessage, fireWebhook, webhookOrg } = await import("../agent/webhooks/dispatch.js");
 const { NO_REPLY_SENTINEL } = await import("../agent/channels/turn-delivery.js");
 const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
@@ -73,6 +74,10 @@ ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "github/owner/repo" 
 ok(throws(() => assertWebhooksValid([{ ...goodHook, target: "slack/T1" }])), "a target missing the channel segment is rejected");
 ok(throws(() => assertWebhooksValid([{ ...goodHook, instruction: "  " }])), "a blank instruction is rejected");
 ok(!throws(() => assertWebhooksValid([])), "an empty registry is valid (the safe default)");
+ok(!throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed-fresh" }])), "a hook declaring a grade ON the ladder validates");
+ok(!throws(() => assertWebhooksValid([goodHook])), "…and omitting it validates too — absence is NO FLOOR, which is what every hook already had");
+ok(throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "signed_fresh" as never }])), "🔴 an authFloor OUTSIDE the ladder is rejected — a typo must not read as 'no floor'");
+ok(throws(() => assertWebhooksValid([{ ...goodHook, authFloor: "" as never }])), "…and neither may a blank one");
 
 {
   const { target: _t, instruction: _i, ...emitOnly } = goodHook;
@@ -217,6 +222,63 @@ ok(
     "🔴 a PREVIOUS-key acceptance is NOT the unverified grade — the two facts are independent, and conflating them is the confusion the stamp exists to end",
   );
   ok(!acceptedUnverified(dbHatch), "a rejection is never the unverified grade");
+}
+
+{
+  const UNFRESH = "test-unfresh-scheme";
+  const unfreshVerifier: import("../agent/webhooks/verifier.js").WebhookVerifier = {
+    source: UNFRESH,
+    keyKind: "shared-secret",
+    keyOrigin: "receiver-minted",
+    signedTimestamp: false,
+    verify: () => ({ ok: true, keyIndex: 0 }),
+  };
+  registerWebhookVerifier(unfreshVerifier);
+  const unfreshHook = { ...goodHook, source: UNFRESH };
+  const freshVerifier = (await import("../agent/webhooks/oe-standard-webhook.js")).standardWebhookVerifier;
+
+  ok(WEBHOOK_AUTH_GRADES.join(",") === "unverified,signed,signed-fresh", "the ladder is ordered WEAKEST FIRST — the array IS the order meetsWebhookAuthFloor compares by");
+  ok(webhookAuthCeiling(freshVerifier) === "signed-fresh", "a signedTimestamp:true scheme's ceiling is signed-fresh");
+  ok(webhookAuthCeiling(unfreshVerifier) === "signed", "a signedTimestamp:false scheme's ceiling is signed — never 'unverified', which is an ATTAINMENT and not any scheme's ceiling");
+  ok(meetsWebhookAuthFloor("signed-fresh", "signed") && !meetsWebhookAuthFloor("signed", "signed-fresh"), "the floor comparison is an ORDER, not equality");
+  ok(meetsWebhookAuthFloor("unverified", "unverified") && meetsWebhookAuthFloor("signed", "signed"), "…and it is reflexive — a floor is a MINIMUM, so attaining exactly it passes");
+
+  ok((await gateWebhookDelivery({ ...baseArgs, hook: unfreshHook })).ok, "a hook with NO declared floor is accepted on a signedTimestamp:false scheme (absence is not a floor)");
+  ok((await gateWebhookDelivery(baseArgs)).ok, "…and on a signedTimestamp:true scheme");
+
+  ok((await gateWebhookDelivery({ ...baseArgs, hook: { ...goodHook, authFloor: "signed-fresh" } })).ok, "authFloor 'signed-fresh' on a timestamped scheme accepts a valid delivery");
+  ok((await gateWebhookDelivery({ ...baseArgs, hook: { ...unfreshHook, authFloor: "signed" } })).ok, "authFloor 'signed' on an untimestamped scheme accepts a valid delivery");
+  ok((await gateWebhookDelivery({ ...baseArgs, hook: { ...unfreshHook, authFloor: "unverified" } })).ok, "the WEAKEST floor admits everything (declaring it constrains nothing, and is allowed to)");
+
+  const unachievable = await gateWebhookDelivery({ ...baseArgs, hook: { ...unfreshHook, authFloor: "signed-fresh" } });
+  ok(!unachievable.ok && unachievable.rejection.status === 401, "🔴 a floor the hook's scheme can NEVER reach refuses the delivery (401) even though its signature verifies — refused, never downgraded");
+  ok(!unachievable.ok && unachievable.rejection.reason.includes("signed-fresh") && unachievable.rejection.reason.includes(UNFRESH), "…and the reason names both the declared floor and the scheme that cannot reach it");
+  ok(!unachievable.ok && unachievable.rejection.reason.includes("signedTimestamp: false"), "…including WHICH declared property decided it, so the fix is readable from the refusal");
+
+  const sameBytes = { ...baseArgs, hook: unfreshHook };
+  ok((await gateWebhookDelivery(sameBytes)).ok && !(await gateWebhookDelivery({ ...sameBytes, hook: { ...unfreshHook, authFloor: "signed-fresh" } })).ok, "🔴 the SAME delivery is accepted or refused purely by the hook's declaration — the request has no say in which floor applies");
+
+  const hatchArgs = { ...baseArgs, secretValues: [], allowUnverified: true };
+  const hatchNoFloor = await gateWebhookDelivery(hatchArgs);
+  ok(hatchNoFloor.ok && acceptedUnverified(hatchNoFloor), "the hatch still accepts a floorless hook, at the 'unverified' grade (unchanged)");
+  const hatchFloored = await gateWebhookDelivery({ ...hatchArgs, hook: { ...goodHook, authFloor: "signed" } });
+  ok(!hatchFloored.ok && hatchFloored.rejection.status === 401, "🔴 a hook declaring ANY floor above 'unverified' refuses the hatch — a missing signature cannot downgrade it to URL-possession");
+  ok(!hatchFloored.ok && hatchFloored.rejection.reason.includes("DEPLOY_STATUS_WEBHOOK_SECRET"), "…and the refusal names the ref to set, not just the fact of refusal");
+  const hatchBottom = await gateWebhookDelivery({ ...hatchArgs, hook: { ...goodHook, authFloor: "unverified" } });
+  ok(hatchBottom.ok && acceptedUnverified(hatchBottom), "…while a hook that declared the BOTTOM grade still takes the hatch — the floor is honoured at its own level, not treated as 'any floor means strict'");
+
+  for (const floor of WEBHOOK_AUTH_GRADES) {
+    for (const [label, base, verifier] of [
+      ["timestamped", goodHook, freshVerifier],
+      ["untimestamped", unfreshHook, unfreshVerifier],
+    ] as const) {
+      const outcome = await gateWebhookDelivery({ ...baseArgs, hook: { ...base, authFloor: floor } });
+      ok(
+        outcome.ok === meetsWebhookAuthFloor(webhookAuthCeiling(verifier), floor),
+        `a VERIFIED delivery on the ${label} scheme is accepted exactly when its ceiling meets floor "${floor}" — no third check needed, and no gap either`,
+      );
+    }
+  }
 }
 
 const previous = "old-s3cr3t";
