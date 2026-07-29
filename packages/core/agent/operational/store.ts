@@ -1,5 +1,5 @@
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
-import type { Routine } from "../routines/routine.js";
+import { routineGrantGeneration, type Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import type { UnifiedWakeRecord } from "../channels/unified-window.js";
@@ -7,6 +7,7 @@ import type { UnifiedWakeRecord } from "../channels/unified-window.js";
 export const OPERATIONAL_TABLES = [
   "spend_ledger",
   "routine",
+  "routine_prompt_revisions",
   "audit_entry",
   "spend_limit",
   "connector_override",
@@ -182,6 +183,65 @@ export interface DomainSkillProvenance {
   readonly approvalId?: string;
 }
 
+export interface RoutinePromptRevisionRow {
+  readonly seq: number;
+  readonly org: string;
+  readonly surfaceKey: string;
+  readonly routineId: string;
+  readonly prompt: string;
+  readonly generation?: number;
+  readonly authoredBy?: string;
+  readonly armedBy?: string;
+  readonly approvalId?: string;
+  readonly recordedAt: string;
+}
+
+export interface RoutinePromptProvenance {
+  readonly authoredBy?: string;
+  readonly armedBy?: string;
+  readonly approvalId?: string;
+}
+
+export interface RoutinePromptRevisionWrite {
+  readonly prompt: string;
+  readonly generation: number;
+  readonly authoredBy?: string;
+  readonly armedBy?: string;
+  readonly approvalId?: string;
+  readonly recordedAt: string;
+}
+
+export function routinePromptRevisionWrites(input: {
+  readonly existing: Routine;
+  readonly updated: Routine;
+  readonly provenance?: RoutinePromptProvenance;
+  readonly hasPriorRevisions: boolean;
+  readonly nowIso: string;
+}): RoutinePromptRevisionWrite[] {
+  const { existing, updated, provenance, hasPriorRevisions, nowIso } = input;
+  const genesis: RoutinePromptRevisionWrite[] = hasPriorRevisions
+    ? []
+    : [
+        {
+          prompt: existing.prompt,
+          generation: routineGrantGeneration(existing),
+          ...(existing.createdBy ? { authoredBy: existing.createdBy } : {}),
+          recordedAt: existing.createdAt,
+        },
+      ];
+  return [
+    ...genesis,
+    {
+      prompt: updated.prompt,
+      generation: routineGrantGeneration(updated),
+      ...(provenance?.authoredBy ? { authoredBy: provenance.authoredBy } : {}),
+      ...(provenance?.armedBy ? { armedBy: provenance.armedBy } : {}),
+      ...(provenance?.approvalId ? { approvalId: provenance.approvalId } : {}),
+      recordedAt: nowIso,
+    },
+  ];
+}
+
 export interface UsageEventEntry {
   readonly org: string;
   readonly surfaceKey: string;
@@ -326,9 +386,10 @@ export interface OperationalStore {
   listRoutines(org: string, surfaceKey: string): Promise<Routine[]>;
   getRoutine(org: string, surfaceKey: string, id: string): Promise<Routine | null>;
   addRoutine(routine: Routine): Promise<Routine>;
-  updateRoutine(org: string, surfaceKey: string, id: string, patch: Partial<Routine>): Promise<Routine | null>;
+  updateRoutine(org: string, surfaceKey: string, id: string, patch: Partial<Routine>, provenance?: RoutinePromptProvenance): Promise<Routine | null>;
   removeRoutine(org: string, surfaceKey: string, id: string): Promise<boolean>;
   listAllRoutines(): Promise<Routine[]>;
+  listRoutinePromptRevisions(org: string, surfaceKey: string, routineId?: string): Promise<RoutinePromptRevisionRow[]>;
 
   appendAudit(entry: AuditEntry): Promise<void>;
   readAudit(filter: AuditFilter): Promise<AuditEntry[]>;

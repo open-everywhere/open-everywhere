@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -45,6 +45,27 @@ function getDb(): DatabaseSync {
       data        TEXT NOT NULL,              -- JSON of the full Routine
       PRIMARY KEY (org_id, id)
     );
+    -- APPEND-ONLY prompt history for the mutable routine row (OPE-242). Written by
+    -- updateRoutine on a patch that REPLACES the prompt, never updated, never deleted, never
+    -- pruned — see RoutinePromptRevisionRow in store.ts for why a routine's prompt history is an
+    -- audit artefact (an edit revokes standing authority), why the log begins at the first EDIT
+    -- rather than at creation, and for the retention position. Append-only here is BY CONTRACT
+    -- only: sqlite has no RLS, so unlike Postgres (SELECT+INSERT policies under FORCE) nothing at
+    -- the engine stops a rewrite. Same caveat audit_entry carries on this deprecated backend,
+    -- stated rather than implied.
+    CREATE TABLE IF NOT EXISTS routine_prompt_revisions (
+      seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id      TEXT NOT NULL,
+      surface_key TEXT NOT NULL,
+      routine_id  TEXT NOT NULL,
+      prompt      TEXT NOT NULL,          -- the exact text the routine ran under
+      generation  INTEGER,                -- the promptGeneration it ran under (joins routineGrantKey)
+      authored_by TEXT,                   -- createdBy on the genesis row, the edit's requestedBy after
+      armed_by    TEXT,                   -- the approver whose click armed it (never on genesis)
+      approval_id TEXT,                   -- pending_actions.id of the card that armed it
+      recorded_at TEXT NOT NULL           -- ISO-8601 (the routine's createdAt on the genesis row)
+    );
+    CREATE INDEX IF NOT EXISTS routine_prompt_revisions_org_surface_routine ON routine_prompt_revisions (org_id, surface_key, routine_id, seq);
     CREATE TABLE IF NOT EXISTS audit_entry (
       seq          INTEGER PRIMARY KEY AUTOINCREMENT,
       ts           TEXT NOT NULL,
@@ -513,7 +534,7 @@ export const sqliteOperationalStore: OperationalStore = {
     return routine;
   },
 
-  async updateRoutine(org, surfaceKey, id, patch) {
+  async updateRoutine(org, surfaceKey, id, patch, provenance) {
     const handle = getDb();
     const row = handle.prepare("SELECT data FROM routine WHERE org_id = ? AND id = ? AND surface_key = ?").get(org, id, surfaceKey) as
       | { data: string }
@@ -521,8 +542,59 @@ export const sqliteOperationalStore: OperationalStore = {
     if (!row) return null;
     const existing = JSON.parse(row.data) as Routine;
     const updated: Routine = { ...existing, ...patch, id: existing.id, org: existing.org, surfaceKey: existing.surfaceKey };
+    if (patch.prompt !== undefined && patch.prompt !== existing.prompt) {
+      const prior = handle
+        .prepare("SELECT 1 FROM routine_prompt_revisions WHERE org_id = ? AND surface_key = ? AND routine_id = ? LIMIT 1")
+        .get(org, surfaceKey, id);
+      const writes = routinePromptRevisionWrites({
+        existing,
+        updated,
+        ...(provenance ? { provenance } : {}),
+        hasPriorRevisions: prior !== undefined,
+        nowIso: new Date().toISOString(),
+      });
+      const insert = handle.prepare(
+        `INSERT INTO routine_prompt_revisions (org_id, surface_key, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const w of writes) {
+        insert.run(org, surfaceKey, id, w.prompt, w.generation, w.authoredBy ?? null, w.armedBy ?? null, w.approvalId ?? null, w.recordedAt);
+      }
+    }
     handle.prepare("UPDATE routine SET data = ? WHERE org_id = ? AND id = ?").run(JSON.stringify(updated), org, id);
     return updated;
+  },
+
+  async listRoutinePromptRevisions(org, surfaceKey, routineId) {
+    const rows = getDb()
+      .prepare(
+        `SELECT seq, routine_id, prompt, generation, authored_by, armed_by, approval_id, recorded_at
+         FROM routine_prompt_revisions
+         WHERE org_id = ? AND surface_key = ? AND (? IS NULL OR routine_id = ?)
+         ORDER BY seq`,
+      )
+      .all(org, surfaceKey, routineId ?? null, routineId ?? null) as {
+      seq: number;
+      routine_id: string;
+      prompt: string;
+      generation: number | null;
+      authored_by: string | null;
+      armed_by: string | null;
+      approval_id: string | null;
+      recorded_at: string;
+    }[];
+    return rows.map((r) => ({
+      seq: Number(r.seq),
+      org,
+      surfaceKey,
+      routineId: r.routine_id,
+      prompt: r.prompt,
+      ...(r.generation === null ? {} : { generation: Number(r.generation) }),
+      ...(r.authored_by ? { authoredBy: r.authored_by } : {}),
+      ...(r.armed_by ? { armedBy: r.armed_by } : {}),
+      ...(r.approval_id ? { approvalId: r.approval_id } : {}),
+      recordedAt: r.recorded_at,
+    }));
   },
 
   async removeRoutine(org, surfaceKey, id) {

@@ -11,6 +11,7 @@ import {
 } from "../routines/routine.js";
 import { appendAudit } from "../audit/audit.js";
 import type { Partition } from "../memory/partition.js";
+import { armingApproval } from "./arming-context.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -54,7 +55,12 @@ const routineEdit: ActionKind<RoutineEditArgs> = {
 
     const generation = args.generation + 1;
     const patch: Partial<Routine> = { prompt: args.prompt, promptGeneration: generation };
-    const updated = await updateRoutine(args.org, args.surfaceKey, args.id, patch);
+    const arming = armingApproval();
+    const updated = await updateRoutine(args.org, args.surfaceKey, args.id, patch, {
+      authoredBy: args.requestedBy,
+      armedBy: decidedBy,
+      ...(arming ? { approvalId: arming.id } : {}),
+    });
     if (!updated) {
       return `routine ${args.id} is gone — it was cancelled before this edit was confirmed, so nothing changed.`;
     }

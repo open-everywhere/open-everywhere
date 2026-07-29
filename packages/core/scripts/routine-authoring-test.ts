@@ -238,6 +238,74 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 }
 
 {
+  const revs = await store.listRoutinePromptRevisions(ORG, SURFACE, "r-edit");
+  ok(
+    revs.some((r) => r.prompt === "Old instruction."),
+    `revisions: THE SUPERSEDED INSTRUCTION SURVIVES the patch that overwrote it (recorded prompts: ${JSON.stringify(revs.map((r) => r.prompt))})`,
+  );
+  ok(revs.length === 2 && revs[0]!.seq < revs[1]!.seq, `revisions: one edit records the text it destroyed AND the text that replaced it, oldest first by seq (got ${revs.length})`);
+  ok(revs[1]!.prompt === "New instruction.", "revisions: the replacing text is recorded too — the log plus the live row is the whole history");
+
+  ok(revs[0]!.generation === 1 && revs[1]!.generation === 2, `revisions: each row carries the generation its text ran under (got ${revs[0]!.generation}/${revs[1]!.generation})`);
+  ok(routineGrantKey({ id: "r-edit", promptGeneration: revs[0]!.generation }) !== routineGrantKey({ id: "r-edit", promptGeneration: revs[1]!.generation }), "revisions: those two generations are the two DIFFERENT grant keys — the log is joinable to the authority it explains");
+
+  ok(revs[0]!.authoredBy === "U7" && revs[0]!.recordedAt === "2026-07-01T00:00:00.000Z", `revisions: the genesis row carries the routine's OWN createdBy + createdAt (got ${revs[0]!.authoredBy}/${revs[0]!.recordedAt})`);
+  ok(revs[0]!.armedBy === undefined && revs[0]!.approvalId === undefined, "revisions: the genesis row claims NO approver — the store knows who created a routine, never who clicked the card that armed it");
+  ok(revs[1]!.authoredBy === "U1" && revs[1]!.armedBy === "U9", "revisions: the new text separates who ASKED from who ARMED, exactly as the audit row does");
+  ok(revs[1]!.approvalId === undefined, "revisions: driven outside a real click, the card join is absent and the write still happened (fail-soft, never refuses)");
+
+  await store.updateRoutine(ORG, SURFACE, "r-edit", { lastRunAt: "2026-07-22T09:00:00.000Z", consecutiveFailures: 0 });
+  ok((await store.listRoutinePromptRevisions(ORG, SURFACE, "r-edit")).length === 2, "revisions: a fire's own patch (nextRunAt/lastRunAt/counters) records nothing — the log grows with approved edits, not with traffic");
+  ok((await store.getRoutine(ORG, SURFACE, "r-edit"))!.lastRunAt === "2026-07-22T09:00:00.000Z", "revisions: …and that patch still applied normally");
+}
+
+{
+  const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
+
+  await store.addRoutine(partition, routine({ id: "r-armed", prompt: "Genesis text.", createdBy: "U7", promptGeneration: 3 }));
+  const posted = await requestApproval(
+    {
+      org: ORG,
+      kind: "routine.edit",
+      args: {
+        org: ORG,
+        partition,
+        surfaceKey: SURFACE,
+        id: "r-armed",
+        prompt: "Armed replacement.",
+        previousPrompt: "Genesis text.",
+        description: "every 30 min",
+        requestedBy: "U_ASKER",
+        trigger: { kind: "interval", everyMinutes: 30 },
+        generation: 3,
+      },
+      scopeKey: SURFACE,
+      domain: null,
+      requestedBy: "U_ASKER",
+      channelId: "C1",
+    },
+    { postCard: async () => "ts-routine-1" },
+  );
+  const decided = await resolveApprovalClick({ org: ORG, id: posted.id, decision: "approve", clickerId: "U_ARMER" });
+  ok(decided.outcome === "decided", `arming: the click decides (outcome ${decided.outcome})`);
+
+  const armed = await store.listRoutinePromptRevisions(ORG, SURFACE, "r-armed");
+  ok(armed.length === 2 && armed[0]!.prompt === "Genesis text." && armed[1]!.prompt === "Armed replacement.", `arming: the click records both texts (got ${JSON.stringify(armed.map((r) => r.prompt))})`);
+  ok(armed[1]!.approvalId === posted.id, `arming: the new text names the CARD that armed it (${armed[1]!.approvalId} vs ${posted.id})`);
+  ok(armed[1]!.armedBy === "U_ARMER" && armed[1]!.authoredBy === "U_ASKER", "arming: armer and asker are recorded separately — they are different people");
+  ok(armed[0]!.approvalId === undefined, "arming: the genesis row is NOT credited to this card — that card armed the text that replaced it");
+  ok(armed[0]!.generation === 3 && armed[1]!.generation === 4, "arming: the recorded generations bracket the authority the click revoked");
+  ok((await store.getRoutine(ORG, SURFACE, "r-armed"))!.prompt === "Armed replacement.", "arming: the LIVE row is the latest text (the log is history, not a replacement)");
+
+  await store.removeRoutine(partition, "r-armed");
+  ok((await store.getRoutine(ORG, SURFACE, "r-armed")) === null, "arming: the routine is cancelled");
+  const swept = await store.listRoutinePromptRevisions(ORG, SURFACE);
+  ok(swept.filter((r) => r.routineId === "r-armed").length === 2, "arming: cancelling does NOT un-record what was armed — an append-only log doesn't retract");
+  ok(swept.some((r) => r.routineId === "r-edit"), "arming: omitting the id sweeps the whole surface, not one routine");
+  ok((await store.listRoutinePromptRevisions("other-org", SURFACE)).length === 0, "arming: another org's log never leaks into this one");
+}
+
+{
   const before = (await store.getRoutine(ORG, SURFACE, "r-edit"))!;
   ok(routineGrantGeneration(before) === 2, "invalidate: the edit above advanced the routine's authority generation");
 
@@ -373,4 +441,4 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
 }
 
 rmSync(dir, { recursive: true, force: true });
-console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + grant invalidation + re-arm)`);
+console.log(`✓ routine authoring (OPE-147): ${passed} assertions passed (preview + run-now + edit + grant invalidation + prompt revisions + re-arm)`);

@@ -90,6 +90,41 @@ const store = makeOperationalPostgresStore(client);
 }
 
 {
+  await store.addRoutine(routine("acme", "local/dev/hist", "r-hist", { prompt: "first instruction", createdBy: "U_MAKER", createdAt: "2026-06-20T08:00:00Z", promptGeneration: 1 }));
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist")).length === 0, "pg revisions: a routine nobody has edited has NO rows — nothing was destroyed, so there is nothing to have kept (this is what keeps a never-pruned table off the traffic path)");
+
+  await store.updateRoutine("acme", "local/dev/hist", "r-hist", { lastRunAt: "2026-06-21T08:00:00Z", consecutiveFailures: 1 });
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist")).length === 0, "pg revisions: a fire's patch (lastRunAt/counters) records nothing — the log grows with approved edits, never with fires");
+
+  await store.updateRoutine("acme", "local/dev/hist", "r-hist", { prompt: "second instruction", promptGeneration: 2 }, { authoredBy: "U_ASKER", armedBy: "U_ARMER", approvalId: "pa_r1" });
+  const revs = await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist");
+  ok(
+    revs.some((r) => r.prompt === "first instruction"),
+    `pg revisions: THE SUPERSEDED INSTRUCTION SURVIVES the patch that overwrote it (recorded prompts: ${JSON.stringify(revs.map((r) => r.prompt))})`,
+  );
+  ok(revs.length === 2 && revs[0]!.seq < revs[1]!.seq, `pg revisions: the first edit records the destroyed text AND its replacement, oldest-first by the identity seq (got ${revs.length})`);
+  ok(revs[0]!.generation === 1 && revs[1]!.generation === 2, "pg revisions: each row carries the generation its text ran under — the join back to routineGrantKey()");
+  ok(revs[0]!.authoredBy === "U_MAKER" && revs[0]!.recordedAt === "2026-06-20T08:00:00Z", "pg revisions: the GENESIS row is attributed from the row (createdBy/createdAt), not from the edit that retired it");
+  ok(revs[0]!.armedBy === undefined && revs[0]!.approvalId === undefined, "pg revisions: the genesis row claims no approver — crediting this edit's clicker for the OLD text would be the most misleading thing this table could say");
+  ok(revs[1]!.authoredBy === "U_ASKER" && revs[1]!.armedBy === "U_ARMER" && revs[1]!.approvalId === "pa_r1", "pg revisions: asker, armer and the arming card's id all round-trip");
+
+  await store.updateRoutine("acme", "local/dev/hist", "r-hist", { prompt: "third instruction", promptGeneration: 3 }, { armedBy: "U_ARMER2", approvalId: "pa_r2" });
+  const three = await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist");
+  ok(three.length === 3 && three.map((r) => r.prompt).join("|") === "first instruction|second instruction|third instruction", `pg revisions: the log reads as the routine's whole spoken history, oldest first (got ${JSON.stringify(three.map((r) => r.prompt))})`);
+  ok((await store.getRoutine("acme", "local/dev/hist", "r-hist"))!.prompt === "third instruction", "pg revisions: the LIVE row is the latest text — the log is what it USED to say");
+
+  await store.updateRoutine("acme", "local/dev/hist", "r-hist", { prompt: "third instruction" });
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist")).length === 3, "pg revisions: re-writing the SAME prompt records nothing — a no-op is not a supersession");
+
+  await store.addRoutine(routine("globex", "local/dev/hist", "r-hist", { prompt: "other org first" }));
+  await store.updateRoutine("globex", "local/dev/hist", "r-hist", { prompt: "other org second" });
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/hist", "r-hist")).length === 3, "pg revisions: another org's edits to the SAME surfaceKey and routine id never leak into this org's log");
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/other")).length === 0, "pg revisions: another surface in the same org is isolated");
+  ok((await store.removeRoutine("acme", "local/dev/hist", "r-hist")) === true, "pg revisions: the routine is cancelled");
+  ok((await store.listRoutinePromptRevisions("acme", "local/dev/hist")).length === 3, "pg revisions: cancelling does NOT un-record what was armed — the surface sweep reaches a routine whose row is gone");
+}
+
+{
   await store.appendAudit({ ts: "2026-06-24T10:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U1", action: "memory.write", detail: { files: 2 } });
   await store.appendAudit({ ts: "2026-06-24T12:00:00Z", org: "acme", platform: "slack", workspace: "T2", surface: "C9", principalId: "U1", action: "egress.policy" });
   await store.appendAudit({ ts: "2026-06-24T09:00:00Z", org: "globex", platform: "linear", workspace: "O1", action: "memory.write" });
@@ -702,6 +737,13 @@ const store = makeOperationalPostgresStore(client);
     await denied("DELETE FROM domain_skill_revisions", "permission denied", "two-role: DELETE domain_skill_revisions is permission-DENIED (the approved body can't be erased)");
     await denied("TRUNCATE domain_skill_revisions", "permission denied", "two-role: TRUNCATE domain_skill_revisions is permission-DENIED (RLS does not filter TRUNCATE)");
 
+    await store.addRoutine(routine("acme", "local/dev/rr", "r-rr", { prompt: "runtime-role genesis" }));
+    await store.updateRoutine("acme", "local/dev/rr", "r-rr", { prompt: "runtime-role replacement", promptGeneration: 2 }, { armedBy: "U2", approvalId: "pa_rr2" });
+    ok((await store.listRoutinePromptRevisions("acme", "local/dev/rr", "r-rr")).length === 2, "two-role: the runtime role can append + read routine_prompt_revisions");
+    await denied("UPDATE routine_prompt_revisions SET prompt = 'tampered'", "permission denied", "two-role: UPDATE routine_prompt_revisions is permission-DENIED (the armed instruction can't be rewritten by the credential that can rewrite the live routine)");
+    await denied("DELETE FROM routine_prompt_revisions", "permission denied", "two-role: DELETE routine_prompt_revisions is permission-DENIED (the armed instruction can't be erased)");
+    await denied("TRUNCATE routine_prompt_revisions", "permission denied", "two-role: TRUNCATE routine_prompt_revisions is permission-DENIED (RLS does not filter TRUNCATE — one statement would wipe every org's prompt history)");
+
     await denied("DELETE FROM webhook_capture_window", "permission denied", "two-role: DELETE webhook_capture_window is permission-DENIED (OPE-221 — no delete path exists for an arm-state row)");
     ok(
       ((await client.query("SELECT count(*)::int AS n FROM webhook_capture_window")).rows as { n: number }[])[0].n >= 0,
@@ -915,4 +957,4 @@ const store = makeOperationalPostgresStore(client);
 }
 
 await db.close();
-console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);
+console.log(`✓ operational — ${passed} assertions (pglite contract, spend/routine/audit isolation, RLS, audit+usage append-only under app role AND FORCE-RLS under a non-superuser owner, two-role runtime posture (DDL escape closed) + tamper detection/refusal, broadened suppression detection (hostile trigger / restrictive policy / stray grant — detect+heal+fail-closed), event dedupe, domain skills, routine prompt revisions, domain model pick, ownership routing (ownerToken/kind), durable stopped marker, channel supervisor sessions, pending-action posted_to round-trip + decide CAS, github installations (upsert/list/delete + org isolation), migration)`);
