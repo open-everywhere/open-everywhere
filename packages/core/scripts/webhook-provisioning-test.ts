@@ -93,12 +93,53 @@ const rotateKind = actionKind("webhook.rotate")!;
   ok(verifierMod.acceptsMintedSecret(fake("x", "vendor-issued")) === false, "acceptsMintedSecret: a vendor-ISSUED shared secret does not (we cannot choose the value)");
   ok(verifierMod.acceptsMintedSecret(fake("x", "receiver-minted", "public-key")) === false, "acceptsMintedSecret: an ASYMMETRIC scheme does not (there is no shared secret to mint)");
 
+  {
+    const declarable = vocab.declarableSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => undefined });
+    const mintable = vocab.mintableSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => undefined });
+    eq(declarable, ["asym", "github", "vendor-token"], "🔴 a vendor-issued or asymmetric source with BOTH halves IS declarable — its secret is just one an operator sets");
+    ok(
+      mintable.every((s) => declarable.includes(s)),
+      "🔴 mintable ⊆ declarable — the ONE invariant that makes this a NARROWING of where a check applies rather than a relaxation of what it decides",
+    );
+    ok(mintable.length < declarable.length, "…and the containment is STRICT here, so the assertion above is not vacuous");
+
+    ok(!declarable.includes("verifier-only"), "🔴 a source with a verifier and NO normalizer is NOT declarable either — it would authenticate and route nowhere");
+    ok(
+      !vocab.declarableSourceVocabulary({ verifiers: V, normalizers: N, declared: () => undefined }).includes("linear"),
+      "🔴 a source with a normalizer and NO verifier is NOT declarable either — every delivery would 401",
+    );
+    eq(
+      vocab.declarableSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => ["vendor-token"] }),
+      ["vendor-token"],
+      "🔴 the operator's declared list narrows the DECLARABLE set too (it is a rule about what may be named, not about who holds the key)",
+    );
+    eq(vocab.declarableSourceVocabulary({ verifiers: VK, normalizers: NK, declared: () => [] }), [], "…and an EMPTY operator list means nothing is declarable, not everything");
+
+    const withProvider = { ...fake("github"), provider: "github" } as WebhookVerifier;
+    eq(
+      vocab.generalPurposeSchemes({ verifiers: () => [withProvider, fake("oe-standard-webhook")], normalizers: () => ["github", "oe-standard-webhook"], declared: () => undefined }),
+      ["oe-standard-webhook"],
+      "🔴 a vendor bundle's verifier is NOT offered as a general-purpose contract — only an entry with no `provider`",
+    );
+  }
+
   const refusal = vocab.unknownSourceRefusal("stripe", ["github", "notion"]);
   ok(refusal.includes("github, notion"), "🔴 the refusal NAMES the legal set — the error message IS the vocabulary");
   ok(/PR|merge/i.test(refusal), "…and names the PR path (an 'ask an admin' with no WHAT is a dead end)");
   ok(vocab.unknownSourceRefusal("stripe", []).includes("No sources are available"), "an empty vocabulary refuses honestly rather than naming an empty list");
-  ok(refusal.includes("none of those can be set up this way"), "a vendor-issued secret is refused plainly, with the config route named");
-  ok(/configuration/.test(refusal), "…and the refusal says WHERE the alternative lives rather than just saying no");
+  ok(!/none of those can be set up this way/.test(refusal), "🔴 the pre-OPE-238 dead end ('none of those can be set up this way') is GONE — it stopped being true when declare_webhook shipped an env default");
+  ok(/secretHome: "env"/.test(refusal), "…and the vendor-issued sentence names the arm that DOES work, by parameter");
+  ok(/can never issue that kind myself/.test(refusal), "…while still stating plainly that WE never issue a vendor's secret (the OPE-186 fact, undiminished)");
+  ok(!/an operator has to declare the hook in configuration instead/.test(refusal), "🔴 the refusal no longer sends the caller to 'have an operator declare it in configuration' — that IS this tool, so it pointed at itself (OPE-238)");
+
+  {
+    const um = vocab.unmintableSourceRefusal("notion", "OE_WEBHOOK_NOTION_EVENTS_SECRET");
+    ok(/secretHome: "env"/.test(um), '🔴 it names the ONE parameter that makes the request work — `secretHome: "env"`');
+    ok(um.includes("OE_WEBHOOK_NOTION_EVENTS_SECRET"), "…and the exact variable an operator sets, so the follow-up step needs no second conversation");
+    ok(/I can declare a "notion" webhook/.test(um), "…and opens by saying the hook IS declarable, so the caller does not read it as a flat no");
+    ok(/401 forever/.test(um), "…and states WHY db is refused — OPE-186's argument, in the one place its antecedent holds");
+    ok(!/\bPRs?\b|\bmerges?\b|\badmins?\b/i.test(um), "🔴 it does NOT send the caller for a code change or a second person — the escape is one field away in this same call");
+  }
 
 }
 

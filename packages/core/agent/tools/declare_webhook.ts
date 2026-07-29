@@ -12,7 +12,14 @@ import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
-import { mintableSourceVocabulary, unknownSourceRefusal } from "../webhooks/source-vocabulary.js";
+import {
+  declarableSourceVocabulary,
+  generalPurposeSchemes,
+  mintableSourceVocabulary,
+  unknownSourceRefusal,
+  unmintableSourceRefusal,
+  type SourceVocabularyDeps,
+} from "../webhooks/source-vocabulary.js";
 import { WEBHOOK_POSTURES, type WebhookPosture } from "../webhooks/config.js";
 import { eventNormalizer } from "../routines/event-model.js";
 import type { HookDeclaration } from "../webhooks/hooks-codemod.js";
@@ -27,15 +34,21 @@ export function dbSecretRefForHookId(id: string): string {
   return `db:webhook:${id}`;
 }
 
-export function generalPurposeSchemeHint(source: string, scheme: string, vocabulary: readonly string[], schemeWasExplicit: boolean): string {
-  if (schemeWasExplicit) return "";
-  const alternatives = vocabulary.filter((s) => s !== scheme && s !== source);
+export function generalPurposeSchemeHint(source: string, contracts: readonly string[]): string {
+  const alternatives = contracts.filter((s) => s !== source);
   if (alternatives.length === 0) return "";
   return (
     `\n\nBefore asking for that PR: if "${source}" is something you control or can script (a CI job, a build, an internal service), it does NOT need an adapter of its own. ` +
-    `Keep "${source}" as the \`source\` — it is just a label — and set \`scheme\` to a general-purpose contract this deployment already has (${alternatives.join(", ")}). ` +
-    `The sender then implements our signing contract instead of us implementing theirs.`
+    `Put "${source}" in the hook's \`id\` instead — the id is the handle, and it is what an \`event\` routine subscribes to — and set \`source\` to a general-purpose contract ` +
+    `this deployment already has (${alternatives.join(", ")}). The sender then implements our signing contract instead of us implementing theirs.`
   );
+}
+
+export function sourceVocabularyRefusal(source: string, secretHome: "env" | "db", envRef: string, deps: SourceVocabularyDeps = {}): string | undefined {
+  const declarable = declarableSourceVocabulary(deps);
+  if (!declarable.includes(source)) return unknownSourceRefusal(source, declarable) + generalPurposeSchemeHint(source, generalPurposeSchemes(deps));
+  if (secretHome === "db" && !mintableSourceVocabulary(deps).includes(source)) return unmintableSourceRefusal(source, envRef);
+  return undefined;
 }
 
 export default defineTool({
@@ -68,7 +81,7 @@ export default defineTool({
       .enum(["env", "db"])
       .optional()
       .describe(
-        'Where the signing secret will live. "env" (the default) means an operator sets an environment variable and redeploys — right when they already hold the secret, e.g. a vendor gave it to them. "db" means the secret is stored here instead: after the PR merges, someone asks to rotate this webhook and gets a one-time link with a freshly generated secret to paste into the sender — no redeploy. Ask for "db" when the sender is something the org configures itself (CI, a script, an internal service).',
+        'Where the signing secret will live. "env" (the default) means an operator sets an environment variable and redeploys — right when they already hold the secret, e.g. a vendor gave it to them. "db" means the secret is stored here instead: after the PR merges, someone asks to rotate this webhook and gets a one-time link with a freshly generated secret to paste into the sender — no redeploy. Ask for "db" when the sender is something the org configures itself (CI, a script, an internal service). Most vendors GENERATE the signing secret themselves rather than letting us choose it; for those "db" is refused (a secret we made up would never verify) and "env" is the only answer.',
       ),
     posture: z
       .enum(WEBHOOK_POSTURES as unknown as [WebhookPosture, ...WebhookPosture[]])
@@ -121,8 +134,10 @@ export default defineTool({
     }
 
     const source = input.source.trim().toLowerCase();
-    const vocabulary = mintableSourceVocabulary();
-    if (!vocabulary.includes(source)) throw new Error(unknownSourceRefusal(source, vocabulary) + generalPurposeSchemeHint(source, source, vocabulary, false));
+    const secretHome = input.secretHome ?? "env";
+
+    const refusal = sourceVocabularyRefusal(source, secretHome, secretRefForHookId(id));
+    if (refusal !== undefined) throw new Error(refusal);
 
     const target = input.target?.trim() || undefined;
     const instruction = input.instruction?.trim() || undefined;
@@ -186,7 +201,6 @@ export default defineTool({
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error("declare_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
 
-    const secretHome = input.secretHome ?? "env";
     const declaration: HookDeclaration = {
       id,
       source,

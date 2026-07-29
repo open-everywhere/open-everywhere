@@ -531,16 +531,18 @@ async function post(
 {
   console.log("\n10. the unknown-source refusal names the (b) escape:");
   const { generalPurposeSchemeHint } = await import("../agent/tools/declare_webhook.js");
-  const vocab = ["github", sw.OE_STANDARD_WEBHOOK_SCHEME];
+  const contracts = [sw.OE_STANDARD_WEBHOOK_SCHEME];
 
-  const hint = generalPurposeSchemeHint("jenkins", "jenkins", vocab, false);
+  const hint = generalPurposeSchemeHint("jenkins", contracts);
   ok(hint.includes(sw.OE_STANDARD_WEBHOOK_SCHEME), "a caller who typed a system name is pointed at the general-purpose contract by name");
-  ok(!hint.includes('"jenkins" as the `scheme`') && hint.includes('Keep "jenkins" as the `source`'), "…and told their word stays as the LABEL, not as the contract");
   ok(/does NOT need an adapter/.test(hint), "…and told explicitly that no adapter is needed — the PR the refusal above suggests is not the only road");
 
-  eq(generalPurposeSchemeHint("jenkins", "jenkins", vocab, true), "", "a caller who ALREADY named a scheme gets no hint (they know the parameter exists)");
-  eq(generalPurposeSchemeHint("jenkins", "jenkins", [], false), "", "a deployment with NO registered contract offers no alternative rather than pointing at nothing");
-  eq(generalPurposeSchemeHint("jenkins", "jenkins", ["jenkins"], false), "", "…and never offers the very string that was just refused");
+  ok(hint.includes('Put "jenkins" in the hook\'s `id`'), "…and told their word stays as the LABEL (the hook's `id`), not as the contract");
+  ok(/set `source` to a general-purpose contract/.test(hint), "…and that `source` is the field carrying the contract");
+  ok(!/`scheme`/.test(hint), "🔴 the hint does NOT name a `scheme` parameter — declare_webhook has never had one (OPE-224 collapsed the pair), so advice to set it is a dead end");
+
+  eq(generalPurposeSchemeHint("jenkins", []), "", "a deployment with NO registered contract offers no alternative rather than pointing at nothing");
+  eq(generalPurposeSchemeHint("jenkins", ["jenkins"]), "", "…and never offers the very string that was just refused");
 }
 
 {

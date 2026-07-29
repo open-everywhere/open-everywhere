@@ -12,7 +12,7 @@ import {
   webhookVerifier,
 } from "@open-everywhere/core/agent/webhooks/verifier.js";
 import { declaredDeliveryId, eventNormalizer, registeredEventSources } from "@open-everywhere/core/agent/routines/event-model.js";
-import { mintableSourceVocabulary, unknownSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
+import { declarableSourceVocabulary, generalPurposeSchemes, mintableSourceVocabulary, unknownSourceRefusal, unmintableSourceRefusal } from "@open-everywhere/core/agent/webhooks/source-vocabulary.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -36,10 +36,12 @@ registerConfig({
 });
 
 const vocabulary = mintableSourceVocabulary();
+const declarable = declarableSourceVocabulary();
 const verifiers = registeredWebhookVerifiers();
 const normalizers = registeredEventSources();
 console.log(`  live registries: verifiers=[${verifiers.map((v) => v.source).sort().join(", ")}] normalizers=[${normalizers.join(", ")}]`);
-console.log(`  live vocabulary: [${vocabulary.join(", ")}]`);
+console.log(`  live DECLARABLE vocabulary: [${declarable.join(", ")}]`);
+console.log(`  live MINTABLE   vocabulary: [${vocabulary.join(", ")}]`);
 
 ok(verifiers.length > 0, "the live VERIFIER registry is non-empty (otherwise every check below is vacuous)");
 ok(normalizers.length > 0, "the live NORMALIZER registry is non-empty (otherwise every check below is vacuous)");
@@ -105,10 +107,14 @@ for (const source of vocabulary) {
   ok(examples.length > 0, "…and it names at least one worked example (an example is what the model reaches for first)");
   for (const example of examples) {
     ok(
-      vocabulary.includes(example),
-      `🔴 declare_webhook offers "${example}" as an example source, but it is NOT in the live vocabulary [${vocabulary.join(", ")}] — the model would be pointed at a value that always refuses`,
+      declarable.includes(example),
+      `🔴 declare_webhook offers "${example}" as an example source, but it is NOT in the live DECLARABLE vocabulary [${declarable.join(", ")}] — the model would be pointed at a value that always refuses`,
     );
   }
+  ok(
+    examples.some((e) => vocabulary.includes(e)),
+    `🔴 NO example source is chat-MINTABLE [mintable=${vocabulary.join(", ")}] — the \`secretHome: "db"\` recipe would have no worked example the model could reach for`,
+  );
   ok(
     examples.some((e) => vocabulary.includes(e) && e !== "github"),
     "…and at least one of them is a contract that is not a named vendor — the category-(b) path the parameter exists for",
@@ -116,16 +122,62 @@ for (const source of vocabulary) {
 }
 
 {
-  const refusal = unknownSourceRefusal("definitely-not-a-registered-source", vocabulary);
-  for (const source of vocabulary) ok(refusal.includes(source), `the refusal names the live member "${source}"`);
+  const refusal = unknownSourceRefusal("definitely-not-a-registered-source", declarable);
+  for (const source of declarable) ok(refusal.includes(source), `the refusal names the live declarable member "${source}"`);
   ok(/PR|merge/i.test(refusal), "the refusal names the PR path (an 'ask an admin' with no WHAT is a dead end)");
 
   ok(
-    refusal.includes("none of those can be set up this way"),
-    "the refusal states plainly that a vendor-issued secret cannot be set up from chat",
+    !refusal.includes("none of those can be set up this way"),
+    "🔴 the pre-OPE-238 dead end has NOT returned — a vendor-issued source IS declarable, it just cannot have its secret minted here",
   );
+  ok(
+    !refusal.includes("an operator has to declare the hook in configuration instead"),
+    "🔴 …nor the sentence that sent the caller to have an operator declare the hook in config — declare_webhook IS that path, so the refusal was pointing at itself",
+  );
+  ok(/secretHome: "env"/.test(refusal), "the refusal names the arm that DOES work for a vendor-issued secret, by parameter");
   for (const source of vocabulary) {
-    ok(acceptsMintedSecret(webhookVerifier(source)!), `live member "${source}" accepts an OE-MINTED key — which is what makes the refusal's vendor-issued sentence true`);
+    ok(acceptsMintedSecret(webhookVerifier(source)!), `live mintable member "${source}" accepts an OE-MINTED key — which is what makes the refusal's vendor-issued sentence true`);
+  }
+}
+
+{
+  ok(declarable.length > 0, "the live DECLARABLE vocabulary is non-empty (otherwise every check below is vacuous)");
+  for (const source of vocabulary) ok(declarable.includes(source), `🔴 mintable member "${source}" is also declarable — mintable ⊆ declarable, always`);
+
+  const envOnly = declarable.filter((s) => !vocabulary.includes(s));
+  console.log(`  env-only (declarable, NOT mintable): [${envOnly.join(", ")}]`);
+  ok(
+    envOnly.length > 0,
+    "🔴 NOTHING is declarable-but-not-mintable on this tree, so the split measures nothing. If every registered source is now legitimately receiver-minted, re-express this leg against a synthetic entry; do NOT just delete it.",
+  );
+  for (const source of envOnly) {
+    const v = webhookVerifier(source)!;
+    ok(v !== undefined, `env-only "${source}" has a registered VERIFIER — the condition that was NOT waived`);
+    ok(eventNormalizer(source) !== undefined, `env-only "${source}" has a registered NORMALIZER — the other condition that was NOT waived`);
+    ok(!acceptsMintedSecret(v), `env-only "${source}" is excluded from MINTABLE on key provenance alone (keyOrigin=${v.keyOrigin}, keyKind=${v.keyKind}) — which is the whole reason the two sets differ`);
+  }
+  for (const v of verifiers) {
+    if (normalizers.includes(v.source)) continue;
+    ok(!declarable.includes(v.source), `🔴 "${v.source}" has a verifier but NO normalizer, so it is absent from the DECLARABLE set too — the env arm waived key provenance, nothing else`);
+    ok(!vocabulary.includes(v.source), `…and from the mintable set`);
+  }
+
+  for (const source of envOnly) {
+    const um = unmintableSourceRefusal(source, `OE_WEBHOOK_${source.toUpperCase()}_SECRET`);
+    ok(/secretHome: "env"/.test(um), `the db refusal for "${source}" names the parameter that makes the request work`);
+    ok(um.includes(`OE_WEBHOOK_${source.toUpperCase()}_SECRET`), `…and the exact variable an operator sets for "${source}"`);
+  }
+
+  const general = generalPurposeSchemes();
+  console.log(`  general-purpose contracts: [${general.join(", ")}]`);
+  ok(general.length > 0, "🔴 at least one general-purpose contract is registered — it is the ONLY route for a sender with no adapter, and declare_webhook's hint points at it");
+  for (const s of general) {
+    ok(declarable.includes(s), `general-purpose "${s}" is declarable`);
+    ok(webhookVerifier(s)!.provider === undefined, `…and carries no \`provider\`, which is what makes it general-purpose rather than a vendor's scheme`);
+  }
+  for (const v of verifiers) {
+    if (v.provider === undefined) continue;
+    ok(!general.includes(v.source), `🔴 vendor-bundled "${v.source}" (provider=${v.provider}) is NOT offered as a general-purpose contract — advising a CI job to sign that way would be false`);
   }
 }
 

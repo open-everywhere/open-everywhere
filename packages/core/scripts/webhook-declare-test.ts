@@ -166,6 +166,49 @@ const ARGS = {
 }
 
 {
+  console.log("\n3b. the two vocabularies, per broker:");
+  const { sourceVocabularyRefusal } = await import("../agent/tools/declare_webhook.js");
+  const v = (source: string, keyOrigin: "receiver-minted" | "vendor-issued", provider?: string) => ({
+    source,
+    keyKind: "shared-secret" as const,
+    keyOrigin,
+    signedTimestamp: false,
+    ...(provider !== undefined ? { provider } : {}),
+    verify: () => ({ ok: false as const, failure: "signature-mismatch" as const }),
+  });
+  const deps = {
+    verifiers: () => [v("ours", "receiver-minted"), v("vendorco", "vendor-issued", "vendorco"), v("halfway", "vendor-issued", "halfway")],
+    normalizers: () => ["ours", "vendorco"],
+    declared: () => undefined,
+  };
+  const REF = "OE_WEBHOOK_X_SECRET";
+
+  eq(sourceVocabularyRefusal("vendorco", "env", REF, deps), undefined, "🔴 a VENDOR-ISSUED source is ACCEPTED under `secretHome: \"env\"` — nothing is minted, so mintability is not the question");
+  eq(sourceVocabularyRefusal("ours", "env", REF, deps), undefined, "…as is a receiver-minted one");
+  eq(sourceVocabularyRefusal("ours", "db", REF, deps), undefined, "…and a receiver-minted source is still accepted under `db`, which is the case that always worked");
+
+  const dbRefusal = sourceVocabularyRefusal("vendorco", "db", REF, deps);
+  ok(dbRefusal !== undefined, "🔴 the SAME source is REFUSED under `secretHome: \"db\"` — a secret we minted could never verify a vendor-signed delivery (OPE-186, undiminished)");
+  ok(/secretHome: "env"/.test(dbRefusal!), "…and the refusal names the live escape by parameter rather than sending the caller away");
+  ok(dbRefusal!.includes(REF), "…with the exact variable an operator sets");
+  ok(!/an operator has to declare the hook in configuration instead/.test(dbRefusal!), "🔴 …and NOT at 'have an operator declare it in configuration', which is what this very tool does");
+
+  for (const home of ["env", "db"] as const) {
+    ok(sourceVocabularyRefusal("halfway", home, REF, deps) !== undefined, `🔴 a source with a verifier but NO normalizer is refused under \`${home}\` too — the env arm waived key provenance, nothing else`);
+    ok(sourceVocabularyRefusal("stripe", home, REF, deps) !== undefined, `…and a wholly unregistered source is refused under \`${home}\``);
+  }
+  const unknown = sourceVocabularyRefusal("stripe", "env", REF, deps)!;
+  ok(unknown.includes("ours, vendorco"), "the unknown-source refusal names the DECLARABLE set, so it does not under-report what this deployment accepts");
+  ok(/general-purpose contract this deployment already has \(ours\)/.test(unknown), "🔴 …and its hint offers ONLY the non-vendor contract — telling a CI job to sign the way a vendor signs would be false advice");
+  ok(!/`scheme`/.test(unknown), "🔴 …and never names a `scheme` parameter, which declare_webhook has not had since OPE-224 collapsed the pair");
+
+  ok(
+    sourceVocabularyRefusal("vendorco", "env", REF, { ...deps, declared: () => ["ours"] }) !== undefined,
+    "🔴 the operator's `loadWebhookSources` narrowing still refuses under `env` — it is a rule about what may be NAMED, not about who holds the key",
+  );
+}
+
+{
   console.log("\n4. the ActionKind:");
   const kind = actionKind("webhook.declare");
   ok(kind !== undefined && kind.policy === "member", "webhook.declare is registered at member policy — the card is the injection gate, the MERGE is the privilege gate");

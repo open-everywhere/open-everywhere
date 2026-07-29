@@ -8,14 +8,14 @@ export interface SourceVocabularyDeps {
   readonly declared?: () => readonly string[] | undefined;
 }
 
-function admissibleSchemes(deps: SourceVocabularyDeps): readonly string[] {
+function admissibleSchemes(deps: SourceVocabularyDeps, requireMintable: boolean): readonly string[] {
   const verifiers = (deps.verifiers ?? registeredWebhookVerifiers)();
   const normalizers = new Set((deps.normalizers ?? registeredEventSources)());
   const declared = (deps.declared ?? (() => getConfig().loadWebhookSources?.()))();
   const narrowing = declared === undefined ? undefined : new Set(declared);
   const out = new Set<string>();
   for (const v of verifiers) {
-    if (!acceptsMintedSecret(v)) continue;
+    if (requireMintable && !acceptsMintedSecret(v)) continue;
     if (!normalizers.has(v.source)) continue;
     if (narrowing && !narrowing.has(v.source)) continue;
     out.add(v.source);
@@ -23,8 +23,17 @@ function admissibleSchemes(deps: SourceVocabularyDeps): readonly string[] {
   return [...out].sort();
 }
 
+export function declarableSourceVocabulary(deps: SourceVocabularyDeps = {}): readonly string[] {
+  return admissibleSchemes(deps, false);
+}
+
+export function generalPurposeSchemes(deps: SourceVocabularyDeps = {}): readonly string[] {
+  const byName = new Map((deps.verifiers ?? registeredWebhookVerifiers)().map((v) => [v.source, v]));
+  return declarableSourceVocabulary(deps).filter((s) => byName.get(s)?.provider === undefined);
+}
+
 export function mintableSourceVocabulary(deps: SourceVocabularyDeps = {}): readonly string[] {
-  return admissibleSchemes(deps);
+  return admissibleSchemes(deps, true);
 }
 
 export function unknownSourceRefusal(source: string, vocabulary: readonly string[]): string {
@@ -34,7 +43,18 @@ export function unknownSourceRefusal(source: string, vocabulary: readonly string
     `Adding one isn't something I can do from here — it needs a code change an admin merges: the source needs a ` +
     `signature verifier (so deliveries can be authenticated) and an event normalizer (so routines can subscribe to it), ` +
     `and for a vendor we already support that usually just means selecting its provider bundle. ` +
-    `Some systems sign with a secret THEY generate rather than one we choose — none of those can be set up this way, ` +
-    `so an operator has to declare the hook in configuration instead. Ask an admin to open that PR.`
+    `Some systems sign with a secret THEY generate rather than one we choose — once one of those has both halves it can be declared ` +
+    `normally, but its secret has to be set by an operator (\`secretHome: "env"\`) because I can never issue that kind myself. ` +
+    `Ask an admin to open that PR.`
+  );
+}
+
+export function unmintableSourceRefusal(source: string, envRef: string): string {
+  return (
+    `I can declare a "${source}" webhook, but not with \`secretHome: "db"\`. ` +
+    `"${source}" signs with a secret IT generates and hands to you, so a secret minted here would never verify a single delivery — ` +
+    `the hook would be approved, its secret revealed, and then every delivery would 401 forever with nothing saying why. ` +
+    `Ask me again with \`secretHome: "env"\` and this works: the declaration names the variable \`${envRef}\`, an operator puts ` +
+    `the value "${source}" gave them into it and redeploys, and the hook authenticates. Nothing else about the request has to change.`
   );
 }
