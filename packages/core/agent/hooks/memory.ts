@@ -53,12 +53,20 @@ export function hashFiles(files: MemoryFiles): Record<string, string> {
   return out;
 }
 
-export function conflictName(rel: string, sessionId: string): string {
+function siblingName(rel: string, marker: string, sessionId: string): string {
   const sid = sessionId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 8) || "session";
   const dot = rel.lastIndexOf(".");
   const slash = rel.lastIndexOf("/");
-  if (dot > slash && dot !== -1) return `${rel.slice(0, dot)}.conflict-${sid}${rel.slice(dot)}`;
-  return `${rel}.conflict-${sid}`;
+  if (dot > slash && dot !== -1) return `${rel.slice(0, dot)}.${marker}-${sid}${rel.slice(dot)}`;
+  return `${rel}.${marker}-${sid}`;
+}
+
+export function conflictName(rel: string, sessionId: string): string {
+  return siblingName(rel, "conflict", sessionId);
+}
+
+export function rejectedName(rel: string, sessionId: string): string {
+  return siblingName(rel, "rejected", sessionId);
 }
 
 export function mergePreservingConflicts(
@@ -81,6 +89,64 @@ export function mergePreservingConflicts(
     }
   }
   return { files: merged, conflicts };
+}
+
+export const MEMORY_DROP_RATIO_FLOOR = 0.5;
+export const MEMORY_DROP_MIN_LINES = 3;
+
+export interface RejectedWrite {
+  readonly rel: string;
+  readonly hostLines: number;
+  readonly droppedLines: number;
+  readonly parkedAs: string;
+}
+
+function isHostMintedSibling(rel: string): boolean {
+  return rel.includes(".conflict-") || rel.includes(".rejected-");
+}
+
+function contentLines(s: string): string[] {
+  return s
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
+
+function destructionVerdict(host: string, next: string): { hostLines: number; droppedLines: number } | null {
+  if (typeof host !== "string" || typeof next !== "string") throw new TypeError("memory floor: non-string file content");
+  const before = contentLines(host);
+  if (before.length === 0) return null;
+  const kept = new Set(contentLines(next));
+  const dropped = before.filter((l) => !kept.has(l)).length;
+  if (dropped < MEMORY_DROP_MIN_LINES) return null;
+  if (dropped / before.length <= MEMORY_DROP_RATIO_FLOOR) return null;
+  return { hostLines: before.length, droppedLines: dropped };
+}
+
+export function guardDestructiveWrites(
+  hostCurrent: MemoryFiles,
+  merged: MemoryFiles,
+  sessionId: string,
+): { files: MemoryFiles; rejected: RejectedWrite[] } {
+  const files: MemoryFiles = { ...merged };
+  const rejected: RejectedWrite[] = [];
+  for (const [rel, hostContent] of Object.entries(hostCurrent)) {
+    if (isHostMintedSibling(rel)) continue;
+    const next = files[rel];
+    if (next === undefined || next === hostContent) continue;
+    let verdict: { hostLines: number; droppedLines: number } | null;
+    try {
+      verdict = destructionVerdict(hostContent, next);
+    } catch {
+      verdict = { hostLines: -1, droppedLines: -1 };
+    }
+    if (!verdict) continue;
+    const parkedAs = rejectedName(rel, sessionId);
+    files[rel] = hostContent;
+    files[parkedAs] = typeof next === "string" ? next : String(next);
+    rejected.push({ rel, hostLines: verdict.hostLines, droppedLines: verdict.droppedLines, parkedAs });
+  }
+  return { files, rejected };
 }
 
 async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): Promise<void> {
@@ -109,20 +175,53 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
   for (const rm of plan.writes) {
     try {
       const provider = providerById(rm.silo.provider);
-      let files = await provider.readTier(p, rm.tier, rm.silo);
+      const hostCurrent = await provider.readTier(p, rm.tier, rm.silo);
+      let files = hostCurrent;
       let conflicts: string[] = [];
+      let rejected: RejectedWrite[] = [];
       if (sandbox) {
         const fromSandbox = await readTierFromSandbox(sandbox, rm.tier);
         if (Object.keys(fromSandbox).length > 0) {
           const baseline = baselines[tierId(rm.tier)] ?? {};
-          ({ files, conflicts } = mergePreservingConflicts(files, fromSandbox, baseline, sessionId));
+          const merged = mergePreservingConflicts(hostCurrent, fromSandbox, baseline, sessionId);
+          conflicts = merged.conflicts;
+          ({ files, rejected } = guardDestructiveWrites(hostCurrent, merged.files, sessionId));
+        }
+      }
+      if (rejected.length > 0) {
+        log(
+          `REFUSED ${rejected.length} destructive overwrite(s) in ${tierId(rm.tier)} → ${rm.silo.name}: ` +
+            rejected.map((r) => `${r.rel} (-${r.droppedLines}/${r.hostLines} lines, parked as ${r.parkedAs})`).join(", "),
+        );
+        try {
+          await appendAudit({
+            org: p.org,
+            platform: p.platform,
+            workspace: p.workspace,
+            surface: p.surface,
+            principalId,
+            action: "memory.write_refused",
+            detail: {
+              tier: tierId(rm.tier),
+              silo: rm.silo.name,
+              provider: rm.silo.provider,
+              outcome,
+              sessionId,
+              request,
+              ...(continuationToken ? { continuationToken } : {}),
+              refused: rejected.map((r) => ({ file: r.rel, hostLines: r.hostLines, droppedLines: r.droppedLines, parkedAs: r.parkedAs })),
+            },
+          });
+        } catch (err) {
+          log(`memory.write_refused audit skipped (the overwrite was still refused): ${String(err)}`);
         }
       }
       const sha = await provider.writeTier(p, rm.tier, files, `session ${sessionId} (${outcome}) [${tierId(rm.tier)}]`, rm.silo);
       persisted += Object.keys(files).length;
       log(
         `persisted ${tierId(rm.tier)} → ${rm.silo.name}/${rm.silo.provider}: ${Object.keys(files).length} file(s)` +
-          `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}`,
+          `${sha ? ` @ ${sha}` : ""}${conflicts.length ? ` (preserved ${conflicts.length} concurrent-write conflict(s): ${conflicts.join(", ")})` : ""}` +
+          `${rejected.length ? ` (REFUSED ${rejected.length} destructive overwrite(s): ${rejected.map((r) => r.rel).join(", ")})` : ""}`,
       );
       if (sha) {
         await appendAudit({
@@ -132,7 +231,7 @@ async function persistOnEnd(ctx: HookContext, outcome: "completed" | "failed"): 
           surface: p.surface,
           principalId,
           action: "memory.write",
-          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}) },
+          detail: { tier: tierId(rm.tier), silo: rm.silo.name, provider: rm.silo.provider, files: Object.keys(files).length, version: sha, outcome, sessionId, request, ...(continuationToken ? { continuationToken } : {}), ...(conflicts.length ? { conflicts } : {}), ...(rejected.length ? { refused: rejected.map((r) => r.rel) } : {}) },
         });
       }
     } catch (err) {

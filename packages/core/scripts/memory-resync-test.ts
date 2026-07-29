@@ -472,4 +472,43 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
   ok(idx1.includes("flaky-silo"), "NIT: the healed silo is now listed among the available silos");
 }
 
-console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh)\n`);
+{
+  const BRAIN_TEXT = [
+    "# payments brain",
+    "- @ana owns the settlement runbook",
+    "- refunds over 10k need a second approver",
+    "- the FX cutover is 2026-08-01",
+    "- never retry a capture without an idempotency key",
+    "- the chargeback SLA is 5 working days",
+  ].join("\n");
+  await brain.provider.writeTier(partition, BRAIN, { "MEMORY.md": BRAIN_TEXT }, "seed the brain");
+  const s = makeSession("sup-destroy", SUP_TOKEN);
+  await fire(s, "session.started");
+  ok(s.sandbox.files.get("memory/brain-silo/MEMORY.md") === BRAIN_TEXT, "the brain materialises for the session");
+
+  s.sandbox.files.set("memory/brain-silo/MEMORY.md", "");
+  await fire(s, "session.completed");
+
+  const stored = brain.tiers.get(tierId(BRAIN))!.files;
+  ok(stored["MEMORY.md"] === BRAIN_TEXT, "OPE-245: persistOnEnd REFUSES the truncation — the domain's brain is intact in the store");
+  const parked = Object.keys(stored).find((k) => k.includes(".rejected-"));
+  ok(parked !== undefined && stored[parked] === "", "OPE-245: the refused version is parked as a `.rejected-` sibling (recoverable, not silently dropped)");
+  const refusal = (await readAudit({ action: "memory.write_refused" })).find((r) => r.detail?.sessionId === "sup-destroy");
+  ok(refusal !== undefined, "OPE-245: the refusal gets its OWN audit row (it must not depend on the memory.write row, which only fires when a write changed something)");
+  const detail = JSON.stringify(refusal?.detail ?? {});
+  ok(detail.includes("MEMORY.md") && !detail.includes("chargeback SLA"), "the refusal row carries file names + counts, never memory CONTENT (the taint rule)");
+}
+
+{
+  const before = brain.tiers.get(tierId(BRAIN))!.files["MEMORY.md"];
+  const s = makeSession("sup-append", SUP_TOKEN);
+  await fire(s, "session.started");
+  s.sandbox.files.set("memory/brain-silo/MEMORY.md", `${before}\n- the session learned a new thing`);
+  await fire(s, "session.completed");
+  ok(
+    brain.tiers.get(tierId(BRAIN))!.files["MEMORY.md"] === `${before}\n- the session learned a new thing`,
+    "OPE-245: the floor is not a blanket block — an ordinary APPEND from the same seat still persists",
+  );
+}
+
+console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistOnEnd + append still lands)\n`);
