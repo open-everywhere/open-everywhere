@@ -91,7 +91,7 @@ function ctx(attrs: Record<string, string>): BindableContext {
 }
 {
   ok(linearTicketCreateAdapter.platform === "linear", "the adapter registers under platform \"linear\"");
-  ok(linearTicketCreateAdapter.checkAccess === undefined, "no checkAccess — the workspace token is self-scoping (same doctrine as read_linear_issue / linearEntityAdapter)");
+  ok(typeof linearTicketCreateAdapter.checkAccess === "function", "the adapter declares checkAccess — the domain write fence on the destination team (OPE-241)");
   ok(typeof linearTicketCreateAdapter.create === "function", "the adapter declares create — registration IS the declaration of support");
 }
 

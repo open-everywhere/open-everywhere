@@ -109,7 +109,7 @@ n++;
   ok(typeof entityActionFn("linear", "assign") === "function", "linear declares assign");
   ok(typeof entityActionFn("linear", "addLabel") === "function", "linear declares addLabel");
   try {
-    resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
+    await resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);
@@ -124,7 +124,7 @@ n++;
   ok(!platforms.includes("notion"), "notion registers NO create adapter — a database row's property schema can't be inferred, so it fails closed rather than faking a ticket");
   ok(typeof ticketCreateFn("linear") === "function", "linear declares create");
   try {
-    resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
+    await resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);

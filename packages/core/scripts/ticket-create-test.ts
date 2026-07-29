@@ -47,7 +47,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 {
   let msg = "";
   try {
-    resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
+    await resolveTicketCreate(ctx("notion", {}), { platform: "notion", target: "db-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     msg = String((err as Error).message);
@@ -58,7 +58,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 }
 
 {
-  assert.throws(
+  await assert.rejects(
     () => resolveTicketCreate(ctx("slack", {}), { platform: "github", target: "acme/web" }, []),
     /not one of this window's sources/,
     "filing into a platform that doesn't fan into this window is refused (topology gate)",
@@ -78,7 +78,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   registerTicketCreateAdapter(adapter);
   registerTicketCreateAdapter({ platform: "test-create-b", create: async () => ({ ref: { platform: "test-create-b", id: "b#1" }, summary: "filed b#1" }) });
 
-  const resolved = resolveTicketCreate(ctx("slack", {}, ["slack", "test-create-a"]), { target: "T-1" }, []);
+  const resolved = await resolveTicketCreate(ctx("slack", {}, ["slack", "test-create-a"]), { target: "T-1" }, []);
   ok(resolved.platform === "test-create-a" && resolved.target === "T-1", "a window with ONE work surface infers the platform");
   const created = await resolved.run({ title: "hi", body: "there" });
   ok(created.ref.id === "T-1#1" && created.url === "https://example.test/1", "the bound `run` closure calls the adapter with (target, draft) and returns the neutral ref");
@@ -86,7 +86,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
 
   let noneMsg = "";
   try {
-    resolveTicketCreate(ctx("slack", {}), undefined, []);
+    await resolveTicketCreate(ctx("slack", {}), undefined, []);
     assert.fail("expected a throw");
   } catch (err) {
     noneMsg = String((err as Error).message);
@@ -94,7 +94,7 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
   ok(/none of this window's sources/.test(noneMsg), `a window with no work surface refuses (${noneMsg})`);
   ok(noneMsg.includes("github") && noneMsg.includes("test-create-a"), "that refusal also names the supported set");
 
-  assert.throws(
+  await assert.rejects(
     () => resolveTicketCreate(ctx("slack", {}, ["slack", "test-create-a", "test-create-b"]), { target: "T-1" }, []),
     /more than one work surface.*pass `platform`/s,
     "an ambiguous window refuses rather than guessing which surface to file on",
@@ -108,11 +108,11 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
     defaultTarget: (c) => ((c as unknown as { session: { auth: { current: { attributes: Record<string, string> } } } }).session.auth.current.attributes.team ? "INFERRED" : undefined),
     create: async (target) => ({ ref: { platform: "test-create-default", id: `${target}#9` }, summary: `filed on ${target}` }),
   });
-  const inferred = resolveTicketCreate(ctx("test-create-default", { team: "yes" }), undefined, []);
+  const inferred = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), undefined, []);
   ok(inferred.target === "INFERRED", "defaultTarget supplies the destination when the caller named none");
-  const explicit = resolveTicketCreate(ctx("test-create-default", { team: "yes" }), { target: "EXPLICIT" }, []);
+  const explicit = await resolveTicketCreate(ctx("test-create-default", { team: "yes" }), { target: "EXPLICIT" }, []);
   ok(explicit.target === "EXPLICIT", "an explicit target always wins over defaultTarget");
-  assert.throws(
+  await assert.rejects(
     () => resolveTicketCreate(ctx("test-create-default", {}), undefined, []),
     /no destination.*pass `target`/s,
     "no target and nothing inferable refuses asking for it (never guesses a destination)",
@@ -128,13 +128,13 @@ function ctx(platform: string, attrs: Record<string, string> = {}, sources?: rea
     },
     create: async (target) => ({ ref: { platform: "test-create-gated", id: `${target}#1` }, summary: "filed" }),
   });
-  assert.throws(
+  await assert.rejects(
     () => resolveTicketCreate(ctx("test-create-gated", {}), { target: "forbidden" }, []),
     /nope, not granted/,
     "checkAccess's refusal propagates from resolveTicketCreate (before anything is frozen)",
   );
   n++;
-  ok(resolveTicketCreate(ctx("test-create-gated", {}), { target: "ok" }, []).target === "ok", "checkAccess passing lets resolution through");
+  ok((await resolveTicketCreate(ctx("test-create-gated", {}), { target: "ok" }, [])).target === "ok", "checkAccess passing lets resolution through");
 }
 
 const created: { target: string; title: string }[] = [];

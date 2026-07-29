@@ -51,7 +51,7 @@ export const setStateEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "set_state");
-    const { ref } = resolveEntityAction(bctx, "setState", input.ref, safeDomains());
+    const { ref } = await resolveEntityAction(bctx, "setState", input.ref, safeDomains());
 
     const binding = bindFrom(ctx);
     if (!hasApprovalCardPath(binding.platform)) {

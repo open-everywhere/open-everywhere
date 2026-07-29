@@ -103,7 +103,7 @@ function fakeLinearApi(table: ReadonlyArray<{ readonly match: RegExp; readonly d
   ok(typeof linearEntityAdapter.setState === "function", "adapter declares setState");
   ok(typeof linearEntityAdapter.assign === "function", "adapter declares assign");
   ok(typeof linearEntityAdapter.addLabel === "function", "adapter declares addLabel");
-  ok(linearEntityAdapter.checkAccess === undefined, "Linear declares NO checkAccess — the workspace token is self-scoping (same doctrine as read_linear_issue)");
+  ok(typeof linearEntityAdapter.checkAccess === "function", "Linear DECLARES checkAccess — the domain write fence (OPE-241); one workspace token bounds the workspace, never the domain");
 }
 
 console.log(`✓ ${n} linear-actions assertions passed`);

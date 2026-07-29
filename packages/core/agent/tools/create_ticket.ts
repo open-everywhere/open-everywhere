@@ -54,7 +54,7 @@ export const createTicketEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "create_ticket");
-    const { platform, target } = resolveTicketCreate(
+    const { platform, target } = await resolveTicketCreate(
       bctx,
       input.platform || input.target ? { ...(input.platform ? { platform: input.platform } : {}), ...(input.target ? { target: input.target } : {}) } : undefined,
       safeDomains(),

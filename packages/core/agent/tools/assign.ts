@@ -56,7 +56,7 @@ export const assignEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "assign");
-    const { ref } = resolveEntityAction(bctx, "assign", input.ref, safeDomains());
+    const { ref } = await resolveEntityAction(bctx, "assign", input.ref, safeDomains());
 
     const binding = bindFrom(ctx);
     if (!hasApprovalCardPath(binding.platform)) {

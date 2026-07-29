@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   assertLinearIssueAllowed,
   currentTurnIssueRefs,
-  linearReadScope,
+  linearIssueScope,
   linearScopeRefusal,
 } from "../agent/channels/linear-scope.js";
 import { ChannelScopeError, defineDomain, registerConfig, type BindableContext, type Domain } from "@open-everywhere/core/agent/adapter-api.js";
@@ -52,12 +52,12 @@ const TEAM_OF: Record<string, string> = {
 
 {
   const fromPay = (target: string, team = TEAM_OF[target]) =>
-    linearReadScope(keyFor(ORG, TEAM_PAY), [ISSUE_OWN, ISSUE_OWN_IDENT], target, team, DOMAINS);
+    linearIssueScope(keyFor(ORG, TEAM_PAY), [ISSUE_OWN, ISSUE_OWN_IDENT], target, team, DOMAINS);
 
   const own = fromPay(ISSUE_OWN);
   ok(own.allowed && own.reason === "own-issue", "the session's OWN issue is always readable");
   ok(fromPay(ISSUE_OWN_IDENT, undefined).allowed, "…named by its human identifier too, with NO team resolved");
-  ok(linearReadScope(keyFor(ORG, TEAM_PAY), [ISSUE_OWN], "pay-1".toUpperCase(), undefined, DOMAINS).reason !== "own-issue", "…and a DIFFERENT ref is not the own issue");
+  ok(linearIssueScope(keyFor(ORG, TEAM_PAY), [ISSUE_OWN], "pay-1".toUpperCase(), undefined, DOMAINS).reason !== "own-issue", "…and a DIFFERENT ref is not the own issue");
 
   const sibling = fromPay(ISSUE_SIBLING);
   ok(sibling.allowed && sibling.reason === "roster", "a SIBLING issue on the same rostered team is readable");
@@ -74,29 +74,29 @@ const TEAM_OF: Record<string, string> = {
   ok(!loose.allowed && loose.reason === "target-unassigned", "an issue on a team in NO domain is REFUSED");
   ok(loose.targetTeam === TEAM_LOOSE && loose.targetDomain === undefined, "…and the row records the team but no target domain");
 
-  const fromLoose = (target: string) => linearReadScope(keyFor(ORG, TEAM_LOOSE), [ISSUE_LOOSE], target, TEAM_OF[target], DOMAINS);
+  const fromLoose = (target: string) => linearIssueScope(keyFor(ORG, TEAM_LOOSE), [ISSUE_LOOSE], target, TEAM_OF[target], DOMAINS);
   ok(fromLoose(ISSUE_LOOSE).allowed, "an unassigned session can still read its own issue");
   ok(!fromLoose(ISSUE_SIBLING).allowed && fromLoose(ISSUE_SIBLING).reason === "caller-unassigned", "an unassigned session cannot reach into a domain");
 
-  ok(!linearReadScope("linear/unknown/unknown", [], ISSUE_SIBLING, TEAM_PAY, DOMAINS).allowed, "an under-identified session is refused");
+  ok(!linearIssueScope("linear/unknown/unknown", [], ISSUE_SIBLING, TEAM_PAY, DOMAINS).allowed, "an under-identified session is refused");
 }
 
 {
-  const fromWide = linearReadScope(keyFor(ORG2, TEAM_WIDE), [], "any-issue", "team-never-listed", DOMAINS);
+  const fromWide = linearIssueScope(keyFor(ORG2, TEAM_WIDE), [], "any-issue", "team-never-listed", DOMAINS);
   ok(fromWide.allowed && fromWide.reason === "container", "a claim-only domain may read an issue on an unenumerated team in its claimed org");
 
-  ok(!linearReadScope(keyFor(ORG, TEAM_PAY), [], "x", TEAM_WIDE, DOMAINS).allowed, "a claim over one org does not admit a team key from another org");
+  ok(!linearIssueScope(keyFor(ORG, TEAM_PAY), [], "x", TEAM_WIDE, DOMAINS).allowed, "a claim over one org does not admit a team key from another org");
 
-  const fallbackUnderClaim = linearReadScope(keyFor(ORG2, "some-issue-uuid"), [], "other", "team-never-listed", DOMAINS);
+  const fallbackUnderClaim = linearIssueScope(keyFor(ORG2, "some-issue-uuid"), [], "other", "team-never-listed", DOMAINS);
   ok(fallbackUnderClaim.allowed && fallbackUnderClaim.reason === "container", "a fallback (non-team) surface key still resolves under a workspace claim");
-  const fallbackUnderRoster = linearReadScope(keyFor(ORG, "some-issue-uuid"), [], ISSUE_SIBLING, TEAM_PAY, DOMAINS);
+  const fallbackUnderRoster = linearIssueScope(keyFor(ORG, "some-issue-uuid"), [], ISSUE_SIBLING, TEAM_PAY, DOMAINS);
   ok(!fallbackUnderRoster.allowed && fallbackUnderRoster.reason === "caller-unassigned", "…and under a ROSTER it fails CLOSED, never open");
 
   const overlapping: readonly Domain[] = [
     defineDomain({ name: "payments", channels: [`linear/${ORG}/${TEAM_PAY}`] }),
     defineDomain({ name: "orgwide", containers: [`linear/${ORG}`] }),
   ];
-  const annex = linearReadScope(keyFor(ORG, TEAM_LOOSE), [], ISSUE_SIBLING, TEAM_PAY, overlapping);
+  const annex = linearIssueScope(keyFor(ORG, TEAM_LOOSE), [], ISSUE_SIBLING, TEAM_PAY, overlapping);
   ok(!annex.allowed && annex.reason === "cross-domain", "a claiming domain cannot read an issue on a team another domain listed");
   ok(annex.callerDomain === "orgwide" && annex.targetDomain === "payments", "…and both sides resolved through the SAME core tiering");
 }
@@ -169,7 +169,7 @@ const ctxFor = (surface: string, issueId?: string, issueIdentifier?: string, org
   ok(lookups === before, "…and refused WITHOUT a team lookup (the caller arm gates the I/O)");
   ok(rows[0]!.detail?.callerSurfaceKey === keyFor(ORG, TEAM_LOOSE), "the row records the caller's surface key, so the fix is obvious from the audit alone");
 
-  const copy = linearScopeRefusal(ISSUE_ENG, linearReadScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS));
+  const copy = linearScopeRefusal(ISSUE_ENG, linearIssueScope(keyFor(ORG, TEAM_PAY), [], ISSUE_ENG, TEAM_ENG, DOMAINS));
   ok(copy.includes("linear/<organization_id>/<team_id>") && copy.includes("containers"), "the refusal tells the operator BOTH ways to grant it");
 }
 

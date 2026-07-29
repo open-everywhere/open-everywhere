@@ -8,6 +8,8 @@ import {
   type Domain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
+export type LinearScopeDirection = "read" | "write";
+
 export type LinearScopeReason =
   | "own-issue"
   | "roster"
@@ -35,7 +37,7 @@ function sameRef(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-export function linearReadScope(
+export function linearIssueScope(
   callerSurfaceKey: string,
   ownIssueRefs: readonly string[],
   targetRef: string,
@@ -67,19 +69,20 @@ export function linearReadScope(
   };
 }
 
-export function linearScopeRefusal(issueRef: string, verdict: LinearScopeVerdict): string {
+export function linearScopeRefusal(targetRef: string, verdict: LinearScopeVerdict, direction: LinearScopeDirection = "read"): string {
   const scope = verdict.callerDomain
     ? `domain "${verdict.callerDomain}"`
     : "this session's (no domain owns the surface this session was woken on)";
   const why =
     verdict.reason === "target-unresolvable"
-      ? "Its team could not be established, and an issue whose team is unknown is refused rather than assumed."
+      ? "Its team could not be established, and a target whose team is unknown is refused rather than assumed."
       : verdict.reason === "target-unassigned"
         ? "Its team is in no memory domain, and an unassigned team is refused rather than assumed."
         : "";
+  const may = direction === "write" ? "may only act on Linear entities on teams" : "may only read issues on teams";
   return (
-    `Linear issue "${issueRef}" is not in ${scope} read scope, so it is refused. ${why} ` +
-    "The agent may only read issues on teams in its memory domain (memory/domains.ts). Add the team to " +
+    `Linear target "${targetRef}" is not in ${scope} ${direction} scope, so it is refused. ${why} ` +
+    `The agent ${may} in its memory domain (memory/domains.ts). Add the team to ` +
     "the domain's `channels` as `linear/<organization_id>/<team_id>`, or claim the whole workspace in " +
     "`containers` as `linear/<organization_id>`, to grant it."
   ).replace(/\s{2,}/g, " ");
@@ -107,10 +110,11 @@ export function currentTurnIssueRefs(ctx: BindableContext): string[] {
   return refs.filter((r): r is string => typeof r === "string" && r.trim().length > 0);
 }
 
-async function auditLinearReadRefusal(
+async function auditLinearRefusal(
   ctx: BindableContext,
   target: string,
   verdict: LinearScopeVerdict,
+  direction: LinearScopeDirection,
   deps?: LinearScopeDeps,
 ): Promise<void> {
   const partition = resolvePartition(ctx);
@@ -121,7 +125,7 @@ async function auditLinearReadRefusal(
     workspace: partition.workspace,
     surface: partition.surface,
     ...(principalId ? { principalId } : {}),
-    action: "read.refused",
+    action: `${direction}.refused`,
     detail: {
       target,
       reason: verdict.reason,
@@ -140,17 +144,82 @@ export async function assertLinearIssueAllowed(
   resolveIssueTeam: (issueRef: string) => Promise<string | undefined>,
   deps?: LinearScopeDeps,
 ): Promise<void> {
+  return assertLinearIssueScope(ctx, issueRef, domains, resolveIssueTeam, "read", deps);
+}
+
+export async function assertLinearIssueWriteAllowed(
+  ctx: BindableContext,
+  issueRef: string,
+  domains: readonly Domain[],
+  resolveIssueTeam: (issueRef: string) => Promise<string | undefined>,
+  deps?: LinearScopeDeps,
+): Promise<void> {
+  return assertLinearIssueScope(ctx, issueRef, domains, resolveIssueTeam, "write", deps);
+}
+
+async function assertLinearIssueScope(
+  ctx: BindableContext,
+  issueRef: string,
+  domains: readonly Domain[],
+  resolveIssueTeam: (issueRef: string) => Promise<string | undefined>,
+  direction: LinearScopeDirection,
+  deps?: LinearScopeDeps,
+): Promise<void> {
   const partition = resolvePartition(ctx);
   const own = currentTurnIssueRefs(ctx);
-  const pure = linearReadScope(partition.surfaceKey, own, issueRef, undefined, domains);
+  const pure = linearIssueScope(partition.surfaceKey, own, issueRef, undefined, domains);
   if (pure.allowed) return;
   if (pure.reason === "caller-unassigned") {
-    await auditLinearReadRefusal(ctx, issueRef, pure, deps);
-    throw new ChannelScopeError(linearScopeRefusal(issueRef, pure));
+    await auditLinearRefusal(ctx, issueRef, pure, direction, deps);
+    throw new ChannelScopeError(linearScopeRefusal(issueRef, pure, direction));
   }
   const teamId = await resolveIssueTeam(issueRef);
-  const verdict = linearReadScope(partition.surfaceKey, own, issueRef, teamId, domains);
+  const verdict = linearIssueScope(partition.surfaceKey, own, issueRef, teamId, domains);
   if (verdict.allowed) return;
-  await auditLinearReadRefusal(ctx, issueRef, verdict, deps);
-  throw new ChannelScopeError(linearScopeRefusal(issueRef, verdict));
+  await auditLinearRefusal(ctx, issueRef, verdict, direction, deps);
+  throw new ChannelScopeError(linearScopeRefusal(issueRef, verdict, direction));
+}
+
+export function linearTeamScope(
+  callerSurfaceKey: string,
+  targetTeamId: string | undefined,
+  domains: readonly Domain[],
+): LinearScopeVerdict {
+  const { org } = splitLinearKey(callerSurfaceKey);
+  const caller = resolveDomainForChannel(callerSurfaceKey, domains);
+  const callerName = caller.domain?.name;
+  if (!callerName) return { allowed: false, reason: "caller-unassigned" };
+  if (!targetTeamId || !org) return { allowed: false, reason: "target-unresolvable", callerDomain: callerName };
+  const target = resolveDomainForChannel(`linear/${org}/${targetTeamId}`, domains);
+  if (!target.domain) return { allowed: false, reason: "target-unassigned", callerDomain: callerName, targetTeam: targetTeamId };
+  if (target.domain.name !== callerName) {
+    return { allowed: false, reason: "cross-domain", callerDomain: callerName, targetDomain: target.domain.name, targetTeam: targetTeamId };
+  }
+  return {
+    allowed: true,
+    reason: target.via === "roster" ? "roster" : "container",
+    callerDomain: callerName,
+    targetDomain: target.domain.name,
+    targetTeam: targetTeamId,
+  };
+}
+
+export async function assertLinearTeamWriteAllowed(
+  ctx: BindableContext,
+  target: string,
+  domains: readonly Domain[],
+  resolveTeamId: (target: string) => Promise<string | undefined>,
+  deps?: LinearScopeDeps,
+): Promise<void> {
+  const partition = resolvePartition(ctx);
+  const pure = linearTeamScope(partition.surfaceKey, undefined, domains);
+  if (pure.reason === "caller-unassigned") {
+    await auditLinearRefusal(ctx, target, pure, "write", deps);
+    throw new ChannelScopeError(linearScopeRefusal(target, pure, "write"));
+  }
+  const teamId = await resolveTeamId(target);
+  const verdict = linearTeamScope(partition.surfaceKey, teamId, domains);
+  if (verdict.allowed) return;
+  await auditLinearRefusal(ctx, target, verdict, "write", deps);
+  throw new ChannelScopeError(linearScopeRefusal(target, verdict, "write"));
 }

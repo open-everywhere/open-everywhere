@@ -35,7 +35,7 @@ export const addLabelEntry = defineTool({
   outputSchema: z.object({ platform: z.string(), id: z.string(), label: z.string(), message: z.string() }),
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
-    const { ref, run } = resolveEntityAction(bctx, "addLabel", input.ref, safeDomains());
+    const { ref, run } = await resolveEntityAction(bctx, "addLabel", input.ref, safeDomains());
     const message = await run(input.label);
     await auditToolAction(bctx, "ticket.add_label", { platform: ref.platform, entityId: ref.id, label: input.label });
     return { platform: ref.platform, id: ref.id, label: input.label, message };

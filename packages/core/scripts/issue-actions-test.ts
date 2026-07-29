@@ -102,9 +102,9 @@ const resolveToken = async () => "test-token";
 {
   const ctx = (attrs: Record<string, unknown>): BindableContext => ({ channel: { kind: "slack" }, session: { auth: { current: { attributes: attrs } } } }) as unknown as BindableContext;
   ok(typeof githubEntityAdapter.checkAccess === "function", "github declares checkAccess (a GitHub-specific access dimension)");
-  githubEntityAdapter.checkAccess!(ctx({}), "acme/web#42");
+  githubEntityAdapter.checkAccess!(ctx({}), "acme/web#42", []);
   ok(true, "a granted repo's checkAccess passes silently");
-  assert.throws(() => githubEntityAdapter.checkAccess!(ctx({}), "evil/repo#1"), /not granted to this channel/, "an ungranted repo refuses (fail-closed, same as checkout_repo/open_pull_request)");
+  assert.throws(() => githubEntityAdapter.checkAccess!(ctx({}), "evil/repo#1", []), /not granted to this channel/, "an ungranted repo refuses (fail-closed, same as checkout_repo/open_pull_request)");
   n++;
 }
 

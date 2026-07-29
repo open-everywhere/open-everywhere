@@ -19,7 +19,7 @@ export type EntityActionFn = (entityId: string, value: string) => Promise<string
 
 export interface EntityActionAdapter {
   readonly platform: string;
-  checkAccess?(ctx: BindableContext, entityId: string): void;
+  checkAccess?(ctx: BindableContext, entityId: string, domains: readonly Domain[]): void | Promise<void>;
   setState?: EntityActionFn;
   assign?: EntityActionFn;
   addLabel?: EntityActionFn;
@@ -64,12 +64,12 @@ export interface ResolvedEntityAction {
   readonly run: (value: string) => Promise<string>;
 }
 
-export function resolveEntityAction(
+export async function resolveEntityAction(
   ctx: BindableContext,
   verb: EntityVerb,
   explicitRef: EntityRef | undefined,
   domains: readonly Domain[],
-): ResolvedEntityAction {
+): Promise<ResolvedEntityAction> {
   const ref = explicitRef ?? currentTurnEntityRef(ctx);
   if (!ref) {
     throw new Error(
@@ -93,7 +93,7 @@ export function resolveEntityAction(
         (supported.length ? `supported on ${supported.join(", ")}.` : "no surface supports it yet."),
     );
   }
-  adapter.checkAccess?.(ctx, ref.id);
+  await adapter.checkAccess?.(ctx, ref.id, domains);
   return { ref, run: (value: string) => fn(ref.id, value) };
 }
 

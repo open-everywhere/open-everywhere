@@ -1,6 +1,7 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
-import { currentTurnIssue, type BindableContext, type CreatedTicket, type TicketCreateAdapter, type TicketDraft } from "@open-everywhere/core/agent/adapter-api.js";
+import { assertLinearTeamWriteAllowed } from "./linear-scope.js";
+import { currentTurnIssue, type BindableContext, type CreatedTicket, type Domain, type TicketCreateAdapter, type TicketDraft } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearCreateOpts {
   readonly api?: LinearApiOptions;
@@ -20,7 +21,7 @@ interface TeamNode {
   name?: string;
 }
 
-async function resolveLinearTeamId(target: string, opts: LinearCreateOpts): Promise<string> {
+export async function resolveLinearTeamId(target: string, opts: LinearCreateOpts = {}): Promise<string> {
   if (UUID_RE.test(target)) return target;
   const data = await callLinearGraphQL<{ teams?: { nodes?: TeamNode[] } }>({
     api: opts.api,
@@ -70,6 +71,14 @@ function defaultLinearTeam(ctx: BindableContext): string | undefined {
 
 export const linearTicketCreateAdapter: TicketCreateAdapter = {
   platform: "linear",
+  checkAccess: (ctx: BindableContext, target: string, domains: readonly Domain[]) =>
+    assertLinearTeamWriteAllowed(ctx, target, domains, async (t) => {
+      try {
+        return await resolveLinearTeamId(t);
+      } catch {
+        return undefined;
+      }
+    }),
   defaultTarget: defaultLinearTeam,
   create: (target, draft) => createLinearIssue(target, draft),
 };

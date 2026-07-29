@@ -37,12 +37,12 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 }
 
 {
-  assert.throws(() => resolveEntityAction(ctx("slack", {}), "setState", undefined, []), /no ticket entity for this turn/, "no ref + no default entity refuses cleanly");
+  await assert.rejects(() => resolveEntityAction(ctx("slack", {}), "setState", undefined, []), /no ticket entity for this turn/, "no ref + no default entity refuses cleanly");
   n++;
 }
 
 {
-  assert.throws(
+  await assert.rejects(
     () => resolveEntityAction(ctx("slack", {}), "setState", { platform: "linear", id: "ENG-1" }, []),
     /not one of this window's sources/,
     "a ref naming a platform outside this window's sources is refused (topology gate)",
@@ -51,13 +51,13 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 }
 
 {
-  assert.throws(
+  await assert.rejects(
     () => resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []),
     /not supported on "notion".*entity-gated/s,
     "an unregistered platform refuses with a structured 'entity-gated: not supported' error",
   );
   try {
-    resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
+    await resolveEntityAction(ctx("notion", {}), "addLabel", { platform: "notion", id: "page-1" }, []);
     assert.fail("expected a throw");
   } catch (err) {
     const msg = String((err as Error).message);
@@ -68,9 +68,9 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
 {
   const readOnlyAdapter: EntityActionAdapter = { platform: "test-verb-partial", setState: async (id, v) => `set:${id}:${v}` };
   registerEntityActionAdapter(readOnlyAdapter);
-  const { ref } = resolveEntityAction(ctx("test-verb-partial", {}), "setState", { platform: "test-verb-partial", id: "1" }, []);
+  const { ref } = await resolveEntityAction(ctx("test-verb-partial", {}), "setState", { platform: "test-verb-partial", id: "1" }, []);
   ok(ref.id === "1", "a verb the adapter DOES implement resolves fine");
-  assert.throws(
+  await assert.rejects(
     () => resolveEntityAction(ctx("test-verb-partial", {}), "addLabel", { platform: "test-verb-partial", id: "1" }, []),
     /addLabel is not supported on "test-verb-partial"/,
     "a registered platform missing THIS verb refuses (per-verb entity gating, not per-platform)",
@@ -87,13 +87,13 @@ function ctx(platform: string, attrs: Record<string, string> = {}): BindableCont
     assign: async (id, v) => `assigned:${id}:${v}`,
   };
   registerEntityActionAdapter(gatedAdapter);
-  assert.throws(
+  await assert.rejects(
     () => resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "forbidden" }, []),
     /nope, not granted/,
     "checkAccess's refusal propagates from resolveEntityAction",
   );
   n++;
-  const { ref, run } = resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "ok-id" }, []);
+  const { ref, run } = await resolveEntityAction(ctx("test-checked", {}), "assign", { platform: "test-checked", id: "ok-id" }, []);
   ok(ref.id === "ok-id", "checkAccess passing lets resolution through");
   const outcome = await run("alice");
   ok(outcome === "assigned:ok-id:alice", "the bound `run` closure calls the adapter fn with (entityId, value)");

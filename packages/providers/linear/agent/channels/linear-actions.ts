@@ -1,6 +1,8 @@
 import { callLinearGraphQL, type LinearApiOptions, type LinearChannelCredentials } from "eve/channels/linear";
 import { linearAppActorCredentials } from "./linear-credentials.js";
-import type { EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
+import { assertLinearIssueWriteAllowed } from "./linear-scope.js";
+import { enrichIssueTeam } from "./linear.js";
+import type { BindableContext, Domain, EntityActionAdapter } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface LinearActionOpts {
   readonly api?: LinearApiOptions;
@@ -130,6 +132,8 @@ export async function addLinearIssueLabel(issueRef: string, label: string, opts:
 
 export const linearEntityAdapter: EntityActionAdapter = {
   platform: "linear",
+  checkAccess: (ctx: BindableContext, entityId: string, domains: readonly Domain[]) =>
+    assertLinearIssueWriteAllowed(ctx, entityId, domains, async (ref) => (await enrichIssueTeam(ref))?.teamId),
   setState: (id, value) => setLinearIssueState(id, value),
   assign: (id, value) => assignLinearIssue(id, value),
   addLabel: (id, value) => addLinearIssueLabel(id, value),

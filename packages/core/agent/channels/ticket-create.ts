@@ -23,7 +23,7 @@ export type TicketCreateFn = (target: string, draft: TicketDraft) => Promise<Cre
 
 export interface TicketCreateAdapter {
   readonly platform: string;
-  checkAccess?(ctx: BindableContext, target: string): void;
+  checkAccess?(ctx: BindableContext, target: string, domains: readonly Domain[]): void | Promise<void>;
   defaultTarget?(ctx: BindableContext): string | undefined;
   create: TicketCreateFn;
 }
@@ -49,11 +49,11 @@ export interface ResolvedTicketCreate {
   readonly run: (draft: TicketDraft) => Promise<CreatedTicket>;
 }
 
-export function resolveTicketCreate(
+export async function resolveTicketCreate(
   ctx: BindableContext,
   dest: TicketDestination | undefined,
   domains: readonly Domain[],
-): ResolvedTicketCreate {
+): Promise<ResolvedTicketCreate> {
   const sources = resolveWindowSources(ctx, domains);
   const supported = supportedTicketCreatePlatforms();
 
@@ -94,7 +94,7 @@ export function resolveTicketCreate(
     );
   }
 
-  adapter.checkAccess?.(ctx, target);
+  await adapter.checkAccess?.(ctx, target, domains);
   return { platform, target, run: (draft: TicketDraft) => adapter.create(target, draft) };
 }
 
