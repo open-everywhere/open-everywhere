@@ -25,5 +25,5 @@ if (problems.length > 0) {
 const frameworkOnly = frameworkToolNames.filter((n) => !tools.has(n)).length;
 console.log(
   `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework + ${subagentNames.length} declared subagent), every declaration matching its runtime gate. ` +
-    `Connector/MCP operations are a separate, design-deferred plane (§3 grain 2, §7 item 5).`,
+    `Connector/MCP operations are a separate plane (§3 grain 2 — the verb classifier plus bundles' raise-only \`connectorOps\`), not rows in this table: their names are injected at runtime.`,
 );

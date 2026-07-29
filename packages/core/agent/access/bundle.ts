@@ -37,11 +37,18 @@ export interface Connection {
   readonly authorizationDetails?: readonly CredentialAuthorizationDetail[];
 }
 
+export interface ConnectorOpGating {
+  readonly connector: string;
+  readonly gated?: readonly string[];
+  readonly destructive?: readonly string[];
+}
+
 export interface Bundle {
   readonly name: string;
   readonly title?: string;
   readonly connections?: readonly Connection[];
   readonly connectors?: readonly string[];
+  readonly connectorOps?: readonly ConnectorOpGating[];
   readonly providers?: readonly ProviderGrant[];
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
@@ -95,6 +102,25 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     for (const name of b.connectors ?? []) {
       if (connectors.has(name)) bad.push(`  bundle "${b.name}" grants connector "${name}" more than once — remove the duplicate`);
       connectors.add(name);
+    }
+    const gatedConnectors = new Set<string>();
+    for (const g of b.connectorOps ?? []) {
+      const key = g.connector.trim().toLowerCase();
+      if (key === "") {
+        bad.push(`  bundle "${b.name}" has a connectorOps entry with an empty connector name — name the connector its ops belong to`);
+        continue;
+      }
+      if (gatedConnectors.has(key)) {
+        bad.push(`  bundle "${b.name}" declares connectorOps for "${g.connector}" more than once — merge the entries (two entries for one connector make the declaration ambiguous)`);
+      }
+      gatedConnectors.add(key);
+      const ops = [...(g.gated ?? []), ...(g.destructive ?? [])];
+      if (ops.length === 0) {
+        bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" names no ops — it raises nothing; list ops under gated/destructive or drop the entry`);
+      }
+      if (ops.some((op) => op.trim() === "")) {
+        bad.push(`  bundle "${b.name}" connectorOps entry for "${g.connector}" has an empty op name — every entry must name a real operation (or "*" for all of them)`);
+      }
     }
     for (const repo of b.repos ?? []) {
       if (!REPO_FORM.test(repo)) {

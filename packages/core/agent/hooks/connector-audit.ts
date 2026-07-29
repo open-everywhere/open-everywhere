@@ -2,7 +2,8 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { appendAudit } from "../audit/audit.js";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { classifyConnectorOp, classifyConnectorOpTier, connectorOpName, isConnectorOpTool } from "../access/consequence.js";
+import { classifyConnectorOpTier, connectorOpName, isConnectorOpTool } from "../access/consequence.js";
+import { effectiveConnectorOpConsequence, effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 
 interface ToolResultLike {
   readonly kind?: string;
@@ -21,6 +22,8 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
     const connection = toolName.slice(0, toolName.indexOf("__"));
     const op = connectorOpName(toolName);
     const status = typeof data?.status === "string" ? data.status : undefined;
+    const baseOpTier = classifyConnectorOpTier(toolName);
+    const effectiveOpTier = effectiveConnectorOpTier(toolName);
 
     let org = deploymentOrg();
     let platform = "unknown";
@@ -47,8 +50,9 @@ async function auditOpResult(event: unknown, ctx: HookContext): Promise<void> {
       detail: {
         connection,
         op,
-        tier: classifyConnectorOp(toolName),
-        opTier: classifyConnectorOpTier(toolName),
+        tier: effectiveConnectorOpConsequence(toolName),
+        opTier: effectiveOpTier,
+        ...(effectiveOpTier !== baseOpTier ? { baseOpTier } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(result.isError ? { isError: true } : {}),
       },

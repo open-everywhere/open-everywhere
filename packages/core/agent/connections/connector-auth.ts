@@ -14,7 +14,8 @@ import {
   surfaceContextFromAuth,
 } from "../access/connector-scope.js";
 import { vercelConnectorOf } from "../access/providers.js";
-import { classifyConnectorOpTier, isConnectorOpTool } from "../access/consequence.js";
+import { isConnectorOpTool } from "../access/consequence.js";
+import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
 import { bindFrom, deploymentOrg } from "../identity/binding.js";
@@ -264,7 +265,7 @@ export function userAwareProviderToken(
 export function connectorOpApproval(): Approval {
   return (ctx): ApprovalStatus => {
     if (!isConnectorOpTool(ctx.toolName)) return "not-applicable";
-    const tier = classifyConnectorOpTier(ctx.toolName);
+    const tier = effectiveConnectorOpTier(ctx.toolName);
     if (tier === "read") return "not-applicable";
     if (tier === "destructive") return "user-approval";
     if (ctx.approvedTools.has(ctx.toolName)) return "not-applicable";
