@@ -16,8 +16,8 @@ import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote, filterToDomain, buildRoutinePredictions, type RoutinePredictionRow } from "../spend/reporting.js";
 import { modelPricing, estimateCostUsd, ensurePricingFor } from "../spend/pricing.js";
 import { deploymentOrg } from "../identity/binding.js";
-import { listDomainSkills } from "../skills/domain-skills.js";
-import type { DomainSkillRow } from "../operational/store.js";
+import { listDomainSkills, listDomainSkillRevisions } from "../skills/domain-skills.js";
+import type { DomainSkillRow, DomainSkillRevisionRow } from "../operational/store.js";
 import { providerById } from "../memory/provider.js";
 import { siloTier } from "../memory/store.js";
 import { controlPartition } from "../memory/partition.js";
@@ -383,6 +383,36 @@ export interface SkillsListResult {
 export async function skillsListView(q: SkillsListQuery): Promise<SkillsListResult> {
   const skills = await listDomainSkills(q.org, q.domain);
   return { org: q.org, domain: q.domain, skills };
+}
+
+export const DEFAULT_SKILL_REVISIONS_LIMIT = 20;
+export const MAX_SKILL_REVISIONS_LIMIT = 100;
+
+export interface SkillRevisionsQuery {
+  readonly org: string;
+  readonly domain: string;
+  readonly name: string;
+  readonly limit?: number;
+}
+export interface SkillRevisionsResult {
+  readonly org: string;
+  readonly domain: string;
+  readonly name: string;
+  readonly revisions: readonly DomainSkillRevisionRow[];
+  readonly capped: boolean;
+}
+
+export async function skillRevisionsView(q: SkillRevisionsQuery): Promise<SkillRevisionsResult> {
+  const limit = Math.min(Math.max(1, Math.trunc(q.limit ?? DEFAULT_SKILL_REVISIONS_LIMIT)), MAX_SKILL_REVISIONS_LIMIT);
+  const oldestFirst = await listDomainSkillRevisions(q.org, q.domain, q.name);
+  const newestFirst = [...oldestFirst].reverse();
+  return {
+    org: q.org,
+    domain: q.domain,
+    name: q.name,
+    revisions: newestFirst.slice(0, limit),
+    capped: oldestFirst.length > limit,
+  };
 }
 
 export interface MemoryFileRow {

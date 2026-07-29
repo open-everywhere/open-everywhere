@@ -1,6 +1,6 @@
 import "./_register-test-config.js";
 import assert from "node:assert/strict";
-import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView } from "../agent/control/views.js";
+import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -64,6 +64,10 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   await appendUsageEvent({ org: CTL_ORG, surfaceKey: "slack/T1/C_ENG", sessionId: "s1", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500 });
   await appendUsageEvent({ org: CTL_ORG, surfaceKey: "slack/T1/C_OTHER", sessionId: "s2", principalId: "U2", kind: "channel", inputTokens: 10, outputTokens: 5 });
   await getOperationalStore().putDomainSkill(CTL_ORG, "eng", "runbook", "# Steps", "U1", "2026-07-04T10:00:00Z");
+  await getOperationalStore().putDomainSkill(CTL_ORG, "eng", "runbook", "# Steps v2", "U1", "2026-07-04T11:00:00Z", {
+    armedBy: "U2",
+    approvalId: "pa-runbook-v2",
+  });
 
   const usageAll = await usageSummaryView({ org: CTL_ORG });
   ok("usageSummaryView (unscoped): sees every surface", usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_ENG") && usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_OTHER"));
@@ -85,6 +89,23 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
 
   const skills = await skillsListView({ org: CTL_ORG, domain: "eng" });
   ok("skillsListView: returns the domain's runtime-authored skills", skills.skills.length === 1 && skills.skills[0].name === "runbook");
+
+  const revs = await skillRevisionsView({ org: CTL_ORG, domain: "eng", name: "runbook" });
+  ok("skillRevisionsView: returns both recorded bodies for the named skill", revs.revisions.length === 2);
+  ok("skillRevisionsView: newest first — the v2 edit leads, not the first write", revs.revisions[0].content === "# Steps v2" && revs.revisions[1].content === "# Steps");
+  ok(
+    "skillRevisionsView: the join columns survive — approvalId + armedBy on the row that carried provenance",
+    revs.revisions[0].approvalId === "pa-runbook-v2" && revs.revisions[0].armedBy === "U2",
+  );
+  ok("skillRevisionsView: the first write (no provenance passed) carries neither armedBy nor approvalId", revs.revisions[1].armedBy === undefined && revs.revisions[1].approvalId === undefined);
+  ok("skillRevisionsView: nothing truncated — capped is false when limit >= the row count", revs.capped === false);
+
+  const revsLimited = await skillRevisionsView({ org: CTL_ORG, domain: "eng", name: "runbook", limit: 1 });
+  ok("skillRevisionsView: limit clamps the row count and still returns the newest", revsLimited.revisions.length === 1 && revsLimited.revisions[0].content === "# Steps v2");
+  ok("skillRevisionsView: capped is true once the row count exceeds limit", revsLimited.capped === true);
+
+  const revsOtherDomain = await skillRevisionsView({ org: CTL_ORG, domain: "watercooler", name: "runbook" });
+  ok("skillRevisionsView: a domain with no such skill's revisions returns empty, not a throw", revsOtherDomain.revisions.length === 0 && revsOtherDomain.capped === false);
 
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -109,6 +130,10 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   ok("skills_list: a domain:eng role can list its own domain's skills", skillsOk.skills.length === 1);
   const skillsDenied = await engClient.callTool({ name: "skills_list", arguments: { org: CTL_ORG, domain: "other" } });
   ok("skills_list: a domain:eng role is denied a different domain", skillsDenied.isError === true);
+  const revisionsOk = await callJson(engClient, "skill_revisions", { org: CTL_ORG, domain: "eng", name: "runbook" });
+  ok("skill_revisions: a domain:eng role can read its own domain's skill history, bodies included", revisionsOk.revisions.length === 2 && revisionsOk.revisions[0].content === "# Steps v2");
+  const revisionsDenied = await engClient.callTool({ name: "skill_revisions", arguments: { org: CTL_ORG, domain: "other", name: "runbook" } });
+  ok("skill_revisions: a domain:eng role is denied a different domain's skill history — the same gate as skills_list, proven, not assumed", revisionsDenied.isError === true);
   const uwDenied = await engClient.callTool({ name: "usage_window", arguments: { sinceIso: "2026-01-01T00:00:00Z", workspaceKeys: ["slack/T1"] } });
   ok("usage_window: a domain:eng role is denied (org-wide read — admin only, same posture as overrides_list)", uwDenied.isError === true);
 

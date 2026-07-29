@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
+import { spendView, routinesView, auditView, accessView, overridesView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, DEFAULT_SKILL_REVISIONS_LIMIT, MAX_SKILL_REVISIONS_LIMIT, memoryListView, memoryReadView, pendingActionsView, unifiedDomainAudit } from "./views.js";
 import { registerControlWriteTools } from "./writes.js";
 import { scopeDenial, siloScopeDenial } from "./auth.js";
 import { getConfig } from "../access/config.js";
@@ -31,6 +31,7 @@ export const CONTROL_TOOL_NAMES = [
   "usage_summary",
   "usage_window",
   "skills_list",
+  "skill_revisions",
   "memory_list",
   "memory_read",
   "pending_actions_list",
@@ -202,6 +203,34 @@ export function buildControlServer(opts: ControlServerOptions = {}): McpServer {
         const denial = scopeDenial(roles, { org: args.org, domain: args.domain });
         if (denial) throw new Error(denial);
         return skillsListView(args);
+      })(),
+  );
+
+  server.registerTool(
+    "skill_revisions",
+    {
+      title: "One domain skill's approved-body history",
+      description:
+        `Every recorded body of ONE runtime domain skill (skills_list for the current names), newest first — the append-only log OPE-237 writes on every ` +
+        `putDomainSkill (agent/operational/store.ts's domain_skill_revisions): the exact content, who authored it, who ARMED it by approving the card ` +
+        `(armedBy), and that card's id (approvalId — join it to pending_actions for the frozen args, or to the audit trail for the "approval.approved" ` +
+        `row) so this answers "what did the approver actually agree to", not just "who last touched it". Survives delete_skill: a removed skill's history ` +
+        `still reads here. name is required (this reads one skill's history, never a whole domain's — skills_list is the domain sweep). limit caps the ` +
+        `rows returned (default ${DEFAULT_SKILL_REVISIONS_LIMIT}, max ${MAX_SKILL_REVISIONS_LIMIT}); capped:true in ` +
+        `the result means there are older revisions this call didn't return. SAME gate as skills_list — a domain:<name> role covering it, or org-wide ` +
+        `"admin" — because a skill body is already fully readable at that tier via skills_list; this is that same content, historically. Read-only.`,
+      inputSchema: {
+        org: z.string().min(1),
+        domain: z.string().min(1),
+        name: z.string().min(1),
+        limit: z.number().int().positive().max(MAX_SKILL_REVISIONS_LIMIT).optional(),
+      },
+    },
+    (args) =>
+      jsonTool(async () => {
+        const denial = scopeDenial(roles, { org: args.org, domain: args.domain });
+        if (denial) throw new Error(denial);
+        return skillRevisionsView(args);
       })(),
   );
 
