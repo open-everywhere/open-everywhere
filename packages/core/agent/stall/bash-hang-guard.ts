@@ -4,7 +4,7 @@ import { emitTelemetry } from "../observability/telemetry.js";
 
 export const DEFAULT_BASH_TIMEOUT_MS = 240_000;
 
-export const FRAMEWORK_STREAM_CEILING_MS = 341_000;
+export const OBSERVED_PROD_STALL_MS = 341_000;
 
 export function bashTimeoutMs(): number {
   const raw = (process.env.OE_BASH_TIMEOUT_MS ?? "").trim().toLowerCase();
@@ -100,7 +100,7 @@ export function unredirectedBackgroundMessage(): string {
   return (
     "`bash` did NOT run this command. It backgrounds a process with `&` but redirects neither " +
     "stdout nor stderr, so the backgrounded process keeps the workspace's output stream open and " +
-    "this call would hang for ~5m41s before failing. Re-run it with BOTH streams redirected — " +
+    "this call would hang until it is cut off, rather than returning. Re-run it with BOTH streams redirected — " +
     "`<command> > /tmp/out.log 2>&1 &` (or `> /dev/null 2>&1 &` if you don't need the output) — " +
     "then poll the log or the port to check it came up."
   );
@@ -108,8 +108,8 @@ export function unredirectedBackgroundMessage(): string {
 
 export function bashTimeoutMessage(ms: number): string {
   return (
-    `\`bash\` gave up waiting after ${Math.round(ms / 1000)}s — the command was still producing ` +
-    "output (its stream never closed). Most likely cause: did you background a process without " +
+    `\`bash\` gave up waiting after ${Math.round(ms / 1000)}s — the command's output stream never ` +
+    "closed, so this call could not return. Most likely cause: did you background a process without " +
     "redirecting stdout/stderr? A background job MUST redirect both (`<command> > /tmp/out.log " +
     "2>&1 &`) or this call can never return. The command may still be running in the workspace — " +
     "check the log or the port with a short command rather than re-running it."

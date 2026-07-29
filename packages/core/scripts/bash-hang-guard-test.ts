@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { ToolContext, ToolDefinition } from "eve/tools";
 import {
   DEFAULT_BASH_TIMEOUT_MS,
-  FRAMEWORK_STREAM_CEILING_MS,
+  OBSERVED_PROD_STALL_MS,
   bashTimeoutMs,
   backgroundGuardEnabled,
   scanCommand,
@@ -50,8 +50,8 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
   delete process.env.OE_BASH_TIMEOUT_MS;
   ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS && DEFAULT_BASH_TIMEOUT_MS === 240_000, "config: default timeout is 240s");
   ok(
-    DEFAULT_BASH_TIMEOUT_MS < FRAMEWORK_STREAM_CEILING_MS - 60_000,
-    "config: the default leaves >60s of margin under eve's ~341s stream ceiling, so our timer always wins the race",
+    DEFAULT_BASH_TIMEOUT_MS < OBSERVED_PROD_STALL_MS - 60_000,
+    "config: the default leaves >60s of margin under the 341s stall observed in prod, so IF that stall is real here our timer still wins the race",
   );
   process.env.OE_BASH_TIMEOUT_MS = "90000";
   ok(bashTimeoutMs() === 90_000, "config: OE_BASH_TIMEOUT_MS overrides the default");
@@ -144,7 +144,7 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
   ok(msg !== null, "timeout: a command that never returns fails BOUNDED instead of stalling");
   ok(msg === bashTimeoutMessage(1000), "timeout: the failure is the authored diagnostic");
   ok(/gave up waiting after 1s/.test(msg!), "timeout: the diagnostic states how long it waited");
-  ok(/still producing output/.test(msg!), "timeout: the diagnostic states WHAT it observed (the stream never closed)");
+  ok(/output stream never closed/.test(msg!), "timeout: the diagnostic states WHAT it observed (the stream never closed — NOT that output was flowing; the measured hang shape emits zero bytes)");
   ok(
     /background a process without redirecting stdout\/stderr/.test(msg!),
     "timeout: the diagnostic NAMES the likely cause (an unredirected background process)",
