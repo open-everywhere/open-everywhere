@@ -6,7 +6,7 @@ import { principalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
-import { policyRules } from "../routines/policy.js";
+import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
@@ -31,17 +31,14 @@ export default defineTool({
     await requireSessionContinuation(ctx, "remove_routine_rule");
 
     const auth = ctx.session?.auth;
-    if (routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes)) {
-      throw new Error(
-        "A routine's own run can't remove its standing rules. Those rules exist to constrain runs like this one, so a run removing them would be the routine editing its own guardrails. Say why the rule looks wrong in your answer, and someone in the channel can ask me to remove it.",
-      );
-    }
-
-    if (untrustedIngestedThisTurn()) {
-      throw new Error(
-        "I've read external content this turn, so I can't propose removing a standing rule — dropping a guardrail on the strength of something I fetched is exactly what those guardrails are there to stop. Ask me again in a fresh message and I'll put it up for confirmation.",
-      );
-    }
+    const refusal = policyAuthorRefusal(
+      {
+        inRoutineFire: routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes) !== null,
+        tainted: untrustedIngestedThisTurn(),
+      },
+      "remove",
+    );
+    if (refusal) throw new Error(refusal);
 
     const p = resolvePartition(ctx);
     const routineId = input.routineId.trim();

@@ -10,6 +10,7 @@ import {
   POLICY_MAX_RULES,
   POLICY_RULE_MAX_CHARS,
   POLICY_WHY_MAX_CHARS,
+  policyAuthorRefusal,
   policyRules,
   policyTextProblem,
 } from "../routines/policy.js";
@@ -62,17 +63,14 @@ export default defineTool({
     await requireSessionContinuation(ctx, "add_routine_rule");
 
     const auth = ctx.session?.auth;
-    if (routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes)) {
-      throw new Error(
-        "A routine's own run can't add a standing rule — not even to itself. Rules are trusted instructions injected into unattended future runs, so they're only ever armed by a person in the channel. Say what went wrong in your answer instead, and whoever reads it can ask me to add the rule.",
-      );
-    }
-
-    if (untrustedIngestedThisTurn()) {
-      throw new Error(
-        "I've read external content this turn (a page, an issue body, a connector result), so I can't propose a standing rule from it — a rule becomes trusted text in every unattended future run of this routine, and I can't vouch for text that may have come out of something I fetched. Say the rule to me directly in a fresh message and I'll put it up for confirmation.",
-      );
-    }
+    const refusal = policyAuthorRefusal(
+      {
+        inRoutineFire: routineMarker(auth?.current?.attributes ?? auth?.initiator?.attributes) !== null,
+        tainted: untrustedIngestedThisTurn(),
+      },
+      "add",
+    );
+    if (refusal) throw new Error(refusal);
 
     const p = resolvePartition(ctx);
     const routineId = input.routineId.trim();

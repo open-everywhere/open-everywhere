@@ -41,6 +41,23 @@ export function policyTextProblem(text: string, field: "rule" | "why", maxChars:
   return null;
 }
 
+export function policyAuthorRefusal(
+  turn: { readonly inRoutineFire: boolean; readonly tainted: boolean },
+  verb: "add" | "remove",
+): string | null {
+  if (turn.inRoutineFire) {
+    return verb === "add"
+      ? "A routine's own run can't add a standing rule — not even to itself. Rules are trusted instructions injected into unattended future runs, so they're only ever armed by a person in the channel. Say what went wrong in your answer instead, and whoever reads it can ask me to add the rule."
+      : "A routine's own run can't remove its standing rules. Those rules exist to constrain runs like this one, so a run removing them would be the routine editing its own guardrails. Say why the rule looks wrong in your answer, and someone in the channel can ask me to remove it.";
+  }
+  if (turn.tainted) {
+    return verb === "add"
+      ? "I've read external content this turn (a page, an issue body, a connector result), so I can't propose a standing rule from it — a rule becomes trusted text in every unattended future run of this routine, and I can't vouch for text that may have come out of something I fetched. Say the rule to me directly in a fresh message and I'll put it up for confirmation."
+      : "I've read external content this turn, so I can't propose removing a standing rule — dropping a guardrail on the strength of something I fetched is exactly what those guardrails are there to stop. Ask me again in a fresh message and I'll put it up for confirmation.";
+  }
+  return null;
+}
+
 export function policyRules(r: Pick<Routine, "policy">): readonly RoutinePolicyRule[] {
   return r.policy ?? [];
 }
