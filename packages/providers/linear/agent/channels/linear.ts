@@ -12,6 +12,7 @@ import {
 import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials } from "./linear-credentials.js";
+import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
 import {
   classifyLinearAmbientComment,
   extractLinearCommentSignal,
@@ -45,6 +46,7 @@ import {
   getOperationalStore,
   postOnce,
   outboundKey,
+  admitTrigger,
   type SupervisorGrain,
   type UnifiedWindowWake,
   type EngagementTier,
@@ -716,6 +718,24 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     if (res.ok) {
       args.waitUntil(ambientDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
       args.waitUntil(mentionSessionDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`mention leg failed: ${String(err)}`)));
+      const deliveryId = req.headers.get(LINEAR_DELIVERY_ID_HEADER) ?? undefined;
+      args.waitUntil(
+        admitTrigger(
+          {
+            source: LINEAR_EVENT_SOURCE,
+            headers: {},
+            body,
+            receivedAt: new Date().toISOString(),
+            ...(deliveryId ? { deliveryId } : {}),
+          },
+          { receive: args.receive },
+        ).then(
+          (report) => {
+            if (report.matched > 0) slog(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);
+          },
+          (err) => slog(`event plane: admitTrigger threw (routing lost for this delivery): ${String(err)}`),
+        ),
+      );
     }
     return res;
   };
