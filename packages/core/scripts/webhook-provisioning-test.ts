@@ -141,6 +141,17 @@ const rotateKind = actionKind("webhook.rotate")!;
     ok(!/\bPRs?\b|\bmerges?\b|\badmins?\b/i.test(um), "🔴 it does NOT send the caller for a code change or a second person — the escape is one field away in this same call");
   }
 
+  {
+    const ur = vocab.unmintableRotationRefusal("notion-events", "notion", "db:webhook:notion-events");
+    ok(/\bPR\b/.test(ur), '🔴 it names the PR, because a declaration is config and config only changes by merged diff');
+    ok(/`broker: "env"`/.test(ur), "…and the exact field to change, so the next step needs no second conversation");
+    ok(ur.includes("db:webhook:notion-events"), "…and the ref the declaration names today, so the operator can find the line");
+    ok(/Nothing was minted and nothing changed/.test(ur), "…and states plainly that the click had no effect — the house sentence every rotate refusal ends on");
+    ok(/401 forever/.test(ur), "…and WHY, which is OPE-186's argument at the one site whose antecedent it is about");
+    ok(!/secretHome/.test(ur), "🔴 it does NOT offer `secretHome` — that is a `declare_webhook` parameter, and the reader is not making that call");
+    ok(/can never do is choose the value/.test(ur), "🔴 it refuses to CHOOSE the value, and does not claim a db-homed vendor-issued hook is meaningless");
+  }
+
 }
 
 {
@@ -248,6 +259,44 @@ const rotateKind = actionKind("webhook.rotate")!;
   const refusedShare = await rotateKind.execute(rotateArgs("twin-a"), DECIDER);
   ok(/twin-b/.test(refusedShare), "🔴 a ref another declaration also names is refused, naming the hook that would have broken");
   eq(await vault.read(configRef), before, "…and NOTHING was written — the refusal is before every write, not after the first");
+
+  {
+    const scheme = (source: string, keyOrigin: "receiver-minted" | "vendor-issued", keyKind: "shared-secret" | "public-key"): WebhookVerifier => ({
+      source,
+      keyKind,
+      keyOrigin,
+      signedTimestamp: false,
+      verify: () => ({ ok: false, failure: "signature-mismatch" }),
+    });
+    verifierMod.registerWebhookVerifier(scheme("vendor-signed", "vendor-issued", "shared-secret"));
+    verifierMod.registerWebhookVerifier(scheme("asym-signed", "receiver-minted", "public-key"));
+    verifierMod.registerWebhookVerifier(scheme("receiver-signed", "receiver-minted", "shared-secret"));
+
+    const handWritten = (id: string, source: string) => ({ ...declared, id, source, secretRef: `db:webhook:${id}` });
+    const vendorHook = handWritten("vendor-hook", "vendor-signed");
+    const asymHook = handWritten("asym-hook", "asym-signed");
+    const okHook = handWritten("ok-hook", "receiver-signed");
+    const unknownHook = handWritten("unknown-hook", "no-verifier-in-this-process");
+    withHooks([vendorHook, asymHook, okHook, unknownHook]);
+    delivered.length = 0;
+
+    const refusedVendor = await rotateKind.execute(rotateArgs("vendor-hook"), DECIDER);
+    ok(/can't issue a secret for "vendor-hook"/.test(refusedVendor), '🔴 a `{ source: <vendor-issued>, broker: "db" }` hook is refused BY NAME at the mint — the broker was checked, key provenance was not (OPE-244)');
+    ok(/`broker: "env"`/.test(refusedVendor) && /\bPR\b/.test(refusedVendor), "…and the refusal names the config change and who makes it, rather than pointing at a dead end (OPE-238's lesson)");
+    eq(await vault.read("db:webhook:vendor-hook"), null, "🔴 …and NOTHING was written — the refusal is before every write, like the shared-ref one");
+    eq(delivered.length, 0, "…and no one-time reveal link was minted or delivered, so nothing disclosed a useless secret");
+
+    const refusedAsym = await rotateKind.execute(rotateArgs("asym-hook"), DECIDER);
+    ok(/can't issue a secret for "asym-hook"/.test(refusedAsym), "🔴 an ASYMMETRIC scheme is refused too — the guard reads `acceptsMintedSecret`, whose OTHER clause this is");
+    eq(await vault.read("db:webhook:asym-hook"), null, "…writing nothing there either");
+
+    await rotateKind.execute(rotateArgs("ok-hook"), DECIDER);
+    ok(typeof (await vault.read("db:webhook:ok-hook")) === "string", '🔴 a REGISTERED receiver-minted shared-secret source still mints — the guard refuses a scheme, never `broker: "db"`');
+    eq(delivered.length, 1, "…and that one still gets its private one-time link");
+
+    await rotateKind.execute(rotateArgs("unknown-hook"), DECIDER);
+    ok(typeof (await vault.read("db:webhook:unknown-hook")) === "string", "🔴 an UNREGISTERED source still mints — the guard fires on a scheme we can SEE is incompatible, not on registry arming");
+  }
 
   withHooks([]);
   const gone = await rotateKind.execute(rotateArgs("ci-status"), DECIDER);

@@ -6,7 +6,8 @@ import { emitTelemetry } from "../observability/telemetry.js";
 import { encryptedKvVault } from "../credentials/kv-vault.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { issueRevealLink } from "../webhooks/reveal-page.js";
-import { webhookVerifier } from "../webhooks/verifier.js";
+import { acceptsMintedSecret, webhookVerifier } from "../webhooks/verifier.js";
+import { unmintableRotationRefusal } from "../webhooks/source-vocabulary.js";
 import { registerActionKind } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -102,6 +103,11 @@ const webhookRotate: ActionKind<WebhookRotateArgs> = {
     }
     const refs = hookSecretRefs(hook);
     const currentRef = refs[0]!;
+    const verifier = webhookVerifier(hook.source);
+    if (verifier && !acceptsMintedSecret(verifier)) {
+      emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": "declined" });
+      return unmintableRotationRefusal(hook.id, hook.source, currentRef);
+    }
     const shared = hooksSharingSecretRef(hooks, hook.id, currentRef);
     if (shared.length > 0) {
       emitTelemetry("oe.feature.used", { "oe.feature": "webhook_rotated", "oe.outcome": "declined" });

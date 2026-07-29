@@ -58,3 +58,15 @@ export function unmintableSourceRefusal(source: string, envRef: string): string 
     `the value "${source}" gave them into it and redeploys, and the hook authenticates. Nothing else about the request has to change.`
   );
 }
+
+export function unmintableRotationRefusal(hookId: string, source: string, ref: string): string {
+  return (
+    `I can't issue a secret for "${hookId}" — it declares \`source: "${source}"\`, and "${source}" signs with a secret IT generates ` +
+    `and hands to you. Anything minted here would be a value "${source}" has never seen, so the secret would be revealed once and then ` +
+    `every delivery would 401 forever with nothing saying why. Nothing was minted and nothing changed. ` +
+    `The fix is one line in the declaration, by PR: give it \`broker: "env"\` with \`secretRef\` naming an environment variable ` +
+    `(it names \`${ref}\` today), then an operator sets that variable to the value "${source}" gave them and redeploys, and the hook ` +
+    `authenticates. If the value already lives in a home this deployment can read, name THAT home as the \`broker\` instead — ` +
+    `what I can never do is choose the value myself.`
+  );
+}
