@@ -3,7 +3,7 @@ import { domainKeyOf, resolvePartition, type Partition } from "../memory/partiti
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { getOperationalStore } from "../operational/provider.js";
-import type { DomainSkillRow } from "../operational/store.js";
+import type { DomainSkillProvenance, DomainSkillRevisionRow, DomainSkillRow } from "../operational/store.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { parseFrontmatter } from "../plugins/extract.js";
 import { MAX_SKILL_BYTES } from "../scm/git.js";
@@ -66,12 +66,17 @@ export function putDomainSkill(
   content: string,
   updatedBy: string | undefined,
   updatedAt: string,
+  provenance?: DomainSkillProvenance,
 ): Promise<void> {
-  return getOperationalStore().putDomainSkill(org, domain, name, content, updatedBy, updatedAt);
+  return getOperationalStore().putDomainSkill(org, domain, name, content, updatedBy, updatedAt, provenance);
 }
 
 export function deleteDomainSkill(org: string, domain: string, name: string): Promise<boolean> {
   return getOperationalStore().deleteDomainSkill(org, domain, name);
+}
+
+export function listDomainSkillRevisions(org: string, domain: string, name?: string): Promise<DomainSkillRevisionRow[]> {
+  return getOperationalStore().listDomainSkillRevisions(org, domain, name);
 }
 
 export function withDescription(content: string, description?: string): string {

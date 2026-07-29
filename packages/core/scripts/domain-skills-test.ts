@@ -96,6 +96,25 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok((await store.deleteDomainSkill("default", "eng", "other-skill")) === true, "store: delete returns true when a row was removed");
   ok((await store.deleteDomainSkill("default", "eng", "other-skill")) === false, "store: delete is idempotent (false when absent)");
   ok((await store.listDomainSkills("default", "eng")).length === 1, "store: gone after delete");
+
+  const revs = await store.listDomainSkillRevisions("default", "eng", "deploy-runbook");
+  ok(
+    revs.some((r) => r.content === "# Deploy\nSteps."),
+    `revisions: THE OLD BODY SURVIVES the destructive upsert that replaced it (readable bodies: ${JSON.stringify(revs.map((r) => r.content))})`,
+  );
+  ok(revs.length === 2, `revisions: one row per write, the first included (got ${revs.length})`);
+  ok(revs[1].content === "# Deploy v2", "revisions: the replacing body is recorded too");
+  ok(revs[0].seq < revs[1].seq, "revisions: ordered oldest-first by seq (the only total order)");
+  ok(revs[0].authoredBy === "U1" && revs[1].authoredBy === "U2", "revisions: each row carries ITS OWN author, not the latest one");
+  ok(revs[0].recordedAt === "2026-07-04T10:00:00Z", "revisions: each row carries the timestamp of its own write");
+  ok(revs[0].armedBy === undefined && revs[0].approvalId === undefined, "revisions: a write outside the card path records without approval provenance (never refuses)");
+
+  ok((await store.listDomainSkillRevisions("default", "eng")).length === 3, "revisions: omitting `name` sweeps the whole domain (2 deploy-runbook + 1 other-skill)");
+  ok((await store.listDomainSkillRevisions("acme", "eng")).length === 1, "revisions: another org's revisions never leak into this org's log");
+  ok((await store.listDomainSkillRevisions("default", "watercooler")).length === 0, "revisions: another domain in the same org is isolated");
+
+  const afterDelete = await store.listDomainSkillRevisions("default", "eng", "other-skill");
+  ok(afterDelete.length === 1 && afterDelete[0].content === "# Other", "revisions: deleting the skill does NOT remove what was armed (an append-only log doesn't un-record)");
 }
 
 {
@@ -260,6 +279,51 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     globalThis.fetch = realFetch;
     delete process.env.SLACK_BOT_TOKEN;
   }
+}
+
+{
+  const { requestApproval, resolveApprovalClick } = await import("../agent/approvals/flow.js");
+  const store = getOperationalStore();
+
+  const posted = await requestApproval(
+    {
+      org: "default",
+      kind: "skill.create",
+      args: { org: "default", domain: "eng", name: "armed-skill", content: "# Armed body", action: "created", authoredBy: "U_AUTHOR" },
+      scopeKey: "slack/T1/C_ENG",
+      domain: "eng",
+      requestedBy: "U_AUTHOR",
+      channelId: "C_ENG",
+    },
+    { postCard: async () => "ts-skill-1" },
+  );
+  const decided = await resolveApprovalClick({ org: "default", id: posted.id, decision: "approve", clickerId: "U_ARMER2" });
+  ok(decided.outcome === "decided", `arming: the click decides (outcome ${decided.outcome})`);
+
+  const armed = (await store.listDomainSkillRevisions("default", "eng", "armed-skill"))[0];
+  ok(armed !== undefined && armed.content === "# Armed body", "arming: the approved body is recorded verbatim");
+  ok(armed?.authoredBy === "U_AUTHOR" && armed?.armedBy === "U_ARMER2", "arming: author and ARMER are recorded separately (they are different people)");
+  ok(armed?.approvalId === posted.id, `arming: the revision names the CARD that armed it (${armed?.approvalId} vs ${posted.id})`);
+
+  const posted2 = await requestApproval(
+    {
+      org: "default",
+      kind: "skill.create",
+      args: { org: "default", domain: "eng", name: "armed-skill", content: "# Armed body v2", action: "updated", authoredBy: "U_AUTHOR" },
+      scopeKey: "slack/T1/C_ENG",
+      domain: "eng",
+      requestedBy: "U_AUTHOR",
+      channelId: "C_ENG",
+    },
+    { postCard: async () => "ts-skill-2" },
+  );
+  await resolveApprovalClick({ org: "default", id: posted2.id, decision: "approve", clickerId: "U_ARMER3" });
+  const both = await store.listDomainSkillRevisions("default", "eng", "armed-skill");
+  ok(both.length === 2 && both[0].content === "# Armed body", "arming: the FIRST approved body survives the second approval that replaced it");
+  ok(both[0].approvalId === posted.id && both[1].approvalId === posted2.id, "arming: each revision points at its own card, not the latest one");
+  ok((await store.listDomainSkills("default", "eng")).find((r) => r.name === "armed-skill")?.content === "# Armed body v2", "arming: the LIVE row is the latest body (the log is history, not a replacement)");
+
+  await store.deleteDomainSkill("default", "eng", "armed-skill");
 }
 
 {

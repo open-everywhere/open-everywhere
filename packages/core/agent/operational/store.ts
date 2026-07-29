@@ -24,6 +24,7 @@ export const OPERATIONAL_TABLES = [
   "pr_session_approval",
   "pending_actions",
   "domain_skill",
+  "domain_skill_revisions",
   "domain_model",
   "usage_events",
   "instance_meta",
@@ -162,6 +163,23 @@ export interface DomainSkillRow {
   readonly content: string;
   readonly updatedBy?: string;
   readonly updatedAt: string;
+}
+
+export interface DomainSkillRevisionRow {
+  readonly seq: number;
+  readonly org: string;
+  readonly domain: string;
+  readonly name: string;
+  readonly content: string;
+  readonly authoredBy?: string;
+  readonly armedBy?: string;
+  readonly approvalId?: string;
+  readonly recordedAt: string;
+}
+
+export interface DomainSkillProvenance {
+  readonly armedBy?: string;
+  readonly approvalId?: string;
 }
 
 export interface UsageEventEntry {
@@ -344,8 +362,17 @@ export interface OperationalStore {
   bumpChannelSessionUsage(org: string, surfaceKey: string, token: string, delta: number): Promise<number>;
 
   listDomainSkills(org: string, domain: string): Promise<DomainSkillRow[]>;
-  putDomainSkill(org: string, domain: string, name: string, content: string, updatedBy: string | undefined, updatedAt: string): Promise<void>;
+  putDomainSkill(
+    org: string,
+    domain: string,
+    name: string,
+    content: string,
+    updatedBy: string | undefined,
+    updatedAt: string,
+    provenance?: DomainSkillProvenance,
+  ): Promise<void>;
   deleteDomainSkill(org: string, domain: string, name: string): Promise<boolean>;
+  listDomainSkillRevisions(org: string, domain: string, name?: string): Promise<DomainSkillRevisionRow[]>;
 
   appendUsageEvent(entry: UsageEventEntry): Promise<void>;
   usageForSession(org: string, sessionId: string): Promise<UsageEventEntry[]>;

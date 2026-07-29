@@ -568,6 +568,27 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.deleteDomainSkill("acme", "eng", "no-author")) === true, "pg: delete returns true when a row was removed");
   ok((await store.deleteDomainSkill("acme", "eng", "no-author")) === false, "pg: delete is idempotent (false when absent)");
   ok((await store.listDomainSkills("acme", "eng")).length === 1, "pg: gone after delete");
+
+  const pgRevs = await store.listDomainSkillRevisions("acme", "eng", "deploy-runbook");
+  ok(
+    pgRevs.some((r) => r.content === "# Deploy\nSteps."),
+    `pg revisions: THE OLD BODY SURVIVES the destructive upsert that replaced it (readable bodies: ${JSON.stringify(pgRevs.map((r) => r.content))})`,
+  );
+  ok(pgRevs.length === 2, `pg revisions: one row per write, the first included (got ${pgRevs.length})`);
+  ok(pgRevs[1].content === "# Deploy v2" && pgRevs[0].seq < pgRevs[1].seq, "pg revisions: oldest-first by the identity `seq`");
+  ok(pgRevs[0].authoredBy === "U1" && pgRevs[1].authoredBy === "U2", "pg revisions: each row keeps its OWN author");
+  ok(pgRevs[0].recordedAt === "2026-06-30T10:00:00Z", "pg revisions: each row keeps the timestamp of its own write");
+
+  await store.putDomainSkill("acme", "eng", "gated", "# Gated body", "U_AUTHOR", "2026-06-30T14:00:00Z", { armedBy: "U_ARMER", approvalId: "pa_abc123" });
+  const gated = (await store.listDomainSkillRevisions("acme", "eng", "gated"))[0];
+  ok(gated.armedBy === "U_ARMER" && gated.approvalId === "pa_abc123", "pg revisions: armedBy + the arming card's id round-trip");
+  ok(pgRevs[0].armedBy === undefined && pgRevs[0].approvalId === undefined, "pg revisions: a write with no provenance is still recorded (absent, not refused)");
+
+  ok((await store.listDomainSkillRevisions("globex", "eng")).length === 1, "pg revisions: another org's log never leaks into this org's");
+  ok((await store.listDomainSkillRevisions("acme", "watercooler")).length === 0, "pg revisions: another domain in the same org is isolated");
+  const deletedRevs = await store.listDomainSkillRevisions("acme", "eng", "no-author");
+  ok(deletedRevs.length === 1 && deletedRevs[0].content === "# No author", "pg revisions: the DELETED skill's armed body is still on the record");
+  ok((await store.listDomainSkillRevisions("acme", "eng")).length === 4, "pg revisions: omitting `name` sweeps the whole domain (2 + 1 deleted + 1 gated)");
 }
 
 {
@@ -674,6 +695,12 @@ const store = makeOperationalPostgresStore(client);
     ok(((await client.query("SELECT count(*)::int AS n FROM audit_entry")).rows as { n: number }[])[0].n > 0, "two-role: the runtime role can append + read audit_entry");
     await denied("UPDATE audit_entry SET action = 'tampered'", "permission denied", "two-role: UPDATE audit_entry is permission-DENIED for the runtime role");
     await denied("DELETE FROM audit_entry", "permission denied", "two-role: DELETE audit_entry is permission-DENIED for the runtime role");
+
+    await store.putDomainSkill("acme", "eng", "runtime-role-write", "# From the runtime role", "U1", "2026-07-29T10:00:00Z", { armedBy: "U2", approvalId: "pa_rr" });
+    ok((await store.listDomainSkillRevisions("acme", "eng", "runtime-role-write")).length === 1, "two-role: the runtime role can append + read domain_skill_revisions");
+    await denied("UPDATE domain_skill_revisions SET content = 'tampered'", "permission denied", "two-role: UPDATE domain_skill_revisions is permission-DENIED (the approved body can't be rewritten)");
+    await denied("DELETE FROM domain_skill_revisions", "permission denied", "two-role: DELETE domain_skill_revisions is permission-DENIED (the approved body can't be erased)");
+    await denied("TRUNCATE domain_skill_revisions", "permission denied", "two-role: TRUNCATE domain_skill_revisions is permission-DENIED (RLS does not filter TRUNCATE)");
 
     await denied("DELETE FROM webhook_capture_window", "permission denied", "two-role: DELETE webhook_capture_window is permission-DENIED (OPE-221 — no delete path exists for an arm-state row)");
     ok(

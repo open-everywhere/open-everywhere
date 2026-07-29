@@ -257,6 +257,24 @@ function getDb(): DatabaseSync {
       updated_at TEXT NOT NULL,               -- ISO-8601
       PRIMARY KEY (org_id, domain, name)
     );
+    -- APPEND-ONLY content history for domain_skill (OPE-237). Written by putDomainSkill on
+    -- every write, never updated, never deleted, never pruned — see DomainSkillRevisionRow in
+    -- store.ts for why a domain skill's history is an audit artefact, and for the retention
+    -- position. Append-only here is BY CONTRACT only: sqlite has no RLS, so unlike Postgres
+    -- (SELECT+INSERT policies under FORCE) nothing at the engine stops a rewrite. That is the
+    -- same caveat audit_entry carries on this deprecated backend, stated rather than implied.
+    CREATE TABLE IF NOT EXISTS domain_skill_revisions (
+      seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id      TEXT NOT NULL,
+      domain      TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      content     TEXT NOT NULL,          -- the exact body written to domain_skill
+      authored_by TEXT,                   -- authoring principalId, when known
+      armed_by    TEXT,                   -- the approver whose click armed it, when known
+      approval_id TEXT,                   -- pending_actions.id of the card that armed it
+      recorded_at TEXT NOT NULL           -- ISO-8601 (= the live row's updated_at)
+    );
+    CREATE INDEX IF NOT EXISTS domain_skill_revisions_org_domain_name ON domain_skill_revisions (org_id, domain, name, seq);
     CREATE TABLE IF NOT EXISTS domain_model (
       org_id     TEXT NOT NULL,
       domain     TEXT NOT NULL,
@@ -918,7 +936,13 @@ export const sqliteOperationalStore: OperationalStore = {
     }));
   },
 
-  async putDomainSkill(org, domain, name, content, updatedBy, updatedAt) {
+  async putDomainSkill(org, domain, name, content, updatedBy, updatedAt, provenance) {
+    getDb()
+      .prepare(
+        `INSERT INTO domain_skill_revisions (org_id, domain, name, content, authored_by, armed_by, approval_id, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(org, domain, name, content, updatedBy ?? null, provenance?.armedBy ?? null, provenance?.approvalId ?? null, updatedAt);
     getDb()
       .prepare(
         `INSERT INTO domain_skill (org_id, domain, name, content, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -932,6 +956,36 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async deleteDomainSkill(org, domain, name) {
     return getDb().prepare("DELETE FROM domain_skill WHERE org_id = ? AND domain = ? AND name = ?").run(org, domain, name).changes > 0;
+  },
+
+  async listDomainSkillRevisions(org, domain, name) {
+    const rows = getDb()
+      .prepare(
+        `SELECT seq, name, content, authored_by, armed_by, approval_id, recorded_at
+         FROM domain_skill_revisions
+         WHERE org_id = ? AND domain = ? AND (? IS NULL OR name = ?)
+         ORDER BY seq`,
+      )
+      .all(org, domain, name ?? null, name ?? null) as {
+      seq: number;
+      name: string;
+      content: string;
+      authored_by: string | null;
+      armed_by: string | null;
+      approval_id: string | null;
+      recorded_at: string;
+    }[];
+    return rows.map((r) => ({
+      seq: Number(r.seq),
+      org,
+      domain,
+      name: r.name,
+      content: r.content,
+      ...(r.authored_by ? { authoredBy: r.authored_by } : {}),
+      ...(r.armed_by ? { armedBy: r.armed_by } : {}),
+      ...(r.approval_id ? { approvalId: r.approval_id } : {}),
+      recordedAt: r.recorded_at,
+    }));
   },
 
   async appendUsageEvent(entry) {

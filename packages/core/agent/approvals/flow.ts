@@ -18,6 +18,7 @@ import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclos
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
+import { withArmingApproval } from "./arming-context.js";
 import type { PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-forget.js";
 import "./access-request.js";
@@ -389,7 +390,7 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
 
   try {
     const args = JSON.parse(row.argsJson) as unknown;
-    const outcome = await kindDef.execute(args, input.clickerId);
+    const outcome = await withArmingApproval({ id: row.id, kind: row.kind }, () => kindDef.execute(args, input.clickerId));
     await appendAudit({ ...whereFromScope(input.org, row.scopeKey), principalId: input.clickerId, action: "approval.approved", detail: { id: row.id, kind: row.kind, outcome } });
     emitTelemetry("oe.feature.used", { "oe.feature": "approval_decided", "oe.outcome": "approved" });
     return { outcome: "decided", row: decidedRow, summaryLines, outcomeLine: outcome };

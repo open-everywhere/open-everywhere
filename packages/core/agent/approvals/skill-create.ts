@@ -1,4 +1,5 @@
 import { putDomainSkill } from "../skills/domain-skills.js";
+import { armingApproval } from "./arming-context.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { registerActionKind } from "./actions.js";
@@ -30,7 +31,11 @@ const skillCreate: ActionKind<SkillCreateArgs> = {
     ];
   },
   async execute(args, decidedBy) {
-    await putDomainSkill(args.org, args.domain, args.name, args.content, args.authoredBy, new Date().toISOString());
+    const arming = armingApproval();
+    await putDomainSkill(args.org, args.domain, args.name, args.content, args.authoredBy, new Date().toISOString(), {
+      armedBy: decidedBy,
+      ...(arming ? { approvalId: arming.id } : {}),
+    });
     await appendAudit({
       org: args.org,
       platform: "-",

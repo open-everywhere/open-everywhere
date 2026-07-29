@@ -218,6 +218,18 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      updated_at text NOT NULL,
      PRIMARY KEY (org_id, domain, name)
    )`,
+  `CREATE TABLE IF NOT EXISTS domain_skill_revisions (
+     seq         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+     org_id      text NOT NULL,
+     domain      text NOT NULL,
+     name        text NOT NULL,
+     content     text NOT NULL,
+     authored_by text,
+     armed_by    text,
+     approval_id text,
+     recorded_at text NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS domain_skill_revisions_org_domain_name ON domain_skill_revisions (org_id, domain, name, seq)`,
   `CREATE TABLE IF NOT EXISTS domain_model (
      org_id     text NOT NULL,
      domain     text NOT NULL,
@@ -291,12 +303,14 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE webhook_capture_window ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE github_installation ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE domain_skill_revisions ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_model ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pr_session_approval ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
+  `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS spend_org_isolation ON spend_ledger`,
   `DROP POLICY IF EXISTS routine_org_isolation ON routine`,
   `DROP POLICY IF EXISTS audit_select ON audit_entry`,
@@ -316,6 +330,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS webhook_capture_window_org_isolation ON webhook_capture_window`,
   `DROP POLICY IF EXISTS github_installation_org_isolation ON github_installation`,
   `DROP POLICY IF EXISTS domain_skill_org_isolation ON domain_skill`,
+  `DROP POLICY IF EXISTS domain_skill_revisions_select ON domain_skill_revisions`,
+  `DROP POLICY IF EXISTS domain_skill_revisions_insert ON domain_skill_revisions`,
   `DROP POLICY IF EXISTS domain_model_org_isolation ON domain_model`,
   `DROP POLICY IF EXISTS usage_events_select ON usage_events`,
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
@@ -374,6 +390,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE POLICY domain_skill_org_isolation ON domain_skill
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY domain_skill_revisions_select ON domain_skill_revisions FOR SELECT USING (true)`,
+  `CREATE POLICY domain_skill_revisions_insert ON domain_skill_revisions FOR INSERT WITH CHECK (true)`,
   `CREATE POLICY domain_model_org_isolation ON domain_model
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -387,7 +405,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      WITH CHECK ${ORG_GUC}`,
 ];
 
-const APPEND_ONLY_TABLES = ["audit_entry", "usage_events"] as const;
+const APPEND_ONLY_TABLES = ["audit_entry", "usage_events", "domain_skill_revisions"] as const;
 
 interface ExpectedPolicy {
   readonly name: string;
@@ -404,6 +422,10 @@ const EXPECTED_POLICIES: Readonly<Record<string, readonly ExpectedPolicy[]>> = {
   usage_events: [
     { name: "usage_events_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
     { name: "usage_events_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
+  ],
+  domain_skill_revisions: [
+    { name: "domain_skill_revisions_select", permissive: true, cmd: "r", qual: "true", withCheck: null },
+    { name: "domain_skill_revisions_insert", permissive: true, cmd: "a", qual: null, withCheck: "true" },
   ],
 };
 
@@ -660,8 +682,8 @@ export function runtimeRoleGrantsSql(role: string): string[] {
   return [
     `GRANT USAGE ON SCHEMA public TO ${role}`,
     `REVOKE CREATE ON SCHEMA public FROM ${role}`,
-    `GRANT SELECT, INSERT ON audit_entry, usage_events TO ${role}`,
-    `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events FROM ${role}`,
+    `GRANT SELECT, INSERT ON audit_entry, usage_events, domain_skill_revisions TO ${role}`,
+    `REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit_entry, usage_events, domain_skill_revisions FROM ${role}`,
     `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
     ...mutableTableGrantsSql(role),
     `GRANT SELECT, INSERT, DELETE ON webhook_capture TO ${role}`,
@@ -1233,7 +1255,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       }));
     },
 
-    async putDomainSkill(org, domain, name, content, updatedBy, updatedAt) {
+    async putDomainSkill(org, domain, name, content, updatedBy, updatedAt, provenance) {
+      await client.query(
+        `INSERT INTO domain_skill_revisions (org_id, domain, name, content, authored_by, armed_by, approval_id, recorded_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [org, domain, name, content, updatedBy ?? null, provenance?.armedBy ?? null, provenance?.approvalId ?? null, updatedAt],
+      );
       await client.query(
         `INSERT INTO domain_skill (org_id, domain, name, content, updated_by, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (org_id, domain, name) DO UPDATE SET
@@ -1250,6 +1277,29 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         [org, domain, name],
       );
       return rows.length > 0;
+    },
+
+    async listDomainSkillRevisions(org, domain, name) {
+      const { rows } = await client.query(
+        `SELECT seq, name, content, authored_by, armed_by, approval_id, recorded_at
+         FROM domain_skill_revisions
+         WHERE org_id = $1 AND domain = $2 AND ($3::text IS NULL OR name = $3)
+         ORDER BY seq`,
+        [org, domain, name ?? null],
+      );
+      return (
+        rows as { seq: number | string; name: string; content: string; authored_by: string | null; armed_by: string | null; approval_id: string | null; recorded_at: string }[]
+      ).map((r) => ({
+        seq: Number(r.seq),
+        org,
+        domain,
+        name: r.name,
+        content: r.content,
+        ...(r.authored_by ? { authoredBy: r.authored_by } : {}),
+        ...(r.armed_by ? { armedBy: r.armed_by } : {}),
+        ...(r.approval_id ? { approvalId: r.approval_id } : {}),
+        recordedAt: r.recorded_at,
+      }));
     },
 
     async appendUsageEvent(entry: UsageEventEntry) {
