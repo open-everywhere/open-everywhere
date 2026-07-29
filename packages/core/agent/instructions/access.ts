@@ -10,6 +10,7 @@ import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
+import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { bridgeReadableChannelList, bridgeBotDisplayName } from "../channels/slack-bridge.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -383,6 +384,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderSupervisorPersona(ctx, { messageToolOnly: true }),
     roleMd,
     accessMd,
+    renderApprovalPreviewFor(windowGrainOf(ctx)),
     memoryMd,
     ...(soloMode ? [renderChannelScope(ctx), renderNoiseDoctrine(ctx)] : []),
   ]
@@ -404,6 +406,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderSupervisorPersona(ctx),
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",
+    renderApprovalPreviewFor(windowGrainOf(ctx)),
     memoryMd,
     renderChannelScope(ctx),
     renderNoiseDoctrine(ctx),
