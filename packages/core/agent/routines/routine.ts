@@ -1,4 +1,5 @@
 import { describeFilter, type SubscriptionFilter } from "./event-model.js";
+import type { RoutinePolicyRule } from "./policy.js";
 
 export type RoutineTrigger =
   | { readonly kind: "cron"; readonly expr: string }
@@ -48,6 +49,7 @@ export interface Routine {
   readonly createdBy?: string;
   readonly createdAt: string;
   readonly taintedAtCreation?: boolean;
+  readonly policy?: readonly RoutinePolicyRule[];
 
   status: RoutineStatus;
   disabledReason?: string;

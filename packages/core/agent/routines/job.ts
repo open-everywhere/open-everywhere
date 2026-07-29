@@ -1,5 +1,6 @@
 import { JOB_STATE_MAX_BYTES, type Routine } from "./routine.js";
 import { firePreamble, renderFailureBlock, renderSilentBlock } from "./watch.js";
+import { renderPolicyBlock } from "./policy.js";
 
 export const JOB_STATE_TOOL = "record_job_state";
 export const JOB_COMPLETE_TOOL = "complete_job";
@@ -22,7 +23,7 @@ export function applyJobStateObservation(state: string, tainted = false): JobSta
 }
 
 export function renderJobMessage(
-  r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "jobState" | "jobTainted" | "report">,
+  r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "jobState" | "jobTainted" | "report" | "policy">,
 ): string {
   const ledger =
     r.jobState && r.jobState.length > 0
@@ -31,11 +32,13 @@ export function renderJobMessage(
         : `[job] Your durable progress ledger from earlier fires (trusted — your own notes):\n${r.jobState}`
       : `[job] No progress ledger yet — this is the FIRST fire of this job. Record where you get to.`;
   const silent = renderSilentBlock(r);
+  const rules = renderPolicyBlock(r);
   return [
     firePreamble(r),
     ...(silent.length > 0 ? ["", silent] : []),
     "",
     renderFailureBlock(),
+    ...(rules.length > 0 ? ["", rules] : []),
     "",
     `[job] This is a DURABLE JOB — it fires on its own schedule (nobody re-tagged you) and, unlike an ` +
       `ordinary routine, keeps ONE persistent session across fires: this thread IS your working context, ` +

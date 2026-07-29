@@ -162,6 +162,14 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button",
   ),
   delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
+  add_routine_rule: member(
+    "routine.policy.add",
+    "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. The card is not the load-bearing control — this tool HARD-REFUSES on a tainted turn (unlike remember/create_routine/edit_routine, which warn and card) and HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine and no fetched content can reach a card; it is also absent from JOB_WAKE_TOOLS. Those refusals are what buy the right to render the block trusted at all",
+  ),
+  remove_routine_rule: member(
+    "routine.policy.remove",
+    "behaviour-persisting removal (OPE-141): dropping a standing rule silently takes away a guardrail a human armed after an incident, and every later fire stops following it with no notice — the cancel_routine/delete_skill shape, reversible by re-adding, but a human confirms against the rule's stated reason. It carries add_routine_rule's tainted-turn and routine-fire refusals for a sharper reason than symmetry: stripping the rule written to stop an attack is an easier act than authoring a malicious one. There is deliberately no edit verb — an edit is remove + add, two cards, so each wording is read on its own and no rule's provenance is mutated under a rewrite",
+  ),
 
   declare_webhook: member(
     "webhook.declare",

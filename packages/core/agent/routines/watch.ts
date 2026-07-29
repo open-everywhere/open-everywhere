@@ -1,5 +1,6 @@
 import { isSilentRoutine, type Routine } from "./routine.js";
 import { hashState, MAX_CONSECUTIVE_FAILURES, shouldPostOnDiff } from "./lifecycle.js";
+import { renderPolicyBlock } from "./policy.js";
 
 export const WATCH_SILENCE_SENTINEL = "NO_REPLY";
 
@@ -35,23 +36,33 @@ export function renderFailureBlock(): string {
   );
 }
 
-function fireMessage(head: string, silent: string, ...rest: readonly string[]): string {
-  return [head, ...(silent.length > 0 ? ["", silent] : []), "", renderFailureBlock(), "", ...rest].join("\n");
+function fireMessage(head: string, silent: string, rules: string, ...rest: readonly string[]): string {
+  return [
+    head,
+    ...(silent.length > 0 ? ["", silent] : []),
+    "",
+    renderFailureBlock(),
+    ...(rules.length > 0 ? ["", rules] : []),
+    "",
+    ...rest,
+  ].join("\n");
 }
 
-export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "report">): string {
-  return fireMessage(firePreamble(r), renderSilentBlock(r), r.prompt);
+export function renderScheduledMessage(r: Pick<Routine, "id" | "prompt" | "createdAt" | "lastRunAt" | "report" | "policy">): string {
+  return fireMessage(firePreamble(r), renderSilentBlock(r), renderPolicyBlock(r), r.prompt);
 }
 
-export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastStateHash" | "createdAt" | "lastRunAt">): string {
+export function renderWatchMessage(r: Pick<Routine, "id" | "prompt" | "lastStateHash" | "createdAt" | "lastRunAt" | "policy">): string {
   const baseline =
     r.lastStateHash === undefined
       ? "No baseline is recorded yet — this is the first check, so report what you observe as the baseline."
       : "A baseline from the last check is recorded — the tool will tell you whether the state changed.";
+  const rules = renderPolicyBlock(r);
   return [
     firePreamble(r),
     "",
     renderFailureBlock(),
+    ...(rules.length > 0 ? ["", rules] : []),
     "",
     `[watch] This is a scheduled check of a WATCH routine — post ONLY if the watched state changed. ` +
       `Protocol: do the check below, then call the \`${WATCH_STATE_TOOL}\` tool with a canonical text ` +

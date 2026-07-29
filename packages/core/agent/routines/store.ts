@@ -12,6 +12,10 @@ export function newRoutineId(): string {
   return `r-${randomUUID().slice(0, 8)}`;
 }
 
+export function newPolicyRuleId(): string {
+  return `p-${randomUUID().slice(0, 8)}`;
+}
+
 export function listRoutines(p: Partition): Promise<Routine[]> {
   return getOperationalStore().listRoutines(p.org, p.surfaceKey);
 }

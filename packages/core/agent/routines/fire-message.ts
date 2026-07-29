@@ -4,7 +4,17 @@ import { renderJobMessage } from "./job.js";
 
 export type FireMessageInput = Pick<
   Routine,
-  "id" | "prompt" | "createdAt" | "lastRunAt" | "report" | "trigger" | "sessionMode" | "lastStateHash" | "jobState" | "jobTainted"
+  | "id"
+  | "prompt"
+  | "createdAt"
+  | "lastRunAt"
+  | "report"
+  | "trigger"
+  | "sessionMode"
+  | "lastStateHash"
+  | "jobState"
+  | "jobTainted"
+  | "policy"
 >;
 
 export function renderFireMessage(r: FireMessageInput): string {

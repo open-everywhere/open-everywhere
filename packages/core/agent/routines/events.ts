@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ingestUntrusted } from "../access/untrusted.js";
 import { renderFailureBlock } from "./watch.js";
+import { renderPolicyBlock } from "./policy.js";
+import type { Routine } from "./routine.js";
 
 export interface LegacyGithubEvent {
   readonly source: string;
@@ -44,11 +46,13 @@ export function normalizeGithubEvent(eventType: string, payload: Record<string, 
 }
 
 export function eventPrompt(
-  routine: { readonly prompt: string },
+  routine: Pick<Routine, "prompt"> & Partial<Pick<Routine, "policy">>,
   ev: { readonly summary: string; readonly url?: string; readonly entity?: string },
 ): string {
   const body = [ev.summary, ev.url, ev.entity].filter((s): s is string => Boolean(s)).join("\n");
-  return `${renderFailureBlock()}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
+  const rules = renderPolicyBlock(routine);
+  const head = rules.length > 0 ? `${renderFailureBlock()}\n\n${rules}` : renderFailureBlock();
+  return `${head}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
 }
 
 export function verifyGithubSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {

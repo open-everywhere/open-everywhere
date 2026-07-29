@@ -5,11 +5,12 @@ import { resolvePartition } from "../memory/partition.js";
 import { listRoutines } from "../routines/store.js";
 import { emptyRoutineForensics, readRoutineForensics } from "../routines/fire-audit.js";
 import { describeTrigger } from "../routines/routine.js";
+import { policyRules } from "../routines/policy.js";
 import { listRoutinePermissions } from "../routines/grants.js";
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), and the standing permissions each one may use unattended without asking. Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether an event subscription's filter has ever matched anything, what one is costing, or what any of them are allowed to do on their own.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, or what rules one has been told to follow.",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -36,6 +37,16 @@ export default defineTool({
         fires7d: z.number(),
         tokens7d: z.number(),
         permissions: z.array(z.string()),
+        rules: z.array(
+          z.object({
+            id: z.string(),
+            rule: z.string(),
+            why: z.string(),
+            addedAt: z.string(),
+            addedBy: z.string(),
+            source: z.string(),
+          }),
+        ),
         note: z.string().nullable(),
       }),
     ),
@@ -79,6 +90,7 @@ export default defineTool({
         fires7d: f.fires7d,
         tokens7d: f.tokens7d,
         permissions: permissions.get(r.id) ?? [],
+        rules: policyRules(r).map((x) => ({ id: x.id, rule: x.rule, why: x.why, addedAt: x.addedAt, addedBy: x.addedBy, source: x.source })),
         note: r.status === "done" ? r.completedReason ?? "job done" : r.disabledReason ?? null,
       };
     });
