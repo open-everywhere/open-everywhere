@@ -13,7 +13,7 @@ import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
-import { whereFromScope as approvalWhereFromScope } from "../approvals/actions.js";
+import { whereFromScope } from "../approvals/actions.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -52,11 +52,6 @@ export function assertMemoryFileWritable(relPath: string, content?: string): voi
   if (content !== undefined && Buffer.byteLength(content, "utf-8") > MEMORY_WRITE_MAX_BYTES) {
     throw new Error(`"${relPath}" is ${Buffer.byteLength(content, "utf-8")} bytes, over the ${MEMORY_WRITE_MAX_BYTES / 1024}KB control-plane write cap.`);
   }
-}
-
-function whereFromScope(org: string, scopeKey: string): { org: string; platform: string; workspace: string; surface?: string } {
-  const [platform, workspace, surface] = scopeKey.split("/");
-  return { org, platform: platform || "unknown", workspace: workspace || "unknown", ...(surface ? { surface } : {}) };
 }
 
 function jsonResult(data: unknown) {
@@ -229,7 +224,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
             return jsonResult({ ok: true, outcome: "expired", org: a.org, id: a.id });
           case "decided": {
             await appendAudit({
-              ...approvalWhereFromScope(a.org, row.scopeKey),
+              ...whereFromScope(a.org, row.scopeKey),
               principalId: actor,
               action: "admin.approval.decide",
               detail: { id: a.id, kind: row.kind, decision: res.row.status, outcome: res.outcomeLine },

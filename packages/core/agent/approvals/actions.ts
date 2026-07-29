@@ -1,5 +1,6 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
+import { parseScopeKey } from "../access/scope-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
 
@@ -24,12 +25,19 @@ export function summarizeFrozenRow(row: PendingActionRow): string[] {
 }
 
 export function whereFromScope(org: string, scopeKey: string): { org: string; platform: string; workspace: string; surface?: string } {
-  const parts = scopeKey.split("/");
-  if (parts.length === 1) {
-    return { org, platform: "domain", workspace: parts[0] || "unknown" };
+  const parsed = parseScopeKey(scopeKey);
+  switch (parsed.kind) {
+    case "domain":
+      return { org, platform: "domain", workspace: parsed.name || "unknown" };
+    case "tenant":
+      return { org, platform: parsed.platform, workspace: parsed.workspace };
+    case "surface":
+      return { org, platform: parsed.platform, workspace: parsed.workspace, surface: parsed.surface };
+    case "malformed": {
+      const [platform, workspace, surface] = parsed.parts;
+      return { org, platform: platform || "unknown", workspace: workspace || "unknown", ...(surface ? { surface } : {}) };
+    }
   }
-  const [platform, workspace, surface] = parts;
-  return { org, platform: platform || "unknown", workspace: workspace || "unknown", ...(surface ? { surface } : {}) };
 }
 
 function fmtCap(tokens: number | null): string {

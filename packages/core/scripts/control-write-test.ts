@@ -153,6 +153,21 @@ await client.connect(clientT);
 }
 
 {
+  const r = await callJson(client, "cancel_routine", { org: "default", surfaceKey: "payments", id: "no-such-routine" });
+  ok("a bare domain-name scope is accepted by the write plane (no format constraint on the param)", r.ok === true && r.cancelled === false);
+  const rows = (await readAudit({ org: "default" })).filter((e) => e.action === "admin.routine.cancel" && (e.detail as { id?: string })?.id === "no-such-routine");
+  ok("the domain-scoped mutation produced exactly one audit row", rows.length === 1);
+  ok(
+    "a bare domain NAME audits as platform:'domain' with the domain as the workspace",
+    rows[0]?.platform === "domain" && rows[0]?.workspace === "payments",
+  );
+  ok(
+    "…and NOT as the deleted private copy had it — a platform that does not exist, with an unknown workspace",
+    !(rows[0]?.platform === "payments" && rows[0]?.workspace === "unknown"),
+  );
+}
+
+{
   const audit = await readAudit({ org: "default" });
   const actions = audit.map((e) => e.action);
   for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel", "skill.delete"]) {
