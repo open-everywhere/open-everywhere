@@ -121,6 +121,75 @@ const ORG = "default";
 
 {
   const defineDomain = domainMod.defineDomain;
+  const partitionFor = (surfaceKey: string) => {
+    const [platform = "", workspace = "", ...rest] = surfaceKey.split("/");
+    return { org: ORG, platform, workspace, surface: rest.join("/"), workspaceKey: `${platform}/${workspace}`, surfaceKey, key: surfaceKey };
+  };
+  const binding = (platform: string, workspace: string, channelId: string) =>
+    ({ platform, workspace, mode: "channel", trust: "internal", target: { channelId } }) as never;
+
+  const asked: string[] = [];
+  const floorFor = (key: string) => {
+    asked.push(key);
+    if (key.includes("SHARED")) return { floor: "guest" as const, roster: { humanMemberIds: ["U1", "U_EXT"], resolved: true, isPrivate: false, hasGuest: true } };
+    if (key.includes("UNKNOWN")) return { floor: "guest" as const, roster: { humanMemberIds: [], resolved: false, isPrivate: false, hasGuest: false } };
+    return { floor: "member" as const, roster: { humanMemberIds: ["U1"], resolved: true, isPrivate: true, hasGuest: false } };
+  };
+  const deps = { floor: async (key: string) => floorFor(key) } as never;
+
+  const mixed = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
+  const pure = cardVenue.approvalVenueFor(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [mixed]);
+  ok("venue" in pure && pure.venue.channelId === "C_SHARED", "venue-floor: the PURE walk is floor-blind and takes the first listing — this is the state the check has to improve on, pinned so the test can't pass vacuously");
+
+  asked.length = 0;
+  const checked = await cardVenue.checkApprovalVenue(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [mixed], deps);
+  ok("venue" in checked && checked.venue.channelId === "C_CLEAN", "venue-floor: 🔴 a candidate venue that is ITSELF externally shared is SKIPPED and the walk continues — a redirect that omitted this would just move the leak");
+  ok(asked[0] === "slack/T1/C_SHARED" && asked.length === 2, "venue-floor: …and it asked in declaration order, stopping at the first candidate that passed (no wasted roster fetches behind it)");
+
+  const allShared = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_SHARED", "slack/T1/C_SHARED2"] });
+  const none = await cardVenue.checkApprovalVenue(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [allShared], deps);
+  ok("refusal" in none && none.refusal.reason === "no-internal-card-channel" && none.refusal.domain === "partners", "venue-floor: a domain whose every card-capable channel is shared refuses with its OWN reason — distinct from no-card-channel, because the config change is a different one");
+  const copy = cardVenue.describeVenueRefusal((none as { refusal: never }).refusal, "teams");
+  ok(copy.includes("partners") && copy.includes("domains.ts"), "venue-floor: …and the copy names the domain and the file to edit");
+  ok(!copy.includes("Ask me again in a channel"), "venue-floor: …but NOT the card-disclosure 'ask somewhere not shared' line — the reader is on Teams, not in the shared room, so that instruction would misdirect them (this is the bug the arm fixes)");
+
+  const unknown = defineDomain({ name: "partners", channels: ["teams/W1/CONV1", "slack/T1/C_UNKNOWN"] });
+  const inert = await cardVenue.checkApprovalVenue(binding("teams", "W1", "CONV1"), partitionFor("teams/W1/CONV1") as never, () => [unknown], deps);
+  ok("venue" in inert && inert.venue.channelId === "C_UNKNOWN", "venue-floor: an UNOBSERVABLE roster ADMITS the candidate — 'we could not ask' must never become a silent outage (the polarity rule every floor consumer shares)");
+
+  asked.length = 0;
+  const ownShared = defineDomain({ name: "partners", channels: ["slack/T1/C_SHARED", "slack/T1/C_CLEAN"] });
+  const own = await cardVenue.checkApprovalVenue(binding("slack", "T1", "C_SHARED"), partitionFor("slack/T1/C_SHARED") as never, () => [ownShared], deps);
+  ok("venue" in own && own.venue.sameRoom && own.venue.channelId === "C_SHARED", "venue-floor: a card-capable OWN room keeps its own card even when the floor would refuse it — the redirect-away move is the one this must not make");
+  ok(asked.length === 0, "venue-floor: …and the own-room path touches the roster seam ZERO times, so the common path reads no config and does no I/O, exactly as before OPE-148");
+
+  const { readdirSync, readFileSync, statSync } = await import("node:fs");
+  const { join, resolve, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const walkSrc = (dir: string, out: string[]): string[] => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return out;
+    }
+    for (const e of entries) {
+      if (e === "node_modules" || e === "dist" || e === ".git" || e === "scripts") continue;
+      const p = join(dir, e);
+      if (statSync(p).isDirectory()) walkSrc(p, out);
+      else if (p.endsWith(".ts")) out.push(p);
+    }
+    return out;
+  };
+  const callers = walkSrc(join(repoRoot, "packages"), [])
+    .concat(walkSrc(join(repoRoot, "agent"), []))
+    .filter((f) => !f.endsWith("card-venue.ts") && /(?<!export function )approvalVenueFor\(/.test(readFileSync(f, "utf8")));
+  ok(callers.length === 0, `venue-floor: no production file may CALL the floor-blind approvalVenueFor — checkApprovalVenue is the entry (offenders: ${callers.join(", ") || "none"})`);
+}
+
+{
+  const defineDomain = domainMod.defineDomain;
   const good = defineDomain({ name: "eng", channels: ["linear/W1/ISSUE1", "slack/T1/C_OPS"], reportChannel: "slack/T1/C_OPS" });
   let threw: string | null = null;
   try {

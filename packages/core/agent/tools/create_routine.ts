@@ -20,7 +20,7 @@ import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval } from "../approvals/flow.js";
-import { approvalVenueFor, describeVenueRefusal } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { domainKeyOf } from "../memory/partition.js";
@@ -232,7 +232,7 @@ export default defineTool({
       throw new Error("`at` must be in the future — a one-shot routine can't fire in the past.");
     }
 
-    const venueResult = approvalVenueFor(binding, p, () => getConfig().loadDomains());
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
     if ("refusal" in venueResult) {
       throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform));
     }
