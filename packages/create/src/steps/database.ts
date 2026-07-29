@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { StepContext, WizardIO, WizardStep } from "../engine.js";
 import { isSet, mergedEnv, writeEnvLocal } from "../env-file.js";
 import {
@@ -14,21 +16,44 @@ function needsDb(env: Record<string, string | undefined>): boolean {
   return memProvider === "postgres" || opProvider === "postgres";
 }
 
+function targetsHostedDeploy(cwd: string): boolean {
+  const p = join(cwd, ".vercel", "project.json");
+  if (!existsSync(p)) return false;
+  try {
+    return Boolean((JSON.parse(readFileSync(p, "utf8")) as { projectId?: string }).projectId);
+  } catch {
+    return false;
+  }
+}
+
 export const databaseStep: WizardStep = {
   id: "database",
   title: "Database (Neon/Postgres)",
   check(ctx: StepContext) {
     const env = mergedEnv(ctx.cwd, ctx.env);
-    if (!needsDb(env)) return { satisfied: true, detail: "local backing (git/sqlite) — no DB required" };
+    if (!needsDb(env)) {
+      if (targetsHostedDeploy(ctx.cwd)) {
+        return {
+          satisfied: false,
+          detail: "git/sqlite backing on a Vercel-linked checkout — a hosted deploy discards memory and operational state",
+        };
+      }
+      return { satisfied: true, detail: "local backing (git/sqlite) — no DB required" };
+    }
     return { satisfied: isSet(env.DATABASE_URL), detail: isSet(env.DATABASE_URL) ? "DATABASE_URL set" : "DATABASE_URL missing (postgres backing selected)" };
   },
-  guide() {
+  guide(ctx: StepContext) {
+    const hosted = targetsHostedDeploy(ctx.cwd);
     return {
-      summary: "A hosted deploy needs Postgres (Vercel's filesystem is ephemeral, so git/sqlite backings don't persist).",
+      summary: hosted
+        ? "This checkout is linked to a Vercel project, and Vercel's filesystem is ephemeral — the default git/sqlite backings are wiped on every deploy, so memory and operational state need Postgres."
+        : "A hosted deploy needs Postgres (Vercel's filesystem is ephemeral, so git/sqlite backings don't persist).",
       instructions: [
         "Vercel dashboard → Storage → add Neon (Postgres) from the Marketplace — the connection string is injected automatically.",
         "Set OE_MEMORY_PROVIDER=postgres and OE_OPERATIONAL_PROVIDER=postgres.",
-        "Running purely locally? You can skip this — the default git/sqlite backings are fine.",
+        hosted
+          ? "Only ever running this locally? Unlink the Vercel project — while it's linked the wizard assumes you intend to deploy."
+          : "Running purely locally? You can skip this — the default git/sqlite backings are fine.",
       ],
     };
   },

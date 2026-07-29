@@ -120,4 +120,16 @@ const ok = (label: string, cond: boolean) => {
   ok("preflight marks two-role posture ok when OE_DB_OWNER_URL is parked", dualCheck?.status === "ok");
 }
 
+{
+  const defaults = preflight({ AI_GATEWAY_API_KEY: "k" });
+  const durability = defaults.checks.find((c) => c.name === "state durability");
+  ok("preflight warns that the default backings are process-local", durability !== undefined);
+  ok("the durability warning names the consequence, not just the setting", /loses|process-local/.test(durability?.detail ?? ""));
+  ok("the durability warning carries a fix", /OE_MEMORY_PROVIDER=postgres/.test(durability?.fix ?? ""));
+  ok("durability is advice, not a blocker — a purely local run is supported", durability?.status === "info" && defaults.ready === true);
+
+  const durable = preflight({ AI_GATEWAY_API_KEY: "k", OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" });
+  ok("no durability warning once postgres backings are selected", durable.checks.every((c) => c.name !== "state durability"));
+}
+
 console.log(`\n✓ ops/quickstart: ${n} assertions passed (preflight, tailored plan, env merge, scaffold via MCP, two-role provisioning)\n`);

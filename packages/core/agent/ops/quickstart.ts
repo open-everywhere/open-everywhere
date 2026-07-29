@@ -48,6 +48,13 @@ export function preflight(env: NodeJS.ProcessEnv = process.env): { checks: Check
         fix: twoRole ? undefined : "harden: run the two-role split so the app's credential can't disable append-only — docs/extending/database.md",
       });
     }
+  } else {
+    checks.push({
+      name: "state durability",
+      status: "info",
+      detail: `${memProvider}/${opProvider} backings are process-local — a hosted deploy loses memory and operational state on every deploy`,
+      fix: "deploying to Vercel? set OE_MEMORY_PROVIDER=postgres, OE_OPERATIONAL_PROVIDER=postgres and DATABASE_URL first — docs/extending/database.md",
+    });
   }
 
   const hasAdminAuth =

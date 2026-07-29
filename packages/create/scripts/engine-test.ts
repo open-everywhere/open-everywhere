@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
 import { databaseStep } from "../src/steps/database.js";
+import { verifyStep, verifyVerdict } from "../src/steps/verify.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -213,6 +214,57 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     ok(!res.ran, "databaseStep skip: hosted=no does nothing (local git/sqlite backing)");
   } finally {
     rmSync(dir3, { recursive: true, force: true });
+  }
+}
+
+{
+  const linked = (projectId: string | null) => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-dbstep-hosted-"));
+    if (projectId !== null) {
+      mkdirSync(join(dir, ".vercel"), { recursive: true });
+      writeFileSync(join(dir, ".vercel", "project.json"), JSON.stringify({ projectId }));
+    }
+    return dir;
+  };
+
+  const local = linked(null);
+  try {
+    const res = await databaseStep.check({ cwd: local, env: {} });
+    ok(res.satisfied, "databaseStep: unlinked checkout on git/sqlite stays satisfied (local runs are legitimate)");
+  } finally {
+    rmSync(local, { recursive: true, force: true });
+  }
+
+  const hosted = linked("prj_abc123");
+  try {
+    const res = await databaseStep.check({ cwd: hosted, env: {} });
+    ok(!res.satisfied, "databaseStep: Vercel-linked checkout on git/sqlite is NOT satisfied");
+    ok(/discards|ephemeral|state/i.test(res.detail), "databaseStep: the detail names the consequence, not just the missing var");
+
+    const guide = databaseStep.guide({ cwd: hosted, env: {} });
+    ok(/ephemeral|wiped/i.test(guide.summary), "databaseStep: the hosted guide is now reachable and states the ephemerality");
+
+    const allButDb = { prereq: true, repo: true, slack: true, database: false, build: true };
+    const verdict = verifyVerdict(allButDb);
+    ok(!verdict.satisfied, "verifyVerdict: everything satisfied EXCEPT the state backing is still not ready");
+    ok(/durable state backing/.test(verdict.detail), "verifyVerdict: names the durable state backing among what is missing");
+    ok(verifyVerdict({ ...allButDb, database: true }).satisfied, "verifyVerdict: flipping only the state backing makes it ready (the term is load-bearing)");
+
+    const wired = await verifyStep.check({ cwd: hosted, env: {} });
+    ok(/durable state backing/.test(wired.detail), "verifyStep: the wired check surfaces the state backing for a linked git/sqlite checkout");
+  } finally {
+    rmSync(hosted, { recursive: true, force: true });
+  }
+
+  const ok2 = linked("prj_abc123");
+  try {
+    const res = await databaseStep.check({
+      cwd: ok2,
+      env: { OE_MEMORY_PROVIDER: "postgres", OE_OPERATIONAL_PROVIDER: "postgres", DATABASE_URL: "postgres://u:p@h/db" },
+    });
+    ok(res.satisfied, "databaseStep: linked checkout with postgres + DATABASE_URL is satisfied");
+  } finally {
+    rmSync(ok2, { recursive: true, force: true });
   }
 }
 
