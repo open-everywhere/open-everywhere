@@ -2,9 +2,7 @@ import type { ToolContext, ToolDefinition } from "eve/tools";
 import { auditToolAction } from "../audit/tool-action.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 
-export const DEFAULT_BASH_TIMEOUT_MS = 240_000;
-
-export const OBSERVED_PROD_STALL_MS = 341_000;
+export const DEFAULT_BASH_TIMEOUT_MS = 600_000;
 
 export function bashTimeoutMs(): number {
   const raw = (process.env.OE_BASH_TIMEOUT_MS ?? "").trim().toLowerCase();

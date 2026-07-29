@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import type { ToolContext, ToolDefinition } from "eve/tools";
 import {
   DEFAULT_BASH_TIMEOUT_MS,
-  OBSERVED_PROD_STALL_MS,
   bashTimeoutMs,
   backgroundGuardEnabled,
   scanCommand,
@@ -48,10 +47,10 @@ async function refusal(tool: ToolDefinition, command: string): Promise<string | 
 
 {
   delete process.env.OE_BASH_TIMEOUT_MS;
-  ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS && DEFAULT_BASH_TIMEOUT_MS === 240_000, "config: default timeout is 240s");
+  ok(bashTimeoutMs() === DEFAULT_BASH_TIMEOUT_MS && DEFAULT_BASH_TIMEOUT_MS === 600_000, "config: default timeout is 600s");
   ok(
-    DEFAULT_BASH_TIMEOUT_MS < OBSERVED_PROD_STALL_MS - 60_000,
-    "config: the default leaves >60s of margin under the 341s stall observed in prod, so IF that stall is real here our timer still wins the race",
+    DEFAULT_BASH_TIMEOUT_MS > 400_000,
+    "config: the default clears the ~400s foreground command measured returning cleanly in prod (OPE-132)",
   );
   process.env.OE_BASH_TIMEOUT_MS = "90000";
   ok(bashTimeoutMs() === 90_000, "config: OE_BASH_TIMEOUT_MS overrides the default");
