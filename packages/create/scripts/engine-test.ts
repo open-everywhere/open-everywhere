@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
 import { databaseStep } from "../src/steps/database.js";
+import { repoStep } from "../src/steps/repo.js";
 import { verifyStep, verifyVerdict } from "../src/steps/verify.js";
 
 let n = 0;
@@ -265,6 +266,63 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     ok(res.satisfied, "databaseStep: linked checkout with postgres + DATABASE_URL is satisfied");
   } finally {
     rmSync(ok2, { recursive: true, force: true });
+  }
+}
+
+{
+  const app = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-repostep-"));
+    for (const [rel, body] of Object.entries(files)) {
+      const abs = join(dir, rel);
+      mkdirSync(join(abs, ".."), { recursive: true });
+      writeFileSync(abs, body);
+    }
+    return dir;
+  };
+  const CORE_PKG = JSON.stringify({ dependencies: { "@open-everywhere/core": "^1.0.0" } });
+
+  const thin = app({ "package.json": CORE_PKG, "agent/agent.ts": "export default {};", "node_modules/.keep": "" });
+  try {
+    const res = await repoStep.check({ cwd: thin, env: {} });
+    ok(res.satisfied, "repoStep: a thin consumer app with no AGENTS.md is recognised");
+  } finally {
+    rmSync(thin, { recursive: true, force: true });
+  }
+
+  const mono = app({
+    "package.json": JSON.stringify({ workspaces: ["packages/*"] }),
+    "agent/agent.ts": "export default {};",
+    "node_modules/.keep": "",
+  });
+  try {
+    ok((await repoStep.check({ cwd: mono, env: {} })).satisfied, "repoStep: the workspaces monorepo shape still passes");
+  } finally {
+    rmSync(mono, { recursive: true, force: true });
+  }
+
+  const noEntry = app({ "package.json": CORE_PKG, "node_modules/.keep": "" });
+  try {
+    const res = await repoStep.check({ cwd: noEntry, env: {} });
+    ok(!res.satisfied, "repoStep: a directory with no agent/agent.ts is not an OE app");
+    ok(/agent\/agent\.ts/.test(res.detail), "repoStep: says which boot-critical file is missing");
+  } finally {
+    rmSync(noEntry, { recursive: true, force: true });
+  }
+
+  const unrelated = app({ "package.json": JSON.stringify({ dependencies: { express: "^4" } }), "agent/agent.ts": "x", "node_modules/.keep": "" });
+  try {
+    const res = await repoStep.check({ cwd: unrelated, env: {} });
+    ok(!res.satisfied, "repoStep: a package.json that doesn't reach @open-everywhere/core is rejected");
+  } finally {
+    rmSync(unrelated, { recursive: true, force: true });
+  }
+
+  const noDeps = app({ "package.json": CORE_PKG, "agent/agent.ts": "export default {};" });
+  try {
+    const res = await repoStep.check({ cwd: noDeps, env: {} });
+    ok(!res.satisfied && /npm install/.test(res.detail), "repoStep: an uninstalled app is told to run npm install");
+  } finally {
+    rmSync(noDeps, { recursive: true, force: true });
   }
 }
 
