@@ -1,6 +1,8 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { readLinearIssue, type LinearCommentSummary } from "../channels/linear-api.js";
+import { enrichIssueTeam } from "../channels/linear.js";
+import { assertLinearIssueAllowed } from "../channels/linear-scope.js";
 import {
   ingestUntrustedModelOutput,
   assertTurnSurface,
@@ -50,6 +52,7 @@ export const readLinearIssueEntry = defineTool({
     assertTurnSurface(ctx2 as BindableContext, "linear");
     const issue = input.issue ?? currentTurnIssue(ctx2 as BindableContext);
     if (!issue) throw new Error("No Linear issue available for this turn — pass `issue` explicitly (its UUID or identifier, e.g. ENG-42).");
+    await assertLinearIssueAllowed(ctx2 as BindableContext, issue, getConfig().loadDomains(), async (ref) => (await enrichIssueTeam(ref))?.teamId);
     const res = await readLinearIssue(issue, { maxComments: MAX_COMMENTS });
     return {
       issue,
