@@ -13,7 +13,7 @@ delete process.env.OE_CREDENTIAL_BINDING_LIVE;
 
 const { stageCredentialBindingPr } = await import("../agent/credentials/binding-pr.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { stringifyCredentialBindings, applyBindingOverride, emptyCredentialBindingsFile } = await import("../agent/access/credential-bindings-codemod.js");
+const { emitCredentialBindingsModule, parseCredentialBindingsModule, applyBindingOverride, emptyCredentialBindingsFile } = await import("../agent/access/credential-bindings-codemod.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -198,8 +198,9 @@ function ghDeps(state: FakeGh) {
   ok(res.staged && !res.dryRun && res.url === "https://github.com/acme/config/pull/11", "live: opened PR, url returned");
   ok(state.branches[branch] === "base-sha", "live: deterministic branch cut from base");
   ok(state.puts.length === 1, "live: exactly one overlay commit");
-  const expectedBytes = stringifyCredentialBindings(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file);
+  const expectedBytes = emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file);
   ok(state.puts[0] === expectedBytes, "live: committed bytes are EXACTLY the deterministic codemod output");
+  ok(parseCredentialBindingsModule(state.puts[0]!).overrides.length === 1, "live: the committed module passes the round-trip-verifying read the drift lint runs");
   ok(state.prPost.length === 1 && state.prPost[0].head === branch && state.prPost[0].base === "main", "live: PR opened head→base");
   ok(state.prPost[0].title.includes("acme/key"), "live: PR title names the credential");
   const body = state.prPost[0].body;
@@ -219,8 +220,8 @@ function ghDeps(state: FakeGh) {
   const state = fakeGh("open-exists");
   const branch = "credential-binding/acme-key";
   state.branches[branch] = "base-sha";
-  state.files[`${branch}:agent/access/credential-bindings.json`] = {
-    content: stringifyCredentialBindings(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file),
+  state.files[`${branch}:agent/access/credential-bindings.generated.ts`] = {
+    content: emitCredentialBindingsModule(applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", broker: "db", secretRef: "db:acme:key" }).file),
     sha: "existing",
   };
   const res = await stageCredentialBindingPr({ ...baseArgs, credentialAuditId: "intake-open" }, ghDeps(state));
@@ -262,7 +263,7 @@ const execArgs = { ...baseArgs, storedRef: EXEC_STORED_REF };
   const res = await stageCredentialBindingPr({ ...execArgs, credentialAuditId: "intake-exec-live" }, ghDeps(state));
   ok(res.staged && !res.dryRun && res.url === "https://github.com/acme/config/pull/11", "exec live: opened PR, url returned");
   ok(state.puts.length === 1, "exec live: exactly one overlay commit");
-  const expectedBytes = stringifyCredentialBindings(
+  const expectedBytes = emitCredentialBindingsModule(
     applyBindingOverride(emptyCredentialBindingsFile(), { provider: "acme", credential: "key", executor: { integration: "acme-mcp", owner: "org", connection: "oe-acme-key" } }).file,
   );
   ok(state.puts[0] === expectedBytes, "exec live: committed bytes are EXACTLY the deterministic executor-override codemod output");

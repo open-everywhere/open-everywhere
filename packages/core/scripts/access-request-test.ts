@@ -19,7 +19,7 @@ const { requestApproval, handleApprovalPayload } = await import("../agent/approv
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { executeAccessRequest, requireAccessRequestsConfig } = await import("../agent/approvals/access-request.js");
 const { planRequestAccess } = await import("../agent/tools/request_access.js");
-const { stringifyGrants, emptyGrantsFile, applyDelta } = await import("../agent/access/grants-codemod.js");
+const { emitGrantsModule, parseGrantsModule, emptyGrantsFile, applyDelta } = await import("../agent/access/grants-codemod.js");
 type PlanContext = import("../agent/access/delta.js").PlanContext;
 type RequestAccessArgs = import("../agent/tools/request_access.js").RequestAccessArgs;
 
@@ -221,8 +221,9 @@ function fakeDeps(state: FakeState) {
 
   const branch = `access-request/${args.requestId}`;
   ok(state.branches[branch] === "base-sha", "execute: request branch cut from the base sha");
-  ok(state.puts.length === 1, "execute: exactly one grants.json commit");
-  ok(state.puts[0] === stringifyGrants(applyDelta(emptyGrantsFile(), args.delta).grants), "execute: committed bytes are EXACTLY the deterministic codemod output");
+  ok(state.puts.length === 1, "execute: exactly one grants-overlay commit");
+  ok(state.puts[0] === emitGrantsModule(applyDelta(emptyGrantsFile(), args.delta).grants), "execute: committed bytes are EXACTLY the deterministic codemod output");
+  ok(parseGrantsModule(state.puts[0]!).bundles.length === 1, "execute: the committed module passes the round-trip-verifying read the drift lint runs");
   ok(state.prs.length === 1 && state.prs[0].head === branch && state.prs[0].base === "main", "execute: PR opened head→base");
   ok(state.prs[0].title === 'Access request: Grant connector "linear" to surface slack/T1/C1', "execute: PR title is the grant sentence");
   ok(
@@ -240,7 +241,7 @@ function fakeDeps(state: FakeState) {
 
   state.prExisting = true;
   const again = await executeAccessRequest(args, "U_TAP2", { config: arConfig(), ...fakeDeps(state) });
-  ok(state.puts.length === 1, "execute(re-run): idempotent — no second grants.json commit");
+  ok(state.puts.length === 1, "execute(re-run): idempotent — no second grants-overlay commit");
   ok(again.includes("updated PR #7"), "execute(re-run): outcome reports the update, not a fresh PR");
 }
 

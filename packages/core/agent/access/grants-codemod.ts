@@ -1,5 +1,6 @@
 import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
 import { HTTP_METHODS, type AccessDelta, type RequestingScope } from "./delta.js";
+import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface GrantsFile {
   readonly bundles: readonly Bundle[];
@@ -72,16 +73,6 @@ export function parseGrantsFile(value: unknown): GrantsFile {
   return { bundles, bindings };
 }
 
-export function parseGrantsText(text: string): GrantsFile {
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (err) {
-    throw new GrantsCodemodError(`grants file is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return parseGrantsFile(json);
-}
-
 const BUNDLE_KEYS = ["name", "connections", "connectors"];
 const CONNECTION_KEYS = ["id", "credentialType", "secretRef", "allowedWebsites", "pathPrefixes", "customHeaders", "methods", "authorizationDetails"];
 const BINDING_KEYS = ["bundle", "scope"];
@@ -127,6 +118,31 @@ export function stringifyGrants(grants: GrantsFile): string {
       .sort((a, b) => a.bundle.localeCompare(b.bundle) || scopeSortKey(a.scope).localeCompare(scopeSortKey(b.scope))),
   };
   return JSON.stringify({ bundles: canonical.bundles, bindings: canonical.bindings.map(canonicalBinding) }, null, 2) + "\n";
+}
+
+export const GRANTS_MODULE: OverlayModuleGrammar = {
+  what: "grants overlay",
+  header: overlayModuleHeader("grants overlay", "packages/core/agent/access/grants-codemod.ts"),
+  typeImport: 'import type { GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";',
+  typeName: "GrantsFile",
+};
+
+export function emitGrantsModule(grants: GrantsFile): string {
+  return wrapOverlayModule(GRANTS_MODULE, stringifyGrants(grants));
+}
+
+export function parseGrantsModule(text: string): GrantsFile {
+  const grants = parseGrantsFile(unwrapOverlayModule(GRANTS_MODULE, text, (m) => new GrantsCodemodError(m)));
+  if (emitGrantsModule(grants) !== text) {
+    throw new GrantsCodemodError(
+      "grants overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+    );
+  }
+  return grants;
+}
+
+export function renormalizeGrantsModule(text: string): string {
+  return emitGrantsModule(parseGrantsFile(unwrapOverlayModule(GRANTS_MODULE, text, (m) => new GrantsCodemodError(m))));
 }
 
 export interface ApplyDeltaResult {

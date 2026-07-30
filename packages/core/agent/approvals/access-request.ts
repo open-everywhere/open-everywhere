@@ -1,6 +1,6 @@
 import { getConfig, type AccessRequestsConfig } from "../access/config.js";
 import { grantSentence, renderDelta, type AccessDelta } from "../access/delta.js";
-import { applyDelta, emptyGrantsFile, parseGrantsText, stringifyGrants } from "../access/grants-codemod.js";
+import { applyDelta, emitGrantsModule, emptyGrantsFile, parseGrantsModule } from "../access/grants-codemod.js";
 import { assertBindingsValid, assertBundlesValid } from "../access/bundle.js";
 import { GitHubContents, type CommitId } from "../scm/contents.js";
 import { createBranch, getBranchSha } from "../scm/refs.js";
@@ -88,7 +88,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   const cfg = requireAccessRequestsConfig(deps.config);
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
-  const grantsPath = cfg.grantsPath ?? "agent/access/grants.json";
+  const grantsPath = cfg.grantsPath ?? "agent/access/grants.generated.ts";
   const branch = `access-request/${args.requestId}`;
   if (!isSafeBranchName(branch)) {
     throw new Error(`unsafe access-request branch name "${branch}"`);
@@ -96,7 +96,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   const sentence = grantSentence(args.delta);
 
   const validateMerged = (grantsText: string): ReturnType<typeof applyDelta> => {
-    const grants = grantsText ? parseGrantsText(grantsText) : emptyGrantsFile();
+    const grants = grantsText ? parseGrantsModule(grantsText) : emptyGrantsFile();
     const result = applyDelta(grants, args.delta);
     const mergedBundles = [...cfg.baseBundles(), ...result.grants.bundles];
     assertBundlesValid(mergedBundles);
@@ -135,7 +135,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
 
   if (result.changed) {
     const committer = deps.committer ?? getGitHubApp()?.committer() ?? { name: "open-everywhere[bot]", email: "open-everywhere@users.noreply.github.com" };
-    await contents.putFile(repo, grantsPath, stringifyGrants(result.grants), `access request: ${sentence}`, branch, token, committer, existing?.sha);
+    await contents.putFile(repo, grantsPath, emitGrantsModule(result.grants), `access request: ${sentence}`, branch, token, committer, existing?.sha);
   }
 
   const pr = await openPr({

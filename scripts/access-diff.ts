@@ -6,20 +6,30 @@ import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
-import { parseGrantsText, type GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";
+import { emptyGrantsFile, parseGrantsModule, type GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";
 import { describeEffectiveAccess } from "./config-snapshot-diff.js";
 
 function arg(name: string): string {
   const i = process.argv.indexOf(`--${name}`);
   if (i < 0 || i + 1 >= process.argv.length) {
-    console.error(`usage: access-diff.ts --before <grants.json> --after <grants.json>`);
+    console.error(`usage: access-diff.ts --before <grants overlay module> --after <grants overlay module>`);
     process.exit(2);
   }
   return process.argv[i + 1];
 }
 
-const before: GrantsFile = parseGrantsText(readFileSync(arg("before"), "utf8"));
-const after: GrantsFile = parseGrantsText(readFileSync(arg("after"), "utf8"));
+function readOverlay(path: string): GrantsFile {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return emptyGrantsFile();
+  }
+  return text.trim() === "" ? emptyGrantsFile() : parseGrantsModule(text);
+}
+
+const before: GrantsFile = readOverlay(arg("before"));
+const after: GrantsFile = readOverlay(arg("after"));
 
 const scopes = new Set<string>();
 for (const g of [before, after]) {

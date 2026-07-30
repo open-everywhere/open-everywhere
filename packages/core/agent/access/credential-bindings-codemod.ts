@@ -1,5 +1,6 @@
 import type { Provider, ProviderCredential } from "./providers.js";
 import { executorHome } from "./providers.js";
+import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface CredentialBindingExecutorHome {
   readonly integration: string;
@@ -158,16 +159,6 @@ export function parseCredentialBindingsFile(value: unknown): CredentialBindingsF
   return { overrides };
 }
 
-export function parseCredentialBindingsText(text: string): CredentialBindingsFile {
-  let json: unknown;
-  try {
-    json = JSON.parse(text);
-  } catch (err) {
-    throw new CredentialBindingsCodemodError(`credential-bindings file is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  return parseCredentialBindingsFile(json);
-}
-
 export function stringifyCredentialBindings(file: CredentialBindingsFile): string {
   const overrides = [...file.overrides]
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.credential.localeCompare(b.credential))
@@ -176,6 +167,35 @@ export function stringifyCredentialBindings(file: CredentialBindingsFile): strin
       return { provider: o.provider, credential: o.credential, ...(home ? home.serialize(o) : {}) };
     });
   return JSON.stringify({ overrides }, null, 2) + "\n";
+}
+
+export const CREDENTIAL_BINDINGS_MODULE: OverlayModuleGrammar = {
+  what: "credential-bindings overlay",
+  header: overlayModuleHeader("credential-bindings overlay", "packages/core/agent/access/credential-bindings-codemod.ts"),
+  typeImport: 'import type { CredentialBindingsFile } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";',
+  typeName: "CredentialBindingsFile",
+};
+
+export function emitCredentialBindingsModule(file: CredentialBindingsFile): string {
+  return wrapOverlayModule(CREDENTIAL_BINDINGS_MODULE, stringifyCredentialBindings(file));
+}
+
+export function parseCredentialBindingsModule(text: string): CredentialBindingsFile {
+  const file = parseCredentialBindingsFile(
+    unwrapOverlayModule(CREDENTIAL_BINDINGS_MODULE, text, (m) => new CredentialBindingsCodemodError(m)),
+  );
+  if (emitCredentialBindingsModule(file) !== text) {
+    throw new CredentialBindingsCodemodError(
+      "credential-bindings overlay is not in canonical form — re-emitting its own data does not reproduce the file, so it has been hand-edited. Run `npm run overlays:normalize` and commit the result (the codemod refuses to rewrite a file it did not write).",
+    );
+  }
+  return file;
+}
+
+export function renormalizeCredentialBindingsModule(text: string): string {
+  return emitCredentialBindingsModule(
+    parseCredentialBindingsFile(unwrapOverlayModule(CREDENTIAL_BINDINGS_MODULE, text, (m) => new CredentialBindingsCodemodError(m))),
+  );
 }
 
 function sameHome(a: CredentialBindingOverride, b: CredentialBindingOverride): boolean {

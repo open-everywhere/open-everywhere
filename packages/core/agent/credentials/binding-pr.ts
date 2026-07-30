@@ -4,8 +4,8 @@ import {
   applyBindingOverride,
   applyOverridesToProviders,
   emptyCredentialBindingsFile,
-  parseCredentialBindingsText,
-  stringifyCredentialBindings,
+  parseCredentialBindingsModule,
+  emitCredentialBindingsModule,
   type ApplyBindingOverrideResult,
   type CredentialBindingsFile,
   type CredentialBindingOverride,
@@ -86,7 +86,7 @@ export async function stageCredentialBindingPr(
 
   const repo = cfg.configRepo;
   const base = cfg.configBase ?? "main";
-  const bindingsPath = deps.bindingsPath ?? process.env.OE_CREDENTIAL_BINDINGS_PATH ?? "agent/access/credential-bindings.json";
+  const bindingsPath = deps.bindingsPath ?? process.env.OE_CREDENTIAL_BINDINGS_PATH ?? "agent/access/credential-bindings.generated.ts";
   const liveArmed = process.env.OE_CREDENTIAL_BINDING_LIVE === "1" && cfg.dryRun !== true;
   const dryRun = deps.dryRun ?? !liveArmed;
 
@@ -147,7 +147,7 @@ export async function stageCredentialBindingPr(
   }
 
   const existing = await provider.getFile({ repo, path: bindingsPath, branch, token });
-  const file = existing?.content ? parseCredentialBindingsText(existing.content) : emptyCredentialBindingsFile();
+  const file = existing?.content ? parseCredentialBindingsModule(existing.content) : emptyCredentialBindingsFile();
   const applied = validateMerged(file);
 
   await appendAudit({
@@ -161,7 +161,7 @@ export async function stageCredentialBindingPr(
     await provider.putFile({
       repo,
       path: bindingsPath,
-      content: stringifyCredentialBindings(applied.file),
+      content: emitCredentialBindingsModule(applied.file),
       message: `credential binding: ${args.provider}/${args.credential} → ${home}`,
       branch,
       token,

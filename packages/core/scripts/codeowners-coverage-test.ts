@@ -43,9 +43,9 @@ for (const t of lines) {
 }
 
 const BOT_PR_TARGETS: readonly { path: string; flow: string }[] = [
-  { path: "agent/access/grants.json", flow: "request_access (access/grants-codemod.ts)" },
-  { path: "agent/access/credential-bindings.json", flow: "credential binding (access/credential-bindings-codemod.ts)" },
-  { path: "agent/webhooks/hooks.json", flow: "declare_webhook (webhooks/hooks-codemod.ts)" },
+  { path: "agent/access/grants.generated.ts", flow: "request_access (access/grants-codemod.ts)" },
+  { path: "agent/access/credential-bindings.generated.ts", flow: "credential binding (access/credential-bindings-codemod.ts)" },
+  { path: "agent/webhooks/hooks.generated.ts", flow: "declare_webhook (webhooks/hooks-codemod.ts)" },
 ];
 
 for (const t of BOT_PR_TARGETS) {

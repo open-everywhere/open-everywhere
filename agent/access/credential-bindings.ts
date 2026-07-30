@@ -1,7 +1,7 @@
 import { parseCredentialBindingsFile, type CredentialBindingsFile } from "@open-everywhere/core/agent/access/credential-bindings-codemod.js";
-import bindingsJson from "./credential-bindings.json" with { type: "json" };
+import bindingsOverlay from "./credential-bindings.generated.js";
 
-const overlay: CredentialBindingsFile = parseCredentialBindingsFile(bindingsJson);
+const overlay: CredentialBindingsFile = parseCredentialBindingsFile(bindingsOverlay);
 
 export function loadCredentialBindingsOverlay(): CredentialBindingsFile {
   return overlay;
