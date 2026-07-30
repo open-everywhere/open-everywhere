@@ -28,6 +28,15 @@ export const FRESH_EYES_REVIEW_OUTPUT = z.object({
       }),
     )
     .describe("Empty when the change is clean. Do not pad."),
+  meaning: z
+    .array(
+      z.object({
+        subject: z.string().describe("What this reading is about — a scope/domain/hook/file, named exactly as the facts name it."),
+        says: z.string().describe("One plain sentence: what the change means for that subject."),
+      }),
+    )
+    .optional()
+    .describe("Per-subject plain-language readings. Fill it when the caller asked for a walkthrough; omit it otherwise."),
 });
 
 export type FreshEyesReviewOutput = z.infer<typeof FRESH_EYES_REVIEW_OUTPUT>;

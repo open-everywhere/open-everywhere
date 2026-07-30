@@ -32,6 +32,8 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "update_status",
   "check_pr_status",
   "get_pr_feedback",
+  "walk_pr",
+  "post_pr_walkthrough",
   "describe_image",
   "list_repos",
   "list_routines",
