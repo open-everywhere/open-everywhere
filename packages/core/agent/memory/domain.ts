@@ -46,7 +46,6 @@ export interface Domain {
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
-  readonly bundle?: string;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly awarenessWake?: boolean;

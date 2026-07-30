@@ -49,13 +49,12 @@ const qa = defineRole({
   instructions: "Hunt for edge cases before confirming the happy path.",
   persona: "Precise and skeptical.",
   statusVerbs: ["Probing", "Breaking"],
-  bundle: "qa-tools",
   memory: "qa-silo",
   models: { primary: { id: "vendor/qa-model", reasoning: "high" } },
   sandbox: { vcpus: 4 },
 });
 const pirate = defineRole({ name: "pirate", persona: "A good-natured pirate captain." });
-const knobsOnly = defineRole({ name: "knobs-only", bundle: "some-tools" });
+const knobsOnly = defineRole({ name: "knobs-only", sandbox: { vcpus: 2 } });
 const replacer = defineRole({ name: "replacer", statusVerbs: ["Only this"], statusVerbsMode: "replace" });
 const ROLES: Role[] = [qa, pirate, knobsOnly, replacer];
 
@@ -95,16 +94,20 @@ throws(
 
 {
   const [d] = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa" })], ROLES);
-  ok(d.bundle === "qa-tools" && d.memory === "qa-silo" && d.sandbox?.vcpus === 4, "role fills absent bundle/memory/sandbox");
+  ok(d.memory === "qa-silo" && d.sandbox?.vcpus === 4, "role fills absent memory/sandbox");
   ok(d.role === "qa", "resolved domain keeps its role name (runtime rungs + prompt need it)");
   ok(d.statusVerbs === undefined && d.models === undefined, "layered knobs (verbs/models) are NOT flattened at load — they merge at resolution");
 }
 {
   const [d] = applyRoleDefaults(
-    [defineDomain({ name: "team", channels: [K], role: "qa", bundle: "own-tools", memory: ["own-silo"], sandbox: { vcpus: 8 } })],
+    [defineDomain({ name: "team", channels: [K], role: "qa", memory: ["own-silo"], sandbox: { vcpus: 8 } })],
     ROLES,
   );
-  ok(d.bundle === "own-tools" && Array.isArray(d.memory) && d.memory[0] === "own-silo" && d.sandbox?.vcpus === 8, "the domain's own bundle/memory/sandbox WIN over the role's, field by field");
+  ok(Array.isArray(d.memory) && d.memory[0] === "own-silo" && d.sandbox?.vcpus === 8, "the domain's own memory/sandbox WIN over the role's, field by field");
+}
+{
+  const [d] = applyRoleDefaults([defineDomain({ name: "team", channels: [K], role: "qa", sandbox: { vcpus: 8 } })], ROLES);
+  ok(d.sandbox?.vcpus === 8 && d.memory === "qa-silo", "overriding ONE single-valued knob keeps the role's value for the other");
 }
 {
   const plain = defineDomain({ name: "plain", channels: [K] });

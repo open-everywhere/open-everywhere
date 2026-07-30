@@ -15,7 +15,6 @@ export interface Role {
   readonly persona?: string;
   readonly statusVerbs?: readonly string[];
   readonly statusVerbsMode?: "extend" | "replace";
-  readonly bundle?: string;
   readonly models?: ModelRoutes;
   readonly memory?: string | readonly string[];
   readonly sandbox?: SandboxPreset;
@@ -42,7 +41,6 @@ export function assertRolesValid(roles: readonly Role[]): void {
       r.instructions !== undefined ||
       r.persona !== undefined ||
       r.statusVerbs !== undefined ||
-      r.bundle !== undefined ||
       r.models !== undefined ||
       r.memory !== undefined ||
       r.sandbox !== undefined;
@@ -64,7 +62,6 @@ export function applyRoleDefaults(domains: readonly Domain[], roles: readonly Ro
     }
     return {
       ...d,
-      bundle: d.bundle ?? role.bundle,
       memory: d.memory ?? role.memory,
       sandbox: d.sandbox ?? role.sandbox,
     };

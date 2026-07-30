@@ -356,7 +356,7 @@ registerEventScopeGrant(linearEventScopeGrant);
 }
 
 {
-  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`linear/${ORG}`], bundle: "org-default" })];
+  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`linear/${ORG}`] })];
 
   const claimedTeam = normalize(issueBody({ data: { id: ISSUE, teamId: "team-never-listed" } }))!;
   ok(

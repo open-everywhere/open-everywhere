@@ -235,28 +235,28 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
 }
 
 {
-  const roles = [{ name: "engineer", bundle: "coding", memory: "eng-brain", sandbox: { vcpus: 4 } }];
+  const roles = [{ name: "engineer", memory: "eng-brain", sandbox: { vcpus: 4 } }];
   const raw = [
     { name: "eng", channels: ["slack/T/C1"], role: "engineer" },
-    { name: "ops", channels: ["slack/T/C2"], role: "engineer", bundle: "own-tools" },
+    { name: "ops", channels: ["slack/T/C2"], role: "engineer", memory: "own-brain" },
   ];
   const resolved = applyRoleDefaults(raw as never, roles as never);
 
   const engRows = new Map(flattenEntity("eng", resolved[0], hash).map((r) => [r.key, r.value]));
-  ok(engRows.get("eng.bundle") === '"coding"', "a role-SUPPLIED bundle appears in the snapshot (the diff sees a role re-point)");
-  ok(engRows.get("eng.memory") === '"eng-brain"', "a role-supplied memory silo appears — and `memory` IS read downstream, so this one is a real data-access change");
+  ok(engRows.get("eng.memory") === '"eng-brain"', "a role-SUPPLIED memory silo appears in the snapshot (the diff sees a role re-point) — and `memory` IS read downstream, so it is a real data-access change");
   ok(engRows.get("eng.sandbox.vcpus") === "4", "a role-supplied sandbox preset appears, nested");
+  ok(![...engRows.keys()].some((k) => k.endsWith(".bundle")), "a resolved domain carries NO bundle row — a role has no capability field to supply, so `access` can never move behind one");
 
   const opsRows = new Map(flattenEntity("ops", resolved[1], hash).map((r) => [r.key, r.value]));
-  ok(opsRows.get("ops.bundle") === '"own-tools"', "the domain's OWN value still wins over the role's (the snapshot shows what resolves, not what was declared)");
+  ok(opsRows.get("ops.memory") === '"own-brain"', "the domain's OWN value still wins over the role's (the snapshot shows what resolves, not what was declared)");
 
-  const repointed = applyRoleDefaults(raw as never, [{ ...roles[0], bundle: "infra" }] as never);
+  const repointed = applyRoleDefaults(raw as never, [{ ...roles[0], memory: "infra-brain" }] as never);
   const before = snap(["domains"], flattenEntity("eng", resolved[0], hash).map((r) => ["domains", r.key, r.value] as [string, string, string]));
   const after = snap(["domains"], flattenEntity("eng", repointed[0], hash).map((r) => ["domains", r.key, r.value] as [string, string, string]));
   const rolePointDiff = diffConfigSnapshots(before, after).sections[0];
   ok(
-    rolePointDiff.kind === "computed" && rolePointDiff.changed.some((c) => c.key === "eng.bundle" && c.after === '"infra"'),
-    "re-pointing the ROLE alone moves the DOMAIN's resolved bundle row — the OPE-255 mechanism, pinned",
+    rolePointDiff.kind === "computed" && rolePointDiff.changed.some((c) => c.key === "eng.memory" && c.after === '"infra-brain"'),
+    "re-pointing the ROLE alone moves the DOMAIN's resolved memory row — the OPE-255 mechanism, pinned",
   );
 }
 

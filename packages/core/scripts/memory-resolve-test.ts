@@ -52,7 +52,7 @@ const pubFaq: MemorySilo = defineMemorySilo({ name: "pub-faq", provider: "sqlite
 
 const cfg: MemoryResolveConfig = {
   domains: [
-    defineDomain({ name: "transactions", channels: ["slack/T/C_TXN"], memory: "txn", bundle: "txn-tools" }),
+    defineDomain({ name: "transactions", channels: ["slack/T/C_TXN"], memory: "txn" }),
     defineDomain({ name: "watercooler", channels: ["slack/T/C_CHAT"] }),
     defineDomain({ name: "readonly-dom", channels: ["slack/T/C_RO"], memory: "baseline" }),
     defineDomain({ name: "multi", channels: ["slack/T/C_MULTI"], memory: ["txn", "baseline"] }),

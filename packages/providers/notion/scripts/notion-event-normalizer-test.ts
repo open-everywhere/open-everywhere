@@ -333,7 +333,7 @@ function normalize(body: string): NormalizedEvent | null {
   ok(tenantOnly.scope.length === 1 && tenantOnly.scope[0]!.kind === "tenant", "…the tenant-only delivery really does prove only a tenant");
   ok(checkEventReadGrant(tenantOnly, [PARTITION], { resolve: () => accessIn("payments") }).ok === false, "a workspace-only delivery is refused — the delivery never said WHICH surface it was about");
 
-  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`notion/${WS}`], bundle: "org-default" })];
+  CLAIM_REGISTRY = [defineDomain({ name: "eng", containers: [`notion/${WS}`] })];
 
   const claimedPage = normalize(structural({ type: "page.created", entity: { id: "page-never-listed", type: "page" }, data: { parent: { id: "db-never-listed", type: "database" } } }))!;
   ok(

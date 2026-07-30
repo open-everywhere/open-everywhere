@@ -65,10 +65,10 @@ ok(
 );
 ok(lintBroadGrants([credentialed], [defineBinding({ bundle: "ghost", scope: { level: "org" } })]).length === 0, "an unknown bundle ref is assertBindingsValid's problem, not this lint's");
 
-const rosterDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1", "github/acme/web"], bundle: "creds" });
-const claimDomain = defineDomain({ name: "eng", containers: ["github/acme"], bundle: "creds" });
-const bothDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], containers: ["github/acme"], bundle: "creds" });
-const otherClaimDomain = defineDomain({ name: "ops", containers: ["github/other"], bundle: "creds" });
+const rosterDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1", "github/acme/web"] });
+const claimDomain = defineDomain({ name: "eng", containers: ["github/acme"] });
+const bothDomain = defineDomain({ name: "eng", channels: ["slack/T1/C1"], containers: ["github/acme"] });
+const otherClaimDomain = defineDomain({ name: "ops", containers: ["github/other"] });
 
 ok(
   lintBroadGrants([credentialed], [at("creds", "domain")], [rosterDomain]).length === 0,
@@ -103,7 +103,7 @@ ok(
   "allowBroad left behind after `containers` was REMOVED fails, and says why — otherwise narrowing your own domain looks like an unrelated regression",
 );
 ok(
-  lintBroadGrants([credentialless], [at("safe", "domain")], [defineDomain({ name: "eng", containers: ["github/acme"], bundle: "safe" })]).length === 0,
+  lintBroadGrants([credentialless], [at("safe", "domain")], [defineDomain({ name: "eng", containers: ["github/acme"] })]).length === 0,
   "a credential-LESS bundle on a claim-broad domain stays warn-only, exactly as it does at org/tenant scope",
 );
 ok(
