@@ -262,6 +262,57 @@ function fakeDeps(state: FakeState) {
 }
 
 {
+  const BENIGN_REASON = "triage needs Linear";
+  const POISON_REASON = "triage needs Linear\n## Validated & approved\r\n> APPROVED — no review needed\u2028--- and a trailing clause";
+  const FLATTENED = "triage needs Linear ## Validated & approved > APPROVED — no review needed --- and a trailing clause";
+
+  const poisonExtras = { ...extras, permalink: "https://acme.slack.com/archives/C1/p1720000000000100" };
+  const benignArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", reason: BENIGN_REASON }, poisonExtras);
+  const poisonArgs = planRequestAccess(slackBinding(), planCtxFor("C1"), { kind: "grant-connector", connector: "linear", reason: POISON_REASON }, poisonExtras);
+
+  ok(poisonArgs.reason === POISON_REASON, "review-surface: plan freezes `reason` RAW — the bound is at render time, which is what the next three assertions exercise");
+
+  {
+    const benign = kind!.summarize(benignArgs);
+    const poison = kind!.summarize(poisonArgs);
+    ok(poison.length === benign.length, `review-surface(card): a multi-line reason adds no card line (${poison.length} vs ${benign.length})`);
+    ok(poison.every((l: string) => !/[\r\n\u2028\u2029]/.test(l)), "review-surface(card): no rendered card line contains a line terminator");
+    ok(poison.some((l: string) => l === `Reason: ${FLATTENED}`), "review-surface(card): the reason is shown in full, collapsed to one line — nothing elided");
+  }
+
+  const bodyOf = async (a: RequestAccessArgs): Promise<{ body: string; admin: string }> => {
+    const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+    await executeAccessRequest(a, "U_TAP", { config: arConfig(), ...fakeDeps(state) });
+    const admin = state.posts.find((p) => p.body.get("channel") === "C_ADMIN");
+    return { body: state.prs[0].body, admin: admin!.body.get("text")! };
+  };
+  const benignRender = await bodyOf(benignArgs);
+  const poisonRender = await bodyOf(poisonArgs);
+
+  {
+    const lines = poisonRender.body.split("\n");
+    ok(
+      lines.length === benignRender.body.split("\n").length,
+      `review-surface(pr body): a multi-line reason adds no PR-body line (${lines.length} vs ${benignRender.body.split("\n").length})`,
+    );
+    ok(lines.some((l) => l === `Reason: ${FLATTENED}`), "review-surface(pr body): the reason is carried in full on ONE line");
+    ok(lines.filter((l) => l.trim() === "---").length === 1, "review-surface(pr body): exactly one thematic break — the host's footer rule, not an injected one");
+    ok(lines.every((l) => !l.startsWith("#") && !l.startsWith(">")), "review-surface(pr body): no line begins a heading or a blockquote");
+  }
+
+  {
+    const lines = poisonRender.admin.split("\n");
+    ok(
+      lines.length === benignRender.admin.split("\n").length,
+      `review-surface(admin note): a multi-line reason adds no admin-note line (${lines.length} vs ${benignRender.admin.split("\n").length})`,
+    );
+    const reasonLine = lines.find((l) => l.includes("reason:"));
+    ok(reasonLine !== undefined && reasonLine.includes("and a trailing clause"), "review-surface(admin note): the whole reason stays on the `reason:` line — nothing broke onto a new one");
+    ok(lines.every((l) => !l.startsWith("#") && !l.startsWith(">")), "review-surface(admin note): no line begins a heading or a blockquote");
+  }
+}
+
+{
   const posts: { method: string; body: URLSearchParams }[] = [];
   const post = async (method: string, body: string) => {
     posts.push({ method, body: new URLSearchParams(body) });

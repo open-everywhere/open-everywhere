@@ -9,6 +9,7 @@ import { getGitHubApp } from "../scm/provider.js";
 import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -73,7 +74,7 @@ function prBody(args: AccessRequestArgs, decidedBy: string): string {
     ...renderDelta(args.delta).join("\n").split("\n"),
     "",
     `Requested by \`${args.requestedBy}\` · sent by \`${decidedBy}\` · scope \`${args.scopeKey}\``,
-    ...(args.reason ? [`Reason: ${args.reason}`] : []),
+    ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
     `Slack thread: ${threadRef}`,
     "",
     "---",
@@ -168,7 +169,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
   adminBody.set(
     "text",
     `:inbox_tray: Access request — ${sentence}.\nRequested by <@${args.requestedBy}> · sent by <@${decidedBy}>` +
-      `${args.reason ? ` · reason: ${args.reason}` : ""}\nReview and merge to grant: ${pr.url}`,
+      `${args.reason ? ` · reason: ${inlineForReview(args.reason)}` : ""}\nReview and merge to grant: ${pr.url}`,
   );
   const adminRes = await post("chat.postMessage", adminBody.toString());
   const adminOk = adminRes?.ok === true;
@@ -192,7 +193,7 @@ const accessRequest: ActionKind<AccessRequestArgs> = {
     return [
       `Request wider access — ${grantSentence(args.delta)}`,
       ...renderDelta(args.delta),
-      ...(args.reason ? [`Reason: ${args.reason}`] : []),
+      ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is granted until they do.`,
     ];
   },

@@ -12,6 +12,7 @@ import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
 
@@ -67,9 +68,7 @@ export function requireWebhookDeclareConfig(override?: AccessRequestsConfig): En
   return cfg as EnabledWebhookDeclareConfig;
 }
 
-export function inlineForReview(text: string): string {
-  return text.replace(/[\r\n\u2028\u2029]+/g, " ").trim();
-}
+export { inlineForReview };
 
 export function declarationSentence(d: HookDeclaration): string {
   const consequence = d.target === undefined ? "emitting to `event` routines only" : `firing into ${inlineForReview(d.target)}`;
