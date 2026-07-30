@@ -7,6 +7,7 @@ import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { parseGrantsText, type GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";
+import { describeEffectiveAccess } from "./config-snapshot-diff.js";
 
 function arg(name: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -43,15 +44,6 @@ function resolveWith(grants: GrantsFile, surfaceKey: string): EffectiveAccess {
   );
 }
 
-function snapshot(a: EffectiveAccess): Record<string, string[]> {
-  return {
-    hosts: a.reachableHosts.map((h) => `${h.host}${h.viaConnection ? ` [auth via ${h.viaConnection}]` : ""}${h.methods ? ` methods=${[...h.methods].join(",")}` : ""}${h.pathPrefixes ? ` paths=${[...h.pathPrefixes].join(",")}` : ""}`),
-    connections: a.connections.map((c) => `${c.id} (${c.credentialType} → ${c.allowedWebsites.join(",")}; methods=${c.methods?.join(",") ?? "all"}; paths=${c.pathPrefixes?.join(",") ?? "all"})`),
-    connectors: [...a.connectors],
-    repos: [...a.repos],
-  };
-}
-
 function diffLines(b: Record<string, string[]>, a: Record<string, string[]>): string[] {
   const lines: string[] = [];
   for (const key of Object.keys(a)) {
@@ -73,7 +65,7 @@ let changedScopes = 0;
 let invariantBreaches = 0;
 
 for (const surfaceKey of [...scopes].sort((x, y) => x.localeCompare(y))) {
-  const lines = diffLines(snapshot(resolveWith(before, surfaceKey)), snapshot(resolveWith(after, surfaceKey)));
+  const lines = diffLines(describeEffectiveAccess(resolveWith(before, surfaceKey)), describeEffectiveAccess(resolveWith(after, surfaceKey)));
   const grantsChanged = scopeEntries(before, surfaceKey) !== scopeEntries(after, surfaceKey);
   if (lines.length === 0) continue;
   changedScopes++;

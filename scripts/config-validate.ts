@@ -6,6 +6,7 @@ import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
+import { boundScopes } from "./config-snapshot-build.js";
 
 let checked = 0;
 const problems: string[] = [];
@@ -15,45 +16,6 @@ function fail(msg: string): void {
 }
 
 const domains = loadDomains();
-
-function splitSurfaceKey(key: string): { platform: string; workspace: string; channel: string } | undefined {
-  const [platform, workspace, ...rest] = key.split("/");
-  if (!platform || !workspace || rest.length === 0 || !rest.join("/")) return undefined;
-  return { platform, workspace, channel: rest.join("/") };
-}
-
-function boundScopes(): { platform: string; workspace: string; channel: string; via: string }[] {
-  const out = new Map<string, { platform: string; workspace: string; channel: string; via: string }>();
-  const add = (platform: string, workspace: string, channel: string, via: string) =>
-    out.set(`${platform}/${workspace}/${channel}`, { platform, workspace, channel, via });
-
-  for (const b of loadBindings()) {
-    const s = b.scope;
-    if (s.level === "surface") {
-      const parts = splitSurfaceKey(s.surface!);
-      if (parts) add(parts.platform, parts.workspace, parts.channel, `surface binding "${b.bundle}"`);
-    }
-    if (s.level === "tenant") {
-      const [platform, workspace] = s.tenant!.split("/");
-      if (platform && workspace) add(platform, workspace, "C__PROBE__", `tenant binding "${b.bundle}" (probe channel)`);
-    }
-    if (s.level === "domain") {
-      const domain = domains.find((d) => d.name === s.domain);
-      for (const key of domain?.channels ?? []) {
-        const parts = splitSurfaceKey(key);
-        if (parts) add(parts.platform, parts.workspace, parts.channel, `domain binding "${b.bundle}" via ${s.domain}`);
-      }
-      for (const key of domain?.containers ?? []) {
-        const [platform, workspace] = key.split("/");
-        if (platform && workspace) {
-          add(platform, workspace, "C__PROBE__", `domain binding "${b.bundle}" via ${s.domain} (containers claim "${key}", probe channel)`);
-        }
-      }
-    }
-    if (s.level === "org") add("slack", "T__PROBE__", "C__PROBE__", `org binding "${b.bundle}" (probe scope)`);
-  }
-  return [...out.values()];
-}
 
 for (const scope of boundScopes()) {
   const req: ResolveRequest = {
