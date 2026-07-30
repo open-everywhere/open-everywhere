@@ -11,6 +11,7 @@ import { fetchPullRequestStatus, prStateLabel, resolveReadToken } from "../scm/p
 import { fetchPrDiff } from "../scm/pr-diff.js";
 import { fetchConfigFacts } from "../review/facts-artifact.js";
 import { renderWalkthrough, type WalkthroughNarration } from "../review/pr-walkthrough.js";
+import { readSubagentAttestation } from "../spend/subagent-runs.js";
 import { REVIEW_CATEGORY, REVIEW_SEVERITY } from "../subagents/contracts.js";
 
 export const POST_PR_WALKTHROUGH_INPUT_KEYS: readonly string[] = ["repo", "number", "narration", "factsRunId"];
@@ -39,7 +40,9 @@ const narrationSchema = z.object({
 const inputSchema = z.object({
   repo: z.string().describe("Repository as 'owner/repo'."),
   number: z.number().int().positive().describe("PR number."),
-  narration: narrationSchema.describe("The fresh_eyes_review verdict, passed through unchanged. Do NOT write your own — it renders as a model opinion either way, and rewriting it just makes it a worse one."),
+  narration: narrationSchema.describe(
+    "The fresh_eyes_review verdict, passed through unchanged. The host checks its own spend ledger for a delegated subagent run in this session: without one the document renders this as UNATTESTED and tells the reader to treat it as your words about your own change.",
+  ),
   factsRunId: z
     .number()
     .int()
@@ -58,13 +61,17 @@ function adminChannel(): string | undefined {
 
 export default defineTool({
   description:
-    "Render the PR walkthrough and post it to the governance admin channel. Pass the fresh_eyes_review verdict as `narration`; the resolved-config FACTS are re-fetched here from CI's own artifact and are not something you can supply, alter or omit. The document labels every computed fact and every model opinion differently, and always states what it cannot establish. It approves and merges nothing — the merge stays with the human. Call walk_pr first.",
+    "Render the PR walkthrough and post it to the governance admin channel. Pass the fresh_eyes_review verdict as `narration`; the resolved-config FACTS are re-fetched here from CI's own artifact and are not something you can supply, alter or omit. The document labels every computed fact and every model opinion differently, states whether the spend ledger shows a delegated subagent run behind the narration, and always states what it cannot establish. It approves and merges nothing — the merge stays with the human. Call walk_pr first.",
   inputSchema,
   outputSchema: z.object({
     walkthrough: z.string().describe("The rendered document, exactly as posted."),
     factsState: z.enum(["artifact", "not-triggered", "unavailable"]),
     factsRunId: z.number().optional(),
     factsStale: z.boolean().describe("True when factsRunId was supplied and does not match the run now backing these facts."),
+    narrationAttested: z
+      .boolean()
+      .describe("True when the spend ledger records a delegated subagent run under this session. It attests that a delegated session RAN — not which one, and not that the narration is its text."),
+    narrationAttestation: z.string().describe("One line: what the ledger showed, or why it showed nothing."),
     delivered: z.boolean(),
     outcome: z.string(),
   }),
@@ -89,6 +96,8 @@ export default defineTool({
       ...(diff.filesCapped ? {} : { changedPaths: diff.files }),
     });
 
+    const attestation = await readSubagentAttestation(deploymentOrg(), ctx.session.id);
+
     const narration: WalkthroughNarration = {
       recommendation: input.narration.recommendation,
       summary: input.narration.summary,
@@ -110,6 +119,7 @@ export default defineTool({
       diff,
       facts,
       narration,
+      attestation,
       ...(input.factsRunId !== undefined ? { expectedFactsRunId: input.factsRunId } : {}),
     });
 
@@ -130,6 +140,8 @@ export default defineTool({
         factsStale,
         recommendation: input.narration.recommendation,
         evidenceSeen: input.narration.evidenceSeen,
+        narrationAttested: attestation.kind === "ledger",
+        ...(attestation.kind === "ledger" ? { subagentRuns: attestation.runs, subagentEvents: attestation.events } : {}),
         findings: input.narration.findings.length,
         severities: input.narration.findings.reduce<Record<string, number>>((acc, f) => ({ ...acc, [f.severity]: (acc[f.severity] ?? 0) + 1 }), {}),
         diffClipped: diff.diffClipped,
@@ -156,14 +168,22 @@ export default defineTool({
       }
     }
 
+    const attestationNote =
+      attestation.kind === "ledger"
+        ? `the spend ledger records ${attestation.events} model call(s) from ${attestation.runs} delegated subagent session(s) under this session — a delegated run happened; which subagent, and whether the narration is its text, are not established`
+        : `NARRATION UNATTESTED — ${attestation.reason}`;
+
     return {
       walkthrough,
       factsState: facts.kind,
       ...(runId !== undefined ? { factsRunId: runId } : {}),
       factsStale,
+      narrationAttested: attestation.kind === "ledger",
+      narrationAttestation: attestationNote,
       delivered,
       outcome:
         `Walkthrough for ${input.repo}#${input.number} rendered from ${facts.kind === "artifact" ? `config-diff run ${runId}` : `NO config facts (${facts.kind})`} — ${deliveryNote}. ` +
+        `Narration provenance: ${attestationNote}. ` +
         `Nothing was approved or merged; the merge is still the reviewer's.`,
     };
   },

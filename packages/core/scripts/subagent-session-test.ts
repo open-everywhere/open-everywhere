@@ -1,7 +1,7 @@
 
 import assert from "node:assert/strict";
 import { classifySessionId, parseSubagentToken, isSubagentSessionToken, isSupervisorShapedToken, bareTokenFromEveContext, formatDmSeatToken, formatWindowToken } from "../agent/channels/window-key.js";
-import { turnKind } from "../agent/hooks/spend.js";
+import { subagentParentOf, turnKind } from "../agent/hooks/spend.js";
 import { checkDeclaredSubagents, listDeclaredSubagents, type DeclaredSubagentSource } from "../agent/subagents/declared.js";
 import { checkConsequenceRegistry, type ConsequenceEntry } from "../agent/access/consequence.js";
 import { checkWindowGateManifest } from "../agent/access/window-gate-manifest.js";
@@ -75,6 +75,15 @@ function withMode<T>(mode: string, fn: () => T): T {
 }
 
 {
+  const projected = { ...ctx, session: { ...ctx.session, parent: { sessionId: "ses_01ABCDEF", callId: "call_7", rootSessionId: "ses_01ABCDEF", turn: { id: "turn_1", sequence: 1 } } } };
+  eq(subagentParentOf(projected, undefined), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "the parent is recovered from eve's TYPED projection with no token at all");
+  eq(subagentParentOf(ctx, CHILD), { parentSessionId: "ses_01ABCDEF", callId: "call_7" }, "…and from the continuation token with no projection at all — the two sources agree on the same child");
+  eq(subagentParentOf(ctx, "cse_example5"), undefined, "an ordinary root turn has no parent — the fail-closed answer");
+  for (const junk of [undefined, null, 42, {}, { session: null }, { session: { parent: { sessionId: "" } } }, { session: { parent: { sessionId: "p" } } }]) {
+    eq(subagentParentOf(junk as never, undefined), undefined, `subagentParentOf is fail-soft and never half-reads ${JSON.stringify(junk)}`);
+  }
+  eq(turnKind(projected, undefined), "subagent", "…and turnKind classifies from the same seam, so a projection-only child is tagged too");
+
   eq(turnKind(ctx, CHILD), "subagent", "a delegated child's usage row is tagged 'subagent' — delegated work is separable in the per-session cost series");
   eq(withMode("dm", () => turnKind(ctx, CHILD)), "subagent", "…including a child delegated FROM a DM: the subagent tag wins over the binding mode");
   ok(withMode("dm", () => turnKind(ctx, CHILD)) !== "dm", "a DM-delegated child does NOT classify 'dm' — the DM-seat starvation diagnostic no longer false-positives on it");

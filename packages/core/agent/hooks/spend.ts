@@ -8,7 +8,8 @@ import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { isSupervisorToken, standingSeatRegistryKey } from "../channels/unified-supervisor.js";
-import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, isSubagentSessionToken } from "../channels/window-key.js";
+import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
+import { stampSubagentRun } from "../spend/subagent-runs.js";
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
   try {
@@ -19,13 +20,30 @@ export function routineIdOf(ctx: BindableContext): string | undefined {
   }
 }
 
-export function turnKind(ctx: BindableContext, continuationToken?: unknown): string {
+export type DelegatableContext = BindableContext & {
+  readonly session?: { readonly parent?: { readonly sessionId?: string; readonly callId?: string } };
+};
+
+export function subagentParentOf(ctx: DelegatableContext, continuationToken?: unknown): { parentSessionId: string; callId: string } | undefined {
+  try {
+    const p = ctx.session?.parent;
+    if (typeof p?.sessionId === "string" && p.sessionId.length > 0 && typeof p.callId === "string" && p.callId.length > 0) {
+      return { parentSessionId: p.sessionId, callId: p.callId };
+    }
+    const parsed = parseSubagentToken(continuationToken);
+    return parsed ? { parentSessionId: parsed.parentSessionId, callId: parsed.callId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function turnKind(ctx: DelegatableContext, continuationToken?: unknown): string {
   try {
     const auth = ctx.session?.auth;
     const attrs = auth?.current?.attributes ?? auth?.initiator?.attributes;
     if (routineMarker(attrs)) return "routine";
     if (isSupervisorToken(continuationToken)) return "supervisor";
-    if (isSubagentSessionToken(continuationToken)) return "subagent";
+    if (subagentParentOf(ctx, continuationToken)) return "subagent";
     return bindFrom(ctx).mode === "dm" ? "dm" : "channel";
   } catch {
     return "channel";
@@ -40,6 +58,7 @@ export default defineHook({
       const p = resolvePartition(ctx);
       const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
       const routineId = routineIdOf(ctx);
+      const delegatedFrom = subagentParentOf(ctx, token);
 
       try {
         await recordUsage(p, periodOf(new Date().toISOString()), usage);
@@ -51,9 +70,10 @@ export default defineHook({
         await appendUsageEvent({
           org: p.org,
           surfaceKey: domainKeyOf(p),
-          sessionId: ctx.session.id,
+          sessionId: delegatedFrom?.parentSessionId ?? ctx.session.id,
           principalId: bindFrom(ctx).principalId,
           kind: turnKind(ctx, token),
+          ...(delegatedFrom ? { detail: stampSubagentRun({ callId: delegatedFrom.callId, sessionId: ctx.session.id }) } : {}),
           ...(routineId !== undefined ? { routineId } : {}),
           model: readModelStamp() ?? undefined,
           inputTokens: usage.inputTokens,

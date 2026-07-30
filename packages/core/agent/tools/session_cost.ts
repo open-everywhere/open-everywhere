@@ -2,6 +2,8 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
+import { subagentParentOf } from "../hooks/spend.js";
+import { subagentRunOf } from "../spend/subagent-runs.js";
 import { usageForSession } from "../spend/usage-events.js";
 import { resolveAssumedModel, rowCostUsd, pricingMix, pricingNote } from "../spend/reporting.js";
 import { estimateSandboxCostUsd } from "../spend/sandbox-pricing.js";
@@ -34,7 +36,10 @@ export default defineTool({
   async execute(input, ctx) {
     const p = resolvePartition(ctx);
     const sessionId = ctx.session.id;
-    const rows = await usageForSession(p.org, sessionId);
+    const delegatedFrom = subagentParentOf(ctx);
+    const all = await usageForSession(p.org, delegatedFrom?.parentSessionId ?? sessionId);
+    const rows = delegatedFrom ? all.filter((r) => subagentRunOf(r)?.sessionId === sessionId) : all;
+    const delegatedRows = delegatedFrom ? 0 : rows.filter((r) => subagentRunOf(r) !== undefined).length;
     const assumed = resolveAssumedModel(input.assumedModelId);
 
     let events = 0;
@@ -68,6 +73,12 @@ export default defineTool({
     const sandboxCostUsd = sandboxSeconds > 0 ? estimateSandboxCostUsd(sandboxSeconds) : undefined;
 
     const notes = [pricingNote(mix, assumed)];
+    if (delegatedRows > 0) {
+      notes.push(`Includes ${delegatedRows} model call(s) made by subagent(s) this conversation delegated to — delegated work is part of what the conversation cost.`);
+    }
+    if (delegatedFrom !== undefined) {
+      notes.push("This is a delegated subagent session, so these are its own rows only — its parent conversation's turns are not counted here.");
+    }
     if (sandboxSeconds > 0) {
       notes.push(
         "sandbox $ estimated from Vercel Sandbox's published Provisioned Memory rate at the platform-default sandbox size (verified against real billing — see the sandbox cost-model notes); an actual bill can differ if this deploy pins a non-default sandbox memory size.",

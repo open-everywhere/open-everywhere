@@ -4,12 +4,15 @@ import { computeBlastRadius, factsEstablishNothing, type BlastRadius } from "./b
 import { sectionHasDelta, type ConfigFacts } from "./config-facts.js";
 import { CONFIG_DIFF_WORKFLOW_PATH, type FactsSource } from "./facts-artifact.js";
 import type { PrDiffSnapshot } from "../scm/pr-diff.js";
+import type { NarrationAttestation } from "../spend/subagent-runs.js";
 
 export const WALKTHROUGH_MARKER = "## PR walkthrough";
 
 export const NO_CHANGE_LINE = "_computed — no change._";
 
 export const NOT_COMPUTABLE_PREFIX = "⚠️ **NOT COMPUTABLE** —";
+
+export const ATTESTED_PREFIX = "✅ **DELEGATION ATTESTED** —";
 
 export const FACTS_LABEL = "🧮 FACTS — computed in CI, no model in the path";
 
@@ -88,6 +91,7 @@ export interface RenderWalkthroughInput {
   readonly diff: PrDiffSnapshot;
   readonly facts: FactsSource;
   readonly narration?: WalkthroughNarration;
+  readonly attestation?: NarrationAttestation;
   readonly expectedFactsRunId?: number;
 }
 
@@ -160,6 +164,7 @@ function factSubjects(facts: FactsSource): Set<string> {
 
 export function renderWalkthrough(input: RenderWalkthroughInput): string {
   const { pr, diff, facts, narration } = input;
+  const attested = input.attestation?.kind === "ledger";
   const out: string[] = [];
 
   out.push(`${WALKTHROUGH_MARKER} — ${pr.repo}#${pr.number}`, "");
@@ -167,8 +172,9 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
   out.push(
     "> 🔴 **Two kinds of content, and they are not interchangeable.** A 🧮 block is COMPUTED — CI",
     "> derived it from the resolved config with no model in the path, and you can reproduce it from",
-    "> the linked run. A 🗣️ block is a language model's OPINION, written by an independent reviewer",
-    "> that saw only the diff and those facts, with no history from whoever proposed the change.",
+    "> the linked run. A 🗣️ block is a language model's OPINION, and it reached this document through",
+    "> the session that asked for the walkthrough. Section 2 opens with what the host could verify",
+    "> about where that opinion came from — read that line before you weigh anything in a 🗣️ block.",
     "> **Nothing in this document approves anything.** The merge is the gate, and it is yours.",
     "",
   );
@@ -179,19 +185,21 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
 
   out.push(`### 2. What it means — ${NARRATION_LABEL}`, "");
   if (!narration) {
-    out.push(`${NOT_COMPUTABLE_PREFIX} no independent review was supplied, so nothing here interprets the change. Run \`fresh_eyes_review\` over the brief and render again.`, "");
+    out.push(`${NOT_COMPUTABLE_PREFIX} no review verdict was supplied, so nothing here interprets the change. Run \`fresh_eyes_review\` over the brief and render again.`, "");
   } else if (!narration.evidenceSeen) {
+    out.push(...renderNarrationProvenance(input.attestation));
     out.push(
-      `${NOT_COMPUTABLE_PREFIX} the independent reviewer reports it was shown no actual change (\`evidenceSeen: false\`), so its reading establishes nothing. Its own summary follows for the record:`,
+      `${NOT_COMPUTABLE_PREFIX} the verdict reports the reviewer was shown no actual change (\`evidenceSeen: false\`), so its reading establishes nothing. The summary follows for the record:`,
       `> ${narrated(narration.summary)}`,
       "",
     );
   } else {
-    out.push(`> **Reviewer's summary.** ${narrated(narration.summary)}`, "");
+    out.push(...renderNarrationProvenance(input.attestation));
+    out.push(`> **${attested ? "Reviewer's summary" : "Summary as supplied — UNATTESTED"}.** ${narrated(narration.summary)}`, "");
     const subjects = factSubjects(facts);
     const meaning = (narration.meaning ?? []).slice(0, MAX_NARRATION_ITEMS);
     if (meaning.length === 0) {
-      out.push(`${NOT_COMPUTABLE_PREFIX} the reviewer returned no per-subject reading, so §1's rows are unexplained. Read them directly.`, "");
+      out.push(`${NOT_COMPUTABLE_PREFIX} the verdict carries no per-subject reading, so §1's rows are unexplained. Read them directly.`, "");
     } else {
       for (const m of meaning) {
         const subject = narrated(m.subject);
@@ -200,7 +208,7 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
       }
       out.push("");
       if ((narration.meaning ?? []).length > MAX_NARRATION_ITEMS) {
-        out.push(`${NOT_COMPUTABLE_PREFIX} the reviewer returned ${(narration.meaning ?? []).length} readings; only the first ${MAX_NARRATION_ITEMS} are shown.`, "");
+        out.push(`${NOT_COMPUTABLE_PREFIX} the verdict carries ${(narration.meaning ?? []).length} readings; only the first ${MAX_NARRATION_ITEMS} are shown.`, "");
       }
     }
   }
@@ -210,12 +218,14 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
 
   out.push(`### 4. What could go wrong — ${NARRATION_LABEL}`, "");
   if (!narration) {
-    out.push(`${NOT_COMPUTABLE_PREFIX} no independent review was supplied, so nobody has looked for problems. This is an UNKNOWN, not a clean bill.`, "");
+    out.push(`${NOT_COMPUTABLE_PREFIX} no review verdict was supplied, so nobody has looked for problems. This is an UNKNOWN, not a clean bill.`, "");
   } else {
     const findings = narration.findings.slice(0, MAX_NARRATION_ITEMS);
     if (findings.length === 0) {
       out.push(
-        `> The reviewer raised no findings. That is its opinion of what it was shown — it is not a proof of anything, and it does not cover any of §5.`,
+        attested
+          ? `> The verdict raises no findings. That is a model's opinion of what it was shown — it is not a proof of anything, and it does not cover any of §5.`
+          : `> The verdict raises no findings — and §2 says nothing establishes that an independent reviewer produced it. An empty finding list from an unattested verdict is not evidence that anyone looked.`,
         "",
       );
     } else {
@@ -225,11 +235,11 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
       }
       out.push("");
       if (narration.findings.length > MAX_NARRATION_ITEMS) {
-        out.push(`${NOT_COMPUTABLE_PREFIX} the reviewer returned ${narration.findings.length} findings; only the first ${MAX_NARRATION_ITEMS} are shown.`, "");
+        out.push(`${NOT_COMPUTABLE_PREFIX} the verdict carries ${narration.findings.length} findings; only the first ${MAX_NARRATION_ITEMS} are shown.`, "");
       }
     }
     out.push(
-      `> **Reviewer's recommendation: \`${narration.recommendation}\`.** This is a model output and it decides nothing. ` +
+      `> **${attested ? "Reviewer's recommendation" : "Recommendation as supplied — UNATTESTED"}: \`${narration.recommendation}\`.** This is a model output and it decides nothing. ` +
         `A \`block\` is worth reading before you merge; an \`approve\` is not permission.`,
       "",
     );
@@ -241,10 +251,31 @@ export function renderWalkthrough(input: RenderWalkthroughInput): string {
   out.push(
     "---",
     `<sub>Facts by \`scripts/config-diff.ts\` via the \`${CONFIG_DIFF_WORKFLOW_PATH}\` artifact (never a PR comment — anyone who can comment ` +
-      `could forge one). Narration by the \`fresh_eyes_review\` declared subagent: a fresh session, zero tools, no history from the proposing session. ` +
+      `could forge one). Narration is model output relayed by the session that asked for this walkthrough; §2 states what the spend ledger records ` +
+      `about a delegated run behind it. \`fresh_eyes_review\` is the intended narrator — a fresh session with zero tools and no history from the ` +
+      `proposing session — and the ledger attests that a delegated session RAN, never which one or what it said. ` +
       `Rendered by \`packages/core/agent/review/pr-walkthrough.ts\` — the facts half is not model-passable. **The merge is the privilege gate.**</sub>`,
   );
   return out.join("\n");
+}
+
+function renderNarrationProvenance(attestation: NarrationAttestation | undefined): string[] {
+  if (attestation?.kind === "ledger") {
+    return [
+      `${ATTESTED_PREFIX} the spend ledger carries ${attestation.events} model call(s) from ${attestation.runs} delegated subagent session(s) ` +
+        `under the session that asked for this walkthrough (${attestation.firstTs} → ${attestation.lastTs}). Those rows are written host-side, inside ` +
+        `the delegated run; no model input can produce one. **What that proves is that a delegated session RAN — not which subagent it was, and not ` +
+        `that the words below are the words it returned.** eve hands a subagent's output to the model, so everything in a 🗣️ block reached this ` +
+        `document through the session whose change is being reviewed, and could have been altered on the way.`,
+      "",
+    ];
+  }
+  return [
+    `${NOT_COMPUTABLE_PREFIX} **the narration below is UNATTESTED.** ` +
+      `${attestation?.reason ?? "this render made no delegated-run check"}, so nothing establishes that an independent reviewer produced any of it. ` +
+      `Read it as the asking session's own words about its own change — which is the conflict of interest this whole document is shaped around.`,
+    "",
+  ];
 }
 
 function renderProvenance(input: RenderWalkthroughInput): string[] {
@@ -435,8 +466,22 @@ function renderBlindSpots(input: RenderWalkthroughInput): string[] {
   }
   if (diff.diffClipped) extra.push(`The diff was CLIPPED at ${diff.diff.length} of ${diff.diffChars} chars, so neither the reviewer nor this render saw all of it.`);
   if (diff.filesCapped) extra.push(`The touched-file list was capped at ${diff.files.length} paths, so "this PR touches no config" must not be concluded from it.`);
-  if (!narration) extra.push("No independent review ran, so §2 and §4 are empty of anything at all.");
-  else if (!narration.evidenceSeen) extra.push("The independent reviewer reports it saw no change, so its verdict carries no information about this PR.");
+  if (!narration) extra.push("No review verdict was supplied, so §2 and §4 are empty of anything at all.");
+  else {
+    if (!narration.evidenceSeen) extra.push("The verdict reports the reviewer saw no change, so it carries no information about this PR.");
+    if (input.attestation?.kind === "ledger") {
+      extra.push(
+        "WHOSE WORDS §2 AND §4 ARE. The spend ledger shows a delegated subagent session ran under the asking session — but eve returns a subagent's " +
+          "output to the model, not to this renderer, so the narration was relayed by the session being reviewed. That it RAN is established; that the " +
+          "text is unaltered, that it came from `fresh_eyes_review` rather than another delegated session, and that the run was for this request, are not.",
+      );
+    } else {
+      extra.push(
+        "WHOSE WORDS §2 AND §4 ARE. Nothing establishes that an independent reviewer produced them: " +
+          `${input.attestation?.reason ?? "this render made no delegated-run check"}. Treat them as the asking session's own reading of its own change.`,
+      );
+    }
+  }
   extra.push(
     "Whether the change is a GOOD IDEA. This document says what moves and what a model thinks that means. It has no view on whether you want it, and it cannot merge, approve or block anything.",
   );

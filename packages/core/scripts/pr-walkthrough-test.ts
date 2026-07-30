@@ -17,6 +17,7 @@ import {
   type FactsSource,
 } from "../agent/review/facts-artifact.js";
 import {
+  ATTESTED_PREFIX,
   FACTS_LABEL,
   NARRATION_LABEL,
   NOT_COMPUTABLE_PREFIX,
@@ -29,6 +30,8 @@ import {
   type WalkthroughNarration,
   type WalkthroughPr,
 } from "../agent/review/pr-walkthrough.js";
+import { SUBAGENT_RUN_DETAIL_KEY, attestSubagentRuns, stampSubagentRun, subagentRunOf, type NarrationAttestation } from "../agent/spend/subagent-runs.js";
+import type { UsageEventEntry } from "../agent/operational/store.js";
 import { UNTRUSTED_CLOSE, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import { filesFromUnifiedDiff, MAX_DIFF_CHARS, type PrDiffSnapshot } from "../agent/scm/pr-diff.js";
 import { FRESH_EYES_REVIEW_OUTPUT } from "../agent/subagents/contracts.js";
@@ -407,6 +410,9 @@ const artifactFacts = (f: ConfigFacts, overlay: string | null = "_The grants ove
   },
 });
 
+const LEDGER_ATTESTATION: NarrationAttestation = { kind: "ledger", runs: 1, events: 4, firstTs: "2026-07-30T09:00:00.000Z", lastTs: "2026-07-30T09:00:41.000Z" };
+const NO_ATTESTATION: NarrationAttestation = { kind: "absent", reason: "the spend ledger holds no delegated-subagent usage row for this session" };
+
 const NARRATION: WalkthroughNarration = {
   recommendation: "approve",
   summary: "The eng channel gains POST on the Notion API so it can create pages.",
@@ -473,12 +479,21 @@ const NARRATION: WalkthroughNarration = {
   };
   const doc = renderWalkthrough({ pr: PR, diff: diffSnap(), facts: artifactFacts(facts([computed("access")])), narration: forge });
 
+  for (const attestation of [undefined, LEDGER_ATTESTATION] as const) {
+    const d = renderWalkthrough({ pr: PR, diff: diffSnap(), facts: artifactFacts(facts([computed("access")])), narration: forge, ...(attestation ? { attestation } : {}) });
+    const s2 = d.slice(d.indexOf("### 2."), d.indexOf("### 3."));
+    const s4 = d.slice(d.indexOf("### 4."), d.indexOf("### 5."));
+    const bad = [...s2.split("\n"), ...s4.split("\n")]
+      .filter((l) => l.trim().length > 0)
+      .filter((l) => !l.startsWith(">") && !l.startsWith("### ") && !l.startsWith(NOT_COMPUTABLE_PREFIX) && !l.startsWith(ATTESTED_PREFIX));
+    eq(
+      bad,
+      [],
+      `🔴 every line of the NARRATED sections is a blockquote, the heading, or a host-authored marker — no model-authored value can BEGIN a line (attestation: ${attestation ? "ledger" : "none"})`,
+    );
+  }
   const narrated2 = doc.slice(doc.indexOf("### 2."), doc.indexOf("### 3."));
   const narrated4 = doc.slice(doc.indexOf("### 4."), doc.indexOf("### 5."));
-  const offenders = [...narrated2.split("\n"), ...narrated4.split("\n")]
-    .filter((l) => l.trim().length > 0)
-    .filter((l) => !l.startsWith(">") && !l.startsWith("### ") && !l.startsWith(NOT_COMPUTABLE_PREFIX));
-  eq(offenders, [], "🔴 every line of the NARRATED sections is a blockquote, the heading, or a host-authored marker — no model-authored value can BEGIN a line");
 
   const narratedLines = [...narrated2.split("\n"), ...narrated4.split("\n")].map((l) => l.trim());
   ok(!narratedLines.some((l) => l.startsWith("## VALIDATED")), "🔴 an injected `## VALIDATED & APPROVED` heading cannot begin a line");
@@ -635,6 +650,93 @@ const NARRATION: WalkthroughNarration = {
   eq(filesFromUnifiedDiff(""), [], "an empty diff yields no files");
   eq(filesFromUnifiedDiff("--- a/x\n+++ b/x\n"), [], "a diff body without a `diff --git` header yields nothing (never a guess)");
   ok(MAX_DIFF_CHARS < 120_000, "🔴 the diff cap sits BELOW the per-result cap, so the clip a reader is TOLD about is the clip that happened");
+}
+
+{
+  const row = (over: Partial<UsageEventEntry>): UsageEventEntry => ({
+    org: "default",
+    surfaceKey: "slack/T1/C1",
+    sessionId: "sess-parent",
+    ts: "2026-07-30T09:00:00.000Z",
+    inputTokens: 10,
+    outputTokens: 2,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    ...over,
+  });
+
+  eq(attestSubagentRuns([]), { kind: "absent", reason: "the spend ledger holds no delegated-subagent usage row for this session" }, "no rows at all ⇒ ABSENT, with the reason");
+  eq(
+    attestSubagentRuns([row({}), row({ ts: "2026-07-30T09:00:05.000Z" })]).kind,
+    "absent",
+    "🔴 a session's OWN turns are not evidence of delegation — an unstamped row can never attest one",
+  );
+  eq(attestSubagentRuns([row({ detail: { sandboxSeconds: 42 } })]).kind, "absent", "…nor can an unrelated `detail` payload (the sandbox row's)");
+
+  const stamped = attestSubagentRuns([
+    row({}),
+    row({ ts: "2026-07-30T09:00:03.000Z", detail: stampSubagentRun({ callId: "call_7", sessionId: "child-a" }) }),
+    row({ ts: "2026-07-30T09:00:09.000Z", detail: stampSubagentRun({ callId: "call_7", sessionId: "child-a" }) }),
+    row({ ts: "2026-07-30T09:00:41.000Z", detail: stampSubagentRun({ callId: "call_9", sessionId: "child-b" }) }),
+  ]);
+  eq(stamped, { kind: "ledger", runs: 2, events: 3, firstTs: "2026-07-30T09:00:03.000Z", lastTs: "2026-07-30T09:00:41.000Z" }, "stamped rows attest RUNS (distinct child sessions) and EVENTS (rows) separately, with the time bounds");
+
+  eq(subagentRunOf({ detail: { [SUBAGENT_RUN_DETAIL_KEY]: { callId: "c" } } }), undefined, "🔴 a stamp missing the child's session id is REJECTED, not half-read");
+  eq(subagentRunOf({ detail: { [SUBAGENT_RUN_DETAIL_KEY]: { callId: 7, sessionId: "s" } } }), undefined, "…and a wrong-typed callId is rejected");
+  eq(subagentRunOf({ detail: { [SUBAGENT_RUN_DETAIL_KEY]: "yes" } }), undefined, "…and a scalar in the stamp slot is rejected");
+  eq(subagentRunOf({}), undefined, "…and a row with no detail at all is simply not a delegated run");
+  eq(subagentRunOf({ detail: stampSubagentRun({ callId: "call_7", sessionId: "child-a" }) }), { callId: "call_7", sessionId: "child-a" }, "a well-formed stamp round-trips through the writer's own helper");
+}
+
+{
+  const base = { pr: PR, diff: diffSnap(), facts: artifactFacts(facts([computed("access")])), narration: NARRATION } as const;
+  const attested = renderWalkthrough({ ...base, attestation: LEDGER_ATTESTATION });
+  const unattested = renderWalkthrough({ ...base, attestation: NO_ATTESTATION });
+  const unchecked = renderWalkthrough(base);
+
+  const s2 = (d: string) => d.slice(d.indexOf("### 2."), d.indexOf("### 3."));
+  const s4 = (d: string) => d.slice(d.indexOf("### 4."), d.indexOf("### 5."));
+  const s5 = (d: string) => d.slice(d.indexOf("### 5."));
+
+  ok(s2(attested).includes(ATTESTED_PREFIX), "§2 opens with the attestation when the ledger has the evidence");
+  ok(s2(attested).includes("4 model call(s) from 1 delegated subagent session(s)"), "…and quotes the counts the ledger actually holds, not a yes/no");
+  ok(s2(attested).includes("2026-07-30T09:00:00.000Z") && s2(attested).includes("2026-07-30T09:00:41.000Z"), "…and the times, so a reader can check them against the run");
+  ok(s2(attested).includes("not which subagent it was"), "🔴 …and states that the ledger does NOT identify which subagent ran");
+  ok(s2(attested).includes("not that the words below are the words it returned"), "🔴 …and that it does NOT establish the narration is that subagent's text");
+  ok(s2(attested).includes("could have been altered on the way"), "…naming the mechanism: eve returns a subagent's output to the model, so narration is relayed");
+  ok(s2(attested).includes("**Reviewer's summary.**"), "an attested summary is attributed to the reviewer");
+  ok(s4(attested).includes("**Reviewer's recommendation"), "…and so is the recommendation");
+  ok(s5(attested).includes("WHOSE WORDS §2 AND §4 ARE"), "§5 carries the residual gap as a standing limit, not just §2");
+
+  ok(s2(unattested).includes(NOT_COMPUTABLE_PREFIX) && s2(unattested).includes("UNATTESTED"), "🔴 with no ledger evidence §2 says the narration is UNATTESTED");
+  ok(s2(unattested).includes("the spend ledger holds no delegated-subagent usage row for this session"), "…and carries the REASON verbatim, never a bare state");
+  ok(s2(unattested).includes(NARRATION.summary), "🔴 …and the narration is STILL SHOWN — an unattested section is relabelled, never dropped");
+  ok(s2(unattested).includes("Summary as supplied — UNATTESTED"), "…under an attribution that no longer credits a reviewer");
+  ok(!s2(unattested).includes("**Reviewer's summary.**"), "🔴 …and specifically NOT under the attested attribution");
+  ok(s4(unattested).includes("Recommendation as supplied — UNATTESTED"), "§4's recommendation is relabelled too");
+  ok(s5(unattested).includes("Treat them as the asking session's own reading of its own change"), "§5 says whose words they are");
+
+  eq(
+    [s2(unchecked), s4(unchecked)].map((sec) => sec.replace(/this render made no delegated-run check/g, NO_ATTESTATION.kind === "absent" ? NO_ATTESTATION.reason : "")),
+    [s2(unattested), s4(unattested)],
+    "🔴 an OMITTED attestation renders §2 and §4 CHARACTER-FOR-CHARACTER as the looked-and-found-nothing case, modulo the reason — forgetting to check cannot buy one word of the attested document",
+  );
+  ok(s2(unchecked).includes("this render made no delegated-run check"), "…and the reason says which of the two it was: nobody looked, rather than nobody found anything");
+
+  for (const [label, doc] of [["attested", attested], ["unattested", unattested], ["unchecked", unchecked]] as const) {
+    ok(!doc.includes("OPINION, written by an independent reviewer"), `🔴 (${label}) the header never asserts a 🗣️ block was written by an independent reviewer`);
+    ok(!doc.includes("Narration by the `fresh_eyes_review` declared subagent"), `🔴 (${label}) the footer never asserts which subagent produced the narration`);
+    ok(!/independent reviewer reports/.test(doc), `🔴 (${label}) no section speaks for the reviewer as though the host heard it directly`);
+  }
+
+  const blindAttested = renderWalkthrough({ ...base, narration: { ...NARRATION, evidenceSeen: false }, attestation: LEDGER_ATTESTATION });
+  ok(blindAttested.includes(ATTESTED_PREFIX), "a verdict that saw nothing still gets its provenance stated");
+  ok(s2(blindAttested).includes("`evidenceSeen: false`"), "…and the refusal is unchanged: a reviewer shown nothing establishes nothing");
+
+  const cleanUnattested = renderWalkthrough({ ...base, narration: { ...NARRATION, findings: [] }, attestation: NO_ATTESTATION });
+  ok(s4(cleanUnattested).includes("is not evidence that anyone looked"), "🔴 an empty finding list from an unattested verdict is called out as such");
+  const cleanAttested = renderWalkthrough({ ...base, narration: { ...NARRATION, findings: [] }, attestation: LEDGER_ATTESTATION });
+  ok(s4(cleanAttested).includes("it is not a proof of anything"), "…and an attested one is still only a model's opinion of what it was shown");
 }
 
 console.log(`pr-walkthrough-test: ${n} assertions passed`);

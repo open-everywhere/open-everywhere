@@ -1,3 +1,4 @@
+import { deepStrictEqual } from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,16 @@ let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {
     console.error(`✗ ${label}`);
+    process.exit(1);
+  }
+  passed++;
+}
+
+function eq(actual: unknown, expected: unknown, label: string): void {
+  try {
+    deepStrictEqual(actual, expected);
+  } catch (err) {
+    console.error(`✗ ${label}: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
   passed++;
@@ -316,6 +327,73 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   });
   const isolatedRows = await usageEvents.usageForSession("default", "sess-isolated");
   ok(isolatedRows.length === 1 && isolatedRows[0].model === undefined, "hooks/spend: a fresh session context is unaffected by an earlier session's stamp");
+}
+
+{
+  const spendHook = (await import("../agent/hooks/spend.js")).default;
+  const usageEvents = await import("../agent/spend/usage-events.js");
+  const { attestSubagentRuns, subagentRunOf } = await import("../agent/spend/subagent-runs.js");
+  const { turnKind } = await import("../agent/hooks/spend.js");
+
+  const runCtx = (id: string, over: { parent?: { sessionId: string; callId: string }; token?: string } = {}) => ({
+    channel: { kind: "slack", ...(over.token !== undefined ? { continuationToken: over.token } : {}) },
+    session: {
+      id,
+      ...(over.parent ? { parent: { ...over.parent, rootSessionId: over.parent.sessionId, turn: { id: "turn_1", sequence: 1 } } } : {}),
+      auth: { current: { attributes: { team_id: "T1", channel_id: "C_DELEG" }, principalId: "U1", principalType: "slack-user" } },
+    },
+  });
+  const step = (i: number, o: number) => ({ data: { usage: { inputTokens: i, outputTokens: o } } });
+
+  await spendHook.events!["step.completed"]!(step(100, 10) as never, runCtx("sess-deleg-parent") as never);
+  await spendHook.events!["step.completed"]!(step(7, 3) as never, runCtx("sess-deleg-child-a", { parent: { sessionId: "sess-deleg-parent", callId: "call_7" } }) as never);
+  await spendHook.events!["step.completed"]!(step(5, 2) as never, runCtx("sess-deleg-child-b", { token: "subagent:sess-deleg-parent:call_9" }) as never);
+
+  const parentRows = await usageEvents.usageForSession("default", "sess-deleg-parent");
+  ok(parentRows.length === 3, `🔴 a delegated child's row files under the PARENT's session id — the parent's own turn plus both children (got ${parentRows.length})`);
+  ok((await usageEvents.usageForSession("default", "sess-deleg-child-a")).length === 0, "…and NOT under the child's own id, which eve mints per run and nothing ever queries");
+  ok((await usageEvents.usageForSession("default", "sess-deleg-child-b")).length === 0, "…for the token-recognised child either");
+
+  const stamps = parentRows.map((r) => subagentRunOf(r));
+  ok(stamps.filter((s) => s === undefined).length === 1, "the parent's OWN turn carries no delegation stamp — filing under the parent is not what makes a row evidence");
+  ok(
+    stamps.some((s) => s?.sessionId === "sess-deleg-child-a" && s.callId === "call_7"),
+    "🔴 the child recognised through eve's TYPED parent projection is stamped with its own session id and the parent's call id",
+  );
+  ok(
+    stamps.some((s) => s?.sessionId === "sess-deleg-child-b" && s.callId === "call_9"),
+    "🔴 the child recognised through eve's CONTINUATION TOKEN alone is stamped identically — the two sources are independently sufficient",
+  );
+  ok(parentRows.filter((r) => r.kind === "subagent").length === 2, "both delegated rows still tag kind 'subagent' — the cost series keeps delegated work separable");
+  ok(parentRows.find((r) => subagentRunOf(r) === undefined)?.inputTokens === 100, "the parent's own tokens are unchanged by any of this");
+
+  eq(
+    attestSubagentRuns(parentRows),
+    { kind: "ledger", runs: 2, events: 2, firstTs: parentRows.filter((r) => subagentRunOf(r)).map((r) => r.ts).sort()[0], lastTs: parentRows.filter((r) => subagentRunOf(r)).map((r) => r.ts).sort()[1] },
+    "🔴 the rows the hook wrote are exactly what the attestation reads: 2 delegated runs, 2 model calls",
+  );
+  eq(attestSubagentRuns(await usageEvents.usageForSession("default", "sess-stamped")).kind, "absent", "a session that delegated NOTHING attests nothing — no false positive from ordinary turns");
+  eq(turnKind(runCtx("x", { parent: { sessionId: "p", callId: "c" } }) as never, undefined), "subagent", "turnKind classifies from the SAME parent seam the stamp uses, so the tag and the stamp cannot disagree");
+}
+
+{
+  const { readSubagentAttestation } = await import("../agent/spend/subagent-runs.js");
+  const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+  type OperationalStore = import("../agent/operational/store.js").OperationalStore;
+
+  const live = getOperationalStore();
+  const broken = { ...live, id: live.id, usageForSession: async () => { throw new Error("connection reset"); } } as OperationalStore;
+  registerOperationalStore(broken);
+  resetOperationalStore();
+  ok(getOperationalStore() === broken, "fail-soft: the broken store is actually in play (else this section would assert nothing)");
+
+  const verdict = await readSubagentAttestation("default", "sess-deleg-parent");
+  eq(verdict.kind, "absent", "🔴 an unreadable ledger reports ABSENT — a database failure can never render as 'a reviewer definitely ran'");
+  ok(verdict.kind === "absent" && verdict.reason.includes("connection reset"), "…and carries the failure as the reason, so the document says why rather than implying nobody delegated");
+
+  registerOperationalStore(live);
+  resetOperationalStore();
+  eq((await readSubagentAttestation("default", "sess-deleg-parent")).kind, "ledger", "…and the live store still reads the real evidence back (the swap was restored)");
 }
 
 {
