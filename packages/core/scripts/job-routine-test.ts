@@ -222,5 +222,52 @@ await throwsAsync(
   "record_job_state on a NON-job routine throws",
 );
 
+{
+  const createRoutine = (await import("../agent/tools/create_routine.js")).default as unknown as {
+    inputSchema: { shape: Record<string, { description?: string }> };
+  };
+  const jobDesc = createRoutine.inputSchema.shape.job?.description ?? "";
+  ok(jobDesc.length > 0, "legibility: create_routine's `job` param carries a model-facing description at all");
+  ok(
+    /\bends?\b/i.test(jobDesc) && jobDesc.includes("complete_job"),
+    "legibility: the `job` param states the TERMINAL CONDITION — that the work must END, and that the job runs until it calls complete_job",
+  );
+  ok(
+    /never ends/i.test(jobDesc),
+    "legibility: …and names the NEGATIVE case (work that never ends ⇒ leave `job` off), so the test is decidable in both directions",
+  );
+  ok(
+    !/open-ended/i.test(jobDesc),
+    "🔴 legibility: the `job` param does NOT recommend itself for 'OPEN-ENDED' work — that phrasing argues FOR arming a job on a forever-routine, which is the exact mis-arming that silently decays the ledger's trust",
+  );
+
+  await import("../agent/approvals/routine-create.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  const createKind = actionKind("routine.create")!;
+  const cardArgs = {
+    org: "default",
+    partition: { org: "default", platform: "slack", workspace: "T1", surface: "C1", surfaceKey: "slack/T1/C1" },
+    surfaceKey: "slack/T1/C1",
+    target: { channelId: "C1" },
+    trigger: { kind: "interval", everyMinutes: 60 },
+    prompt: "Chase PR #12 until it merges.",
+  };
+  const jobCard = createKind.summarize({ ...cardArgs, sessionMode: "job" } as never).join("\n");
+  const plainCard = createKind.summarize(cardArgs as never).join("\n");
+  ok(/\bDONE\b|\bfinish/i.test(jobCard), "legibility: the card tells a human a JOB runs until the work is DONE / can finish — the terminal condition, in plain words");
+  ok(
+    /ordinary routine/i.test(jobCard) && /(fresh|repeats forever)/i.test(jobCard),
+    "legibility: …and names the ALTERNATIVE it is not (an ordinary routine starts fresh and repeats forever), because the card only renders the job arm so the contrast is otherwise invisible",
+  );
+  ok(
+    !/persistent session/i.test(jobCard),
+    "🔴 legibility: the card does NOT put implementation language ('persistent session') in front of the person clicking — it is the one chance to catch a bad pick",
+  );
+  ok(
+    !/\bDONE\b|persistent session|ordinary routine/i.test(plainCard),
+    "legibility: an ORDINARY routine's card is unchanged — the job line renders only for a job (no new line on the most common card)",
+  );
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ job-routine: ${passed} assertions passed`);

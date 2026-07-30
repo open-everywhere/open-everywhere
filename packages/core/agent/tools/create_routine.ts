@@ -126,12 +126,11 @@ export default defineTool({
       .boolean()
       .optional()
       .describe(
-        "DURABLE JOB: make this routine keep ONE persistent session across fires so multi-step work " +
-          "('chase this PR until it merges', 'drive this migration to done') ACCUMULATES context instead " +
-          "of starting cold each time — the fires all live in one thread, and the job runs until its own " +
-          "session calls complete_job (not just until one request is answered). Use for open-ended, " +
-          "multi-fire objectives; leave off for a plain recurring post (a daily summary). Slack-only, and " +
-          "scheduled triggers only (not `event`).",
+        "DURABLE JOB: ONE persistent session across fires, so multi-step work ACCUMULATES context " +
+          "instead of starting cold each time — the fires all live in one thread. Set it ONLY when the " +
+          "work has an END the job itself can recognise, because a job runs until its own session calls " +
+          "complete_job: \"watch this PR until it's merged\" ends — job. \"Check the dashboard every " +
+          "morning\" never ends — leave `job` off. Slack-only, and scheduled triggers only (not `event`).",
       ),
     permissions: z
       .array(z.string())

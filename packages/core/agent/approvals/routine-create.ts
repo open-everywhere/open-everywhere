@@ -41,7 +41,9 @@ const routineCreate: ActionKind<RoutineCreateArgs> = {
       `Create ${args.sessionMode === "job" ? "durable JOB" : "routine"} — ${describeTrigger(args.trigger, args.report)} — fires WITHOUT a fresh @-mention`,
       ...(args.report?.kind === "silent" ? ["🔇 reports NOTHING here — you will only hear from it if it hits a problem it can't resolve, or if it self-disables"] : []),
       ...(args.report?.kind === "surface" ? [`📤 posts into ${args.report.surfaceKey} — this surface can't post proactively, so its domain's configured reportChannel is where every run will land`] : []),
-      ...(args.sessionMode === "job" ? ["↻ keeps ONE persistent session across fires (accumulates context) until it calls complete_job"] : []),
+      ...(args.sessionMode === "job"
+        ? ["↻ keeps going until it decides the work is DONE, building on what each earlier run learned — where an ordinary routine starts fresh each time and repeats forever. Arm a job only for work that can actually finish."]
+        : []),
       ...(args.sessionMode === "job" && args.boundPolicy ? [`⏹️ ${args.boundPolicy} — it will say so here, and you can start it again`] : []),
       ...(args.tainted ? ["⚠ authored in a turn that read external content — review before arming"] : []),
       ...permissionLines(args),
