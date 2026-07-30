@@ -11,6 +11,8 @@ import { domainNameForScope } from "./caps.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "../tools/set_spend_limit.js";
+import { routineMarker } from "../routines/routine.js";
+import { recordCheckpointStall } from "../routines/outcome-fold.js";
 import "../approvals/session-checkpoint.js";
 import { CHECKPOINT_KIND, CHECKPOINT_GRANT_MEMO, CHECKPOINT_ASK_MEMO, checkpointTtlHours } from "../approvals/session-checkpoint.js";
 
@@ -240,6 +242,10 @@ export async function requireSessionContinuation(ctx: BindableContext, toolName:
     await auditToolAction(ctx, "checkpoint.trip", { tool: toolName, carded: false, allowed: true, reason: plan.reason, note: "no approval-card path — allowed" });
     return;
   }
+
+  const fireAuth = ctx.session?.auth;
+  const marker = routineMarker(fireAuth?.current?.attributes ?? fireAuth?.initiator?.attributes);
+  if (marker) await recordCheckpointStall({ marker, tool: toolName, reason: plan.reason });
 
   const store = getOperationalStore();
   const now = new Date();

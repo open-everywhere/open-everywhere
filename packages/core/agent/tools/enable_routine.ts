@@ -83,6 +83,7 @@ export default defineTool({
           trigger: routine.trigger,
           requestedBy,
           ...(routine.bound ? { bounded: true } : {}),
+          ...(routine.stalledFires ? { stalled: true } : {}),
         },
         scopeKey: p.surfaceKey,
         domain: null,

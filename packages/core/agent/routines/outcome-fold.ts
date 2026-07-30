@@ -1,7 +1,8 @@
 import { applyOutcome, settleOutcome } from "./lifecycle.js";
 import { boundExhaustedPatch, type BoundVerdict } from "./bound.js";
-import { auditRoutineDisabled, auditRoutineFire } from "./fire-audit.js";
+import { auditRoutineDisabled, auditRoutineFire, auditRoutineStalled } from "./fire-audit.js";
 import { announceBoundExhausted, announceSelfDisable } from "./disable-notice.js";
+import { stallFoldPatch } from "./stall.js";
 import { getRoutine, updateRoutine } from "./store.js";
 import type { Routine, RunOutcome } from "./routine.js";
 
@@ -40,6 +41,7 @@ export async function foldRoutineOutcome(opts: {
     status: updated.status,
     disabledReason: updated.disabledReason,
     nextRunAt: updated.nextRunAt,
+    ...stallFoldPatch(routine),
   });
 
   const declared = updated.lastFailureReason;
@@ -80,6 +82,30 @@ export async function retireExhaustedRoutine(opts: {
     fireCount: routine.fireCount ?? 0,
     ...(routine.bound?.maxFires !== undefined ? { maxFires: routine.bound.maxFires } : {}),
     ...(routine.bound?.until !== undefined ? { boundUntil: routine.bound.until } : {}),
+    ...(routine.stalledFires ? { stalledFires: routine.stalledFires } : {}),
+    ...(routine.lastStallAt !== undefined ? { lastStallAt: routine.lastStallAt } : {}),
   });
   return announceBoundExhausted(routine, verdict);
+}
+
+export async function recordCheckpointStall(opts: {
+  readonly marker: RoutineOutcomeMarker;
+  readonly tool: string;
+  readonly reason: string;
+  readonly at?: Date;
+}): Promise<boolean> {
+  const { marker, tool, reason } = opts;
+  try {
+    const routine = await getRoutine(marker.org, marker.surfaceKey, marker.id);
+    if (!routine) return false;
+    if (routine.lastStallAt !== undefined) return false;
+    const at = (opts.at ?? new Date()).toISOString();
+    const updated = await updateRoutine(marker.org, marker.surfaceKey, marker.id, { lastStallAt: at });
+    if (!updated) return false;
+    await auditRoutineStalled(routine, { tool, reason, stalledFires: (routine.stalledFires ?? 0) + 1 });
+    return true;
+  } catch (err) {
+    console.log(`[open-everywhere:routines] stall record skipped for ${marker.id}: ${String(err)}`);
+    return false;
+  }
 }

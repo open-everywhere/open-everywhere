@@ -1,5 +1,6 @@
 import { updateRoutine } from "../routines/store.js";
 import { mintJobBound } from "../routines/bound.js";
+import { stallResetPatch } from "../routines/stall.js";
 import { computeNextRun } from "../routines/schedule.js";
 import {
   assertReportConsistent,
@@ -104,6 +105,7 @@ export interface RoutineEnableArgs {
   readonly trigger: RoutineTrigger;
   readonly requestedBy: string;
   readonly bounded?: boolean;
+  readonly stalled?: boolean;
 }
 
 const routineEnable: ActionKind<RoutineEnableArgs> = {
@@ -115,6 +117,9 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       `Stopped because: ${args.disabledReason} (${args.consecutiveFailures} consecutive failures)`,
       "↻ keeps everything it learned — a watch's baseline, a job's progress ledger and thread, its id and history",
       ...(args.bounded ? ["⏹️ its run ceiling starts again from zero — it gets a fresh full allowance, not the remainder of the old one"] : []),
+      ...(args.stalled
+        ? ["⚠️ it stopped because a session cost checkpoint held its consequential actions and nobody confirmed — answer that card, or raise the checkpoint for this scope, FIRST, or it will stall again"]
+        : []),
       `> ${clip(args.prompt)}`,
       `Target: ${args.surfaceKey}`,
     ];
@@ -128,6 +133,7 @@ const routineEnable: ActionKind<RoutineEnableArgs> = {
       consecutiveFailures: 0,
       nextRunAt: next ? next.toISOString() : null,
       ...(args.bounded ? { bound: mintJobBound(args.trigger, now), fireCount: 0 } : {}),
+      ...stallResetPatch(),
     });
     if (!updated) {
       return `routine ${args.id} is gone — it was cancelled before this re-arm was confirmed, so nothing changed.`;

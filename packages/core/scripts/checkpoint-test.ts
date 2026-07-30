@@ -244,6 +244,123 @@ passed++;
   }
 }
 
+{
+  const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
+  const { ROUTINE_AUDIT } = await import("../agent/routines/fire-audit.js");
+  const routineStore = await import("../agent/routines/store.js");
+  const SURFACE = "slack/T1/C1";
+
+  const fireCtx = (sessionId: string, routineId: string, extra: Record<string, string> = {}) =>
+    ({
+      channel: { kind: "slack" },
+      session: {
+        id: sessionId,
+        auth: {
+          current: {
+            attributes: {
+              team_id: "T1",
+              channel_id: "C1",
+              [ROUTINE_MARKER.id]: routineId,
+              [ROUTINE_MARKER.surface]: SURFACE,
+              [ROUTINE_MARKER.org]: "default",
+              ...extra,
+            },
+            principalId: "eve:app",
+            principalType: "runtime",
+          },
+        },
+      },
+    }) as never;
+
+  const addJob = async (id: string) =>
+    routineStore.addRoutine({} as never, {
+      id,
+      org: "default",
+      surfaceKey: SURFACE,
+      target: { channelId: "C1" },
+      trigger: { kind: "interval", everyMinutes: 15 },
+      prompt: "Chase the migration until it is done.",
+      createdAt: "2026-07-01T00:00:00.000Z",
+      status: "active",
+      consecutiveFailures: 0,
+      sessionMode: "job",
+      bound: { maxFires: 200 },
+      fireCount: 4,
+    } as never);
+
+  withCheckpoints({ default: { sessionTokens: 1000 } });
+
+  {
+    const sid = "sess-fire";
+    const id = "r-fire";
+    await addJob(id);
+    await seed(sid, 5000);
+    const pendingBefore = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
+    await throws(() => requireSessionContinuation(fireCtx(sid, id), "remember"), "fire: a crossed routine fire is still BLOCKED — the stop is the right direction and OPE-253 did not change it");
+    const pendingAfter = (await store.listPendingActions("default")).filter((r) => r.kind === "session.checkpoint").length;
+    ok(pendingAfter === pendingBefore + 1, "fire: THE CARD STILL POSTS — whether an unattended fire should card at all is a doctrine question about the approvals plane, deliberately left alone");
+
+    const row = await routineStore.getRoutine("default", SURFACE, id);
+    ok(
+      typeof row?.lastStallAt === "string",
+      "🔴 THE RECORD: a blocked fire stamps the stall on its OWN routine row — remove the recordCheckpointStall call and 'waiting on a human click' is indistinguishable from 'running fine' on every surface OE ships, while the OPE-248 ceiling burns down underneath it",
+    );
+    const rows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id);
+    ok(rows.length === 1, "🔴 THE ROW: one routine.stalled forensic row, written at the MOMENT of the block — checkpoint.trip is once per SESSION, and a durable job's session spans every fire, so without this the 2nd..200th blocked fire wrote nothing at all");
+    ok((rows[0]?.detail as { tool?: string }).tool === "remember", "fire: the row names the tool that was refused");
+
+    await throws(() => requireSessionContinuation(fireCtx(sid, id), "open_pull_request"), "fire: a second consequential call in the same fire is still blocked");
+    const after = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id);
+    ok(after.length === 1, "fire: …and records nothing extra — one stalled FIRE, not one per refused tool");
+  }
+
+  {
+    const sid = "sess-fire-open";
+    const id = "r-open";
+    await addJob(id);
+    await seed(sid, 5000);
+    const ctx = {
+      channel: { kind: "slack" },
+      session: {
+        id: sid,
+        auth: {
+          current: {
+            attributes: { team_id: "T1", [ROUTINE_MARKER.id]: id, [ROUTINE_MARKER.surface]: SURFACE, [ROUTINE_MARKER.org]: "default" },
+            principalId: "eve:app",
+            principalType: "runtime",
+          },
+        },
+      },
+    } as never;
+    await requireSessionContinuation(ctx, "remember");
+    passed++;
+    const row = await routineStore.getRoutine("default", SURFACE, id);
+    ok(
+      row?.lastStallAt === undefined,
+      "🔴 POSITION: nothing is recorded on the guard's FAIL-OPEN exit — move the recorder above the canAsk branch and every fire on a surface with no card path is logged as stalled, retiring healthy jobs after three runs",
+    );
+    ok(
+      (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled && (a.detail as { routineId?: string } | undefined)?.routineId === id).length === 0,
+      "position: …and no forensic row either",
+    );
+  }
+
+  {
+    const sid = "sess-human";
+    await seed(sid, 5000);
+    const beforeRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
+    await throws(() => requireSessionContinuation(ctxFor(sid), "remember"), "parity: a live human session over threshold blocks exactly as before");
+    const afterRows = (await readAudit({ org: "default", limit: 1000 })).filter((a) => a.action === ROUTINE_AUDIT.stalled).length;
+    ok(afterRows === beforeRows, "parity: …and records no stall — a stall is a property of an UNATTENDED fire, and a human who is right there can answer the card");
+  }
+
+  {
+    const sid = "sess-fire-gone";
+    await seed(sid, 5000);
+    await throws(() => requireSessionContinuation(fireCtx(sid, "r-does-not-exist"), "remember"), "fail-soft: a marker with no surviving routine still produces the guard's own block, not a store error");
+  }
+}
+
 try {
   rmSync(dir, { recursive: true, force: true });
 } catch {

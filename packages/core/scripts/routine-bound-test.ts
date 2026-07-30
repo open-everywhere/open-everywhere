@@ -318,4 +318,202 @@ async function tick(now: Date): Promise<void> {
   );
 }
 
+const { MAX_STALLED_FIRES, describeStall, stallExhausted, stallFoldPatch, stallResetPatch } = await import("../agent/routines/stall.js");
+const { boundExhaustedPatch } = await import("../agent/routines/bound.js");
+
+async function quietStore(except: string): Promise<void> {
+  for (const r of await routineStore.listRoutines({ org: ORG, surfaceKey: SURFACE } as never)) {
+    if (r.status === "active" && r.id !== except) await routineStore.updateRoutine(ORG, SURFACE, r.id, { status: "disabled", nextRunAt: null });
+  }
+}
+
+{
+  ok(MAX_STALLED_FIRES === MAX_CONSECUTIVE_FAILURES, "stall: the limit REUSES the three-strike constant — a stall run is the same 'how many attempts is a fair sample' question, and a second constant would be a second answer to it");
+
+  const row = (over: Partial<Routine>): Pick<Routine, "bound" | "fireCount" | "stalledFires"> => over as never;
+  ok(stallExhausted({ stalledFires: undefined }) === false, "stall: an absent counter is not stalling — every pre-OPE-253 row, and every routine on a deployment with no configured checkpoint");
+  ok(stallExhausted({ stalledFires: MAX_STALLED_FIRES - 1 }) === false, "stall: under the limit runs");
+  ok(stallExhausted({ stalledFires: MAX_STALLED_FIRES }) === true, "stall: AT the limit is exhausted (>=, so the run that trips it has already happened — the check runs before the NEXT dispatch)");
+
+  const at = new Date("2030-01-01T00:00:00.000Z");
+  const stalled = checkBound(row({ bound: { maxFires: 200 }, fireCount: 4, stalledFires: MAX_STALLED_FIRES }), at);
+  ok(stalled.exhausted && stalled.dimension === "stalled", "🔴 THE VERDICT: a job blocked MAX_STALLED_FIRES fires running is exhausted, on its own dimension — remove the stall check from checkBound and this job runs until its 200-fire ceiling instead, doing nothing on every one of them");
+  ok(stalled.exhausted && /cost checkpoint/i.test(stalled.reason) && stalled.reason.includes(String(MAX_STALLED_FIRES)), "verdict: the reason is HOST-COMPOSED from the row's own numbers and NAMES the cause — no model text rides the notice path");
+
+  const bothTripped = checkBound(row({ bound: { maxFires: 3, until: "2026-07-01T00:00:00.000Z" }, fireCount: 9, stalledFires: MAX_STALLED_FIRES }), at);
+  ok(
+    bothTripped.exhausted && bothTripped.dimension === "stalled",
+    "🔴 ORDER: with the stall AND the fire cap AND the deadline all tripped, the STALL is what gets reported — move the check below the fire cap and the operator is told to re-arm a job that will stall again on its very next fire",
+  );
+
+  ok(checkBound(row({ stalledFires: 99 }), at).exhausted === false, "stall: an UNBOUNDED routine is never retired by a stall run — stall-reaping is keyed on carrying a ceiling, the same key fireCount is written under, and a daily digest is SUPPOSED to run forever");
+
+  ok(boundExhaustedPatch(stalled as never).disabledReason?.startsWith("stopped because it was blocked") === true, "stall: the row's own reason says BLOCKED, not 'at its ceiling' — the job never got to spend its ceiling, and disabledReason is what list_routines, the CLI and the re-arm card all show");
+  ok(boundExhaustedPatch({ exhausted: true, dimension: "fires", reason: "x" }).disabledReason?.startsWith("stopped at its ceiling") === true, "stall: …and a genuine ceiling stop still reads as one");
+}
+
+{
+  ok(Object.keys(stallFoldPatch({ stalledFires: undefined, lastStallAt: undefined })).length === 0, "fold: a routine that has never stalled and did not stall this fire gets a BYTE-IDENTICAL patch — no field is written onto it at all");
+  ok(stallFoldPatch({ stalledFires: undefined, lastStallAt: "2026-07-02T12:00:00.000Z" }).stalledFires === 1, "fold: a fire that recorded a stall starts the run at 1");
+  ok(stallFoldPatch({ stalledFires: 2, lastStallAt: "2026-07-02T12:00:00.000Z" }).stalledFires === 3, "fold: …and extends it");
+  const cleared = stallFoldPatch({ stalledFires: 2, lastStallAt: undefined });
+  ok("stalledFires" in cleared && cleared.stalledFires === undefined, "🔴 CONSECUTIVE: a fire that got its hands CLEARS the run — drop this and a job that stalled three times across months of healthy work retires as though it had stalled three times running");
+  ok(stallResetPatch().stalledFires === undefined && stallResetPatch().lastStallAt === undefined, "reset: a re-arm clears BOTH — leaving lastStallAt would have the next fold count a stall from before the re-arm");
+
+  ok(describeStall({ stalledFires: 0, lastStallAt: undefined }) === null, "describe: a routine that is not stalling says nothing about stalls at all");
+  const d = describeStall({ stalledFires: 2, lastStallAt: "2026-07-30T03:00:00.000Z" }) ?? "";
+  ok(/cost checkpoint/.test(d) && d.includes(`2/${MAX_STALLED_FIRES}`) && d.includes("2026-07-30T03:00:00.000Z"), "describe: list_routines gets the cause, the progress toward the limit AND when it last happened — 'waiting on a human click' and 'running fine' were the same reading of a job before this field");
+}
+
+{
+  const fold = await import("../agent/routines/outcome-fold.js");
+  const id = "r-stallfold";
+  await routineStore.addRoutine({} as never, routine({ id, sessionMode: "job", bound: { maxFires: 200 }, fireCount: 1, lastStallAt: "2026-07-05T12:00:00.000Z" }));
+  const marker = { id, surfaceKey: SURFACE, org: ORG };
+
+  await fold.foldRoutineOutcome({ marker, sessionOutcome: "ok", at: new Date("2026-07-05T12:00:05.000Z"), sessionId: "s-1" });
+  const one = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(one?.stalledFires === 1, "🔴 THE COUNT: the fold turns the mid-turn stall FACT into a run — remove stallFoldPatch from foldRoutineOutcome and a stalled fire leaves the row indistinguishable from a healthy one");
+  ok(one?.lastOutcome === "ok" && one?.consecutiveFailures === 0, "fold: …on a fire that settled OK with zero failures, which is why consecutiveFailures, report_run_failed and the delivery fold are all structurally blind to it");
+  ok(one?.status === "active", "fold: one stall does not stop it — the card may yet be answered");
+
+  await routineStore.updateRoutine(ORG, SURFACE, id, { lastStallAt: "2026-07-05T12:15:00.000Z" });
+  await fold.foldRoutineOutcome({ marker, sessionOutcome: "ok", at: new Date("2026-07-05T12:15:05.000Z"), sessionId: "s-2" });
+  ok((await routineStore.getRoutine(ORG, SURFACE, id))?.stalledFires === 2, "fold: a second blocked fire extends the run");
+
+  await routineStore.updateRoutine(ORG, SURFACE, id, { lastStallAt: undefined });
+  await fold.foldRoutineOutcome({ marker, sessionOutcome: "ok", at: new Date("2026-07-05T12:30:05.000Z"), sessionId: "s-3" });
+  const healed = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(healed?.stalledFires === undefined, "🔴 CONSECUTIVE, end to end: one fire that was NOT blocked resets the run to nothing");
+}
+
+{
+  const id = "r-stallclear";
+  await routineStore.addRoutine(
+    {} as never,
+    routine({ id, sessionMode: "job", bound: { maxFires: 200 }, fireCount: 0, stalledFires: 1, lastStallAt: "2026-07-06T11:00:00.000Z", nextRunAt: "2026-07-06T12:00:00.000Z" }),
+  );
+  await quietStore(id);
+  await tick(new Date("2026-07-06T12:00:00.000Z"));
+  const fired = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(fired?.lastRunAt === "2026-07-06T12:00:00.000Z", "clear: the routine fires (one stall is under the limit)");
+  ok(
+    fired?.lastStallAt === undefined,
+    "🔴 THE INVARIANT: the dispatcher CLEARS lastStallAt at fire, alongside lastOutcome — delete that line and a routine that was blocked ONCE has the fact on its row forever, so every later fold counts a stall that never happened and the job retires on a run it did not have",
+  );
+  ok(fired?.stalledFires === 1, "clear: …while the RUN so far is untouched — the fact is per-fire, the count is not");
+  ok(fired?.fireCount === 1, "clear: and the fire counted toward the OPE-248 ceiling like any other — a blocked fire still woke the session, ran a turn and billed tokens");
+}
+
+{
+  const fold = await import("../agent/routines/outcome-fold.js");
+  const id = "r-stallrec";
+  await routineStore.addRoutine({} as never, routine({ id, sessionMode: "job", bound: { maxFires: 200 }, fireCount: 2, stalledFires: 1 }));
+  const marker = { id, surfaceKey: SURFACE, org: ORG };
+  const reason = "this session reached its cost checkpoint (5,000,000 / 5,000,000 tokens)";
+
+  ok(await fold.recordCheckpointStall({ marker, tool: "remember", reason, at: new Date("2026-07-07T12:00:00.000Z") }), "recorder: the first refusal of a fire records the stall");
+  const stamped = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(stamped?.lastStallAt === "2026-07-07T12:00:00.000Z", "recorder: …as the per-fire FACT on the row");
+  ok(stamped?.stalledFires === 1, "recorder: it does NO arithmetic — the count is the fold's job, which is what lets a clean fire break the run");
+
+  ok((await fold.recordCheckpointStall({ marker, tool: "open_pull_request", reason })) === false, "🔴 IDEMPOTENT PER FIRE: a second refusal in the same fire records nothing — remove the already-set early return and one fire writes a row per blocked tool, inflating the run and the audit trail together");
+  const rows = (await readAudit({ org: ORG, limit: 1000 })).filter((r) => r.action === ROUTINE_AUDIT.stalled && (r.detail as { routineId?: string } | undefined)?.routineId === id);
+  ok(rows.length === 1, "recorder: exactly ONE routine.stalled forensic row for the fire");
+  const detail = (rows[0]?.detail ?? {}) as Record<string, unknown>;
+  ok(detail["tool"] === "remember" && String(detail["reason"]).includes("cost checkpoint"), "forensics: the row names the refused tool and the checkpoint's own reason — before this, a durable job's 2nd..200th blocked fire wrote NOTHING anywhere (checkpoint.trip is once per session, and a job resumes one session across every fire)");
+  ok(detail["stalledFires"] === 2, "forensics: …and the run this fire EXTENDS, stated as the count including this fire rather than the stored one, which would be off by one for every reader");
+
+  ok((await fold.recordCheckpointStall({ marker: { id: "r-gone", surfaceKey: SURFACE, org: ORG }, tool: "remember", reason })) === false, "recorder: a routine cancelled between the fire and the refusal is a no-op, never a throw — this runs inside a guard whose own job is to throw a specific recoverable error");
+}
+
+{
+  const id = "r-stalled";
+  await routineStore.addRoutine(
+    {} as never,
+    routine({ id, sessionMode: "job", bound: { maxFires: 200, until: "2030-01-01T00:00:00.000Z" }, fireCount: 3, stalledFires: MAX_STALLED_FIRES, lastStallAt: "2026-07-08T11:45:00.000Z", nextRunAt: "2026-07-08T12:00:00.000Z" }),
+  );
+  await quietStore(id);
+  const noticesBefore = notices.length;
+  await tick(new Date("2026-07-08T12:00:00.000Z"));
+  const stopped = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(stopped?.fireCount === 3 && stopped?.lastRunAt === undefined, "🔴 THE FENCE: a job blocked MAX_STALLED_FIRES fires running does NOT fire again — its fire count and last-run are untouched, with 197 runs and years left on its ceiling, so nothing else in the tree would have stopped it");
+  ok(stopped?.status === "disabled" && stopped?.nextRunAt === null, "trip: it stopped itself, terminally, and stops consuming a per-tick concurrency slot");
+  ok(stopped?.consecutiveFailures === 0, "trip: with consecutiveFailures still 0 — every one of those fires SUCCEEDED, which is exactly why the three-strike fold could never reach this");
+  ok(stopped?.status !== "done", "trip: `disabled`, not `done` — the job did not declare its objective finished, it was never allowed to work on it");
+
+  ok(notices.length === noticesBefore + 1, "🔴 THE NOTICE: stopping POSTS, exactly once, through the routine's OWN dispatch origin — the same arm a fire's reply takes, not a second delivery mechanism");
+  const text = notices[notices.length - 1]!;
+  ok(text.includes(id), "notice: names the routine");
+  ok(/BLOCKED/.test(text) && /cost checkpoint/i.test(text), "🔴 THE DIAGNOSIS: the notice says it was BLOCKED and names the cost checkpoint — remove the dimension branch and a stalled job reports the CEILING's story instead");
+  ok(!/Nothing failed: it just never finished/.test(text), "🔴 THE DIAGNOSIS: …and it does NOT claim 'nothing failed, it just never finished', which is the ceiling's line and a false diagnosis here — it points the operator at re-arm when the truth is unblock-then-re-arm");
+  ok(/raise the cost checkpoint|Answer that card/i.test(text) && /THEN/.test(text), "notice: it names the step that has to happen BEFORE a re-arm, which is the whole reason the two stops read differently");
+
+  const disabledRows = (await readAudit({ org: ORG, limit: 1000 })).filter((r) => r.action === ROUTINE_AUDIT.disabled && (r.detail as { routineId?: string } | undefined)?.routineId === id);
+  ok(disabledRows.length === 1, "forensics: exactly ONE routine.disabled row, on the transition");
+  const d = (disabledRows[0]?.detail ?? {}) as Record<string, unknown>;
+  ok(d["boundDimension"] === "stalled", "🔴 forensics: the row names the STALL dimension — 'ran out of tries', 'ran out of time' and 'was never allowed to work' are three different incidents and three different next moves");
+  ok(d["stalledFires"] === MAX_STALLED_FIRES && d["fireCount"] === 3, "forensics: …with the stall run AND the fires it burned, so 'how much of the ceiling went on doing nothing?' is answerable");
+
+  await import("../agent/approvals/routine-lifecycle.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  const enable = actionKind("routine.enable");
+  ok(enable !== undefined, "re-arm: the routine.enable ActionKind is registered");
+  const card = (enable!.summarize as (a: unknown) => string[])({
+    org: ORG,
+    partition: { org: ORG, platform: "slack", workspace: "T1", surface: CHAN, surfaceKey: SURFACE, workspaceKey: "slack/T1" },
+    surfaceKey: SURFACE,
+    id,
+    description: "every 15 minutes",
+    disabledReason: stopped?.disabledReason ?? "",
+    consecutiveFailures: 0,
+    prompt: stopped?.prompt ?? "",
+    trigger: { kind: "interval", everyMinutes: 15 },
+    requestedBy: "U1",
+    bounded: true,
+    stalled: true,
+  }).join("\n");
+  ok(/cost checkpoint/i.test(card) && /FIRST/.test(card), "🔴 THE CARD: a re-arm of a STALLED routine says the checkpoint has to be cleared FIRST — without it the clicker recovers the job into an identical incident three fires later");
+
+  await enable!.execute(
+    {
+      org: ORG,
+      partition: { org: ORG, platform: "slack", workspace: "T1", surface: CHAN, surfaceKey: SURFACE, workspaceKey: "slack/T1" },
+      surfaceKey: SURFACE,
+      id,
+      description: "every 15 minutes",
+      disabledReason: stopped?.disabledReason ?? "",
+      consecutiveFailures: 0,
+      prompt: stopped?.prompt ?? "",
+      trigger: { kind: "interval", everyMinutes: 15 },
+      requestedBy: "U1",
+      bounded: true,
+      stalled: true,
+    } as never,
+    "U-APPROVER",
+  );
+  const rearmed = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(rearmed?.status === "active", "re-arm: the row is active again, keeping its id, ledger and thread");
+  ok(rearmed?.stalledFires === undefined && rearmed?.lastStallAt === undefined, "re-arm: the stall run AND the per-fire fact are both cleared");
+  ok(rearmed?.fireCount === 0, "re-arm: and the ceiling starts again from zero (OPE-248)");
+
+  await quietStore(id);
+  await tick(new Date(Date.parse(rearmed?.nextRunAt ?? "2026-07-08T12:30:00.000Z") + 1000));
+  const ran = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(
+    ran?.fireCount === 1 && ran?.status === "active",
+    "🔴 THE SHARPEST EDGE: a re-armed job FIRES — drop stallResetPatch() from the re-arm click and its fireCount stays 0 and its status flips straight back to disabled, because checkBound retires it before dispatch on the very next tick: 'enable didn't work', and the routine never runs again",
+  );
+}
+
+{
+  const id = "r-nostall";
+  await routineStore.addRoutine({} as never, routine({ id, sessionMode: "job", bound: { maxFires: 200 }, fireCount: 0, nextRunAt: "2026-07-09T12:00:00.000Z" }));
+  await quietStore(id);
+  for (const t of ["12:00", "12:15", "12:30"]) await tick(new Date(`2026-07-09T${t}:00.000Z`));
+  const clean = await routineStore.getRoutine(ORG, SURFACE, id);
+  ok(clean?.fireCount === 3, "parity: a job nothing ever blocked fires on every tick");
+  ok(clean?.stalledFires === undefined && clean?.lastStallAt === undefined, "parity: …and NEITHER stall field is ever written onto its row — its stored JSON is byte-identical to a pre-OPE-253 one, which is every row on every deployment with no configured spend checkpoint");
+}
+
 console.log(`✓ routine-bound: ${passed} assertions passed`);

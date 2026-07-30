@@ -6,12 +6,13 @@ import { listRoutines } from "../routines/store.js";
 import { emptyRoutineForensics, readRoutineForensics } from "../routines/fire-audit.js";
 import { describeTrigger } from "../routines/routine.js";
 import { describeBound } from "../routines/bound.js";
+import { describeStall } from "../routines/stall.js";
 import { policyRules } from "../routines/policy.js";
 import { listRoutinePermissions } from "../routines/grants.js";
 
 export default defineTool({
   description:
-    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, or what rules one has been told to follow.",
+    "List the routines (scheduled jobs, watches, event subscriptions) set up on this surface, with their status, next run time, recent run history (last session id, last time it posted, fires and tokens over 7 days), the standing permissions each one may use unattended without asking, and the standing RULES each one has accumulated (with the id needed to remove one). Use when asked what proactive/recurring work is configured here, whether a routine actually ran, whether one is stuck waiting on a cost-checkpoint confirmation, whether an event subscription's filter has ever matched anything, what one is costing, what any of them are allowed to do on their own, or what rules one has been told to follow.",
   inputSchema: z.object({
     includeDisabled: z.boolean().default(false).describe("Include auto-disabled routines and completed jobs (terminal rows kept for visibility)."),
     id: z.string().optional().describe("Report on ONE routine by id (e.g. 'r-1a2b3c4d'). Omit to list them all."),
@@ -33,6 +34,7 @@ export default defineTool({
         lastMatchAt: z.string().nullable(),
         consecutiveFailures: z.number(),
         ceiling: z.string().nullable(),
+        stalled: z.string().nullable(),
         taintedAtCreation: z.boolean(),
         lastSessionId: z.string().nullable(),
         lastPostedAt: z.string().nullable(),
@@ -87,6 +89,7 @@ export default defineTool({
         lastMatchAt: r.lastMatchAt ?? null,
         consecutiveFailures: r.consecutiveFailures,
         ceiling: describeBound(r),
+        stalled: describeStall(r),
         taintedAtCreation: r.taintedAtCreation === true,
         lastSessionId: f.lastSessionId,
         lastPostedAt: f.lastPostedAt,

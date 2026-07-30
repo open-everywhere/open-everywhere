@@ -25,12 +25,17 @@ export function boundNoticeText(
 ): string {
   const what = r.prompt.trim().replace(/\s+/g, " ").slice(0, 160);
   const noun = r.sessionMode === "job" ? "Job" : "Routine";
+  const stalled = verdict.dimension === "stalled";
   return (
-    `⏹️ ${noun} \`${r.id}\` has STOPPED at its ceiling and will not run again — ${verdict.reason.slice(0, 200)}.\n` +
+    `⏹️ ${noun} \`${r.id}\` has STOPPED ${stalled ? "because it was BLOCKED" : "at its ceiling"} and will not run again — ${verdict.reason.slice(0, 200)}.\n` +
     `> ${what}\n` +
-    `Nothing failed: it just never finished, so I stopped it rather than keep going unattended. ` +
-    (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
-    `Ask me to start it again if you still want it — it picks up from where it got to, with a fresh ceiling.`
+    (stalled
+      ? `Nothing broke, and it did not run out of runs: a session cost checkpoint paused its consequential actions and the "keep going?" card was never answered, so it kept waking up unable to do its work. ` +
+        (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
+        `Answer that card — or raise the cost checkpoint for this scope — and THEN ask me to start it again, or it will stall the same way.`
+      : `Nothing failed: it just never finished, so I stopped it rather than keep going unattended. ` +
+        (isSilentRoutine(r) ? `It reported nothing while it was running, so this notice is the only sign of it. ` : ``) +
+        `Ask me to start it again if you still want it — it picks up from where it got to, with a fresh ceiling.`)
   );
 }
 

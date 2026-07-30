@@ -6,6 +6,8 @@ import { getOperationalStore } from "../operational/provider.js";
 import { listAllRoutines, routinesRoot } from "../routines/store.js";
 import { isDue } from "../routines/schedule.js";
 import { describeTrigger } from "../routines/routine.js";
+import { describeBound } from "../routines/bound.js";
+import { describeStall } from "../routines/stall.js";
 import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
@@ -126,6 +128,8 @@ export interface RoutineRow {
   readonly disabledReason?: string;
   readonly firstMatchAt?: string;
   readonly lastMatchAt?: string;
+  readonly ceiling?: string;
+  readonly stalled?: string;
 }
 export interface RoutinesView {
   readonly root: string;
@@ -157,6 +161,8 @@ export async function routinesView(opts: { onlyDue?: boolean; org?: string; surf
       ...(r.disabledReason ? { disabledReason: r.disabledReason } : {}),
       ...(r.firstMatchAt ? { firstMatchAt: r.firstMatchAt } : {}),
       ...(r.lastMatchAt ? { lastMatchAt: r.lastMatchAt } : {}),
+      ...(describeBound(r) !== null ? { ceiling: describeBound(r)! } : {}),
+      ...(describeStall(r) !== null ? { stalled: describeStall(r)! } : {}),
     })),
   };
 }

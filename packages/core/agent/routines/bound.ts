@@ -1,5 +1,6 @@
 import { MAX_CONSECUTIVE_FAILURES } from "./lifecycle.js";
 import { computeNextRun } from "./schedule.js";
+import { stallExhausted, stallReason } from "./stall.js";
 import type { Routine, RoutineBound, RoutineTrigger } from "./routine.js";
 
 export const DEFAULT_JOB_MAX_DAYS = 7;
@@ -54,7 +55,7 @@ export function describeBound(r: Pick<Routine, "bound" | "fireCount">): string |
   return parts.length > 0 ? parts.join(", or ") : null;
 }
 
-export type BoundDimension = "fires" | "deadline";
+export type BoundDimension = "fires" | "deadline" | "stalled";
 
 export type BoundVerdict =
   | { readonly exhausted: false }
@@ -65,11 +66,15 @@ export type BoundVerdict =
     };
 
 export function checkBound(
-  r: Pick<Routine, "bound" | "fireCount">,
+  r: Pick<Routine, "bound" | "fireCount" | "stalledFires">,
   now: Date,
 ): BoundVerdict {
   const bound = r.bound;
   if (!bound) return { exhausted: false };
+
+  if (stallExhausted(r)) {
+    return { exhausted: true, dimension: "stalled", reason: stallReason(r) };
+  }
 
   const fires = Number.isInteger(r.fireCount) && (r.fireCount as number) > 0 ? (r.fireCount as number) : 0;
   if (bound.maxFires !== undefined && fires >= bound.maxFires) {
@@ -95,5 +100,6 @@ export function checkBound(
 }
 
 export function boundExhaustedPatch(verdict: Extract<BoundVerdict, { exhausted: true }>): Partial<Routine> {
-  return { status: "disabled", disabledReason: `stopped at its ceiling — ${verdict.reason}`, nextRunAt: null };
+  const prefix = verdict.dimension === "stalled" ? "stopped because it was blocked" : "stopped at its ceiling";
+  return { status: "disabled", disabledReason: `${prefix} — ${verdict.reason}`, nextRunAt: null };
 }

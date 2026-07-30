@@ -8,6 +8,7 @@ export const ROUTINE_AUDIT = {
   skip: "routine.skip",
   fireLost: "routine.fire_lost",
   disabled: "routine.disabled",
+  stalled: "routine.stalled",
   runNow: "routine.run_now",
 } as const;
 
@@ -121,6 +122,28 @@ export async function auditRoutineFireLost(r: Routine, error: string, deps: Rout
         error: error.slice(0, 300),
         sessionId: null,
         note: "delivery rejected — no session started, so no sessionId exists for this fire",
+      },
+    },
+    deps,
+  );
+}
+
+export async function auditRoutineStalled(
+  r: Routine,
+  detail: { readonly tool: string; readonly reason: string; readonly stalledFires: number },
+  deps: RoutineAuditDeps = {},
+): Promise<void> {
+  await write(
+    {
+      org: r.org,
+      ...routineAuditScope(r),
+      principalId: deps.principalId ?? ROUTINE_DISPATCHER_PRINCIPAL,
+      action: ROUTINE_AUDIT.stalled,
+      detail: {
+        routineId: r.id,
+        tool: detail.tool,
+        reason: detail.reason.slice(0, 300),
+        stalledFires: detail.stalledFires,
       },
     },
     deps,

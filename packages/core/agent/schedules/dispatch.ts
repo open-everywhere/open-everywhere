@@ -130,6 +130,7 @@ export async function dispatchTick(
         nextRunAt: next ? next.toISOString() : null,
         lastOutcome: undefined,
         lastFailureReason: undefined,
+        lastStallAt: undefined,
         ...(r.manualRunAt !== undefined ? { manualRunAt: undefined } : {}),
         ...(r.bound ? { fireCount: (r.fireCount ?? 0) + 1 } : {}),
         ...onceDisablePatch(r, now, "fired"),

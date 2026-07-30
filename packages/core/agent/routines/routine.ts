@@ -77,6 +77,8 @@ export interface Routine {
   prWatch?: { readonly repo: string; readonly number: number; readonly checksRemaining: number };
   bound?: RoutineBound;
   fireCount?: number;
+  lastStallAt?: string;
+  stalledFires?: number;
   completedAt?: string;
   completedReason?: string;
 }
