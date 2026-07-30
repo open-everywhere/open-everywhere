@@ -53,6 +53,10 @@ for (const t of BOT_PR_TARGETS) {
     `bot-PR target ${t.path} is CODEOWNED — the merge is the gate for ${t.flow}`,
     isSpecificallyOwned(t.path),
   );
+  ok(
+    `bot-PR target ${t.path} EXISTS — otherwise this list is stale and its ownership assertion is vacuous`,
+    existsSync(join(repoRoot, t.path)),
+  );
 }
 
 for (const p of ["agent/memory/domains.ts", "agent/access/bundles.ts", "agent/roles/roles.ts"]) {
