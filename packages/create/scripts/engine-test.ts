@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { checkAll, runWizard, type StepContext, type WizardIO, type WizardStep } from "../src/engine.js";
 import { databaseStep } from "../src/steps/database.js";
 import { repoStep } from "../src/steps/repo.js";
+import { toolRosterStep } from "../src/steps/tool-roster.js";
 import { verifyStep, verifyVerdict } from "../src/steps/verify.js";
 
 let n = 0;
@@ -323,6 +324,80 @@ const OWNER = "postgres://neondb_owner:ownerpass@ep-x.us-east-2.aws.neon.tech/ne
     ok(!res.satisfied && /npm install/.test(res.detail), "repoStep: an uninstalled app is told to run npm install");
   } finally {
     rmSync(noDeps, { recursive: true, force: true });
+  }
+}
+
+{
+  const shim = (name: string) => `export { default } from "@open-everywhere/core/agent/tools/${name}.js";\n`;
+  const scaffold = (opts: { readonly coreTools: readonly string[]; readonly appTools: Record<string, string> }) => {
+    const dir = mkdtempSync(join(tmpdir(), "oe-rosterstep-"));
+    const coreDir = join(dir, "node_modules", "@open-everywhere", "core", "agent", "tools");
+    mkdirSync(coreDir, { recursive: true });
+    for (const t of opts.coreTools) writeFileSync(join(coreDir, `${t}.ts`), "export default {};\n");
+    const appDir = join(dir, "agent", "tools");
+    mkdirSync(appDir, { recursive: true });
+    for (const [f, body] of Object.entries(opts.appTools)) writeFileSync(join(appDir, f), body);
+    return dir;
+  };
+
+  const full = scaffold({ coreTools: ["alpha", "beta"], appTools: { "alpha.ts": shim("alpha"), "beta.ts": shim("beta") } });
+  try {
+    const res = await toolRosterStep.check({ cwd: full, env: {} });
+    ok(res.satisfied, "toolRosterStep: a roster covering every core tool is satisfied");
+    ok(/2\/2 core tools mounted/.test(res.detail), "toolRosterStep: the detail states how much of core is mounted");
+  } finally {
+    rmSync(full, { recursive: true, force: true });
+  }
+
+  const thin = scaffold({ coreTools: ["alpha", "beta"], appTools: { "alpha.ts": shim("alpha") } });
+  try {
+    const before = await toolRosterStep.check({ cwd: thin, env: {} });
+    ok(!before.satisfied, "toolRosterStep: a core tool with no shim leaves the step unsatisfied");
+    ok(/beta/.test(before.detail), "toolRosterStep: the detail names the tool that has no file");
+
+    const io = fakeIO();
+    const result = await toolRosterStep.automate!({ cwd: thin, env: {} }, io);
+    ok(result.ran && result.ok, "toolRosterStep: automate() writes the missing shims");
+    ok(
+      readFileSync(join(thin, "agent", "tools", "beta.ts"), "utf8") === shim("beta"),
+      "toolRosterStep: the generated file is the same one-line re-export the tree carries by hand",
+    );
+    ok(io.printed.some((l) => /COMMIT them/.test(l)), "toolRosterStep: tells the operator to COMMIT the shims — generation is not the decision");
+    ok((await toolRosterStep.check({ cwd: thin, env: {} })).satisfied, "toolRosterStep: the re-check passes on the files existing");
+  } finally {
+    rmSync(thin, { recursive: true, force: true });
+  }
+
+  const declined = scaffold({
+    coreTools: ["alpha", "beta"],
+    appTools: { "alpha.ts": shim("alpha"), "beta.ts": 'import { disableTool } from "eve/tools";\n\nexport default disableTool();\n' },
+  });
+  try {
+    const res = await toolRosterStep.check({ cwd: declined, env: {} });
+    ok(res.satisfied, "toolRosterStep: a tool DECLINED by sentinel is a decision, so the step is satisfied");
+    ok(/1 declined by sentinel/.test(res.detail), "toolRosterStep: the detail counts the declined capabilities");
+  } finally {
+    rmSync(declined, { recursive: true, force: true });
+  }
+
+  const noCore = mkdtempSync(join(tmpdir(), "oe-rosterstep-nocore-"));
+  try {
+    mkdirSync(join(noCore, "agent", "tools"), { recursive: true });
+    const res = await toolRosterStep.check({ cwd: noCore, env: {} });
+    ok(!res.satisfied, "toolRosterStep: a checkout with no @open-everywhere/core is UNSATISFIED, not vacuously clean");
+    ok(/npm install/.test(res.detail), "toolRosterStep: says what to do about it");
+    const auto = await toolRosterStep.automate!({ cwd: noCore, env: {} }, fakeIO());
+    ok(!auto.ran, "toolRosterStep: automate() refuses to write anything it cannot justify");
+  } finally {
+    rmSync(noCore, { recursive: true, force: true });
+  }
+
+  const emptyCore = scaffold({ coreTools: [], appTools: {} });
+  try {
+    const res = await toolRosterStep.check({ cwd: emptyCore, env: {} });
+    ok(!res.satisfied, "toolRosterStep: a core that exports no tools is UNKNOWN, not clean");
+  } finally {
+    rmSync(emptyCore, { recursive: true, force: true });
   }
 }
 

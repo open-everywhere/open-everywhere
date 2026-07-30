@@ -6,6 +6,7 @@ import {
   accessSideEffectFindings,
   diffConfigSnapshots,
   renderConfigDiff,
+  toolRosterFindings,
   type ConfigDiff,
   type ConfigSnapshot,
 } from "./config-snapshot-diff.js";
@@ -114,7 +115,10 @@ if (baseDir && !baseFailure) {
 const changedFiles = baseRef ? changedFilesAgainst(baseRef) : undefined;
 
 const diffed = diffConfigSnapshots(base, head.snapshot, { baseFailure });
-const diff: ConfigDiff = { ...diffed, findings: [...diffed.findings, ...accessSideEffectFindings(diffed, changedFiles)] };
+const diff: ConfigDiff = {
+  ...diffed,
+  findings: [...diffed.findings, ...accessSideEffectFindings(diffed, changedFiles), ...toolRosterFindings(diffed)],
+};
 const markdown = renderConfigDiff(diff, { baseRef: baseRef ?? baseDirFlag, headRef: "HEAD", changedFiles });
 
 const out = flag("out");

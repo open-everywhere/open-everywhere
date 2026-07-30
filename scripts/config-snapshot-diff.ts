@@ -1,4 +1,5 @@
 import type { EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
+import { classifyRosterTransition, rosterToolNameOf } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
 
 export const SNAPSHOT_FORMAT_VERSION = 1;
 
@@ -224,6 +225,47 @@ export function accessSideEffectFindings(diff: ConfigDiff, changedFiles: readonl
       detail: `${scopes.length} scope(s) change effective access, yet this PR edits NO file under ${EXPLICIT_ACCESS_PATH_PREFIXES.join(", ")} — the change arrived through ${changedSections.length > 0 ? changedSections.join(", ") : "a file this snapshot does not attribute to any section"}. Re-rostering a domain, re-pointing a silo, editing a provider or changing what a plugin expands to all move what a scope can reach without any access file being opened; that is the review gap this gate exists to state. Scopes: ${scopes.join(", ")}.`,
     },
   ];
+}
+
+export function toolRosterFindings(diff: ConfigDiff): Finding[] {
+  const mounted = diff.sections.find((s) => s.section === "mounted");
+  if (mounted === undefined || mounted.kind === "not-computable") return [];
+
+  const gained: string[] = [];
+  const lost: string[] = [];
+  const record = (name: string, before: string | undefined, after: string | undefined): void => {
+    const dir = classifyRosterTransition(before, after);
+    if (dir === "gain") gained.push(name);
+    if (dir === "loss") lost.push(name);
+  };
+
+  for (const r of mounted.added) {
+    const name = rosterToolNameOf(r.key);
+    if (name !== undefined) record(name, undefined, r.value);
+  }
+  for (const r of mounted.removed) {
+    const name = rosterToolNameOf(r.key);
+    if (name !== undefined) record(name, r.value, undefined);
+  }
+  for (const c of mounted.changed) {
+    const name = rosterToolNameOf(c.key);
+    if (name !== undefined) record(name, c.before, c.after);
+  }
+
+  const findings: Finding[] = [];
+  if (gained.length > 0) {
+    findings.push({
+      id: "tool-roster-capability-gain",
+      detail: `${gained.length} tool(s) become MOUNTED in agent/tools/: ${gained.sort((a, b) => a.localeCompare(b)).join(", ")}. Eve names a tool after its file, so each of these is a capability the model can now call that it could not before — either a new roster file or a \`disableTool()\` sentinel replaced by a real tool. A sentinel→tool flip is the one worth reading twice: it looks like an edit to an existing file and it is a GRANT.`,
+    });
+  }
+  if (lost.length > 0) {
+    findings.push({
+      id: "tool-roster-capability-loss",
+      detail: `${lost.length} tool(s) stop being mounted in agent/tools/: ${lost.sort((a, b) => a.localeCompare(b)).join(", ")}. Reported for symmetry — a removal is not a hazard, but a roster whose declined set changed without anyone saying so is how a sentinel gets deleted as a "cleanup". Declining a tool means committing a sentinel; deleting the file un-decides it and \`npm run lint:tool-roster\` reports the tool as MISSING.`,
+    });
+  }
+  return findings;
 }
 
 export const CONFIG_DIFF_MARKER = "## Config diff (resolved `agent/**` config)";

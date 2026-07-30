@@ -1,6 +1,7 @@
 import type { WizardStep } from "../engine.js";
 import { prerequisitesStep } from "./prerequisites.js";
 import { repoStep } from "./repo.js";
+import { toolRosterStep } from "./tool-roster.js";
 import { vercelStep } from "./vercel.js";
 import { databaseStep } from "./database.js";
 import { slackStep } from "./slack.js";
@@ -12,6 +13,7 @@ import { verifyStep } from "./verify.js";
 export const WIZARD_STEPS: readonly WizardStep[] = [
   prerequisitesStep,
   repoStep,
+  toolRosterStep,
   vercelStep,
   databaseStep,
   slackStep,
@@ -24,6 +26,7 @@ export const WIZARD_STEPS: readonly WizardStep[] = [
 export {
   prerequisitesStep,
   repoStep,
+  toolRosterStep,
   vercelStep,
   databaseStep,
   slackStep,

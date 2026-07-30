@@ -7,10 +7,10 @@ import { WIZARD_VERSION } from "./version.js";
 
 const USAGE = `create-open-everywhere [--check] [--version] [--help]
 
-  (no flags)   Interactive setup wizard — walks prerequisites, repo, Vercel,
-               database, Slack, env checklist, telemetry disclosure, build,
-               and final verification. Resumable — re-run any time; already-
-               satisfied steps are skipped.
+  (no flags)   Interactive setup wizard — walks prerequisites, repo, tool
+               roster, Vercel, database, Slack, env checklist, telemetry
+               disclosure, build, and final verification. Resumable — re-run
+               any time; already-satisfied steps are skipped.
   --check      Non-interactive status report only. No prompts, no changes,
                no telemetry. Exit code 0 if every step is satisfied, else 1.
   --version    Print the wizard's own version.

@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { WIZARD_STEPS } from "../src/steps/index.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -39,7 +40,11 @@ function runCli(args: readonly string[], cwd: string): { status: number | null; 
     ok(result.stdout.includes("Prerequisites"), "--check: reports the prerequisites step");
     ok(result.stdout.includes("Repo"), "--check: reports the repo step");
     ok(result.stdout.includes("Slack app"), "--check: reports the Slack step");
-    ok(/\d+\/9 steps satisfied\./.test(result.stdout), "--check: prints an N/9 summary line");
+    ok(result.stdout.includes("Tool roster"), "--check: reports the tool-roster step");
+    ok(
+      new RegExp(String.raw`\d+/${WIZARD_STEPS.length} steps satisfied\.`).test(result.stdout),
+      `--check: prints an N/${WIZARD_STEPS.length} summary line covering every registered step`,
+    );
     ok(!existsSync(join(dir, ".open-everywhere", "wizard-state.json")), "--check: never writes wizard-state.json (no prompts, no side effects)");
   } finally {
     rmSync(dir, { recursive: true, force: true });

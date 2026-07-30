@@ -10,6 +10,7 @@ import { loadRoles } from "../agent/roles/roles.js";
 import { loadWebhooks } from "../agent/webhooks/hooks.js";
 import { loadPrincipals } from "../agent/identity/principals.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
+import { classifyPrimitiveSource } from "@open-everywhere/core/agent/scaffold/tool-roster.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import {
   SNAPSHOT_FORMAT_VERSION,
@@ -91,8 +92,7 @@ const MOUNTED_DIRS = ["tools", "connections", "subagents", "skills", "schedules"
 
 function classifyPrimitive(path: string): string {
   try {
-    const text = readFileSync(path, "utf8");
-    return /export\s+default\s+disableTool\s*\(/.test(text) ? "disabled (disableTool sentinel)" : "mounted";
+    return classifyPrimitiveSource(readFileSync(path, "utf8"));
   } catch {
     return "unreadable";
   }
