@@ -478,6 +478,36 @@ await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07"
 }
 
 {
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  type SpendBudgets = import("../agent/spend/spend.js").SpendBudgets;
+  let budgets: SpendBudgets = { perDomain: { "public-crit": { surfaceMonthlyTokens: 50 } } };
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "public-crit", match: "public" })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets,
+  });
+  const extHook = { ...goodHook, id: "deploy-status-ext", target: "slack/T1/C_EXT" };
+  await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C_EXT", period: "2026-07", inputTokens: 60, outputTokens: 0 });
+  {
+    const { calls, receive } = captureReceive();
+    const result = await fireWebhook(extHook, payload, { receive: receive as never, now, confirmInternal: async () => false });
+    ok(result.fired === false && calls.length === 0, 'OPE-275: an UNCONFIRMED target classifies `external` → the perDomain["public"] criteria budget declines the fire — fail-closed cuts toward the tighter cap');
+  }
+  {
+    const { calls, receive } = captureReceive();
+    const result = await fireWebhook(extHook, payload, { receive: receive as never, now, confirmInternal: async () => true });
+    ok(result.fired === true && calls.length === 1, "OPE-275: the SAME target confirmed internal classifies into no criteria domain — with only the public budget configured, the fire proceeds (trust gates classification, never grants an escape)");
+  }
+  budgets = {};
+}
+
+{
   const { auditWebhookRejection, resetRejectionThrottle, rejectionThrottleKey, REJECTION_WINDOW_MS, REJECTION_ID_MAX_CHARS } =
     await import("../agent/webhooks/reject-audit.js");
   type AuditInput = import("../agent/operational/store.js").AuditInput;

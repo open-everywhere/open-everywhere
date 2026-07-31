@@ -706,7 +706,7 @@ rmSync(dir, { recursive: true, force: true });
 
 {
   const { readFileSync } = await import("node:fs");
-  const fireDispatchers = ["../agent/schedules/dispatch.ts", "../agent/webhooks/dispatch.ts"];
+  const fireDispatchers = ["../agent/schedules/dispatch.ts", "../agent/webhooks/dispatch.ts", "../agent/routines/ingress.ts"];
   for (const rel of fireDispatchers) {
     const src = readFileSync(new URL(rel, import.meta.url), "utf8");
     ok(!/\bcapBypassFor\s*\(/.test(src), `OPE-267: ${rel.split("/").pop()} never CALLS capBypassFor — an autonomous fire cannot obtain the admin escape`);

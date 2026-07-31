@@ -8,6 +8,10 @@ import { mintWakeId } from "../channels/unified-window.js";
 import { taintedFireAttrs } from "../access/taint-signal.js";
 import { listAllRoutines } from "./store.js";
 import { routineFireAttributes } from "./fire-auth.js";
+import { recheckFireCreator, type CreatorStandingCheck } from "./fire-creator.js";
+import { routinePartition } from "./partition.js";
+import { scopeOverBudget } from "../spend/check.js";
+import type { Trust } from "../identity/binding.js";
 import { divertTriggeredFire, runFireSeatKey, type FireWindowDeps } from "./fire-window.js";
 import { auditRoutineFireLost, auditRoutineSkip, type RoutineAuditDeps } from "./fire-audit.js";
 import { foldRoutineOutcome } from "./outcome-fold.js";
@@ -60,6 +64,7 @@ export interface TriggerAdmitDeps {
   readonly listRoutines?: () => Promise<Routine[]>;
   readonly resolveTarget?: (r: Routine) => DispatchTarget | null;
   readonly confirmInternal?: (channelId: string) => Promise<boolean>;
+  readonly confirmCreatorInternal?: CreatorStandingCheck;
   readonly markSeen?: (org: string, key: string, atIso: string, ttlMs: number) => Promise<boolean>;
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly now?: () => Date;
@@ -166,6 +171,7 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   let fired = 0;
   let unwired = 0;
   let overCap = 0;
+  let overBudget = 0;
   let ungranted = 0;
   let drifted = 0;
   let hydrated = 0;
@@ -227,6 +233,38 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
       if (emitted) await announceFireWithheld(r.id, r.surfaceKey, dest.origin, deps.notice ?? {});
       continue;
     }
+    const slackChannelId =
+      r.surfaceKey.split("/")[0] === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
+        ? (dest.target as { channelId: string }).channelId
+        : undefined;
+    const internal = slackChannelId !== undefined && dest.mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
+    const creatorInternal = await recheckFireCreator({
+      createdBy: r.createdBy,
+      platform: r.surfaceKey.split("/")[0],
+      mode: dest.mode,
+      workspaceId: r.surfaceKey.split("/")[1],
+      ...(deps.confirmCreatorInternal ? { check: deps.confirmCreatorInternal } : {}),
+    }).catch(() => undefined);
+    const fireTrust: Trust = (dest.mode === "dm" ? creatorInternal === true : internal) ? "internal" : "external";
+    try {
+      const verdict = await scopeOverBudget(routinePartition(r), dest.mode, (deps.now?.() ?? new Date()).toISOString(), fireTrust, r.createdBy);
+      if (verdict.over) {
+        overBudget++;
+        log(`event ${ev.summary} matched ${r.id} but the scope is over budget (${verdict.reason ?? "cap reached"}) — SKIPPED (audited; an event has no "later")`);
+        await auditRoutineSkip(
+          r,
+          "over_budget",
+          {
+            ...(verdict.reason ? { budgetReason: verdict.reason } : {}),
+            event: ev.event,
+            ...(ev.action ? { action: ev.action } : {}),
+          },
+          auditDeps,
+        );
+        continue;
+      }
+    } catch {
+    }
     let entityBlock: string | undefined;
     if (ev.pointer) {
       const h: HydrationOutcome = await hydratePointer(ev.pointer, memo, deps.hydrate ?? {});
@@ -257,16 +295,11 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
         entityBlock = renderHydratedEntity(h.entity);
       }
     }
-    const slackChannelId =
-      r.surfaceKey.split("/")[0] === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
-        ? (dest.target as { channelId: string }).channelId
-        : undefined;
-    const internal = slackChannelId !== undefined && dest.mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
     const auth = {
       authenticator: ev.source,
       principalType: "service",
       principalId: `${ev.source}:webhook`,
-      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal), ...taintedFireAttrs(!ev.redacted) },
+      attributes: { ...routineFireAttributes(r, dest.attributes, dest.mode, internal, creatorInternal), ...taintedFireAttrs(!ev.redacted) },
     };
     const message = eventPrompt(r, {
       summary: ev.summary,
@@ -297,14 +330,14 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
   if (matches.length > 0 || invalid > 0) {
     log(
       `event "${ev.summary}": ${matches.length} matched -> ${fired - lostFires} fired (${hydrated} hydrated), ${ungranted} ungranted, ` +
-        `${withheld} audience-withheld, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
+        `${withheld} audience-withheld, ${overBudget} over-budget, ${drifted} grant-drift, ${unwired} unwired, ${overCap} over-cap (cap ${cap}), ` +
         `${invalid} invalid-filter`,
     );
   }
   return {
     matched: matches.length,
     fired: fired - lostFires,
-    skipped: ungranted + unwired + overCap + withheld + drifted + lostFires,
+    skipped: ungranted + unwired + overCap + overBudget + withheld + drifted + lostFires,
   };
 }
 

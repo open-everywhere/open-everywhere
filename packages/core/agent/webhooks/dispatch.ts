@@ -97,16 +97,16 @@ export async function fireWebhook(
     return { fired: false, reason: WEBHOOK_AUDIENCE_FLOOR_REASON };
   }
 
+  const internal = await confirmInternal(channelId).catch(() => false);
+
   try {
-    const verdict = await scopeOverBudget(partition, mode, now.toISOString());
+    const verdict = await scopeOverBudget(partition, mode, now.toISOString(), internal ? "internal" : "external");
     if (verdict.over) {
       emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "failed" });
       return { fired: false, reason: verdict.reason ?? "over budget" };
     }
   } catch {
   }
-
-  const internal = await confirmInternal(channelId).catch(() => false);
 
   const auth = {
     authenticator: "webhook",

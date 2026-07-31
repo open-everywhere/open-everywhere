@@ -435,5 +435,60 @@ await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionI
   }
 }
 
+{
+  type SpendBudgets = import("@open-everywhere/core/agent/spend/spend.js").SpendBudgets;
+  const domains275 = [...testDomains, defineDomain({ name: "dm-crit", match: "dm" })];
+  const budgets275: SpendBudgets = { perDomain: { "dm-crit": { surfaceMonthlyTokens: 50 } } };
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => domains275,
+    loadSilos: () => [],
+    domainsForSurface: (p) => {
+      const d = domainForChannel(`${p.workspaceKey}/${p.surface}`, domains275);
+      return d ? [d.name] : [];
+    },
+    loadSpendBudgets: () => budgets275,
+  });
+  await opStore.recordSpend("default", { surfaceKey: "slack/T1/D_CREATOR", period: "2026-07", inputTokens: 60, outputTokens: 0 });
+  const mkDm = (id: string, surface: string, createdBy: string): Routine => ({
+    id,
+    org: "default",
+    surfaceKey: `slack/T1/${surface}`,
+    trigger: { kind: "interval", everyMinutes: 30 },
+    prompt: "morning brief",
+    createdAt: now.toISOString(),
+    status: "active",
+    consecutiveFailures: 0,
+    nextRunAt: past,
+    target: { channelId: surface },
+    createdBy,
+  });
+  await store.addRoutine({} as never, mkDm("r-dm-capped", "D_CREATOR", "U_CREATOR"));
+  await store.addRoutine({} as never, mkDm("r-dm-under", "D_OTHER", "U_OTHER"));
+  {
+    const started: string[] = [];
+    const receive = ((_c: unknown, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+      const mk = routineMarker(opts.auth?.attributes as never);
+      if (mk) started.push(mk.id);
+      return Promise.resolve();
+    }) as never;
+    await dispatch.dispatchTick({
+      now,
+      receive,
+      waitUntil: (_p: Promise<unknown>) => {},
+      appAuth: { attributes: {} } as never,
+      confirmCreatorInternal: async () => true,
+    } as never);
+    ok(!started.includes("r-dm-capped"), 'OPE-275: perDomain["dm"] ALONE declines a DM cron fire — the recommended "everyone gets their own budget" config now binds the unattended leg too');
+    ok(started.includes("r-dm-under"), "OPE-275: …and it is the BUDGET declining, not the DM shape — a second, under-budget DM fires on the same tick under the same config");
+    const after = await store.getRoutine("default", "slack/T1/D_CREATOR", "r-dm-capped");
+    ok(after?.lastOutcome === "skipped", "OPE-275: the dm-criteria decline records `skipped` and advances, exactly like every other budget decline");
+    ok(after?.nextRunAt !== null && after?.nextRunAt !== undefined && Date.parse(after.nextRunAt) > now.getTime(), "OPE-275: …schedule advanced (retries at its cadence, not every tick)");
+  }
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ dispatch: ${passed} assertions passed`);

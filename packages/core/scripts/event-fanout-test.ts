@@ -498,5 +498,61 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
   }
 }
 
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const spendStore = await import("../agent/spend/store.js");
+  const { periodOf } = await import("../agent/spend/spend.js");
+  type SpendBudgets = import("../agent/spend/spend.js").SpendBudgets;
+
+  let budgets: SpendBudgets = {};
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "dm-crit", match: "dm" })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets,
+  });
+
+  const period = periodOf(new Date().toISOString());
+  const pFor = (surface: string) =>
+    ({ org: "acme", platform: "slack", workspace: "T1", surface, workspaceKey: "slack/T1", surfaceKey: `slack/T1/${surface}`, key: `slack/T1/${surface}` });
+
+  budgets = { perSurface: { "slack/T1/C_OVER": { surfaceMonthlyTokens: 5 } } };
+  await spendStore.recordSpend(pFor("C_OVER") as never, { period, usage: { inputTokens: 100 } });
+  {
+    const over = routine({ id: "r-evt-over", surfaceKey: "slack/T1/C_OVER", target: { channelId: "C_OVER" } });
+    const under = routine({ id: "r-evt-under" });
+    const h = harness([over, under]);
+    const report = await fanOutDelivery(PR_BODY, "pull_request", undefined, h.deps);
+    ok(h.fired.length === 1 && h.fired[0]!.auth.attributes[ROUTINE_MARKER.id] === "r-evt-under", "OPE-275: an over-budget event routine does NOT fire — and the gate is per ROUTINE, so the under-budget sibling matched by the same delivery still does");
+    const skip = h.audited.find((e) => e.action === "routine.skip" && e.detail?.["routineId"] === "r-evt-over");
+    ok(skip?.detail?.["reason"] === "over_budget", "OPE-275: the decline is an AUDITED `over_budget` skip — silently-not-firing and deliberately-skipping must never look the same from the outside");
+    ok(typeof skip?.detail?.["budgetReason"] === "string", "OPE-275: …and the row carries the gate's own human-readable reason");
+    ok(report.fired === 1 && report.skipped === 1, "OPE-275: the transport-visible report counts the decline as a skip, not a fire");
+  }
+
+  budgets = { perDomain: { "dm-crit": { surfaceMonthlyTokens: 5 } } };
+  await spendStore.recordSpend(pFor("D_ME") as never, { period, usage: { inputTokens: 100 } });
+  {
+    const dmRoutine = routine({ id: "r-evt-dm", surfaceKey: "slack/T1/D_ME", target: { channelId: "D_ME" }, createdBy: "U_ME" });
+    const h = harness([dmRoutine]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, { ...h.deps, confirmCreatorInternal: async () => true });
+    ok(h.fired.length === 0, 'OPE-275: perDomain["dm"] ALONE declines a DM event routine whose surface breached it — the documented "everyone gets their own budget" config now gates this leg too');
+    const skip = h.audited.find((e) => e.action === "routine.skip" && e.detail?.["routineId"] === "r-evt-dm");
+    ok(skip?.detail?.["reason"] === "over_budget", "OPE-275: …as an audited over_budget skip");
+  }
+  {
+    const dmRoutine = routine({ id: "r-evt-dm-ext", surfaceKey: "slack/T1/D_ME", target: { channelId: "D_ME" }, createdBy: "U_ME" });
+    const h = harness([dmRoutine]);
+    await fanOutDelivery(PR_BODY, "pull_request", undefined, { ...h.deps, confirmCreatorInternal: async () => false });
+    ok(h.fired.length === 1, "OPE-275: the dm classification is trust-CONDITIONAL — a creator who cannot be positively verified classifies `public`, and the dm-only budget does not apply");
+  }
+  budgets = {};
+}
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`✓ event-fanout: ${passed} assertions passed`);

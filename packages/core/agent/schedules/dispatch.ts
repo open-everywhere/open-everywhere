@@ -14,6 +14,7 @@ import { isClockScheduled, isJobRoutine, routineGrantGeneration, routineReportSu
 import { renderFireMessage } from "../routines/fire-message.js";
 import { routinePartition } from "../routines/partition.js";
 import { scopeOverBudget } from "../spend/check.js";
+import type { Trust } from "../identity/binding.js";
 import type { Partition } from "../memory/partition.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 
@@ -109,8 +110,22 @@ export async function dispatchTick(
     const dueAt = Date.parse(r.nextRunAt ?? "");
     const next = computeNextRun(r.trigger, Number.isFinite(dueAt) ? new Date(dueAt) : now, now);
     const mode = dest.mode;
+    const slackChannelId =
+      firePlatform === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
+        ? (dest.target as { channelId: string }).channelId
+        : undefined;
+    const internal =
+      slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
+    const creatorInternal = await recheckFireCreator({
+      createdBy: r.createdBy,
+      platform: firePlatform,
+      mode,
+      workspaceId: fireSurfaceKey.split("/")[1],
+      ...(args.confirmCreatorInternal ? { check: args.confirmCreatorInternal } : {}),
+    }).catch(() => undefined);
+    const fireTrust: Trust = (mode === "dm" ? creatorInternal === true : internal) ? "internal" : "external";
     try {
-      const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString(), undefined, r.createdBy);
+      const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString(), fireTrust, r.createdBy);
       if (verdict.over) {
         declined++;
         log(`DECLINED (over budget): ${r.id} on ${r.surfaceKey} — ${verdict.reason ?? "cap reached"}`);
@@ -155,19 +170,6 @@ export async function dispatchTick(
           log(`job ${r.id} on ${r.surfaceKey}: durable-job session-join is Slack-only in v1 — firing with ledger continuity only`);
         }
       }
-      const slackChannelId =
-        firePlatform === "slack" && typeof (dest.target as { channelId?: unknown }).channelId === "string"
-          ? (dest.target as { channelId: string }).channelId
-          : undefined;
-      const internal =
-        slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
-      const creatorInternal = await recheckFireCreator({
-        createdBy: r.createdBy,
-        platform: firePlatform,
-        mode,
-        workspaceId: fireSurfaceKey.split("/")[1],
-        ...(args.confirmCreatorInternal ? { check: args.confirmCreatorInternal } : {}),
-      }).catch(() => undefined);
       const markedAuth = {
         ...appAuth,
         attributes: {
