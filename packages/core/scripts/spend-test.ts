@@ -633,6 +633,35 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
+  const { registerPricingSource, _resetPricingSourceForTest, _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
+  delete process.env.OE_MODEL_PRICING;
+  _resetPricingCacheForTest();
+  const store4 = await import("../agent/spend/store.js");
+
+  let ready = false;
+  let ensureCalls = 0;
+  registerPricingSource({
+    priceFor: (id) => (ready && id === "catalog/only-model" ? { inPerMtok: 2, outPerMtok: 4 } : undefined),
+    ensureReady: async () => {
+      ensureCalls++;
+      ready = true;
+    },
+  });
+
+  const org = "cold-pricing-org";
+  const p = { org, platform: "slack", workspace: "T6", surface: "C_COLD", workspaceKey: "slack/T6", surfaceKey: "slack/T6/C_COLD", key: "slack/T6/C_COLD" };
+  await store4.recordSpend(p as never, { period: "2026-07", usage: { inputTokens: 1_000_000, outputTokens: 0 }, model: "catalog/only-model" });
+  ok(ensureCalls === 1, "OPE-275: recordSpend awaited the source's readiness before pricing (the write path has the same determinism seam the read path got)");
+  const totals = await store4.spendTotals(org, { surfaceKey: "slack/T6/C_COLD", period: "2026-07" });
+  ok(totals.usdMicros === 2_000_000, `OPE-275: a catalog-only model priced against a COLD cache writes its real rate, not a permanent $0 (got ${totals.usdMicros} micros, want 2000000)`);
+
+  await store4.recordSpend(p as never, { period: "2026-07", usage: {}, model: "", usdMicros: 5 });
+  ok(ensureCalls === 1, "OPE-275: an explicit-usdMicros write (sandbox runtime) never consults the source — no rate is involved");
+
+  _resetPricingSourceForTest();
+}
+
+{
   process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
   const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
   _resetPricingCacheForTest();
