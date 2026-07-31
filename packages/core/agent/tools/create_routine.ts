@@ -190,11 +190,7 @@ export default defineTool({
     if (t.kind === "event" && t.jq !== undefined) {
       await probeFilter(t.jq, t.source, eventNormalizer(eventScheme ?? t.source)?.matchKeys ?? []);
     }
-    if (mode === "dm" && t.kind !== "once") {
-      throw new Error(
-        "I can't set up a standing schedule from a DM — it would fire unattended forever with nobody but you ever seeing it run, and you'd be the only person who could approve it. Ask me in a channel and I'll set it up there; or ask for a one-off reminder here (\"check back in an hour\") and I'll do that.",
-      );
-    }
+
     if (t.kind === "event") {
       let grant: ReadableBy | undefined;
       let domains: readonly Domain[] | undefined;
@@ -268,9 +264,6 @@ export default defineTool({
       }
       if (t.kind === "event") {
         throw new Error("A durable job fires on a schedule (cron / everyMinutes / a one-shot), not on an external event — drop `job`, or use a scheduled trigger.");
-      }
-      if (mode === "dm") {
-        throw new Error("I can't run a durable job from a DM — a job keeps going until it decides it's finished, with nobody but you ever seeing it. Ask me in a channel and I'll set it up there.");
       }
     }
     const createdBy = actingPrincipalIdOf(ctx);

@@ -316,12 +316,46 @@ const ORG = "default";
     "external: a guest-bearing channel is refused at creation — the authoring half of the hole create_skill already closed",
   );
 
-  const dmAttrs = { channel_id: "D_ME", channel_type: "im" };
   await refuses(
-    () => createTool.execute({ prompt: "p", trigger: cron } as never, slackCtx(dmAttrs)),
-    /standing schedule from a DM/,
-    "dm: a RECURRING routine in a DM is refused — unwitnessed, unattended, standing, and approved by an audience of exactly the person who asked",
+    () => createTool.execute({ prompt: "p", trigger: cron } as never, slackCtx({ channel_id: "G_GROUP", channel_type: "mpim" })),
+    /execution-only/,
+    "mpim: a group DM still refuses every routine shape — nothing durable is authored in one",
   );
+
+  const dmAttrs = { channel_id: "D_ME", channel_type: "im" };
+  (await import("../agent/channels/slack-bridge.js")).registerSlackBridge({
+    form: async () => ({ ok: true, ts: "1700000000.0001" }),
+    readCall: async () => {
+      throw new Error("not wired in this test");
+    },
+    fetchUserDisplayName: async () => undefined,
+    fetchChannelDisplayName: async () => undefined,
+    botDisplayName: async () => undefined,
+    confirmChannelInternal: async () => true,
+    partnerFactsFromInfo: () => ({ dmPartnerTrust: "external" }),
+    readableChannelList: () => [],
+    channel: {} as never,
+  } as never);
+  const opsStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+  const pendingArgs = async (): Promise<Record<string, unknown>[]> =>
+    (await opsStore.listPendingActions(ORG)).filter((r) => r.kind === "routine.create").map((r) => JSON.parse(r.argsJson) as Record<string, unknown>);
+
+  const dmBinding = (await import("../agent/identity/binding.js")).bindFrom(slackCtx(dmAttrs));
+  ok(dmBinding.mode === "dm" && dmBinding.trust === "external", "dm: an unverified DM partner binds trust `external` — the same verdict that refuses a CHANNEL two assertions ago");
+
+  const dmCron = (await createTool.execute({ prompt: "morning brief", trigger: cron } as never, slackCtx(dmAttrs))) as {
+    pending: boolean;
+    nextRunAt: string | null;
+    preview: string;
+  };
+  ok(dmCron.pending === true, "dm: a RECURRING routine in a DM reaches the card path — the shape a personal daily brief needs, and the one the refusal blocked");
+  ok(dmCron.nextRunAt !== null, "dm: …with a real next-fire instant, so it is a schedule and not an inert row");
+  ok(dmCron.preview.includes("morning brief"), "dm: …and the preview carries the prompt the fire will actually receive");
+  const cronArgs = (await pendingArgs()).find((a) => a["prompt"] === "morning brief");
+  ok(cronArgs !== undefined, "dm: …and a routine.create pending was actually written — `pending:true` alone would not prove a card exists");
+  ok((cronArgs?.["trigger"] as Record<string, unknown>)?.["expr"] === "0 9 * * 1-5", "dm: …the frozen args carry the CRON the user asked for, not a downgraded one-shot");
+  ok(String(cronArgs?.["surfaceKey"] ?? "").includes("D_ME"), "dm: …and it is owned by the DM that asked, which is also the whole of its blast radius");
+
   (await import("../agent/routines/event-model.js")).registerEventNormalizer({
     source: "fake",
     matchKeys: ["event"],
@@ -330,31 +364,20 @@ const ORG = "default";
     resolvesActor: false,
     normalize: () => null,
   } as never);
-  await refuses(
-    () => createTool.execute({ prompt: "p", trigger: { kind: "event", source: "fake", jq: '.scope.container == "me/proj"' } } as never, slackCtx(dmAttrs)),
-    /standing schedule from a DM/,
-    "dm: an EVENT subscription in a DM is refused too — no clock, but every bit as standing",
-  );
-  await refuses(
-    () => createTool.execute({ prompt: "p", trigger: once, job: true } as never, slackCtx(dmAttrs)),
-    /durable job from a DM/,
-    "dm: a durable JOB in a DM is refused even on a one-shot trigger — a job runs until IT decides it is done, which is the opposite of 'fires once'",
-  );
-  let dmMsg = "";
-  try {
-    await createTool.execute({ prompt: "p", trigger: cron } as never, slackCtx(dmAttrs));
-  } catch (err) {
-    dmMsg = err instanceof Error ? err.message : String(err);
-  }
-  ok(dmMsg.includes("one-off reminder"), "dm: the refusal routes the user — 'ask in a channel, or ask for a one-off reminder here' — rather than just saying no");
+  const dmEvent = (await createTool.execute(
+    { prompt: "watch the queue", trigger: { kind: "event", source: "fake", jq: '.scope.container == "me/proj"' } } as never,
+    slackCtx(dmAttrs),
+  )) as { pending: boolean };
+  ok(dmEvent.pending === true, "dm: an EVENT subscription in a DM is created too — no clock, still standing, still fine");
 
-  let onceMsg = "";
-  try {
-    await createTool.execute({ prompt: "check back on this", trigger: once } as never, slackCtx(dmAttrs));
-  } catch (err) {
-    onceMsg = err instanceof Error ? err.message : String(err);
-  }
-  ok(!/from a DM/.test(onceMsg), `dm: a ONE-SHOT in a DM is NOT refused — 'check back in an hour' is the most-wanted DM affordance and it survives (got: ${onceMsg || "no throw"})`);
+  const dmJob = (await createTool.execute({ prompt: "chase this to done", trigger: once, job: true } as never, slackCtx(dmAttrs))) as { pending: boolean };
+  ok(dmJob.pending === true, "dm: a durable JOB in a DM is created — the refusal here rested on a job running until IT decides it is done, which OPE-248's `bound` made false");
+  const jobArgs = (await pendingArgs()).find((a) => a["prompt"] === "chase this to done");
+  ok(jobArgs?.["sessionMode"] === "job", "dm: …and it is frozen as a JOB, not silently downgraded to a plain one-shot");
+  ok(typeof jobArgs?.["boundPolicy"] === "string" && String(jobArgs["boundPolicy"]).length > 0, "dm: …carrying the ceiling it will retire itself at, which is the answer that replaced the refusal");
+
+  const dmOnce = (await createTool.execute({ prompt: "check back on this", trigger: once } as never, slackCtx(dmAttrs))) as { pending: boolean };
+  ok(dmOnce.pending === true, "dm: a ONE-SHOT in a DM is created — 'check back in an hour' is unchanged by any of this");
 }
 
 rmSync(dir, { recursive: true, force: true });
