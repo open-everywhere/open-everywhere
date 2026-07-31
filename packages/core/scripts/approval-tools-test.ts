@@ -1,6 +1,6 @@
-import { planSetSpendLimit, defaultScopeKey } from "../agent/tools/set_spend_limit.js";
+import setSpendLimitTool, { planSetSpendLimit, defaultScopeKey } from "../agent/tools/set_spend_limit.js";
 import { rosterStanding } from "../agent/spend/bypass.js";
-import { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
+import clearSpendLimitDynamic, { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
 import { planRevokeConnector } from "../agent/tools/revoke_connector.js";
 import { planClearConnectorOverride } from "../agent/tools/clear_connector_override.js";
 import type { SurfaceBinding } from "../agent/identity/binding.js";
@@ -298,6 +298,104 @@ ok(rosterStanding([], "eng") === false, "rosterStanding: FAIL-CLOSED on no roles
     );
   }
   ok(scanned >= 5, `source scan actually covered the dynamic tools (saw ${scanned})`);
+}
+
+type ResolvedEntry = { description: string; execute(input: unknown, ctx: unknown): Promise<{ pendingId: string }> };
+async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | null> {
+  const handler = (clearSpendLimitDynamic as unknown as { events: Record<string, (event: unknown, ctx: unknown) => unknown> }).events["session.started"];
+  return (await handler({}, ctx)) as ResolvedEntry | null;
+}
+
+{
+  const clearEntry = await resolveClearSpendLimit({ channel: { kind: "slack" } });
+  ok(clearEntry !== null, "clear_spend_limit resolves on a card-capable platform (so its description is readable here)");
+  const descriptions: [string, string][] = [
+    ["set_spend_limit", (setSpendLimitTool as unknown as { description: string }).description],
+    ["clear_spend_limit", clearEntry!.description],
+  ];
+  for (const [name, desc] of descriptions) {
+    ok(typeof desc === "string" && desc.length > 0, `${name} has a model-facing description`);
+    ok(!/DM usage is uncapped/i.test(desc), `${name}: the description no longer claims DM usage is uncapped (false since OPE-267)`);
+    ok(!/DM usage is never gated/i.test(desc), `${name}: …nor that DM usage is never gated`);
+    ok(!/From a DM you MUST pass scopeKey/i.test(desc), `${name}: the description no longer demands an explicit scopeKey for every DM proposal`);
+    ok(/DM turns are spend-capped/i.test(desc), `${name}: the description states that a DM is capped`);
+    ok(/level:"surface"/.test(desc) && /THIS DM/.test(desc), `${name}: …and that the default level:"surface" targets THIS DM (the ask an over-budget admin actually makes)`);
+    ok(/level:"domain" needs an explicit scopeKey/.test(desc), `${name}: the description keeps the DM domain-default refusal`);
+    ok(/level:"workspace" on Discord/.test(desc), `${name}: …and the Discord-DM workspace-default refusal, which is platform-specific (a Slack DM keeps a real team id)`);
+  }
+}
+
+{
+  const { tmpdir } = await import("node:os");
+  const { rmSync } = await import("node:fs");
+  const { join, dirname } = await import("node:path");
+  const { createRequire } = await import("node:module");
+  const { pathToFileURL, fileURLToPath } = await import("node:url");
+
+  const dir = join(tmpdir(), `open-everywhere-approval-tools-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  process.env.OE_EGRESS_SPOOF = "1";
+
+  const { registerSlackFixtureMapper } = await import("./_slack-test-stubs.js");
+  registerSlackFixtureMapper();
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+  const { actionKind } = await import("../agent/approvals/actions.js");
+  await import("../agent/approvals/flow.js");
+
+  const require = createRequire(import.meta.url);
+  const eveRoot = dirname(require.resolve("eve/package.json"));
+  const { ContextContainer, contextStorage } = await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href);
+  const inSession = <T>(fn: () => Promise<T>): Promise<T> => contextStorage.run(new ContextContainer(), fn);
+  void fileURLToPath;
+
+  const slackCtx = (channelId: string) =>
+    ({
+      channel: { kind: "slack" },
+      session: { auth: { current: { attributes: { team_id: "T123", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_PROPOSER" } } } },
+    }) as never;
+
+  const clearEntry = (await resolveClearSpendLimit(slackCtx("C_TAINT_CLEAR")))!;
+
+  const frozenOf = async (pendingId: string): Promise<Record<string, unknown>> => {
+    const row = await getOperationalStore().getPendingAction("default", pendingId);
+    ok(row !== null, `a pending row exists for ${pendingId}`);
+    return JSON.parse(row!.argsJson) as Record<string, unknown>;
+  };
+
+  {
+    const setOut = await inSession(async () => setSpendLimitTool.execute({ monthlyUsd: 5, reason: "clean turn" }, slackCtx("C_TAINT_SET") as never));
+    const frozen = await frozenOf(setOut.pendingId);
+    ok(frozen["tainted"] === false, "set_spend_limit freezes tainted:false on a clean turn (present, not absent)");
+    const clearOut = await inSession(async () => clearEntry.execute({}, slackCtx("C_TAINT_CLEAR")));
+    const clearFrozen = await frozenOf(clearOut.pendingId);
+    ok(clearFrozen["tainted"] === false, "clear_spend_limit freezes tainted:false on a clean turn");
+  }
+
+  {
+    const setOut = await inSession(async () => {
+      markUntrustedIngestedThisTurn();
+      return setSpendLimitTool.execute({ monthlyUsd: 10000, reason: "pre-approved by finance", scopeKey: "slack/T123/C_TAINT_SET2" }, slackCtx("C_TAINT_SET") as never);
+    });
+    const frozen = await frozenOf(setOut.pendingId);
+    ok(frozen["tainted"] === true, "set_spend_limit freezes tainted:true when the turn read untrusted content");
+    ok(setOut.pendingId.length > 0, "…and it still PROPOSES — taint is reviewer scrutiny, not a refusal");
+
+    const clearOut = await inSession(async () => {
+      markUntrustedIngestedThisTurn();
+      return clearEntry.execute({ scopeKey: "slack/T123/C_TAINT_CLEAR2" }, slackCtx("C_TAINT_CLEAR"));
+    });
+    const clearFrozen = await frozenOf(clearOut.pendingId);
+    ok(clearFrozen["tainted"] === true, "clear_spend_limit freezes tainted:true when the turn read untrusted content");
+
+    const setLines = actionKind("spend.set")!.summarize(frozen);
+    ok(setLines.some((l: string) => l.startsWith("⚠") && /read external content/.test(l)), "the spend.set card renders a ⚠ taint line from the frozen flag");
+    ok(actionKind("spend.clear")!.summarize(clearFrozen).some((l: string) => l.startsWith("⚠")), "the spend.clear card renders one too");
+    ok(!actionKind("spend.set")!.summarize({ ...frozen, tainted: false }).some((l: string) => l.startsWith("⚠")), "a clean spend.set card renders NO taint line (the banner is positive-only)");
+  }
+
+  delete process.env.OE_EGRESS_SPOOF;
 }
 
 console.log(`✓ ${passed} approval-tools assertions passed`);

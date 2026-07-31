@@ -52,6 +52,10 @@ function scopeLine(label: string | undefined, scopeKey: string, level: string): 
   return label ? `${label} (${level})` : `scope \`${scopeKey}\` (${level})`;
 }
 
+function spendTaintLines(tainted: boolean | undefined): string[] {
+  return tainted ? ["⚠ proposed in a turn that read external content — confirm a person actually asked for this budget change before approving"] : [];
+}
+
 export interface SpendSetArgs {
   readonly org: string;
   readonly scopeKey: string;
@@ -62,6 +66,7 @@ export interface SpendSetArgs {
   readonly scopeLabel?: string;
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
+  readonly tainted?: boolean;
 }
 
 function spendChangeLines(args: SpendSetArgs): string[] {
@@ -79,6 +84,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
       `Set spend limit — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       ...spendChangeLines(args),
       ...(args.reason ? [`Reason: ${args.reason}`] : []),
+      ...spendTaintLines(args.tainted),
     ];
   },
   async execute(args, decidedBy) {
@@ -100,6 +106,7 @@ const spendSet: ActionKind<SpendSetArgs> = {
         ...(args.monthlyTokens != null ? { monthlyTokens: args.monthlyTokens } : {}),
         ...(args.monthlyUsd != null ? { monthlyUsd: args.monthlyUsd } : {}),
         ...(args.reason ? { reason: args.reason } : {}),
+        ...(args.tainted ? { tainted: true } : {}),
       },
     });
     const set = [
@@ -117,6 +124,7 @@ export interface SpendClearArgs {
   readonly currentCap: number | null;
   readonly currentUsd?: number | null;
   readonly scopeLabel?: string;
+  readonly tainted?: boolean;
 }
 
 const spendClear: ActionKind<SpendClearArgs> = {
@@ -130,6 +138,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
     return [
       `Clear spend limit override — ${scopeLine(args.scopeLabel, args.scopeKey, args.level)}`,
       `${current.length ? current.join(" + ") : "none (uncapped)"} → reverts to the config-as-code cap`,
+      ...spendTaintLines(args.tainted),
     ];
   },
   async execute(args, decidedBy) {
@@ -139,7 +148,7 @@ const spendClear: ActionKind<SpendClearArgs> = {
       ...whereFromScope(args.org, args.scopeKey),
       principalId: decidedBy,
       action: "admin.spend.clear_limit",
-      detail: { scopeKey: args.scopeKey, level: args.level, cleared },
+      detail: { scopeKey: args.scopeKey, level: args.level, cleared, ...(args.tainted ? { tainted: true } : {}) },
     });
     const scope = args.scopeLabel ?? `\`${args.scopeKey}\``;
     return cleared

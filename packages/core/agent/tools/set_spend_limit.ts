@@ -3,6 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
@@ -114,7 +115,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, a Discord DM belongs to no server, and a DM\'s default domain would span every DM like it — the defaults would target the wrong scope); an over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). An over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
@@ -158,11 +159,13 @@ export default defineTool({
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
+    const tainted = untrustedIngestedThisTurn();
+
     const posted = await requestApproval(
       {
         org: plan.args.org,
         kind: plan.kind,
-        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), tainted },
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
@@ -189,7 +192,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" (pending ${posted.id}).`,
+      note: `card posted — ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""} (pending ${posted.id}).`,
     };
   },
 });

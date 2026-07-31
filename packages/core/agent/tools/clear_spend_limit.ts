@@ -2,6 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
@@ -51,7 +52,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
 
 const clearSpendLimitEntry = defineTool({
   description:
-    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. From a DM you MUST pass scopeKey explicitly (DM usage is uncapped, a Discord DM belongs to no server, and a DM\'s default domain would span every DM like it — the defaults would target the wrong scope). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" clears THIS DM\'s own override and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
   inputSchema: z.object({
     level: z
       .enum(LEVELS)
@@ -91,11 +92,13 @@ const clearSpendLimitEntry = defineTool({
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
+    const tainted = untrustedIngestedThisTurn();
+
     const posted = await requestApproval(
       {
         org: plan.args.org,
         kind: plan.kind,
-        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}) },
+        args: { ...plan.args, ...(scopeLabel ? { scopeLabel } : {}), tainted },
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
@@ -118,7 +121,7 @@ const clearSpendLimitEntry = defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}" (pending ${posted.id}).`,
+      note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""} (pending ${posted.id}).`,
     };
   },
 });
