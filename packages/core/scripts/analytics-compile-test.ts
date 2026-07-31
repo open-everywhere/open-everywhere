@@ -62,7 +62,11 @@ const parse = (q: unknown) => analyticsQuerySchema.parse(q);
 {
   assert.throws(() => compileAnalyticsQuery(parse({ dataset: "usage", scope: "domain", mode: "rows" }), memberDomainScope, domains), /rows mode isn't available/, "member (rowMode:false) requesting rows THROWS");
   n++;
-  assert.throws(() => compileAnalyticsQuery(parse({ dataset: "spend", scope: "self", select: ["calls"] }), selfScope, domains), /no per-person dimension/, "spend + self THROWS (spend has no principal)");
+  {
+    const spendSelf = compileAnalyticsQuery(parse({ dataset: "spend", scope: "self", select: ["calls", "usd"] }), selfScope, domains);
+    ok(spendSelf.sql.where.some((w) => /principal_id = \?/.test(w)), "spend + self compiles and scopes to principal_id = ? (OPE-265: the ledger now has a principal dimension)");
+    ok(spendSelf.sql.params.includes(selfScope.principalId), "spend + self binds the caller's own principal id");
+  }
   n++;
   assert.throws(() => compileAnalyticsQuery({ dataset: "usage", scope: "org", select: ["events"], filters: [{ dim: "kind", op: "eq", value: "x" }], groupBy: ["not_a_dim" as never] } as never, orgScope, domains), /./, "an unknown groupBy dim is rejected (zod enum / compiler)");
   n++;

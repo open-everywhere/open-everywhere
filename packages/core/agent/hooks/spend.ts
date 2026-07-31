@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { domainKeyOf, resolvePartition } from "../memory/partition.js";
-import { recordUsage } from "../spend/store.js";
+import { recordSpend } from "../spend/store.js";
 import { appendUsageEvent } from "../spend/usage-events.js";
 import { periodOf, type Usage } from "../spend/spend.js";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
@@ -59,9 +59,16 @@ export default defineHook({
       const token = bareTokenFromEveContext(ctx.channel?.continuationToken) ?? ctx.channel?.continuationToken;
       const routineId = routineIdOf(ctx);
       const delegatedFrom = subagentParentOf(ctx, token);
+      const model = readModelStamp() ?? undefined;
 
       try {
-        await recordUsage(p, periodOf(new Date().toISOString()), usage);
+        await recordSpend(p, {
+          period: periodOf(new Date().toISOString()),
+          usage,
+          principalId: bindFrom(ctx).principalId,
+          routineId,
+          model,
+        });
       } catch (err) {
         console.log(`[open-everywhere:spend] record skipped: ${String(err)}`);
       }
@@ -75,7 +82,7 @@ export default defineHook({
           kind: turnKind(ctx, token),
           ...(delegatedFrom ? { detail: stampSubagentRun({ callId: delegatedFrom.callId, sessionId: ctx.session.id }) } : {}),
           ...(routineId !== undefined ? { routineId } : {}),
-          model: readModelStamp() ?? undefined,
+          model,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
           cacheReadTokens: usage.cacheReadTokens,

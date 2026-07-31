@@ -33,21 +33,25 @@ await initOperationalSchema(client);
 const store = makeOperationalPostgresStore(client);
 
 {
-  await store.recordUsage("default", "slack/T1/C1", "2026-06", { inputTokens: 100, outputTokens: 100 });
-  await store.recordUsage("default", "slack/T1/C1", "2026-06", { inputTokens: 0, outputTokens: 50 });
-  await store.recordUsage("default", "slack/T1/C2", "2026-06", { inputTokens: 200, outputTokens: 0 });
+  await store.recordSpend("default", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-06", inputTokens: 100, outputTokens: 100, cacheReadTokens: 5, usdMicros: 150 });
+  await store.recordSpend("default", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-06", outputTokens: 50, usdMicros: 50 });
+  await store.recordSpend("default", { surfaceKey: "slack/T1/C1", principalId: "U2", model: "m-1", period: "2026-06", inputTokens: 30, usdMicros: 10 });
+  await store.recordSpend("default", { surfaceKey: "slack/T1/C2", period: "2026-06", inputTokens: 200 });
 
-  const led = await store.surfaceLedger("default", "slack/T1/C1");
-  const w = led.windows["2026-06"];
-  ok(w.inputTokens === 100 && w.outputTokens === 150 && w.calls === 2, "spend: usage accumulates atomically across calls");
-  ok(!("2026-07" in led.windows), "spend: other period is empty");
+  const c1 = await store.spendTotals("default", { surfaceKey: "slack/T1/C1", period: "2026-06" });
+  ok(c1.inputTokens === 130 && c1.outputTokens === 150 && c1.cacheReadTokens === 5 && c1.usdMicros === 210 && c1.calls === 3, "spend: totals sum atomically across writes + dimensions");
+  const u1 = await store.spendTotals("default", { surfaceKey: "slack/T1/C1", principalId: "U1", period: "2026-06" });
+  ok(u1.inputTokens === 100 && u1.usdMicros === 200 && u1.calls === 2, "spend: a principal filter isolates that principal's rows");
+  ok((await store.spendTotals("default", { surfaceKey: "slack/T1/C1", period: "2026-07" })).calls === 0, "spend: other period is empty (zero totals)");
+  const rows = await store.listSpendLedger("default");
+  ok(rows.length === 3, "spend: one ledger row per (org, surface, principal, routine, model, period) key");
+  const wsTotals = await store.spendTotals("default", { surfaceKeyPrefix: "slack/T1/", period: "2026-06" });
+  ok(wsTotals.inputTokens === 330 && wsTotals.calls === 4, "spend: a surfaceKeyPrefix filter rolls up the workspace");
+  ok((await store.spendTotals("default", { surfaceKey: "slack/T1/C", period: "2026-06" })).calls === 0, "spend: surfaceKey is an exact match, never a prefix");
 
-  const all = await store.allLedgers();
-  ok(all.length === 2, "spend: allLedgers groups one row per (org, surface)");
-
-  await store.recordUsage("acme", "slack/T1/C1", "2026-06", { inputTokens: 777, outputTokens: 0 });
-  ok((await store.surfaceLedger("default", "slack/T1/C1")).windows["2026-06"].inputTokens === 100, "spend: another org's usage doesn't bleed into this org");
-  ok((await store.surfaceLedger("acme", "slack/T1/C1")).windows["2026-06"].inputTokens === 777, "spend: the other org has its own isolated ledger");
+  await store.recordSpend("acme", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-06", inputTokens: 777 });
+  ok((await store.spendTotals("default", { surfaceKey: "slack/T1/C1", period: "2026-06" })).inputTokens === 130, "spend: another org's usage doesn't bleed into this org");
+  ok((await store.spendTotals("acme", { surfaceKey: "slack/T1/C1", period: "2026-06" })).inputTokens === 777, "spend: the other org has its own isolated ledger");
 }
 
 {
@@ -719,8 +723,8 @@ const store = makeOperationalPostgresStore(client);
     await initPostgresSchema(client);
     ok(true, "two-role: initOperationalSchema + initPostgresSchema boot clean under the runtime role (verify-only, no DDL)");
 
-    await store.recordUsage("acme", "slack/T9/C9", "2026-07", { inputTokens: 1, outputTokens: 1 });
-    ok((await store.surfaceLedger("acme", "slack/T9/C9")).windows["2026-07"].calls === 1, "two-role: mutable DML works with the GUC unset ('' folds to unset — permissive arm)");
+    await store.recordSpend("acme", { surfaceKey: "slack/T9/C9", period: "2026-07", inputTokens: 1, outputTokens: 1 });
+    ok((await store.spendTotals("acme", { surfaceKey: "slack/T9/C9", period: "2026-07" })).calls === 1, "two-role: mutable DML works with the GUC unset ('' folds to unset — permissive arm)");
     await setOrgContext(client, "acme");
     const spendOrgs = new Set(((await client.query("SELECT DISTINCT org_id FROM spend_ledger")).rows as { org_id: string }[]).map((r) => r.org_id));
     ok(spendOrgs.size === 1 && spendOrgs.has("acme"), "two-role: with the GUC set, mutable-table RLS enforces for the runtime role");

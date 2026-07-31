@@ -1,4 +1,3 @@
-import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import { routineGrantGeneration, type Routine } from "../routines/routine.js";
 import type { PendingActionRow } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
@@ -90,10 +89,78 @@ export interface AuditFilter {
   readonly limit?: number;
 }
 
-export interface OrgSurfaceLedger {
-  readonly org: string;
+export interface SpendLedgerKey {
   readonly surfaceKey: string;
-  readonly ledger: SurfaceLedger;
+  readonly principalId: string;
+  readonly routineId: string;
+  readonly model: string;
+  readonly period: string;
+}
+
+export interface SpendLedgerRow extends SpendLedgerKey {
+  readonly org: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly usdMicros: number;
+  readonly calls: number;
+}
+
+export interface SpendLedgerWrite {
+  readonly surfaceKey: string;
+  readonly principalId?: string;
+  readonly routineId?: string;
+  readonly model?: string;
+  readonly period: string;
+  readonly inputTokens?: number;
+  readonly outputTokens?: number;
+  readonly cacheReadTokens?: number;
+  readonly cacheWriteTokens?: number;
+  readonly usdMicros?: number;
+}
+
+export interface SpendLedgerFilter {
+  readonly surfaceKey?: string;
+  readonly surfaceKeyPrefix?: string;
+  readonly principalId?: string;
+  readonly routineId?: string;
+  readonly period?: string;
+}
+
+export interface SpendTotals {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly usdMicros: number;
+  readonly calls: number;
+}
+
+export function spendLedgerConjuncts(filter: SpendLedgerFilter): { conjuncts: string[]; params: (string | number)[] } {
+  const conjuncts: string[] = [];
+  const params: (string | number)[] = [];
+  if (filter.surfaceKey !== undefined) {
+    conjuncts.push("surface_key = ?");
+    params.push(filter.surfaceKey);
+  }
+  if (filter.surfaceKeyPrefix !== undefined) {
+    conjuncts.push("surface_key LIKE ? ESCAPE '\\'");
+    params.push(`${filter.surfaceKeyPrefix.replace(/([\\%_])/g, "\\$1")}%`);
+  }
+  if (filter.principalId !== undefined) {
+    conjuncts.push("principal_id = ?");
+    params.push(filter.principalId);
+  }
+  if (filter.routineId !== undefined) {
+    conjuncts.push("routine_id = ?");
+    params.push(filter.routineId);
+  }
+  if (filter.period !== undefined) {
+    conjuncts.push("period = ?");
+    params.push(filter.period);
+  }
+  return { conjuncts, params };
 }
 
 export interface OverrideMeta {
@@ -379,9 +446,9 @@ export interface OperationalStore {
   readonly id: string;
   root(): string;
 
-  recordUsage(org: string, surfaceKey: string, period: string, usage: Usage): Promise<void>;
-  surfaceLedger(org: string, surfaceKey: string): Promise<SurfaceLedger>;
-  allLedgers(): Promise<OrgSurfaceLedger[]>;
+  recordSpend(org: string, write: SpendLedgerWrite): Promise<void>;
+  spendTotals(org: string, filter?: SpendLedgerFilter): Promise<SpendTotals>;
+  listSpendLedger(org?: string): Promise<SpendLedgerRow[]>;
 
   listRoutines(org: string, surfaceKey: string): Promise<Routine[]>;
   getRoutine(org: string, surfaceKey: string, id: string): Promise<Routine | null>;

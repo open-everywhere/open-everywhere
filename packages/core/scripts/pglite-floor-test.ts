@@ -139,10 +139,10 @@ function withWarnTap<T>(run: (warns: string[]) => T): T {
   ok(chain[0].prevSha === null && chain[1].prevSha !== null, "round-trip: hash chain is linked (genesis + link)");
   ok(findChainBreak(chain, { expectGenesis: true }) === null, "round-trip: audit chain verifies (no break)");
 
-  await store.recordUsage(ORG, "slack/T1/C1", "2026-07", { inputTokens: 100, outputTokens: 20 });
-  await store.recordUsage(ORG, "slack/T1/C1", "2026-07", { inputTokens: 50, outputTokens: 10 });
-  const ledger = await store.surfaceLedger(ORG, "slack/T1/C1");
-  ok(ledger.windows["2026-07"].inputTokens === 150 && ledger.windows["2026-07"].calls === 2, "round-trip: put/get through the store (spend ledger aggregates)");
+  await store.recordSpend(ORG, { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 100, outputTokens: 20, usdMicros: 70 });
+  await store.recordSpend(ORG, { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 50, outputTokens: 10, usdMicros: 30 });
+  const totals = await store.spendTotals(ORG, { surfaceKey: "slack/T1/C1", period: "2026-07" });
+  ok(totals.inputTokens === 150 && totals.usdMicros === 100 && totals.calls === 2, "round-trip: put/get through the store (spend ledger aggregates, usd_micros summed)");
 
   releasePgliteLock(dataDir);
   rmSync(dataDir, { recursive: true, force: true });

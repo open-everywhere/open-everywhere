@@ -351,15 +351,14 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const opStore = getOperationalStore();
   const { scopeOverBudget } = await import("../agent/spend/check.js");
 
-  await store.recordUsage({ org, surfaceKey: wsSurface } as never, currentPeriod, { inputTokens: 1_000_000, outputTokens: 0 });
-  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-1", principalId: "U_CAP", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: `${currentPeriod}-02T09:00:00Z` });
-  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-2", principalId: "U_CAP", kind: "channel", model: "mystery/unpriced", inputTokens: 9_000_000, outputTokens: 0, ts: `${currentPeriod}-02T09:01:00Z` });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_CAP", model: "zai/glm-5.2" });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 9_000_000 }, principalId: "U_CAP", model: "mystery/unpriced" });
 
   const before = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
   const rowBefore = before.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(rowBefore !== undefined, "spend_report ledger: the seeded surface appears in ledger.surfaces");
-  ok(Math.abs(rowBefore!.usd - 1.4) < 1e-9, `spend_report ledger: usd sums only the priced row ($1.40 @ zai/glm-5.2's built-in rate), the unpriced-model-stamped row contributes $0, never guessed (got ${rowBefore!.usd})`);
-  ok(rowBefore!.tokens === 1_000_000, "spend_report ledger: tokens still come from the monthly token ledger, unchanged");
+  ok(Math.abs(rowBefore!.usd - 1.4) < 1e-9, `spend_report ledger: usd sums only the priced write ($1.40 @ zai/glm-5.2's built-in rate); the unpriced-model write contributed $0 at write time, never guessed (got ${rowBefore!.usd})`);
+  ok(rowBefore!.tokens === 10_000_000, "spend_report ledger: tokens sum BOTH writes — an unpriced model's tokens still count against a token cap");
   ok(rowBefore!.tokenCap === null && rowBefore!.usdCap === null, "spend_report ledger: no cap configured anywhere -> both caps null");
   ok(rowBefore!.tokenOver === false && rowBefore!.usdOver === false && rowBefore!.over === false, "spend_report ledger: no cap -> never over");
 
@@ -391,13 +390,12 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const prevDate = new Date(Date.UTC(curYear, curMonth1Indexed - 1, 1));
   prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
   const prevPeriod = prevDate.toISOString().slice(0, 7);
-  await appendUsageEvent({ org, surfaceKey: wsSurface, sessionId: "sess-cap-prev", principalId: "U_CAP", kind: "channel", inputTokens: 2_000_000, outputTokens: 0, ts: `${prevPeriod}-15T00:00:00Z` });
-  await store.recordUsage({ org, surfaceKey: wsSurface } as never, prevPeriod, { inputTokens: 42, outputTokens: 0 });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: prevPeriod, usage: { inputTokens: 2_000_000 }, principalId: "U_CAP", model: "zai/glm-5.2" });
   const prevReport = await spendReportTool.execute({ scope: "org", period: prevPeriod }, ctxOrgAdmin as never);
   const prevRow = prevReport.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(prevReport.ledger.period === prevPeriod, "spend_report ledger: an explicit past period is honoured");
-  ok(prevRow!.tokens === 42, "spend_report ledger: a past period's tokens come from THAT month's ledger window, not the current one");
-  ok(Math.abs(prevRow!.usd - 2.8) < 1e-9, `spend_report ledger: a past period's usd windows to THAT calendar month only (2,000,000 in-tokens @ $1.4/Mtok = $2.80, got ${prevRow!.usd})`);
+  ok(prevRow!.tokens === 2_000_000, "spend_report ledger: a past period's tokens come from THAT month's ledger rows, not the current one");
+  ok(Math.abs(prevRow!.usd - 2.8) < 1e-9, `spend_report ledger: a past period's usd is THAT calendar month's ledger sum (2,000,000 in-tokens @ $1.4/Mtok = $2.80, got ${prevRow!.usd})`);
 }
 
 {
@@ -408,10 +406,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const store = await import("../agent/spend/store.js");
   const opStore = getOperationalStore();
 
-  await store.recordUsage({ org, surfaceKey: dmA } as never, currentPeriod, { inputTokens: 10, outputTokens: 0 });
-  await store.recordUsage({ org, surfaceKey: dmB } as never, currentPeriod, { inputTokens: 5, outputTokens: 0 });
-  await appendUsageEvent({ org, surfaceKey: dmA, sessionId: "sess-dm-cap-a", principalId: "U_DM_A", kind: "dm", inputTokens: 1_000_000, outputTokens: 0, ts: `${currentPeriod}-03T10:00:00Z` });
-  await appendUsageEvent({ org, surfaceKey: dmB, sessionId: "sess-dm-cap-b", principalId: "U_DM_B", kind: "dm", inputTokens: 500_000, outputTokens: 0, ts: `${currentPeriod}-03T10:01:00Z` });
+  await store.recordSpend({ org, surfaceKey: dmA } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DM_A", model: "zai/glm-5.2" });
+  await store.recordSpend({ org, surfaceKey: dmB } as never, { period: currentPeriod, usage: { inputTokens: 500_000 }, principalId: "U_DM_B", model: "zai/glm-5.2" });
 
   await opStore.setSpendLimit(org, dmA, "surface", { monthlyUsd: 0.5 }, { reason: "test", setBy: "tester" });
 

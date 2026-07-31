@@ -1,7 +1,6 @@
-import type { Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -15,14 +14,28 @@ const ORG_GUC =
      OR NULLIF(current_setting('app.current_org', true), '') IS NULL)`;
 
 const SCHEMA_STATEMENTS: readonly string[] = [
+  `DO $$ BEGIN
+     IF to_regclass('public.spend_ledger') IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'spend_ledger' AND column_name = 'usd_micros'
+     ) THEN
+       EXECUTE 'DROP TABLE spend_ledger';
+     END IF;
+   END $$`,
   `CREATE TABLE IF NOT EXISTS spend_ledger (
-     org_id        text   NOT NULL,
-     surface_key   text   NOT NULL,
-     period        text   NOT NULL,
-     input_tokens  bigint NOT NULL DEFAULT 0,
-     output_tokens bigint NOT NULL DEFAULT 0,
-     calls         bigint NOT NULL DEFAULT 0,
-     PRIMARY KEY (org_id, surface_key, period)
+     org_id             text   NOT NULL,
+     surface_key        text   NOT NULL,
+     principal_id       text   NOT NULL DEFAULT '',  -- '' = unattributed (PK columns can't be NULL)
+     routine_id         text   NOT NULL DEFAULT '',  -- '' = not a routine turn
+     model              text   NOT NULL DEFAULT '',  -- '' = no model (unstamped call; sandbox runtime)
+     period             text   NOT NULL,
+     input_tokens       bigint NOT NULL DEFAULT 0,
+     output_tokens      bigint NOT NULL DEFAULT 0,
+     cache_read_tokens  bigint NOT NULL DEFAULT 0,
+     cache_write_tokens bigint NOT NULL DEFAULT 0,
+     usd_micros         bigint NOT NULL DEFAULT 0,   -- millionths of a dollar, priced at write
+     calls              bigint NOT NULL DEFAULT 0,
+     PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period)
    )`,
   `CREATE TABLE IF NOT EXISTS routine (
      org_id      text NOT NULL,
@@ -768,12 +781,22 @@ function mutableTableGrantsSql(role: string): string[] {
 }
 
 const UPSERT_SPEND =
-  `INSERT INTO spend_ledger (org_id, surface_key, period, input_tokens, output_tokens, calls)
-   VALUES ($1, $2, $3, $4, $5, 1)
-   ON CONFLICT (org_id, surface_key, period) DO UPDATE SET
-     input_tokens  = spend_ledger.input_tokens  + excluded.input_tokens,
-     output_tokens = spend_ledger.output_tokens + excluded.output_tokens,
-     calls         = spend_ledger.calls + 1`;
+  `INSERT INTO spend_ledger
+     (org_id, surface_key, principal_id, routine_id, model, period,
+      input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, calls)
+   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 1)
+   ON CONFLICT (org_id, surface_key, principal_id, routine_id, model, period) DO UPDATE SET
+     input_tokens       = spend_ledger.input_tokens       + excluded.input_tokens,
+     output_tokens      = spend_ledger.output_tokens      + excluded.output_tokens,
+     cache_read_tokens  = spend_ledger.cache_read_tokens  + excluded.cache_read_tokens,
+     cache_write_tokens = spend_ledger.cache_write_tokens + excluded.cache_write_tokens,
+     usd_micros         = spend_ledger.usd_micros         + excluded.usd_micros,
+     calls              = spend_ledger.calls + 1`;
+
+function renderSpendConjuncts(conjuncts: string[], offset: number): string[] {
+  let n = offset;
+  return conjuncts.map((c) => c.replace("?", () => `$${++n}`));
+}
 
 type PendingActionPgRow = {
   id: string;
@@ -814,10 +837,36 @@ function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActi
   };
 }
 
-function ledgerFrom(rows: { period: string; input_tokens: number; output_tokens: number; calls: number }[]) {
-  const windows: Record<string, { inputTokens: number; outputTokens: number; calls: number }> = {};
-  for (const r of rows) windows[r.period] = { inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), calls: Number(r.calls) };
-  return { windows };
+type SpendLedgerPgRow = {
+  org_id: string;
+  surface_key: string;
+  principal_id: string;
+  routine_id: string;
+  model: string;
+  period: string;
+  input_tokens: number | string;
+  output_tokens: number | string;
+  cache_read_tokens: number | string;
+  cache_write_tokens: number | string;
+  usd_micros: number | string;
+  calls: number | string;
+};
+
+function spendRowFromPg(r: SpendLedgerPgRow): SpendLedgerRow {
+  return {
+    org: r.org_id,
+    surfaceKey: r.surface_key,
+    principalId: r.principal_id,
+    routineId: r.routine_id,
+    model: r.model,
+    period: r.period,
+    inputTokens: Number(r.input_tokens),
+    outputTokens: Number(r.output_tokens),
+    cacheReadTokens: Number(r.cache_read_tokens),
+    cacheWriteTokens: Number(r.cache_write_tokens),
+    usdMicros: Number(r.usd_micros),
+    calls: Number(r.calls),
+  };
 }
 
 export function makeOperationalPostgresStore(client: PgClient): OperationalStore {
@@ -825,33 +874,51 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     id: "postgres",
     root: () => "postgres",
 
-    async recordUsage(org, surfaceKey, period, usage: Usage) {
-      await client.query(UPSERT_SPEND, [org, surfaceKey, period, usage.inputTokens ?? 0, usage.outputTokens ?? 0]);
+    async recordSpend(org, write: SpendLedgerWrite) {
+      await client.query(UPSERT_SPEND, [
+        org,
+        write.surfaceKey,
+        write.principalId ?? "",
+        write.routineId ?? "",
+        write.model ?? "",
+        write.period,
+        write.inputTokens ?? 0,
+        write.outputTokens ?? 0,
+        write.cacheReadTokens ?? 0,
+        write.cacheWriteTokens ?? 0,
+        write.usdMicros ?? 0,
+      ]);
     },
 
-    async surfaceLedger(org, surfaceKey) {
+    async spendTotals(org, filter: SpendLedgerFilter = {}): Promise<SpendTotals> {
+      const { conjuncts, params } = spendLedgerConjuncts(filter);
       const { rows } = await client.query(
-        "SELECT period, input_tokens, output_tokens, calls FROM spend_ledger WHERE org_id = $1 AND surface_key = $2",
-        [org, surfaceKey],
+        `SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(usd_micros), 0) AS usd_micros,
+                COALESCE(SUM(calls), 0) AS calls
+         FROM spend_ledger WHERE ${["org_id = $1", ...renderSpendConjuncts(conjuncts, 1)].join(" AND ")}`,
+        [org, ...params],
       );
-      return ledgerFrom(rows as never[]);
+      const r = rows[0] as { input_tokens: number | string; output_tokens: number | string; cache_read_tokens: number | string; cache_write_tokens: number | string; usd_micros: number | string; calls: number | string };
+      return {
+        inputTokens: Number(r.input_tokens),
+        outputTokens: Number(r.output_tokens),
+        cacheReadTokens: Number(r.cache_read_tokens),
+        cacheWriteTokens: Number(r.cache_write_tokens),
+        usdMicros: Number(r.usd_micros),
+        calls: Number(r.calls),
+      };
     },
 
-    async allLedgers() {
-      const { rows } = await client.query(
-        "SELECT org_id, surface_key, period, input_tokens, output_tokens, calls FROM spend_ledger",
-      );
-      const byKey = new Map<string, OrgSurfaceLedger>();
-      for (const r of rows as { org_id: string; surface_key: string; period: string; input_tokens: number; output_tokens: number; calls: number }[]) {
-        const k = `${r.org_id} ${r.surface_key}`;
-        let entry = byKey.get(k);
-        if (!entry) {
-          entry = { org: r.org_id, surfaceKey: r.surface_key, ledger: { windows: {} } };
-          byKey.set(k, entry);
-        }
-        entry.ledger.windows[r.period] = { inputTokens: Number(r.input_tokens), outputTokens: Number(r.output_tokens), calls: Number(r.calls) };
-      }
-      return [...byKey.values()];
+    async listSpendLedger(org?: string) {
+      const { rows } =
+        org !== undefined
+          ? await client.query("SELECT * FROM spend_ledger WHERE org_id = $1", [org])
+          : await client.query("SELECT * FROM spend_ledger");
+      return (rows as SpendLedgerPgRow[]).map(spendRowFromPg);
     },
 
     async listRoutines(org, surfaceKey) {

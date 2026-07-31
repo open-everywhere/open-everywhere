@@ -63,8 +63,8 @@ function roSqlite(path: string): DatabaseSync {
     await s.appendAudit({ ts: "2026-07-01T11:00:00Z", org: "acme", platform: "slack", workspace: "T1", surface: "C1", principalId: "U2", action: "egress.policy", detail: { hosts: 3, enforced: false } });
     await s.appendAudit({ ts: "2026-07-01T12:00:00Z", org: "acme", platform: "slack", workspace: "T2", surface: "C9", principalId: "U1", action: "spend.set" });
     await s.appendAudit({ ts: "2026-07-01T09:00:00Z", org: "globex", platform: "linear", workspace: "ORG1", surface: "ISS9", principalId: "L3", action: "memory.write" });
-    await s.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 100, outputTokens: 20 });
-    await s.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 50, outputTokens: 10 });
+    await s.recordSpend("acme", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-07", inputTokens: 100, outputTokens: 20, cacheReadTokens: 7, usdMicros: 1400 });
+    await s.recordSpend("acme", { surfaceKey: "slack/T1/C1", principalId: "U1", model: "m-1", period: "2026-07", inputTokens: 50, outputTokens: 10, usdMicros: 600 });
     await s.addRoutine({ id: "r-1", org: "acme", surfaceKey: "slack/T1/C1", trigger: { kind: "interval", everyMinutes: 60 }, prompt: "do it", createdAt: "2026-07-01T00:00:00Z", status: "active", consecutiveFailures: 0 });
     await s.appendUsageEvent({ org: "acme", surfaceKey: "slack/T1/C1", sessionId: "sess-1", principalId: "U1", ts: "2026-07-01T10:00:00Z", kind: "channel", inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 });
     await s.setConnectorOverride("acme", "slack/T1/C1", "notion", true, { reason: "granted", setBy: "U1" });
@@ -96,8 +96,8 @@ function roSqlite(path: string): DatabaseSync {
   const store = makeOperationalPostgresStore(target);
   const auditAcme = await store.readAudit({ org: "acme" });
   ok(auditAcme.length === 3, "full: acme audit rows copied (3)");
-  const spend = await store.surfaceLedger("acme", "slack/T1/C1");
-  ok(spend.windows["2026-07"].inputTokens === 150 && spend.windows["2026-07"].calls === 2, "full: spend ledger copied verbatim (aggregate preserved)");
+  const spend = await store.spendTotals("acme", { surfaceKey: "slack/T1/C1", period: "2026-07" });
+  ok(spend.inputTokens === 150 && spend.cacheReadTokens === 7 && spend.usdMicros === 2000 && spend.calls === 2, "full: spend ledger copied verbatim (dimensions + usd_micros preserved)");
   ok((await store.listRoutines("acme", "slack/T1/C1")).length === 1, "full: routine copied");
   ok((await store.usageForSession("acme", "sess-1")).length === 1, "full: usage_events copied (identity re-assigned)");
   ok((await store.getMeta("telemetry_instance_id")) === "inst-abc-123", "full: instance_meta copied");
@@ -122,7 +122,7 @@ function roSqlite(path: string): DatabaseSync {
 {
   const srcPath = tmpFile("small.sqlite3");
   await seedSource(srcPath, async (s) => {
-    await s.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 1, outputTokens: 1 });
+    await s.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 1, outputTokens: 1 });
   });
   const source = roSqlite(srcPath);
   const target = newPg();
@@ -168,7 +168,7 @@ function roSqlite(path: string): DatabaseSync {
 {
   const srcPath = tmpFile("mem.sqlite3");
   await seedSource(srcPath, async (s) => {
-    await s.recordUsage("acme", "slack/T1/C1", "2026-07", { inputTokens: 1, outputTokens: 1 });
+    await s.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 1, outputTokens: 1 });
   });
   const w = rawSqlite(srcPath);
   w.exec(`

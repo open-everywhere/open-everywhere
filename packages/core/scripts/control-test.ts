@@ -147,8 +147,7 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   const nowISO = new Date().toISOString();
   const period = nowISO.slice(0, 7);
 
-  await store.recordUsage({ org: CTL_ORG, surfaceKey } as never, period, { inputTokens: 1_000_000, outputTokens: 0 });
-  await appendUsageEvent({ org: CTL_ORG, surfaceKey, sessionId: "s-ctl-cap", principalId: "U_CTL", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: `${period}-05T00:00:00Z` });
+  await store.recordSpend({ org: CTL_ORG, surfaceKey } as never, { period, usage: { inputTokens: 1_000_000 }, model: "zai/glm-5.2" });
 
   const spendBefore = await spendView(period);
   const rowBefore = spendBefore.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);

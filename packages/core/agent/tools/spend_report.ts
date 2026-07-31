@@ -2,10 +2,9 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
-import { allLedgers } from "../spend/store.js";
-import { windowTokens, periodOf, type Caps } from "../spend/spend.js";
+import { spendRollup } from "../spend/store.js";
+import { periodOf, type Caps } from "../spend/spend.js";
 import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope } from "../spend/caps.js";
-import { workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod, type WorkspaceUsdSpend } from "../spend/check.js";
 import { getConfig } from "../access/config.js";
 import {
   resolveReportScope,
@@ -194,10 +193,8 @@ export default defineTool({
       const nowISO = new Date().toISOString();
       const currentPeriod = periodOf(nowISO);
       const period = input.period ?? currentPeriod;
-      const isCurrentPeriod = period === currentPeriod;
-      const ledgers = await allLedgers();
-      const orgLedgers = ledgers
-        .filter((l) => l.org === resolved.org)
+      const orgLedgers = (await spendRollup())
+        .filter((l) => l.org === resolved.org && l.period === period)
         .filter((l) => !resolved.domain || domainOfUsageRow(l.surfaceKey, undefined, domains) === resolved.domain);
 
       const overrideLimits = await activeSpendLimitsForOrg(resolved.org);
@@ -207,24 +204,15 @@ export default defineTool({
       };
 
       const workspaceKeysInScope = [...new Set(orgLedgers.map((l) => l.surfaceKey.split("/").slice(0, 2).join("/")))];
-      const usdByWorkspace = new Map<string, WorkspaceUsdSpend>(
-        await Promise.all(
-          workspaceKeysInScope.map(
-            async (wk) => [wk, isCurrentPeriod ? await workspaceUsdSpendForCurrentMonth(resolved.org, wk, nowISO) : await workspaceUsdSpendForPeriod(resolved.org, wk, period)] as const,
-          ),
-        ),
-      );
 
       const rawLedgerSurfaces = orgLedgers.map((l) => {
         const workspaceKey = l.surfaceKey.split("/").slice(0, 2).join("/");
-        const tokens = windowTokens(l.ledger.windows[period]);
         const caps = effCapsForScope(workspaceKey, l.surfaceKey);
         const tokenCap = caps.surfaceMonthlyTokens ?? null;
-        const tokenOver = tokenCap != null && tokens >= tokenCap;
-        const usd = usdByWorkspace.get(workspaceKey)?.bySurface.get(l.surfaceKey) ?? 0;
+        const tokenOver = tokenCap != null && l.tokens >= tokenCap;
         const usdCap = caps.surfaceMonthlyUsd ?? null;
-        const usdOver = usdCap != null && usd >= usdCap;
-        return { surfaceKey: l.surfaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
+        const usdOver = usdCap != null && l.usd >= usdCap;
+        return { surfaceKey: l.surfaceKey, tokens: l.tokens, tokenCap, tokenOver, usd: l.usd, usdCap, usdOver, over: tokenOver || usdOver };
       });
       const dmLedger = new Map<string, (typeof rawLedgerSurfaces)[number]>();
       const ledgerSurfaces: typeof rawLedgerSurfaces = [];
@@ -251,13 +239,12 @@ export default defineTool({
       const ledgerTotalUsd = ledgerSurfaces.reduce((sum, s) => sum + s.usd, 0);
 
       const ledgerWorkspaces = workspaceKeysInScope.map((workspaceKey) => {
-        const tokens = orgLedgers
-          .filter((l) => l.surfaceKey.split("/").slice(0, 2).join("/") === workspaceKey)
-          .reduce((sum, l) => sum + windowTokens(l.ledger.windows[period]), 0);
+        const inWorkspace = orgLedgers.filter((l) => l.surfaceKey.split("/").slice(0, 2).join("/") === workspaceKey);
+        const tokens = inWorkspace.reduce((sum, l) => sum + l.tokens, 0);
+        const usd = inWorkspace.reduce((sum, l) => sum + l.usd, 0);
         const caps = effCapsForScope(workspaceKey, "");
         const tokenCap = caps.workspaceMonthlyTokens ?? null;
         const tokenOver = tokenCap != null && tokens >= tokenCap;
-        const usd = usdByWorkspace.get(workspaceKey)?.workspaceUsd ?? 0;
         const usdCap = caps.workspaceMonthlyUsd ?? null;
         const usdOver = usdCap != null && usd >= usdCap;
         return { workspaceKey, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
@@ -284,7 +271,7 @@ export default defineTool({
         "routinePredictions project future spend from this window's history and each surface's CURRENT active cron/interval routines — always an estimate, not a bill.",
         "ledger.surfaces/ledger.workspaces use the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
         "ledger caps are EFFECTIVE caps — config-as-code overlaid with any currently-active admin override (set_spend_limit) — the same numbers the spend gate enforces; an expired override has already reverted to config here, same as at the gate.",
-        "ledger.*.usd is the SAME evidence-only per-row estimate the gate uses (never a guessed rate); an all-unpriced deploy's usd reads $0 and its usd cap never trips. For the current month this figure equals what the gate is enforcing right now; it always uses the deploy's own default assumed-model resolution for this ledger, independent of any assumedModelId you passed above.",
+        "ledger.*.usd is the spend ledger's own stored figure — priced evidence-only at WRITE time (a call's stamped model's rate, the sole-priced-model fallback for a stampless call, $0 for an unpriced model, never a guessed rate) — the EXACT sum the gate enforces for the same period; it is independent of any assumedModelId you passed above (that only re-prices the usage-window figures).",
         "channel labels are best-effort Slack lookups — prefer them when presenting; the surfaceKey stays the ground truth.",
         'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution); tokenCap/usdCap are hidden as null for that bucket (a shared bucket has no single cap) but over/tokenOver/usdOver are never masked.',
       ];

@@ -29,7 +29,7 @@ const { buildDiscordFrontHandler, PUBLIC_DISCORD_ROUTE } = await import("@open-e
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
 const { markThreadEngaged } = await import("@open-everywhere/core/agent/channels/engagement.js");
-const { recordUsage } = await import("@open-everywhere/core/agent/spend/store.js");
+const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
 const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
 const { resolvePartition } = await import("@open-everywhere/core/agent/memory/partition.js");
 const { buildDiscordAuth } = await import("@open-everywhere/provider-discord/agent/channels/discord-identity.js");
@@ -215,7 +215,7 @@ await scenario(
   async (s) => {
     const p = partitionFor({ userId: "U_RANDO6E", guildId: "GS6E", channelId: "CS6E", channelType: "0" });
     await getOperationalStore().setSpendLimit(p.org, p.surfaceKey, "surface", { monthlyTokens: 50 }, { setBy: "scenario-seed" });
-    await recordUsage(p, periodOf(new Date().toISOString()), { inputTokens: 200, outputTokens: 5 });
+    await recordSpend(p, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 200, outputTokens: 5 } });
     s.note(`surface cap 50 tokens/month on ${p.surfaceKey}; 205 tokens recorded; guild GS6E's admin probe is scripted to THROW`);
     await s.inbound({
       id: "M61E",

@@ -76,17 +76,23 @@ const SPEND: DatasetSpec = {
   dims: {
     period: { kind: "column", column: "period" },
     surface: { kind: "column", column: "surface_key" },
+    principal: { kind: "column", column: "principal_id" },
+    routine: { kind: "column", column: "routine_id" },
+    model: { kind: "column", column: "model" },
     domain: { kind: "domain" },
   },
   measures: {
     input_tokens: { kind: "sql", expr: "SUM(input_tokens)" },
     output_tokens: { kind: "sql", expr: "SUM(output_tokens)" },
+    cache_read_tokens: { kind: "sql", expr: "SUM(cache_read_tokens)" },
+    cache_write_tokens: { kind: "sql", expr: "SUM(cache_write_tokens)" },
     calls: { kind: "sql", expr: "SUM(calls)" },
+    usd: { kind: "sql", expr: "SUM(usd_micros) / 1000000.0" },
   },
-  rowColumns: ["period", "surface_key", "input_tokens", "output_tokens", "calls"],
+  rowColumns: ["period", "surface_key", "principal_id", "routine_id", "model", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "usd_micros", "calls"],
   surfaceColumn: "surface_key",
   surfaceParts: null,
-  principalColumn: "",
+  principalColumn: "principal_id",
   rowOrderColumn: "period",
 };
 

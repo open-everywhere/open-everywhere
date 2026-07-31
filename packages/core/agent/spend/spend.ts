@@ -7,34 +7,12 @@ export interface Usage {
   readonly cacheWriteTokens?: number;
 }
 
-export interface SpendWindow {
-  inputTokens: number;
-  outputTokens: number;
-  calls: number;
-}
-
-export interface SurfaceLedger {
-  windows: Record<string, SpendWindow>;
-}
-
 export function periodOf(iso: string): string {
   return iso.slice(0, 7);
 }
 
-export function emptyWindow(): SpendWindow {
-  return { inputTokens: 0, outputTokens: 0, calls: 0 };
-}
-
-export function addUsage(w: SpendWindow, u: Usage): SpendWindow {
-  return {
-    inputTokens: w.inputTokens + (u.inputTokens ?? 0),
-    outputTokens: w.outputTokens + (u.outputTokens ?? 0),
-    calls: w.calls + 1,
-  };
-}
-
-export function windowTokens(w: SpendWindow | undefined): number {
-  return w ? w.inputTokens + w.outputTokens : 0;
+export function billableTokens(t: { readonly inputTokens: number; readonly outputTokens: number }): number {
+  return t.inputTokens + t.outputTokens;
 }
 
 export interface Caps {

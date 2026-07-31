@@ -2,7 +2,7 @@ import { deepStrictEqual } from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { periodOf, emptyWindow, addUsage, windowTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
+import { periodOf, billableTokens, checkCap, assertSpendBudgetsValid, type SpendBudgets } from "../agent/spend/spend.js";
 import { isSpendLimitActive, activeSpendLimits, applyCapOverrides } from "../agent/spend/caps.js";
 import type { SpendLimitRow } from "../agent/operational/store.js";
 
@@ -32,12 +32,7 @@ function eq(actual: unknown, expected: unknown, label: string): void {
 }
 
 ok(periodOf("2026-06-24T09:30:00Z") === "2026-06", "periodOf -> YYYY-MM");
-let w = emptyWindow();
-w = addUsage(w, { inputTokens: 100, outputTokens: 50 });
-w = addUsage(w, { inputTokens: 10, outputTokens: 5, cacheReadTokens: 999 });
-ok(w.calls === 2 && w.inputTokens === 110 && w.outputTokens === 55, "addUsage accumulates input/output + call count");
-ok(windowTokens(w) === 165, "windowTokens = input + output");
-ok(windowTokens(undefined) === 0, "windowTokens defensive on missing window");
+ok(billableTokens({ inputTokens: 110, outputTokens: 55 }) === 165, "billableTokens = input + output (cache tokens tracked, not cap-billed)");
 
 const caps = { surfaceMonthlyTokens: 1000, workspaceMonthlyTokens: 5000 };
 ok(!checkCap({ mode: "channel", surfaceTokens: 999, workspaceTokens: 100, caps }).over, "under surface cap -> not over");
@@ -238,17 +233,18 @@ const pA = { org: "default", platform: "slack", workspace: "T1", surface: "C1", 
 const pB = { ...pA, surface: "C2", surfaceKey: "slack/T1/C2", key: "slack/T1/C2" };
 const pOther = { org: "default", platform: "slack", workspace: "T2", surface: "C9", workspaceKey: "slack/T2", surfaceKey: "slack/T2/C9", key: "slack/T2/C9" };
 
-await store.recordUsage(pA as never, "2026-06", { inputTokens: 100, outputTokens: 100 });
-await store.recordUsage(pA as never, "2026-06", { inputTokens: 0, outputTokens: 50 });
-await store.recordUsage(pB as never, "2026-06", { inputTokens: 200, outputTokens: 0 });
-await store.recordUsage(pOther as never, "2026-06", { inputTokens: 5000, outputTokens: 0 });
+await store.recordSpend(pA as never, { period: "2026-06", usage: { inputTokens: 100, outputTokens: 100 }, principalId: "U1", model: "m-1" });
+await store.recordSpend(pA as never, { period: "2026-06", usage: { outputTokens: 50 }, principalId: "U2" });
+await store.recordSpend(pB as never, { period: "2026-06", usage: { inputTokens: 200 } });
+await store.recordSpend(pOther as never, { period: "2026-06", usage: { inputTokens: 5000 } });
 
-ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: surface tokens accumulate across calls");
+ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: surface tokens accumulate across writes, whatever their attribution dimensions");
 ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-07")) === 0, "store: other period is empty");
 ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "store: workspace tokens = sum of its surfaces (not other workspaces)");
 ok((await store.workspaceTokens("default", "slack/T2", "2026-06")) === 5000, "store: workspace isolation in the rollup");
+ok(billableTokens(await store.spendTotals("default", { surfaceKey: "slack/T1/C1", principalId: "U1", period: "2026-06" })) === 200, "store: a (surface, principal) prefix answers one user's spend directly");
 const pOrg2 = { ...pA, org: "acme" };
-await store.recordUsage(pOrg2 as never, "2026-06", { inputTokens: 777, outputTokens: 0 });
+await store.recordSpend(pOrg2 as never, { period: "2026-06", usage: { inputTokens: 777 } });
 ok((await store.surfaceTokens("default", "slack/T1/C1", "2026-06")) === 250, "store: other org's usage does not bleed into this org's surface total");
 ok((await store.surfaceTokens("acme", "slack/T1/C1", "2026-06")) === 777, "store: the other org has its own isolated ledger");
 ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "store: workspace rollup stays within one org");
@@ -374,6 +370,20 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   );
   eq(attestSubagentRuns(await usageEvents.usageForSession("default", "sess-stamped")).kind, "absent", "a session that delegated NOTHING attests nothing — no false positive from ordinary turns");
   eq(turnKind(runCtx("x", { parent: { sessionId: "p", callId: "c" } }) as never, undefined), "subagent", "turnKind classifies from the SAME parent seam the stamp uses, so the tag and the stamp cannot disagree");
+
+  {
+    const { spendTotals } = await import("../agent/spend/store.js");
+    const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
+    const period = (await import("../agent/spend/spend.js")).periodOf(new Date().toISOString());
+    const totals = await spendTotals("default", { surfaceKey: "slack/T1/C_DELEG", period });
+    ok(
+      billableTokens(totals) === 127 && totals.calls === 3,
+      `🔴 the parent's surface ledger holds the parent's own turn (110) PLUS both delegated children (10 + 7) — a surface cap sees delegated spend (got ${billableTokens(totals)} tokens / ${totals.calls} calls)`,
+    );
+    const delegRows = (await opStore.listSpendLedger("default")).filter((r) => r.surfaceKey === "slack/T1/C_DELEG");
+    ok(delegRows.length === 1, `all three writes collapsed into ONE (surface, principal, routine, model) row — the children carried the parent's dimensions, so nothing forked (got ${delegRows.length})`);
+    ok(delegRows[0].principalId !== "", "…and the row is principal-attributed (the child ran under the parent's carried auth, not unattributed)");
+  }
 }
 
 {
@@ -414,32 +424,44 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
     loadSpendBudgets: () => budgets,
   });
 
-  const { monthStartISO, scopeUsdSpend, scopeOverBudget } = await import("../agent/spend/check.js");
-  const usageEvents = await import("../agent/spend/usage-events.js");
+  const { scopeUsdSpend, scopeOverBudget } = await import("../agent/spend/check.js");
   const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
-
-  ok(monthStartISO("2026-07-15T12:00:00.000Z") === "2026-07-01T00:00:00.000Z", "monthStartISO -> first instant of the calendar month (matches periodOf's bucketing)");
 
   const NOW_ISO = "2026-07-15T12:00:00.000Z";
   const org = "usd-org";
-  const row = (surfaceKey: string, ts: string, tokens: { inputTokens?: number; outputTokens?: number }, model?: string, kind = "channel") =>
-    usageEvents.appendUsageEvent({ org, surfaceKey, sessionId: `s-${ts}`, ts, kind, model, ...tokens });
+  const seed = (surfaceKey: string, period: string, tokens: { inputTokens?: number; outputTokens?: number }, model?: string) =>
+    store.recordSpend({ org, surfaceKey } as never, { period, usage: tokens, model });
 
-  await row("slack/T9/C1", "2026-07-02T00:00:00Z", { inputTokens: 1_000_000 }, "zai/glm-5.2");
-  await row("slack/T9/C1", "2026-07-03T00:00:00Z", { outputTokens: 1_000_000 });
-  await row("slack/T9/C1", "2026-07-04T00:00:00Z", { inputTokens: 9_000_000 }, "mystery/unpriced");
-  await row("slack/T9/C11", "2026-07-05T00:00:00Z", { inputTokens: 2_000_000 }, "zai/glm-5.2");
-  await row("slack/T9/D1", "2026-07-06T00:00:00Z", { inputTokens: 1_000_000 }, "zai/glm-5.2", "dm");
-  await row("slack/T9/C1", "2026-06-29T18:14:59Z", { inputTokens: 50_000_000 }, "zai/glm-5.2");
-  await row("slack/T9/C1", "2026-07-14T06:15:01Z", { inputTokens: 50_000_000 }, "zai/glm-5.2");
-  await usageEvents.appendUsageEvent({ org: "other-org", surfaceKey: "slack/T9/C1", sessionId: "s-x", ts: "2026-07-02T00:00:00Z", kind: "channel", model: "zai/glm-5.2", inputTokens: 50_000_000 });
+  await seed("slack/T9/C1", "2026-07", { inputTokens: 1_000_000 }, "zai/glm-5.2");
+  await seed("slack/T9/C1", "2026-07", { outputTokens: 1_000_000 });
+  await seed("slack/T9/C1", "2026-07", { inputTokens: 9_000_000 }, "mystery/unpriced");
+  await seed("slack/T9/C11", "2026-07", { inputTokens: 2_000_000 }, "zai/glm-5.2");
+  await seed("slack/T9/D1", "2026-07", { inputTokens: 1_000_000 }, "zai/glm-5.2");
+  await seed("slack/T9/C1", "2026-06", { inputTokens: 50_000_000 }, "zai/glm-5.2");
+  await seed("slack/T9/C1", "2026-09", { inputTokens: 50_000_000 }, "zai/glm-5.2");
+  await store.recordSpend({ org: "other-org", surfaceKey: "slack/T9/C1" } as never, { period: "2026-07", usage: { inputTokens: 50_000_000 }, model: "zai/glm-5.2" });
 
   const usd = await scopeUsdSpend(org, "slack/T9", "slack/T9/C1", NOW_ISO);
   const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
-  ok(close(usd.surfaceUsd, 3), `surfaceUsd sums stamped ($1) + assumed ($2) rows, $0 for unpriced/out-of-window/other-surface/other-org (got ${usd.surfaceUsd})`);
+  ok(close(usd.surfaceUsd, 3), `surfaceUsd sums stamped ($1) + assumed ($2) writes, $0 for unpriced/other-period/other-surface/other-org (got ${usd.surfaceUsd})`);
   ok(close(usd.workspaceUsd, 6), `workspaceUsd = whole workspace incl. the sibling surface ($2) and the DM ($1) (got ${usd.workspaceUsd})`);
   const c11 = await scopeUsdSpend(org, "slack/T9", "slack/T9/C11", NOW_ISO);
   ok(close(c11.surfaceUsd, 2), "surfaceUsd is an exact surfaceKey match, not a prefix match (C1 vs C11)");
+
+  {
+    const { rowCostUsd, resolveAssumedModel } = await import("../agent/spend/reporting.js");
+    const ledgerRows = (await opStore.listSpendLedger(org)).filter((r) => r.model !== "");
+    ok(ledgerRows.length >= 5, `recompute: model rows present to recompute (got ${ledgerRows.length})`);
+    const assumed = resolveAssumedModel();
+    for (const r of ledgerRows) {
+      const re = rowCostUsd({ model: r.model, inputTokens: r.inputTokens, outputTokens: r.outputTokens, cacheReadTokens: r.cacheReadTokens }, assumed);
+      const reMicros = re === undefined ? 0 : Math.round(re * 1_000_000);
+      ok(reMicros === r.usdMicros, `recompute: (tokens + model) reproduces usd_micros for ${r.surfaceKey}/${r.model} (${reMicros} vs stored ${r.usdMicros})`);
+    }
+    const { usdMicrosAtWrite } = await import("../agent/spend/pricing.js");
+    ok(usdMicrosAtWrite({ outputTokens: 1_000_000 }) === 2_000_000, "write-time pricing: a stampless call prices at the deploy's sole configured model, same as the read path's fallback");
+    ok(usdMicrosAtWrite({ inputTokens: 9_000_000 }, "mystery/unpriced") === 0, "write-time pricing: an unpriced model contributes $0 — never another model's rate, never a guess");
+  }
 
   const p = { org, platform: "slack", workspace: "T9", surface: "C1", workspaceKey: "slack/T9", surfaceKey: "slack/T9/C1", key: "slack/T9/C1" };
 
@@ -466,7 +488,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok(!(await scopeOverBudget(p as never, "channel", NOW_ISO)).over, "under the workspace $ cap -> not over");
 
   const store2 = await import("../agent/spend/store.js");
-  await store2.recordUsage(p as never, "2026-07", { inputTokens: 5, outputTokens: 5 });
+  await store2.recordSpend(p as never, { period: "2026-07", usage: { inputTokens: 5, outputTokens: 5 } });
   budgets = { perSurface: { "slack/T9/C1": { surfaceMonthlyTokens: 10, surfaceMonthlyUsd: 100 } } };
   const tokOver = await scopeOverBudget(p as never, "channel", NOW_ISO);
   ok(tokOver.over && !!tokOver.reason?.includes("tokens"), "a token cap on the same scope enforces through the same gate");
@@ -480,8 +502,8 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok((await scopeOverBudget(pThread as never, "channel", NOW_ISO)).over, "thread grain: a cap on the PARENT channel gates the thread's turns (via domainKey)");
   ok(!(await scopeOverBudget({ ...pThread, domainKey: undefined } as never, "channel", NOW_ISO)).over, "thread grain: no domainKey (fail-open ingress) → the thread checks its own key, today's behaviour");
   const beforeTokens = await store2.surfaceTokens(org, "slack/T9/C1", "2026-07");
-  await store2.recordUsage(pThread as never, "2026-07", { inputTokens: 7, outputTokens: 0 });
-  ok((await store2.surfaceTokens(org, "slack/T9/C1", "2026-07")) === beforeTokens + 7, "thread grain: recordUsage buckets thread usage under the PARENT channel's ledger");
+  await store2.recordSpend(pThread as never, { period: "2026-07", usage: { inputTokens: 7 } });
+  ok((await store2.surfaceTokens(org, "slack/T9/C1", "2026-07")) === beforeTokens + 7, "thread grain: recordSpend buckets thread usage under the PARENT channel's ledger");
   ok((await store2.surfaceTokens(org, "slack/T9/T_TH1", "2026-07")) === 0, "thread grain: nothing accumulates under the thread's own key");
 
   const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
@@ -527,14 +549,14 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const mk = (surface: string) => ({ org, platform: "slack", workspace: "T8", surface, workspaceKey: wsKey, surfaceKey: `${wsKey}/${surface}`, key: `${wsKey}/${surface}` });
 
   budgets3 = { perDomain: { "txn-team": { surfaceMonthlyTokens: 5 } } };
-  await store3.recordUsage(mk("C_TXN") as never, "2026-07", { inputTokens: 10, outputTokens: 0 });
+  await store3.recordSpend(mk("C_TXN") as never, { period: "2026-07", usage: { inputTokens: 10 } });
   ok((await scopeOverBudget(mk("C_TXN") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain[explicit]: gates an explicit domain's channel exactly like a perSurface entry would");
   ok(!(await scopeOverBudget(mk("C_OTHER") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain[explicit]: a channel OUTSIDE the domain (no perWorkspace/default either) stays uncapped");
 
   budgets3 = { perDomain: { "dm-crit": { surfaceMonthlyTokens: 1 }, "public-crit": { surfaceMonthlyTokens: 1 } } };
-  await store3.recordUsage(mk("D_USER1") as never, "2026-07", { inputTokens: 100, outputTokens: 0 });
+  await store3.recordSpend(mk("D_USER1") as never, { period: "2026-07", usage: { inputTokens: 100 } });
   ok(!(await scopeOverBudget(mk("D_USER1") as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, 'perDomain["dm-crit"]: an internal DM stays exempt from blocking even though its own perDomain cap is configured and breached');
-  await store3.recordUsage(mk("C_GUEST") as never, "2026-07", { inputTokens: 100, outputTokens: 0 });
+  await store3.recordSpend(mk("C_GUEST") as never, { period: "2026-07", usage: { inputTokens: 100 } });
   ok((await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "external")).over, 'perDomain["public-crit"]: an externally-shared channel (mode "channel", trust "external") IS gated by its criteria-domain cap');
   ok(!(await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "internal")).over, "perDomain[criteria]: the SAME surface with trust \"internal\" doesn't classify into public-crit, so no perDomain cap applies (and none else is configured)");
 
@@ -550,36 +572,31 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
   _resetPricingCacheForTest();
 
-  const { scopeUsdSpend, workspaceUsdSpendForCurrentMonth, workspaceUsdSpendForPeriod } = await import("../agent/spend/check.js");
+  const { scopeUsdSpend } = await import("../agent/spend/check.js");
   const { activeSpendLimitsForOrg } = await import("../agent/spend/caps.js");
-  const usageEvents = await import("../agent/spend/usage-events.js");
+  const { spendRollup } = await import("../agent/spend/store.js");
   const opStore = (await import("../agent/operational/provider.js")).getOperationalStore();
 
   const org = "usd-report-org";
   const wk = "slack/T7";
-  const row = (surfaceKey: string, ts: string, inputTokens: number) => usageEvents.appendUsageEvent({ org, surfaceKey, sessionId: `s-${surfaceKey}-${ts}`, ts, kind: "channel", model: "zai/glm-5.2", inputTokens });
+  const row = (surfaceKey: string, period: string, inputTokens: number) =>
+    store.recordSpend({ org, surfaceKey } as never, { period, usage: { inputTokens }, model: "zai/glm-5.2" });
 
-  await row(`${wk}/C1`, "2026-05-08T18:15:00Z", 1_000_000);
-  await row(`${wk}/C2`, "2026-05-09T18:15:00Z", 2_000_000);
-  await row(`${wk}/C1`, "2026-06-13T18:15:00Z", 5_000_000);
+  await row(`${wk}/C1`, "2026-05", 1_000_000);
+  await row(`${wk}/C2`, "2026-05", 2_000_000);
+  await row(`${wk}/C1`, "2026-06", 5_000_000);
 
   const NOW_ISO = "2026-06-20T00:00:00.000Z";
 
-  const ws = await workspaceUsdSpendForCurrentMonth(org, wk, NOW_ISO);
+  const june = (await spendRollup()).filter((r) => r.org === org && r.period === "2026-06");
   const viaScope = await scopeUsdSpend(org, wk, `${wk}/C1`, NOW_ISO);
-  ok(ws.workspaceUsd === viaScope.workspaceUsd, "workspaceUsdSpendForCurrentMonth: workspaceUsd matches scopeUsdSpend's own arithmetic");
-  ok(ws.bySurface.get(`${wk}/C1`) === viaScope.surfaceUsd, "workspaceUsdSpendForCurrentMonth: bySurface's C1 entry matches scopeUsdSpend's surfaceUsd");
-  ok(ws.bySurface.get(`${wk}/C1`) === 5 && ws.workspaceUsd === 5, "workspaceUsdSpendForCurrentMonth: only June's row counts for the current-month window (May's rows are out of window)");
+  const juneC1 = june.find((r) => r.surfaceKey === `${wk}/C1`);
+  ok(juneC1?.usd === viaScope.surfaceUsd, "spendRollup: a surface's usd equals the gate's scopeUsdSpend for the same period (report == gate)");
+  ok(june.reduce((sum, r) => sum + (r.surfaceKey.startsWith(`${wk}/`) ? r.usd : 0), 0) === viaScope.workspaceUsd, "spendRollup: the workspace's summed usd equals the gate's workspaceUsd");
+  ok(juneC1?.usd === 5 && juneC1.tokens === 5_000_000, "spendRollup: only June's rows count for June (May's rows are a different period)");
 
-  const may = await workspaceUsdSpendForPeriod(org, wk, "2026-05");
-  ok(may.workspaceUsd === 3, `workspaceUsdSpendForPeriod: May's two rows sum to $3, June's $5 excluded (got ${may.workspaceUsd})`);
-  ok(may.bySurface.get(`${wk}/C1`) === 1 && may.bySurface.get(`${wk}/C2`) === 2, "workspaceUsdSpendForPeriod: per-surface breakdown is correct for the past month");
-  ok(may.bySurface.get(`${wk}/C1`) !== undefined, "workspaceUsdSpendForPeriod: a mid-month row (the 10th) is inside the whole-month window");
-
-  await row(`${wk}/C1`, "2026-05-30T18:14:59.999Z", 500_000);
-  await row(`${wk}/C1`, "2026-06-01T00:00:00.000Z", 999_000_000);
-  const mayAfter = await workspaceUsdSpendForPeriod(org, wk, "2026-05");
-  ok(Math.abs(mayAfter.workspaceUsd - 3.5) < 1e-9, "workspaceUsdSpendForPeriod: the month's last millisecond is included, the next month's first instant is not");
+  const may = (await spendRollup()).filter((r) => r.org === org && r.period === "2026-05");
+  ok(may.find((r) => r.surfaceKey === `${wk}/C1`)?.usd === 1 && may.find((r) => r.surfaceKey === `${wk}/C2`)?.usd === 2, "spendRollup: a past period's per-surface breakdown is intact ($1 + $2 in May)");
 
   await opStore.setSpendLimit(org, `${wk}/C1`, "surface", { monthlyUsd: 10 }, { reason: "active" });
   await opStore.setSpendLimit(org, wk, "workspace", { monthlyUsd: 20 }, { reason: "expired", expiresAt: Date.now() - 1000 });

@@ -18,7 +18,7 @@ const { default: discordGateway } = await import("@open-everywhere/provider-disc
 const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
 const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
 const { getOperationalStore } = await import("@open-everywhere/core/agent/operational/provider.js");
-const { recordUsage } = await import("@open-everywhere/core/agent/spend/store.js");
+const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
 const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
 const { markThreadEngaged } = await import("@open-everywhere/core/agent/channels/engagement.js");
 const { resolvePartition } = await import("@open-everywhere/core/agent/memory/partition.js");
@@ -142,8 +142,8 @@ await scenario("05-card-suppression", async (s) => {
 await scenario("06-cap-decline-nonadmin", async (s) => {
   const p = partitionFor({ userId: "U_RANDO6", guildId: "G6", channelId: "C6", channelType: "0" });
   await getOperationalStore().setSpendLimit(p.org, p.surfaceKey, "surface", { monthlyTokens: 50 }, { setBy: "scenario-seed" });
-  await recordUsage(p, periodOf(new Date().toISOString()), { inputTokens: 200, outputTokens: 5 });
-  s.note(`surface cap 50 tokens/month on ${p.surfaceKey}; 205 tokens already recorded (real setSpendLimit + recordUsage)`);
+  await recordSpend(p, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 200, outputTokens: 5 } });
+  s.note(`surface cap 50 tokens/month on ${p.surfaceKey}; 205 tokens already recorded (real setSpendLimit + recordSpend)`);
   await s.inbound({
     id: "M61",
     content: "<@BOT> summarize this thread",
@@ -158,7 +158,7 @@ await scenario("06-cap-decline-nonadmin", async (s) => {
 await scenario("07-cap-admin-bypass-throttle", async (s) => {
   const p = partitionFor({ userId: "U_ADMIN7", guildId: "G7", channelId: "C7", channelType: "0" });
   await getOperationalStore().setSpendLimit(p.org, p.surfaceKey, "surface", { monthlyTokens: 50 }, { setBy: "scenario-seed" });
-  await recordUsage(p, periodOf(new Date().toISOString()), { inputTokens: 200, outputTokens: 5 });
+  await recordSpend(p, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 200, outputTokens: 5 } });
   s.note(`surface cap 50 tokens/month on ${p.surfaceKey}; 205 tokens already recorded; author U_ADMIN7 is an org-roster admin`);
   await s.inbound({
     id: "M71",

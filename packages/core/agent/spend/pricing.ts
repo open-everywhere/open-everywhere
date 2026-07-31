@@ -110,6 +110,15 @@ export interface UsageTokens {
   readonly cacheReadTokens?: number;
 }
 
+export function usdMicrosAtWrite(usage: UsageTokens, model?: string): number {
+  const pricing = model ? modelPricing(model) : ((): ModelPricing | undefined => {
+    const sole = soleConfiguredModel();
+    return sole ? modelPricing(sole) : undefined;
+  })();
+  const cost = estimateCostUsd(usage, pricing);
+  return cost === undefined ? 0 : Math.round(cost * 1_000_000);
+}
+
 export function estimateCostUsd(usage: UsageTokens, pricing: ModelPricing | undefined): number | undefined {
   if (!pricing) return undefined;
   const input = usage.inputTokens ?? 0;

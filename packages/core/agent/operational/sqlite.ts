@@ -1,9 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { SurfaceLedger, Usage } from "../spend/spend.js";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type OrgSurfaceLedger, type SlackAttachmentRow, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -28,15 +27,23 @@ function getDb(): DatabaseSync {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const handle = new DatabaseSync(path);
   handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+  const spendCols = handle.prepare("SELECT name FROM pragma_table_info('spend_ledger')").all() as { name: string }[];
+  if (spendCols.length > 0 && !spendCols.some((c) => c.name === "usd_micros")) handle.exec("DROP TABLE spend_ledger");
   handle.exec(`
     CREATE TABLE IF NOT EXISTS spend_ledger (
-      org_id        TEXT NOT NULL,
-      surface_key   TEXT NOT NULL,
-      period        TEXT NOT NULL,            -- "YYYY-MM"
-      input_tokens  INTEGER NOT NULL DEFAULT 0,
-      output_tokens INTEGER NOT NULL DEFAULT 0,
-      calls         INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (org_id, surface_key, period)
+      org_id             TEXT NOT NULL,
+      surface_key        TEXT NOT NULL,
+      principal_id       TEXT NOT NULL DEFAULT '',  -- '' = unattributed (PK columns can't be NULL)
+      routine_id         TEXT NOT NULL DEFAULT '',  -- '' = not a routine turn
+      model              TEXT NOT NULL DEFAULT '',  -- '' = no model (unstamped call; sandbox runtime)
+      period             TEXT NOT NULL,             -- "YYYY-MM"
+      input_tokens       INTEGER NOT NULL DEFAULT 0,
+      output_tokens      INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      usd_micros         INTEGER NOT NULL DEFAULT 0, -- millionths of a dollar, priced at write
+      calls              INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (org_id, surface_key, principal_id, routine_id, model, period)
     );
     CREATE TABLE IF NOT EXISTS routine (
       org_id      TEXT NOT NULL,
@@ -392,12 +399,36 @@ export function _resetOperationalDbForTest(): void {
   openedPath = null;
 }
 
-function rowsToLedger(rows: { period: string; input_tokens: number; output_tokens: number; calls: number }[]): SurfaceLedger {
-  const ledger: SurfaceLedger = { windows: {} };
-  for (const r of rows) {
-    ledger.windows[r.period] = { inputTokens: r.input_tokens, outputTokens: r.output_tokens, calls: r.calls };
-  }
-  return ledger;
+type SpendLedgerDbRow = {
+  org_id: string;
+  surface_key: string;
+  principal_id: string;
+  routine_id: string;
+  model: string;
+  period: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  usd_micros: number;
+  calls: number;
+};
+
+function spendRowFrom(r: SpendLedgerDbRow): SpendLedgerRow {
+  return {
+    org: r.org_id,
+    surfaceKey: r.surface_key,
+    principalId: r.principal_id,
+    routineId: r.routine_id,
+    model: r.model,
+    period: r.period,
+    inputTokens: r.input_tokens,
+    outputTokens: r.output_tokens,
+    cacheReadTokens: r.cache_read_tokens,
+    cacheWriteTokens: r.cache_write_tokens,
+    usdMicros: r.usd_micros,
+    calls: r.calls,
+  };
 }
 
 type UsageEventRow = {
@@ -476,41 +507,66 @@ export const sqliteOperationalStore: OperationalStore = {
   id: "sqlite",
   root: dbPath,
 
-  async recordUsage(org, surfaceKey, period, usage: Usage) {
+  async recordSpend(org, write: SpendLedgerWrite) {
     getDb()
       .prepare(
-        `INSERT INTO spend_ledger (org_id, surface_key, period, input_tokens, output_tokens, calls)
-         VALUES (?, ?, ?, ?, ?, 1)
-         ON CONFLICT(org_id, surface_key, period) DO UPDATE SET
-           input_tokens  = input_tokens  + excluded.input_tokens,
-           output_tokens = output_tokens + excluded.output_tokens,
-           calls         = calls + 1`,
+        `INSERT INTO spend_ledger
+           (org_id, surface_key, principal_id, routine_id, model, period,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_micros, calls)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(org_id, surface_key, principal_id, routine_id, model, period) DO UPDATE SET
+           input_tokens       = input_tokens       + excluded.input_tokens,
+           output_tokens      = output_tokens      + excluded.output_tokens,
+           cache_read_tokens  = cache_read_tokens  + excluded.cache_read_tokens,
+           cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+           usd_micros         = usd_micros         + excluded.usd_micros,
+           calls              = calls + 1`,
       )
-      .run(org, surfaceKey, period, usage.inputTokens ?? 0, usage.outputTokens ?? 0);
+      .run(
+        org,
+        write.surfaceKey,
+        write.principalId ?? "",
+        write.routineId ?? "",
+        write.model ?? "",
+        write.period,
+        write.inputTokens ?? 0,
+        write.outputTokens ?? 0,
+        write.cacheReadTokens ?? 0,
+        write.cacheWriteTokens ?? 0,
+        write.usdMicros ?? 0,
+      );
   },
 
-  async surfaceLedger(org, surfaceKey) {
-    const rows = getDb()
-      .prepare("SELECT period, input_tokens, output_tokens, calls FROM spend_ledger WHERE org_id = ? AND surface_key = ?")
-      .all(org, surfaceKey) as { period: string; input_tokens: number; output_tokens: number; calls: number }[];
-    return rowsToLedger(rows);
+  async spendTotals(org, filter: SpendLedgerFilter = {}): Promise<SpendTotals> {
+    const { conjuncts, params } = spendLedgerConjuncts(filter);
+    const row = getDb()
+      .prepare(
+        `SELECT COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+                COALESCE(SUM(usd_micros), 0) AS usd_micros,
+                COALESCE(SUM(calls), 0) AS calls
+         FROM spend_ledger WHERE ${["org_id = ?", ...conjuncts].join(" AND ")}`,
+      )
+      .get(org, ...params) as { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; usd_micros: number; calls: number };
+    return {
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      usdMicros: row.usd_micros,
+      calls: row.calls,
+    };
   },
 
-  async allLedgers() {
-    const rows = getDb()
-      .prepare("SELECT org_id, surface_key, period, input_tokens, output_tokens, calls FROM spend_ledger")
-      .all() as { org_id: string; surface_key: string; period: string; input_tokens: number; output_tokens: number; calls: number }[];
-    const byKey = new Map<string, OrgSurfaceLedger>();
-    for (const r of rows) {
-      const k = `${r.org_id} ${r.surface_key}`;
-      let entry = byKey.get(k);
-      if (!entry) {
-        entry = { org: r.org_id, surfaceKey: r.surface_key, ledger: { windows: {} } };
-        byKey.set(k, entry);
-      }
-      entry.ledger.windows[r.period] = { inputTokens: r.input_tokens, outputTokens: r.output_tokens, calls: r.calls };
-    }
-    return [...byKey.values()];
+  async listSpendLedger(org?: string) {
+    const rows = (
+      org !== undefined
+        ? getDb().prepare("SELECT * FROM spend_ledger WHERE org_id = ?").all(org)
+        : getDb().prepare("SELECT * FROM spend_ledger").all()
+    ) as SpendLedgerDbRow[];
+    return rows.map(spendRowFrom);
   },
 
   async listRoutines(org, surfaceKey) {
