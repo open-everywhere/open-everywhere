@@ -1,5 +1,5 @@
 import { appendAudit } from "../audit/audit.js";
-import { bindFrom, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "./config.js";
 import { governanceChannelFor, governanceDeliveryMode, governanceDomains, isGovernanceChannel, type Domain } from "../memory/domain.js";
@@ -82,7 +82,7 @@ async function resolvePaneVenue(ctx: BindableContext): Promise<VenueResolution> 
   const b = bindFrom(ctx);
   const part = resolvePartition(ctx);
   const coords = { org: part.org, platform: part.platform, workspace: part.workspace, surface: part.surface };
-  const base = { domains, channelKey: part.surfaceKey, principalId: b.principalId, coords };
+  const base = { domains, channelKey: part.surfaceKey, principalId: actingPrincipalId(b), coords };
 
   const dmFallback = governanceDeliveryMode(domains) === "dm-fallback";
   if (governanceDomains(domains).length === 0 && !dmFallback) {

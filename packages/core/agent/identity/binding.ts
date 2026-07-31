@@ -22,6 +22,7 @@ export interface SurfaceBinding {
   readonly visibility: Visibility;
   readonly trust: Trust;
   readonly principalId?: string;
+  readonly principalAttested?: true;
   readonly target?: Readonly<Record<string, unknown>>;
   readonly threadTs?: string;
 }
@@ -69,6 +70,20 @@ function attr(a: AuthPrincipal["attributes"], keys: readonly string[]): string |
     if (Array.isArray(v) && typeof v[0] === "string" && v[0].length > 0) return v[0];
   }
   return undefined;
+}
+
+export const FIRE_PRINCIPAL_ATTR = "oe_fire_principal";
+export const FIRE_PRINCIPAL_TRUST_ATTR = "oe_fire_principal_trust";
+
+function attestedFirePrincipal(ctx: BindableContext): { readonly id: string; readonly internal: boolean } | undefined {
+  const a = authOf(ctx)?.attributes;
+  const id = attr(a, [FIRE_PRINCIPAL_ATTR, "oeFirePrincipal"]);
+  if (id === undefined) return undefined;
+  return { id, internal: attr(a, [FIRE_PRINCIPAL_TRUST_ATTR, "oeFirePrincipalTrust"]) === "internal" };
+}
+
+export function actingPrincipalId(binding: SurfaceBinding): string | undefined {
+  return binding.principalAttested ? undefined : binding.principalId;
 }
 
 export interface RawIdentity {
@@ -231,10 +246,12 @@ export function bindBridged(bridged: BridgedIdentity): { platform: string; raw: 
 export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
   let raw = (MAPPERS[platform] ?? bindLocal)(ctx);
+  let fire = attestedFirePrincipal(ctx);
   if (raw.workspace === undefined && raw.surface === undefined) {
     const bridged = readBindingBridge();
     if (bridged) {
       ({ platform, raw } = bindBridged(bridged));
+      fire ??= attestedFirePrincipal(bridgedContext(bridged));
       console.warn(
         `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
       );
@@ -247,8 +264,16 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   const vouched = isVouchedInternal(`${platform}/${workspace}`, `${platform}/${workspace}/${surface}`)
     ? ("internal" as const)
     : undefined;
-  let trust = raw.trust ?? vouched ?? local.trust ?? (platform === "local" ? "internal" : "external");
-  if (mode === "dm" && platform !== "local" && process.env.OE_TRUST !== "internal" && !raw.trustVerified && vouched !== "internal") {
+  const fireTrust: Trust | undefined = fire?.internal === true ? "internal" : undefined;
+  let trust = raw.trust ?? fireTrust ?? vouched ?? local.trust ?? (platform === "local" ? "internal" : "external");
+  if (
+    mode === "dm" &&
+    platform !== "local" &&
+    process.env.OE_TRUST !== "internal" &&
+    !raw.trustVerified &&
+    vouched !== "internal" &&
+    fire?.internal !== true
+  ) {
     trust = "external";
   }
   return {
@@ -261,7 +286,8 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     mode,
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
-    principalId: raw.principalId ?? local.principalId,
+    principalId: fire?.id ?? raw.principalId ?? local.principalId,
+    ...(fire ? { principalAttested: true as const } : {}),
     target: raw.target,
     threadTs: raw.threadTs,
   };

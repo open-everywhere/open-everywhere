@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { resolveMode, principalIdOf } from "../access/request.js";
+import { resolveMode, actingPrincipalIdOf } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { computeNextRun, parseCron } from "../routines/schedule.js";
 import { assertReportConsistent, describeTrigger, type RoutineReport, type RoutineTrigger } from "../routines/routine.js";
@@ -273,7 +273,7 @@ export default defineTool({
         throw new Error("I can't run a durable job from a DM — a job keeps going until it decides it's finished, with nobody but you ever seeing it. Ask me in a channel and I'll set it up there.");
       }
     }
-    const createdBy = principalIdOf(ctx);
+    const createdBy = actingPrincipalIdOf(ctx);
     if (!createdBy) {
       throw new Error("create_routine needs a verified sender to gate the write — no principal id resolved, so there's no requester to show on the approval card.");
     }

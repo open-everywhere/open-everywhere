@@ -1,6 +1,7 @@
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { jobFireAttrs } from "../access/job-posture.js";
 import type { SessionMode } from "../access/resolver.js";
+import { FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR } from "../identity/binding.js";
 import { isJobRoutine, isSilentRoutine, routineGrantKey, ROUTINE_MARKER, type Routine } from "./routine.js";
 
 export function routineFireAttributes(
@@ -8,10 +9,13 @@ export function routineFireAttributes(
   destAttributes: Readonly<Record<string, string>>,
   mode: SessionMode,
   internal: boolean,
+  creatorInternal?: boolean,
 ): Record<string, string> {
   return {
     ...destAttributes,
     ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+    ...(r.createdBy ? { [FIRE_PRINCIPAL_ATTR]: r.createdBy } : {}),
+    ...(creatorInternal === true ? { [FIRE_PRINCIPAL_TRUST_ATTR]: "internal" } : {}),
     ...rootDmGrainAttrs(
       mode === "dm" || mode === "mpim" || destAttributes["chat_type"] === "group" || destAttributes["chat_type"] === "supergroup",
     ),

@@ -1,4 +1,4 @@
-import { bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
 
@@ -12,7 +12,7 @@ export interface Role {
 const NO_ROLE: Role = { isOrgAdmin: false, isDomainAdmin: false };
 
 export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain[]): Role {
-  const principalId = binding.principalId;
+  const principalId = actingPrincipalId(binding);
   if (!principalId) return NO_ROLE;
 
   const org = criteriaDomain("org", domains);

@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf } from "../access/request.js";
 import { getRoutine, updateRoutine } from "../routines/store.js";
 import { describeTrigger, isClockScheduled } from "../routines/routine.js";
 import { auditRoutineRunNow } from "../routines/fire-audit.js";
@@ -34,7 +34,7 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 
-    const requestedBy = principalIdOf(ctx);
+    const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
         "run_routine_now needs a verified sender — an unattended routine fire has no principal, and a routine may not re-trigger itself or another routine. Ask a person in this conversation to run it.",

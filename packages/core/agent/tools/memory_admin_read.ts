@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { adminControlRoles } from "../access/roles.js";
 import { memoryReadView } from "../control/views.js";
@@ -26,16 +26,17 @@ export default defineTool({
   approval: never(),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
-    if (!binding.principalId) {
+    const caller = actingPrincipalId(binding);
+    if (!caller) {
       throw new Error(
         "memory_admin_read needs a verified sender on this turn — no principal id resolved, so there's no caller to check admin standing for.",
       );
     }
     const domains = getConfig().loadDomains();
-    const roles = adminControlRoles(binding.principalId, domains);
+    const roles = adminControlRoles(caller, domains);
     if (roles.length === 0) {
       throw new Error(
-        `memory_admin_read requires an org admin, or a domain admin for at least one memory domain. Your id ("${binding.principalId}") ` +
+        `memory_admin_read requires an org admin, or a domain admin for at least one memory domain. Your id ("${caller}") ` +
           `isn't listed on the "org" pseudo-domain's admins or any explicit domain's admins (Domain.admins, agent/memory/domains.ts).`,
       );
     }

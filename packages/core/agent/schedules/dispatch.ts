@@ -2,6 +2,7 @@ import { defineSchedule, type ScheduleHandlerArgs } from "eve/schedules";
 import { bridgeConfirmChannelInternal, bridgeSlackForm } from "../channels/slack-bridge.js";
 import { resolveRoutineTarget } from "./routine-dispatch.js";
 import { routineFireAttributes } from "../routines/fire-auth.js";
+import { recheckFireCreator, type CreatorStandingCheck } from "../routines/fire-creator.js";
 import { divertTriggeredFire, jobFireSeatKey, runFireSeatKey } from "../routines/fire-window.js";
 import { mintWakeId, type UnifiedWakeOrigin } from "../channels/unified-window.js";
 import { auditRoutineFireLost, auditRoutineSkip } from "../routines/fire-audit.js";
@@ -54,6 +55,7 @@ export async function dispatchTick(
     readonly now?: Date;
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
     readonly postJobKickoff?: (channelId: string, text: string) => Promise<string | undefined>;
+    readonly confirmCreatorInternal?: CreatorStandingCheck;
   },
 ): Promise<void> {
   const { receive, waitUntil, appAuth } = args;
@@ -159,11 +161,18 @@ export async function dispatchTick(
           : undefined;
       const internal =
         slackChannelId !== undefined && mode === "channel" ? await confirmInternal(slackChannelId).catch(() => false) : false;
+      const creatorInternal = await recheckFireCreator({
+        createdBy: r.createdBy,
+        platform: firePlatform,
+        mode,
+        workspaceId: fireSurfaceKey.split("/")[1],
+        ...(args.confirmCreatorInternal ? { check: args.confirmCreatorInternal } : {}),
+      }).catch(() => undefined);
       const markedAuth = {
         ...appAuth,
         attributes: {
           ...appAuth.attributes,
-          ...routineFireAttributes(r, dest.attributes, mode, internal),
+          ...routineFireAttributes(r, dest.attributes, mode, internal, creatorInternal),
         },
       };
       const fireOrigin: UnifiedWakeOrigin | undefined =
