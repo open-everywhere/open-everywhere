@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf } from "../access/request.js";
 import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
@@ -41,9 +41,9 @@ export default windowGated("delete_skill", defineTool({
     if (!hasApprovalCardPath(binding.platform)) {
       throw new Error(`delete_skill needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm the removal.`);
     }
-    const requestedBy = principalIdOf(ctx);
+    const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
-      throw new Error("delete_skill needs a verified sender to gate the removal — no principal id resolved, so there's no requester to show on the approval card.");
+      throw new Error("delete_skill needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a guardrail the domain's later turns rely on. Ask a person in this conversation to propose it.");
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {

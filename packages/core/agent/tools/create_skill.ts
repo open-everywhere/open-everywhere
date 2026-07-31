@@ -3,7 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf, resolveAccessFor } from "../access/request.js";
+import { actingPrincipalIdOf, resolveAccessFor } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
@@ -74,9 +74,9 @@ export default windowGated("create_skill", defineTool({
     if (!hasApprovalCardPath(binding.platform)) {
       throw new Error(`create_skill needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and arm the skill body before it can be followed.`);
     }
-    const authoredBy = principalIdOf(ctx);
+    const authoredBy = actingPrincipalIdOf(ctx);
     if (!authoredBy) {
-      throw new Error("create_skill needs a verified sender to gate the write — no principal id resolved, so there's no author to show on the approval card.");
+      throw new Error("create_skill needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not author standing instructions every later turn of the domain will follow. Ask a person in this conversation to propose it.");
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {

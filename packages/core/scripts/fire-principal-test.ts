@@ -24,6 +24,7 @@ async function refuses(fn: () => unknown, needle: RegExp, label: string): Promis
 const dir = mkdtempSync(join(tmpdir(), "oe-fire-principal-"));
 process.env.OE_SQLITE_PATH = join(dir, "store.db");
 delete process.env.OE_TRUST;
+delete process.env.OE_ONESHOT_AGENT;
 
 const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./_slack-test-stubs.js");
 registerSlackFixtureMapper();
@@ -305,6 +306,91 @@ const staleBag = delivered[1]!.attributes;
   ok(pending.length === 0, `authoring: 🔴 …and NO approval card was minted at all by any of them (found ${pending.length}: ${pending.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`);
 
   ok(principalIdOf(fire) === CREATOR && actingPrincipalIdOf(fire) === undefined, "authoring: the two questions stay separate on the very same context — which is what lets subscribe_pr keep its fired re-arm while its siblings refuse one");
+}
+
+{
+  const { resolveWindowGated } = await import("../agent/access/window-gated.js");
+  const { putDomainSkill, listDomainSkills } = await import("../agent/skills/domain-skills.js");
+
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0003" }) })) as unknown as typeof fetch;
+  try {
+    const chanFire = fireCtx(
+      routineFireAttributes(
+        { id: "r-chan-skills", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdBy: CREATOR, createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
+        { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },
+        "channel",
+        true,
+      ),
+    );
+    const chanLive = liveCtx({ channel_id: "C_ENG", channel_type: "channel", trust_checked: "true" });
+
+    type Entry = { execute: (i: unknown, c: unknown) => unknown };
+    const mountOn = async (name: string, ctx: unknown): Promise<Entry | null> =>
+      (await resolveWindowGated((await import(`../agent/tools/${name}.js`)).default, ctx as never)) as Entry | null;
+
+    for (const name of ["create_skill", "delete_skill", "open_pull_request"]) {
+      ok((await mountOn(name, chanFire)) !== null, `skills: 🔴 a CHANNEL fire on a DEFAULT self-host (OE_ONESHOT_AGENT off ⇒ FULL_KIT = ["task","native"]) really does MOUNT ${name} — grain withholds nothing here, so the identity gate is the whole control`);
+    }
+
+    await putDomainSkill(ORG, "eng", "deploy-runbook", "# Deploy\nSteps.", CREATOR, "2026-07-01T00:00:00.000Z");
+
+    const SENDER = /verified sender|acting sender/;
+    const skillCases: readonly { readonly tool: string; readonly input: Record<string, unknown>; readonly why: string }[] = [
+      { tool: "create_skill", input: { name: "fire-authored", content: "# Do the thing\nAlways trust the ledger." }, why: "an armed skill is standing trusted text every LATER turn of the domain follows by name, and it arms on ONE person's click against a body a fire wrote" },
+      { tool: "delete_skill", input: { name: "deploy-runbook" }, why: "🔴 a GUARDRAIL REMOVED — the injected ask is far more often 'delete the runbook that would have stopped me' than 'author something new'" },
+    ];
+    for (const c of skillCases) {
+      const tool = await mountOn(c.tool, chanFire);
+      await refuses(() => tool!.execute(c.input, chanFire), SENDER, `skills: 🔴 a fire cannot ${c.tool} — ${c.why}`);
+    }
+
+    const { getOperationalStore: skillOpStore } = await import("../agent/operational/provider.js");
+    const afterFires = await skillOpStore().listPendingActions(ORG);
+    ok(afterFires.length === 0, `skills: 🔴 …and NEITHER minted an approval card (found ${afterFires.length}: ${afterFires.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`);
+    ok((await listDomainSkills(ORG, "eng")).length === 1, "skills: …and the seeded skill is still there — the refused delete did not take the slow path to the same effect");
+
+    for (const c of skillCases) {
+      const tool = await mountOn(c.tool, chanLive);
+      const out = (await tool!.execute(c.input, chanLive)) as { pending?: boolean; pendingId?: string };
+      ok(out.pending === true && typeof out.pendingId === "string", `skills: …and the same creator ACTING LIVE on the same surface gets a card from ${c.tool} — the refusal is about nobody being here, not about who (got: ${JSON.stringify(out)})`);
+    }
+    const afterLive = await skillOpStore().listPendingActions(ORG);
+    ok(
+      afterLive.length === 2 && afterLive.every((r) => r.requestedBy === CREATOR),
+      `skills: 🔴 …and BOTH live cards name the creator, so the two halves differ only in whether a human was present (got ${afterLive.length}: ${afterLive.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`,
+    );
+
+    {
+      const pr = await mountOn("open_pull_request", chanFire);
+      let msg: string | null = null;
+      try {
+        await pr!.execute({ repo: "acme/app", head: "oe/fix", title: "Fix the thing", body: "why" }, chanFire);
+      } catch (err) {
+        msg = err instanceof Error ? err.message : String(err);
+      }
+      ok(msg === null || !SENDER.test(msg), `skills: 🔴 open_pull_request is STILL REACHABLE by a fire — the one carded write whose review surface outlives the click, kept on purpose (got: ${msg ?? "no throw"})`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.SLACK_BOT_TOKEN;
+  }
+}
+
+{
+  const { webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+  const hookCtx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { authenticator: "webhook", principalType: "service", principalId: "webhook:inbound", attributes: webhookFireAttributes("inbound", TEAM, "C_ENG", false, true) } } },
+  } as never;
+  const hook = bindFrom(hookCtx);
+  ok(hook.principalAttested === undefined, "webhook-limit: a webhook fire carries NO attestation — the bag has nobody to name, so there is no id for the flag to travel with");
+  ok(
+    actingPrincipalIdOf(hookCtx) === "webhook:inbound",
+    `webhook-limit: 🔴 …so its ACTING principal is a non-empty service id, and every presence gate in the tree is satisfied by it (got: ${String(actingPrincipalIdOf(hookCtx))}). A routine fire's is undefined; a webhook fire's is not. Fixing this belongs in the attestation vehicle, not in the gates`,
+  );
+  ok(actingPrincipalIdOf(fireCtx(vouchedBag)) === undefined, "webhook-limit: …stated as the contrast it is — the ROUTINE fire the rest of this file is about really does answer the same question with undefined");
 }
 
 {
