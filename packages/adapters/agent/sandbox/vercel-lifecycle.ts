@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { domainKeyOf, resolvePartition, appendUsageEvent, recordSpend, periodOf, estimateSandboxCostUsd } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);
@@ -78,6 +78,8 @@ async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
 export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandbox[]): Promise<void> {
   try {
     const p = resolvePartition(ctx);
+    const principalId = bindFrom(ctx).principalId;
+    const routineId = routineIdOf(ctx);
     for (const s of stopped) {
       const sandboxSeconds = Math.round(s.sandboxSeconds);
       await appendUsageEvent({
@@ -85,6 +87,8 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
         surfaceKey: domainKeyOf(p),
         sessionId: ctx.session.id,
         kind: "sandbox",
+        principalId,
+        ...(routineId !== undefined ? { routineId } : {}),
         inputTokens: 0,
         outputTokens: 0,
         cacheReadTokens: 0,
@@ -95,6 +99,8 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
         await recordSpend(p, {
           period: periodOf(new Date().toISOString()),
           usage: {},
+          principalId,
+          routineId,
           model: "",
           usdMicros: Math.round(estimateSandboxCostUsd(sandboxSeconds) * 1_000_000),
         });

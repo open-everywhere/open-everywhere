@@ -128,8 +128,44 @@ const ok = (cond: boolean, label: string) => {
   ok(totals.inputTokens === 0 && totals.outputTokens === 0, "…with zero tokens — runtime is not model spend, and a token cap is unaffected");
   ok(totals.calls === 1, "…and one ledger write per stopped sandbox");
 
+  const fireCtx = {
+    channel: { kind: "slack" },
+    session: {
+      id: "sess-fire-ledger",
+      auth: {
+        current: {
+          attributes: {
+            team_id: "T1",
+            channel_id: "C_SBX2",
+            open_everywhere_routine_id: "r-sbx",
+            open_everywhere_routine_surface: "slack/T1/C_SBX2",
+            open_everywhere_routine_org: "default",
+            oe_fire_principal: "U_CREATOR",
+          },
+        },
+      },
+    },
+  };
+  await recordSandboxUsage(fireCtx as never, [{ name: "sbx-fire", sandboxSeconds: 1800 }]);
+  const p2 = resolvePartition(fireCtx as never);
+  const attributed = await spendTotals(p2.org, {
+    surfaceKey: domainKeyOf(p2),
+    principalId: "U_CREATOR",
+    period: periodOf(new Date().toISOString()),
+  });
+  ok(
+    attributed.usdMicros === Math.round(estimateSandboxCostUsd(1800) * 1_000_000) && attributed.usdMicros > 0,
+    `OPE-275: a fire's sandbox $ lands on its CREATOR's ledger rows — the perUser axis can now see delegated runtime (got ${attributed.usdMicros} micros under U_CREATOR)`,
+  );
+  const byRoutine = await spendTotals(p2.org, {
+    surfaceKey: domainKeyOf(p2),
+    routineId: "r-sbx",
+    period: periodOf(new Date().toISOString()),
+  });
+  ok(byRoutine.usdMicros === attributed.usdMicros, "OPE-275: …and on the ROUTINE's own dimension, so a routine's reported cost includes its compute");
+
   rmSync(dir, { recursive: true, force: true });
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record)\n`);
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution)\n`);
