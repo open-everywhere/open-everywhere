@@ -224,6 +224,56 @@ const staleBag = delivered[1]!.attributes;
 }
 
 {
+  const fire = fireCtx(vouchedBag);
+  const live = liveCtx({ channel_id: "D_CREATOR" });
+  const dmPartition = partitionFor(`slack/${TEAM}/D_CREATOR`);
+
+  await store.addRoutine(dmPartition, {
+    id: "r-dm-off",
+    org: ORG,
+    surfaceKey: `slack/${TEAM}/D_CREATOR`,
+    target: { channelId: "D_CREATOR" },
+    trigger: { kind: "cron", expr: "0 9 * * *" },
+    prompt: "brief me",
+    createdBy: CREATOR,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    status: "disabled",
+    disabledReason: "three consecutive failures",
+    consecutiveFailures: 3,
+  } as never);
+
+  const load = async (name: string) => (await import(`../agent/tools/${name}.js`)).default as { execute: (i: unknown, c: unknown) => unknown };
+  const SENDER = /verified sender|acting sender/;
+  const passesSenderGate = async (fn: () => unknown, label: string): Promise<void> => {
+    let msg: string | null = null;
+    try {
+      await fn();
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    ok(msg === null || !SENDER.test(msg), `${label} (got: ${msg ?? "no throw"})`);
+  };
+
+  const cases: readonly { readonly tool: string; readonly input: Record<string, unknown>; readonly why: string }[] = [
+    { tool: "cancel_routine", input: { id: "r-dm-ok" }, why: "cancelling is a GUARDRAIL REMOVED — the injected ask is far more often 'stop the watch that would notice me' than 'arm something in my name'" },
+    { tool: "edit_routine", input: { id: "r-dm-ok", prompt: "Do something else entirely." }, why: "an edit REWRITES the trusted text future fires are handed — a fire that could propose one could propose its own next doctrine" },
+    { tool: "enable_routine", input: { id: "r-dm-off" }, why: "a re-arm resurrects what the three-strike guard stopped — the stopped thing lobbying for its own return" },
+    { tool: "revoke_routine_permissions", input: { id: "r-dm-ok" }, why: "🔴 no card at all (open tier) — the sender gate is the ONLY control, so a fire reaching it disarms a routine silently and blames the creator in the audit row" },
+  ];
+  for (const c of cases) {
+    const tool = await load(c.tool);
+    await refuses(() => tool.execute(c.input, fire), SENDER, `authoring: 🔴 a fire cannot ${c.tool} — ${c.why}`);
+    await passesSenderGate(() => tool.execute(c.input, live), `authoring: …and the same creator ACTING LIVE clears ${c.tool}'s sender gate — the refusal is about nobody being here, not about who`);
+  }
+
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const pending = await getOperationalStore().listPendingActions(ORG);
+  ok(pending.length === 0, `authoring: 🔴 …and NO approval card was minted at all by any of them (found ${pending.length}: ${pending.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`);
+
+  ok(principalIdOf(fire) === CREATOR && actingPrincipalIdOf(fire) === undefined, "authoring: the two questions stay separate on the very same context — which is what lets subscribe_pr keep its fired re-arm while its siblings refuse one");
+}
+
+{
   const chanAttrs = routineFireAttributes(
     { id: "r-c", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdBy: CREATOR, createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
     { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },

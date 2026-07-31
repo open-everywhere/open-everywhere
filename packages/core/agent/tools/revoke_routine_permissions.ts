@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf } from "../access/request.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { listRoutinePermissions, revokeRoutinePermissions } from "../routines/grants.js";
@@ -26,10 +26,10 @@ export default defineTool({
     const p = resolvePartition(ctx);
     const id = input.id.trim();
 
-    const requestedBy = principalIdOf(ctx);
+    const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
-        "revoke_routine_permissions needs a verified sender so the audit log can name who withdrew the permissions. Ask a person in this conversation to run it.",
+        "revoke_routine_permissions needs a verified sender so the audit log can name who withdrew the permissions — a triggered routine fire has no acting sender (only the creator it is attributed to). Ask a person in this conversation to run it.",
       );
     }
 

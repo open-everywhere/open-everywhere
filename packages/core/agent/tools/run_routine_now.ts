@@ -37,7 +37,7 @@ export default defineTool({
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
-        "run_routine_now needs a verified sender — an unattended routine fire has no principal, and a routine may not re-trigger itself or another routine. Ask a person in this conversation to run it.",
+        "run_routine_now needs a verified sender — an unattended routine fire has no acting sender (only the creator it is attributed to), and a routine may not re-trigger itself or another routine. Ask a person in this conversation to run it.",
       );
     }
 

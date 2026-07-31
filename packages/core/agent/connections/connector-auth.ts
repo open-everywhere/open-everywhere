@@ -18,7 +18,7 @@ import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { connectorOpTieringEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
-import { bindFrom, deploymentOrg } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
   requireUserAuthFlow,
@@ -168,7 +168,7 @@ export async function resolveDmPrincipal(
   if (!bindCtx) return {};
   try {
     const b = bindFrom(bindCtx);
-    return { mode: b.mode, principalId: b.principalId };
+    return { mode: b.mode, principalId: actingPrincipalId(b) };
   } catch {
     return {};
   }

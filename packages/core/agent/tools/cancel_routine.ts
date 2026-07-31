@@ -2,10 +2,11 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
+import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -38,20 +39,21 @@ export default defineTool({
     if (!hasApprovalCardPath(binding.platform)) {
       throw new Error(`cancel_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm the cancellation.`);
     }
-    const requestedBy = principalIdOf(ctx);
+    const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
-      throw new Error("cancel_routine needs a verified sender to gate the removal — no principal id resolved, so there's no requester to show on the approval card.");
+      throw new Error("cancel_routine needs a verified sender to gate the removal — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a standing behaviour. Ask a person in this conversation to cancel it.");
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
       throw new Error("cancel_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
     }
 
+    const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
       {
         org: p.org,
         kind: "routine.cancel",
-        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, id, description, requestedBy },
+        args: { org: p.org, partition: p, surfaceKey: p.surfaceKey, id, description, requestedBy, tainted },
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
@@ -66,7 +68,7 @@ export default defineTool({
       pending: true,
       pendingId: posted.id,
       id,
-      message: `card posted — cancel of routine ${id} (${description}) awaiting a human to confirm (pending ${posted.id}).`,
+      message: `card posted — cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""} awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
 });

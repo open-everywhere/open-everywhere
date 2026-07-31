@@ -12,6 +12,7 @@ export interface RoutineCancelArgs {
   readonly id: string;
   readonly description: string;
   readonly requestedBy?: string;
+  readonly tainted?: boolean;
 }
 
 const routineCancel: ActionKind<RoutineCancelArgs> = {
@@ -20,6 +21,7 @@ const routineCancel: ActionKind<RoutineCancelArgs> = {
   summarize(args) {
     return [
       `Cancel routine \`${args.id}\` — ${args.description}`,
+      ...(args.tainted ? ["⚠ proposed in a turn that read external content — check who actually wanted this stopped before approving"] : []),
       "(reversible: it can be re-created with create_routine)",
     ];
   },
@@ -32,7 +34,7 @@ const routineCancel: ActionKind<RoutineCancelArgs> = {
       surface: args.partition.surface,
       principalId: decidedBy,
       action: "routine.cancel",
-      detail: { id: args.id, description: args.description, cancelled, requestedBy: args.requestedBy ?? null, confirmedBy: decidedBy },
+      detail: { id: args.id, description: args.description, cancelled, requestedBy: args.requestedBy ?? null, confirmedBy: decidedBy, tainted: Boolean(args.tainted) },
     });
     const outcomeTag = cancelled ? "ok" : "noop";
     emitTelemetry("oe.feature.used", { "oe.feature": "routine_cancelled", "oe.outcome": outcomeTag });

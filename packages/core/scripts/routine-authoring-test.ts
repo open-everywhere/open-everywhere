@@ -166,7 +166,7 @@ const enableTool = (await import("../agent/tools/enable_routine.js")).default;
     channel: { kind: "slack" },
     session: { auth: { current: { attributes: { team_id: "T1", channel_id: "C1", channel_type: "channel", [ROUTINE_MARKER.id]: "r-run" }, principalType: "service" } } },
   } as never;
-  await refuses(() => runNowTool.execute({ id: "r-run" } as never, fireCtx), /verified sender|re-trigger/, "run-now: a routine FIRE (no principal) is refused — a routine may not re-trigger itself into a loop");
+  await refuses(() => runNowTool.execute({ id: "r-run" } as never, fireCtx), /verified sender|re-trigger/, "run-now: a routine FIRE (no acting sender) is refused — a routine may not re-trigger itself into a loop");
 }
 
 {

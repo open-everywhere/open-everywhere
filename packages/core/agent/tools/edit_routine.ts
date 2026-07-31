@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineGrantGeneration } from "../routines/routine.js";
@@ -60,9 +60,9 @@ export default defineTool({
         `edit_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read the new instruction before it can fire unattended.`,
       );
     }
-    const requestedBy = principalIdOf(ctx);
+    const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
-      throw new Error("edit_routine needs a verified sender to gate the change — no principal id resolved, so there's no requester to show on the approval card.");
+      throw new Error("edit_routine needs a verified sender to gate the change — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose rewriting the instruction it or another routine runs under. Ask a person in this conversation to change it.");
     }
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
