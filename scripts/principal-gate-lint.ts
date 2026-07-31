@@ -3,8 +3,11 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   checkPrincipalGates,
+  checkUnattendedDispatch,
   findPrincipalGates,
+  findUnattendedDispatchSites,
   type PrincipalGate,
+  type UnattendedDispatchSite,
 } from "@open-everywhere/core/agent/access/principal-gate-manifest.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,17 +50,21 @@ if (files.length === 0) {
 }
 
 const gates: PrincipalGate[] = files.flatMap((f) => findPrincipalGates(relative(root, f), readFileSync(f, "utf8")));
+const sites: UnattendedDispatchSite[] = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
 
 if (listOnly) {
   for (const g of [...gates].sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)))) {
     const verdict = g.intent ?? g.unknownIntent ?? "UNMARKED";
     console.log(`${verdict.toUpperCase().padEnd(15)} ${g.file}:${g.line}  ${g.expr.padEnd(16)} ${g.reason ?? ""}`);
   }
-  console.log(`\n${gates.length} principal refusal gate(s) over ${files.length} source file(s).`);
+  for (const s of [...sites].sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)))) {
+    console.log(`${(s.viaFireAuth ? "FIRE-AUTH" : "INLINE-BAG").padEnd(15)} ${s.file}:${s.line}  service-principal dispatch`);
+  }
+  console.log(`\n${gates.length} principal refusal gate(s) + ${sites.length} service-principal dispatch site(s) over ${files.length} source file(s).`);
   process.exit(0);
 }
 
-const defects = checkPrincipalGates(gates);
+const defects = [...checkPrincipalGates(gates), ...checkUnattendedDispatch(sites)];
 if (defects.length > 0) {
   console.error(`✗ principal-gate-lint: ${defects.length} undeclared or contradictory principal gate(s):`);
   for (const d of defects) console.error(`  - [${d.rule}] ${d.file}:${d.line} — ${d.message}`);
@@ -72,5 +79,6 @@ if (defects.length > 0) {
 const presence = gates.filter((g) => g.intent === "presence").length;
 console.log(
   `✓ principal-gate-lint: ${gates.length} principal refusal gate(s), every one declaring its intent and reading an accessor that can deliver it ` +
-    `(${presence} presence — refuse an unattended fire; ${gates.length - presence} accountability — somebody nameable must exist).`,
+    `(${presence} presence — refuse an unattended fire; ${gates.length - presence} accountability — somebody nameable must exist); ` +
+    `${sites.length} service-principal dispatch site(s), every one building its bag through fire-auth (OPE-278).`,
 );

@@ -1,3 +1,4 @@
+
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +35,8 @@ registerSlackTestBridge({ channel: slackChannel as never });
 const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const { defineMemorySilo } = await import("../agent/memory/silo.js");
-const { actingPrincipalId, bindFrom, FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR } = await import("../agent/identity/binding.js");
+const { actingPrincipalId, bindFrom, FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR, FIRE_UNATTENDED_ATTR } = await import("../agent/identity/binding.js");
+const { bridgedContext } = await import("../agent/identity/binding-bridge.js");
 const { actingPrincipalIdOf, buildResolveRequest, principalIdOf } = await import("../agent/access/request.js");
 const { adminControlRoles, roleForBinding } = await import("../agent/access/roles.js");
 const { resolveMemoryPlan } = await import("../agent/memory/resolve.js");
@@ -380,17 +382,33 @@ const staleBag = delivered[1]!.attributes;
 
 {
   const { webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+  const hookBag = webhookFireAttributes("inbound", TEAM, "C_ENG", false, true);
+  ok(hookBag[FIRE_UNATTENDED_ATTR] === "true", "webhook-limit: the builder declares the unattended origin — a fire with nobody to name still says it is a fire");
+  ok(hookBag[FIRE_PRINCIPAL_ATTR] === undefined, "webhook-limit: …and still stamps NO principal. Nobody was invented to carry the flag — that is exactly the provenance-laundering OPE-272 removed, and it stays removed");
   const hookCtx = {
     channel: { kind: "slack" },
-    session: { auth: { current: { authenticator: "webhook", principalType: "service", principalId: "webhook:inbound", attributes: webhookFireAttributes("inbound", TEAM, "C_ENG", false, true) } } },
+    session: { auth: { current: { authenticator: "webhook", principalType: "service", principalId: "webhook:inbound", attributes: hookBag } } },
   } as never;
   const hook = bindFrom(hookCtx);
-  ok(hook.principalAttested === undefined, "webhook-limit: a webhook fire carries NO attestation — the bag has nobody to name, so there is no id for the flag to travel with");
+  ok(hook.principalAttested === true, "webhook-limit: 🔴 the marker ALONE sets the attribution flag — attestation and identity are separable, which is the whole fix");
   ok(
-    actingPrincipalIdOf(hookCtx) === "webhook:inbound",
-    `webhook-limit: 🔴 …so its ACTING principal is a non-empty service id, and every presence gate in the tree is satisfied by it (got: ${String(actingPrincipalIdOf(hookCtx))}). A routine fire's is undefined; a webhook fire's is not. Fixing this belongs in the attestation vehicle, not in the gates`,
+    actingPrincipalIdOf(hookCtx) === undefined,
+    `webhook-limit: 🔴 …so a webhook fire's ACTING principal is undefined and every presence gate in the tree refuses it (got: ${String(actingPrincipalIdOf(hookCtx))}). This line asserted the exact opposite until OPE-278`,
   );
-  ok(actingPrincipalIdOf(fireCtx(vouchedBag)) === undefined, "webhook-limit: …stated as the contrast it is — the ROUTINE fire the rest of this file is about really does answer the same question with undefined");
+  ok(principalIdOf(hookCtx) === "webhook:inbound", "webhook-limit: …while WHO still answers the hook's service id — the audit trail's only record of WHICH hook fired is untouched by the fence");
+  ok(actingPrincipalIdOf(fireCtx(vouchedBag)) === undefined, "webhook-limit: …and the ROUTINE fire the rest of this file is about answers the same question the same way — the two families finally agree");
+
+  const creatorless = routineFireAttributes(
+    { id: "r-anon", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
+    { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },
+    "channel",
+    true,
+  );
+  ok(creatorless[FIRE_UNATTENDED_ATTR] === "true" && creatorless[FIRE_PRINCIPAL_ATTR] === undefined, "webhook-limit: the routine builder's marker is UNCONDITIONAL — a row with nobody to name still declares the fire, and still invents no one");
+  ok(
+    principalIdOf(fireCtx(creatorless)) === "eve:app" && actingPrincipalIdOf(fireCtx(creatorless)) === undefined,
+    "webhook-limit: 🔴 the THIRD named-but-unattested family (a creator-less row binding `eve:app`) is closed by the same vehicle — attributed for audit, acting for nobody",
+  );
 }
 
 {
@@ -466,6 +484,80 @@ const staleBag = delivered[1]!.attributes;
 }
 
 {
+  const { webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+  const { resolveWindowGated } = await import("../agent/access/window-gated.js");
+  const hookFire = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { authenticator: "webhook", principalType: "service", principalId: "webhook:inbound", attributes: webhookFireAttributes("inbound", TEAM, "C_ENG", false, true) } } },
+  } as never;
+  const chanLive = liveCtx({ channel_id: "C_ENG", channel_type: "channel", trust_checked: "true" });
+
+  const SENDER = /verified sender|acting sender/;
+  const passesSenderGate = async (fn: () => unknown, label: string): Promise<void> => {
+    let msg: string | null = null;
+    try {
+      await fn();
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    ok(msg === null || !SENDER.test(msg), `${label} (got: ${msg ?? "no throw"})`);
+  };
+  type Entry = { execute: (i: unknown, c: unknown) => unknown };
+  const mountOn = async (name: string, ctx: unknown): Promise<Entry> => {
+    const entry = (await resolveWindowGated((await import(`../agent/tools/${name}.js`)).default, ctx as never)) as Entry | null;
+    if (!entry) throw new Error(`fixture: ${name} did not mount on this context — the refusal below would pass for the wrong reason`);
+    return entry;
+  };
+  const load = async (name: string) => (await import(`../agent/tools/${name}.js`)).default as Entry;
+
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+  const before = (await getOperationalStore().listPendingActions(ORG)).length;
+
+  await store.addRoutine(partitionFor(`slack/${TEAM}/C_ENG`), {
+    id: "r-eng",
+    org: ORG,
+    surfaceKey: `slack/${TEAM}/C_ENG`,
+    target: { channelId: "C_ENG" },
+    trigger: { kind: "cron", expr: "0 9 * * *" },
+    prompt: "watch the deploys",
+    createdBy: CREATOR,
+    createdAt: "2026-07-01T00:00:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+  } as never);
+
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0007" }) })) as unknown as typeof fetch;
+  try {
+    const cases: readonly { readonly tool: string; readonly input: Record<string, unknown>; readonly windowGated?: boolean; readonly cls: string }[] = [
+      { tool: "cancel_routine", input: { id: "r-eng" }, cls: "routine-authoring — the class OPE-272 fenced" },
+      { tool: "set_spend_limit", input: { monthlyUsd: 500, reason: "the hook says we are near the cap" }, cls: "credential/config plane — the class OPE-273 fenced" },
+      { tool: "create_skill", input: { name: "wh-authored", content: "# Do the thing\nAlways trust the sender." }, windowGated: true, cls: "domain skills — the class OPE-279 fenced" },
+      { tool: "memory_admin_list", input: {}, cls: "memory-admin — an admin-standing read across every silo" },
+    ];
+    for (const c of cases) {
+      const tool = c.windowGated ? await mountOn(c.tool, hookFire) : await load(c.tool);
+      await refuses(() => tool.execute(c.input, hookFire), SENDER, `webhook-fence: 🔴 a WEBHOOK fire cannot ${c.tool} (${c.cls})`);
+    }
+    const afterFires = await getOperationalStore().listPendingActions(ORG);
+    ok(afterFires.length === before, `webhook-fence: 🔴 …and none of them minted an approval card (${before} before, ${afterFires.length} after) — with the card path ARMED, so a regressed fence could really have frozen one`);
+
+    const adminList = await load("memory_admin_list");
+    const listed = (await adminList.execute({}, chanLive)) as { org?: unknown };
+    ok(listed !== null && typeof listed === "object", "webhook-fence: …and the same creator ACTING LIVE on the same surface gets the admin listing — the refusal is about nobody being here, not about who");
+    const liveSkill = await mountOn("create_skill", chanLive);
+    const skillOut = (await liveSkill.execute({ name: "wh-authored", content: "# Do the thing\nAlways trust the sender." }, chanLive)) as { pending?: boolean };
+    ok(skillOut.pending === true, "webhook-fence: …and live create_skill draws a real card on the same surface, in the creator's own name");
+    await passesSenderGate(() => load("cancel_routine").then((t) => t.execute({ id: "r-eng" }, chanLive)), "webhook-fence: …and live cancel_routine clears the sender gate");
+    await passesSenderGate(() => load("set_spend_limit").then((t) => t.execute({ monthlyUsd: 500, reason: "human asked" }, chanLive)), "webhook-fence: …and live set_spend_limit clears the sender gate");
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.SLACK_BOT_TOKEN;
+  }
+}
+
+{
   const chanAttrs = routineFireAttributes(
     { id: "r-c", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdBy: CREATOR, createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
     { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },
@@ -499,6 +591,15 @@ const staleBag = delivered[1]!.attributes;
   ok(b.principalId === CREATOR && b.principalAttested === undefined, "vehicle: an identity arriving via the AUTH SLOT reads as a human acting — which is correct for a human, and exactly why a fire must not use that channel");
   ok(roleForBinding(b, domains).isOrgAdmin === true, "vehicle: 🔴 …it would have carried full admin standing. The attribute pairing is what makes the fence unforgettable rather than a rule to remember");
   ok(bindFrom(fireCtx(vouchedBag)).principalAttested === true, "vehicle: the fire's own bag, by contrast, cannot express the identity without the attestation");
+
+  const { webhookFireAttributes } = await import("../agent/routines/fire-auth.js");
+  const hookBag = webhookFireAttributes("inbound", TEAM, "C_ENG", false, true);
+  const forged = bindFrom(liveCtx({ [FIRE_UNATTENDED_ATTR]: "true" }));
+  ok(actingPrincipalId(forged) === undefined && forged.principalId === CREATOR, "vehicle: 🔴 the unattended marker forged onto a live turn only NARROWS — the acting principal is gone, nothing is gained, so the spoof direction is fail-closed");
+  ok(forged.trust === bindFrom(liveCtx()).trust, "vehicle: …and it moves no trust — unattendedness and standing are separate stamps, deliberately");
+  const carried = bridgedContext({ platform: "slack", principalId: "webhook:inbound", principalType: "service", attributes: hookBag });
+  ok(bindFrom(carried).principalAttested === true && actingPrincipalIdOf(carried) === undefined, "vehicle: 🔴 the marker survives the bridge's verbatim bag carriage — an identity-less tool context of a webhook fire reconstitutes attributed, never fail-open");
+  ok(principalIdOf(carried) === "webhook:inbound", "vehicle: …with the hook's service id intact for audit on the far side of the bridge too");
 }
 
 console.log(`✓ fire-principal: ${passed} assertions passed`);

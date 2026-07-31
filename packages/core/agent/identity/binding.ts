@@ -74,12 +74,17 @@ function attr(a: AuthPrincipal["attributes"], keys: readonly string[]): string |
 
 export const FIRE_PRINCIPAL_ATTR = "oe_fire_principal";
 export const FIRE_PRINCIPAL_TRUST_ATTR = "oe_fire_principal_trust";
+export const FIRE_UNATTENDED_ATTR = "oe_fire_unattended";
 
 function attestedFirePrincipal(ctx: BindableContext): { readonly id: string; readonly internal: boolean } | undefined {
   const a = authOf(ctx)?.attributes;
   const id = attr(a, [FIRE_PRINCIPAL_ATTR, "oeFirePrincipal"]);
   if (id === undefined) return undefined;
   return { id, internal: attr(a, [FIRE_PRINCIPAL_TRUST_ATTR, "oeFirePrincipalTrust"]) === "internal" };
+}
+
+function unattendedOrigin(ctx: BindableContext): boolean {
+  return attr(authOf(ctx)?.attributes, [FIRE_UNATTENDED_ATTR, "oeFireUnattended"]) === "true";
 }
 
 export function actingPrincipalId(binding: SurfaceBinding): string | undefined {
@@ -247,11 +252,13 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   let platform = seg(channelPlatform(ctx), "local");
   let raw = (MAPPERS[platform] ?? bindLocal)(ctx);
   let fire = attestedFirePrincipal(ctx);
+  let unattended = unattendedOrigin(ctx);
   if (raw.workspace === undefined && raw.surface === undefined) {
     const bridged = readBindingBridge();
     if (bridged) {
       ({ platform, raw } = bindBridged(bridged));
       fire ??= attestedFirePrincipal(bridgedContext(bridged));
+      unattended ||= unattendedOrigin(bridgedContext(bridged));
       console.warn(
         `[open-everywhere:binding-bridge] context carried no platform identity — bound via the session's stamped ${platform} identity`,
       );
@@ -287,7 +294,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
     visibility: raw.visibility ?? local.visibility ?? "public",
     trust,
     principalId: fire?.id ?? raw.principalId ?? local.principalId,
-    ...(fire ? { principalAttested: true as const } : {}),
+    ...(fire || unattended ? { principalAttested: true as const } : {}),
     target: raw.target,
     threadTs: raw.threadTs,
   };

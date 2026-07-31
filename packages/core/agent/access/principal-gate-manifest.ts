@@ -23,7 +23,7 @@ export interface PrincipalGate {
 export interface PrincipalGateDefect {
   readonly file: string;
   readonly line: number;
-  readonly rule: "unmarked" | "mismatched" | "unknown-intent" | "no-reason";
+  readonly rule: "unmarked" | "mismatched" | "unknown-intent" | "no-reason" | "unattended-inline-bag";
   readonly message: string;
 }
 
@@ -133,6 +133,48 @@ function markerFields(lines: readonly string[], line: number): Pick<PrincipalGat
   if (!m) return {};
   const known = (PRINCIPAL_GATE_INTENTS as readonly string[]).includes(m.intent);
   return known ? { intent: m.intent as PrincipalGateIntent, reason: m.reason } : { unknownIntent: m.intent, reason: m.reason };
+}
+
+export interface UnattendedDispatchSite {
+  readonly file: string;
+  readonly line: number;
+  readonly viaFireAuth: boolean;
+}
+
+const SERVICE_PRINCIPAL_RE = /\bprincipalType:\s*["']service["']/;
+const ATTRIBUTES_KEY_RE = /\battributes:\s/;
+const FIRE_AUTH_BUILDER_RE = /FireAttributes\s*\(/;
+const ATTRIBUTES_WINDOW = 40;
+
+export function findUnattendedDispatchSites(file: string, source: string): UnattendedDispatchSite[] {
+  const code = stripComments(source.split("\n"));
+  const sites: UnattendedDispatchSite[] = [];
+  for (let i = 0; i < code.length; i++) {
+    if (!SERVICE_PRINCIPAL_RE.test(code[i] ?? "")) continue;
+    let viaFireAuth = false;
+    for (let j = i; j < Math.min(i + 1 + ATTRIBUTES_WINDOW, code.length); j++) {
+      if (!ATTRIBUTES_KEY_RE.test(code[j] ?? "")) continue;
+      viaFireAuth = FIRE_AUTH_BUILDER_RE.test(code[j] ?? "");
+      break;
+    }
+    sites.push({ file, line: i + 1, viaFireAuth });
+  }
+  return sites;
+}
+
+export function checkUnattendedDispatch(sites: readonly UnattendedDispatchSite[]): PrincipalGateDefect[] {
+  return sites
+    .filter((s) => !s.viaFireAuth)
+    .map((s) => ({
+      file: s.file,
+      line: s.line,
+      rule: "unattended-inline-bag" as const,
+      message:
+        `a session auth naming a SERVICE principal whose attribute bag does not come from routines/fire-auth.ts. ` +
+        `An unattended origin MUST carry the FIRE_UNATTENDED_ATTR marker — without it, its non-empty service id answers ` +
+        `every presence gate in the tree as if a human were acting (OPE-278; the webhook fire shipped exactly this way). ` +
+        `Build the bag with routineFireAttributes / webhookFireAttributes (or a sibling builder in that module), never inline.`,
+    }));
 }
 
 export function checkPrincipalGates(gates: readonly PrincipalGate[]): PrincipalGateDefect[] {

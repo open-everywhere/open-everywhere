@@ -6,7 +6,9 @@ import {
   INTENT_FOR_ACCESSOR,
   PRINCIPAL_GATE_INTENTS,
   checkPrincipalGates,
+  checkUnattendedDispatch,
   findPrincipalGates,
+  findUnattendedDispatchSites,
   type PrincipalGate,
 } from "../agent/access/principal-gate-manifest.js";
 
@@ -108,6 +110,35 @@ function f(role) {
 }`).length === 0, "synthetic: …and an opaque read is checked for a marker + a reason, but never for an accessor match nobody can compute");
 }
 
+{
+  const sitesIn = (src: string) => findUnattendedDispatchSites("fixture.ts", src);
+  const r4 = (src: string) => checkUnattendedDispatch(sitesIn(src));
+
+  const inlineBag = `
+const auth = {
+  authenticator: "webhook",
+  principalType: "service",
+  principalId: \`webhook:\${hook.id}\`,
+  attributes: { team_id: teamId, channel_id: channelId },
+};`;
+  ok(sitesIn(inlineBag).length === 1 && sitesIn(inlineBag)[0]!.viaFireAuth === false, "synthetic-r4: a service-principal auth with a hand-rolled bag is SEEN, and seen as inline");
+  ok(r4(inlineBag).length === 1 && r4(inlineBag)[0]!.rule === "unattended-inline-bag", "synthetic-r4: 🔴 …and it is RED — this is the exact shape the webhook fire shipped with, caught at the moment it is written");
+  ok(/FIRE_UNATTENDED_ATTR/.test(r4(inlineBag)[0]!.message) && /fire-auth/.test(r4(inlineBag)[0]!.message), "synthetic-r4: …and the message names both the marker and the module to build the bag in, so the red is a fix and not a puzzle");
+
+  const viaBuilder = inlineBag.replace(
+    "attributes: { team_id: teamId, channel_id: channelId },",
+    "attributes: { ...webhookFireAttributes(hook.id, teamId, channelId, isDm, internal) },",
+  );
+  ok(sitesIn(viaBuilder).length === 1 && sitesIn(viaBuilder)[0]!.viaFireAuth === true, "synthetic-r4: the SAME site building through a fire-auth builder is GREEN — the red was about the bag's provenance, not about dispatching at all");
+  ok(r4(viaBuilder).length === 0, "synthetic-r4: …no defect");
+
+  ok(r4(`const auth = { authenticator: "webhook", principalType: "service", principalId: "webhook:x" };`).length === 1, "synthetic-r4: a service auth with no attributes at all is red too — no bag means no marker, which is the same hole");
+
+  ok(sitesIn(`const auth = { authenticator: "slack", principalType: "slack-user", principalId: userId, attributes: a };`).length === 0, "synthetic-r4: a human-principal auth is not a site — live ingress must never be pushed toward stamping the marker");
+
+  ok(sitesIn(`// the old shape was principalType: "service" with an inline attributes: bag`).length === 0, "synthetic-r4: a site quoted inside a comment is not a site");
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 function tsFilesUnder(dir: string): string[] {
   const out: string[] = [];
@@ -134,6 +165,13 @@ function tsFilesUnder(dir: string): string[] {
 
   const presence = gates.filter((g) => g.intent === "presence").length;
   ok(presence >= 15 && gates.length >= 25, `real: the inventory is the size the three sweeps left behind (${gates.length} gates, ${presence} presence) — a collapse here means the detector stopped seeing, not that the gates went away`);
+
+  const sites = files.flatMap((f) => findUnattendedDispatchSites(relative(root, f), readFileSync(f, "utf8")));
+  ok(checkUnattendedDispatch(sites).length === 0, `real: every service-principal dispatch builds its bag through fire-auth (${checkUnattendedDispatch(sites).map((d) => `${d.file}:${d.line}`).join(", ")})`);
+  const siteAt = (needle: string) => sites.find((s) => s.file.endsWith(needle));
+  ok(siteAt("webhooks/dispatch.ts")?.viaFireAuth === true, "real: the webhook fire's dispatch is SEEN and builds through webhookFireAttributes — the site OPE-278 is about");
+  ok(siteAt("routines/ingress.ts")?.viaFireAuth === true, "real: the event fan-out's dispatch is SEEN and builds through routineFireAttributes — the site whose creator-less rows were the third family");
+  ok(sites.length >= 2, `real: the site inventory did not collapse (${sites.length}) — zero would mean the detector went blind, not that the dispatches went away`);
 }
 
 {

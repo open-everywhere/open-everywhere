@@ -1,7 +1,7 @@
 import { rootDmGrainAttrs } from "../channels/unified-window.js";
 import { jobFireAttrs } from "../access/job-posture.js";
 import type { SessionMode } from "../access/resolver.js";
-import { FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR } from "../identity/binding.js";
+import { FIRE_PRINCIPAL_ATTR, FIRE_PRINCIPAL_TRUST_ATTR, FIRE_UNATTENDED_ATTR } from "../identity/binding.js";
 import { isJobRoutine, isSilentRoutine, routineGrantKey, ROUTINE_MARKER, type Routine } from "./routine.js";
 
 export function routineFireAttributes(
@@ -14,6 +14,7 @@ export function routineFireAttributes(
   return {
     ...destAttributes,
     ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+    [FIRE_UNATTENDED_ATTR]: "true",
     ...(r.createdBy ? { [FIRE_PRINCIPAL_ATTR]: r.createdBy } : {}),
     ...(creatorInternal === true ? { [FIRE_PRINCIPAL_TRUST_ATTR]: "internal" } : {}),
     ...rootDmGrainAttrs(
@@ -43,6 +44,7 @@ export function webhookFireAttributes(
     channel_id: channelId,
     channel_type: isDm ? "im" : "channel",
     ...(internal ? { is_ext_shared: "false", trust_checked: "true" } : {}),
+    [FIRE_UNATTENDED_ATTR]: "true",
     ...rootDmGrainAttrs(isDm),
     [WEBHOOK_MARKER_ATTR]: hookId,
   };
