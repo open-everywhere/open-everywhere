@@ -305,12 +305,16 @@ function discordOeInteraction(opts: {
   );
   n++;
 
-  await assert.rejects(
-    () => runBudgetRaise(discordBinding({ mode: "dm", workspace: "U_DM_USER", target: { channelId: "U_DM_USER" } }), 10, deps),
-    /DM/,
-    "runBudgetRaise bubbles planSetSpendLimit's DM-without-explicit-scope refusal verbatim",
+  recorded = undefined;
+  const dmRaise = await runBudgetRaise(
+    discordBinding({ mode: "dm", workspace: "U_DM_USER", target: { channelId: "U_DM_USER" } }),
+    10,
+    deps,
   );
-  n++;
+  ok(dmRaise.includes("$10.00"), "runBudgetRaise from a DM acks the amount — a DM's own cap is enforceable since OPE-267");
+  ok(recorded!.kind === "spend.set", "runBudgetRaise from a DM proposes a spend.set");
+  ok(recorded!.scopeKey === "discord/U_DM_USER/C1", "runBudgetRaise from a DM defaults to that DM's OWN surface key, never the workspace bucket");
+  n += 3;
 }
 
 console.log(`\n✓ oe-commands: ${n} assertions passed (parsing, renderers, registration JSON, classification, ephemeral responses, budget glue — the Slack signature gate moved to @open-everywhere/provider-slack)\n`);

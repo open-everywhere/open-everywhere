@@ -39,13 +39,13 @@ export function checkCap(opts: {
   workspaceUsd?: number;
   caps: Caps;
 }): CapVerdict {
-  if (opts.mode === "dm") return { over: false };
+  const here = opts.mode === "dm" ? "this DM" : opts.mode === "mpim" ? "this group DM" : "this channel";
   const { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd } = opts.caps;
   if (surfaceMonthlyTokens != null && opts.surfaceTokens >= surfaceMonthlyTokens) {
-    return { over: true, reason: `this channel reached its monthly budget (${opts.surfaceTokens.toLocaleString()} / ${surfaceMonthlyTokens.toLocaleString()} tokens)` };
+    return { over: true, reason: `${here} reached its monthly budget (${opts.surfaceTokens.toLocaleString()} / ${surfaceMonthlyTokens.toLocaleString()} tokens)` };
   }
   if (surfaceMonthlyUsd != null && (opts.surfaceUsd ?? 0) >= surfaceMonthlyUsd) {
-    return { over: true, reason: `this channel reached its monthly budget (~${fmtUsd(opts.surfaceUsd ?? 0)} of ${fmtUsd(surfaceMonthlyUsd)})` };
+    return { over: true, reason: `${here} reached its monthly budget (~${fmtUsd(opts.surfaceUsd ?? 0)} of ${fmtUsd(surfaceMonthlyUsd)})` };
   }
   if (workspaceMonthlyTokens != null && opts.workspaceTokens >= workspaceMonthlyTokens) {
     return { over: true, reason: `this workspace reached its monthly budget (${opts.workspaceTokens.toLocaleString()} / ${workspaceMonthlyTokens.toLocaleString()} tokens)` };

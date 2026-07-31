@@ -66,17 +66,12 @@ export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
 
 export function assertScopableFromHere(tool: string, binding: SurfaceBinding, level: Level, explicitScopeKey: string | undefined): void {
   if (explicitScopeKey?.trim() || binding.mode === "channel") return;
-  if (level === "surface") {
-    throw new Error(
-      `${tool}: this is a DM, and DM usage is never gated (caps guard shared channels/servers), so a cap scoped here would never be enforced. Pass scopeKey for the channel or server you mean — e.g. "discord/<serverId>/<channelId>" or "slack/<teamId>/<channelId>"; the ⛔ decline message in an over-budget channel shows its exact keys.`,
-    );
-  }
   if (level === "domain") {
     throw new Error(
-      `${tool}: this is a DM, and DM usage is never gated (caps guard shared channels/servers), so a domain-level cap defaulted from here would never be enforced against THIS conversation — and the domain it'd classify into (the dm/public criteria layer) spans every DM like it, not just this one. Pass scopeKey explicitly (the domain's name) — the ⛔ decline message in an over-budget channel shows it.`,
+      `${tool}: this is a DM, so a domain-level cap defaulted from here would land on the dm/public CRITERIA domain — which spans every DM in the deployment, not just this conversation. That caps everyone. Say scopeKey explicitly (the domain's name) if you mean it, or use level:"surface" to cap just this DM.`,
     );
   }
-  if (binding.platform === "discord") {
+  if (level === "workspace" && binding.platform === "discord") {
     throw new Error(
       `${tool}: a Discord DM belongs to no server, so level:"workspace" here would target your personal DM bucket ("discord/${binding.workspace}"), not a server. Pass scopeKey "discord/<serverId>" for the server you mean — the ⛔ decline message in an over-budget channel shows it, or ask again from a channel in that server.`,
     );

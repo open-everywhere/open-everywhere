@@ -38,7 +38,9 @@ const caps = { surfaceMonthlyTokens: 1000, workspaceMonthlyTokens: 5000 };
 ok(!checkCap({ mode: "channel", surfaceTokens: 999, workspaceTokens: 100, caps }).over, "under surface cap -> not over");
 ok(checkCap({ mode: "channel", surfaceTokens: 1000, workspaceTokens: 100, caps }).over, "at surface cap -> over");
 ok(checkCap({ mode: "channel", surfaceTokens: 0, workspaceTokens: 5000, caps }).over, "workspace cap breached -> over");
-ok(!checkCap({ mode: "dm", surfaceTokens: 99999, workspaceTokens: 99999, caps }).over, "DM is exempt from caps");
+ok(checkCap({ mode: "dm", surfaceTokens: 99999, workspaceTokens: 99999, caps }).over, "OPE-267: a DM is NOT exempt — the same over-cap numbers that block a channel block a DM");
+ok(checkCap({ mode: "dm", surfaceTokens: 99999, workspaceTokens: 99999, caps }).reason?.includes("this DM") === true, 'OPE-267: the DM refusal says "this DM", not "this channel" (the reader is not in a channel)');
+ok(checkCap({ mode: "mpim", surfaceTokens: 99999, workspaceTokens: 99999, caps }).reason?.includes("this group DM") === true, "OPE-267: a group DM is capped too, and named as one");
 ok(!checkCap({ mode: "channel", surfaceTokens: 99999, workspaceTokens: 99999, caps: {} }).over, "no caps configured -> never over");
 const reason = checkCap({ mode: "channel", surfaceTokens: 1200, workspaceTokens: 0, caps }).reason;
 ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict carries a human reason");
@@ -49,7 +51,7 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
   ok(!checkCap({ ...base, surfaceUsd: 9.99, workspaceUsd: 9.99, caps: usdCaps }).over, "under surface $ cap -> not over");
   ok(checkCap({ ...base, surfaceUsd: 10, workspaceUsd: 10, caps: usdCaps }).over, "at surface $ cap -> over (>= like tokens)");
   ok(checkCap({ ...base, surfaceUsd: 0, workspaceUsd: 100, caps: usdCaps }).over, "workspace $ cap breached -> over");
-  ok(!checkCap({ mode: "dm", surfaceTokens: 0, workspaceTokens: 0, surfaceUsd: 9999, workspaceUsd: 9999, caps: usdCaps }).over, "DM is exempt from $ caps too");
+  ok(checkCap({ mode: "dm", surfaceTokens: 0, workspaceTokens: 0, surfaceUsd: 9999, workspaceUsd: 9999, caps: usdCaps }).over, "OPE-267: a DM is not exempt from $ caps either");
   const usdReason = checkCap({ ...base, surfaceUsd: 12.345, workspaceUsd: 0, caps: usdCaps }).reason;
   ok(typeof usdReason === "string" && usdReason.includes("$12.35") && usdReason.includes("$10.00"), "over-$ verdict shows spent-of-cap dollars");
   ok(!checkCap({ ...base, caps: usdCaps }).over, "missing USD inputs read as $0 spent");
@@ -472,7 +474,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const over = await scopeOverBudget(p as never, "channel", NOW_ISO);
   ok(over.over === true, "config $ cap below the month's priced spend -> over (fail closed)");
   ok(!!over.reason?.includes("$3.00") && !!over.reason?.includes("$2.50"), `the refusal names spent vs cap (got: "${over.reason}")`);
-  ok(!(await scopeOverBudget(p as never, "dm", NOW_ISO)).over, "the same over-$ scope is exempt in DM mode");
+  ok((await scopeOverBudget(p as never, "dm", NOW_ISO)).over, "OPE-267: the same over-$ scope is over in DM mode too — end to end through the real gate, not just checkCap");
   ok(!(await scopeOverBudget(p as never, "channel", "2026-04-04T23:30:00.000Z")).over, "the window resets at the calendar-month boundary (August sees $0)");
 
   await opStore.setSpendLimit(org, "slack/T9/C1", "surface", { monthlyUsd: 10 }, { reason: "bridge while the PR lands", setBy: "admin#1" });
@@ -569,7 +571,8 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
   budgets3 = { perDomain: { "dm-crit": { surfaceMonthlyTokens: 1 }, "public-crit": { surfaceMonthlyTokens: 1 } } };
   await store3.recordSpend(mk("D_USER1") as never, { period: "2026-07", usage: { inputTokens: 100 } });
-  ok(!(await scopeOverBudget(mk("D_USER1") as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, 'perDomain["dm-crit"]: an internal DM stays exempt from blocking even though its own perDomain cap is configured and breached');
+  ok((await scopeOverBudget(mk("D_USER1") as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, 'OPE-267: perDomain["dm-crit"] DECLINES an internal DM whose own spend breached it — the cap that could never gate anything now gates');
+  ok(!(await scopeOverBudget(mk("D_USER2") as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, 'perDomain["dm"] is a REPEATED per-surface default, never a shared pool: a second person\'s DM is judged on its own ledger and stays under the same cap');
   await store3.recordSpend(mk("C_GUEST") as never, { period: "2026-07", usage: { inputTokens: 100 } });
   ok((await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "external")).over, 'perDomain["public-crit"]: an externally-shared channel (mode "channel", trust "external") IS gated by its criteria-domain cap');
   ok(!(await scopeOverBudget(mk("C_GUEST") as never, "channel", "2026-07-15T00:00:00.000Z", "internal")).over, "perDomain[criteria]: the SAME surface with trust \"internal\" doesn't classify into public-crit, so no perDomain cap applies (and none else is configured)");
@@ -651,6 +654,18 @@ rmSync(dir, { recursive: true, force: true });
 
   ok(turnKind(chanCtx, "C:oe-sup:g3-ab12cd") === "supervisor", "OPE-58: a salted supervisor token (g<n>-<sha>) STILL tags kind 'supervisor'");
   ok(turnKind(chanCtx, "oe-dom:payments:oe-sup:g1-000000") === "supervisor", "OPE-58: a salted DOMAIN window token still tags kind 'supervisor'");
+}
+
+{
+  const { readFileSync } = await import("node:fs");
+  const fireDispatchers = ["../agent/schedules/dispatch.ts", "../agent/webhooks/dispatch.ts"];
+  for (const rel of fireDispatchers) {
+    const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+    ok(!/\bcapBypassFor\s*\(/.test(src), `OPE-267: ${rel.split("/").pop()} never CALLS capBypassFor — an autonomous fire cannot obtain the admin escape`);
+    ok(!/from\s+"[^"]*spend\/bypass\.js"/.test(src), `OPE-267: ${rel.split("/").pop()} does not even import spend/bypass.js`);
+  }
+  const gate = readFileSync(new URL("../../providers/slack/agent/channels/slack-spend-gate.ts", import.meta.url), "utf8");
+  ok(/\bcapBypassFor\b/.test(gate), "OPE-267: the ATTENDED slack ingress gate does consult capBypassFor — the escape exists, it is just unreachable from a fire");
 }
 
 console.log(`✓ spend: ${passed} assertions passed`);

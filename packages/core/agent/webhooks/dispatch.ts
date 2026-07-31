@@ -89,7 +89,7 @@ export async function fireWebhook(
   const surfaceKey = `${workspaceKey}/${channelId}`;
   const partition: Partition = { org, platform: "slack", workspace: teamId, surface: channelId, workspaceKey, surfaceKey, key: surfaceKey };
   const isDm = channelId.startsWith("D");
-  const mode = "channel" as const;
+  const mode = isDm ? ("dm" as const) : ("channel" as const);
 
   const disclosure = await checkFireDisclosure(surfaceKey);
   if (!disclosure.ok) {

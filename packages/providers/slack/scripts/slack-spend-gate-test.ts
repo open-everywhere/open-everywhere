@@ -58,12 +58,13 @@ async function run(opts: {
   throwPost?: boolean;
   door?: "mention" | "engagement" | "join";
   principalId?: string;
+  mode?: "channel" | "dm" | "mpim";
 }): Promise<{ decision: string; posts: string[]; audits: SpendGateAuditRow[] }> {
   const posts: string[] = [];
   const audits: SpendGateAuditRow[] = [];
   const decision = await slackSpendGate({
     bindable: BINDABLE,
-    mode: "channel",
+    mode: opts.mode ?? "channel",
     principalId: "principalId" in opts ? opts.principalId : "U_ASKER",
     teamId: "T_ENG",
     door: opts.door ?? "mention",
@@ -147,6 +148,22 @@ async function run(opts: {
 
 ok(spendRefusalCopy("over cap", "slack/T/C", "slack/T").includes(":no_entry:"), "refusal copy carries the :no_entry: marker");
 ok(spendBypassWarnCopy("over cap").includes(":warning:"), "bypass copy carries the :warning: marker");
+
+{
+  const r = await run({ mode: "dm", verdict: { over: true, reason: "this DM reached its monthly budget (~$5.10 of $5.00)" } });
+  ok(r.decision === "declined", "OPE-267: an over-budget DM with no admin bypass is DECLINED — no model turn");
+  ok(!/DM me/i.test(r.posts[0]!), 'OPE-267: the DM refusal never says "DM me" — the reader is already in the DM');
+  ok(/ask an org admin/i.test(r.posts[0]!), "OPE-267: the DM refusal names the remedy that works from there (ask an org admin)");
+  ok(r.posts[0]!.includes("slack/T_ENG/C_TXN"), "OPE-267: the DM refusal still names the scope key, so the admin it points at can act on it");
+  const c = await run({ verdict: { over: true, reason: "over cap" } });
+  ok(/DM me/i.test(c.posts[0]!), "the CHANNEL refusal still points at a DM (an admin raising a channel's cap from their DM is the flow that survives)");
+}
+{
+  const r = await run({ mode: "dm", verdict: { over: true, reason: "this workspace reached its monthly budget (~$500.00 of $200.00)" }, bypass: { warn: true } });
+  ok(r.decision === "proceed", "OPE-267 acceptance: an ORG ADMIN's own DM turn proceeds past a fully-burned workspace budget");
+  ok(r.posts[0]!.startsWith(":warning:"), "…and VISIBLY: the admin is told they are spending past the cap, not silently exempted");
+  ok(r.audits.length === 1 && (r.audits[0]!.detail as Record<string, unknown>).mode === "dm", "…and AUDITED: the spend.gate row records the DM the bypass happened in");
+}
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const read = (rel: string) => readFileSync(`${here}../agent/channels/${rel}`, "utf8");

@@ -44,7 +44,10 @@ export interface SpendGateAuditRow {
   readonly detail?: Readonly<Record<string, unknown>>;
 }
 
-export function spendRefusalCopy(reason: string | undefined, surfaceKey: string, workspaceKey: string): string {
+export function spendRefusalCopy(reason: string | undefined, surfaceKey: string, workspaceKey: string, isDm = false): string {
+  if (isDm) {
+    return `:no_entry: I'm holding off — ${reason}. This is a cap on your own usage, and I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card. The scope key for this conversation is \`${surfaceKey}\`.`;
+  }
   return `:no_entry: I'm holding off here — ${reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = \`${surfaceKey}\`, whole workspace = \`${workspaceKey}\`.`;
 }
 
@@ -97,7 +100,7 @@ export async function slackSpendGate(input: SlackSpendGateInput): Promise<SpendG
       return "proceed";
     }
     try {
-      await input.post(spendRefusalCopy(verdict.reason, partition.surfaceKey, `${binding.platform}/${binding.workspace}`));
+      await input.post(spendRefusalCopy(verdict.reason, partition.surfaceKey, `${binding.platform}/${binding.workspace}`, input.mode === "dm" || input.mode === "mpim"));
     } catch {
     }
     return "declined";

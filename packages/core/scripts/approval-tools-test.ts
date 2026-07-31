@@ -202,15 +202,18 @@ throwsWith(
   "belongs to no server",
   "planSetSpendLimit refuses a Discord-DM workspace default (would target the DM bucket, not a server)",
 );
+{
+  const plan = planSetSpendLimit(discordDmBinding(), setInput, uncapped, null);
+  ok(plan.args.scopeKey === "discord/300000000000000104/D1", "planSetSpendLimit ALLOWS a DM surface default now that the gate enforces it (OPE-267)");
+}
+{
+  const plan = planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), setInput, uncapped, null);
+  ok(plan.args.scopeKey === "slack/T123/D9", "planSetSpendLimit ALLOWS a Slack-DM surface default too");
+}
 throwsWith(
-  () => planSetSpendLimit(discordDmBinding(), setInput, uncapped, null),
-  "never be enforced",
-  "planSetSpendLimit refuses a DM surface default (the gate never enforces DM caps)",
-);
-throwsWith(
-  () => planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), setInput, uncapped, null),
-  "never be enforced",
-  "planSetSpendLimit refuses a Slack-DM surface default too",
+  () => planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { ...setInput, level: "domain" }, uncapped, null),
+  "spans every DM",
+  "planSetSpendLimit still refuses a DM domain default — re-anchored onto BLAST RADIUS (it would cap everyone's DM), which stays true",
 );
 {
   const plan = planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { ...setInput, level: "workspace" }, uncapped, null);
@@ -260,12 +263,12 @@ ok(defaultScopeKey(slackBinding(), "domain") === "eng", 'defaultScopeKey: level:
 }
 throwsWith(
   () => planSetSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { monthlyTokens: 1, reason: "x", level: "domain" }, uncapped, null),
-  "never be enforced against THIS conversation",
-  'planSetSpendLimit refuses a DM-defaulted level:"domain" scope',
+  "spans every DM in the deployment",
+  'planSetSpendLimit refuses a DM-defaulted level:"domain" scope (blast radius, not unenforceability)',
 );
 throwsWith(
   () => planClearSpendLimit(slackBinding({ mode: "dm", surface: "D9" }), { level: "domain" }, uncapped, null),
-  "never be enforced against THIS conversation",
+  "spans every DM in the deployment",
   'planClearSpendLimit refuses a DM-defaulted level:"domain" scope',
 );
 {

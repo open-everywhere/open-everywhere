@@ -858,10 +858,15 @@ export async function dispatchTurn(
       } else {
         await discordCreateMessage(
           msg.channelId,
-          `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
-            `spend-budgets config, or DM me to propose a temporary override — an admin approves it ` +
-            `on a card. Scope keys for the override: this channel = \`${domainKeyOf(partition)}\`, ` +
-            `whole server = \`${binding.platform}/${binding.workspace}\`.`,
+          binding.mode === "dm" || binding.mode === "mpim"
+            ? `⛔ I'm holding off — ${verdict.reason}. This is a cap on your own usage, and I can't ` +
+              `raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets ` +
+              `config, or temporarily by asking me from a channel to propose an override — an admin ` +
+              `approves that on a card. The scope key for this conversation is \`${domainKeyOf(partition)}\`.`
+            : `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
+              `spend-budgets config, or DM me to propose a temporary override — an admin approves it ` +
+              `on a card. Scope keys for the override: this channel = \`${domainKeyOf(partition)}\`, ` +
+              `whole server = \`${binding.platform}/${binding.workspace}\`.`,
         );
         log(`declined ${domainKeyOf(partition)}: over budget (${verdict.reason ?? "over cap"})`);
         return;
