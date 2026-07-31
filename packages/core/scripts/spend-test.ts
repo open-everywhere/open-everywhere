@@ -506,6 +506,20 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok((await store2.surfaceTokens(org, "slack/T9/C1", "2026-07")) === beforeTokens + 7, "thread grain: recordSpend buckets thread usage under the PARENT channel's ledger");
   ok((await store2.surfaceTokens(org, "slack/T9/T_TH1", "2026-07")) === 0, "thread grain: nothing accumulates under the thread's own key");
 
+  {
+    const { estimateSandboxCostUsd } = await import("../agent/spend/sandbox-pricing.js");
+    const pSbx = { org, platform: "slack", workspace: "T9", surface: "C_SBX", workspaceKey: "slack/T9", surfaceKey: "slack/T9/C_SBX", key: "slack/T9/C_SBX" };
+    const fourHoursUsd = estimateSandboxCostUsd(4 * 3600);
+    await store2.recordSpend(pSbx as never, { period: "2026-07", usage: {}, model: "", usdMicros: Math.round(fourHoursUsd * 1_000_000) });
+    ok((await store2.surfaceTokens(org, "slack/T9/C_SBX", "2026-07")) === 0, "sandbox: the runtime line carries NO tokens — a token cap is unaffected");
+    budgets = { perSurface: { "slack/T9/C_SBX": { surfaceMonthlyUsd: 0.1 } } };
+    const sbxVerdict = await scopeOverBudget(pSbx as never, "channel", NOW_ISO);
+    ok(sbxVerdict.over === true, "🔴 a period with sandbox runtime and NO model spend trips a USD cap set below its runtime cost");
+    ok(!!sbxVerdict.reason?.includes("$0.10"), `…and the refusal names the cap (got: "${sbxVerdict.reason}")`);
+    const sbxTotals = await store2.spendTotals(org, { surfaceKey: "slack/T9/C_SBX", period: "2026-07" });
+    ok(sbxTotals.usdMicros === Math.round(fourHoursUsd * 1_000_000), "sandbox: the ledger holds exactly the platform-rate estimate, in micros");
+  }
+
   const { _resetOperationalDbForTest } = await import("../agent/operational/sqlite.js");
   const goodPath = process.env.OE_SQLITE_PATH;
   _resetOperationalDbForTest();

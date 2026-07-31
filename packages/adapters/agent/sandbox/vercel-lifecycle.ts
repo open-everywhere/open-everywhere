@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { domainKeyOf, resolvePartition, appendUsageEvent } from "@open-everywhere/core/agent/adapter-api.js";
+import { domainKeyOf, resolvePartition, appendUsageEvent, recordSpend, periodOf, estimateSandboxCostUsd } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);
@@ -75,10 +75,11 @@ async function onTurnEnd(ctx: HookContext, outcome: string): Promise<void> {
   }
 }
 
-async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandbox[]): Promise<void> {
+export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandbox[]): Promise<void> {
   try {
     const p = resolvePartition(ctx);
     for (const s of stopped) {
+      const sandboxSeconds = Math.round(s.sandboxSeconds);
       await appendUsageEvent({
         org: p.org,
         surfaceKey: domainKeyOf(p),
@@ -88,11 +89,21 @@ async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandbox[]): 
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
-        detail: { sandboxSeconds: Math.round(s.sandboxSeconds), sandboxName: s.name },
+        detail: { sandboxSeconds, sandboxName: s.name },
       });
+      try {
+        await recordSpend(p, {
+          period: periodOf(new Date().toISOString()),
+          usage: {},
+          model: "",
+          usdMicros: Math.round(estimateSandboxCostUsd(sandboxSeconds) * 1_000_000),
+        });
+      } catch (err) {
+        log(`sandbox spend-ledger record skipped for "${s.name}": ${String(err)}`);
+      }
     }
   } catch (err) {
-    log(`sandbox usage-event skipped (no resolvable partition): ${String(err)}`);
+    log(`sandbox usage records skipped (no resolvable partition): ${String(err)}`);
   }
 }
 

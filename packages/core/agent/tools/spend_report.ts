@@ -267,7 +267,7 @@ export default defineTool({
 
       const notes = [
         pricingNote(mix, assumed),
-        "sandbox runtime isn't included in this rollup — see session_cost for a conversation's sandbox seconds/$.",
+        "the bySurfaceAndKind usage-window figures exclude sandbox runtime (see session_cost for a conversation's sandbox seconds/$); the monthly ledger.*.usd figures DO include sandbox runtime (OPE-266) — an estimate priced at stop time from the platform rate, assuming the configured/default sandbox memory size.",
         "routinePredictions project future spend from this window's history and each surface's CURRENT active cron/interval routines — always an estimate, not a bill.",
         "ledger.surfaces/ledger.workspaces use the existing monthly spend ledger (the caps engine), which may cover a different window than sinceDays (it's keyed by calendar month).",
         "ledger caps are EFFECTIVE caps — config-as-code overlaid with any currently-active admin override (set_spend_limit) — the same numbers the spend gate enforces; an expired override has already reverted to config here, same as at the gate.",
