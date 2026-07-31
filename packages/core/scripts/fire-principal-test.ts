@@ -59,6 +59,7 @@ const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };
 const bundles = [{ name: "personal", connectors: ["personal-notion"] }] as never;
 const bindings = [{ scope: { level: "principal" as const, principal: CREATOR }, bundle: "personal" }] as never;
+let spendBudgets: import("../agent/spend/spend.js").SpendBudgets = {};
 registerConfig({
   loadBundles: () => bundles,
   loadBindings: () => bindings,
@@ -67,6 +68,7 @@ registerConfig({
   loadDomains: () => domains,
   loadSilos: () => silos,
   domainsForSurface: () => [],
+  loadSpendBudgets: () => spendBudgets,
 });
 
 type Attrs = Record<string, string>;
@@ -177,6 +179,37 @@ const staleBag = delivered[1]!.attributes;
   ok(planShape(firePlan) === planShape(livePlan), `plan: 🔴 a fire by a currently-vouched creator resolves the SAME memory plan as that creator's live DM (fire=${planShape(firePlan)} live=${planShape(livePlan)})`);
   ok(firePlan.reads.some((r) => r.silo.name === "org-brain"), "plan: …and that plan really does include the org brain — otherwise 'the same plan' could be 'the same nothing'");
   ok(firePlan.writes.every((w) => w.silo.name === "@personal"), "plan: the shared layer stays READ-ONLY — a fire reads the org brain, it never writes into it");
+}
+
+{
+  const { scopeOverBudget } = await import("../agent/spend/check.js");
+  const spendStore = await import("../agent/spend/store.js");
+  const fire = bindFrom(fireCtx(vouchedBag));
+  const dmPartition = partitionFor(`slack/${TEAM}/D_CREATOR`) as unknown as Parameters<typeof scopeOverBudget>[0];
+  const NOW = "2026-07-20T03:00:00.000Z";
+
+  await spendStore.recordSpend(dmPartition as never, { period: "2026-07", usage: { inputTokens: 900 }, principalId: fire.principalId, routineId: "r-dm-ok" });
+
+  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 } } };
+  const verdict = await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR);
+  ok(verdict.over === true, "budget: 🔴 a DM routine's spend counts against ITS CREATOR's per-user budget — the id the fire binds as is the id the gate is asked about");
+  ok(verdict.reason?.includes("your own monthly budget") === true, `budget: …and it trips the PERSON axis, not the place's (got: "${verdict.reason}")`);
+
+  ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", "U_SOMEONE_ELSE")).over, "budget: …and NOT against anyone else's — a different principal on the same DM surface sees none of this spend");
+
+  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 }, overrides: { [CREATOR]: { surfaceMonthlyTokens: 1_000_000 } } } };
+  ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: an override on the creator raises what their own routines may spend (the coherent consequence of charging them)");
+
+  spendBudgets = {
+    perUser: { overrides: { [CREATOR]: { surfaceMonthlyTokens: 1_000_000 } } },
+    perSurface: { [`slack/${TEAM}/D_CREATOR`]: { surfaceMonthlyTokens: 100 } },
+  };
+  ok((await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: …but never widens the SURFACE cap — a per-user allowance is an extra constraint, never a substitute");
+
+  ok(actingPrincipalId(fire) === undefined, "budget: 🔴 …while the AUTHORITY fence is untouched — the fire is billable to its creator and empowered by nobody");
+  ok(roleForBinding(fire, domains).isOrgAdmin === false, "budget: …so even an org-admin creator's fire holds no admin standing (the spend answer and the authority answer stay opposite)");
+
+  spendBudgets = {};
 }
 
 {

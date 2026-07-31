@@ -110,7 +110,7 @@ export async function dispatchTick(
     const next = computeNextRun(r.trigger, Number.isFinite(dueAt) ? new Date(dueAt) : now, now);
     const mode = dest.mode;
     try {
-      const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString());
+      const verdict = await scopeOverBudget(partitionOf(r), mode, now.toISOString(), undefined, r.createdBy);
       if (verdict.over) {
         declined++;
         log(`DECLINED (over budget): ${r.id} on ${r.surfaceKey} — ${verdict.reason ?? "cap reached"}`);

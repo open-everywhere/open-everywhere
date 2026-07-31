@@ -837,7 +837,7 @@ export async function dispatchTurn(
 
   const binding = bindFrom(ctxFromAuth(auth));
   try {
-    const verdict = await scopeOverBudget(partition, binding.mode, new Date().toISOString(), binding.trust);
+    const verdict = await scopeOverBudget(partition, binding.mode, new Date().toISOString(), binding.trust, binding.principalId);
     if (verdict.over) {
       const bypass = await capBypassFor({
         org: binding.org,

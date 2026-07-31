@@ -1,4 +1,4 @@
-import { type Caps, type SpendBudgets } from "./spend.js";
+import { type Caps, type SpendBudgets, type UserCaps } from "./spend.js";
 import type { SpendLimitRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
@@ -40,6 +40,12 @@ export function resolveCaps(workspaceKey: string, surfaceKey: string, domainName
     budgets.default ??
     {}
   );
+}
+
+export function resolveUserCaps(principalId: string | undefined): UserCaps {
+  if (!principalId) return {};
+  const perUser = loadBudgets().perUser;
+  return perUser?.overrides?.[principalId] ?? perUser?.default ?? {};
 }
 
 export function isSpendLimitActive(row: SpendLimitRow, now: number): boolean {

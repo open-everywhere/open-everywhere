@@ -111,7 +111,8 @@ export async function slackSpendGate(input: SlackSpendGateInput): Promise<SpendG
 }
 
 function liveCheckOverBudget(bindable: BindableContext, mode: SessionMode): Promise<Verdict> {
-  return scopeOverBudget(resolvePartition(bindable), mode, new Date().toISOString(), bindFrom(bindable).trust);
+  const binding = bindFrom(bindable);
+  return scopeOverBudget(resolvePartition(bindable), mode, new Date().toISOString(), binding.trust, binding.principalId);
 }
 
 function liveAppendGateAudit(row: SpendGateAuditRow): Promise<void> {

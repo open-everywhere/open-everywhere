@@ -22,6 +22,8 @@ export interface Caps {
   readonly workspaceMonthlyUsd?: number;
 }
 
+export type UserCaps = Pick<Caps, "surfaceMonthlyTokens" | "surfaceMonthlyUsd">;
+
 export interface CapVerdict {
   readonly over: boolean;
   readonly reason?: string;
@@ -37,9 +39,19 @@ export function checkCap(opts: {
   workspaceTokens: number;
   surfaceUsd?: number;
   workspaceUsd?: number;
+  userTokens?: number;
+  userUsd?: number;
   caps: Caps;
+  userCaps?: UserCaps;
 }): CapVerdict {
   const here = opts.mode === "dm" ? "this DM" : opts.mode === "mpim" ? "this group DM" : "this channel";
+  const { surfaceMonthlyTokens: userTokenCap, surfaceMonthlyUsd: userUsdCap } = opts.userCaps ?? {};
+  if (userTokenCap != null && (opts.userTokens ?? 0) >= userTokenCap) {
+    return { over: true, reason: `you've reached your own monthly budget (${(opts.userTokens ?? 0).toLocaleString()} / ${userTokenCap.toLocaleString()} tokens)` };
+  }
+  if (userUsdCap != null && (opts.userUsd ?? 0) >= userUsdCap) {
+    return { over: true, reason: `you've reached your own monthly budget (~${fmtUsd(opts.userUsd ?? 0)} of ${fmtUsd(userUsdCap)})` };
+  }
   const { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd } = opts.caps;
   if (surfaceMonthlyTokens != null && opts.surfaceTokens >= surfaceMonthlyTokens) {
     return { over: true, reason: `${here} reached its monthly budget (${opts.surfaceTokens.toLocaleString()} / ${surfaceMonthlyTokens.toLocaleString()} tokens)` };
@@ -61,6 +73,10 @@ export interface SpendBudgets {
   readonly perWorkspace?: Readonly<Record<string, Caps>>;
   readonly perDomain?: Readonly<Record<string, Caps>>;
   readonly perSurface?: Readonly<Record<string, Caps>>;
+  readonly perUser?: {
+    readonly default?: UserCaps;
+    readonly overrides?: Readonly<Record<string, UserCaps>>;
+  };
 }
 
 export function defineSpendBudgets(budgets: SpendBudgets): SpendBudgets {
@@ -68,17 +84,18 @@ export function defineSpendBudgets(budgets: SpendBudgets): SpendBudgets {
 }
 
 const CAP_FIELDS = ["surfaceMonthlyTokens", "workspaceMonthlyTokens", "surfaceMonthlyUsd", "workspaceMonthlyUsd"] as const;
+const USER_CAP_FIELDS = ["surfaceMonthlyTokens", "surfaceMonthlyUsd"] as const;
 
-function assertCapsShape(caps: Caps, where: string): void {
+function assertCapsShape(caps: Caps, where: string, allowed: readonly (keyof Caps)[] = CAP_FIELDS): void {
   for (const key of Object.keys(caps)) {
-    if (!(CAP_FIELDS as readonly string[]).includes(key)) {
-      throw new Error(`spend budget ${where} has unknown field "${key}" (valid: ${CAP_FIELDS.join(", ")})`);
+    if (!(allowed as readonly string[]).includes(key)) {
+      throw new Error(`spend budget ${where} has unknown field "${key}" (valid: ${allowed.join(", ")})`);
     }
   }
-  if (CAP_FIELDS.every((f) => caps[f] == null)) {
-    throw new Error(`spend budget ${where} sets no cap at all — remove the entry or set at least one of ${CAP_FIELDS.join(", ")}`);
+  if (allowed.every((f) => caps[f] == null)) {
+    throw new Error(`spend budget ${where} sets no cap at all — remove the entry or set at least one of ${allowed.join(", ")}`);
   }
-  for (const f of CAP_FIELDS) {
+  for (const f of allowed) {
     const v = caps[f];
     if (v == null) continue;
     if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
@@ -111,5 +128,19 @@ export function assertSpendBudgetsValid(budgets: SpendBudgets): void {
       throw new Error(`spend budget perSurface key must be "platform/workspace/surface", got ${JSON.stringify(key)}`);
     }
     assertCapsShape(caps, `perSurface["${key}"]`);
+  }
+  if (budgets.perUser) {
+    for (const key of Object.keys(budgets.perUser)) {
+      if (key !== "default" && key !== "overrides") {
+        throw new Error(`spend budget perUser has unknown field "${key}" (valid: default, overrides)`);
+      }
+    }
+    if (budgets.perUser.default) assertCapsShape(budgets.perUser.default, "perUser.default", USER_CAP_FIELDS);
+    for (const [principalId, caps] of Object.entries(budgets.perUser.overrides ?? {})) {
+      if (!principalId.trim()) {
+        throw new Error(`spend budget perUser.overrides key must be a non-empty principal id, got ${JSON.stringify(principalId)}`);
+      }
+      assertCapsShape(caps, `perUser.overrides["${principalId}"]`, USER_CAP_FIELDS);
+    }
   }
 }

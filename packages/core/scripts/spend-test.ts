@@ -104,6 +104,18 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
   throws({ default: {} }, "no cap at all", "an entry that caps nothing is rejected");
   throws({ default: { surfaceMonthlyUsd: -1 } }, "> 0", "a non-positive amount is rejected");
   throws({ default: { surfaceMonthlyTokens: 1.5 } }, "integer", "a fractional token cap is rejected");
+
+  valid({ perUser: { default: { surfaceMonthlyUsd: 5 } } }, "perUser.default with a surface-shaped USD cap validates");
+  valid(
+    { perUser: { default: { surfaceMonthlyTokens: 100_000 }, overrides: { U_BIG: { surfaceMonthlyUsd: 50, surfaceMonthlyTokens: 5_000_000 } } } },
+    "perUser with a default AND a named override validates in both denominations",
+  );
+  throws({ perUser: { default: { workspaceMonthlyUsd: 5 } as never } }, "unknown field", "OPE-268: a WORKSPACE-shaped field under perUser.default is REFUSED, not silently ignored");
+  throws({ perUser: { overrides: { U1: { workspaceMonthlyTokens: 5 } as never } } }, "unknown field", "OPE-268: …and refused under an override too");
+  throws({ perUser: { overrides: { "": { surfaceMonthlyUsd: 1 } } } }, "non-empty principal id", "OPE-268: a blank principal id key is rejected");
+  throws({ perUser: { default: {} } }, "no cap at all", "OPE-268: a perUser entry that caps nothing is rejected");
+  throws({ perUser: { default: { surfaceMonthlyUsd: 0 } } }, "> 0", "OPE-268: a non-positive per-user amount is rejected");
+  throws({ perUser: { defaults: { surfaceMonthlyUsd: 5 } } as never }, "unknown field", "OPE-268: a typo on the WRAPPER (`defaults`) fails loud — an allowance nobody receives is invisible in every report");
 }
 
 const NOW = 1_000_000;
@@ -582,6 +594,42 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 
   budgets3 = { default: { surfaceMonthlyTokens: 1_000_000 }, perWorkspace: { [wsKey]: { surfaceMonthlyTokens: 1_000_000 } }, perDomain: { "txn-team": { surfaceMonthlyTokens: 1 } } };
   ok((await scopeOverBudget(mk("C_TXN") as never, "channel", "2026-07-15T00:00:00.000Z")).over, "perDomain vs perWorkspace/default: perDomain wins even though both wider layers are configured (and looser)");
+
+  const DM = "D_SHARED";
+  await store3.recordSpend(mk(DM) as never, { period: "2026-07", usage: { inputTokens: 100 }, principalId: "U_HEAVY" });
+  await store3.recordSpend(mk(DM) as never, { period: "2026-07", usage: { inputTokens: 1 }, principalId: "U_LIGHT" });
+
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 } } };
+  const heavy = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY");
+  ok(heavy.over === true, "OPE-268: perUser.default declines the person whose OWN rows breached it");
+  ok(heavy.reason?.includes("your own monthly budget") === true, `OPE-268: the refusal is about the PERSON, not the place (got: "${heavy.reason}")`);
+  ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT")).over, "OPE-268: …while a second person on the SAME surface key stays under it — two users never share a pool, and the gate is reading principal_id, not the surface total");
+
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 }, overrides: { U_HEAVY: { surfaceMonthlyTokens: 1_000_000 } } } };
+  ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: perUser.overrides[principal] beats the default for that person");
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 1 }, overrides: { U_OTHER: { surfaceMonthlyTokens: 1_000_000 } } } };
+  ok((await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT")).over, "OPE-268: …and ONLY for that person — someone else's override doesn't raise everyone's default");
+
+  budgets3 = { perUser: { overrides: { U_LIGHT: { surfaceMonthlyTokens: 1_000_000 } } }, perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 5 } } };
+  const vsSurface = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT");
+  ok(vsSurface.over === true && vsSurface.reason?.includes("this DM") === true, "OPE-268: a huge per-user allowance does NOT disable the SURFACE cap — both are checked, and the surface's breach is what is reported");
+  budgets3 = { perUser: { overrides: { U_LIGHT: { surfaceMonthlyTokens: 1_000_000 } } }, default: { workspaceMonthlyTokens: 5 } };
+  const vsWorkspace = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT");
+  ok(vsWorkspace.over === true && vsWorkspace.reason?.includes("workspace") === true, "OPE-268: …nor the WORKSPACE cap — person and place are different axes, ORed, never substituted");
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 } }, perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 1_000_000 } }, default: { workspaceMonthlyTokens: 1_000_000 } };
+  ok((await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: a person over their own budget is declined even where the surface and workspace have headroom");
+
+  await store3.recordSpend(mk("C_BUSY") as never, { period: "2026-07", usage: { inputTokens: 100 }, principalId: "U_HEAVY" });
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 1 } } };
+  ok(!(await scopeOverBudget(mk("C_BUSY") as never, "channel", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: the person axis is DM-scoped — the same principal's channel turns are not gated by their DM allowance");
+  ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, "OPE-268: no principal → no per-user cap can apply (never the unattributed bucket by accident)");
+
+  budgets3 = { perUser: { default: { surfaceMonthlyUsd: 0.000_05 } } };
+  const usdVerdict = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY");
+  ok(usdVerdict.over === true && usdVerdict.reason?.includes("your own monthly budget") === true, "OPE-268: a per-user cap trips in USD as well as tokens (both read the same principal-keyed ledger rows)");
+
+  budgets3 = {};
+  ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: an empty registry stays uncapped on the person axis too");
 }
 
 {
