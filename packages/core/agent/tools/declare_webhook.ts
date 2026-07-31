@@ -3,7 +3,7 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf, resolveMode } from "../access/request.js";
+import { actingPrincipalIdOf, resolveMode } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
@@ -125,6 +125,10 @@ export default defineTool({
         `Proposing a webhook needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human has to read the exact declaration before a PR is opened in their name.`,
       );
     }
+    const requestedBy = actingPrincipalIdOf(ctx);
+    if (!requestedBy) {
+      throw new Error("declare_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not open a config PR declaring a standing inbound door in that person's name. Ask a person in this conversation to propose it.");
+    }
     const cfg = requireWebhookDeclareConfig();
 
     const id = input.id.trim().toLowerCase();
@@ -196,8 +200,6 @@ export default defineTool({
     }
 
     const p = resolvePartition(ctx);
-    const requestedBy = principalIdOf(ctx);
-    if (!requestedBy) throw new Error("declare_webhook needs a verified sender — there's no requester to show on the approval card.");
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error("declare_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
 

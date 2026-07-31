@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, channelPlatform, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, channelPlatform, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { buildResolveRequest, principalIdOf, resolveAccessFor } from "../access/request.js";
+import { buildResolveRequest, resolveAccessFor } from "../access/request.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext } from "../access/delta.js";
@@ -52,8 +52,9 @@ export function planRequestAccess(
   if (binding.trust === "external") {
     throw new Error("this channel is externally shared — access can't be widened from an external surface; an internal admin can PR a grant by hand.");
   }
-  if (!binding.principalId) {
-    throw new Error("request_access needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the card.");
+  const requestedBy = actingPrincipalId(binding);
+  if (!requestedBy) {
+    throw new Error("request_access needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not ask for its own channel to be widened in that person's name. Ask someone in this channel to request it.");
   }
 
   const delta = planAccessDelta(
@@ -72,7 +73,7 @@ export function planRequestAccess(
     scopeKey: extras.scopeKey,
     requestId: randomUUID(),
     delta,
-    requestedBy: binding.principalId,
+    requestedBy,
     ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
     channelId: extras.channelId,
     threadTs: binding.threadTs ?? null,

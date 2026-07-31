@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
@@ -27,8 +27,8 @@ export function planClearConnectorOverride(binding: SurfaceBinding, input: Clear
   if (binding.platform !== "slack") {
     throw new Error(`clear_connector_override is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
   }
-  if (!binding.principalId) {
-    throw new Error("clear_connector_override needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  if (!actingPrincipalId(binding)) {
+    throw new Error("clear_connector_override needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and restoring cut access is a person's decision. Ask someone in this conversation to propose it.");
   }
   const connector = input.connector.trim();
   if (!connector) {

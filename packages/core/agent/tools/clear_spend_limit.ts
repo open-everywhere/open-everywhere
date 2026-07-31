@@ -1,6 +1,6 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
@@ -36,8 +36,8 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
   if (!hasApprovalCardPath(binding.platform)) {
     throw new Error(`clear_spend_limit needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
   }
-  if (!binding.principalId) {
-    throw new Error("clear_spend_limit needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  if (!actingPrincipalId(binding)) {
+    throw new Error("clear_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a spend override in that person's name. Ask a person in this conversation to propose it.");
   }
   const level = input.level ?? "surface";
   assertScopableFromHere("clear_spend_limit", binding, level, input.scopeKey);

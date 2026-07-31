@@ -69,6 +69,7 @@ registerConfig({
   loadSilos: () => silos,
   domainsForSurface: () => [],
   loadSpendBudgets: () => spendBudgets,
+  loadAccessRequests: () => ({ adminChannel: "C_ADMIN", configRepo: "acme/agent-config", dryRun: true, baseBundles: () => bundles, baseBindings: () => bindings }),
 });
 
 type Attrs = Record<string, string>;
@@ -304,6 +305,78 @@ const staleBag = delivered[1]!.attributes;
   ok(pending.length === 0, `authoring: 🔴 …and NO approval card was minted at all by any of them (found ${pending.length}: ${pending.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`);
 
   ok(principalIdOf(fire) === CREATOR && actingPrincipalIdOf(fire) === undefined, "authoring: the two questions stay separate on the very same context — which is what lets subscribe_pr keep its fired re-arm while its siblings refuse one");
+}
+
+{
+  const dmFire = fireCtx(vouchedBag);
+  const dmLive = liveCtx({ channel_id: "D_CREATOR" });
+
+  const chanFireAttrs = routineFireAttributes(
+    { id: "r-chan", org: ORG, surfaceKey: `slack/${TEAM}/C_ENG`, trigger: { kind: "cron", expr: "0 9 * * *" }, prompt: "p", createdBy: CREATOR, createdAt: "x", status: "active", consecutiveFailures: 0 } as never,
+    { team_id: TEAM, channel_id: "C_ENG", channel_type: "channel" },
+    "channel",
+    true,
+  );
+  const chanFire = fireCtx(chanFireAttrs);
+  const chanLive = liveCtx({ channel_id: "C_ENG", channel_type: "channel", trust_checked: "true" });
+
+  type Entry = { execute: (i: unknown, c: unknown) => unknown };
+  type DynHandler = (event: unknown, ctx: unknown) => Entry | null;
+  const loadFor = async (name: string, ctx: unknown): Promise<Entry> => {
+    const mod = (await import(`../agent/tools/${name}.js`)).default as Entry & { events?: Record<string, DynHandler> };
+    if (typeof mod.execute === "function") return mod;
+    const entry = mod.events?.["session.started"]?.({ type: "session.started" }, ctx);
+    if (!entry) throw new Error(`fixture: ${name}'s dynamic resolver hid the tool on this context — the leg would pass for the wrong reason`);
+    return entry;
+  };
+
+  const SENDER = /verified sender|acting sender/;
+  const passesSenderGate = async (fn: () => unknown, label: string): Promise<void> => {
+    let msg: string | null = null;
+    try {
+      await fn();
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    ok(msg === null || !SENDER.test(msg), `${label} (got: ${msg ?? "no throw"})`);
+  };
+
+  const cases: readonly { readonly tool: string; readonly input: Record<string, unknown>; readonly fire: never; readonly live: never; readonly why: string }[] = [
+    { tool: "set_spend_limit", input: { monthlyUsd: 500, reason: "the routine says we are near the cap" }, fire: dmFire, live: dmLive, why: "raising the ceiling on the agent's OWN spend is the first thing an injected fire wants, and the card would carry an admin's name" },
+    { tool: "clear_spend_limit", input: {}, fire: dmFire, live: dmLive, why: "a clear REMOVES the override holding a cap down — a guardrail taken away, not one added" },
+    { tool: "revoke_connector", input: { connector: "personal-notion", reason: "suspected leak" }, fire: dmFire, live: dmLive, why: "break-glass is a person's decision; an approved revoke is STICKY, so one wrong click off a fire is an outage that persists until someone reverses it" },
+    { tool: "clear_connector_override", input: { connector: "personal-notion" }, fire: dmFire, live: dmLive, why: "🔴 the ONE widen verb on the runtime connector lane — everything else about access widens only through a reviewed PR" },
+    { tool: "declare_webhook", input: { id: "inbound", source: "github", readableBy: ["org"], posture: "trigger-only" }, fire: dmFire, live: dmLive, why: "a declared hook is a STANDING unattended door, landed by a merged PR that outlives the session" },
+    { tool: "rotate_webhook", input: { source: "github" }, fire: dmFire, live: dmLive, why: "the tool's entire product is HANDING A SECRET TO SOMEBODY, and a fire has no recipient — only a name to record it under" },
+    { tool: "request_access", input: { kind: "grant-connector", connector: "personal-notion" }, fire: chanFire, live: chanLive, why: "🔴 the worst outcome of the seven — a merged bot-PR widening the channel's PERMANENT grants, naming a person in a diff nobody can un-write" },
+  ];
+
+  const { getOperationalStore: opStore } = await import("../agent/operational/provider.js");
+  const before = (await opStore().listPendingActions(ORG)).length;
+
+  for (const c of cases) {
+    const tool = await loadFor(c.tool, c.fire);
+    await refuses(() => tool.execute(c.input, c.fire), SENDER, `credential: 🔴 a fire cannot ${c.tool} — ${c.why}`);
+  }
+
+  const afterFires = await opStore().listPendingActions(ORG);
+  ok(
+    afterFires.length === before,
+    `credential: 🔴 …and not ONE of the seven minted an approval card (${before} before, ${afterFires.length} after: ${afterFires.map((r) => `${r.kind}/${r.requestedBy}`).join(", ")})`,
+  );
+
+  for (const c of cases) {
+    const tool = await loadFor(c.tool, c.live);
+    await passesSenderGate(() => tool.execute(c.input, c.live), `credential: …and the same creator ACTING LIVE clears ${c.tool}'s sender gate — the refusal is about nobody being here, not about who`);
+  }
+
+  const { planSetSpendLimit } = await import("../agent/tools/set_spend_limit.js");
+  const { planClearSpendLimit } = await import("../agent/tools/clear_spend_limit.js");
+  const slashBinding = bindFrom(liveCtx({ channel_id: "C_ENG", channel_type: "channel", trust_checked: "true" }));
+  const uncapped = { tokens: null, usd: null };
+  ok(slashBinding.principalAttested === undefined && actingPrincipalId(slashBinding) === CREATOR, "credential: a slash command's binding carries no attestation — which is why the shared planner fence cannot reach it");
+  ok(planSetSpendLimit(slashBinding, { monthlyUsd: 25, reason: '"/oe budget raise"' }, uncapped, null).kind === "spend.set", "credential: 🔴 …and `/oe budget raise`'s planner still plans — the fence took nothing from the zero-inference command path");
+  ok(planClearSpendLimit(slashBinding, {}, uncapped, null).kind === "spend.clear", "credential: …nor from `/oe budget clear`'s");
 }
 
 {

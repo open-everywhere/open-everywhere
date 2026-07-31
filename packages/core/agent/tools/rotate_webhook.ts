@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf, resolveMode } from "../access/request.js";
+import { actingPrincipalIdOf, resolveMode } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
@@ -46,6 +46,10 @@ export default defineTool({
     if (!hasApprovalCardPath(binding.platform)) {
       throw new Error(`Rotating a webhook secret needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}".`);
     }
+    const requestedBy = actingPrincipalIdOf(ctx);
+    if (!requestedBy) {
+      throw new Error("rotate_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and there is nobody in a fire to hand a fresh signing secret to. Ask a person in this conversation to rotate it.");
+    }
     if (!hasPrivateDeliveryPath(binding.platform) || !revealPageAvailable()) {
       throw new Error(
         `I can't hand over a new signing secret from "${binding.platform}" — it needs a surface where I can send you a private message, and a deployment configured to serve one-time links. Rotating without being able to give you the result would just break the webhook.`,
@@ -67,8 +71,6 @@ export default defineTool({
       );
     }
 
-    const requestedBy = principalIdOf(ctx);
-    if (!requestedBy) throw new Error("rotate_webhook needs a verified sender — there's no requester to show on the approval card.");
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) throw new Error("rotate_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
 

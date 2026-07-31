@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
@@ -29,8 +29,8 @@ export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnec
   if (binding.platform !== "slack") {
     throw new Error(`revoke_connector is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
   }
-  if (!binding.principalId) {
-    throw new Error("revoke_connector needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  if (!actingPrincipalId(binding)) {
+    throw new Error("revoke_connector needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and break-glass is a person's decision, not a schedule's. Ask someone in this conversation to propose the revoke.");
   }
   const connector = input.connector.trim();
   if (!connector) {

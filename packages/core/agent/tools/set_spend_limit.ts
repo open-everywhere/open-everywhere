@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { bindFrom, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
@@ -83,8 +83,8 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
   if (!hasApprovalCardPath(binding.platform)) {
     throw new Error(`set_spend_limit needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
   }
-  if (!binding.principalId) {
-    throw new Error("set_spend_limit needs a verified sender on this turn — no principal id resolved, so there's no requester to show on the approval card.");
+  if (!actingPrincipalId(binding)) {
+    throw new Error("set_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose a spend-limit change in that person's name. Ask a person in this conversation to propose it.");
   }
   if (input.monthlyTokens == null && input.monthlyUsd == null) {
     throw new Error("set_spend_limit needs monthlyTokens and/or monthlyUsd — a proposal must set at least one cap component.");
