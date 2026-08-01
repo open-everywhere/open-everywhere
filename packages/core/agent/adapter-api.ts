@@ -437,7 +437,7 @@ export { registerRoutineDispatch } from "./schedules/routine-dispatch.js";
 export type { RoutineDispatchProvider, DispatchTarget } from "./schedules/routine-dispatch.js";
 export type { Routine } from "./routines/routine.js";
 
-export { appendUsageEvent } from "./spend/usage-events.js";
+export { appendUsageEvent, usageForSession } from "./spend/usage-events.js";
 export type { ModelPricing, PricingSource } from "./spend/pricing.js";
 export { recordSpend, spendTotals } from "./spend/store.js";
 export { periodOf } from "./spend/spend.js";

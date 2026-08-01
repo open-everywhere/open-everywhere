@@ -1,6 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
 import { Sandbox } from "@vercel/sandbox";
-import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf } from "@open-everywhere/core/agent/adapter-api.js";
+import { bindFrom, domainKeyOf, resolvePartition, appendUsageEvent, usageForSession, recordSpend, periodOf, estimateSandboxCostUsd, routineIdOf } from "@open-everywhere/core/agent/adapter-api.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:sandbox-lifecycle] ${msg}`);
@@ -80,8 +80,20 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
     const p = resolvePartition(ctx);
     const principalId = bindFrom(ctx).principalId;
     const routineId = routineIdOf(ctx);
+    const priorBilled = new Map<string, number>();
+    try {
+      for (const e of await usageForSession(p.org, ctx.session.id)) {
+        if (e.kind !== "sandbox") continue;
+        const name = e.detail?.sandboxName;
+        if (typeof name !== "string") continue;
+        const secs = typeof e.detail?.sandboxSeconds === "number" ? e.detail.sandboxSeconds : 0;
+        priorBilled.set(name, (priorBilled.get(name) ?? 0) + secs);
+      }
+    } catch (err) {
+      log(`prior sandbox usage read skipped (billing the full window): ${String(err)}`);
+    }
     for (const s of stopped) {
-      const sandboxSeconds = Math.round(s.sandboxSeconds);
+      const billedSeconds = Math.max(0, Math.round(s.sandboxSeconds) - (priorBilled.get(s.name) ?? 0));
       await appendUsageEvent({
         org: p.org,
         surfaceKey: domainKeyOf(p),
@@ -93,7 +105,7 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
         outputTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
-        detail: { sandboxSeconds, sandboxName: s.name },
+        detail: { sandboxSeconds: billedSeconds, sandboxName: s.name },
       });
       try {
         await recordSpend(p, {
@@ -102,7 +114,7 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
           principalId,
           routineId,
           model: "",
-          usdMicros: Math.round(estimateSandboxCostUsd(sandboxSeconds) * 1_000_000),
+          usdMicros: Math.round(estimateSandboxCostUsd(billedSeconds) * 1_000_000),
         });
       } catch (err) {
         log(`sandbox spend-ledger record skipped for "${s.name}": ${String(err)}`);

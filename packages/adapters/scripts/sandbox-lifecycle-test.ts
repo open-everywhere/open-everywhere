@@ -168,4 +168,35 @@ const ok = (cond: boolean, label: string) => {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution)\n`);
+{
+  const dir = join(tmpdir(), `oe-sandbox-lifecycle-delta-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  const { resolvePartition, domainKeyOf, spendTotals, periodOf, estimateSandboxCostUsd } = await import(
+    "@open-everywhere/core/agent/adapter-api.js"
+  );
+
+  const ctx = {
+    channel: { kind: "slack" },
+    session: { id: "sess-multi", auth: { current: { attributes: { team_id: "T1", channel_id: "C_MULTI" } } } },
+  };
+  for (const cumulative of [100, 250, 400]) {
+    await recordSandboxUsage(ctx as never, [{ name: "sbx-main", sandboxSeconds: cumulative }]);
+  }
+
+  const p = resolvePartition(ctx as never);
+  const totals = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period: periodOf(new Date().toISOString()) });
+  const billedOnce = Math.round(estimateSandboxCostUsd(400) * 1_000_000);
+  const cumulativeBug = Math.round(estimateSandboxCostUsd(100 + 250 + 400) * 1_000_000);
+  ok(
+    Math.abs(totals.usdMicros - billedOnce) <= 3,
+    `3-stop session bills the runtime ONCE (${totals.usdMicros} ≈ ${billedOnce} micros), not Σ cumulative (${cumulativeBug})`,
+  );
+  ok(totals.usdMicros < cumulativeBug, "…demonstrably below the pre-fix superlinear total (750s → 400s of billed runtime)");
+  ok(totals.calls === 3, "…across three ledger writes (one delta per stop)");
+
+  rmSync(dir, { recursive: true, force: true });
+  delete process.env.OE_SQLITE_PATH;
+}
+
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing)\n`);
