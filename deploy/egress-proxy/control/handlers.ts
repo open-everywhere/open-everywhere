@@ -1,4 +1,4 @@
-import { PolicyStore, validatePolicy, type AclRequest, type AclDecision } from "./acl.ts";
+import { PolicyStore, validatePolicy, normalizeSourceIp, type AclRequest, type AclDecision } from "./acl.ts";
 
 export interface PushInput {
   readonly body: unknown;
@@ -54,6 +54,12 @@ export function handleAcl(store: PolicyStore, q: AclQuery): AclResult {
   if (method) req.method = method;
   if (path) req.path = path;
   return { decision: store.decide(src, req), evaluated: true };
+}
+
+export function isLoopbackAddr(addr: string | undefined): boolean {
+  if (!addr) return false;
+  const a = normalizeSourceIp(addr);
+  return a === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a);
 }
 
 function clean(v: string | undefined): string | undefined {

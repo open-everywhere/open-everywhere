@@ -1,6 +1,6 @@
 import http from "node:http";
 import { PolicyStore } from "./acl.ts";
-import { handlePolicyPush, handleAcl } from "./handlers.ts";
+import { handlePolicyPush, handleAcl, isLoopbackAddr } from "./handlers.ts";
 
 const store = new PolicyStore();
 const TOKEN = process.env.OE_EGRESS_PROXY_TOKEN?.trim() || undefined;
@@ -58,6 +58,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === "/acl" && req.method === "GET") {
+      if (!isLoopbackAddr(remoteAddr(req))) return send(res, 403, { error: "forbidden" });
       const q = {
         src: url.searchParams.get("src") ?? undefined,
         host: url.searchParams.get("host") ?? undefined,

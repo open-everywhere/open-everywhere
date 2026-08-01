@@ -8,7 +8,7 @@ import {
   validatePolicy,
   type EgressPolicy,
 } from "./acl.ts";
-import { handlePolicyPush, handleAcl } from "./handlers.ts";
+import { handlePolicyPush, handleAcl, isLoopbackAddr } from "./handlers.ts";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -130,4 +130,15 @@ const ok = (cond: boolean, label: string) => {
   ok(!malformed2.evaluated && !malformed2.decision.allow, "missing host → fail-closed deny");
 }
 
-console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers)\n`);
+{
+  ok(isLoopbackAddr("127.0.0.1"), "IPv4 loopback → /acl allowed (the in-container helper)");
+  ok(isLoopbackAddr("127.1.2.3"), "any 127.0.0.0/8 address is loopback");
+  ok(isLoopbackAddr("::1"), "IPv6 loopback is loopback");
+  ok(isLoopbackAddr("::ffff:127.0.0.1"), "ipv4-mapped-ipv6 loopback is loopback");
+  ok(!isLoopbackAddr("172.20.0.3"), "a sandbox network IP is NOT loopback → /acl refused (F1 credential read-back closed)");
+  ok(!isLoopbackAddr("10.0.0.7"), "an app-facing network IP is NOT loopback → /acl refused");
+  ok(!isLoopbackAddr(""), "empty remote address is NOT loopback (fail-closed)");
+  ok(!isLoopbackAddr(undefined), "undefined remote address is NOT loopback (fail-closed)");
+}
+
+console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers + /acl loopback gate)\n`);
