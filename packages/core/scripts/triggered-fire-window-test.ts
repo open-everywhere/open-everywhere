@@ -254,6 +254,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   process.env.OE_ONESHOT_AGENT = "1";
   const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
+  const { registerEntityRead } = await import("../agent/routines/entity-read.js");
+  registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) });
   const GRANT = { resolve: () => ({ repos: ["me/proj"] }) as never };
   const ev = routine({ id: "r-event", trigger: { kind: "event", source: "github" }, prompt: "Summarise the PR." });
   const body = JSON.stringify({

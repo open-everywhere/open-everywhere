@@ -24,6 +24,7 @@ const { routineFireAttributes } = await import("../agent/routines/fire-auth.js")
 const { ROUTINE_MARKER } = await import("../agent/routines/routine.js");
 const { OE_TAINTED_FIRE_ATTR } = await import("../agent/access/taint-signal.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
+const { registerEntityRead } = await import("../agent/routines/entity-read.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 type AuditInput = import("../agent/operational/store.js").AuditInput;
 type DispatchTarget = import("../agent/schedules/routine-dispatch.js").DispatchTarget;
@@ -32,6 +33,8 @@ const SLACK_CHANNEL = { __fixture: "slack" } as never;
 const DISCORD_CHANNEL = { __fixture: "discord" } as never;
 
 registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
+
+registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) });
 
 registerRoutineDispatch("discord", {
   resolveTarget: (r: Routine): DispatchTarget | null => {

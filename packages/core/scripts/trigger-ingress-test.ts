@@ -28,6 +28,7 @@ const { admitTrigger, deliveryDedupeKey } = await import("../agent/routines/ingr
 const { fanOutDelivery } = await import("../agent/routines/github-fanout.js");
 const { registerEventNormalizer } = await import("../agent/routines/event-model.js");
 const { registerEventScopeGrant } = await import("../agent/routines/event-authz.js");
+const { registerEntityRead } = await import("../agent/routines/entity-read.js");
 
 type Routine = import("../agent/routines/routine.js").Routine;
 type AuditInput = import("../agent/operational/store.js").AuditInput;
@@ -37,6 +38,8 @@ type TriggerReport = import("../agent/routines/ingress.js").TriggerReport;
 
 const SLACK_CHANNEL = { __fixture: "slack" } as never;
 registerSlackTestBridge({ channel: SLACK_CHANNEL, confirmChannelInternal: async () => true });
+
+registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) });
 
 const QUEUE_SOURCE = "deploys";
 
