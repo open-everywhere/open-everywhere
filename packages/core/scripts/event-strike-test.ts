@@ -25,6 +25,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { ROUTINE_AUDIT, resetRoutineSkipThrottle } = await import("../agent/routines/fire-audit.js");
 const { MAX_CONSECUTIVE_FAILURES } = await import("../agent/routines/lifecycle.js");
 const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+const { registerEntityRead } = await import("../agent/routines/entity-read.js");
 type Routine = import("../agent/routines/routine.js").Routine;
 type AuditInput = import("../agent/operational/store.js").AuditInput;
 type HydrationOutcome = import("../agent/routines/entity-read.js").HydrationOutcome;
@@ -45,6 +46,8 @@ registerSlackTestBridge({
   },
 });
 registerSlackFixturePostArm();
+
+registerEntityRead({ platform: "github", read: async () => ({ status: "gone" }) });
 
 function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   return {
