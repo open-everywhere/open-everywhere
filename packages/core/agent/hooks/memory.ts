@@ -69,6 +69,10 @@ export function rejectedName(rel: string, sessionId: string): string {
   return siblingName(rel, "rejected", sessionId);
 }
 
+function isHostOwnedFile(rel: string): boolean {
+  return rel === "RECURRING.md";
+}
+
 export function mergePreservingConflicts(
   hostCurrent: MemoryFiles,
   fromSandbox: MemoryFiles,
@@ -79,6 +83,10 @@ export function mergePreservingConflicts(
   const conflicts: string[] = [];
   for (const [rel, sandboxContent] of Object.entries(fromSandbox)) {
     if (rel.includes(".conflict-")) continue;
+    if (isHostOwnedFile(rel)) {
+      if (rel in hostCurrent) merged[rel] = hostCurrent[rel];
+      continue;
+    }
     const hostContent = hostCurrent[rel];
     if (hostContent === undefined) continue;
     const hostChangedSinceStart = hashContent(hostContent) !== baseline[rel];
