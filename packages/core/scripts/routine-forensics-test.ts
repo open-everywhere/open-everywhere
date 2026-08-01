@@ -224,6 +224,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
       return true;
     },
     grant: { resolve: () => ({ repos: ["me/proj"] }) as never },
+    hydrate: { read: async () => ({ status: "gone" }) as never },
   };
   const body = JSON.stringify({
     action: "opened",
