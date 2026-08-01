@@ -249,4 +249,66 @@ function seedRoutine(id: string, surfaceKey: string, target: Record<string, unkn
   ok(!teamsSingleWindowPrivacyOk({ ...vouchedFacts, scope: "personal" }), "window floor: a personal chat is refused even when vouched");
 }
 
-console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom)`);
+{
+  const { teamsOnMessage } = await import("@open-everywhere/provider-teams/agent/channels/teams.js");
+  const { buildTeamsAuth } = await import("@open-everywhere/provider-teams/agent/channels/teams-identity.js");
+  const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
+  const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+
+  const auth = (conversationId: string, tenantId: string) =>
+    buildTeamsAuth({ userId: "cap-user", userName: "Cap User", tenantId, conversationId, teamId: "team-cap", serviceUrl: TEAMS_SERVICE_URL, scope: "channel" });
+  const bindableOf = (a: ReturnType<typeof buildTeamsAuth>) => ({ channel: { kind: "teams" as const }, session: { auth: { current: a } } });
+  const msg = (conversationId: string, tenantId: string): unknown => ({
+    scope: "channel",
+    isBotMentioned: true,
+    from: { id: "cap-user", name: "Cap User" },
+    tenantId,
+    conversation: { id: conversationId, tenantId },
+    teamsChannelId: conversationId,
+    teamId: "team-cap",
+    serviceUrl: TEAMS_SERVICE_URL,
+    channelData: {},
+    text: "@bot hi",
+  });
+  const drive = async (conversationId: string, tenantId: string) => {
+    const posted: string[] = [];
+    const ctx = { teams: { request: async () => ({ ok: false, body: {} }) }, thread: { post: async (t: string) => { posted.push(t); return { id: "p" }; } }, isSubscribed: async () => false };
+    const res = await teamsOnMessage(ctx as never, msg(conversationId, tenantId) as never);
+    return { res, posted };
+  };
+
+  const overAuth = auth("19:cap@thread.tacv2", "TENCAP");
+  const overPart = resolvePartition(bindableOf(overAuth));
+  const okAuth = auth("19:ok@thread.tacv2", "TENOK");
+  const okPart = resolvePartition(bindableOf(okAuth));
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
+    loadSpendBudgets: () => ({ perSurface: { [overPart.surfaceKey]: { surfaceMonthlyTokens: 1 } } }),
+  });
+  await recordSpend(overPart as never, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 100, outputTokens: 100 } });
+
+  const over = await drive("19:cap@thread.tacv2", "TENCAP");
+  ok(over.res === null, "spend-gate: an over-budget teams mention DECLINES the turn (returns null, no model turn)");
+  ok(over.posted.length === 1 && over.posted[0]!.includes(overPart.surfaceKey), "spend-gate: the decline posts a VISIBLE refusal naming the surface scope key");
+  const gateRows = (await readAudit({ org: overPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === overPart.surfaceKey);
+  ok(gateRows.length === 1 && gateRows[0]!.detail?.door === "mention" && gateRows[0]!.detail?.over === true, "spend-gate: an over-budget teams mention writes ONE spend.gate audit row (door=mention, over=true)");
+
+  const under = await drive("19:ok@thread.tacv2", "TENOK");
+  ok(under.res !== null && (under.res as { auth?: unknown }).auth !== undefined, "spend-gate: an under-budget teams mention DISPATCHES (returns {auth})");
+  ok(under.posted.length === 0, "spend-gate: an under-budget teams mention posts NO refusal");
+  ok((await readAudit({ org: okPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === okPart.surfaceKey).length === 0, "spend-gate: an under-budget teams mention writes NO spend.gate row");
+
+  const live = provider.getOperationalStore();
+  const broken = { ...live, spendTotals: async () => { throw new Error("store down"); } } as typeof live;
+  provider.registerOperationalStore(broken);
+  provider.resetOperationalStore();
+  const failOpen = await drive("19:cap@thread.tacv2", "TENCAP");
+  ok(failOpen.res !== null && (failOpen.res as { auth?: unknown }).auth !== undefined, "spend-gate: a THROWN budget check fails OPEN (over-budget scope still dispatches)");
+  provider.registerOperationalStore(live);
+  provider.resetOperationalStore();
+}
+
+console.log(`\n✓ teams-provider-integration: ${n} assertions passed (manifest row, RSC manifest block, group-chat window floor, reply gate, target, execute + audit, read adapter, routine dispatch + bindFrom, attended-mention spend gate)`);

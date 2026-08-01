@@ -167,4 +167,63 @@ await inSession(async () => {
   n++;
 });
 
-console.log(`\n✓ linear-provider-integration: ${n} assertions passed (manifest row, entity-action totality + refusal, reply gate, target, execute + audit, no-anchor throw)`);
+{
+  const { linearOnAgentSession } = await import("@open-everywhere/provider-linear/agent/channels/linear.js");
+  const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
+  const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const { resolvePartition } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+
+  const ORG = "ORGLIN";
+  const bindableOf = (teamId: string) => ({ channel: { kind: "linear" as const }, session: { auth: { current: { attributes: { organization_id: ORG, team_id: teamId }, principalId: "creator-1", principalType: "linear-user" } } } });
+  const overPart = resolvePartition(bindableOf("TEAMCAP") as never);
+  const okPart = resolvePartition(bindableOf("TEAMOK") as never);
+
+  const event = (teamId: string, sessionId: string): unknown => ({
+    action: "created",
+    kind: "agent_session",
+    organizationId: ORG,
+    previousComments: [],
+    delivery: { id: `d-${sessionId}` },
+    agentSession: { id: sessionId, creator: { id: "creator-1" }, issueId: "issue-1", issue: { id: "issue-1", identifier: "CAP-1" } },
+    raw: { agentSession: { issue: { team: { id: teamId } } } },
+  });
+  const drive = async (teamId: string, sessionId: string) => {
+    calls = [];
+    const res = await linearOnAgentSession({} as never, event(teamId, sessionId) as never);
+    const posted = calls.filter((c) => c.url.includes("api.linear.app")).map((c) => c.body);
+    return { res, posted };
+  };
+
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => [], loadSilos: () => [], domainsForSurface: () => [],
+    loadSpendBudgets: () => ({ perSurface: { [overPart.surfaceKey]: { surfaceMonthlyTokens: 1 } } }),
+  });
+  await recordSpend(overPart as never, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 100, outputTokens: 100 } });
+
+  fakeHttp();
+  const over = await drive("TEAMCAP", "as-cap");
+  ok(over.res === null, "spend-gate: an over-budget linear mention DECLINES the turn (returns null)");
+  ok(over.posted.some((b) => b.includes(overPart.surfaceKey) && b.includes("\"error\"")), "spend-gate: the decline posts a VISIBLE terminal error activity naming the surface scope key");
+  const gateRows = (await readAudit({ org: overPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === overPart.surfaceKey);
+  ok(gateRows.length === 1 && gateRows[0]!.detail?.door === "mention" && gateRows[0]!.detail?.over === true, "spend-gate: an over-budget linear mention writes ONE spend.gate row (door=mention, over=true)");
+
+  const under = await drive("TEAMOK", "as-ok");
+  ok(under.res !== null && (under.res as { auth?: unknown }).auth !== undefined, "spend-gate: an under-budget linear mention DISPATCHES (returns {auth})");
+  ok(!under.posted.some((b) => b.includes("holding off")), "spend-gate: an under-budget linear mention posts NO refusal");
+  ok((await readAudit({ org: okPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === okPart.surfaceKey).length === 0, "spend-gate: an under-budget linear mention writes NO spend.gate row");
+
+  const live = provider.getOperationalStore();
+  const broken = { ...live, spendTotals: async () => { throw new Error("store down"); } } as typeof live;
+  provider.registerOperationalStore(broken);
+  provider.resetOperationalStore();
+  const failOpen = await drive("TEAMCAP", "as-failopen");
+  ok(failOpen.res !== null && (failOpen.res as { auth?: unknown }).auth !== undefined, "spend-gate: a THROWN linear budget check fails OPEN (over-budget scope still dispatches)");
+  provider.registerOperationalStore(live);
+  provider.resetOperationalStore();
+  restoreHttp();
+}
+
+console.log(`\n✓ linear-provider-integration: ${n} assertions passed (manifest row, entity-action totality + refusal, reply gate, target, execute + audit, no-anchor throw, attended-mention spend gate)`);

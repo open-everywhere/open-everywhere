@@ -141,4 +141,86 @@ await inSession(async () => {
   ok(!verifyNotionSignature("wrong", raw, sig), "the wrong notion secret fails verification");
 }
 
-console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip)`);
+{
+  process.env.OE_ALLOW_UNVERIFIED_NOTION_WEBHOOK = "1";
+  delete process.env.NOTION_WEBHOOK_SECRET;
+  const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js");
+  const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
+  const { registerConfig } = await import("@open-everywhere/core/agent/access/config.js");
+  const { resolvePartition } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const notionChannel = (await import("@open-everywhere/provider-notion/agent/channels/notion.js")).default as unknown as {
+    routes: ReadonlyArray<{ handler: (req: Request, args: unknown) => Promise<Response> }>;
+  };
+  const routeHandler = notionChannel.routes[0]!.handler;
+
+  const BOT = "bot-user-id-999", AUTHOR = "author-user-id-111";
+  process.env.NOTION_BOT_USER_ID = BOT;
+  const partOf = (ws: string, page: string) => resolvePartition({ channel: { kind: "notion" as const }, session: { auth: { current: { attributes: { workspace_id: ws, page_id: page }, principalId: AUTHOR } } } } as never);
+  const overPart = partOf("WSCAP", "PAGECAP");
+  const okPart = partOf("WSOK", "PAGEOK");
+
+  const mentionRT = [
+    { type: "mention", plain_text: "@OE", mention: { type: "user", user: { id: BOT } } },
+    { type: "text", plain_text: " please summarise", text: { content: " please summarise" } },
+  ];
+  const event = (ws: string, page: string): string =>
+    JSON.stringify({ type: "comment.created", workspace_id: ws, entity: { id: "comment-000", type: "comment" }, data: { page_id: page, parent: { id: page, type: "page" } }, authors: [{ id: AUTHOR, type: "person" }] });
+  const retrievedComment = (page: string) => ({ id: "comment-000", discussion_id: `disc-${page}`, parent: { type: "page", page_id: page }, created_by: { id: AUTHOR, object: "user" }, rich_text: mentionRT });
+
+  const realFetch = globalThis.fetch;
+  let posts: string[] = [];
+  let currentPage = "PAGECAP";
+  globalThis.fetch = (async (input: unknown, init: { method?: string; body?: unknown } = {}) => {
+    const url = String(input), method = (init.method ?? "GET").toUpperCase();
+    const R = (b: unknown, s = 200) => ({ ok: s >= 200 && s < 300, status: s, json: async () => b, text: async () => JSON.stringify(b) }) as unknown as Response;
+    if (method === "GET" && /\/v1\/comments\/[^?]+$/.test(url)) return R(retrievedComment(currentPage));
+    if (method === "GET" && url.includes("/v1/comments?block_id=")) return R({ results: [] });
+    if (method === "GET" && url.endsWith("/v1/users/me")) return R({ id: BOT, type: "bot", name: "Aria" });
+    if (method === "POST" && url.endsWith("/v1/comments")) { posts.push(String(init.body ?? "")); return R({ id: "reply-1" }); }
+    return R({ error: "unexpected host" }, 500);
+  }) as typeof fetch;
+
+  let sendCalled = false;
+  const args = () => ({ send: async () => { sendCalled = true; return { id: "sess-1" }; }, waitUntil: (_p: Promise<unknown>) => {}, receive: async () => ({ id: "sess-1" }) });
+  const drive = async (ws: string, page: string) => {
+    posts = []; sendCalled = false; currentPage = page;
+    let threw: unknown;
+    try { await routeHandler(new Request("http://x/eve/v1/notion", { method: "POST", body: event(ws, page) }), args()); } catch (e) { threw = e; }
+    return { posts, sendCalled, threw };
+  };
+
+  const { defineDomain } = await import("@open-everywhere/core/agent/memory/domain.js");
+  registerConfig({
+    loadBundles: () => [], loadBindings: () => [], pluginRegistry: {}, skillContent: {},
+    loadDomains: () => [defineDomain({ name: "notion-ambient", match: "org", ambientSupervisor: true })],
+    loadSilos: () => [], domainsForSurface: () => [],
+    loadSpendBudgets: () => ({ perSurface: { [overPart.surfaceKey]: { surfaceMonthlyTokens: 1 } } }),
+  });
+  await recordSpend(overPart as never, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 100, outputTokens: 100 } });
+
+  const over = await drive("WSCAP", "PAGECAP");
+  ok(over.sendCalled === false, "spend-gate: an over-budget notion mention never reaches the model dispatch (declined before it)");
+  ok(over.posts.some((b) => b.includes(overPart.surfaceKey) && b.includes("holding off")), "spend-gate: the decline posts a VISIBLE refusal reply naming the surface scope key");
+  const gateRows = (await readAudit({ org: overPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === overPart.surfaceKey);
+  ok(gateRows.length === 1 && gateRows[0]!.detail?.door === "mention" && gateRows[0]!.detail?.over === true, "spend-gate: an over-budget notion mention writes ONE spend.gate row (door=mention, over=true)");
+  ok((await readAudit({ org: overPart.org, action: "notion.dispatched" })).filter((r) => r.surface === "PAGECAP").length === 0, "spend-gate: a declined notion wake skips the notion.dispatched audit (gate is before dispatch)");
+
+  const under = await drive("WSOK", "PAGEOK");
+  ok(under.sendCalled === true, "spend-gate: an under-budget notion mention PROCEEDS to the model dispatch (send invoked)");
+  ok(!under.posts.some((b) => b.includes("holding off")), "spend-gate: an under-budget notion mention posts NO refusal");
+  ok((await readAudit({ org: okPart.org, action: "spend.gate" })).filter((r) => r.detail?.key === okPart.surfaceKey).length === 0, "spend-gate: an under-budget notion mention writes NO spend.gate row");
+
+  const provider = await import("@open-everywhere/core/agent/operational/provider.js");
+  const live = provider.getOperationalStore();
+  const broken = { ...live, spendTotals: async () => { throw new Error("store down"); } } as typeof live;
+  provider.registerOperationalStore(broken);
+  provider.resetOperationalStore();
+  const failOpen = await drive("WSCAP", "PAGECAP");
+  ok(failOpen.sendCalled === true && !failOpen.posts.some((b) => b.includes("holding off")), "spend-gate: a THROWN notion budget check fails OPEN (over-budget wake still dispatches, no refusal)");
+  provider.registerOperationalStore(live);
+  provider.resetOperationalStore();
+
+  globalThis.fetch = realFetch;
+}
+
+console.log(`\n✓ notion-provider-integration: ${n} assertions passed (manifest row, reply gate, target, execute + audit, no-anchor throw, forge-signer round-trip, attended-mention spend gate)`);

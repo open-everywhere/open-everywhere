@@ -1,4 +1,4 @@
-import { teamsChannel, splitTeamsMessageText, type TeamsHandle } from "eve/channels/teams";
+import { teamsChannel, splitTeamsMessageText, type TeamsHandle, type TeamsInboundMessageContext, type TeamsMessageActivity, type TeamsInboundResult } from "eve/channels/teams";
 import { frontTeamsChannel, INTERNAL_TEAMS_ROUTE } from "./teams-front.js";
 import { buildTeamsAuth, teamsMembershipType, teamsUserTypeFromMember } from "./teams-identity.js";
 import {
@@ -7,6 +7,11 @@ import {
   postTerminalProse,
   consumeRepliedThisTurn,
   resolvePartition,
+  bindFrom,
+  scopeOverBudget,
+  capBypassFor,
+  appendAudit,
+  domainKeyOf,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -70,9 +75,7 @@ export function _resetTeamsUserTypeCacheForTest(): void {
   teamsUserTypeCache.clear();
 }
 
-const native = teamsChannel({
-  route: INTERNAL_TEAMS_ROUTE,
-  onMessage: async (ctx, message) => {
+export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: TeamsMessageActivity): Promise<TeamsInboundResult> => {
     if (message.scope !== "personal" && !message.isBotMentioned) return null;
 
     const userType = await resolveTeamsUserType(ctx.teams, message.conversation.id, message.from.id);
@@ -90,8 +93,44 @@ const native = teamsChannel({
       membershipType: teamsMembershipType(message.channelData),
       userType,
     });
+
+    try {
+      const gBindable = { channel: { kind: "teams" as const }, session: { auth: { current: auth } } };
+      const gPartition = resolvePartition(gBindable);
+      const gBinding = bindFrom(gBindable);
+      const verdict = await scopeOverBudget(gPartition, gBinding.mode, new Date().toISOString(), gBinding.trust, gBinding.principalId);
+      if (verdict.over) {
+        try {
+          await appendAudit({
+            org: gPartition.org, platform: gPartition.platform, workspace: gPartition.workspace, surface: gPartition.surface,
+            action: "spend.gate",
+            detail: { key: domainKeyOf(gPartition), mode: gBinding.mode, door: "mention", over: true, ...(verdict.reason ? { reason: verdict.reason } : {}) },
+          });
+        } catch {}
+        const bypass = await capBypassFor({ org: gBinding.org, principalId: message.from.id, surfaceKey: domainKeyOf(gPartition), reason: verdict.reason });
+        if (bypass) {
+          if (bypass.warn) { try { await ctx.thread.post(`⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap, or change it in the spend-budgets config.`); } catch {} }
+        } else {
+          const isDm = gBinding.mode === "dm" || gBinding.mode === "mpim";
+          const scopeKey = domainKeyOf(gPartition), wsKey = `${gBinding.platform}/${gBinding.workspace}`;
+          try {
+            await ctx.thread.post(isDm
+              ? `I'm holding off — ${verdict.reason}. This is a cap on your own usage; I can't raise it from here. Ask an org admin to raise it in the spend-budgets config, or from a channel ask me to propose an override. Scope key: \`${scopeKey}\`.`
+              : `I'm holding off here — ${verdict.reason}. An admin can raise this in the spend-budgets config, or DM me to propose a temporary override. Scope keys: this surface = \`${scopeKey}\`, whole workspace = \`${wsKey}\`.`);
+          } catch {}
+          return null;
+        }
+      }
+    } catch (e) {
+      console.warn(`[open-everywhere:teams:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     return { auth };
-  },
+};
+
+const native = teamsChannel({
+  route: INTERNAL_TEAMS_ROUTE,
+  onMessage: teamsOnMessage,
   events: {
     "message.completed": async (data, channel, ctx) => {
       const sessionId = ctx?.session?.id;

@@ -8,6 +8,8 @@ import {
   type LinearChannelCredentials,
   type LinearChannel,
   type LinearChannelState,
+  type LinearSessionContext,
+  type LinearInboundResult,
 } from "eve/channels/linear";
 import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
 import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
@@ -34,6 +36,11 @@ import {
   completeSupervisorTurn,
   auditSupervisorFailure,
   appendAudit,
+  bindFrom,
+  resolvePartition,
+  scopeOverBudget,
+  capBypassFor,
+  domainKeyOf,
   auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
@@ -573,9 +580,7 @@ type AdapterEventFn = (data: unknown, adapterCtx: unknown) => unknown;
 const defaultEvent = (name: string): AdapterEventFn | undefined =>
   (pristine as unknown as { adapter?: Record<string, AdapterEventFn> }).adapter?.[name];
 
-const native: LinearChannel = linearChannel({
-  credentials: linearAppActorCredentials,
-  onAgentSession: async (_ctx, event) => {
+export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: LinearAgentSessionEvent): Promise<LinearInboundResult> => {
     const s = event.agentSession;
     const agentSessionId = s.id;
     if (!agentSessionId) return null;
@@ -600,8 +605,44 @@ const native: LinearChannel = linearChannel({
       guest,
       isPrivate,
     });
+
+    try {
+      const gBindable = { channel: { kind: "linear" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
+      const gPartition = resolvePartition(gBindable);
+      const gBinding = bindFrom(gBindable);
+      const verdict = await scopeOverBudget(gPartition, gBinding.mode, new Date().toISOString(), gBinding.trust, gBinding.principalId);
+      if (verdict.over) {
+        try {
+          await appendAudit({
+            org: gPartition.org, platform: gPartition.platform, workspace: gPartition.workspace, surface: gPartition.surface,
+            action: "spend.gate",
+            detail: { key: domainKeyOf(gPartition), mode: gBinding.mode, door: "mention", over: true, ...(verdict.reason ? { reason: verdict.reason } : {}) },
+          });
+        } catch {}
+        const bypass = await capBypassFor({ org: gBinding.org, principalId: creatorId, surfaceKey: domainKeyOf(gPartition), reason: verdict.reason });
+        if (bypass) {
+          if (bypass.warn) { try { await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap, or change it in the spend-budgets config.` } } }); } catch {} }
+        } else {
+          const isDm = gBinding.mode === "dm" || gBinding.mode === "mpim";
+          const scopeKey = domainKeyOf(gPartition), wsKey = `${gBinding.platform}/${gBinding.workspace}`;
+          try {
+            await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: isDm
+              ? `I'm holding off — ${verdict.reason}. This is a cap on your own usage; I can't raise it from here. Ask an org admin to raise it in the spend-budgets config, or from a channel ask me to propose an override. Scope key: \`${scopeKey}\`.`
+              : `I'm holding off here — ${verdict.reason}. An admin can raise this in the spend-budgets config, or DM me to propose a temporary override. Scope keys: this surface = \`${scopeKey}\`, whole workspace = \`${wsKey}\`.` } } });
+          } catch {}
+          return null;
+        }
+      }
+    } catch (e) {
+      console.warn(`[open-everywhere:linear:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     return { auth };
-  },
+};
+
+const native: LinearChannel = linearChannel({
+  credentials: linearAppActorCredentials,
+  onAgentSession: linearOnAgentSession,
   events: {
     async "turn.started"(data, channel, ctx) {
       if (!isSupervisorLinearState(channel.state)) {
