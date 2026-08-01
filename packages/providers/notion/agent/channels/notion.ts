@@ -21,6 +21,8 @@ import {
   captureHandshakeSecret,
   admitTrigger,
   NOTION_HANDSHAKE_REF_NAMESPACE,
+  postOnce,
+  outboundKey,
   type SupervisorGrain,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { NOTION_EVENT_SOURCE, notionEventDeliveryId } from "./notion-event-normalizer.js";
@@ -287,7 +289,17 @@ export default defineChannel<NotionState, { state: NotionState }>({
         post: async (text) => {
           const apiKey = await resolveNotionApiKey();
           if (!apiKey) throw new Error("reply couldn't post to Notion — NOTION_CHANNEL_API_KEY is not set.");
-          await createCommentReply({ discussionId: discussionId!, text, apiKey });
+          await postOnce({
+            org,
+            key: outboundKey({
+              surface: "notion",
+              channel: target?.pageId ?? channel.state.pageId ?? discussionId ?? "unknown",
+              threadTs: discussionId!,
+              action: "notion.supervisor-reply",
+              payload: text,
+            }),
+            run: () => createCommentReply({ discussionId: discussionId!, text, apiKey }),
+          });
         },
         log: (m) => log(m),
       });
