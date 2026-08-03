@@ -19,6 +19,12 @@ import {
   parseHooksModule,
   renormalizeHooksModule,
 } from "@open-everywhere/core/agent/webhooks/hooks-codemod.js";
+import {
+  emitAgentsModule,
+  emptyAgentsFile,
+  parseAgentsModule,
+  renormalizeAgentsModule,
+} from "@open-everywhere/core/agent/memory/agents-codemod.js";
 
 interface OverlaySpec {
   readonly path: string;
@@ -53,6 +59,14 @@ const OVERLAYS: readonly OverlaySpec[] = [
     parseModule: parseHooksModule,
     renormalize: renormalizeHooksModule,
     emitEmpty: () => emitHooksModule(emptyHooksFile()),
+  },
+  {
+    path: "agent/memory/agents.generated.ts",
+    what: "agents overlay",
+    flow: "create_agent (memory/agents-codemod.ts)",
+    parseModule: parseAgentsModule,
+    renormalize: renormalizeAgentsModule,
+    emitEmpty: () => emitAgentsModule(emptyAgentsFile()),
   },
 ];
 

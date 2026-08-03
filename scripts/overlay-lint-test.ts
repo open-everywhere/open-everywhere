@@ -10,6 +10,7 @@ const OVERLAYS = [
   "agent/access/grants.generated.ts",
   "agent/access/credential-bindings.generated.ts",
   "agent/webhooks/hooks.generated.ts",
+  "agent/memory/agents.generated.ts",
 ] as const;
 
 let passed = 0;

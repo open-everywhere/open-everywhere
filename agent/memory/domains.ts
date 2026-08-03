@@ -7,8 +7,10 @@ import {
   type Domain,
 } from "@open-everywhere/core/agent/memory/domain.js";
 import { defineMemorySilo, assertSilosValid, type MemorySilo } from "@open-everywhere/core/agent/memory/silo.js";
+import { assertExposedAgentsCurated } from "@open-everywhere/core/agent/memory/agents-codemod.js";
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
 import { loadRoles } from "../roles/roles.js";
+import { loadAgentsOverlay } from "./agents-overlay.js";
 
 const silos: MemorySilo[] = [
   defineMemorySilo({ name: "org-brain", provider: "postgres" }),
@@ -118,19 +120,24 @@ const rawDomains: Domain[] = [
 
 ];
 
-const domains: Domain[] = applyRoleDefaults(rawDomains, loadRoles());
+const agentsOverlay = loadAgentsOverlay();
+const mergedRawDomains: Domain[] = [...rawDomains, ...agentsOverlay.domains];
+const mergedSilos: MemorySilo[] = [...silos, ...agentsOverlay.silos];
+
+const domains: Domain[] = applyRoleDefaults(mergedRawDomains, loadRoles());
 
 assertChannelExclusivity(domains);
 assertDomainsValid(domains);
 assertUnifiedDomainTrust(domains);
-assertSilosValid(silos);
+assertSilosValid(mergedSilos);
+assertExposedAgentsCurated(domains, mergedSilos, agentsOverlay.specs);
 
 export function loadDomains(): readonly Domain[] {
   return domains;
 }
 
 export function loadSilos(): readonly MemorySilo[] {
-  return silos;
+  return mergedSilos;
 }
 
 export function domainsForSurface(

@@ -1,5 +1,6 @@
 import type { Bundle, Binding } from "./bundle.js";
 import type { Provider } from "./providers.js";
+import type { AgentsFile } from "../memory/agents-codemod.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import type { SkillPackageDefinition } from "eve/skills";
 import type { Domain } from "../memory/domain.js";
@@ -18,7 +19,9 @@ export interface AccessRequestsConfig {
   readonly configBase?: string;
   readonly grantsPath?: string;
   readonly hooksPath?: string;
+  readonly agentsPath?: string;
   baseWebhooks?(): readonly WebhookHook[];
+  baseAgents?(): AgentsFile;
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
