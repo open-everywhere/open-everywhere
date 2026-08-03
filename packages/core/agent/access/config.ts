@@ -22,6 +22,8 @@ export interface AccessRequestsConfig {
   readonly agentsPath?: string;
   baseWebhooks?(): readonly WebhookHook[];
   baseAgents?(): AgentsFile;
+  baseDomains?(): readonly Domain[];
+  baseSilos?(): readonly MemorySilo[];
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];

@@ -250,6 +250,10 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   ),
   request_access: member("access.request", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
+  create_agent: member(
+    "agent.create",
+    "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate",
+  ),
   set_state: member("ticket.set_state", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
   assign: member("ticket.assign", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
   create_ticket: member(

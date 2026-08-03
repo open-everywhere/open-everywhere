@@ -140,6 +140,14 @@ export function loadSilos(): readonly MemorySilo[] {
   return mergedSilos;
 }
 
+const baseDomains: Domain[] = applyRoleDefaults(rawDomains, loadRoles());
+export function loadBaseDomains(): readonly Domain[] {
+  return baseDomains;
+}
+export function loadBaseSilos(): readonly MemorySilo[] {
+  return silos;
+}
+
 export function domainsForSurface(
   p: { workspaceKey: string; surface: string },
   list: readonly Domain[] = domains,

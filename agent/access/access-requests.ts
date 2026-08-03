@@ -1,7 +1,9 @@
 import type { AccessRequestsConfig } from "@open-everywhere/core/agent/access/config.js";
+import { emptyAgentsFile } from "@open-everywhere/core/agent/memory/agents-codemod.js";
 import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
 import { loadBaseProviders } from "./providers.js";
 import { loadBaseWebhooks } from "../webhooks/hooks.js";
+import { loadBaseDomains, loadBaseSilos } from "../memory/domains.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {
   return {
@@ -15,5 +17,9 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     baseProviders: loadBaseProviders,
     hooksPath: process.env.OE_WEBHOOK_HOOKS_PATH || undefined,
     baseWebhooks: loadBaseWebhooks,
+    agentsPath: process.env.OE_AGENTS_PATH || undefined,
+    baseAgents: emptyAgentsFile,
+    baseDomains: loadBaseDomains,
+    baseSilos: loadBaseSilos,
   };
 }

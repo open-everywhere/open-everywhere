@@ -33,6 +33,7 @@ import "./routine-lifecycle.js";
 import "./routine-policy.js";
 import "./webhook.js";
 import "./webhook-declare.js";
+import "./agent-create.js";
 import "./ticket-actions.js";
 import "./ticket-create.js";
 import "./session-checkpoint.js";
