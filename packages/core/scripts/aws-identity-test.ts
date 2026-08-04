@@ -1,5 +1,6 @@
 import {
   awsRoleSessionName,
+  isAwsCommandAllowed,
   planAwsIdentity,
   resolveAwsIdentity,
   registerAwsIdentityProvider,
@@ -199,7 +200,7 @@ try {
 
   const opsBundle: Bundle = {
     name: "aws-ops",
-    awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe-ops", region: "eu-west-2" }],
+    awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe-ops", region: "eu-west-2", allow: ["logs", "s3:cp"] }],
   };
   const opsBinding: Binding = { bundle: "aws-ops", scope: { level: "domain", domain: "ops" } };
   registerConfig({
@@ -224,6 +225,10 @@ try {
   ok(resolved.region === "eu-west-2", "resolve: the granted region rides through");
   ok(resolved.boundAs === "domain-role", "resolve: a channel turn binds as the domain role");
   ok(resolved.roleSessionName === "oe-ops", "resolve: RoleSessionName is the oe-<domain> form");
+  ok(
+    JSON.stringify(resolved.allow) === JSON.stringify(["logs", "s3:cp"]),
+    "resolve: the VERIFIED grant's `allow` list rides onto ResolvedAwsIdentity (Phase 2 host-side narrowing)",
+  );
   ok(rec.calls === 1, "resolve: the provider was minted exactly once");
   ok(rec.last?.kind === "domain-role", "resolve: the mint request carried kind domain-role");
   ok(rec.last?.roleArn === "arn:aws:iam::123456789012:role/oe-ops", "resolve: the mint request carried the granted roleArn");
@@ -276,6 +281,74 @@ try {
 
   assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws-us-gov:iam::123456789012:role/x", region: "us-gov-east-1" }] }]);
   ok(true, "bundle-valid: a gov-partition region (us-gov-east-1) passes");
+}
+
+{
+  const ROLE = "arn:aws:iam::123456789012:role/x";
+
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs", "s3:cp", "dynamodb:query"] }] }]);
+  ok(true, "bundle-valid: a well-formed allow list (service + service:operation) passes");
+
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: [] }] }]);
+  ok(true, "bundle-valid: an empty allow list passes (unrestricted)");
+
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs", "  "] }] }]),
+    "empty/whitespace",
+    "bundle-valid: an empty/whitespace allow entry is refused",
+  );
+
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["s3:cp:extra"] }] }]),
+    "at most one",
+    "bundle-valid: an allow entry with more than one ':' is refused",
+  );
+
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["s3:"] }] }]),
+    "both sides",
+    "bundle-valid: an allow entry with an empty operation half is refused",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: [":cp"] }] }]),
+    "both sides",
+    "bundle-valid: an allow entry with an empty service half is refused",
+  );
+
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["s3:cp", "S3:cp"] }] }]),
+    "more than once",
+    "bundle-valid: a duplicate allow entry (case-insensitive) within one grant is refused",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs:start-query", "logs:start_query"] }] }]),
+    "more than once",
+    "bundle-valid: a duplicate allow entry (`-`/`_` equivalent) is refused",
+  );
+}
+
+{
+  ok(isAwsCommandAllowed(["logs", "start-query"], undefined), "allow: undefined allow ⇒ allowed (unrestricted)");
+  ok(isAwsCommandAllowed(["s3", "rm", "--recursive"], []), "allow: empty allow ⇒ allowed (unrestricted)");
+
+  ok(isAwsCommandAllowed(["logs", "start-query"], ["logs"]), "allow: bare-service entry allows any op of that service");
+  ok(isAwsCommandAllowed(["logs", "describe-log-groups"], ["logs"]), "allow: bare-service entry allows a different op of the same service");
+  ok(!isAwsCommandAllowed(["s3", "cp"], ["logs"]), "allow: a command whose service is not listed is refused");
+
+  ok(isAwsCommandAllowed(["s3", "cp", "a", "b"], ["s3:cp"]), "allow: service:operation entry allows exactly that op");
+  ok(!isAwsCommandAllowed(["s3", "rm"], ["s3:cp"]), "allow: service:operation entry refuses a different op of the same service");
+  ok(!isAwsCommandAllowed(["logs", "cp"], ["s3:cp"]), "allow: service:operation entry refuses the same op on a different service");
+
+  ok(isAwsCommandAllowed(["LOGS", "Start-Query"], ["logs:start-query"]), "allow: service + operation match case-insensitively");
+  ok(isAwsCommandAllowed(["logs", "start_query"], ["logs:start-query"]), "allow: operation matches with `_` treated as `-`");
+  ok(isAwsCommandAllowed(["logs", "start-query"], ["logs:start_query"]), "allow: the reverse `-`/`_` tolerance also holds");
+  ok(isAwsCommandAllowed(["S3", "cp"], ["s3"]), "allow: bare-service match is case-insensitive too");
+
+  ok(isAwsCommandAllowed(["s3", "cp"], ["logs", "s3:cp"]), "allow: allowed when one of several entries matches");
+  ok(!isAwsCommandAllowed(["dynamodb", "scan"], ["logs", "s3:cp"]), "allow: refused when no entry matches");
+
+  ok(!isAwsCommandAllowed(["s3"], ["s3:cp"]), "allow: a service:operation entry does not match a command with no operation");
+  ok(isAwsCommandAllowed(["s3"], ["s3"]), "allow: a bare-service entry matches a command with no operation");
 }
 
 {

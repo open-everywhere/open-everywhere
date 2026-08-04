@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { requireAwsExecutor } from "../connections/aws-exec.js";
-import { resolveAwsIdentity } from "../connections/aws-identity.js";
+import { isAwsCommandAllowed, resolveAwsIdentity } from "../connections/aws-identity.js";
 
 export default defineTool({
   description:
@@ -34,6 +34,17 @@ export default defineTool({
       roleArn: input.roleArn,
       as: input.identity === "me" ? "user-sso" : "domain-role",
     });
+    if (!isAwsCommandAllowed(input.args, resolved.allow)) {
+      const service = input.args[0] ?? "(none)";
+      const operation = input.args[1];
+      const attempted = operation ? `${service} ${operation}` : service;
+      throw new Error(
+        `aws command "${attempted}" is not permitted by this channel's AWS grant: the role "${resolved.roleArn}" ` +
+          `carries a host-side allow-list (${resolved.allow!.join(", ")}) and \`${operation ? `${service}:${operation}` : service}\` ` +
+          `is not on it. This is a reviewed narrowing on top of the IAM role — an admin must widen the grant's ` +
+          `\`allow\` list (access/bundle.ts awsRoles) to run it. Fail-closed: the command was NOT run.`,
+      );
+    }
     const result = await requireAwsExecutor().run({
       credentials: resolved.credentials,
       region: resolved.region,

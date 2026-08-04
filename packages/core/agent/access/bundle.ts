@@ -47,6 +47,7 @@ export interface AwsRoleGrant {
   readonly roleArn: string;
   readonly region?: string;
   readonly audience?: string;
+  readonly allow?: readonly string[];
 }
 
 export interface Bundle {
@@ -149,6 +150,31 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
       roleArns.add(grant.roleArn);
       if (grant.region !== undefined && !AWS_REGION_FORM.test(grant.region)) {
         bad.push(`  bundle "${b.name}" awsRoles region "${grant.region}" is not a well-formed AWS region (e.g. "eu-west-2")`);
+      }
+      const seenAllow = new Set<string>();
+      for (const entry of grant.allow ?? []) {
+        if (entry.trim() === "") {
+          bad.push(`  bundle "${b.name}" awsRoles allow entry for "${grant.roleArn}" is empty/whitespace — an allow entry must be a "service" (e.g. "logs") or "service:operation" (e.g. "s3:cp")`);
+          continue;
+        }
+        const colons = entry.split(":").length - 1;
+        if (colons > 1) {
+          bad.push(`  bundle "${b.name}" awsRoles allow entry "${entry}" (role "${grant.roleArn}") is malformed — an entry has at most one ":" ("service" or "service:operation")`);
+          continue;
+        }
+        if (colons === 1) {
+          const [service, operation] = entry.split(":");
+          if (service!.trim() === "" || operation!.trim() === "") {
+            bad.push(`  bundle "${b.name}" awsRoles allow entry "${entry}" (role "${grant.roleArn}") is malformed — both sides of the ":" must be non-empty ("service:operation", e.g. "s3:cp")`);
+            continue;
+          }
+        }
+        const [svc, op] = entry.split(":");
+        const norm = op === undefined ? svc!.trim().toLowerCase() : `${svc!.trim().toLowerCase()}:${op.trim().toLowerCase().replace(/_/gu, "-")}`;
+        if (seenAllow.has(norm)) {
+          bad.push(`  bundle "${b.name}" awsRoles allow lists "${entry}" (role "${grant.roleArn}") more than once — remove the duplicate`);
+        }
+        seenAllow.add(norm);
       }
     }
   }

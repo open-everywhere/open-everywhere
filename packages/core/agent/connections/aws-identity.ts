@@ -32,6 +32,31 @@ export interface ResolvedAwsIdentity {
   readonly region?: string;
   readonly boundAs: AwsIdentityKind;
   readonly roleSessionName: string;
+  readonly allow?: readonly string[];
+}
+
+function normalizeAwsOp(token: string): string {
+  return token.trim().toLowerCase().replace(/_/gu, "-");
+}
+
+export function isAwsCommandAllowed(args: readonly string[], allow: readonly string[] | undefined): boolean {
+  if (allow === undefined || allow.length === 0) return true;
+  const service = args[0];
+  if (service === undefined) return false;
+  const operation = args[1];
+  const normService = service.trim().toLowerCase();
+  const normOperation = operation === undefined ? undefined : normalizeAwsOp(operation);
+  for (const entry of allow) {
+    const sep = entry.indexOf(":");
+    if (sep < 0) {
+      if (entry.trim().toLowerCase() === normService) return true;
+      continue;
+    }
+    const entryService = entry.slice(0, sep).trim().toLowerCase();
+    const entryOperation = normalizeAwsOp(entry.slice(sep + 1));
+    if (entryService === normService && normOperation !== undefined && entryOperation === normOperation) return true;
+  }
+  return false;
 }
 
 let registered: AwsIdentityProvider | undefined;
@@ -159,5 +184,6 @@ export async function resolveAwsIdentity(
     region: plan.grant.region,
     boundAs: plan.kind,
     roleSessionName: plan.roleSessionName,
+    allow: plan.grant.allow,
   };
 }
