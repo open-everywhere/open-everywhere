@@ -43,6 +43,12 @@ export interface ConnectorOpGating {
   readonly destructive?: readonly string[];
 }
 
+export interface AwsRoleGrant {
+  readonly roleArn: string;
+  readonly region?: string;
+  readonly audience?: string;
+}
+
 export interface Bundle {
   readonly name: string;
   readonly title?: string;
@@ -53,6 +59,7 @@ export interface Bundle {
   readonly repos?: readonly string[];
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
+  readonly awsRoles?: readonly AwsRoleGrant[];
   readonly instructions?: string;
 }
 
@@ -71,6 +78,10 @@ export function defineBinding(binding: Binding): Binding {
 }
 
 const REPO_FORM = /^[\w.-]+\/[\w.-]+$/u;
+
+const ROLE_ARN_FORM = /^arn:aws[\w-]*:iam::\d{12}:role\/.+$/u;
+
+const AWS_REGION_FORM = /^[a-z]{2}-[a-z]+-\d+$/u;
 
 function isOverlyBroadHost(pattern: string): boolean {
   return pattern === "*" || /^\*\.[^.]+$/u.test(pattern);
@@ -125,6 +136,19 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     for (const repo of b.repos ?? []) {
       if (!REPO_FORM.test(repo)) {
         bad.push(`  bundle "${b.name}" repo "${repo}" must be bare owner/name form (e.g. "acme/web") — not a URL, a bare owner, or an owner/name/extra path`);
+      }
+    }
+    const roleArns = new Set<string>();
+    for (const grant of b.awsRoles ?? []) {
+      if (!ROLE_ARN_FORM.test(grant.roleArn)) {
+        bad.push(`  bundle "${b.name}" awsRoles roleArn "${grant.roleArn}" must be an IAM role ARN (e.g. "arn:aws:iam::123456789012:role/oe-agent")`);
+      }
+      if (roleArns.has(grant.roleArn)) {
+        bad.push(`  bundle "${b.name}" grants awsRole "${grant.roleArn}" more than once — remove the duplicate`);
+      }
+      roleArns.add(grant.roleArn);
+      if (grant.region !== undefined && !AWS_REGION_FORM.test(grant.region)) {
+        bad.push(`  bundle "${b.name}" awsRoles region "${grant.region}" is not a well-formed AWS region (e.g. "eu-west-2")`);
       }
     }
   }

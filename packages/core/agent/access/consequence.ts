@@ -82,6 +82,9 @@ const admin = (action: string, reason: string): ConsequenceEntry => ({ tier: "ga
 
 export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   bash: open("sandbox execution; reach is bounded by the egress plane (L1), not by this table"),
+  aws: open(
+    "runs an `aws` CLI command host-side under a bundle-granted, identity-bound IAM role (tools/aws.ts). Same rubric as `bash`: reach is bounded NOT by this table but by the role's IAM policy — the reviewed per-domain `awsRoles` grant (access/bundle.ts) chooses WHICH role and its policy scopes WHAT it can do, both default-deny and reviewed-git. The tool is inert until an operator wires an AWS adapter AND binds an awsRoles grant; a fire cannot assume a human's SSO identity, and credentials are minted host-side and never enter the sandbox (connections/aws-identity.ts). A per-call card would gate reads it shouldn't and still not bound a write the role permits — an operator who wants per-call approval scopes the role read-only",
+  ),
   glob: open("sandbox-local file listing"),
   grep: open("sandbox-local file search"),
   read_file: open("sandbox-local read"),

@@ -1,4 +1,4 @@
-import type { Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
 
@@ -34,6 +34,7 @@ export interface EffectiveAccess {
   readonly connections: readonly Connection[];
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
+  readonly awsRoles: readonly AwsRoleGrant[];
   readonly plugins: readonly string[];
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
@@ -156,6 +157,12 @@ export function resolveAccess(
 
   const repos = [...new Set(ordered.flatMap(({ bundle }) => bundle.repos ?? []))].sort();
 
+  const awsRoleMap = new Map<string, AwsRoleGrant>();
+  for (const { bundle } of ordered) {
+    for (const grant of bundle.awsRoles ?? []) awsRoleMap.set(grant.roleArn, grant);
+  }
+  const awsRoles = [...awsRoleMap.values()].sort((a, b) => a.roleArn.localeCompare(b.roleArn));
+
   const plugins = [...new Set(ordered.flatMap(({ bundle }) => bundle.plugins ?? []))].sort();
   const pluginConnectors = new Set<string>();
   const skillSet = new Set<string>();
@@ -230,6 +237,11 @@ export function resolveAccess(
         `broad grant: bundle "${bundle.name}" grants ${bundle.plugins!.length} plugin(s) at ${where} scope — every surface under it gets those plugins' skills + connectors. Bind plugin grants to a domain or specific surface instead.`,
       );
     }
+    if ((bundle.awsRoles?.length ?? 0) > 0) {
+      warnings.push(
+        `broad grant: bundle "${bundle.name}" grants ${bundle.awsRoles!.length} AWS role(s) at ${where} scope — every surface under it may assume those roles host-side. Bind AWS-role grants to a domain or specific surface instead.`,
+      );
+    }
   }
 
   const scopeKey =
@@ -246,6 +258,7 @@ export function resolveAccess(
     connections,
     reachableHosts,
     repos,
+    awsRoles,
     plugins,
     skills,
     subagents,

@@ -25,6 +25,7 @@ const base: EffectiveAccess = {
   connectorCredentials: {},
   reachableHosts: [],
   repos: [],
+  awsRoles: [],
   plugins: [],
   skills: [],
   subagents: [],

@@ -7,6 +7,7 @@ function credentialedFields(bundle: Bundle): string[] {
   if (bundle.providers?.length) fields.push(`${bundle.providers.length} provider credential(s)`);
   if (bundle.repos?.length) fields.push(`${bundle.repos.length} repo(s)`);
   if (bundle.connectors?.length) fields.push(`${bundle.connectors.length} connector(s)`);
+  if (bundle.awsRoles?.length) fields.push(`${bundle.awsRoles.length} AWS role(s)`);
   return fields;
 }
 

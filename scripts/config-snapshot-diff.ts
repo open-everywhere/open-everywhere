@@ -112,6 +112,9 @@ export function describeEffectiveAccess(a: EffectiveAccess): Record<string, stri
     ),
     connectors: [...a.connectors],
     repos: [...a.repos],
+    awsRoles: a.awsRoles.map(
+      (r) => `${r.roleArn}${r.region ? ` region=${r.region}` : ""}${r.audience ? ` aud=${r.audience}` : ""}`,
+    ),
   };
 }
 
