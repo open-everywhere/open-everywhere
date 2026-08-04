@@ -69,9 +69,11 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
     connections: [{ id: "notion-rest", credentialType: "bearer", allowedWebsites: ["api.notion.com"], methods: ["GET"] }],
     connectors: ["notion"],
     repos: ["acme/app"],
+    awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe-app", region: "eu-west-2" }],
   } as unknown as EffectiveAccess;
   const d = describeEffectiveAccess(fake);
   ok(d.hosts[0] === "api.notion.com [auth via notion-rest] methods=GET,POST", "hosts carry the auth connection AND the method narrowing");
+  ok(d.awsRoles[0] === "arn:aws:iam::123456789012:role/oe-app region=eu-west-2", "awsRoles carry the role ARN + region facet");
   ok(d.connections[0].includes("bearer") && d.connections[0].includes("methods=GET"), "connections carry credential type + method scope");
   ok(d.connectors[0] === "notion" && d.repos[0] === "acme/app", "connectors and repos project verbatim");
 }
