@@ -81,7 +81,7 @@ const REPO_FORM = /^[\w.-]+\/[\w.-]+$/u;
 
 const ROLE_ARN_FORM = /^arn:aws[\w-]*:iam::\d{12}:role\/.+$/u;
 
-const AWS_REGION_FORM = /^[a-z]{2}-[a-z]+-\d+$/u;
+const AWS_REGION_FORM = /^[a-z]{2}(?:-[a-z]+)+-\d+$/u;
 
 function isOverlyBroadHost(pattern: string): boolean {
   return pattern === "*" || /^\*\.[^.]+$/u.test(pattern);
