@@ -1,11 +1,10 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
-import { windowGated } from "../access/window-gated.js";
 import { requireAwsExecutor } from "../connections/aws-exec.js";
 import { resolveAwsIdentity } from "../connections/aws-identity.js";
 
-export default windowGated("aws", defineTool({
+export default defineTool({
   description:
     "Run an AWS CLI command under this channel's granted AWS role (e.g. read CloudWatch logs, query DynamoDB). Credentials are resolved host-side from the verified identity and never enter the sandbox. `args` are the arguments after `aws` (e.g. [\"logs\",\"start-query\",\"--log-group-name\",\"/x\",...]). Fails closed if this channel has no AWS role granted. Reach is bounded by the role's IAM policy.",
   inputSchema: z.object({
@@ -48,4 +47,4 @@ export default windowGated("aws", defineTool({
       identity: resolved.boundAs,
     };
   },
-}));
+});

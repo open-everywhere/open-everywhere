@@ -72,7 +72,7 @@ function stubEntry(name: string): GatedToolEntry {
 }
 
 console.log("0. WINDOW_GATED_TOOLS table pins:");
-const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill", "aws"] as const;
+const WIDE_HANDS = ["bash", "glob", "grep", "read_file", "write_file", "web_fetch", "checkout_repo", "open_pull_request", "post_file", "create_skill", "delete_skill"] as const;
 for (const name of WIDE_HANDS) {
   eq(WINDOW_GATED_TOOLS[name], ["task", "native"], `"${name}" mounts on task+native only, flag-off (withheld from standing)`);
 }
@@ -82,8 +82,8 @@ eq(WINDOW_GATED_TOOLS.complete_task, ["task"], "complete_task is task-only (only
 eq(WINDOW_GATED_TOOLS.complete_thread, ["thread"], "complete_thread is thread-only (only a thread seat owns a thread)");
 eq(WINDOW_GATED_TOOLS.return_result, ["task"], "return_result is task-only (only a one-shot task returns a result)");
 eq(WINDOW_GATED_TOOLS.agent, ["standing", "thread"], "agent is grain-gated to the conversational-root seats (standing+thread) — absent on native, and NEVER on a task worker leaf");
-eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 6, "the gated table is EXACTLY the 12 wide-hands tools + the 6 delegation/lifecycle tools (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — nothing else narrows");
-eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread", "return_result"].sort(), "standing withholds the 12 wide-hands tools + complete_task + complete_thread + return_result (it KEEPS agent + the spawners — a standing seat is what delegates)");
+eq(Object.keys(WINDOW_GATED_TOOLS).length, WIDE_HANDS.length + 6, "the gated table is EXACTLY the 11 wide-hands tools + the 6 delegation/lifecycle tools (agent/spawn_task/spawn_thread_session/complete_task/complete_thread/return_result) — nothing else narrows");
+eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "complete_thread", "return_result"].sort(), "standing withholds the 11 wide-hands tools + complete_task + complete_thread + return_result (it KEEPS agent + the spawners — a standing seat is what delegates)");
 
 {
   const OFF = { wide: ["task", "native"] as const, armed: false };
