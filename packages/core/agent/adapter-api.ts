@@ -4,6 +4,11 @@ export type { CredentialBroker, BrokeredSecret } from "./access/credentials.js";
 export { warmCredential, DEFAULT_REFRESH_MARGIN_MS } from "./credentials/warm.js";
 export type { WarmCredential, WarmCredentialSpec } from "./credentials/warm.js";
 
+export { registerAwsIdentityProvider, resetAwsIdentityProvider, awsRoleSessionName } from "./connections/aws-identity.js";
+export type { AwsIdentityProvider, AwsIdentityRequest, AwsCredentials, AwsIdentityKind } from "./connections/aws-identity.js";
+export { registerAwsExecutor, resetAwsExecutor } from "./connections/aws-exec.js";
+export type { AwsExecutor, AwsExecRequest, AwsExecResult } from "./connections/aws-exec.js";
+
 export { registerRefCodec } from "./credentials/ref.js";
 export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./credentials/ref.js";
 
