@@ -1,26 +1,43 @@
 import {
   registerAwsIdentityProvider,
   registerAwsExecutor,
+  registerAwsSsoLinkStore,
+  registerAwsSsoCallbackCompleter,
   type AwsIdentityProvider,
   type AwsExecutor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { makeAwsStsProvider, type AwsStsProviderOptions } from "./sts.js";
 import { makeAwsCliExecutor, type AwsCliExecutorOptions } from "./cli.js";
-import { loadAwsAccessConfig } from "./config.js";
+import { makeAwsSsoMinter, makeAwsSsoLinkStore, type AwsSsoMinter, type AwsSsoMinterOptions } from "./sso.js";
+import { loadAwsAccessConfig, loadAwsSsoConfig } from "./config.js";
 
 export interface RegisterAwsAccessOptions {
   readonly identity?: AwsStsProviderOptions;
   readonly executor?: AwsCliExecutorOptions;
+  readonly sso?: AwsSsoMinterOptions;
 }
 
 export function registerAwsAccess(opts: RegisterAwsAccessOptions = {}): {
   provider: AwsIdentityProvider;
   executor: AwsExecutor;
+  sso: AwsSsoMinter;
 } {
   const { defaultRegion } = loadAwsAccessConfig();
-  const provider = makeAwsStsProvider({ defaultRegion, ...opts.identity });
+  const ssoCfg = loadAwsSsoConfig();
+
+  registerAwsSsoLinkStore(makeAwsSsoLinkStore());
+  const sso = makeAwsSsoMinter({
+    ...(ssoCfg.region ? { region: ssoCfg.region } : defaultRegion ? { region: defaultRegion } : {}),
+    ...(ssoCfg.clientId ? { clientId: ssoCfg.clientId } : {}),
+    ...(ssoCfg.scopes ? { scopes: ssoCfg.scopes } : {}),
+    ...opts.sso,
+  });
+
+  registerAwsSsoCallbackCompleter({ complete: ({ state, code }) => sso.completeLink(state, code) });
+
+  const provider = makeAwsStsProvider({ defaultRegion, mintUserSso: (req) => sso.mint(req), ...opts.identity });
   const executor = makeAwsCliExecutor({ defaultRegion, ...opts.executor });
   registerAwsIdentityProvider(provider);
   registerAwsExecutor(executor);
-  return { provider, executor };
+  return { provider, executor, sso };
 }

@@ -9,6 +9,7 @@ export interface AwsStsProviderOptions {
   readonly readTokenFile?: TokenFileReader;
   readonly durationSeconds?: number;
   readonly defaultRegion?: string;
+  readonly mintUserSso?: (req: AwsIdentityRequest) => Promise<AwsCredentials>;
 }
 
 const AWS_WEB_IDENTITY_TOKEN_FILE_ENV = "AWS_WEB_IDENTITY_TOKEN_FILE";
@@ -119,6 +120,7 @@ export function makeAwsStsProvider(opts: AwsStsProviderOptions = {}): AwsIdentit
   const readTokenFile = opts.readTokenFile ?? ((path: string) => readFileSync(path, "utf-8"));
   const durationSeconds = opts.durationSeconds ?? 3600;
   const defaultRegion = opts.defaultRegion;
+  const mintUserSso = opts.mintUserSso;
 
   const warm = warmCredential<AwsIdentityRequest>({
     name: "aws.sts-web-identity",
@@ -136,6 +138,7 @@ export function makeAwsStsProvider(opts: AwsStsProviderOptions = {}): AwsIdentit
   return {
     async mint(req: AwsIdentityRequest): Promise<AwsCredentials> {
       if (req.kind === "user-sso") {
+        if (mintUserSso) return mintUserSso(req);
         throw new Error(
           "AWS SSO per-user identity linking is not configured (Phase 1). " +
             "Use the domain role.",

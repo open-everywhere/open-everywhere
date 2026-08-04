@@ -8,6 +8,13 @@ export { registerAwsIdentityProvider, resetAwsIdentityProvider, awsRoleSessionNa
 export type { AwsIdentityProvider, AwsIdentityRequest, AwsCredentials, AwsIdentityKind } from "./connections/aws-identity.js";
 export { registerAwsExecutor, resetAwsExecutor } from "./connections/aws-exec.js";
 export type { AwsExecutor, AwsExecRequest, AwsExecResult } from "./connections/aws-exec.js";
+export {
+  registerAwsSsoLinkStore,
+  resetAwsSsoLinkStore,
+  awsSsoLinkStore,
+  requireAwsSsoLinkStore,
+} from "./connections/aws-sso-link.js";
+export type { AwsSsoLinkStore } from "./connections/aws-sso-link.js";
 
 export { registerRefCodec } from "./credentials/ref.js";
 export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./credentials/ref.js";
@@ -54,6 +61,9 @@ export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";
 
 export { registerOeOauthCallbackCompleter, OE_OAUTH_CALLBACK_PATH } from "./connections/oe-oauth-callback.js";
 export type { OeOauthCallbackArgs, OeOauthCallbackResult, OeOauthCallbackCompleter } from "./connections/oe-oauth-callback.js";
+
+export { registerAwsSsoCallbackCompleter, OE_AWS_SSO_CALLBACK_PATH } from "./connections/aws-sso-callback.js";
+export type { AwsSsoCallbackArgs, AwsSsoCallbackResult, AwsSsoCallbackCompleter } from "./connections/aws-sso-callback.js";
 
 export type { Connection, CredentialAuthorizationDetail } from "./access/bundle.js";
 
