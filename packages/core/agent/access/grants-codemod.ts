@@ -1,5 +1,5 @@
-import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
-import { HTTP_METHODS, type AccessDelta, type RequestingScope } from "./delta.js";
+import { type Binding, type Bundle, type Connection, type HttpMethod, type Scope } from "./bundle.js";
+import { HTTP_METHODS, requestingScopeProblem, sameScope, type AccessDelta, type RequestingScope } from "./delta.js";
 import { overlayModuleHeader, unwrapOverlayModule, wrapOverlayModule, type OverlayModuleGrammar } from "./overlay-module.js";
 
 export interface GrantsFile {
@@ -14,7 +14,32 @@ export function emptyGrantsFile(): GrantsFile {
 }
 
 export function overlayBundleName(scope: RequestingScope): string {
-  return `grants:${scope.surface}`;
+  switch (scope.level) {
+    case "surface":
+      return `grants:${scope.surface}`;
+    case "principal":
+      return `grants:principal:${scope.principal}`;
+    case "group":
+      return `grants:group:${scope.group}`;
+  }
+}
+
+function bindingScope(scope: RequestingScope): Scope {
+  switch (scope.level) {
+    case "surface":
+      return { level: "surface", surface: scope.surface };
+    case "principal":
+      return { level: "principal", principal: scope.principal };
+    case "group":
+      return { level: "group", group: scope.group };
+  }
+}
+
+function requestingScopeOf(s: Scope): RequestingScope | undefined {
+  if (s.level === "surface" && typeof s.surface === "string") return { level: "surface", surface: s.surface };
+  if (s.level === "principal" && typeof s.principal === "string") return { level: "principal", principal: s.principal };
+  if (s.level === "group" && typeof s.group === "string") return { level: "group", group: s.group };
+  return undefined;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -63,10 +88,29 @@ export function parseGrantsFile(value: unknown): GrantsFile {
     if (!isRecord(bd) || typeof bd.bundle !== "string" || !isRecord(bd.scope)) {
       throw new GrantsCodemodError("every grants binding needs { bundle, scope }");
     }
-    const scope = bd.scope as Record<string, unknown>;
-    if (scope.level !== "surface" || typeof scope.surface !== "string") {
-      throw new GrantsCodemodError(`grants binding for "${bd.bundle}" must be surface-scoped with a fully-qualified "platform/<tenant-id>/<container-id>" key (the overlay never binds wider)`);
+    for (const k of Object.keys(bd)) {
+      if (!["bundle", "scope", "allowBroad"].includes(k)) {
+        throw new GrantsCodemodError(`grants binding for "${bd.bundle}" has field "${k}" — an overlay binding carries { bundle, scope } and at most allowBroad`);
+      }
     }
+    if (bd.allowBroad !== undefined && (typeof bd.allowBroad !== "string" || bd.allowBroad.trim() === "")) {
+      throw new GrantsCodemodError(`grants binding for "${bd.bundle}" has an empty/malformed allowBroad — the escape must NAME the reason a broad grant is deliberate (access/lint.ts)`);
+    }
+    const raw = bd.scope as Record<string, unknown>;
+    const scope = requestingScopeOf(raw as unknown as Scope);
+    if (!scope) {
+      throw new GrantsCodemodError(
+        `grants binding for "${bd.bundle}" must be surface-, principal- or group-scoped with that level's own address field (got level="${String(raw.level)}") — the overlay never binds wider than one room, one person or one declared group`,
+      );
+    }
+    const stray = ["tenant", "domain", "surface", "group", "principal"].filter(
+      (f) => raw[f] !== undefined && f !== scope.level,
+    );
+    if (stray.length > 0) {
+      throw new GrantsCodemodError(`grants binding for "${bd.bundle}" is ${scope.level}-scoped but also sets scope.${stray.join("/scope.")} — a scope carries exactly its own address field`);
+    }
+    const problem = requestingScopeProblem(scope);
+    if (problem) throw new GrantsCodemodError(`grants binding for "${bd.bundle}": ${problem}`);
     bindings.push(bd as unknown as Binding);
   }
 
@@ -75,8 +119,8 @@ export function parseGrantsFile(value: unknown): GrantsFile {
 
 const BUNDLE_KEYS = ["name", "connections", "connectors"];
 const CONNECTION_KEYS = ["id", "credentialType", "secretRef", "allowedWebsites", "pathPrefixes", "customHeaders", "methods", "authorizationDetails"];
-const BINDING_KEYS = ["bundle", "scope"];
-const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "principal"];
+const BINDING_KEYS = ["bundle", "scope", "allowBroad"];
+const SCOPE_KEYS = ["level", "tenant", "domain", "surface", "group", "principal"];
 
 function orderKeys(obj: Record<string, unknown>, order: readonly string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -108,7 +152,7 @@ function canonicalBinding(bd: Binding): Record<string, unknown> {
 }
 
 function scopeSortKey(s: Scope): string {
-  return `${s.surface ?? ""}/${s.tenant ?? ""}/${s.domain ?? ""}/${s.principal ?? ""}/${s.level}`;
+  return `${s.surface ?? ""}/${s.tenant ?? ""}/${s.domain ?? ""}/${s.group ?? ""}/${s.principal ?? ""}/${s.level}`;
 }
 
 export function stringifyGrants(grants: GrantsFile): string {
@@ -152,7 +196,8 @@ export interface ApplyDeltaResult {
 }
 
 function scopeEquals(s: Scope, scope: RequestingScope): boolean {
-  return s.level === "surface" && s.surface === scope.surface;
+  const other = requestingScopeOf(s);
+  return other !== undefined && sameScope(other, scope);
 }
 
 function bundlesBoundToScope(grants: GrantsFile, scope: RequestingScope): readonly Bundle[] {
@@ -172,20 +217,23 @@ function writeTarget(grants: GrantsFile, scope: RequestingScope): { name: string
   }
 }
 
-function withBundle(grants: GrantsFile, name: string, next: Bundle, hadBundle: boolean, hadBinding: boolean, scope: RequestingScope): GrantsFile {
+function withBundle(grants: GrantsFile, name: string, next: Bundle, hadBundle: boolean, delta: AccessDelta): GrantsFile {
+  const scope = delta.scope;
+  const isTarget = (b: Binding): boolean => b.bundle === name && scopeEquals(b.scope, scope);
+  const hadBinding = grants.bindings.some(isTarget);
   return {
     bundles: hadBundle ? grants.bundles.map((b) => (b.name === name ? next : b)) : [...grants.bundles, next],
     bindings: hadBinding
-      ? grants.bindings
-      : [...grants.bindings, { bundle: name, scope: { level: "surface", surface: scope.surface } }],
+      ? grants.bindings.map((b) => (isTarget(b) && delta.allowBroad && b.allowBroad === undefined ? { ...b, allowBroad: delta.allowBroad } : b))
+      : [...grants.bindings, { bundle: name, scope: bindingScope(scope), ...(delta.allowBroad ? { allowBroad: delta.allowBroad } : {}) }],
   };
 }
 
 export function applyDelta(grants: GrantsFile, delta: AccessDelta): ApplyDeltaResult {
-  if (!SURFACE_KEY.test(delta.scope.surface ?? "")) {
-    throw new GrantsCodemodError(
-      `delta scope must be a fully-qualified surface key "platform/<tenant-id>/<container-id>" (got surface="${delta.scope.surface}")`,
-    );
+  const problem = requestingScopeProblem(delta.scope);
+  if (problem) throw new GrantsCodemodError(`delta scope is invalid — ${problem}`);
+  if (delta.allowBroad !== undefined && delta.allowBroad.trim() === "") {
+    throw new GrantsCodemodError("delta carries an EMPTY allowBroad — the escape must name the reason a broad grant is deliberate (access/lint.ts)");
   }
 
   if (delta.kind === "grant-connector") {
@@ -200,7 +248,7 @@ export function applyDelta(grants: GrantsFile, delta: AccessDelta): ApplyDeltaRe
       ...(existing ?? { name }),
       connectors: [...new Set([...(existing?.connectors ?? []), delta.connector])].sort(),
     };
-    return { grants: withBundle(grants, name, next, existing !== undefined, existing !== undefined, delta.scope), changed: true, bundleName: name };
+    return { grants: withBundle(grants, name, next, existing !== undefined, delta), changed: true, bundleName: name };
   }
 
   const { connectionId, addMethods, addPathPrefixes, baseConnection } = delta;
@@ -236,5 +284,5 @@ export function applyDelta(grants: GrantsFile, delta: AccessDelta): ApplyDeltaRe
 
   const others = (existing?.connections ?? []).filter((c) => c.id !== connectionId);
   const next: Bundle = { ...(existing ?? { name }), connections: [...others, widened] };
-  return { grants: withBundle(grants, name, next, existing !== undefined, existing !== undefined, delta.scope), changed: true, bundleName: name };
+  return { grants: withBundle(grants, name, next, existing !== undefined, delta), changed: true, bundleName: name };
 }

@@ -28,6 +28,7 @@ export interface AccessRequestsConfig {
   readonly dryRun?: boolean;
   baseBundles(): readonly Bundle[];
   baseBindings(): readonly Binding[];
+  groupRegistry?(): readonly Group[];
   baseProviders?(): readonly Provider[];
 }
 

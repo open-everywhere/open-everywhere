@@ -193,7 +193,7 @@ export function buildConfigSnapshot(agentDir = "agent"): ConfigSnapshot {
   const rows: SnapshotRow[] = [
     ...accessRows(),
     ...entityRows("bindings", loadBindings(), (b: { bundle: string; scope: Record<string, unknown> }) =>
-      `${b.scope.level}:${b.scope.org ?? b.scope.tenant ?? b.scope.domain ?? b.scope.surface ?? b.scope.principal ?? "-"}→${b.bundle}`,
+      `${b.scope.level}:${b.scope.org ?? b.scope.tenant ?? b.scope.domain ?? b.scope.surface ?? b.scope.group ?? b.scope.principal ?? "-"}→${b.bundle}`,
     ),
     ...entityRows("bundles", loadBundles(), (b: { name: string }) => b.name),
     ...entityRows("domains", loadDomains(), (d: { name: string }) => d.name),

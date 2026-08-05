@@ -4,6 +4,8 @@ import { loadBaseBundles, loadBaseBindings } from "../agent/access/bundles.js";
 import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { domainsForSurface, loadDomains } from "../agent/memory/domains.js";
+import { loadGroups } from "../agent/identity/groups.js";
+import { groupsForPrincipal } from "@open-everywhere/core/agent/identity/groups.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type EffectiveAccess } from "@open-everywhere/core/agent/access/resolver.js";
 import { emptyGrantsFile, parseGrantsModule, type GrantsFile } from "@open-everywhere/core/agent/access/grants-codemod.js";
@@ -31,27 +33,39 @@ function readOverlay(path: string): GrantsFile {
 const before: GrantsFile = readOverlay(arg("before"));
 const after: GrantsFile = readOverlay(arg("after"));
 
-const scopes = new Set<string>();
+type DiffScope = { readonly level: "surface" | "principal" | "group"; readonly address: string };
+
+const scopes = new Map<string, DiffScope>();
 for (const g of [before, after]) {
-  for (const b of g.bindings) if (b.scope.surface) scopes.add(b.scope.surface);
+  for (const b of g.bindings) {
+    if (b.scope.level === "surface" && b.scope.surface) scopes.set(`surface:${b.scope.surface}`, { level: "surface", address: b.scope.surface });
+    if (b.scope.level === "principal" && b.scope.principal) scopes.set(`principal:${b.scope.principal}`, { level: "principal", address: b.scope.principal });
+    if (b.scope.level === "group" && b.scope.group) scopes.set(`group:${b.scope.group}`, { level: "group", address: b.scope.group });
+  }
 }
 
-function resolveWith(grants: GrantsFile, surfaceKey: string): EffectiveAccess {
-  const [platform, workspace, ...rest] = surfaceKey.split("/");
-  const channel = rest.join("/");
-  return resolveAccess(
-    {
+function resolveWith(grants: GrantsFile, scope: DiffScope): EffectiveAccess {
+  const bundles = [...loadBaseBundles(), ...grants.bundles];
+  const bindings = [...loadBaseBindings(), ...grants.bindings];
+  const resolve = (req: Parameters<typeof resolveAccess>[0]): EffectiveAccess => resolveAccess(req, bundles, bindings, PLUGIN_REGISTRY, loadProviders());
+  if (scope.level === "surface") {
+    const [platform, workspace, ...rest] = scope.address.split("/");
+    const channel = rest.join("/");
+    return resolve({
       mode: "channel",
       platform,
       workspace,
       channel,
       domains: domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel }),
-    },
-    [...loadBaseBundles(), ...grants.bundles],
-    [...loadBaseBindings(), ...grants.bindings],
-    PLUGIN_REGISTRY,
-    loadProviders(),
-  );
+    });
+  }
+  if (scope.level === "principal") {
+    const slash = scope.address.indexOf("/");
+    const platform = scope.address.slice(0, slash);
+    const principalId = scope.address.slice(slash + 1);
+    return resolve({ mode: "dm", platform, workspace: "-", channel: "-", principalId, groups: groupsForPrincipal(loadGroups(), scope.address) });
+  }
+  return resolve({ mode: "dm", platform: "-", workspace: "-", channel: "-", principalId: "-", groups: [scope.address] });
 }
 
 function diffLines(b: Record<string, string[]>, a: Record<string, string[]>): string[] {
@@ -65,22 +79,35 @@ function diffLines(b: Record<string, string[]>, a: Record<string, string[]>): st
   return lines;
 }
 
-function scopeEntries(g: GrantsFile, surfaceKey: string): string {
-  const names = new Set(g.bindings.filter((b) => b.scope.surface === surfaceKey).map((b) => b.bundle));
+function scopeEntries(g: GrantsFile, scope: DiffScope): string {
+  const names = new Set(
+    g.bindings
+      .filter((b) => b.scope.level === scope.level && (b.scope.surface ?? b.scope.principal ?? b.scope.group) === scope.address)
+      .map((b) => b.bundle),
+  );
   return JSON.stringify(g.bundles.filter((b) => names.has(b.name)));
+}
+
+function heading(scope: DiffScope): string {
+  if (scope.level === "surface") {
+    const routing = resolveDomainForChannel(scope.address, loadDomains());
+    return `### \`${scope.address}\`  — domain: ${routing.domain?.name ?? "none"} (via ${routing.via})`;
+  }
+  if (scope.level === "principal") return `### \`${scope.address}\`  — personal DM universe (one person)`;
+  const members = loadGroups().find((g) => g.name === scope.address)?.members.length ?? 0;
+  return `### \`group:${scope.address}\`  — person-group, ${members} member(s), applying in EACH member's DM`;
 }
 
 const out: string[] = ["## Effective-access diff (grants overlay)", ""];
 let changedScopes = 0;
 let invariantBreaches = 0;
 
-for (const surfaceKey of [...scopes].sort((x, y) => x.localeCompare(y))) {
-  const lines = diffLines(describeEffectiveAccess(resolveWith(before, surfaceKey)), describeEffectiveAccess(resolveWith(after, surfaceKey)));
-  const grantsChanged = scopeEntries(before, surfaceKey) !== scopeEntries(after, surfaceKey);
+for (const scope of [...scopes.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([, s]) => s)) {
+  const lines = diffLines(describeEffectiveAccess(resolveWith(before, scope)), describeEffectiveAccess(resolveWith(after, scope)));
+  const grantsChanged = scopeEntries(before, scope) !== scopeEntries(after, scope);
   if (lines.length === 0) continue;
   changedScopes++;
-  const routing = resolveDomainForChannel(surfaceKey, loadDomains());
-  out.push(`### \`${surfaceKey}\`  — domain: ${routing.domain?.name ?? "none"} (via ${routing.via})`, "", "```diff", ...lines, "```", "");
+  out.push(heading(scope), "", "```diff", ...lines, "```", "");
   if (!grantsChanged) {
     invariantBreaches++;
     out.push(`> ⚠️ **INVARIANT BREACH** — this scope's effective access changed but its own overlay entries did not.`, "");

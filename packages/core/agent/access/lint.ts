@@ -22,7 +22,7 @@ function tenantClaims(domains: readonly Domain[]): Map<string, readonly string[]
   return claims;
 }
 
-function groupWidth(group: Group | undefined): string | undefined {
+export function groupWidth(group: Group | undefined): string | undefined {
   if (!group) return undefined;
   const sets = group.members.filter(isLinkSetMember).length;
   if (sets > 0) {

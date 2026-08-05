@@ -24,6 +24,7 @@ export interface AccessRequestArgs {
   readonly threadTs: string | null;
   readonly permalink?: string;
   readonly configRepo: string;
+  readonly universe?: string;
 }
 
 export interface AccessRequestExecuteDeps {
@@ -71,6 +72,7 @@ function prBody(args: AccessRequestArgs, decidedBy: string): string {
   return [
     grantSentence(args.delta) + ".",
     "",
+    ...(args.universe ? [args.universe, ""] : []),
     ...renderDelta(args.delta).join("\n").split("\n"),
     "",
     `Requested by \`${args.requestedBy}\` · sent by \`${decidedBy}\` · scope \`${args.scopeKey}\``,
@@ -100,7 +102,7 @@ export async function executeAccessRequest(args: AccessRequestArgs, decidedBy: s
     const result = applyDelta(grants, args.delta);
     const mergedBundles = [...cfg.baseBundles(), ...result.grants.bundles];
     assertBundlesValid(mergedBundles);
-    assertBindingsValid([...cfg.baseBindings(), ...result.grants.bindings], mergedBundles);
+    assertBindingsValid([...cfg.baseBindings(), ...result.grants.bindings], mergedBundles, cfg.groupRegistry?.());
     return result;
   };
 
@@ -192,6 +194,7 @@ const accessRequest: ActionKind<AccessRequestArgs> = {
   summarize(args) {
     return [
       `Request wider access — ${grantSentence(args.delta)}`,
+      ...(args.universe ? [args.universe] : []),
       ...renderDelta(args.delta),
       ...(args.reason ? [`Reason: ${inlineForReview(args.reason)}`] : []),
       `Sending opens a bot-PR against \`${args.configRepo}\` for an admin to merge — nothing is granted until they do.`,

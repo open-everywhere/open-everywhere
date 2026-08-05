@@ -4,6 +4,7 @@ import { loadBaseBundles, loadBaseBindings } from "./bundles.js";
 import { loadBaseProviders } from "./providers.js";
 import { loadBaseWebhooks } from "../webhooks/hooks.js";
 import { loadBaseDomains, loadBaseSilos } from "../memory/domains.js";
+import { loadGroups } from "../identity/groups.js";
 
 export function loadAccessRequests(): AccessRequestsConfig | null {
   return {
@@ -14,6 +15,7 @@ export function loadAccessRequests(): AccessRequestsConfig | null {
     dryRun: process.env.OE_ACCESS_DRY_RUN === "1",
     baseBundles: loadBaseBundles,
     baseBindings: loadBaseBindings,
+    groupRegistry: loadGroups,
     baseProviders: loadBaseProviders,
     hooksPath: process.env.OE_WEBHOOK_HOOKS_PATH || undefined,
     baseWebhooks: loadBaseWebhooks,

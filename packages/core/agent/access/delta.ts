@@ -1,4 +1,7 @@
 import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
+import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
+import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { groupWidth } from "./lint.js";
 import type { EffectiveAccess } from "./resolver.js";
 
 export const OUT_OF_VOCABULARY =
@@ -6,22 +9,65 @@ export const OUT_OF_VOCABULARY =
 
 export const HTTP_METHODS: readonly HttpMethod[] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"];
 
-export interface RequestingScope {
-  readonly surface: string;
+export type RequestingScope =
+  | { readonly level: "surface"; readonly surface: string }
+  | { readonly level: "principal"; readonly principal: string }
+  | { readonly level: "group"; readonly group: string };
+
+export function scopeAddress(scope: RequestingScope): string {
+  switch (scope.level) {
+    case "surface":
+      return scope.surface;
+    case "principal":
+      return scope.principal;
+    case "group":
+      return scope.group;
+  }
 }
 
-export interface WidenConnectionDelta {
-  readonly kind: "widen-connection";
+export function sameScope(a: RequestingScope, b: RequestingScope): boolean {
+  return a.level === b.level && scopeAddress(a) === scopeAddress(b);
+}
+
+export function requestingScopeProblem(scope: RequestingScope): string | undefined {
+  switch (scope.level) {
+    case "surface":
+      return SURFACE_KEY.test(scope.surface ?? "")
+        ? undefined
+        : `surface="${scope.surface}" is not the fully-qualified surface key "platform/<tenant-id>/<container-id>"`;
+    case "principal":
+      return isQualifiedPrincipalKey(scope.principal)
+        ? undefined
+        : `principal="${scope.principal}" is not the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC")`;
+    case "group": {
+      const name = scope.group ?? "";
+      if (name.trim().length === 0) return "group name is empty — a group grant needs the bare name of a declared person-group";
+      if (/[\s/]/u.test(name)) {
+        return `group="${name}" must be a BARE name with no whitespace or "/" (it names the overlay bundle \`grants:group:<name>\`)`;
+      }
+      if (name.startsWith(DIRECTORY_GROUP_PREFIX)) {
+        return `group="${name}" is in the reserved "${DIRECTORY_GROUP_PREFIX}" namespace, which belongs to the machine-owned IdP-group overlay — a grant onto a directory-synced group is a hand PR`;
+      }
+      return undefined;
+    }
+  }
+}
+
+interface DeltaBase {
   readonly scope: RequestingScope;
+  readonly allowBroad?: string;
+}
+
+export interface WidenConnectionDelta extends DeltaBase {
+  readonly kind: "widen-connection";
   readonly connectionId: string;
   readonly addMethods: readonly HttpMethod[];
   readonly addPathPrefixes: readonly string[];
   readonly baseConnection: Connection;
 }
 
-export interface GrantConnectorDelta {
+export interface GrantConnectorDelta extends DeltaBase {
   readonly kind: "grant-connector";
-  readonly scope: RequestingScope;
   readonly connector: string;
 }
 
@@ -33,12 +79,14 @@ export interface AccessAsk {
   readonly addMethods?: readonly string[];
   readonly addPathPrefixes?: readonly string[];
   readonly connector?: string;
+  readonly reason?: string;
 }
 
 export interface PlanContext {
   readonly scope: RequestingScope;
   readonly access: EffectiveAccess;
   readonly bundles: readonly Bundle[];
+  readonly groups?: readonly Group[];
 }
 
 function isHttpMethod(v: string): v is HttpMethod {
@@ -49,7 +97,63 @@ export function definedConnectors(bundles: readonly Bundle[]): readonly string[]
   return [...new Set(bundles.flatMap((b) => b.connectors ?? []))].sort();
 }
 
-function planWidenConnection(ask: AccessAsk, ctx: PlanContext): WidenConnectionDelta {
+export function scopeWhere(scope: RequestingScope): string {
+  switch (scope.level) {
+    case "surface":
+      return `surface ${scope.surface}`;
+    case "principal":
+      return `the personal DM universe of ${scope.principal}`;
+    case "group":
+      return `person-group "${scope.group}" (every member's own DM)`;
+  }
+}
+
+export function scopeHere(scope: RequestingScope): string {
+  switch (scope.level) {
+    case "surface":
+      return "this channel";
+    case "principal":
+      return "your own DM universe";
+    case "group":
+      return `person-group "${scope.group}"`;
+  }
+}
+
+export function scopeTarget(scope: RequestingScope): string {
+  return scope.level === "surface" ? scope.surface : `${scope.level}:${scopeAddress(scope)}`;
+}
+
+export const ALLOW_BROAD_REASON_MAX = 200;
+
+export function normalizeAllowBroadReason(reason: string): string {
+  const flat = reason.replace(/\s+/gu, " ").trim();
+  return flat.length > ALLOW_BROAD_REASON_MAX ? `${flat.slice(0, ALLOW_BROAD_REASON_MAX - 1)}…` : flat;
+}
+
+function planGroupTarget(ask: AccessAsk, ctx: PlanContext): string | undefined {
+  if (ctx.scope.level !== "group") return undefined;
+  const name = ctx.scope.group;
+  const declared = ctx.groups ?? [];
+  const group = declared.find((g) => g.name === name);
+  if (!group) {
+    throw new Error(
+      `"${name}" isn't a declared person-group (declared: ${declared.length ? declared.map((g) => g.name).join(", ") : "none"}) — ` +
+        `groups live in agent/identity/groups.ts and are added by PR, so ${OUT_OF_VOCABULARY}`,
+    );
+  }
+  const width = groupWidth(group);
+  if (!width) return undefined;
+  const reason = (ask.reason ?? "").trim();
+  if (reason.length === 0) {
+    throw new Error(
+      `granting "${name}" is a BROAD grant — ${width}. CI refuses a broad credentialed grant that nobody acknowledged, ` +
+        `so this request needs a reason: say why the whole group should have it, and I'll record it on the binding as \`allowBroad\` for the merging admin to read.`,
+    );
+  }
+  return normalizeAllowBroadReason(reason);
+}
+
+function planWidenConnection(ask: AccessAsk, ctx: PlanContext, allowBroad: string | undefined): WidenConnectionDelta {
   if (!ask.connection || !ask.connection.trim()) {
     throw new Error(`widen-connection needs the connection id to widen — ${OUT_OF_VOCABULARY}`);
   }
@@ -58,7 +162,7 @@ function planWidenConnection(ask: AccessAsk, ctx: PlanContext): WidenConnectionD
   const base = ctx.access.connections.find((c) => c.id === id);
   if (!base) {
     throw new Error(
-      `connection "${id}" isn't effective in this channel (effective: ${
+      `connection "${id}" isn't effective in ${scopeHere(ctx.scope)} (effective there: ${
         ctx.access.connections.length ? ctx.access.connections.map((c) => c.id).join(", ") : "none"
       }) — ${OUT_OF_VOCABULARY}`,
     );
@@ -90,14 +194,15 @@ function planWidenConnection(ask: AccessAsk, ctx: PlanContext): WidenConnectionD
     if (rawPrefixes.length > 0 && base.pathPrefixes === undefined) unrestricted.push("every path");
     throw new Error(
       unrestricted.length > 0
-        ? `connection "${id}" already allows ${unrestricted.join(" and ")} here — nothing to widen.`
-        : `connection "${id}" already grants everything requested in this channel — nothing to request.`,
+        ? `connection "${id}" already allows ${unrestricted.join(" and ")} in ${scopeHere(ctx.scope)} — nothing to widen.`
+        : `connection "${id}" already grants everything requested in ${scopeHere(ctx.scope)} — nothing to request.`,
     );
   }
 
   return {
     kind: "widen-connection",
     scope: ctx.scope,
+    ...(allowBroad ? { allowBroad } : {}),
     connectionId: id,
     addMethods,
     addPathPrefixes,
@@ -105,14 +210,14 @@ function planWidenConnection(ask: AccessAsk, ctx: PlanContext): WidenConnectionD
   };
 }
 
-function planGrantConnector(ask: AccessAsk, ctx: PlanContext): GrantConnectorDelta {
+function planGrantConnector(ask: AccessAsk, ctx: PlanContext, allowBroad: string | undefined): GrantConnectorDelta {
   if (!ask.connector || !ask.connector.trim()) {
     throw new Error(`grant-connector needs the connector name to grant — ${OUT_OF_VOCABULARY}`);
   }
   const name = ask.connector.trim();
 
   if (ctx.access.connectors.includes(name)) {
-    throw new Error(`connector "${name}" is already granted to this channel — nothing to request.`);
+    throw new Error(`connector "${name}" is already granted to ${scopeHere(ctx.scope)} — nothing to request.`);
   }
 
   const defined = definedConnectors(ctx.bundles);
@@ -122,27 +227,27 @@ function planGrantConnector(ask: AccessAsk, ctx: PlanContext): GrantConnectorDel
     );
   }
 
-  return { kind: "grant-connector", scope: ctx.scope, connector: name };
+  return { kind: "grant-connector", scope: ctx.scope, ...(allowBroad ? { allowBroad } : {}), connector: name };
 }
 
 export function planAccessDelta(ask: AccessAsk, ctx: PlanContext): AccessDelta {
-  if (!SURFACE_KEY.test(ctx.scope.surface ?? "")) {
-    throw new Error(
-      `invalid requesting scope (surface="${ctx.scope.surface}") — the fully-qualified surface key "platform/<tenant-id>/<container-id>" is required.`,
-    );
+  const problem = requestingScopeProblem(ctx.scope);
+  if (problem) {
+    throw new Error(`invalid requesting scope (${ctx.scope.level}) — ${problem}.`);
   }
+  const allowBroad = planGroupTarget(ask, ctx);
   switch (ask.kind) {
     case "widen-connection":
-      return planWidenConnection(ask, ctx);
+      return planWidenConnection(ask, ctx, allowBroad);
     case "grant-connector":
-      return planGrantConnector(ask, ctx);
+      return planGrantConnector(ask, ctx, allowBroad);
     default:
       throw new Error(`unknown access-request kind "${ask.kind}" — the vocabulary is widen-connection | grant-connector; ${OUT_OF_VOCABULARY}`);
   }
 }
 
 export function grantSentence(delta: AccessDelta): string {
-  const where = `surface ${delta.scope.surface}`;
+  const where = scopeWhere(delta.scope);
   if (delta.kind === "grant-connector") {
     return `Grant connector "${delta.connector}" to ${where}`;
   }
@@ -153,14 +258,16 @@ export function grantSentence(delta: AccessDelta): string {
 }
 
 export function renderDelta(delta: AccessDelta): string[] {
+  const ack = delta.allowBroad ? [`  allowBroad: ${delta.allowBroad}`] : [];
   if (delta.kind === "grant-connector") {
-    return [`\`\`\`grant-connector: ${delta.connector} → ${delta.scope.surface}\`\`\``];
+    return ["```" + [`grant-connector: ${delta.connector} → ${scopeTarget(delta.scope)}`, ...ack].join("\n") + "```"];
   }
   const lines = [
-    `widen-connection: ${delta.connectionId} → ${delta.scope.surface}`,
+    `widen-connection: ${delta.connectionId} → ${scopeTarget(delta.scope)}`,
     ...(delta.addMethods.length > 0 ? [`  + methods: ${delta.addMethods.join(", ")}`] : []),
     ...(delta.addPathPrefixes.length > 0 ? [`  + pathPrefixes: ${delta.addPathPrefixes.join(", ")}`] : []),
     `  base: ${delta.baseConnection.allowedWebsites.join(", ")} (methods: ${delta.baseConnection.methods?.join(",") ?? "all"}; paths: ${delta.baseConnection.pathPrefixes?.join(",") ?? "all"})`,
+    ...ack,
   ];
   return ["```" + lines.join("\n") + "```"];
 }

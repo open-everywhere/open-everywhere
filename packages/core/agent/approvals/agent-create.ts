@@ -139,7 +139,7 @@ export async function executeAgentCreate(args: AgentCreateArgs, decidedBy: strin
     assertExposedAgentsCurated(mergedDomains, mergedSilos, mergedSpecs);
     const mergedBundles = [...cfg.baseBundles(), ...baseAgents.bundles, ...result.file.bundles];
     assertBundlesValid(mergedBundles);
-    assertBindingsValid([...cfg.baseBindings(), ...baseAgents.bindings, ...result.file.bindings], mergedBundles);
+    assertBindingsValid([...cfg.baseBindings(), ...baseAgents.bindings, ...result.file.bindings], mergedBundles, cfg.groupRegistry?.());
     return result;
   };
 
