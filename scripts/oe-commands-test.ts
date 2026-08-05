@@ -13,7 +13,7 @@ registerConfig({
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] })],
+  loadDomains: () => [defineDomain({ name: "org", match: "org", admins: ["discord/U_ORG_ADMIN"] })],
   loadSilos: () => [],
   domainsForSurface: () => [],
 });

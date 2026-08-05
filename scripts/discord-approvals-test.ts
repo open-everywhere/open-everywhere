@@ -58,9 +58,9 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
-    defineDomain({ name: "eng", channels: ["discord/G1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
-    defineDomain({ name: "dwin", channels: ["discord/G1/C_WIN"], admins: ["U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "org", match: "org", admins: ["discord/U_ORG_ADMIN"] }),
+    defineDomain({ name: "eng", channels: ["discord/G1/C_ENG"], admins: ["discord/U_ENG_ADMIN"] }),
+    defineDomain({ name: "dwin", channels: ["discord/G1/C_WIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -443,8 +443,16 @@ const store = getOperationalStore();
 
 {
   await store.addPendingAction(row({ id: "dp-or", domain: null }));
-  const res = await resolveApprovalClick({ org: "default", id: "dp-or", decision: "reject", clickerId: "U_ORG_ADMIN" });
+  const res = await resolveApprovalClick({ org: "default", id: "dp-or", decision: "reject", clickerId: "U_ORG_ADMIN", clickerPlatform: "discord" });
   ok(res.outcome === "decided", "the core decides for a roster admin with NO platformAdmin predicate at all (Slack call shape)");
+
+  await store.addPendingAction(row({ id: "dp-or-unqualified", domain: null }));
+  const unqualified = await resolveApprovalClick({ org: "default", id: "dp-or-unqualified", decision: "reject", clickerId: "U_ORG_ADMIN" });
+  ok(unqualified.outcome === "denied", "🔴 …and with NO clicker platform and nothing to derive one from, the ROSTER arm fails closed — a bare id is never matched against a qualified roster");
+
+  await store.addPendingAction(row({ id: "dp-or-foreign", domain: null }));
+  const foreign = await resolveApprovalClick({ org: "default", id: "dp-or-foreign", decision: "reject", clickerId: "U_ORG_ADMIN", clickerPlatform: "telegram" });
+  ok(foreign.outcome === "denied", "🔴 …and the same id clicking from ANOTHER platform is a different person — the roster names discord/U_ORG_ADMIN");
 }
 
 {

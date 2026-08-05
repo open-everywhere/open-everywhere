@@ -55,9 +55,9 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/U_ENG_ADMIN"] }),
     defineDomain({ name: "other", channels: ["slack/T1/C_OTHER"] }),
-    defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
+    defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG_ADMIN"] }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],

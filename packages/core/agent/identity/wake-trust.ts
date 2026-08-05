@@ -3,6 +3,7 @@ import type { BackscrollTrustFor } from "../channels/backscroll-cluster.js";
 import type { BindableContext } from "./binding.js";
 import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
+import { rosterHasPrincipal } from "./principal-key.js";
 import { getConfig } from "../access/config.js";
 import { isAllowlistedDriverAuthor } from "../testing/driver-allowlist.js";
 
@@ -26,10 +27,10 @@ export function wakeAuthorIsAdmin(
   channelKey: string | undefined,
   domains: readonly Domain[],
 ): boolean {
-  if (!authorId) return false;
-  if (criteriaDomain("org", domains)?.admins?.includes(authorId) === true) return true;
-  if (!channelKey) return false;
-  return domainForChannel(channelKey, domains)?.admins?.includes(authorId) === true;
+  if (!authorId || !channelKey) return false;
+  const platform = channelKey.split("/")[0];
+  if (rosterHasPrincipal(criteriaDomain("org", domains)?.admins, platform, authorId)) return true;
+  return rosterHasPrincipal(domainForChannel(channelKey, domains)?.admins, platform, authorId);
 }
 
 export function loadDomainsForWakeTrust(): readonly Domain[] {

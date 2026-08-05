@@ -119,7 +119,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const bindings: Binding[] = [
     { bundle: "org", scope: { level: "org" } },
     { bundle: "ch", scope: { level: "surface", surface: "slack/T1/C1" } },
-    { bundle: "personal", scope: { level: "principal", principal: "U1" } },
+    { bundle: "personal", scope: { level: "principal", principal: "slack/U1" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -128,6 +128,26 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ok(a.scopeKey === "dm:U1", "DM scopeKey is the principal");
   const none: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "C1", principalId: "U2" };
   ok(resolveAccess(none, bundles, bindings).repos.length === 0, "DM with no personal bundle = empty surface");
+  const foreign: ResolveRequest = { mode: "dm", platform: "discord", workspace: "G1", channel: "D1", principalId: "U1" };
+  ok(resolveAccess(foreign, bundles, bindings).repos.length === 0, "🔴 a DM from the same id on ANOTHER platform resolves NOTHING — the binding names slack/U1, not the bare id");
+}
+
+{
+  const COLLIDING_ID = "300000000000000104";
+  const bundles: Bundle[] = [
+    { name: "discord-personal", repos: ["acme/discord-scratch"] },
+    { name: "telegram-personal", repos: ["acme/telegram-scratch"] },
+  ];
+  const bindings: Binding[] = [
+    { bundle: "discord-personal", scope: { level: "principal", principal: `discord/${COLLIDING_ID}` } },
+    { bundle: "telegram-personal", scope: { level: "principal", principal: `telegram/${COLLIDING_ID}` } },
+  ];
+  const dmOn = (platform: string): ResolveRequest => ({ mode: "dm", platform, workspace: "W1", channel: "D1", principalId: COLLIDING_ID });
+  const d = resolveAccess(dmOn("discord"), bundles, bindings);
+  const t = resolveAccess(dmOn("telegram"), bundles, bindings);
+  ok(d.repos.length === 1 && d.repos[0] === "acme/discord-scratch", "identical digit ids: the discord DM resolves ONLY the discord principal's bundle");
+  ok(t.repos.length === 1 && t.repos[0] === "acme/telegram-scratch", "identical digit ids: the telegram DM resolves ONLY the telegram principal's bundle");
+  ok(resolveAccess(dmOn("slack"), bundles, bindings).repos.length === 0, "…and a third platform with the same id resolves nothing at all");
 }
 
 {
@@ -192,7 +212,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "svc", scope: { level: "org" } },
-    { bundle: "mine", scope: { level: "principal", principal: "U_me" } },
+    { bundle: "mine", scope: { level: "principal", principal: "slack/U_me" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U_me" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -347,7 +367,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     { bundle: "basket", scope: { level: "domain", domain: "payments" } },
     { bundle: "basket", scope: { level: "surface", surface: "slack/T1/C1" } },
     { bundle: "basket", scope: { level: "surface", surface: "teams/tid/19-x-thread.tacv2" } },
-    { bundle: "basket", scope: { level: "principal", principal: "U1" } },
+    { bundle: "basket", scope: { level: "principal", principal: "slack/U1" } },
   ];
   assertBindingsValid(good, bundles);
   ok(true, "well-formed bindings at every level validate (org/tenant/domain/surface/principal)");
@@ -404,6 +424,21 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "the retired dm: sentinel throws with the migration instruction",
   );
   throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "U1" } }], bundles),
+    "PLATFORM-QUALIFIED principal key",
+    "a BARE principal id throws at config load (it names no namespace, so it can never match)",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "slack/T1/U1" } }], bundles),
+    "PLATFORM-QUALIFIED principal key",
+    "a surface-shaped (three-segment) principal key throws — a principal key is exactly platform + id",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "Slack/U1" } }], bundles),
+    "PLATFORM-QUALIFIED principal key",
+    "an upper-cased platform token throws — platform strings are normalized lowercase everywhere, so \"Slack/U1\" would never match a live request",
+  );
+  throwsWith(
     () => assertBindingsValid([{ bundle: "basket", scope: { level: "domain", domain: "payments", tenant: "slack/T1" } }], bundles),
     "also sets scope.tenant",
     "a domain scope carrying a tenant qualifier throws (a domain is org-global)",
@@ -439,7 +474,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "same for a surface binding — the key carries its platform",
   );
 
-  const personal: Binding[] = [{ bundle: "unified", scope: { level: "principal", principal: "U1" } }];
+  const personal: Binding[] = [{ bundle: "unified", scope: { level: "principal", principal: "slack/U1" } }];
   ok(resolveAccess(chan("T1", "C1"), bundles, personal).repos.length === 0, "a principal binding grants nothing in a channel");
   ok(
     resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" }, bundles, personal).repos.length === 1,

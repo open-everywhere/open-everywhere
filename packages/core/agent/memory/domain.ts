@@ -1,4 +1,5 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
+import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
@@ -512,6 +513,12 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
         segs.length > 2
           ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported yet — a containers entry must be a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>"), never a deeper path. List the concrete surfaces in channels instead.`
           : `  "${d.name}" claims container "${key}", which is not a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>")`,
+      );
+    }
+    for (const entry of d.admins ?? []) {
+      if (isQualifiedPrincipalKey(entry)) continue;
+      bad.push(
+        `  "${d.name}" lists admin "${entry}", which is not a PLATFORM-QUALIFIED principal key \`platform/<principal-id>\` (e.g. "slack/U0EXUSER002", "discord/300000000000000104") — a bare vendor id names no namespace and can never match, so the person would silently hold no admin standing (identity/principal-key.ts)`,
       );
     }
     if (hasMatch) {

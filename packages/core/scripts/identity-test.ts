@@ -1,5 +1,6 @@
 import { bindFrom, bindBridged, registerIdentityMapper, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
+import { principalKey, isQualifiedPrincipalKey, parsePrincipalKey, rosterHasPrincipal, principalIdsOnPlatform } from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 
@@ -108,5 +109,40 @@ ok(
   bindFrom({ channel: { kind: "neverregistered" } }).trust === "external",
   "register seam: an unregistered platform still falls through to bindLocal + fail-closed external",
 );
+
+{
+  ok(principalKey("slack", "U0EXOWNER") === "slack/U0EXOWNER", "principalKey composes <platform>/<id>");
+  ok(principalKey("discord", "300000000000000104") === "discord/300000000000000104", "…for a digit-string id too");
+  ok(principalKey("Slack", "U1") === "Slack/U1", "principalKey does NOT normalize — it is a join, and the validator is the gate");
+
+  ok(isQualifiedPrincipalKey("slack/U1"), "a two-segment key validates");
+  ok(isQualifiedPrincipalKey("discord-gateway/1"), "a hyphenated platform token validates");
+  ok(!isQualifiedPrincipalKey("U1"), "a BARE id does not validate (the pre-P0 form)");
+  ok(!isQualifiedPrincipalKey("300000000000000104"), "…nor a bare digit string");
+  ok(!isQualifiedPrincipalKey("slack/"), "…nor an empty id");
+  ok(!isQualifiedPrincipalKey("/U1"), "…nor an empty platform");
+  ok(!isQualifiedPrincipalKey("slack/T1/U1"), "…nor a surface-shaped three-segment key — the id carries no slash");
+  ok(!isQualifiedPrincipalKey("Slack/U1"), "…nor an upper-cased platform token (platforms are normalized lowercase everywhere)");
+  ok(!isQualifiedPrincipalKey("slack/U 1"), "…nor an id with whitespace");
+  ok(!isQualifiedPrincipalKey(undefined), "…nor undefined");
+
+  const parsed = parsePrincipalKey("discord/300000000000000104");
+  ok(parsed?.platform === "discord" && parsed.id === "300000000000000104", "parsePrincipalKey splits a valid key");
+  ok(parsePrincipalKey("U1") === undefined, "parsePrincipalKey returns a VALUE (undefined) for a malformed key — display/filter paths skip, they never throw");
+
+  const roster = ["slack/U_ADMIN", "discord/300000000000000104"];
+  ok(rosterHasPrincipal(roster, "slack", "U_ADMIN"), "rosterHasPrincipal matches the qualified entry");
+  ok(rosterHasPrincipal(roster, "discord", "300000000000000104"), "…on either platform in one roster");
+  ok(!rosterHasPrincipal(roster, "telegram", "300000000000000104"), "🔴 …and NOT the same digits on another platform — the collision this grammar exists to delete");
+  ok(!rosterHasPrincipal(roster, undefined, "U_ADMIN"), "rosterHasPrincipal FAILS CLOSED with no platform");
+  ok(!rosterHasPrincipal(roster, "slack", undefined), "…and with no id");
+  ok(!rosterHasPrincipal(undefined, "slack", "U_ADMIN"), "…and with no roster at all");
+  ok(!rosterHasPrincipal(["U_ADMIN"], "slack", "U_ADMIN"), "…and a BARE roster entry never matches (which is why config load refuses one)");
+
+  ok(JSON.stringify(principalIdsOnPlatform(roster, "slack")) === JSON.stringify(["U_ADMIN"]), "principalIdsOnPlatform projects the roster down to one platform's bare ids");
+  ok(principalIdsOnPlatform(roster, "telegram").length === 0, "…dropping every other platform's entries");
+  ok(principalIdsOnPlatform([...roster, "junk"], "slack").length === 1, "…and malformed entries");
+  ok(principalIdsOnPlatform(roster, undefined).length === 0, "…and yielding nothing at all with no platform (fail closed)");
+}
 
 console.log(`✓ identity: ${passed} assertions passed`);

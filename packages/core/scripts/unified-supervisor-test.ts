@@ -253,6 +253,14 @@ throws(
   () => assertPrincipalsValid([rowan, definePrincipal({ name: "Impostor", ids: { slack: "U0EXOWNER" } })]),
   "same (slack, id) claimed by two people ⇒ fail loud (fail-closed on merge)",
 );
+throws(
+  () => assertPrincipalsValid([rowan, definePrincipal({ name: "Rowan Hale", ids: { slack: "U0EXOWNER" } })]),
+  "two SAME-NAMED entries double-claiming one (platform, id) ⇒ fail loud (conflicts key by entry index, not by display name)",
+);
+throws(
+  () => assertPrincipalsValid([rowan, definePrincipal({ name: "Rowan Hale", ids: { github: "someone-else" }, email: "T@Example.com" })]),
+  "…and the same holds for the email ledger: two same-named entries claiming one email ⇒ fail loud",
+);
 throws(() => assertPrincipalsValid([definePrincipal({ name: "", ids: { slack: "X" } })]), "empty name ⇒ fail loud");
 throws(() => assertPrincipalsValid([definePrincipal({ name: "NoIds", ids: {} })]), "no surface ids ⇒ fail loud");
 throws(

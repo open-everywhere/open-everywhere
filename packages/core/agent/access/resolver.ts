@@ -1,4 +1,5 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import { principalKey } from "../identity/principal-key.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
 
@@ -98,13 +99,16 @@ export function resolveAccess(
   const warnings: string[] = [];
   const byName = new Map(bundles.map((b) => [b.name, b]));
 
+  const callerKey =
+    req.principalId !== undefined ? principalKey(req.platform, req.principalId) : undefined;
+
   const applied: { scope: Scope; bundle: Bundle }[] = [];
   for (const binding of bindings) {
     const inScope =
       req.mode === "dm"
-        ? req.principalId !== undefined &&
+        ? callerKey !== undefined &&
           binding.scope.level === "principal" &&
-          binding.scope.principal === req.principalId
+          binding.scope.principal === callerKey
         : scopeMatches(binding.scope, req);
     if (!inScope) continue;
     const bundle = byName.get(binding.bundle);

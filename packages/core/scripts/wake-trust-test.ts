@@ -24,8 +24,8 @@ function ok(cond: boolean, label: string): void {
 }
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "org", match: "org", admins: ["U_ORG_ADMIN"] }),
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["U_ENG_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG_ADMIN"] }),
+  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/U_ENG_ADMIN"] }),
 ];
 
 ok(wakeTrustFor({ authorIsBot: true, authorId: "B1", surfaceInternal: true, authorIsAdmin: true }) === "relay", "bot author → relay, even a rostered one (machine-authored never speaks with standing)");
@@ -42,13 +42,22 @@ ok(wakeTrustFor({ authorIsBot: true, authorId: "BDRV", surfaceInternal: true, au
 ok(wakeTrustFor({ authorIsBot: false, authorId: "U1", surfaceInternal: true, authorIsAdmin: true, isAllowlistedDriver: true }) === "principal", "the lift NEVER touches the human path: a real human admin is still principal even if the flag is (spuriously) set");
 
 ok(wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_RANDOM", DOMAINS), "org admin is an admin on EVERY channel");
-ok(wakeAuthorIsAdmin("U_ORG_ADMIN", undefined, DOMAINS), "org admin resolves even without a channel key");
+ok(!wakeAuthorIsAdmin("U_ORG_ADMIN", undefined, DOMAINS), "org admin WITHOUT a channel key → not an admin: the platform half of the roster key is a surface fact, and there is no surface here to read it from (fail closed)");
 ok(wakeAuthorIsAdmin("U_ENG_ADMIN", "slack/T1/C_ENG", DOMAINS), "domain admin is an admin on the domain's own channel");
 ok(!wakeAuthorIsAdmin("U_ENG_ADMIN", "slack/T1/C_OTHER", DOMAINS), "domain admin is NOT an admin on another channel");
 ok(!wakeAuthorIsAdmin("U_ENG_ADMIN", undefined, DOMAINS), "domain admin without a channel key → not an admin (fail closed)");
 ok(!wakeAuthorIsAdmin("U_MEMBER", "slack/T1/C_ENG", DOMAINS), "a plain member never resolves admin");
 ok(!wakeAuthorIsAdmin(undefined, "slack/T1/C_ENG", DOMAINS), "no author id → not an admin (fail closed)");
 ok(!wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_ENG", []), "empty rosters → nobody is an admin");
+
+const COLLIDING: readonly Domain[] = [
+  defineDomain({ name: "org", match: "org", admins: ["discord/300000000000000104"] }),
+  defineDomain({ name: "tg", channels: ["telegram/W1/C_TG"], admins: ["telegram/900900900"] }),
+];
+ok(wakeAuthorIsAdmin("300000000000000104", "discord/G1/C_ANY", COLLIDING), "the digit-string id IS an org admin on discord, its own namespace");
+ok(!wakeAuthorIsAdmin("300000000000000104", "telegram/W1/C_TG", COLLIDING), "🔴 …and the SAME digits on telegram are NOT — a bare-id roster would have granted a stranger principal-tier standing");
+ok(wakeAuthorIsAdmin("900900900", "telegram/W1/C_TG", COLLIDING), "the telegram domain admin matches on the telegram surface");
+ok(!wakeAuthorIsAdmin("900900900", "discord/G1/C_ANY", COLLIDING), "…and not on a discord surface, even though nothing but the platform distinguishes the two ids");
 
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "principal", "resolveWakeTrust: org admin on internal channel → principal");
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ENG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "principal", "resolveWakeTrust: domain admin on their channel → principal");

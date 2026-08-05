@@ -25,8 +25,8 @@ const bind = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => ({
 });
 
 const domains: Domain[] = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["U_ORG_ADMIN"] }),
-  defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["U_TXN_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U_ORG_ADMIN"] }),
+  defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/U_TXN_ADMIN"] }),
   defineDomain({ name: "no-admins", channels: ["slack/T1/C_PLAIN"] }),
 ];
 

@@ -13,6 +13,8 @@ import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
+import { platformOfScopeKey } from "../access/scope-key.js";
+import { principalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
@@ -223,13 +225,15 @@ export function isDomainLevelSpendCap(row: PendingActionRow): boolean {
   }
 }
 
-export function clickerMayDecide(row: PendingActionRow, clickerId: string): boolean {
+export function clickerMayDecide(row: PendingActionRow, clickerId: string, clickerPlatform: string | undefined): boolean {
+  if (!clickerPlatform) return false;
   const domains = getConfig().loadDomains();
-  if (criteriaDomain("org", domains)?.admins?.includes(clickerId) === true) return true;
+  const key = principalKey(clickerPlatform, clickerId);
+  if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return true;
   if (isDomainLevelSpendCap(row)) return false;
   if (!row.domain) return false;
   const explicit = domains.find((d) => d.name === row.domain);
-  return explicit?.admins?.includes(clickerId) === true;
+  return explicit?.admins?.includes(key) === true;
 }
 
 interface BlockActionsPayload {
@@ -308,6 +312,7 @@ export interface ResolveApprovalClickInput {
   readonly clickerId: string;
   readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
   readonly clickContext?: { readonly surfaceKey: string };
+  readonly clickerPlatform?: string;
 }
 
 async function auditClickerDenial(org: string, row: PendingActionRow, clickerId: string, reason: ClickerFloorRefusal | "not-admin"): Promise<void> {
@@ -362,7 +367,9 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     }
   }
 
-  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId) && (await input.platformAdmin?.(row)) !== true) {
+  const clickerPlatform =
+    input.clickerPlatform ?? platformOfScopeKey(input.clickContext?.surfaceKey) ?? platformOfScopeKey(row.postedTo);
+  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform) && (await input.platformAdmin?.(row)) !== true) {
     await auditClickerDenial(input.org, row, input.clickerId, "not-admin");
     return { outcome: "denied", row };
   }
@@ -595,6 +602,7 @@ export async function handleApprovalPayload(payload: unknown, deps: HandleApprov
       id: parsed.id,
       decision: parsed.decision,
       clickerId,
+      clickerPlatform: "slack",
       ...(teamId ? { clickContext: { surfaceKey: `slack/${teamId}/${channelId}` } } : {}),
     });
     switch (res.outcome) {

@@ -149,7 +149,7 @@ export async function fulfilPaneRead<T>(
     throw redirectError(r, opts.kind);
   }
 
-  const roles = adminControlRoles(r.principalId, r.domains);
+  const roles = adminControlRoles(r.principalId, r.domains, r.coords.platform);
   if (roles.length === 0) {
     const why = r.principalId
       ? `your id ("${r.principalId}") holds no admin standing in any configured domain`

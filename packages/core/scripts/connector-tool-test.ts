@@ -128,7 +128,7 @@ console.log("2. card build:");
 
 console.log("3. click handlers:");
 
-const DOMAINS: Domain[] = [{ name: "org", match: "org", admins: ["U_ADMIN"] }];
+const DOMAINS: Domain[] = [{ name: "org", match: "org", admins: ["slack/U_ADMIN"] }];
 const FAKE_URL = "https://connect.example/CAP-TOKEN-DO-NOT-LEAK";
 
 function recorder() {

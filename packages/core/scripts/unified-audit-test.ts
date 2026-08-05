@@ -32,7 +32,7 @@ const payments = defineDomain({
   channels: [SLACK, GH],
   ambientSupervisor: true,
   mode: "unified",
-  admins: ["U_ADMIN"],
+  admins: ["slack/U_ADMIN"],
 });
 const org = defineDomain({ name: "org", match: "org" });
 const domains = [payments, org];
@@ -92,7 +92,7 @@ const {
   ok(JSON.stringify(sarah.surfacesNotIn) === JSON.stringify(["github"]), "Sarah is NOT on github — the read-across exposure (answering github could disclose to a non-member)");
   ok(!v.humans.some((h) => h.name === "Outsider"), "a principal touching no domain platform is excluded");
 
-  ok(JSON.stringify(v.controllers) === JSON.stringify(["U_ADMIN"]), "controllers = domain admins");
+  ok(JSON.stringify(v.controllers) === JSON.stringify(["slack/U_ADMIN"]), "controllers = domain admins, as the qualified roster keys they are stored as");
   ok(v.notes.some((nn) => nn.includes("Pure-read")), "notes state the pure-read discipline");
   ok(v.notes.some((nn) => nn.toLowerCase().includes("privacy ordinal")), "notes flag the not-yet-enforced privacy ordinal (honest)");
 }

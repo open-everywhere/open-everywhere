@@ -31,9 +31,9 @@ const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const salesSilo = defineMemorySilo({ name: "sales-silo", provider: "sqlite" });
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["U_ENG_ADMIN"] }),
-  defineDomain({ name: "sales", channels: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["U_SALES_ADMIN"] }),
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["U_ORG_ADMIN"] }),
+  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["slack/U_ENG_ADMIN"] }),
+  defineDomain({ name: "sales", channels: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["slack/U_SALES_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U_ORG_ADMIN"] }),
 ];
 registerConfig({
   loadBundles: () => [],
@@ -73,10 +73,12 @@ const list = (ctx: BindableContext, silo?: string) => memoryAdminListTool.execut
 const read = (ctx: BindableContext, silo: string, relPath: string) => memoryAdminReadTool.execute({ silo, relPath }, ctx as never);
 
 {
-  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains)) === JSON.stringify(["admin"]), "adminControlRoles: org admin -> [\"admin\"]");
-  ok(JSON.stringify(adminControlRoles("U_ENG_ADMIN", domains)) === JSON.stringify(["domain:eng"]), "adminControlRoles: eng admin -> [\"domain:eng\"] regardless of channel");
-  ok(JSON.stringify(adminControlRoles("U_RANDOM", domains)) === JSON.stringify([]), "adminControlRoles: a plain member has no roles");
-  ok(JSON.stringify(adminControlRoles(undefined, domains)) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no principalId -> []");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "slack")) === JSON.stringify(["admin"]), "adminControlRoles: org admin -> [\"admin\"]");
+  ok(JSON.stringify(adminControlRoles("U_ENG_ADMIN", domains, "slack")) === JSON.stringify(["domain:eng"]), "adminControlRoles: eng admin -> [\"domain:eng\"] regardless of channel");
+  ok(JSON.stringify(adminControlRoles("U_RANDOM", domains, "slack")) === JSON.stringify([]), "adminControlRoles: a plain member has no roles");
+  ok(JSON.stringify(adminControlRoles(undefined, domains, "slack")) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no principalId -> []");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, undefined)) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no platform to qualify the id with -> [] (never \"admin\")");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "discord")) === JSON.stringify([]), "adminControlRoles: the SAME id on another platform holds no standing — the roster names slack/U_ORG_ADMIN, not the bare id");
 }
 
 {
@@ -135,7 +137,7 @@ const read = (ctx: BindableContext, silo: string, relPath: string) => memoryAdmi
 
 {
   const bigSilo = defineMemorySilo({ name: "big-silo", provider: "sqlite" });
-  const domainsWithBig = [...domains, defineDomain({ name: "big", channels: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["U_BIG_ADMIN"] })];
+  const domainsWithBig = [...domains, defineDomain({ name: "big", channels: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["slack/U_BIG_ADMIN"] })];
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],

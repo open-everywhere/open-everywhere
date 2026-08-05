@@ -1,4 +1,5 @@
 import type { ProviderGrant } from "./providers.js";
+import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 
 export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "principal";
 
@@ -233,9 +234,11 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
         `  ${where} scope.domain "${domain}" contains "/" — a domain scope takes the BARE domain name from memory/domains.ts ("payments"), deliberately NOT tenant-qualified: domains are cross-platform, so one grant is one binding`,
       );
     }
-    if (principal?.includes("/") || principal?.startsWith("dm:")) {
+    if (principal !== undefined && !isQualifiedPrincipalKey(principal)) {
       bad.push(
-        `  ${where} scope.principal "${principal}" must be the BARE platform principal id (e.g. a Slack member id "U0123ABC") — the old \`workspace: "dm:<id>"\` sentinel is now the first-class \`principal\` level, so drop the "dm:" prefix`,
+        principal.startsWith("dm:")
+          ? `  ${where} scope.principal "${principal}" still carries the old \`workspace: "dm:<id>"\` sentinel — the DM universe is the first-class \`principal\` level now, so drop the "dm:" prefix and write the PLATFORM-QUALIFIED key "platform/<principal-id>" (e.g. "slack/U0123ABC")`
+          : `  ${where} scope.principal "${principal}" must be the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC", "discord/300000000000000104") — a BARE member id has no platform namespace and will NEVER match (identity/principal-key.ts)`,
       );
     }
   }

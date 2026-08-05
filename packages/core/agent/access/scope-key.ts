@@ -12,3 +12,9 @@ export function parseScopeKey(scopeKey: string): ScopeKeyShape {
   if (parts.length === 3) return { kind: "surface", platform: parts[0], workspace: parts[1], surface: parts[2] };
   return { kind: "malformed", raw: scopeKey, parts };
 }
+
+export function platformOfScopeKey(scopeKey: string | undefined | null): string | undefined {
+  if (!scopeKey) return undefined;
+  const parsed = parseScopeKey(scopeKey);
+  return parsed.kind === "tenant" || parsed.kind === "surface" ? parsed.platform : undefined;
+}

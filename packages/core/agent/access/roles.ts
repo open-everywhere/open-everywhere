@@ -1,4 +1,5 @@
 import { actingPrincipalId, bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { principalKey, rosterHasPrincipal } from "../identity/principal-key.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
 
@@ -16,11 +17,11 @@ export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain
   if (!principalId) return NO_ROLE;
 
   const org = criteriaDomain("org", domains);
-  const isOrgAdmin = org?.admins?.includes(principalId) === true;
+  const isOrgAdmin = rosterHasPrincipal(org?.admins, binding.platform, principalId);
 
   const channelKey = `${binding.platform}/${binding.workspace}/${binding.domainSurface ?? binding.surface}`;
   const explicit = domainForChannel(channelKey, domains);
-  const isDomainAdmin = isOrgAdmin || explicit?.admins?.includes(principalId) === true;
+  const isDomainAdmin = isOrgAdmin || rosterHasPrincipal(explicit?.admins, binding.platform, principalId);
 
   return { principalId, isOrgAdmin, isDomainAdmin, domain: explicit?.name };
 }
@@ -37,7 +38,7 @@ export function requireOrgAdmin(ctx: BindableContext): Role {
     throw new Error(
       `this action requires an org admin.${
         role.principalId ? ` Your id ("${role.principalId}") isn't listed.` : " No verified sender id on this turn."
-      } Add the principal id to the "org" pseudo-domain's admins (Domain.admins, agent/memory/domains.ts) to grant org-admin.`,
+      } Add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to the "org" pseudo-domain's admins (Domain.admins, agent/memory/domains.ts) to grant org-admin.`,
     );
   }
   return role;
@@ -48,15 +49,20 @@ export function requireDomainAdminOrOrg(ctx: BindableContext): Role {
   if (!role.isDomainAdmin) {
     const hint = role.principalId ? `Your id ("${role.principalId}") isn't listed.` : "No verified sender id on this turn.";
     const fix = role.domain
-      ? `Add the principal id to domain "${role.domain}"'s admins (Domain.admins, agent/memory/domains.ts).`
-      : `This channel isn't in an explicit domain, so only an org admin can do this — add the principal id to the "org" pseudo-domain's admins.`;
+      ? `Add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to domain "${role.domain}"'s admins (Domain.admins, agent/memory/domains.ts).`
+      : `This channel isn't in an explicit domain, so only an org admin can do this — add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to the "org" pseudo-domain's admins.`;
     throw new Error(`this action requires a domain admin (or an org admin). ${hint} ${fix}`);
   }
   return role;
 }
 
-export function adminControlRoles(principalId: string | undefined, domains: readonly Domain[]): string[] {
-  if (!principalId) return [];
-  if (criteriaDomain("org", domains)?.admins?.includes(principalId) === true) return ["admin"];
-  return domains.filter((d) => d.match === undefined && d.admins?.includes(principalId) === true).map((d) => `domain:${d.name}`);
+export function adminControlRoles(
+  principalId: string | undefined,
+  domains: readonly Domain[],
+  platform: string | undefined,
+): string[] {
+  if (!principalId || !platform) return [];
+  const key = principalKey(platform, principalId);
+  if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return ["admin"];
+  return domains.filter((d) => d.match === undefined && d.admins?.includes(key) === true).map((d) => `domain:${d.name}`);
 }

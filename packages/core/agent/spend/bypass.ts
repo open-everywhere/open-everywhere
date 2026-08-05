@@ -2,6 +2,7 @@ import { adminControlRoles } from "../access/roles.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel } from "../memory/domain.js";
 import { nativeAdminCheck } from "../access/native-admin.js";
+import { platformOfScopeKey } from "../access/scope-key.js";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { whereFromScope } from "../approvals/actions.js";
 
@@ -28,12 +29,12 @@ export async function capBypassFor(input: {
     if (!input.principalId) return null;
     const domains = getConfig().loadDomains();
     let standing: CapBypassStanding | null = null;
-    const roles = adminControlRoles(input.principalId, domains);
+    const platform = platformOfScopeKey(input.surfaceKey);
+    const roles = adminControlRoles(input.principalId, domains, platform);
     if (rosterStanding(roles, domainForChannel(input.surfaceKey, domains)?.name ?? null)) {
       standing = "roster";
     } else {
-      const platform = input.surfaceKey.split("/")[0];
-      const check = nativeAdminCheck(platform);
+      const check = platform ? nativeAdminCheck(platform) : undefined;
       if (check && (await check(input.surfaceKey, input.principalId))) standing = "guild-admin";
     }
     if (!standing) return null;

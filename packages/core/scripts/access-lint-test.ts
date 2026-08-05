@@ -39,7 +39,7 @@ ok(lintBroadGrants([credentialed], [at("creds", "domain")]).length === 0, "the s
 ok(lintBroadGrants([credentialed], [at("creds", "surface")]).length === 0, "…and at SURFACE scope");
 ok(lintBroadGrants([credentialless], [at("safe", "org")]).length === 0, "a credential-LESS bundle at org scope stays warn-only (not a CI failure)");
 ok(
-  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "principal", principal: "U123" } })]).length === 0,
+  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "principal", principal: "slack/U123" } })]).length === 0,
   "a principal scope is one person's own — not broad (OPE-219: a level now, not a dm: sentinel the lint had to sniff for)",
 );
 

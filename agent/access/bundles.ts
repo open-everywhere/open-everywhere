@@ -95,7 +95,7 @@ const bindings: Binding[] = [
 
   defineBinding({
     bundle: "notion-personal",
-    scope: { level: "principal", principal: "U0EXOWNER" },
+    scope: { level: "principal", principal: "slack/U0EXOWNER" },
   }),
 
 ];

@@ -180,6 +180,21 @@ throws(
   "validation: includeOrg on the org pseudo-domain (self-ref) → throws",
 );
 
+assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/U_ADMIN", "discord/300000000000000104"] })]);
+ok(true, "validation: qualified admin keys on one roster (two platforms, one human) pass");
+throws(
+  () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["U_ADMIN"] })]),
+  "validation: a BARE admin id → throws at config load (it can never match, so it must never load quietly)",
+);
+throws(
+  () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["300000000000000104"] })]),
+  "validation: a bare DIGIT-STRING admin id → throws (the exact shape a discord/telegram collision needs)",
+);
+throws(
+  () => assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]),
+  "validation: a surface-shaped admin key → throws (a principal key is exactly platform + id)",
+);
+
 const multiIndex = renderMemoryIndex(multi.reads);
 ok(multiIndex.includes("# Memory index") && multiIndex.includes("not** in your context"), "index: header + not-in-context note");
 ok(multiIndex.includes("memory/txn/") && multiIndex.includes("`remember`"), "index: writable silo listed with its dir + remember hint");

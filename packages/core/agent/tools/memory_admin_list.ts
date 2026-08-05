@@ -36,7 +36,7 @@ export default defineTool({
       );
     }
     const domains = getConfig().loadDomains();
-    const roles = adminControlRoles(caller, domains);
+    const roles = adminControlRoles(caller, domains, binding.platform);
     if (roles.length === 0) {
       throw new Error(
         `memory_admin_list requires an org admin, or a domain admin for at least one memory domain. Your id ("${caller}") ` +

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryPlan } from "../agent/memory/resolve.js";
+import { principalKey } from "../agent/identity/principal-key.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -54,14 +55,14 @@ const TEAM = "T1";
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: [CREATOR] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: [principalKey("slack", CREATOR)] }),
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
   defineDomain({ name: "eng", channels: [`slack/${TEAM}/C_ENG`], memory: "eng-silo" }),
 ];
 const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };
 const bundles = [{ name: "personal", connectors: ["personal-notion"] }] as never;
-const bindings = [{ scope: { level: "principal" as const, principal: CREATOR }, bundle: "personal" }] as never;
+const bindings = [{ scope: { level: "principal" as const, principal: principalKey("slack", CREATOR) }, bundle: "personal" }] as never;
 let spendBudgets: import("../agent/spend/spend.js").SpendBudgets = {};
 registerConfig({
   loadBundles: () => bundles,
@@ -239,8 +240,8 @@ const staleBag = delivered[1]!.attributes;
   ok(actingPrincipalId(fire) === undefined, "fence: the fence itself — there is no ACTING principal on a fire, whoever it is attributable to");
   ok(actingPrincipalId(live) === CREATOR, "fence: …and a live turn is untouched by it");
 
-  ok(adminControlRoles(actingPrincipalId(live), domains).join(",") === "admin", "fence: the cross-domain role scan (memory_admin_*, the governance DM arm) sees a live admin");
-  ok(adminControlRoles(actingPrincipalId(fire), domains).length === 0, "fence: 🔴 …and sees nothing for a fire — no unattended read of every silo the creator administers");
+  ok(adminControlRoles(actingPrincipalId(live), domains, "slack").join(",") === "admin", "fence: the cross-domain role scan (memory_admin_*, the governance DM arm) sees a live admin");
+  ok(adminControlRoles(actingPrincipalId(fire), domains, "slack").length === 0, "fence: 🔴 …and sees nothing for a fire — no unattended read of every silo the creator administers");
 
   const liveAccess = resolveAccess(buildResolveRequest(liveCtx()), bundles, bindings, {});
   const fireAccess = resolveAccess(buildResolveRequest(fireCtx(vouchedBag)), bundles, bindings, {});

@@ -29,9 +29,10 @@ export function principalSurfaces(p: Principal): string[] {
 
 export function assertPrincipalsValid(principals: readonly Principal[]): void {
   const bad: string[] = [];
-  const claimed = new Map<string, string>();
-  const emails = new Map<string, string>();
-  for (const p of principals) {
+  const claimed = new Map<string, number>();
+  const emails = new Map<string, number>();
+  const at = (i: number): string => `"${principals[i]!.name}" (entry #${i})`;
+  for (const [index, p] of principals.entries()) {
     if (!p.name || p.name.trim().length === 0) {
       bad.push(`  a principal has an empty name (ids: ${JSON.stringify(p.ids)})`);
     }
@@ -46,19 +47,19 @@ export function assertPrincipalsValid(principals: readonly Principal[]): void {
       }
       const key = `${platform}\u0000${id}`;
       const prev = claimed.get(key);
-      if (prev !== undefined && prev !== p.name) {
-        bad.push(`  (${platform}, ${id}) is claimed by BOTH "${prev}" and "${p.name}" — an account is exactly one person (fail-closed on merge)`);
+      if (prev !== undefined) {
+        bad.push(`  (${platform}, ${id}) is claimed by BOTH ${at(prev)} and ${at(index)} — an account is exactly one person (fail-closed on merge)`);
       } else {
-        claimed.set(key, p.name);
+        claimed.set(key, index);
       }
     }
     if (p.email && p.email.trim().length > 0) {
       const key = p.email.trim().toLowerCase();
       const prev = emails.get(key);
-      if (prev !== undefined && prev !== p.name) {
-        bad.push(`  email "${p.email}" is claimed by BOTH "${prev}" and "${p.name}" — would propose a bad auto-join merge`);
+      if (prev !== undefined) {
+        bad.push(`  email "${p.email}" is claimed by BOTH ${at(prev)} and ${at(index)} — would propose a bad auto-join merge`);
       } else {
-        emails.set(key, p.name);
+        emails.set(key, index);
       }
     }
   }
