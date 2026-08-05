@@ -1,0 +1,41 @@
+import { resolvePartition } from "../memory/partition.js";
+import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
+import { groupsForPrincipal, type Group } from "../identity/groups.js";
+import { principalKey } from "../identity/principal-key.js";
+import { resolveLinkSet } from "../identity/link-store.js";
+import { getConfig } from "./config.js";
+import { buildResolveRequest } from "./request.js";
+import { resolveAccess, type EffectiveAccess, type ResolveRequest } from "./resolver.js";
+
+export async function callerLinkSets(org: string, platform: string, nativeId: string): Promise<readonly string[]> {
+  try {
+    const set = await resolveLinkSet(org, platform, nativeId);
+    return set ? [set.id] : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function withLinkSetGroups(
+  req: ResolveRequest,
+  org: string,
+  groups: readonly Group[] = getConfig().loadGroups?.() ?? [],
+): Promise<ResolveRequest> {
+  if (req.principalId === undefined || groups.length === 0) return req;
+  const sets = await callerLinkSets(org, req.platform, req.principalId);
+  if (sets.length === 0) return req;
+  const viaSets = groupsForPrincipal(groups, principalKey(req.platform, req.principalId), sets);
+  if (viaSets.length === 0) return req;
+  return { ...req, groups: [...new Set([...(req.groups ?? []), ...viaSets])].sort() };
+}
+
+export async function buildResolveRequestWithGroups(ctx: BindableContext): Promise<ResolveRequest> {
+  return withLinkSetGroups(buildResolveRequest(ctx), resolvePartition(ctx).org);
+}
+
+export async function resolveAccessForWithGroups(ctx: BindableContext): Promise<EffectiveAccess> {
+  const cfg = getConfig();
+  const acting = actingPrincipalId(bindFrom(ctx));
+  const req = acting === undefined ? buildResolveRequest(ctx) : await buildResolveRequestWithGroups(ctx);
+  return resolveAccess(req, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []);
+}

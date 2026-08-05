@@ -3,6 +3,7 @@ import { loadBindings, loadBundles } from "../agent/access/bundles.js";
 import { loadProviders } from "../agent/access/providers.js";
 import { PLUGIN_REGISTRY } from "../agent/plugins/registry.js";
 import { loadDomains, domainsForSurface } from "../agent/memory/domains.js";
+import { loadGroups } from "../agent/identity/groups.js";
 import { resolveDomainForChannel } from "@open-everywhere/core/agent/memory/domain.js";
 import { resolveAccess, type ResolveRequest } from "@open-everywhere/core/agent/access/resolver.js";
 import { compileNetworkPolicy } from "@open-everywhere/core/agent/access/egress.js";
@@ -71,4 +72,4 @@ if (problems.length > 0) {
   for (const p of problems) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`✓ config-validate: merged config loads clean; ${checked} scope checks passed (fail-closed verified)`);
+console.log(`✓ config-validate: merged config loads clean (${loadGroups().length} person-group(s)); ${checked} scope checks passed (fail-closed verified)`);

@@ -2,6 +2,8 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, bindFrom, type BindableContext, type Visibility, type Trust } from "../identity/binding.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionMode } from "./resolver.js";
 import { getConfig } from "./config.js";
+import { groupsForPrincipal } from "../identity/groups.js";
+import { principalKey } from "../identity/principal-key.js";
 
 export type { Visibility, Trust } from "../identity/binding.js";
 
@@ -28,13 +30,15 @@ export function actingPrincipalIdOf(ctx: BindableContext): string | undefined {
 export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
   const b = bindFrom(ctx);
   const p = resolvePartition(ctx);
+  const acting = actingPrincipalId(b);
   return {
     mode: b.mode,
     platform: p.platform,
     workspace: p.workspace,
     channel: b.domainSurface ?? p.surface,
     domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
-    principalId: actingPrincipalId(b),
+    principalId: acting,
+    groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : principalKey(p.platform, acting)),
   };
 }
 

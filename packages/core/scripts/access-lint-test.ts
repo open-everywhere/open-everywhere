@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { defineBundle, defineBinding, type Bundle, type Binding, type Connection } from "../agent/access/bundle.js";
 import { lintBroadGrants, lintMethodNarrowing, lintAccessConfig } from "../agent/access/lint.js";
 import { defineDomain } from "../agent/memory/domain.js";
+import type { Group } from "../agent/identity/groups.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -131,6 +132,14 @@ ok(
   "a wide-but-EXPLICIT methods list is clean — naming every method IS the reviewed declaration",
 );
 ok(lintMethodNarrowing([credentialless]).length === 0, "a bundle with no connections has nothing to narrow");
+
+{
+  const bind: Binding = defineBinding({ bundle: "creds", scope: { level: "group", group: "team" } });
+  const wide: Group = { name: "team", members: ["slack/U1", { linkSet: "set-a" }] };
+  const narrow: Group = { name: "team", members: ["slack/U1", "slack/U2"] };
+  ok(lintBroadGrants([credentialed], [bind], [], [wide]).length === 1, "a credentialed GROUP binding onto a link-set-bearing group needs allowBroad");
+  ok(lintAccessConfig([credentialed], [bind], [], [narrow]).length === 0, "…and a small, fully-enumerated group is clean through lintAccessConfig");
+}
 
 {
   const problems = lintAccessConfig(

@@ -12,6 +12,7 @@ import type { SpendCheckpoints } from "../spend/checkpoint.js";
 import type { ModelPolicy } from "../model/policy.js";
 import type { BlobHostingConfig } from "../blob/hosting.js";
 import type { Principal } from "../identity/principals.js";
+import type { Group } from "../identity/groups.js";
 
 export interface AccessRequestsConfig {
   readonly adminChannel?: string;
@@ -48,6 +49,7 @@ export interface AppConfig {
   loadModelPolicy?(): ModelPolicy | undefined;
   loadBlobHosting?(): BlobHostingConfig | undefined;
   loadPrincipals?(): readonly Principal[];
+  loadGroups?(): readonly Group[];
 }
 
 let registered: AppConfig | null = null;

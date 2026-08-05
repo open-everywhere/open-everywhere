@@ -1,13 +1,15 @@
 import type { ProviderGrant } from "./providers.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import type { Group } from "../identity/groups.js";
 
-export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "principal";
+export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "group" | "principal";
 
 export interface Scope {
   readonly level: ScopeLevel;
   readonly tenant?: string;
   readonly domain?: string;
   readonly surface?: string;
+  readonly group?: string;
   readonly principal?: string;
 }
 
@@ -186,31 +188,33 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
   }
 }
 
-type ScopeAddressField = "tenant" | "domain" | "surface" | "principal";
+type ScopeAddressField = "tenant" | "domain" | "surface" | "group" | "principal";
 const LEVEL_FIELD: Record<string, ScopeAddressField | null | undefined> = {
   org: null,
   tenant: "tenant",
   domain: "domain",
   surface: "surface",
+  group: "group",
   principal: "principal",
 };
 
 export const TENANT_KEY = /^[^/\s]+\/[^/\s]+$/u;
 export const SURFACE_KEY = /^[^/\s]+\/[^/\s]+\/\S+$/u;
 
-export function assertBindingsValid(bindings: readonly Binding[], bundles: readonly Bundle[]): void {
+export function assertBindingsValid(bindings: readonly Binding[], bundles: readonly Bundle[], groups?: readonly Group[]): void {
   const known = new Set(bundles.map((b) => b.name));
+  const knownGroups = groups === undefined ? undefined : new Set(groups.map((g) => g.name));
   const bad: string[] = [];
   for (const b of bindings) {
     const where = `binding "${b.bundle}" (${b.scope.level} scope)`;
     if (!known.has(b.bundle)) bad.push(`  ${where} references unknown bundle "${b.bundle}" — define it in the bundles list or fix the name`);
-    const { level, tenant, domain, surface, principal } = b.scope;
+    const { level, tenant, domain, surface, group, principal } = b.scope;
     const required = LEVEL_FIELD[level];
     if (required === undefined) {
-      bad.push(`  ${where} has an unknown scope.level "${level}" — the levels are org | tenant | domain | surface | principal`);
+      bad.push(`  ${where} has an unknown scope.level "${level}" — the levels are org | tenant | domain | surface | group | principal`);
       continue;
     }
-    for (const [field, value] of [["tenant", tenant], ["domain", domain], ["surface", surface], ["principal", principal]] as const) {
+    for (const [field, value] of [["tenant", tenant], ["domain", domain], ["surface", surface], ["group", group], ["principal", principal]] as const) {
       if (field === required) {
         if (!value) bad.push(`  ${where} needs scope.${field} — a ${level}-level binding can never match without one`);
       } else if (value !== undefined) {
@@ -232,6 +236,13 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
     if (domain?.includes("/")) {
       bad.push(
         `  ${where} scope.domain "${domain}" contains "/" — a domain scope takes the BARE domain name from memory/domains.ts ("payments"), deliberately NOT tenant-qualified: domains are cross-platform, so one grant is one binding`,
+      );
+    }
+    if (group !== undefined && group.trim().length === 0) {
+      bad.push(`  ${where} scope.group is empty — a group-level binding takes the BARE group name from agent/identity/groups.ts (e.g. "payments-team")`);
+    } else if (group !== undefined && knownGroups !== undefined && !knownGroups.has(group)) {
+      bad.push(
+        `  ${where} scope.group "${group}" is not a declared person-group — define it with defineGroup() in agent/identity/groups.ts (or fix the name). A binding onto a group nobody declared can never match, so it is refused rather than ignored.`,
       );
     }
     if (principal !== undefined && !isQualifiedPrincipalKey(principal)) {

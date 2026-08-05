@@ -25,6 +25,12 @@ import {
   parseAgentsModule,
   renormalizeAgentsModule,
 } from "@open-everywhere/core/agent/memory/agents-codemod.js";
+import {
+  emitGroupsModule,
+  emptyGroupsFile,
+  parseGroupsModule,
+  renormalizeGroupsModule,
+} from "@open-everywhere/core/agent/identity/groups-codemod.js";
 
 interface OverlaySpec {
   readonly path: string;
@@ -67,6 +73,14 @@ const OVERLAYS: readonly OverlaySpec[] = [
     parseModule: parseAgentsModule,
     renormalize: renormalizeAgentsModule,
     emitEmpty: () => emitAgentsModule(emptyAgentsFile()),
+  },
+  {
+    path: "agent/identity/groups.generated.ts",
+    what: "person-groups overlay",
+    flow: "directory_groups_plan (identity/groups-codemod.ts)",
+    parseModule: parseGroupsModule,
+    renormalize: renormalizeGroupsModule,
+    emitEmpty: () => emitGroupsModule(emptyGroupsFile()),
   },
 ];
 

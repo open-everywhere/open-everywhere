@@ -490,6 +490,20 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     !resolveAccess(chan("T1", "C1"), bundles, personal).warnings.some((w) => w.startsWith("broad grant")),
     "a principal scope is never 'broad' — with no dm:-prefix special case left to carry it",
   );
+
+  const grouped: Binding[] = [{ bundle: "unified", scope: { level: "group", group: "payments" } }];
+  ok(
+    resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1", groups: ["payments"] }, bundles, grouped).repos.length === 0,
+    "a group binding grants nothing in a channel — a group grants PEOPLE, not rooms",
+  );
+  ok(
+    resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1", groups: ["payments"] }, bundles, grouped).repos.length === 1,
+    "…and everything in a member's own DM",
+  );
+  ok(
+    resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" }, bundles, grouped).repos.length === 0,
+    "an absent `groups` list is member-of-nothing, never a wildcard",
+  );
 }
 
 console.log(`✓ resolver: ${passed} assertions passed`);

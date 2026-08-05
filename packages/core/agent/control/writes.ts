@@ -17,6 +17,8 @@ import { whereFromScope } from "../approvals/actions.js";
 import { listLinkSetsWithIds, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
 import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
+import { groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
+import { directoryGroupsOf } from "../identity/groups-codemod.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -36,6 +38,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "revoke_link_set",
   "directory_sync_now",
   "directory_sync_status",
+  "directory_groups_plan",
 ] as const;
 
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
@@ -508,6 +511,59 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         });
       } catch (e) {
         return errorResult(`directory_sync_status failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "directory_groups_plan",
+    {
+      title: "Plan the IdP person-group overlay (review mode — writes nothing)",
+      description:
+        "Diff the directory's (Okta's) GROUP memberships against this deployment's machine-owned person-group overlay and return the next overlay file, plus a readable list of the additions and removals it would make. It APPLIES NOTHING: person-groups grant capability in each member's DM, so they are config-as-code and change only through a merged diff — commit the returned `overlayContent` to `agent/identity/groups.generated.ts` (or open a PR with it), and the memberships take effect on the next deploy. Groups are named `directory:<idp-group>` so they can never collide with hand-written ones, and members are link-set references, so a person only ever contributes the accounts they have CONFIRMED. A person the directory reports as deprovisioned is dropped from every group in the plan — and their link-set is separately suspended by directory_sync_now, which stops their access immediately without waiting for this diff. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("directory_groups_plan");
+      if (denial) return errorResult(denial);
+      try {
+        const provider = directoryProvider();
+        if (!provider) {
+          return jsonResult({
+            ok: true,
+            org: a.org,
+            provider: null,
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and wire the adapter at boot to arm directory group sync. Person-groups declared by hand in agent/identity/groups.ts work regardless.",
+          });
+        }
+        const current = directoryGroupsOf(getConfig().loadGroups?.() ?? []);
+        const people = await provider.listPeople();
+        const plan = planDirectoryGroups({ provider: provider.id, people, current });
+        await appendAudit({
+          org: a.org,
+          platform: "control",
+          workspace: "control",
+          principalId: actor,
+          action: "admin.identity.directory_groups_plan",
+          detail: { provider: provider.id, people: plan.people, planned: plan.counts, warnings: plan.warnings.length },
+        });
+        return jsonResult({
+          ok: true,
+          org: a.org,
+          provider: provider.id,
+          people: plan.people,
+          planned: plan.counts,
+          changed: !groupPlanIsNoop(plan),
+          diff: renderGroupPlan(plan),
+          warnings: plan.warnings,
+          overlayPath: "agent/identity/groups.generated.ts",
+          overlayContent: planOverlayContent(plan),
+          note: groupPlanIsNoop(plan)
+            ? "the overlay already matches the directory — nothing to commit."
+            : "REVIEW MODE: nothing was applied. Commit `overlayContent` to `overlayPath` (a PR is the reviewed diff) — the memberships take effect on the next deploy of the merged config.",
+        });
+      } catch (e) {
+        return errorResult(`directory_groups_plan failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

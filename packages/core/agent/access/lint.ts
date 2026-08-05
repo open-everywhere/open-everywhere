@@ -1,5 +1,8 @@
 import type { Binding, Bundle } from "./bundle.js";
 import type { Domain } from "../memory/domain.js";
+import { isLinkSetMember, type Group } from "../identity/groups.js";
+
+export const GROUP_BROAD_MEMBERS = 8;
 
 function credentialedFields(bundle: Bundle): string[] {
   const fields: string[] = [];
@@ -19,12 +22,26 @@ function tenantClaims(domains: readonly Domain[]): Map<string, readonly string[]
   return claims;
 }
 
+function groupWidth(group: Group | undefined): string | undefined {
+  if (!group) return undefined;
+  const sets = group.members.filter(isLinkSetMember).length;
+  if (sets > 0) {
+    return `it has ${sets} link-set member(s) — each one is a HUMAN, expanded at resolve time to every account they have confirmed, so the DMs this credential reaches grow whenever they link another account, without this binding, this bundle or this group changing`;
+  }
+  if (group.members.length >= GROUP_BROAD_MEMBERS) {
+    return `it has ${group.members.length} members (at or over the ${GROUP_BROAD_MEMBERS}-member threshold) — every one of them gets this capability in their own DM`;
+  }
+  return undefined;
+}
+
 export function lintBroadGrants(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
   domains: readonly Domain[] = [],
+  groups: readonly Group[] = [],
 ): string[] {
   const byName = new Map(bundles.map((b) => [b.name, b]));
+  const groupByName = new Map(groups.map((g) => [g.name, g]));
   const claims = tenantClaims(domains);
   const problems: string[] = [];
   for (const binding of bindings) {
@@ -32,12 +49,19 @@ export function lintBroadGrants(
       binding.scope.level === "domain" && binding.scope.domain !== undefined
         ? claims.get(binding.scope.domain)
         : undefined;
-    const broad = binding.scope.level === "org" || binding.scope.level === "tenant" || claimed !== undefined;
+    const wideGroup =
+      binding.scope.level === "group" && binding.scope.group !== undefined
+        ? groupWidth(groupByName.get(binding.scope.group))
+        : undefined;
+    const broad =
+      binding.scope.level === "org" || binding.scope.level === "tenant" || claimed !== undefined || wideGroup !== undefined;
     if (binding.allowBroad !== undefined && !broad) {
       const why =
         binding.scope.level === "domain"
           ? ` — a domain binding is only broad while its domain claims a tenant via \`containers\` (agent/memory/domains.ts), and "${binding.scope.domain}" claims none`
-          : "";
+          : binding.scope.level === "group"
+            ? ` — a group binding is only broad while its group holds a link-set member or ${GROUP_BROAD_MEMBERS}+ members (agent/identity/groups.ts), and "${binding.scope.group}" holds neither`
+            : "";
       problems.push(
         `binding "${binding.bundle}" (${binding.scope.level} scope) sets allowBroad but isn't a broad scope${why} — remove the escape (it suggests the binding means something it doesn't)`,
       );
@@ -53,7 +77,12 @@ export function lintBroadGrants(
       continue;
     }
     if (binding.allowBroad === undefined) {
-      if (claimed) {
+      if (wideGroup) {
+        problems.push(
+          `broad credentialed grant (person-group): bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at group scope to "${binding.scope.group}" — ${wideGroup}. ` +
+            `A group grants PEOPLE: every member gets this capability in their own DM. Split the group, name the individuals with \`principal\` bindings, or accept it deliberately with allowBroad: "<reason>" on the binding (access/bundle.ts).`,
+        );
+      } else if (claimed) {
         problems.push(
           `broad credentialed grant (via domain claim): bundle "${binding.bundle}" carries ${fields.join(" + ")} bound at domain scope — but domain "${binding.scope.domain}" claims the whole tenant(s) ${claimed.join(", ")} via \`containers\` (agent/memory/domains.ts), so this reaches EVERY surface under them, including ones created later that nobody will ever list. ` +
             `The binding reads as narrow; the width comes from the domain. Either enumerate the domain's surfaces in \`channels\` instead of claiming the tenant, or accept it deliberately with allowBroad: "<reason>" on the binding (access/bundle.ts).`,
@@ -88,6 +117,7 @@ export function lintAccessConfig(
   bundles: readonly Bundle[],
   bindings: readonly Binding[],
   domains: readonly Domain[] = [],
+  groups: readonly Group[] = [],
 ): string[] {
-  return [...lintBroadGrants(bundles, bindings, domains), ...lintMethodNarrowing(bundles)];
+  return [...lintBroadGrants(bundles, bindings, domains, groups), ...lintMethodNarrowing(bundles)];
 }

@@ -12,6 +12,7 @@ export interface ResolveRequest {
   readonly channel: string;
   readonly domains?: readonly string[];
   readonly principalId?: string;
+  readonly groups?: readonly string[];
 }
 
 export interface ReachableHost {
@@ -45,7 +46,7 @@ export interface EffectiveAccess {
   readonly warnings: readonly string[];
 }
 
-const SPECIFICITY: Record<Scope["level"], number> = { org: 0, tenant: 1, domain: 2, surface: 3, principal: 4 };
+const SPECIFICITY: Record<Scope["level"], number> = { org: 0, tenant: 1, domain: 2, surface: 3, group: 4, principal: 5 };
 
 export function tenantKeyOf(req: Pick<ResolveRequest, "platform" | "workspace">): string {
   return `${req.platform}/${req.workspace}`;
@@ -65,6 +66,8 @@ function scopeLabel(s: Scope): string {
       return `domain:${s.domain}`;
     case "surface":
       return `surface:${s.surface}`;
+    case "group":
+      return `group:${s.group}`;
     case "principal":
       return `principal:${s.principal}`;
   }
@@ -80,6 +83,8 @@ function scopeMatches(s: Scope, req: ResolveRequest): boolean {
       return req.domains?.includes(s.domain!) ?? false;
     case "surface":
       return s.surface === surfaceKeyOf(req);
+    case "group":
+      return false;
     case "principal":
       return false;
   }
@@ -102,13 +107,19 @@ export function resolveAccess(
   const callerKey =
     req.principalId !== undefined ? principalKey(req.platform, req.principalId) : undefined;
 
+  const callerGroups = new Set(req.groups ?? []);
+
   const applied: { scope: Scope; bundle: Bundle }[] = [];
   for (const binding of bindings) {
     const inScope =
       req.mode === "dm"
-        ? callerKey !== undefined &&
-          binding.scope.level === "principal" &&
-          binding.scope.principal === callerKey
+        ? (callerKey !== undefined &&
+            binding.scope.level === "principal" &&
+            binding.scope.principal === callerKey) ||
+          (callerKey !== undefined &&
+            binding.scope.level === "group" &&
+            binding.scope.group !== undefined &&
+            callerGroups.has(binding.scope.group))
         : scopeMatches(binding.scope, req);
     if (!inScope) continue;
     const bundle = byName.get(binding.bundle);
