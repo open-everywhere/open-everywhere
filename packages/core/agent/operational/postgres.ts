@@ -1,6 +1,6 @@
 import type { Routine } from "../routines/routine.js";
 import type { PgClient } from "../memory/postgres.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type CredentialIntakeRow, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerFilter, type SpendLedgerRow, type SpendLedgerWrite, type SpendTotals, type StoredCredentialRow, type UsageEventEntry, type UsageSummaryFilter } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -283,6 +283,45 @@ const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id)`,
   `CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts)`,
+  `CREATE TABLE IF NOT EXISTS identity_link_sets (
+     org_id     text NOT NULL,
+     id         text NOT NULL,
+     handle     text NOT NULL,          -- DISPLAY ONLY: admin lists + audit rows, never a lookup key
+     status     text NOT NULL,          -- "active" | "suspended" | "revoked" ("revoked" is terminal)
+     created_at text NOT NULL,
+     updated_at text NOT NULL,
+     PRIMARY KEY (org_id, id)
+   )`,
+  `CREATE TABLE IF NOT EXISTS identity_linked_ids (
+     org_id         text NOT NULL,
+     platform       text NOT NULL,
+     native_id      text NOT NULL,
+     link_set_id    text NOT NULL,
+     status         text NOT NULL,      -- "suggested" | "confirmed" | "revoked" ("revoked" is terminal)
+     established_by text NOT NULL,      -- "challenge:<id>" | "config-import" | "directory-sync:<provider>"
+     evidence       text,               -- the structured evidence record as JSON; opaque here
+     created_at     text NOT NULL,
+     updated_at     text NOT NULL,
+     PRIMARY KEY (org_id, platform, native_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS identity_linked_ids_org_set ON identity_linked_ids (org_id, link_set_id)`,
+  `CREATE TABLE IF NOT EXISTS identity_link_challenges (
+     org_id                 text NOT NULL,
+     id                     text NOT NULL,
+     nonce_hash             text NOT NULL,   -- sha-256 hex of the uppercased code; NEVER the code
+     initiating_platform    text NOT NULL,
+     initiating_native_id   text NOT NULL,
+     initiating_surface_key text NOT NULL,   -- the DM the ratification must come back to
+     claimed_platform       text,            -- stamped from the WAKE's own captured author
+     claimed_native_id      text,
+     claimed_at             text,
+     status                 text NOT NULL,   -- pending | claimed | ratified | denied | expired
+     created_at             text NOT NULL,
+     expires_at             text NOT NULL,
+     decided_at             text,
+     PRIMARY KEY (org_id, id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -335,6 +374,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pending_actions ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE pr_session_approval ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE identity_link_sets ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE identity_linked_ids ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE identity_link_challenges ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -367,6 +409,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS usage_events_insert ON usage_events`,
   `DROP POLICY IF EXISTS pending_actions_org_isolation ON pending_actions`,
   `DROP POLICY IF EXISTS pr_session_approval_org_isolation ON pr_session_approval`,
+  `DROP POLICY IF EXISTS identity_link_sets_org_isolation ON identity_link_sets`,
+  `DROP POLICY IF EXISTS identity_linked_ids_org_isolation ON identity_linked_ids`,
+  `DROP POLICY IF EXISTS identity_link_challenges_org_isolation ON identity_link_challenges`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -433,6 +478,15 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY pr_session_approval_org_isolation ON pr_session_approval
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY identity_link_sets_org_isolation ON identity_link_sets
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY identity_linked_ids_org_isolation ON identity_linked_ids
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY identity_link_challenges_org_isolation ON identity_link_challenges
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -753,6 +807,9 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   unified_wake_target: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   github_installation: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   pr_session_approval: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  identity_link_sets: ["SELECT", "INSERT", "UPDATE"],
+  identity_linked_ids: ["SELECT", "INSERT", "UPDATE", "DELETE"],
+  identity_link_challenges: ["SELECT", "INSERT", "UPDATE"],
 };
 
 function mutableTableGrantsSql(role: string): string[] {
@@ -834,6 +891,75 @@ function pendingActionFromPgRow(org: string, r: PendingActionPgRow): PendingActi
     expiresAt: r.expires_at,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at,
+  };
+}
+
+type LinkSetPgRow = { id: string; handle: string; status: string; created_at: string; updated_at: string };
+
+function linkSetFromPgRow(org: string, r: LinkSetPgRow): LinkSetRow {
+  return { org, id: r.id, handle: r.handle, status: r.status as LinkSetStatus, createdAt: r.created_at, updatedAt: r.updated_at };
+}
+
+type LinkedIdPgRow = {
+  platform: string;
+  native_id: string;
+  link_set_id: string;
+  status: string;
+  established_by: string;
+  evidence: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function linkedIdFromPgRow(org: string, r: LinkedIdPgRow): LinkedIdRow {
+  return {
+    org,
+    linkSetId: r.link_set_id,
+    platform: r.platform,
+    nativeId: r.native_id,
+    status: r.status as LinkedIdStatus,
+    establishedBy: r.established_by,
+    ...(r.evidence === null ? {} : { evidenceJson: r.evidence }),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+const LINK_CHALLENGE_SELECT =
+  `SELECT org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
+          claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+   FROM identity_link_challenges`;
+
+type LinkChallengePgRow = {
+  id: string;
+  nonce_hash: string;
+  initiating_platform: string;
+  initiating_native_id: string;
+  initiating_surface_key: string;
+  claimed_platform: string | null;
+  claimed_native_id: string | null;
+  claimed_at: string | null;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+};
+
+function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallengeRow {
+  return {
+    org,
+    id: r.id,
+    nonceHash: r.nonce_hash,
+    initiatingPlatform: r.initiating_platform,
+    initiatingNativeId: r.initiating_native_id,
+    initiatingSurfaceKey: r.initiating_surface_key,
+    ...(r.claimed_platform === null ? {} : { claimedPlatform: r.claimed_platform }),
+    ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
+    ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
+    status: r.status as LinkChallengeStatus,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
   };
 }
 
@@ -2000,6 +2126,168 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async revokeSessionApprovals(org, sessionId) {
       const { rows } = await client.query("DELETE FROM pr_session_approval WHERE org_id = $1 AND session_id = $2 RETURNING kind", [org, sessionId]);
+      return (rows as unknown[]).length;
+    },
+
+    async putLinkSet(org: string, row: LinkSetRow) {
+      await client.query(
+        `INSERT INTO identity_link_sets (org_id, id, handle, status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (org_id, id) DO UPDATE SET handle = EXCLUDED.handle, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at`,
+        [org, row.id, row.handle, row.status, row.createdAt, row.updatedAt],
+      );
+    },
+
+    async getLinkSet(org, id) {
+      const { rows } = await client.query("SELECT id, handle, status, created_at, updated_at FROM identity_link_sets WHERE org_id = $1 AND id = $2", [org, id]);
+      const r = (rows as LinkSetPgRow[])[0];
+      return r ? linkSetFromPgRow(org, r) : null;
+    },
+
+    async listLinkSets(org) {
+      const { rows } = await client.query("SELECT id, handle, status, created_at, updated_at FROM identity_link_sets WHERE org_id = $1 ORDER BY id ASC", [org]);
+      return (rows as LinkSetPgRow[]).map((r) => linkSetFromPgRow(org, r));
+    },
+
+    async updateLinkSetStatus(org, id, from, to, at) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_sets SET status = $1, updated_at = $2
+         WHERE org_id = $3 AND id = $4 AND status = ANY($5) RETURNING id`,
+        [to, at, org, id, [...from]],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async insertLinkedId(org: string, row: LinkedIdRow) {
+      const { rows } = await client.query(
+        `INSERT INTO identity_linked_ids (org_id, platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (org_id, platform, native_id) DO NOTHING RETURNING native_id`,
+        [org, row.platform, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async getLinkedId(org, platform, nativeId) {
+      const { rows } = await client.query(
+        `SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
+         FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND native_id = $3`,
+        [org, platform, nativeId],
+      );
+      const r = (rows as LinkedIdPgRow[])[0];
+      return r ? linkedIdFromPgRow(org, r) : null;
+    },
+
+    async listLinkedIds(org, linkSetId) {
+      const { rows } = await client.query(
+        `SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
+         FROM identity_linked_ids WHERE org_id = $1${linkSetId === undefined ? "" : " AND link_set_id = $2"}
+         ORDER BY platform ASC, native_id ASC`,
+        linkSetId === undefined ? [org] : [org, linkSetId],
+      );
+      return (rows as LinkedIdPgRow[]).map((r) => linkedIdFromPgRow(org, r));
+    },
+
+    async updateLinkedIdStatus(org, platform, nativeId, from, to, establishedBy, evidenceJson, at) {
+      const { rows } = await client.query(
+        `UPDATE identity_linked_ids SET status = $1, established_by = $2, evidence = $3, updated_at = $4
+         WHERE org_id = $5 AND platform = $6 AND native_id = $7 AND status = ANY($8) RETURNING native_id`,
+        [to, establishedBy, evidenceJson ?? null, at, org, platform, nativeId, [...from]],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async deleteLinkedId(org, platform, nativeId) {
+      const { rows } = await client.query("DELETE FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND native_id = $3 RETURNING native_id", [org, platform, nativeId]);
+      return (rows as unknown[]).length > 0;
+    },
+
+    async revokeLinkedIdsForSet(org, linkSetId, at) {
+      const { rows } = await client.query(
+        `UPDATE identity_linked_ids SET status = 'revoked', updated_at = $1
+         WHERE org_id = $2 AND link_set_id = $3 AND status <> 'revoked' RETURNING native_id`,
+        [at, org, linkSetId],
+      );
+      return (rows as unknown[]).length;
+    },
+
+    async addLinkChallenge(org: string, row: LinkChallengeRow) {
+      await client.query(
+        `INSERT INTO identity_link_challenges
+           (org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
+            claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [
+          org,
+          row.id,
+          row.nonceHash,
+          row.initiatingPlatform,
+          row.initiatingNativeId,
+          row.initiatingSurfaceKey,
+          row.claimedPlatform ?? null,
+          row.claimedNativeId ?? null,
+          row.claimedAt ?? null,
+          row.status,
+          row.createdAt,
+          row.expiresAt,
+          row.decidedAt ?? null,
+        ],
+      );
+    },
+
+    async getLinkChallenge(org, id) {
+      const { rows } = await client.query(`${LINK_CHALLENGE_SELECT} WHERE org_id = $1 AND id = $2`, [org, id]);
+      const r = (rows as LinkChallengePgRow[])[0];
+      return r ? linkChallengeFromPgRow(org, r) : null;
+    },
+
+    async listLinkChallenges(org, filter) {
+      const conjuncts = ["org_id = $1"];
+      const params: unknown[] = [org];
+      if (filter?.initiatingPlatform !== undefined) {
+        params.push(filter.initiatingPlatform);
+        conjuncts.push(`initiating_platform = $${params.length}`);
+      }
+      if (filter?.initiatingNativeId !== undefined) {
+        params.push(filter.initiatingNativeId);
+        conjuncts.push(`initiating_native_id = $${params.length}`);
+      }
+      if (filter?.status !== undefined) {
+        params.push(filter.status);
+        conjuncts.push(`status = $${params.length}`);
+      }
+      const { rows } = await client.query(`${LINK_CHALLENGE_SELECT} WHERE ${conjuncts.join(" AND ")} ORDER BY created_at DESC`, params);
+      return (rows as LinkChallengePgRow[]).map((r) => linkChallengeFromPgRow(org, r));
+    },
+
+    async claimLinkChallenge(org, nonceHash, platform, nativeId, at) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_challenges
+           SET claimed_platform = $1, claimed_native_id = $2, claimed_at = $3, status = 'claimed'
+         WHERE org_id = $4 AND nonce_hash = $5 AND status = 'pending' AND expires_at > $6
+           AND NOT (initiating_platform = $1 AND initiating_native_id = $2)
+         RETURNING org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
+                   claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at`,
+        [platform, nativeId, at, org, nonceHash, at],
+      );
+      const r = (rows as LinkChallengePgRow[])[0];
+      return r ? linkChallengeFromPgRow(org, r) : null;
+    },
+
+    async decideLinkChallenge(org, id, from, to, at) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_challenges SET status = $1, decided_at = $2
+         WHERE org_id = $3 AND id = $4 AND status = ANY($5) RETURNING id`,
+        [to, at, org, id, [...from]],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async expireLinkChallenges(org, nowIso) {
+      const { rows } = await client.query(
+        `UPDATE identity_link_challenges SET status = 'expired', decided_at = $1
+         WHERE org_id = $2 AND status IN ('pending', 'claimed') AND expires_at <= $1 RETURNING id`,
+        [nowIso, org],
+      );
       return (rows as unknown[]).length;
     },
 

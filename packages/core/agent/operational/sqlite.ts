@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Routine } from "../routines/routine.js";
-import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type UsageEventEntry } from "./store.js";
+import { assertSpendLimitAmount, assertDomainModelPick, routinePromptRevisionWrites, spendLedgerConjuncts, CAPTURE_MAX_RETENTION_MS, EVENT_DEDUPE_MAX_RETENTION_MS, type AuditChainRow, type AuditEntry, type AuditFilter, type CapLevel, type LinkChallengeRow, type LinkChallengeStatus, type LinkSetRow, type LinkSetStatus, type LinkedIdRow, type LinkedIdStatus, type OperationalStore, type SlackAttachmentRow, type SpendLedgerRow, type SpendLedgerWrite, type SpendLedgerFilter, type SpendTotals, type UsageEventEntry } from "./store.js";
 import type { PendingActionRow, PendingStatus } from "../approvals/types.js";
 import type { ModelReasoning } from "../memory/domain.js";
 import { auditRowSha } from "../audit/chain.js";
@@ -330,6 +330,55 @@ function getDb(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS usage_events_org_session ON usage_events (org_id, session_id);
     CREATE INDEX IF NOT EXISTS usage_events_org_surface_ts ON usage_events (org_id, surface_key, ts);
+    -- identity link-sets (P1): the three tables behind DB-backed cross-surface identity. See the
+    -- LinkSetRow section in store.ts for what they are, and the postgres twin for the RLS half.
+    -- Read-write (a person severs an account, an admin suspends a set); the immutable HISTORY is
+    -- audit_entry, which identity/link-store.ts appends on every mutation. The handle column is
+    -- DISPLAY ONLY -- no index, no uniqueness, no lookup -- because a name/handle join is exactly the
+    -- attacker-controllable merge the fail-closed-on-merge doctrine forbids.
+    CREATE TABLE IF NOT EXISTS identity_link_sets (
+      org_id     TEXT NOT NULL,
+      id         TEXT NOT NULL,               -- opaque, host-minted; the ONLY join key for a set
+      handle     TEXT NOT NULL,               -- DISPLAY ONLY: admin lists + audit rows
+      status     TEXT NOT NULL,               -- active | suspended | revoked ("revoked" is terminal)
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, id)
+    );
+    -- PRIMARY KEY (org_id, platform, native_id) IS the "an account is exactly one person"
+    -- invariant -- assertPrincipalsValid's rule, moved from config load to write time.
+    CREATE TABLE IF NOT EXISTS identity_linked_ids (
+      org_id         TEXT NOT NULL,
+      platform       TEXT NOT NULL,
+      native_id      TEXT NOT NULL,
+      link_set_id    TEXT NOT NULL,
+      status         TEXT NOT NULL,           -- suggested | confirmed | revoked ("revoked" terminal)
+      established_by TEXT NOT NULL,           -- "challenge:<id>" | "config-import" | "directory-sync:<p>"
+      evidence       TEXT,                    -- structured evidence record as JSON; opaque here
+      created_at     TEXT NOT NULL,
+      updated_at     TEXT NOT NULL,
+      PRIMARY KEY (org_id, platform, native_id)
+    );
+    CREATE INDEX IF NOT EXISTS identity_linked_ids_org_set ON identity_linked_ids (org_id, link_set_id);
+    -- The proof-of-control nonce ledger. nonce_hash is a sha-256 -- the RAW code is NEVER stored,
+    -- so a copy of this file yields no usable codes. Single-use is the pending-only claim CAS.
+    CREATE TABLE IF NOT EXISTS identity_link_challenges (
+      org_id                 TEXT NOT NULL,
+      id                     TEXT NOT NULL,
+      nonce_hash             TEXT NOT NULL,   -- sha-256 hex of the uppercased code; NEVER the code
+      initiating_platform    TEXT NOT NULL,
+      initiating_native_id   TEXT NOT NULL,
+      initiating_surface_key TEXT NOT NULL,   -- the DM the ratification must come back to
+      claimed_platform       TEXT,            -- stamped from the WAKE's own captured author
+      claimed_native_id      TEXT,
+      claimed_at             TEXT,
+      status                 TEXT NOT NULL,   -- pending | claimed | ratified | denied | expired
+      created_at             TEXT NOT NULL,
+      expires_at             TEXT NOT NULL,
+      decided_at             TEXT,
+      PRIMARY KEY (org_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash);
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -500,6 +549,81 @@ function pendingActionFromRow(org: string, r: PendingActionSqlRow): PendingActio
     expiresAt: r.expires_at,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at,
+  };
+}
+
+function placeholders(n: number): string {
+  return new Array(n).fill("?").join(", ");
+}
+
+type LinkSetSqliteRow = { id: string; handle: string; status: string; created_at: string; updated_at: string };
+
+function linkSetFromSqliteRow(org: string, r: LinkSetSqliteRow): LinkSetRow {
+  return { org, id: r.id, handle: r.handle, status: r.status as LinkSetStatus, createdAt: r.created_at, updatedAt: r.updated_at };
+}
+
+const LINKED_ID_SQLITE_SELECT = "SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at FROM identity_linked_ids";
+
+type LinkedIdSqliteRow = {
+  platform: string;
+  native_id: string;
+  link_set_id: string;
+  status: string;
+  established_by: string;
+  evidence: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function linkedIdFromSqliteRow(org: string, r: LinkedIdSqliteRow): LinkedIdRow {
+  return {
+    org,
+    linkSetId: r.link_set_id,
+    platform: r.platform,
+    nativeId: r.native_id,
+    status: r.status as LinkedIdStatus,
+    establishedBy: r.established_by,
+    ...(r.evidence === null ? {} : { evidenceJson: r.evidence }),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+const LINK_CHALLENGE_SQLITE_SELECT =
+  `SELECT id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
+          claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+   FROM identity_link_challenges`;
+
+type LinkChallengeSqliteRow = {
+  id: string;
+  nonce_hash: string;
+  initiating_platform: string;
+  initiating_native_id: string;
+  initiating_surface_key: string;
+  claimed_platform: string | null;
+  claimed_native_id: string | null;
+  claimed_at: string | null;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+};
+
+function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): LinkChallengeRow {
+  return {
+    org,
+    id: r.id,
+    nonceHash: r.nonce_hash,
+    initiatingPlatform: r.initiating_platform,
+    initiatingNativeId: r.initiating_native_id,
+    initiatingSurfaceKey: r.initiating_surface_key,
+    ...(r.claimed_platform === null ? {} : { claimedPlatform: r.claimed_platform }),
+    ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
+    ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
+    status: r.status as LinkChallengeStatus,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    ...(r.decided_at === null ? {} : { decidedAt: r.decided_at }),
   };
 }
 
@@ -1626,6 +1750,158 @@ export const sqliteOperationalStore: OperationalStore = {
 
   async revokeSessionApprovals(org, sessionId) {
     return Number(getDb().prepare("DELETE FROM pr_session_approval WHERE org_id = ? AND session_id = ?").run(org, sessionId).changes);
+  },
+
+  async putLinkSet(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO identity_link_sets (org_id, id, handle, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, id) DO UPDATE SET handle = excluded.handle, status = excluded.status, updated_at = excluded.updated_at`,
+      )
+      .run(org, row.id, row.handle, row.status, row.createdAt, row.updatedAt);
+  },
+
+  async getLinkSet(org, id) {
+    const row = getDb().prepare("SELECT id, handle, status, created_at, updated_at FROM identity_link_sets WHERE org_id = ? AND id = ?").get(org, id) as
+      | LinkSetSqliteRow
+      | undefined;
+    return row ? linkSetFromSqliteRow(org, row) : null;
+  },
+
+  async listLinkSets(org) {
+    const rows = getDb().prepare("SELECT id, handle, status, created_at, updated_at FROM identity_link_sets WHERE org_id = ? ORDER BY id ASC").all(org) as LinkSetSqliteRow[];
+    return rows.map((r) => linkSetFromSqliteRow(org, r));
+  },
+
+  async updateLinkSetStatus(org, id, from, to, at) {
+    const changes = getDb()
+      .prepare(`UPDATE identity_link_sets SET status = ?, updated_at = ? WHERE org_id = ? AND id = ? AND status IN (${placeholders(from.length)})`)
+      .run(to, at, org, id, ...from).changes;
+    return Number(changes) > 0;
+  },
+
+  async insertLinkedId(org, row) {
+    const changes = getDb()
+      .prepare(
+        `INSERT INTO identity_linked_ids (org_id, platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, platform, native_id) DO NOTHING`,
+      )
+      .run(org, row.platform, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt).changes;
+    return Number(changes) > 0;
+  },
+
+  async getLinkedId(org, platform, nativeId) {
+    const row = getDb()
+      .prepare(`${LINKED_ID_SQLITE_SELECT} WHERE org_id = ? AND platform = ? AND native_id = ?`)
+      .get(org, platform, nativeId) as LinkedIdSqliteRow | undefined;
+    return row ? linkedIdFromSqliteRow(org, row) : null;
+  },
+
+  async listLinkedIds(org, linkSetId) {
+    const sql = `${LINKED_ID_SQLITE_SELECT} WHERE org_id = ?${linkSetId === undefined ? "" : " AND link_set_id = ?"} ORDER BY platform ASC, native_id ASC`;
+    const rows = (linkSetId === undefined ? getDb().prepare(sql).all(org) : getDb().prepare(sql).all(org, linkSetId)) as LinkedIdSqliteRow[];
+    return rows.map((r) => linkedIdFromSqliteRow(org, r));
+  },
+
+  async updateLinkedIdStatus(org, platform, nativeId, from, to, establishedBy, evidenceJson, at) {
+    const changes = getDb()
+      .prepare(
+        `UPDATE identity_linked_ids SET status = ?, established_by = ?, evidence = ?, updated_at = ?
+         WHERE org_id = ? AND platform = ? AND native_id = ? AND status IN (${placeholders(from.length)})`,
+      )
+      .run(to, establishedBy, evidenceJson ?? null, at, org, platform, nativeId, ...from).changes;
+    return Number(changes) > 0;
+  },
+
+  async deleteLinkedId(org, platform, nativeId) {
+    return Number(getDb().prepare("DELETE FROM identity_linked_ids WHERE org_id = ? AND platform = ? AND native_id = ?").run(org, platform, nativeId).changes) > 0;
+  },
+
+  async revokeLinkedIdsForSet(org, linkSetId, at) {
+    return Number(
+      getDb().prepare("UPDATE identity_linked_ids SET status = 'revoked', updated_at = ? WHERE org_id = ? AND link_set_id = ? AND status <> 'revoked'").run(at, org, linkSetId).changes,
+    );
+  },
+
+  async addLinkChallenge(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO identity_link_challenges
+           (org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
+            claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        org,
+        row.id,
+        row.nonceHash,
+        row.initiatingPlatform,
+        row.initiatingNativeId,
+        row.initiatingSurfaceKey,
+        row.claimedPlatform ?? null,
+        row.claimedNativeId ?? null,
+        row.claimedAt ?? null,
+        row.status,
+        row.createdAt,
+        row.expiresAt,
+        row.decidedAt ?? null,
+      );
+  },
+
+  async getLinkChallenge(org, id) {
+    const row = getDb().prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE org_id = ? AND id = ?`).get(org, id) as LinkChallengeSqliteRow | undefined;
+    return row ? linkChallengeFromSqliteRow(org, row) : null;
+  },
+
+  async listLinkChallenges(org, filter) {
+    const conjuncts = ["org_id = ?"];
+    const params: string[] = [org];
+    if (filter?.initiatingPlatform !== undefined) {
+      conjuncts.push("initiating_platform = ?");
+      params.push(filter.initiatingPlatform);
+    }
+    if (filter?.initiatingNativeId !== undefined) {
+      conjuncts.push("initiating_native_id = ?");
+      params.push(filter.initiatingNativeId);
+    }
+    if (filter?.status !== undefined) {
+      conjuncts.push("status = ?");
+      params.push(filter.status);
+    }
+    const rows = getDb()
+      .prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE ${conjuncts.join(" AND ")} ORDER BY created_at DESC`)
+      .all(...params) as LinkChallengeSqliteRow[];
+    return rows.map((r) => linkChallengeFromSqliteRow(org, r));
+  },
+
+  async claimLinkChallenge(org, nonceHash, platform, nativeId, at) {
+    const db = getDb();
+    const changes = db
+      .prepare(
+        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_native_id = ?, claimed_at = ?, status = 'claimed'
+         WHERE org_id = ? AND nonce_hash = ? AND status = 'pending' AND expires_at > ?
+           AND NOT (initiating_platform = ? AND initiating_native_id = ?)`,
+      )
+      .run(platform, nativeId, at, org, nonceHash, at, platform, nativeId).changes;
+    if (Number(changes) === 0) return null;
+    const row = db.prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE org_id = ? AND nonce_hash = ? AND claimed_at = ?`).get(org, nonceHash, at) as LinkChallengeSqliteRow | undefined;
+    return row ? linkChallengeFromSqliteRow(org, row) : null;
+  },
+
+  async decideLinkChallenge(org, id, from, to, at) {
+    const changes = getDb()
+      .prepare(`UPDATE identity_link_challenges SET status = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status IN (${placeholders(from.length)})`)
+      .run(to, at, org, id, ...from).changes;
+    return Number(changes) > 0;
+  },
+
+  async expireLinkChallenges(org, nowIso) {
+    return Number(
+      getDb()
+        .prepare("UPDATE identity_link_challenges SET status = 'expired', decided_at = ? WHERE org_id = ? AND status IN ('pending', 'claimed') AND expires_at <= ?")
+        .run(nowIso, org, nowIso).changes,
+    );
   },
 
   async getMeta(key) {

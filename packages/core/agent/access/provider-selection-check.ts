@@ -21,6 +21,7 @@ export interface ParsedProviderRow {
 
 export const UNGATED_SEAMS: Readonly<Record<string, string>> = {
   registerAuditDropCounter: "injects a single process-wide audit-drop counter; the `platform` is a callback ARGUMENT, not a registry key — nothing per-provider is stored",
+  registerControlWriteTools: "registers control-plane MCP tools keyed by TOOL NAME; the `.platform` it touches is a linked-identity row's data column, not a per-provider registry key",
 };
 
 const PROVIDER_PKG = /@open-everywhere\/provider-([a-z0-9-]+)/gu;

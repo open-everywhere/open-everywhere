@@ -241,6 +241,16 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "the resolver FILE that re-provides the disabled framework-named `agent` per session grain (access/window-gated.ts windowGatedKit — the sandbox_tools shape); mounts nothing beyond the `agent` name above, at its own open tier",
   ),
 
+  link_identity: open(
+    "issues a short-TTL, single-use proof-of-control CODE in the initiator's own DM and writes one challenge row. It links nothing, reaches nobody outside that DM, and changes no behaviour — the code's entire power is to earn its holder a QUESTION in the initiator's DM naming them. Gating it would put a card in front of asking a question. The consequential step is confirm_link, and that step is already a specific identified human answering in their own DM, which no card can improve on",
+  ),
+  confirm_link: open(
+    "the RATIFICATION itself — the human act an approval card would otherwise be standing in for. It commits the link, and it is `open` precisely BECAUSE it is the gate: it refuses unless the caller is the challenge's own initiator (matching platform AND acting principal id), in the originating DM, on a claim that is still `claimed` and unexpired. A card here would ask a member-tier audience to confirm a decision only ONE person is allowed to make — a weaker check, not a stronger one. Denying writes nothing at all",
+  ),
+  unlink_identity: open(
+    "de-escalation only: removes an account from the CALLER'S OWN link-set, and there is no configuration in which it widens anything — afterwards that account is attributed to strictly fewer things. Gating the off switch for your own identity would mean needing someone else's permission to stop being associated with an account, which is the one direction this must never require. Refuses without an ACTING principal (so a fire cannot detach its creator's accounts) and audited (identity.link.unlinked)",
+  ),
+
   create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
   create_routine: member("routine.create", "self-modification: a standing scheduled behaviour that outlives the turn"),
   remember: member(

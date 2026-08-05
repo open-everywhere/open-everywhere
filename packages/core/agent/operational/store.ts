@@ -29,6 +29,9 @@ export const OPERATIONAL_TABLES = [
   "usage_events",
   "instance_meta",
   "webhook_capture",
+  "identity_link_sets",
+  "identity_linked_ids",
+  "identity_link_challenges",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -442,6 +445,55 @@ export interface SessionApprovalRow {
   readonly expiresAt: string;
 }
 
+export type LinkSetStatus = "active" | "suspended" | "revoked";
+
+export type LinkedIdStatus = "suggested" | "confirmed" | "revoked";
+
+export type LinkChallengeStatus = "pending" | "claimed" | "ratified" | "denied" | "expired";
+
+export interface LinkSetRow {
+  readonly org: string;
+  readonly id: string;
+  readonly handle: string;
+  readonly status: LinkSetStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface LinkedIdRow {
+  readonly org: string;
+  readonly linkSetId: string;
+  readonly platform: string;
+  readonly nativeId: string;
+  readonly status: LinkedIdStatus;
+  readonly establishedBy: string;
+  readonly evidenceJson?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface LinkChallengeRow {
+  readonly org: string;
+  readonly id: string;
+  readonly nonceHash: string;
+  readonly initiatingPlatform: string;
+  readonly initiatingNativeId: string;
+  readonly initiatingSurfaceKey: string;
+  readonly claimedPlatform?: string;
+  readonly claimedNativeId?: string;
+  readonly claimedAt?: string;
+  readonly status: LinkChallengeStatus;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly decidedAt?: string;
+}
+
+export interface LinkChallengeFilter {
+  readonly initiatingPlatform?: string;
+  readonly initiatingNativeId?: string;
+  readonly status?: LinkChallengeStatus;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -569,6 +621,34 @@ export interface OperationalStore {
 
   armWebhookCaptureWindow(org: string, hookId: string, captureUntil: string, armedBy: string, at: string): Promise<void>;
   getWebhookCaptureWindow(org: string, hookId: string): Promise<WebhookCaptureWindowRow | null>;
+
+  putLinkSet(org: string, row: LinkSetRow): Promise<void>;
+  getLinkSet(org: string, id: string): Promise<LinkSetRow | null>;
+  listLinkSets(org: string): Promise<readonly LinkSetRow[]>;
+  updateLinkSetStatus(org: string, id: string, from: readonly LinkSetStatus[], to: LinkSetStatus, at: string): Promise<boolean>;
+
+  insertLinkedId(org: string, row: LinkedIdRow): Promise<boolean>;
+  getLinkedId(org: string, platform: string, nativeId: string): Promise<LinkedIdRow | null>;
+  listLinkedIds(org: string, linkSetId?: string): Promise<readonly LinkedIdRow[]>;
+  updateLinkedIdStatus(
+    org: string,
+    platform: string,
+    nativeId: string,
+    from: readonly LinkedIdStatus[],
+    to: LinkedIdStatus,
+    establishedBy: string,
+    evidenceJson: string | undefined,
+    at: string,
+  ): Promise<boolean>;
+  deleteLinkedId(org: string, platform: string, nativeId: string): Promise<boolean>;
+  revokeLinkedIdsForSet(org: string, linkSetId: string, at: string): Promise<number>;
+
+  addLinkChallenge(org: string, row: LinkChallengeRow): Promise<void>;
+  getLinkChallenge(org: string, id: string): Promise<LinkChallengeRow | null>;
+  listLinkChallenges(org: string, filter?: LinkChallengeFilter): Promise<readonly LinkChallengeRow[]>;
+  claimLinkChallenge(org: string, nonceHash: string, platform: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
+  decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
+  expireLinkChallenges(org: string, nowIso: string): Promise<number>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

@@ -11,6 +11,8 @@ import { readAudit, auditRoot, type AuditFilter, type AuditEntry } from "../audi
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled, windowModeFor, resolveDomainForChannel } from "../memory/domain.js";
 import { principalSurfaces } from "../identity/principals.js";
+import { unionPrincipals } from "../identity/link-resolve.js";
+import { confirmedLinkSetPrincipals } from "../identity/link-store.js";
 import { resolveAccess, type ResolveRequest, type SessionMode } from "../access/resolver.js";
 import { usageSummary } from "../spend/usage-events.js";
 import type { CapLevel, UsageSummaryRow } from "../operational/store.js";
@@ -636,7 +638,8 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
   const union = (pick: (r: UnifiedContainerRow) => readonly string[]): string[] => [...new Set(containers.flatMap((r) => [...pick(r)]))].sort();
   const platforms = [...new Set(channels.map((ch) => surfaceKeyParts(ch).platform))].sort();
 
-  const principals = cfg.loadPrincipals?.() ?? [];
+  const principalUnion = unionPrincipals(cfg.loadPrincipals?.() ?? [], await confirmedLinkSetPrincipals(org));
+  const principals = principalUnion.principals;
   const humans: UnifiedHumanRow[] = principals
     .map((p) => {
       const surfaces = principalSurfaces(p);
@@ -665,6 +668,7 @@ export async function unifiedDomainAudit(q: UnifiedDomainAuditQuery): Promise<Un
     "Surface-privacy ORDINAL (P5 enforced form) is not yet built — TODO(unified-audit-privacy-ordinal); quote-across-surfaces is advisory (the disclosure preamble) until it lands.",
   ];
   if (!unified) notes.unshift(`NOTE: domain "${q.domain}" is not currently windowed (WINDOW_TOPOLOGY_ENABLED off and/or the domain is not an ambient supervisor) — this shows what unification WOULD expose.`);
+  for (const w of principalUnion.warnings) notes.unshift(`⚠ ${w.message}`);
 
   return {
     org,

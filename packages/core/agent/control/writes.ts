@@ -14,6 +14,7 @@ import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
 import { whereFromScope } from "../approvals/actions.js";
+import { listLinkSetsWithIds, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -27,6 +28,10 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "set_domain_model",
   "clear_domain_model",
   "decide_pending_action",
+  "link_sets_list",
+  "suspend_link_set",
+  "reactivate_link_set",
+  "revoke_link_set",
 ] as const;
 
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
@@ -320,6 +325,106 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, cleared, org: a.org, domain: a.domain });
       } catch (e) {
         return errorResult(`clear_domain_model failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  const requireOrgAdminForLinks = (verb: string): string | null =>
+    roles.includes("admin") ? null : `forbidden: ${verb} requires the org-wide "admin" role — a link-set spans every surface, so no domain role covers it (have: ${roles.length ? roles.join(", ") : "none"}).`;
+
+  server.registerTool(
+    "link_sets_list",
+    {
+      title: "List identity link-sets",
+      description:
+        "Every cross-surface identity link-set in an org: the person's display handle, the set's status (active | suspended | revoked), and each linked account with its own status (suggested | confirmed | revoked) and the evidence that established it (`challenge:<id>`, `config-import`, `directory-sync:<provider>`). Org-admin only — a link-set enumerates one human's accounts across every surface. This is the offboarding worklist: find the person's set here, then revoke_link_set.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("link_sets_list");
+      if (denial) return errorResult(denial);
+      try {
+        const rows = await listLinkSetsWithIds(a.org);
+        return jsonResult({
+          ok: true,
+          org: a.org,
+          linkSets: rows.map(({ set, ids }) => ({
+            id: set.id,
+            handle: set.handle,
+            status: set.status,
+            createdAt: set.createdAt,
+            updatedAt: set.updatedAt,
+            ids: ids.map((r) => ({ platform: r.platform, nativeId: r.nativeId, status: r.status, establishedBy: r.establishedBy, updatedAt: r.updatedAt })),
+          })),
+        });
+      } catch (e) {
+        return errorResult(`link_sets_list failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "suspend_link_set",
+    {
+      title: "Suspend an identity link-set",
+      description:
+        "Put a person's identity link-set on HOLD: it stops resolving, so cross-surface attribution for those accounts degrades to per-surface identity until it is reactivated. Reversible (reactivate_link_set) — use this for a suspected compromise or an observed directory deprovision; use revoke_link_set for a real offboarding. Org-admin only. Get the id from link_sets_list.",
+      inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("suspend_link_set");
+      if (denial) return errorResult(denial);
+      try {
+        const res = await setLinkSetHold({ org: a.org, linkSetId: a.linkSetId, hold: "suspended", actor });
+        if (!res.ok) return errorResult(`suspend_link_set failed: ${res.reason}`);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.identity.suspend_link_set", detail: { linkSetId: a.linkSetId } });
+        return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, status: "suspended" });
+      } catch (e) {
+        return errorResult(`suspend_link_set failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "reactivate_link_set",
+    {
+      title: "Reactivate a suspended identity link-set",
+      description:
+        "Lift a suspend_link_set hold — the set resolves again and cross-surface attribution resumes. Only a SUSPENDED set can be reactivated: a revoked one is terminal, and a person who needs standing back builds a fresh set through the ordinary link_identity challenge. Org-admin only.",
+      inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("reactivate_link_set");
+      if (denial) return errorResult(denial);
+      try {
+        const res = await setLinkSetHold({ org: a.org, linkSetId: a.linkSetId, hold: "active", actor });
+        if (!res.ok) return errorResult(`reactivate_link_set failed: ${res.reason}`);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.identity.reactivate_link_set", detail: { linkSetId: a.linkSetId } });
+        return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, status: "active" });
+      } catch (e) {
+        return errorResult(`reactivate_link_set failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "revoke_link_set",
+    {
+      title: "Revoke an identity link-set (offboarding, TERMINAL)",
+      description:
+        "THE OFFBOARDING LEVER, and it does not come back: closes a person's link-set and tombstones every account on it, so none of those accounts can be re-linked to anyone by a later challenge. Cross-surface attribution for them stops immediately. There is deliberately no un-revoke — a mistake is repaired by running link_identity again with the accounts that should be linked, because \"this person no longer has standing\" must not be quietly reversible. Prefer suspend_link_set if you might want it back. Org-admin only.",
+      inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("revoke_link_set");
+      if (denial) return errorResult(denial);
+      try {
+        const res = await revokeLinkSet({ org: a.org, linkSetId: a.linkSetId, actor });
+        if (!res.ok) return errorResult(`revoke_link_set failed: ${res.reason}`);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.identity.revoke_link_set", detail: { linkSetId: a.linkSetId, note: res.note } });
+        return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, status: "revoked", note: res.note });
+      } catch (e) {
+        return errorResult(`revoke_link_set failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

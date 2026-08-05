@@ -1,0 +1,373 @@
+
+process.env.OE_SQLITE_PATH = ":memory:";
+process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+
+import assert from "node:assert/strict";
+import { PGlite } from "@electric-sql/pglite";
+import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
+import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
+import { registerOperationalStore, resetOperationalStore, getOperationalStore } from "../agent/operational/provider.js";
+import { OPERATIONAL_TABLES, type LinkChallengeRow, type LinkedIdRow, type OperationalStore } from "../agent/operational/store.js";
+import { detectLinkClaim, hashLinkCode, mintLinkCode, LINK_CODE_ALPHABET, LINK_CODE_LENGTH } from "../agent/identity/link-challenge.js";
+import {
+  claimLinkChallenge,
+  confirmLinkedId,
+  confirmedLinkSetPrincipals,
+  denyLinkChallenge,
+  expandLinkSet,
+  issueLinkChallenge,
+  listLinkSetsWithIds,
+  ratifyLinkChallenge,
+  resolveLinkSet,
+  revokeLinkSet,
+  setLinkSetHold,
+  suggestLinkedId,
+  unlinkOwnId,
+} from "../agent/identity/link-store.js";
+import { unionPrincipals } from "../agent/identity/link-resolve.js";
+import { observeLinkClaim } from "../agent/hooks/link-claim.js";
+import type { BindableContext } from "../agent/identity/binding.js";
+import type { Principal } from "../agent/identity/principals.js";
+import linkIdentityTool from "../agent/tools/link_identity.js";
+import confirmLinkTool from "../agent/tools/confirm_link.js";
+import unlinkIdentityTool from "../agent/tools/unlink_identity.js";
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+
+registerSlackFixtureMapper();
+
+let n = 0;
+const ok = (cond: boolean, label: string) => {
+  assert.ok(cond, label);
+  n++;
+};
+async function refuses(fn: () => Promise<unknown>, needle: string, label: string): Promise<void> {
+  let msg = "";
+  try {
+    await fn();
+  } catch (e) {
+    msg = e instanceof Error ? e.message : String(e);
+  }
+  ok(msg.length > 0 && msg.toLowerCase().includes(needle.toLowerCase()), `${label} (got: ${msg || "no error"})`);
+}
+
+const ORG = "default";
+const db = new PGlite();
+const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
+await initOperationalSchema(client);
+const pg = makeOperationalPostgresStore(client);
+registerOperationalStore(pg);
+resetOperationalStore();
+ok(getOperationalStore() === pg, "provider: the PGlite-backed postgres store is what link-store.ts will reach");
+
+type ExecTool = { execute(input: unknown, ctx: unknown): Promise<any> };
+const linkIdentity = linkIdentityTool as unknown as ExecTool;
+const confirmLink = confirmLinkTool as unknown as ExecTool;
+const unlinkIdentity = unlinkIdentityTool as unknown as ExecTool;
+
+function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
+  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, trust_checked: "true" };
+  if (opts.channelType) attributes.channel_type = opts.channelType;
+  return {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes, principalId: opts.principalId ?? "U1", principalType: "slack-user" } } },
+  } as BindableContext;
+}
+const dmU1 = ctxFor({ channelId: "D1", channelType: "im", principalId: "U1" });
+const dmU2 = ctxFor({ channelId: "D2", channelType: "im", principalId: "U2" });
+const channelU1 = ctxFor({ channelId: "C_ENG", principalId: "U1" });
+const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" });
+
+{
+  ok(!/[01IOB]/.test(LINK_CODE_ALPHABET) && LINK_CODE_ALPHABET === LINK_CODE_ALPHABET.toUpperCase(), "code alphabet drops one member of every confusable pair (0/O, 1/I, 8/B) and is upper-case only");
+  const codes = new Set(Array.from({ length: 200 }, () => mintLinkCode()));
+  ok([...codes].every((c) => c.length === LINK_CODE_LENGTH && [...c].every((ch) => LINK_CODE_ALPHABET.includes(ch))), "mintLinkCode stays inside the alphabet at the declared length");
+  ok(codes.size > 190, "mintLinkCode is not returning a constant (200 draws are essentially all distinct)");
+
+  const code = mintLinkCode();
+  ok(hashLinkCode(code) === hashLinkCode(code.toLowerCase()), "hashLinkCode is case-insensitive — a lower-case claim matches an upper-case code");
+  ok(hashLinkCode(code) !== code && hashLinkCode(code).length === 64, "hashLinkCode is a sha-256 hex digest, never the code itself");
+
+  ok(detectLinkClaim(`link ${code}`) === code, "detectLinkClaim finds a bare claim");
+  ok(detectLinkClaim(`  Hi team — LINK ${code.toLowerCase()} thanks`) === code, "detectLinkClaim is case-insensitive on both halves and works mid-message (a rendered wake envelope)");
+  ok(detectLinkClaim(`unlink ${code}`) === undefined, "detectLinkClaim does NOT match `unlink <code>` (word boundary)");
+  ok(detectLinkClaim(`link ${code}EXTRA`) === undefined, "detectLinkClaim does NOT match a code glued to more text");
+  ok(detectLinkClaim("link 00000000") === undefined, "detectLinkClaim rejects symbols outside the alphabet");
+  ok(detectLinkClaim(undefined) === undefined && detectLinkClaim("") === undefined, "detectLinkClaim is total on empty input");
+}
+
+{
+  const issued = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U1", surfaceKey: "slack/T1/D1" });
+  ok(issued.challenge.status === "pending" && issued.challenge.claimedNativeId === undefined, "issue: a fresh challenge is pending and unclaimed");
+  const stored = await pg.getLinkChallenge(ORG, issued.challenge.id);
+  ok(stored?.nonceHash === hashLinkCode(issued.code), "issue: the row stores the HASH of the code");
+  ok(!JSON.stringify(stored).includes(issued.code), "issue: the raw code appears NOWHERE on the stored row");
+
+  ok((await claimLinkChallenge({ org: ORG, code: issued.code, claimant: { platform: "slack", nativeId: "U1" } })) === null, "claim: the INITIATOR's own account cannot claim its own code (a DM echo must not burn it)");
+  ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.status === "pending", "claim: a refused self-claim leaves the code still pending");
+
+  const claimed = await claimLinkChallenge({ org: ORG, code: issued.code, claimant: { platform: "github", nativeId: "example-owner" } });
+  ok(claimed?.status === "claimed" && claimed.claimedPlatform === "github" && claimed.claimedNativeId === "example-owner", "claim: stamps the claimant and moves pending→claimed");
+
+  ok((await claimLinkChallenge({ org: ORG, code: issued.code, claimant: { platform: "linear", nativeId: "lin-9" } })) === null, "claim: SINGLE-USE — a second claimer of a spent nonce is refused");
+  ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.claimedNativeId === "example-owner", "claim: the second claimer did not overwrite the first");
+
+  const ratified = await ratifyLinkChallenge({ org: ORG, challengeId: issued.challenge.id, handle: "slack/U1" });
+  ok(ratified.ok, "ratify: a claimed challenge commits");
+  ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.status === "ratified", "ratify: the challenge is terminal (ratified)");
+  const set = ratified.ok ? await expandLinkSet(ORG, ratified.linkSetId) : [];
+  const pairs = set.map((a) => `${a.platform}/${a.nativeId}`).sort();
+  assert.deepEqual(pairs, ["github/example-owner", "slack/U1"], "ratify: EXACTLY the initiator + the claimed pair are linked, nothing else");
+  n++;
+  ok((await ratifyLinkChallenge({ org: ORG, challengeId: issued.challenge.id, handle: "x" })).ok === false, "ratify: a second ratification of the same challenge is refused");
+
+  const denyIssue = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_DENY", surfaceKey: "slack/T1/D9" });
+  await claimLinkChallenge({ org: ORG, code: denyIssue.code, claimant: { platform: "github", nativeId: "attacker" } });
+  ok(await denyLinkChallenge({ org: ORG, challengeId: denyIssue.challenge.id }), "deny: a claimed challenge can be denied");
+  ok((await pg.getLinkedId(ORG, "github", "attacker")) === null, "deny: NOTHING was written — the claimant holds no link row");
+  ok((await pg.getLinkedId(ORG, "slack", "U_DENY")) === null, "deny: the initiator is not linked either");
+  ok((await denyLinkChallenge({ org: ORG, challengeId: denyIssue.challenge.id })) === false, "deny: denial is terminal — a second deny is refused");
+  ok((await ratifyLinkChallenge({ org: ORG, challengeId: denyIssue.challenge.id, handle: "x" })).ok === false, "deny: a denied challenge can never be ratified afterwards");
+
+  const past = new Date(Date.now() - 60 * 60_000);
+  const stale = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_STALE", surfaceKey: "slack/T1/D8", now: past });
+  ok((await claimLinkChallenge({ org: ORG, code: stale.code, claimant: { platform: "github", nativeId: "late" } })) === null, "expiry: a code past its TTL cannot be claimed");
+  ok((await pg.expireLinkChallenges(ORG, new Date().toISOString())) >= 1, "expiry: the sweep marks still-open expired challenges");
+  ok((await pg.getLinkChallenge(ORG, stale.challenge.id))?.status === "expired", "expiry: the swept challenge is `expired`");
+  ok((await ratifyLinkChallenge({ org: ORG, challengeId: stale.challenge.id, handle: "x" })).ok === false, "expiry: an expired challenge cannot be ratified");
+
+  const raced = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_RACE", surfaceKey: "slack/T1/D7" });
+  await claimLinkChallenge({ org: ORG, code: raced.code, claimant: { platform: "github", nativeId: "racer" } });
+  await pg.expireLinkChallenges(ORG, new Date(Date.now() + 60 * 60_000).toISOString());
+  ok((await ratifyLinkChallenge({ org: ORG, challengeId: raced.challenge.id, handle: "x" })).ok === false, "expiry: the TTL bounds the WHOLE flow — a claimed-then-expired challenge cannot be ratified");
+  ok((await pg.getLinkedId(ORG, "github", "racer")) === null, "expiry: nothing was written for the expired claim");
+}
+
+{
+  const other = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_OTHER", surfaceKey: "slack/T1/D3" });
+  await claimLinkChallenge({ org: ORG, code: other.code, claimant: { platform: "github", nativeId: "example-owner" } });
+  const dup = await ratifyLinkChallenge({ org: ORG, challengeId: other.challenge.id, handle: "slack/U_OTHER" });
+  ok(dup.ok === false && !dup.ok && dup.reason.includes("exactly one person"), "invariant 1 (API): a second person cannot ratify an account another link-set already holds");
+  const stillRowan = await resolveLinkSet(ORG, "github", "example-owner");
+  ok(stillRowan !== null, "invariant 1 (API): the original owner keeps the account");
+  ok((await pg.getLinkedId(ORG, "slack", "U_OTHER")) === null, "invariant 1 (API): the refused ratification wrote NOTHING at all, not even the initiator's own id");
+
+  const owner = (await pg.getLinkedId(ORG, "github", "example-owner"))!;
+  const foreign: LinkedIdRow = { ...owner, linkSetId: "some-other-set", status: "confirmed", establishedBy: "challenge:forged", createdAt: owner.createdAt, updatedAt: owner.updatedAt };
+  ok((await pg.insertLinkedId(ORG, foreign)) === false, "invariant 1 (DB, postgres): the (org, platform, native_id) PRIMARY KEY refuses a second row for one account");
+  ok((await pg.getLinkedId(ORG, "github", "example-owner"))?.linkSetId === owner.linkSetId, "invariant 1 (DB, postgres): the refused insert did not repoint the account");
+
+  ok((await pg.insertLinkedId("acme", { ...foreign, org: "acme" })) === true, "org isolation: another org may hold the same (platform, native_id)");
+  ok((await resolveLinkSet(ORG, "github", "example-owner"))?.id === owner.linkSetId, "org isolation: the other org's row does not leak into this one");
+
+  const sugSet = "set-suggest";
+  await pg.putLinkSet(ORG, { org: ORG, id: sugSet, handle: "slack/U_SUG", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
+  const suggested = await suggestLinkedId({ org: ORG, linkSetId: sugSet, account: { platform: "linear", nativeId: "lin-77" }, evidence: { kind: "directory-sync", provider: "okta", grade: "scim" } });
+  ok(suggested.ok, "evidence: a directory sync may record a SUGGESTED account");
+  ok((await pg.getLinkedId(ORG, "linear", "lin-77"))?.status === "suggested", "evidence: it lands as `suggested`, not `confirmed`");
+  ok((await resolveLinkSet(ORG, "linear", "lin-77")) === null, "evidence: a `suggested` account resolves to NOTHING — attribution is unchanged until it is proven");
+  ok((await expandLinkSet(ORG, sugSet)).length === 0, "evidence: expandLinkSet excludes suggested accounts");
+
+  const confirmed = await confirmLinkedId({ org: ORG, account: { platform: "linear", nativeId: "lin-77" }, evidence: { kind: "challenge", challengeId: "chal-xyz" } });
+  ok(confirmed.ok, "evidence: suggested → confirmed with evidence succeeds");
+  const confRow = (await pg.getLinkedId(ORG, "linear", "lin-77"))!;
+  ok(confRow.status === "confirmed" && confRow.establishedBy === "challenge:chal-xyz", "evidence: WHAT confirmed it is recorded on the row (establishedBy)");
+  ok(JSON.parse(confRow.evidenceJson ?? "{}").challengeId === "chal-xyz", "evidence: the structured evidence record round-trips for later phases");
+  ok((await resolveLinkSet(ORG, "linear", "lin-77"))?.id === sugSet, "evidence: a confirmed account now resolves");
+  ok((await confirmLinkedId({ org: ORG, account: { platform: "linear", nativeId: "nope" }, evidence: { kind: "config-import", note: "x" } })).ok === false, "evidence: confirming an account on no link-set is refused");
+
+  const revoked = await revokeLinkSet({ org: ORG, linkSetId: sugSet, actor: "admin@example" });
+  ok(revoked.ok, "revoke: an active set can be revoked");
+  ok((await pg.getLinkSet(ORG, sugSet))?.status === "revoked", "revoke: the set is revoked");
+  ok((await pg.getLinkedId(ORG, "linear", "lin-77"))?.status === "revoked", "revoke: every account on the set is tombstoned");
+  ok((await resolveLinkSet(ORG, "linear", "lin-77")) === null, "revoke: a tombstoned account resolves to nothing");
+  ok((await pg.insertLinkedId(ORG, { org: ORG, linkSetId: "brand-new", platform: "linear", nativeId: "lin-77", status: "confirmed", establishedBy: "challenge:x", createdAt: "z", updatedAt: "z" })) === false, "revoke: a tombstone keeps the PK, so the account cannot be re-linked by a later challenge");
+  ok((await confirmLinkedId({ org: ORG, account: { platform: "linear", nativeId: "lin-77" }, evidence: { kind: "challenge", challengeId: "c2" } })).ok === false, "revoke: a revoked row can NEVER be re-confirmed (terminal)");
+  ok((await setLinkSetHold({ org: ORG, linkSetId: sugSet, hold: "active", actor: "admin@example" })).ok === false, "revoke: a revoked SET can never be reactivated (terminal)");
+  ok((await revokeLinkSet({ org: ORG, linkSetId: sugSet, actor: "admin@example" })).ok === false, "revoke: revoking twice is refused");
+
+  const held = (await resolveLinkSet(ORG, "github", "example-owner"))!;
+  ok((await setLinkSetHold({ org: ORG, linkSetId: held.id, hold: "suspended", actor: "admin@example" })).ok, "suspend: an active set can be held");
+  ok((await resolveLinkSet(ORG, "github", "example-owner")) === null, "suspend: a held set resolves to nothing (attribution degrades to per-surface)");
+  ok((await expandLinkSet(ORG, held.id)).length === 0, "suspend: a held set expands to nothing");
+  ok((await setLinkSetHold({ org: ORG, linkSetId: held.id, hold: "active", actor: "admin@example" })).ok, "reactivate: the hold lifts");
+  ok((await resolveLinkSet(ORG, "github", "example-owner"))?.id === held.id, "reactivate: the set resolves again");
+  ok((await setLinkSetHold({ org: ORG, linkSetId: "no-such-set", hold: "suspended", actor: "a" })).ok === false, "suspend: an unknown set is refused, not silently created");
+}
+
+{
+  const sq: OperationalStore = sqliteOperationalStore;
+  const now = "2026-01-14T12:20:00Z";
+  await sq.putLinkSet(ORG, { org: ORG, id: "s1", handle: "slack/U1", status: "active", createdAt: now, updatedAt: now });
+  const row: LinkedIdRow = { org: ORG, linkSetId: "s1", platform: "github", nativeId: "gh1", status: "confirmed", establishedBy: "challenge:c1", createdAt: now, updatedAt: now };
+  ok((await sq.insertLinkedId(ORG, row)) === true, "sqlite: first insert of an account wins");
+  ok((await sq.insertLinkedId(ORG, { ...row, linkSetId: "s2" })) === false, "sqlite: the (org, platform, native_id) PRIMARY KEY refuses a second person's claim on that account");
+  ok((await sq.getLinkedId(ORG, "github", "gh1"))?.linkSetId === "s1", "sqlite: the original owner is untouched");
+
+  const ch: LinkChallengeRow = {
+    org: ORG,
+    id: "c-sq",
+    nonceHash: hashLinkCode("ABCDEFGH"),
+    initiatingPlatform: "slack",
+    initiatingNativeId: "U1",
+    initiatingSurfaceKey: "slack/T1/D1",
+    status: "pending",
+    createdAt: now,
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  };
+  await sq.addLinkChallenge(ORG, ch);
+  ok((await sq.claimLinkChallenge(ORG, ch.nonceHash, "slack", "U1", new Date().toISOString())) === null, "sqlite: the initiator cannot self-claim");
+  const sqClaimed = await sq.claimLinkChallenge(ORG, ch.nonceHash, "github", "gh2", new Date().toISOString());
+  ok(sqClaimed?.claimedNativeId === "gh2", "sqlite: the claim CAS stamps the claimant and returns the row");
+  ok((await sq.claimLinkChallenge(ORG, ch.nonceHash, "linear", "l1", new Date().toISOString())) === null, "sqlite: single-use — a second claimer is refused");
+  ok((await sq.decideLinkChallenge(ORG, "c-sq", ["claimed"], "ratified", now)) === true, "sqlite: a claimed challenge can be decided");
+  ok((await sq.decideLinkChallenge(ORG, "c-sq", ["claimed"], "denied", now)) === false, "sqlite: a decided challenge is terminal");
+  ok((await sq.updateLinkedIdStatus(ORG, "github", "gh1", ["suggested", "confirmed"], "revoked", "x", undefined, now)) === true, "sqlite: a status CAS lands from a legal `from`");
+  ok((await sq.updateLinkedIdStatus(ORG, "github", "gh1", ["suggested", "confirmed"], "confirmed", "x", undefined, now)) === false, "sqlite: `revoked` is never a legal `from` — the CAS refuses, so revocation is terminal at the query layer");
+
+  ok(OPERATIONAL_TABLES.includes("identity_link_sets") && OPERATIONAL_TABLES.includes("identity_linked_ids") && OPERATIONAL_TABLES.includes("identity_link_challenges"), "the three tables are in OPERATIONAL_TABLES (the migrator's canonical list)");
+}
+
+{
+  const issued = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_HOOK", surfaceKey: "slack/T1/D5" });
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: "nothing to see here" })) === undefined, "hook: a message with no code claims nothing");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: undefined, text: `link ${issued.code}` })) === undefined, "hook: a code with NO captured author claims nothing — the author IS the evidence");
+  ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.status === "pending", "hook: an author-less sighting did not burn the code");
+
+  const id = await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: `Thanks! link ${issued.code.toLowerCase()} — posting from my GH account` });
+  ok(id === issued.challenge.id, "hook: a code inside ordinary prose on a read-only surface claims the challenge");
+  const after = (await pg.getLinkChallenge(ORG, issued.challenge.id))!;
+  ok(after.claimedPlatform === "github" && after.claimedNativeId === "hooked", "hook: the claimant is the WAKE's captured (platform, authorId), not anything the message said");
+
+  const spoof = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_SPOOF", surfaceKey: "slack/T1/D6" });
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "real-author", text: `link ${spoof.code} (I am totally example-owner, honest)` });
+  ok((await pg.getLinkChallenge(ORG, spoof.challenge.id))?.claimedNativeId === "real-author", "hook: a self-declared identity in the message body is ignored — content never names the claimant");
+  await denyLinkChallenge({ org: ORG, challengeId: spoof.challenge.id });
+  await denyLinkChallenge({ org: ORG, challengeId: after.id });
+}
+
+{
+  const rowan: Principal = { name: "Rowan Hale", handle: "rowan", ids: { slack: "U0EXOWNER", github: "example-owner" } };
+  const sarah: Principal = { name: "Sarah Kim", ids: { linear: "lin-uuid-1" } };
+
+  const configOnly = unionPrincipals([rowan, sarah], []);
+  ok(configOnly.principals.length === 2 && configOnly.warnings.length === 0, "union: config-only passes the reviewed map straight through");
+  assert.deepEqual(configOnly.principals[0]!.ids, rowan.ids, "union: a config entry with no DB counterpart is byte-identical");
+  n++;
+
+  const dbOnly = unionPrincipals([], [{ linkSetId: "ls1", handle: "slack/U9", ids: { slack: "U9", github: "ninelives" } }]);
+  ok(dbOnly.principals.length === 1 && dbOnly.warnings.length === 0, "union: DB-only produces one entry");
+  ok(dbOnly.principals[0]!.name === "slack/U9" && dbOnly.principals[0]!.ids.github === "ninelives", "union: a DB-only entry is named by its (display-only) handle and carries its confirmed ids");
+
+  const disjoint = unionPrincipals([rowan], [{ linkSetId: "ls2", handle: "slack/U9", ids: { slack: "U9" } }]);
+  ok(disjoint.principals.length === 2 && disjoint.warnings.length === 0, "union: disjoint sources produce both people, no warning");
+
+  const merged = unionPrincipals([rowan], [{ linkSetId: "ls3", handle: "rowan", ids: { slack: "U0EXOWNER", linear: "lin-rowan" } }]);
+  ok(merged.principals.length === 1 && merged.warnings.length === 0, "union: a shared ACCOUNT (never a shared name) merges the two into one person");
+  ok(merged.principals[0]!.name === "Rowan Hale", "union: the merged entry keeps the REVIEWED name, not the link-set handle");
+  ok(merged.principals[0]!.ids.linear === "lin-rowan" && merged.principals[0]!.ids.github === "example-owner", "union: the merged entry gains the DB's extra surface and keeps config's");
+
+  const conflict = unionPrincipals([rowan, sarah], [{ linkSetId: "ls4", handle: "someone-else", ids: { github: "example-owner", linear: "lin-uuid-1" } }]);
+  ok(conflict.warnings.length > 0, "union: a (platform, id) claimed by two different people produces a LOUD warning");
+  ok(conflict.warnings.some((w) => w.key === "github/example-owner"), "union: the warning names the disputed account in principal-key form");
+  ok(conflict.warnings.every((w) => w.message.includes("NO merge")), "union: the warning says plainly that no merge was applied");
+  const rowanOut = conflict.principals.find((p) => p.name === "Rowan Hale")!;
+  ok(rowanOut.ids.github === undefined, "union: the disputed account is DROPPED from the config entry (fail-closed on merge)");
+  ok(rowanOut.ids.slack === "U0EXOWNER", "union: the config entry's UNDISPUTED accounts survive — a conflict costs one account, not the person");
+  ok(conflict.principals.every((p) => p.ids.linear !== "lin-uuid-1"), "union: the disputed account is dropped from BOTH sides, never awarded to one");
+
+  const nameOnly = unionPrincipals([{ name: "Rowan Hale", ids: { slack: "U_REAL" } }], [{ linkSetId: "ls5", handle: "Rowan Hale", ids: { github: "impostor" } }]);
+  ok(nameOnly.principals.length === 2 && nameOnly.warnings.length === 0, "union: two entries sharing a NAME and no account are two people — display names are never a join key");
+
+  const live = await confirmedLinkSetPrincipals(ORG);
+  ok(live.every((s) => Object.keys(s.ids).length > 0), "confirmedLinkSetPrincipals: never emits an entry with no accounts");
+  ok(live.some((s) => s.ids.github === "example-owner"), "confirmedLinkSetPrincipals: the confirmed link-set is visible to the attribution path");
+}
+
+{
+  await refuses(() => linkIdentity.execute({}, channelU1), "DM-only", "link_identity refuses in a channel");
+  await refuses(() => linkIdentity.execute({}, mpimU1), "DM-only", "link_identity refuses in a group DM (mpim)");
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, channelU1), "DM-only", "confirm_link refuses in a channel");
+  await refuses(() => unlinkIdentity.execute({}, mpimU1), "DM-only", "unlink_identity refuses in a group DM");
+
+  const out = (await linkIdentity.execute({}, dmU1)) as { challengeId: string; instructions: string; expiresAt: string };
+  ok(typeof out.challengeId === "string" && out.instructions.includes("link "), "link_identity: returns a challenge id and postable instructions");
+  const code = detectLinkClaim(out.instructions)!;
+  ok(code !== undefined, "link_identity: the instructions carry a well-formed code");
+
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU1), "no link request", "confirm_link refuses before anything has claimed the code");
+
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "u1-github", text: `link ${code}` });
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU2), "no link request", "confirm_link refuses a DIFFERENT person — a claim awaiting U1 is invisible to U2");
+  await refuses(() => confirmLink.execute({ decision: "confirm", challengeId: out.challengeId }, dmU2), "no link request", "confirm_link refuses when a different person names the challenge id explicitly");
+  await refuses(() => confirmLink.execute({ decision: "deny", challengeId: out.challengeId }, dmU2), "no link request", "confirm_link refuses a different person's DENY too — a stranger cannot cancel your link either");
+  ok((await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "confirm_link: the refused attempts changed nothing — the claim still awaits its initiator");
+
+  const confirmed = (await confirmLink.execute({ decision: "confirm" }, dmU1)) as { decided: string; claimant: string; linkSetId: string };
+  ok(confirmed.decided === "confirmed" && confirmed.claimant === "github/u1-github", "confirm_link: the initiator commits the link and the claimant is named back");
+  ok((await resolveLinkSet(ORG, "github", "u1-github"))?.id === confirmed.linkSetId, "confirm_link: the link resolves afterwards");
+
+  await refuses(() => unlinkIdentity.execute({ platform: "github" }, dmU1), "BOTH platform and nativeId", "unlink_identity refuses a half-specified target");
+  await refuses(() => unlinkIdentity.execute({ platform: "linear", nativeId: "lin-uuid-1" }, dmU1), "not on your link-set", "unlink_identity refuses an account that is not on the caller's set");
+  const unlinked = (await unlinkIdentity.execute({ platform: "github", nativeId: "u1-github" }, dmU1)) as { unlinked: string };
+  ok(unlinked.unlinked === "github/u1-github", "unlink_identity: a caller may remove ANOTHER id from their OWN set (they may have lost access to it)");
+  ok((await resolveLinkSet(ORG, "github", "u1-github")) === null, "unlink_identity: the severed account no longer resolves");
+  ok((await pg.getLinkedId(ORG, "github", "u1-github")) === null, "unlink_identity: a sever DELETES the row (no tombstone) so the account is joinable again");
+  ok((await pg.insertLinkedId(ORG, { org: ORG, linkSetId: "fresh", platform: "github", nativeId: "u1-github", status: "confirmed", establishedBy: "challenge:z", createdAt: "z", updatedAt: "z" })) === true, "unlink_identity: unlink-then-relink works — the asymmetry with admin REVOKE is real");
+
+  const self = (await unlinkIdentity.execute({}, dmU1)) as { unlinked: string };
+  ok(self.unlinked === "slack/U1", "unlink_identity: with no target it removes the account the caller is speaking from");
+  await refuses(() => unlinkIdentity.execute({}, dmU2), "no linked accounts", "unlink_identity refuses a caller with no link-set at all");
+}
+
+{
+  const { registerControlWriteTools } = await import("../agent/control/writes.js");
+  type Registered = { name: string; handler: (a: any) => Promise<{ isError?: boolean; content: { text: string }[] }> };
+  const mount = (roles: readonly string[]) => {
+    const tools: Registered[] = [];
+    const server = { registerTool: (name: string, _spec: unknown, handler: Registered["handler"]) => tools.push({ name, handler }) };
+    registerControlWriteTools(server as never, "admin@example", roles);
+    return tools;
+  };
+  const IDENTITY_VERBS = ["link_sets_list", "suspend_link_set", "reactivate_link_set", "revoke_link_set"];
+
+  const adminTools = mount(["admin"]);
+  ok(IDENTITY_VERBS.every((v) => adminTools.some((t) => t.name === v)), "admin tools: all four identity verbs are registered");
+
+  const domainTools = mount(["domain:eng"]);
+  for (const verb of IDENTITY_VERBS) {
+    const tool = domainTools.find((t) => t.name === verb)!;
+    const res = await tool.handler({ org: ORG, linkSetId: "whatever" });
+    ok(res.isError === true && res.content[0]!.text.includes('org-wide "admin"'), `admin tools: ${verb} refuses a domain-role identity (a link-set spans every surface)`);
+  }
+  const noRole = mount([]).find((t) => t.name === "link_sets_list")!;
+  ok((await noRole.handler({ org: ORG })).isError === true, "admin tools: link_sets_list refuses an identity with NO roles — the read is org-admin too");
+
+  const listed = await adminTools.find((t) => t.name === "link_sets_list")!.handler({ org: ORG });
+  const payload = JSON.parse(listed.content[0]!.text) as { linkSets: { id: string; status: string; ids: { establishedBy: string }[] }[] };
+  ok(payload.linkSets.length > 0, "admin tools: link_sets_list returns the org's sets");
+  ok(payload.linkSets.some((s) => s.status === "revoked"), "admin tools: the list shows REVOKED sets too — it is the offboarding worklist, not a live-only view");
+  ok(payload.linkSets.flatMap((s) => s.ids).some((i) => i.establishedBy.startsWith("challenge:")), "admin tools: each account names the challenge that established it");
+
+  const target = (await listLinkSetsWithIds(ORG)).find((r) => r.set.status === "active")!;
+  const suspend = adminTools.find((t) => t.name === "suspend_link_set")!;
+  ok((await suspend.handler({ org: ORG, linkSetId: target.set.id })).isError !== true, "admin tools: suspend_link_set holds an active set");
+  ok((await suspend.handler({ org: ORG, linkSetId: target.set.id })).isError === true, "admin tools: suspending an already-suspended set is refused, not a silent no-op");
+  ok((await adminTools.find((t) => t.name === "reactivate_link_set")!.handler({ org: ORG, linkSetId: target.set.id })).isError !== true, "admin tools: reactivate_link_set lifts the hold");
+  ok((await adminTools.find((t) => t.name === "revoke_link_set")!.handler({ org: ORG, linkSetId: target.set.id })).isError !== true, "admin tools: revoke_link_set closes the set");
+  ok((await adminTools.find((t) => t.name === "reactivate_link_set")!.handler({ org: ORG, linkSetId: target.set.id })).isError === true, "admin tools: a REVOKED set can never be reactivated — revocation is terminal on the admin plane too");
+}
+
+{
+  const rows = await pg.readAudit({ org: ORG });
+  const actions = new Set(rows.map((r) => r.action));
+  for (const action of ["identity.link.challenge_issued", "identity.link.challenge_claimed", "identity.link.confirmed", "identity.link.denied", "identity.link.unlinked", "identity.link.suspended", "identity.link.reactivated", "identity.link.revoked", "identity.link.suggested"]) {
+    ok(actions.has(action), `audit: ${action} was appended`);
+  }
+  const fresh = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_AUDIT", surfaceKey: "slack/T1/D4" });
+  const everything = JSON.stringify(await pg.readAudit({ org: ORG }));
+  ok(everything.includes(fresh.challenge.id), "audit: the challenge-issued row is there (the negative below is not vacuous)");
+  ok(!everything.includes(fresh.code), "audit: the raw code appears NOWHERE in the audit log");
+  ok(!JSON.stringify(await pg.getLinkChallenge(ORG, fresh.challenge.id)).includes(fresh.code), "audit: nor anywhere on the challenge row — only its sha-256 is at rest");
+}
+
+console.log(`✓ identity-links: ${n} assertions (challenge state machine, store invariants incl. sqlite parity, claim hook, union resolver, tools, admin plane, audit)`);
