@@ -11,7 +11,12 @@ export type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedId
 export type LinkEvidence =
   | { readonly kind: "challenge"; readonly challengeId: string }
   | { readonly kind: "config-import"; readonly note: string }
-  | { readonly kind: "directory-sync"; readonly provider: string; readonly grade: string };
+  | {
+      readonly kind: "directory-sync";
+      readonly provider: string;
+      readonly grade: string;
+      readonly externalId?: string;
+    };
 
 export function evidenceLabel(e: LinkEvidence): string {
   switch (e.kind) {
@@ -219,6 +224,22 @@ async function joinConfirmed(org: string, linkSetId: string, account: LinkedAcco
   };
   if (await store.insertLinkedId(org, row)) return;
   await store.updateLinkedIdStatus(org, account.platform, account.nativeId, ["suggested", "confirmed"], "confirmed", row.establishedBy, row.evidenceJson, at);
+}
+
+export async function ensureLinkSet(input: {
+  readonly org: string;
+  readonly linkSetId: string;
+  readonly handle: string;
+  readonly now?: Date;
+}): Promise<{ readonly set: LinkSetRow; readonly created: boolean }> {
+  const store = getOperationalStore();
+  const existing = await store.getLinkSet(input.org, input.linkSetId);
+  if (existing) return { set: existing, created: false };
+  const at = (input.now ?? new Date()).toISOString();
+  const set: LinkSetRow = { org: input.org, id: input.linkSetId, handle: input.handle, status: "active", createdAt: at, updatedAt: at };
+  await store.putLinkSet(input.org, set);
+  await auditLink(input.org, "directory", undefined, input.linkSetId, "identity.link.set_created", { linkSetId: input.linkSetId, handle: input.handle });
+  return { set, created: true };
 }
 
 export async function suggestLinkedId(input: {

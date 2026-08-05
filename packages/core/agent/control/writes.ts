@@ -15,6 +15,8 @@ import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
 import { whereFromScope } from "../approvals/actions.js";
 import { listLinkSetsWithIds, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
+import { directoryProvider } from "../identity/directory.js";
+import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -32,6 +34,8 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "suspend_link_set",
   "reactivate_link_set",
   "revoke_link_set",
+  "directory_sync_now",
+  "directory_sync_status",
 ] as const;
 
 const REASONING_LEVELS: ["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"] = [
@@ -425,6 +429,85 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, status: "revoked", note: res.note });
       } catch (e) {
         return errorResult(`revoke_link_set failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "directory_sync_now",
+    {
+      title: "Sync identity links from the directory (Okta) now",
+      description:
+        "Run the identity-directory sync for an org immediately instead of waiting for the daily schedule, and return the plan it applied. New IdP→platform mappings land as `suggested` links — INERT until the person confirms them in their own DM (`confirm_link`) — unless the org has set OE_DIRECTORY_AUTOCONFIRM=attested, which auto-confirms only mappings the IdP itself provisions. A person the directory reports as deprovisioned has their link-set SUSPENDED eagerly. It never unlinks or revokes anything: absence from the directory is not evidence, and revocation stays a human act (revoke_link_set). Safe to run repeatedly and concurrently — a second run over an unchanged directory is all no-ops. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("directory_sync_now");
+      if (denial) return errorResult(denial);
+      try {
+        const res = await syncDirectoryOrg({ org: a.org });
+        if (!res) {
+          return jsonResult({
+            ok: true,
+            org: a.org,
+            provider: null,
+            note: "no directory provider is registered — set OE_DIRECTORY_PROVIDER and wire the adapter at boot to arm directory sync.",
+          });
+        }
+        await appendAudit({
+          org: a.org,
+          platform: "control",
+          workspace: "control",
+          principalId: actor,
+          action: "admin.identity.directory_sync_now",
+          detail: { provider: res.provider, policy: res.policy, planned: res.plan.counts, applied: res.applied, warnings: res.plan.warnings.length },
+        });
+        return jsonResult({
+          ok: true,
+          org: a.org,
+          provider: res.provider,
+          policy: res.policy,
+          people: res.plan.people,
+          planned: res.plan.counts,
+          applied: res.applied,
+          warnings: res.plan.warnings,
+          refusals: res.refusals,
+          startedAt: res.startedAt,
+          finishedAt: res.finishedAt,
+        });
+      } catch (e) {
+        return errorResult(`directory_sync_now failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "directory_sync_status",
+    {
+      title: "Last identity-directory sync result",
+      description:
+        "What the last identity-directory sync did for an org: when it ran, which provider, the auto-confirm policy in force, how many suggestions/confirmations/suspensions it planned and applied, and any warnings it refused to act on (an account two directory records claim, a person whose accounts already span two link-sets). Read straight off the audit trail, so it reflects scheduled runs and manual ones alike. Org-admin only.",
+      inputSchema: { org: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("directory_sync_status");
+      if (denial) return errorResult(denial);
+      try {
+        const provider = directoryProvider();
+        const last = await lastDirectorySync(a.org);
+        return jsonResult({
+          ok: true,
+          org: a.org,
+          provider: provider ? { id: provider.id, name: provider.name } : null,
+          lastRun: last ? { ts: last.ts, ...last.detail } : null,
+          note: provider
+            ? last
+              ? undefined
+              : "a directory provider is wired but this org has never synced — run directory_sync_now, or wait for the daily schedule."
+            : "no directory provider is registered (OE_DIRECTORY_PROVIDER unset or its adapter is not wired) — directory sync is off.",
+        });
+      } catch (e) {
+        return errorResult(`directory_sync_status failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

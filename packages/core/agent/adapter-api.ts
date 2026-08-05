@@ -16,6 +16,9 @@ export {
 } from "./connections/aws-sso-link.js";
 export type { AwsSsoLinkStore } from "./connections/aws-sso-link.js";
 
+export { registerDirectoryProvider, directoryProvider, resetDirectoryProvider } from "./identity/directory.js";
+export type { DirectoryProvider, DirectoryPerson, DirectoryAccount, DirectoryGrade } from "./identity/directory.js";
+
 export { registerRefCodec } from "./credentials/ref.js";
 export type { RefCodec, CredentialRefDeriveInput, ParsedCredentialRef } from "./credentials/ref.js";
 

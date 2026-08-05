@@ -6,6 +6,7 @@ import { registerAgentBrowser } from "@open-everywhere/adapters/agent/browser/re
 import { agentBrowserEnabled, loadAgentBrowserConfig } from "@open-everywhere/adapters/agent/browser/config.js";
 import { registerAwsAccess } from "@open-everywhere/adapters/agent/aws/register.js";
 import { awsAccessEnabled } from "@open-everywhere/adapters/agent/aws/config.js";
+import { registerDirectoryAdapter } from "@open-everywhere/adapters/agent/directory/register.js";
 import {
   registerDbCredentialBroker,
   CREDENTIAL_KEY_ENV,
@@ -54,6 +55,8 @@ if (process.env[CREDENTIAL_KEY_ENV]) {
 if (awsAccessEnabled()) {
   registerAwsAccess();
 }
+
+registerDirectoryAdapter();
 
 registerGitHubMemory();
 

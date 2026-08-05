@@ -294,12 +294,12 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   const code = detectLinkClaim(out.instructions)!;
   ok(code !== undefined, "link_identity: the instructions carry a well-formed code");
 
-  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU1), "no link request", "confirm_link refuses before anything has claimed the code");
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU1), "nothing of yours is waiting", "confirm_link refuses before anything has claimed the code");
 
   await observeLinkClaim({ org: ORG, platform: "github", authorId: "u1-github", text: `link ${code}` });
-  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU2), "no link request", "confirm_link refuses a DIFFERENT person — a claim awaiting U1 is invisible to U2");
-  await refuses(() => confirmLink.execute({ decision: "confirm", challengeId: out.challengeId }, dmU2), "no link request", "confirm_link refuses when a different person names the challenge id explicitly");
-  await refuses(() => confirmLink.execute({ decision: "deny", challengeId: out.challengeId }, dmU2), "no link request", "confirm_link refuses a different person's DENY too — a stranger cannot cancel your link either");
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU2), "nothing of yours is waiting", "confirm_link refuses a DIFFERENT person — a claim awaiting U1 is invisible to U2");
+  await refuses(() => confirmLink.execute({ decision: "confirm", challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "confirm_link refuses when a different person names the challenge id explicitly");
+  await refuses(() => confirmLink.execute({ decision: "deny", challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "confirm_link refuses a different person's DENY too — a stranger cannot cancel your link either");
   ok((await pg.getLinkChallenge(ORG, out.challengeId))?.status === "claimed", "confirm_link: the refused attempts changed nothing — the claim still awaits its initiator");
 
   const confirmed = (await confirmLink.execute({ decision: "confirm" }, dmU1)) as { decided: string; claimant: string; linkSetId: string };

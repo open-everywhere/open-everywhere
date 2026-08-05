@@ -5,21 +5,29 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey } from "../identity/principal-key.js";
-import { denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
+import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
+import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
 
 export default defineTool({
   description:
-    "Confirm (or deny) an account that claimed this person's link code — the second half of link_identity. DM only, and only the person who started the link may call it. Confirming writes the link; denying writes nothing at all. ALWAYS show the claiming account to the person and let THEM decide before calling this — if they do not recognise it, deny.",
+    "Confirm (or deny) an account that belongs to this person — the second half of link_identity, and the one-tap confirmation for accounts an identity-directory sync (Okta) suggested for them. DM only, and only that person may call it. Confirming writes the link; denying writes nothing at all. ALWAYS show the account(s) to the person and let THEM decide before calling this — if they do not recognise one, deny.",
   inputSchema: z.object({
-    decision: z.enum(["confirm", "deny"]).describe("`confirm` links the claiming account to this person; `deny` discards the claim and writes nothing."),
+    decision: z.enum(["confirm", "deny"]).describe("`confirm` links the account(s) to this person; `deny` discards the proposal and writes nothing."),
     challengeId: z
       .string()
       .optional()
       .describe("Which link request to decide. Only needed when this person has more than one claim waiting — the tool names them if so."),
+    accounts: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Only for directory-suggested accounts: which ones to confirm, as principal keys (\"github/octocat\"). Omit to decide every account the directory proposed for this person. Ignored when a link code claim is waiting.",
+      ),
   }),
   outputSchema: z.object({
     decided: z.string(),
     claimant: z.string().optional(),
+    accounts: z.array(z.string()).optional(),
     linkSetId: z.string().optional(),
     note: z.string(),
   }),
@@ -42,7 +50,7 @@ export default defineTool({
       status: "claimed",
     });
     if (waiting.length === 0) {
-      throw new Error("no link request of yours is waiting for a decision — either nothing has claimed your code yet, it expired (codes last ~10 minutes), or it was already decided. Start again with link_identity.");
+      return await decideDirectorySuggestions({ org: binding.org, platform: binding.platform, actor, decision: input.decision, only: input.accounts });
     }
 
     let challenge = waiting[0]!;
@@ -75,3 +83,58 @@ export default defineTool({
     return { decided: "confirmed", claimant, linkSetId: result.linkSetId, note: result.note };
   },
 });
+
+async function decideDirectorySuggestions(input: {
+  readonly org: string;
+  readonly platform: string;
+  readonly actor: string;
+  readonly decision: "confirm" | "deny";
+  readonly only?: readonly string[];
+}): Promise<{ decided: string; accounts?: string[]; linkSetId?: string; note: string }> {
+  const pending = await pendingDirectorySuggestionsFor(input.org, input.platform, input.actor);
+  if (pending.length === 0) {
+    throw new Error(
+      "nothing of yours is waiting for a decision — no link code has been claimed (codes last ~10 minutes) and no identity-directory sync has suggested an account for you. Start a link yourself with link_identity.",
+    );
+  }
+  const chosen = input.only?.length
+    ? pending.filter((p) => input.only!.some((want) => want.trim().toLowerCase() === p.principal.toLowerCase()))
+    : pending;
+  if (chosen.length === 0) {
+    throw new Error(`none of those accounts is waiting for your decision. Suggested for you: ${pending.map((p) => p.principal).join(", ")}.`);
+  }
+  const named = chosen.map((p) => p.principal);
+
+  if (input.decision === "deny") {
+    return {
+      decided: "denied",
+      accounts: named,
+      note:
+        `Declined — nothing was linked. ${named.join(", ")} still has no standing as you. ` +
+        `The suggestion stays on file and the directory may propose it again; use unlink_identity to detach an account for good.`,
+    };
+  }
+
+  const confirmed: string[] = [];
+  const failed: string[] = [];
+  for (const p of chosen) {
+    const res = await confirmLinkedId({
+      org: input.org,
+      account: { platform: p.platform, nativeId: p.nativeId },
+      evidence: { kind: "challenge", challengeId: `dm-confirm:${principalKey(input.platform, input.actor)}` },
+    });
+    if (res.ok) confirmed.push(p.principal);
+    else failed.push(`${p.principal} (${res.reason})`);
+  }
+  if (confirmed.length === 0) {
+    throw new Error(`could not confirm ${failed.join("; ")}`);
+  }
+  return {
+    decided: "confirmed",
+    accounts: confirmed,
+    linkSetId: chosen[0]!.linkSetId,
+    note:
+      `Linked ${confirmed.join(", ")} to you.` +
+      (failed.length ? ` Could not link ${failed.join("; ")}.` : ""),
+  };
+}
