@@ -2,6 +2,10 @@ import { makeAwsStsProvider } from "../agent/aws/sts.js";
 import { makeAwsCliExecutor, type AwsExecInvocation } from "../agent/aws/cli.js";
 import type { AwsCredentials, AwsIdentityRequest } from "@open-everywhere/core/agent/adapter-api.js";
 
+delete process.env.AWS_REGION;
+delete process.env.AWS_DEFAULT_REGION;
+delete process.env.OE_AWS_REGION;
+
 let passed = 0;
 function ok(cond: boolean, label: string): void {
   if (!cond) {

@@ -8,7 +8,7 @@ import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/m
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
-import { defaultAgentModelId } from "@open-everywhere/core/agent/model/default-model.js";
+import { PRIMARY_MODEL, UTILITY_MODEL, VISION_MODEL } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { readFileSync } from "node:fs";
@@ -18,9 +18,8 @@ const GATEWAY_DEFAULTS = {
   zeroDataRetention: true,
   caching: "auto",
 } as const;
-const DEFAULT_MODEL = defaultAgentModelId();
+const DEFAULT_MODEL = PRIMARY_MODEL;
 
-const UTILITY_MODEL = "deepseek/deepseek-v4-flash";
 const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
 const UTILITY_GATEWAY_DEFAULTS = {
   zeroDataRetention: true,
@@ -35,11 +34,10 @@ registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_D
 
 registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
-const VISION_MODEL = "alibaba/qwen3.5-flash";
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   throw new Error(
     `open-everywhere: vision model "${VISION_MODEL}" is not allowed by the org model policy — ` +
-      "add it to agent/model/policy.ts's allow-list (or point VISION_MODEL at an allow-listed model).",
+      "check providerDeny in agent/model/policy.ts, or re-point the `vision` role in agent/model/models.ts.",
   );
 }
 registerGatewayImageDescriber({ id: VISION_MODEL, gateway: { zeroDataRetention: true } });
