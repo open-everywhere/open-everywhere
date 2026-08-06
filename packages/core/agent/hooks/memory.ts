@@ -18,6 +18,7 @@ import { appendAudit } from "../audit/audit.js";
 import { isSupervisorSession } from "../model/routing.js";
 import { windowTopologyEnabled } from "../access/capabilities.js";
 import { getConfig } from "../access/config.js";
+import { HOST_OWNED_FILES } from "../memory/host-owned-files.js";
 
 const sessionLog = defineState<{ firstMessage?: string }>(
   "open-everywhere.memory.sessionLog",
@@ -70,7 +71,7 @@ export function rejectedName(rel: string, sessionId: string): string {
 }
 
 function isHostOwnedFile(rel: string): boolean {
-  return rel === "RECURRING.md";
+  return HOST_OWNED_FILES.has(rel);
 }
 
 export function mergePreservingConflicts(

@@ -199,4 +199,87 @@ const ok = (cond: boolean, label: string) => {
   delete process.env.OE_SQLITE_PATH;
 }
 
-console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing)\n`);
+{
+  const dir = join(tmpdir(), `oe-sandbox-lifecycle-writeorder-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  const {
+    resolvePartition,
+    domainKeyOf,
+    spendTotals,
+    periodOf,
+    estimateSandboxCostUsd,
+    getOperationalStore,
+    registerOperationalStore,
+    resetOperationalStore,
+    usageForSession,
+  } = await import("@open-everywhere/core/agent/adapter-api.js");
+  type OperationalStore = ReturnType<typeof getOperationalStore>;
+
+  const ctx = {
+    channel: { kind: "slack" },
+    session: { id: "sess-writeorder", auth: { current: { attributes: { team_id: "T1", channel_id: "C_ORDER" } } } },
+  };
+  const p = resolvePartition(ctx as never);
+
+  const live = getOperationalStore();
+  const broken = { ...live, id: live.id, recordSpend: async () => { throw new Error("ledger unavailable"); } } as OperationalStore;
+  registerOperationalStore(broken);
+  resetOperationalStore();
+  ok(getOperationalStore() === broken, "write-ordering test: the broken store is actually in play");
+
+  await recordSandboxUsage(ctx as never, [{ name: "sbx-order", sandboxSeconds: 300 }]);
+
+  const totalsAfterFailure = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period: periodOf(new Date().toISOString()) });
+  ok(totalsAfterFailure.usdMicros === 0 && totalsAfterFailure.calls === 0, "a failed ledger write records nothing in the ledger (as expected — it threw)");
+  const eventsAfterFailure = (await usageForSession(p.org, "sess-writeorder")).filter((e) => e.kind === "sandbox");
+  ok(eventsAfterFailure.length === 0, "🔴 the fix: a failed recordSpend must NOT advance the watermark — no usage_events row for the failed stop");
+
+  registerOperationalStore(live);
+  resetOperationalStore();
+  ok(getOperationalStore() === live, "write-ordering test: the live store is restored");
+  await recordSandboxUsage(ctx as never, [{ name: "sbx-order", sandboxSeconds: 500 }]);
+
+  const totalsAfterRecovery = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period: periodOf(new Date().toISOString()) });
+  const expectedRecoveredMicros = Math.round(estimateSandboxCostUsd(500) * 1_000_000);
+  ok(
+    totalsAfterRecovery.usdMicros === expectedRecoveredMicros && totalsAfterRecovery.calls === 1,
+    `re-bill next stop: the recovered ledger holds the FULL 500s (the failed 300s were never lost) — got ${totalsAfterRecovery.usdMicros}, want ${expectedRecoveredMicros}`,
+  );
+  const eventsAfterRecovery = (await usageForSession(p.org, "sess-writeorder")).filter((e) => e.kind === "sandbox");
+  ok(eventsAfterRecovery.length === 1 && eventsAfterRecovery[0].detail?.sandboxSeconds === 500, "…and the watermark row now carries the full 500s delta");
+
+  rmSync(dir, { recursive: true, force: true });
+  delete process.env.OE_SQLITE_PATH;
+}
+
+{
+  const dir = join(tmpdir(), `oe-sandbox-lifecycle-dedupe-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
+  const { resolvePartition, domainKeyOf, spendTotals, periodOf, estimateSandboxCostUsd } = await import(
+    "@open-everywhere/core/agent/adapter-api.js"
+  );
+
+  const ctx = {
+    channel: { kind: "slack" },
+    session: { id: "sess-dedupe", auth: { current: { attributes: { team_id: "T1", channel_id: "C_DEDUPE" } } } },
+  };
+  await recordSandboxUsage(ctx as never, [
+    { name: "sbx-dup", sandboxSeconds: 200 },
+    { name: "sbx-dup", sandboxSeconds: 200 },
+  ]);
+
+  const p = resolvePartition(ctx as never);
+  const totals = await spendTotals(p.org, { surfaceKey: domainKeyOf(p), period: periodOf(new Date().toISOString()) });
+  const expectedMicros = Math.round(estimateSandboxCostUsd(200) * 1_000_000);
+  ok(
+    totals.usdMicros === expectedMicros && totals.calls === 1,
+    `🔴 the fix: a duplicate sandbox name in one stop call bills ONCE, not twice (got ${totals.usdMicros} micros / ${totals.calls} calls, want ${expectedMicros} / 1)`,
+  );
+
+  rmSync(dir, { recursive: true, force: true });
+  delete process.env.OE_SQLITE_PATH;
+}
+
+console.log(`\n✓ sandbox-lifecycle: ${n} assertions passed (hook shape, stop decisions, fail-soft, enable flag, runtime-seconds, spend-ledger $ record + principal/routine attribution + delta billing, write-ordering safety, duplicate-name dedupe)\n`);

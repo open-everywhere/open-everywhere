@@ -92,21 +92,14 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
     } catch (err) {
       log(`prior sandbox usage read skipped (billing the full window): ${String(err)}`);
     }
-    for (const s of stopped) {
+    const seenNames = new Set<string>();
+    const dedupedStopped = stopped.filter((s) => {
+      if (seenNames.has(s.name)) return false;
+      seenNames.add(s.name);
+      return true;
+    });
+    for (const s of dedupedStopped) {
       const billedSeconds = Math.max(0, Math.round(s.sandboxSeconds) - (priorBilled.get(s.name) ?? 0));
-      await appendUsageEvent({
-        org: p.org,
-        surfaceKey: domainKeyOf(p),
-        sessionId: ctx.session.id,
-        kind: "sandbox",
-        principalId,
-        ...(routineId !== undefined ? { routineId } : {}),
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
-        detail: { sandboxSeconds: billedSeconds, sandboxName: s.name },
-      });
       try {
         await recordSpend(p, {
           period: periodOf(new Date().toISOString()),
@@ -117,7 +110,25 @@ export async function recordSandboxUsage(ctx: HookContext, stopped: StoppedSandb
           usdMicros: Math.round(estimateSandboxCostUsd(billedSeconds) * 1_000_000),
         });
       } catch (err) {
-        log(`sandbox spend-ledger record skipped for "${s.name}": ${String(err)}`);
+        log(`sandbox spend-ledger record skipped for "${s.name}" (watermark NOT advanced — this window re-bills next stop): ${String(err)}`);
+        continue;
+      }
+      try {
+        await appendUsageEvent({
+          org: p.org,
+          surfaceKey: domainKeyOf(p),
+          sessionId: ctx.session.id,
+          kind: "sandbox",
+          principalId,
+          ...(routineId !== undefined ? { routineId } : {}),
+          inputTokens: 0,
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          detail: { sandboxSeconds: billedSeconds, sandboxName: s.name },
+        });
+      } catch (err) {
+        log(`sandbox usage-event append skipped for "${s.name}" (watermark not advanced; a future stop may re-bill this window): ${String(err)}`);
       }
     }
   } catch (err) {
