@@ -2,6 +2,7 @@ import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { SyntheticSlack } from "./synthetic.js";
 import { APPROVAL_PREFIX } from "./synthetic.js";
 import { pollUntil } from "./poll.js";
+import type { AuditQueryOpts, AuditWireEntry } from "./audit-read.js";
 
 export function factToken(stem: string): string {
   return `${stem}-${Date.now() % 100_000}`;
@@ -80,6 +81,91 @@ export async function driveDecide(args: {
   await awaitDecided(slack, askTs, card.ts, timeoutMs);
   gate(true, `card DECIDED — buttons removed by the deployment's chat.update (hard gate)`);
   return card;
+}
+
+interface SpendGateDetail {
+  readonly door?: unknown;
+  readonly key?: unknown;
+  readonly mode?: unknown;
+  readonly reason?: unknown;
+  readonly over?: unknown;
+}
+
+export function describeSpendGateRows(rows: readonly AuditWireEntry[]): string | undefined {
+  const gates = rows.filter((r) => r.action === "spend.gate");
+  if (gates.length === 0) return undefined;
+  const first = gates[0]!;
+  const d = (first.detail ?? {}) as SpendGateDetail;
+  const parts = [
+    `${gates.length} spend.gate row(s) in the run window`,
+    `door=${typeof d.door === "string" ? d.door : "(none)"}`,
+    `key=${typeof d.key === "string" ? d.key : "(none)"}`,
+    ...(typeof d.mode === "string" ? [`mode=${d.mode}`] : []),
+    `platform=${first.platform}`,
+    ...(typeof d.reason === "string" ? [`reason="${d.reason}"`] : []),
+  ];
+  return parts.join(" ");
+}
+
+export function spendGateDoorOf(rows: readonly AuditWireEntry[]): string | undefined {
+  const first = rows.find((r) => r.action === "spend.gate");
+  const door = (first?.detail as SpendGateDetail | undefined)?.door;
+  return typeof door === "string" && door.length > 0 ? door : undefined;
+}
+
+export const SPEND_GATE_DOORS = ["mention", "engagement", "join", "window"] as const;
+
+export type SilenceCause = { readonly kind: "unwired" } | { readonly kind: "routing" } | { readonly kind: "cap"; readonly detail: string };
+
+export async function classifySilence(
+  auditRead: ((opts: AuditQueryOpts) => Promise<readonly AuditWireEntry[]>) | undefined,
+  sinceIso: string,
+  opts: { readonly platform?: string } = {},
+): Promise<SilenceCause> {
+  if (!auditRead) return { kind: "unwired" };
+  try {
+    const rows = await auditRead({ sinceIso, actions: ["spend.gate"], ...(opts.platform ? { platform: opts.platform } : {}) });
+    const detail = describeSpendGateRows(rows);
+    return detail === undefined ? { kind: "routing" } : { kind: "cap", detail };
+  } catch {
+    return { kind: "unwired" };
+  }
+}
+
+export function silenceCauseGate(cause: SilenceCause): { readonly ok: boolean; readonly label: string } {
+  if (cause.kind === "cap") {
+    return {
+      ok: false,
+      label:
+        `the silence is a CAP REFUSAL, not routing — ${cause.detail}. While this scope is over cap EVERY wake here is ` +
+        `dropped before a model turn, so the silence leg proves nothing about the mention/ambient gate. Raise or clear ` +
+        `the cap on this fixture's scope and re-run.`,
+    };
+  }
+  if (cause.kind === "unwired") {
+    return {
+      ok: true,
+      label:
+        "silence cause not discriminated — no audit read wired (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN to tell a " +
+        "routing silence from a spend-cap refusal; since 6687d86f a capped surface goes silent for a money reason)",
+    };
+  }
+  return { ok: true, label: "the silence is a routing decision, not a spend-cap refusal (no spend.gate row in the run window)" };
+}
+
+export const LINK_CODE_ALPHABET = "23456789ACDEFGHJKLMNPQRSTUVWXYZ";
+
+export function parseLinkCode(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const CLASS = `[${LINK_CODE_ALPHABET}]`;
+  const PUNCT = "[\\s:*_`\\-]";
+  const anchored = new RegExp(`\\blink${PUNCT}+(${CLASS}{8})\\b`, "i").exec(text);
+  if (anchored) return anchored[1]!.toUpperCase();
+  for (const line of text.split("\n")) {
+    const bare = new RegExp(`^${PUNCT}*(${CLASS}{8})${PUNCT}*$`).exec(line);
+    if (bare) return bare[1]!;
+  }
+  return undefined;
 }
 
 export interface PrReadback {

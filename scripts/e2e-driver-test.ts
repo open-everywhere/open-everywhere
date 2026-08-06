@@ -247,13 +247,13 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(new Set(ids).size === ids.length, "scenario ids are unique");
   const EXPECTED_IDS = new Set([
     "J1", "J2", "S-MEM-READ", "J3", "J4", "S6", "J-DISC", "S8", "S9", "S10", "S11", "S13", "S14",
-    "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
-    "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
+    "S-LINK-SLACK", "S20", "S23", "S24", "J-TEAMS", "J-GH", "J-LIN", "J-NOT", "F-ART", "F-EDIT", "F-SEC", "J-SUP",
+    "J-UNIFIED", "J-UNI-X", "J-PR", "S-PR-SESSION", "S-PR-BOUNDARY", "S-AWS-BOUNDARY", "J-WORKFLOW", "S-NOTION-WRITE", "S-CONNECTOR-TIER",
     "S-CONNECTOR-TIER-EXECUTOR", "S-DM-NOTION", "S-CONNECT-CARD", "S-APIKEY-INTAKE",
   ]);
   ok(
     ids.length === EXPECTED_IDS.size && ids.every((id) => EXPECTED_IDS.has(id)),
-    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch)`,
+    `pack roster is exactly the ${EXPECTED_IDS.size} expected scenarios (J1 absorbs S1/S2/S3/S21/S22; J2 absorbs S4/S12; J3 absorbs S5/S15/S16/S19; J4 absorbs S17/S18; J-GH/J-LIN/J-NOT add github/linear/notion; F-ART/F-EDIT add artifact+edit; F-SEC adds the security suite; J-UNIFIED adds the unified Slack-only live path; J-UNI-X is the cross-surface money-shot, runnable pending a live multi-surface fixture; J-PR/J-WORKFLOW add the consequential open_pull_request write + S-PR-SESSION the OPE-53 approve-for-session grant→skip pair + S-PR-BOUNDARY the ungranted-repo refusal + S-AWS-BOUNDARY its twin on the OTHER consequential door (the ungated \`aws\` tool, whose only control is the fail-closed awsRoles grant); S-LINK-SLACK drives the whole proof-of-control identity-link loop across two REAL Slack accounts (mint → claim → notice → ratify), asserted on the identity.link.* audit rows because no read-tool exposes link rows; S-NOTION-WRITE/S-CONNECTOR-TIER add the connector-WRITE plane — write approval + the read/write tier split; S-DM-NOTION folds the DM personal-Notion journey + S-CONNECT-CARD the channel connector-offer card→forged-org-click→dashboard-link-issued audit + S-APIKEY-INTAKE the db-broker Set-API-key intake — all self-skipping until their fixtures are armed; S-MEM-READ is the OPE-121 leg that asserts a memory recall OPENED A FILE rather than trusting the reply text, which is what J2 alone could never catch)`,
   );
   const KNOWN = new Set(["slack", "discord", "synthetic", "slackPrivate", "slackChannelB", "slackCapFixture", "slackSupervisor", "syntheticDm", "slackUser2", "slackSecondary", "webhook", "notion", "teams", "github", "linear", "notionAmbient", "slackUnified", "pr", "connectorWrite"]);
   for (const s of SCENARIOS) {
@@ -289,9 +289,12 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   );
   const smoke = SCENARIOS.filter((s) => s.smoke === true).map((s) => s.id);
   ok(smoke.join(",") === "J1,J-TEAMS", "the smoke lane is exactly J1 (slack wake+reply) + J-TEAMS (teams)");
-  ok(SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC,S-PR-BOUNDARY", "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal)");
+  ok(
+    SCENARIOS.filter((s) => s.suite === "security").map((s) => s.id).join(",") === "F-SEC,S-PR-BOUNDARY,S-AWS-BOUNDARY",
+    "the security suite is F-SEC (tainted-remember/SSRF/injection) + S-PR-BOUNDARY (ungranted-repo PR refusal) + S-AWS-BOUNDARY (ungranted-AWS refusal: no host execution, no credential material)",
+  );
   const unjudged = SCENARIOS.filter((s) => !s.judged).map((s) => s.id);
-  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD", "S-MEM-READ/S6/S10/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD are fully deterministic — no judge (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
+  ok(unjudged.join(",") === "S-MEM-READ,S6,S10,S-LINK-SLACK,J-NOT,J-SUP,S-PR-SESSION,S-CONNECT-CARD", "S-MEM-READ/S6/S10/S-LINK-SLACK/J-NOT/J-SUP/S-PR-SESSION/S-CONNECT-CARD are fully deterministic — no judge (S-LINK-SLACK deliberately: an identity link either got WRITTEN or it didn't, and the only evidence of that is the identity.link.* audit rows — a model saying \"linked!\" is exactly the false pass this scenario exists to close) (S-MEM-READ deliberately: its whole point is that reply QUALITY is not the evidence — it gates on the memory.write audit row, the session-transcript read count and the touched silo set) (S15's deterministic legs folded into judged J3; S-PR-SESSION gates on GitHub-API readback + audit rows; S-CONNECT-CARD asserts the connector.dashboard_link_issued audit row; hard gates: route status / audited silence / reply-target / in-channel presence)");
   const req = (id: string) => SCENARIOS.find((s) => s.id === id)!.requires.join("+");
   ok(req("S11") === "slack+slackPrivate", "S11 requires slack + slackPrivate");
   ok(req("J2") === "slack+slackChannelB", "J2 (memory journey) requires slack + slackChannelB (the union of S4's slack and S12's slack+slackChannelB)");
@@ -306,6 +309,14 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(req("J-UNI-X") === "slack+slackUnified+github", "J-UNI-X (plan-only) requires slack + slackUnified + github — the eventual cross-surface fixture union");
   ok(req("J-PR") === "slack+synthetic+pr", "J-PR requires slack + synthetic (forge the approve) + pr (the granted target repo + readback token)");
   ok(req("S-PR-BOUNDARY") === "slack", "S-PR-BOUNDARY requires only slack (the ungranted-repo ask needs no repo/token — the refusal precedes any remote touch)");
+  ok(
+    req("S-AWS-BOUNDARY") === "slack",
+    "S-AWS-BOUNDARY requires only slack (the e2e channel has no awsRoles grant, so the fail-closed grant check refuses before any STS call — no AWS fixture needed, and deliberately so: a scenario that needed AWS creds to prove AWS is fenced would be unrunnable exactly where it matters)",
+  );
+  ok(
+    req("S-LINK-SLACK") === "slack+syntheticDm+slackSecondary",
+    "S-LINK-SLACK requires slack + syntheticDm (the initiator's DM turns — a driver-posted DM never wakes) + slackSecondary (a genuinely SECOND real account; link-store.ts refuses a self-claim, so this flow cannot be driven from one identity)",
+  );
   ok(req("J-WORKFLOW") === "slack+synthetic+pr", "J-WORKFLOW requires slack + synthetic + pr (the read→PR→remember→recall chain reuses the PR drive)");
 }
 
@@ -510,6 +521,62 @@ const { parseDirectMessageEvent, parseAppMentionEvent } = await import(`${eveRoo
   ok(classifyPrMiss("the staging push of my-branch failed — checkout the repo first") === "errored", "classifyPrMiss: a push/checkout failure → errored (prefer FAIL)");
   ok(classifyPrMiss("couldn't push your branch to the remote") === "errored", "classifyPrMiss: a couldn't-push reply → errored");
   ok(classifyPrMiss("Sure — what change would you like in the PR?") === "no-tool", "classifyPrMiss: a plain narration reply (no tool call) → no-tool (SKIP as model-choice)");
+}
+
+{
+  const { describeSpendGateRows, spendGateDoorOf, silenceCauseGate, SPEND_GATE_DOORS } = await import("../packages/core/scripts/e2e/journey.js");
+  const row = (action: string, detail?: Record<string, unknown>) => ({
+    ts: "2026-04-09T23:30:00.000Z",
+    org: "default",
+    platform: "github",
+    workspace: "acme",
+    action,
+    ...(detail ? { detail } : {}),
+  });
+  ok(describeSpendGateRows([]) === undefined, "describeSpendGateRows: an empty window yields undefined (no cap refusal ⇒ the silence is routing)");
+  ok(
+    describeSpendGateRows([row("github.no_reply"), row("reply.post")]) === undefined,
+    "describeSpendGateRows: rows that are not spend.gate never count (the discriminator keys on the action, not on there being any audit at all)",
+  );
+  const described = describeSpendGateRows([row("spend.gate", { door: "window", key: "github/acme/repo", mode: "channel", over: true, reason: "over the per-surface cap" })]);
+  ok(
+    described !== undefined && described.includes("door=window") && described.includes("key=github/acme/repo") && described.includes('reason="over the per-surface cap"'),
+    "describeSpendGateRows: renders door + key + reason into one line (door leads — it is the field that says WHICH ingress chokepoint refused)",
+  );
+  ok(
+    describeSpendGateRows([row("spend.gate", {})])?.includes("door=(none)") === true,
+    "describeSpendGateRows: a spend.gate row with no door still reports (a row without a door is itself the finding, not a reason to stay quiet)",
+  );
+  ok(spendGateDoorOf([row("spend.gate", { door: "mention" })]) === "mention", "spendGateDoorOf: reads the door off the first spend.gate row");
+  ok(spendGateDoorOf([row("github.no_reply", { door: "mention" })]) === undefined, "spendGateDoorOf: ignores a door on a non-spend.gate row");
+  ok(spendGateDoorOf([row("spend.gate", { door: 7 })]) === undefined, "spendGateDoorOf: a non-string door is undefined (wire data is never trusted to be well-typed)");
+  ok(
+    SPEND_GATE_DOORS.join("|") === "mention|engagement|join|window",
+    "SPEND_GATE_DOORS mirrors agent/spend/ingress-gate.ts's SpendGateDoor — the four ingress chokepoints, `window` being the cross-surface single-window divert",
+  );
+  ok(silenceCauseGate({ kind: "routing" }).ok, "silenceCauseGate: no spend.gate row ⇒ the silence leg stands (ok)");
+  ok(silenceCauseGate({ kind: "unwired" }).ok, "silenceCauseGate: an unwired audit reader is ok — never red a correct silence for a missing harness credential");
+  ok(
+    silenceCauseGate({ kind: "unwired" }).label.includes("E2E_CONTROL_READ_TOKEN"),
+    "silenceCauseGate: the unwired label names the env vars that would arm the discriminator (the call sites LOG this rather than counting a gate)",
+  );
+  const capped = silenceCauseGate({ kind: "cap", detail: "1 spend.gate row(s) in the run window door=window" });
+  ok(!capped.ok && /cap refusal/i.test(capped.label), "silenceCauseGate: a spend.gate row in the window FAILS the leg, saying 'cap refusal, not routing'");
+  ok(capped.label.includes("door=window"), "silenceCauseGate: the failure carries the row detail, so the reader sees WHICH door bought the silence");
+}
+
+{
+  const { parseLinkCode, LINK_CODE_ALPHABET } = await import("../packages/core/scripts/e2e/journey.js");
+  ok(LINK_CODE_ALPHABET === "23456789ACDEFGHJKLMNPQRSTUVWXYZ", "LINK_CODE_ALPHABET mirrors agent/identity/link-challenge.ts (no 0/1/I/O/B, no lower case — 31 symbols)");
+  ok(parseLinkCode("…and nothing else:\n\n    link K7QD2XMN\n\nIt is single-use") === "K7QD2XMN", "parseLinkCode: lifts the code out of the tool's own verbatim instructions");
+  ok(parseLinkCode("send me `link k7qd2xmn` from the other account") === "K7QD2XMN", "parseLinkCode: case-insensitive on the anchored form, normalised to upper case (the claim CAS uppercases too)");
+  ok(parseLinkCode("Here's your code:\n\n`K7QD2XMN`\n\nPost it from the other account.") === "K7QD2XMN", "parseLinkCode: a whole-line/code-block rendering is recognised when the model reformats");
+  ok(
+    parseLinkCode("This is a STANDARD reply with no code in it at all.") === undefined,
+    "parseLinkCode: does NOT bare-scan prose — 'STANDARD' is eight symbols entirely inside the alphabet, and a wrong code fails the claim in a way that looks like a product bug",
+  );
+  ok(parseLinkCode(undefined) === undefined && parseLinkCode("") === undefined, "parseLinkCode: total over absent/empty input");
+  ok(parseLinkCode("link ACDEFGH") === undefined, "parseLinkCode: a 7-symbol token is not a code (length is pinned at 8)");
 }
 
 {
