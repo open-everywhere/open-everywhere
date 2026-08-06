@@ -5,6 +5,7 @@ import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, su
 import { principalKey } from "./principal-key.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
+import { connectorLinkSetVaultEnabled, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 
 function log(msg: string): void {
@@ -20,6 +21,14 @@ function accessReferencedSetsFromConfig(): Set<string> {
     });
   } catch {
     return new Set<string>();
+  }
+}
+
+export function directoryLinkSetVaultArmed(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    return connectorLinkSetVaultEnabled(env);
+  } catch {
+    return true;
   }
 }
 
@@ -105,9 +114,19 @@ export function planDirectorySync(input: {
   readonly current: DirectoryLinkState;
   readonly autoConfirm: DirectoryAutoConfirm;
   readonly accessReferencedSets?: ReadonlySet<string>;
+  readonly linkSetVaultArmed?: boolean;
 }): DirectorySyncPlan {
   const steps: DirectorySyncStep[] = [];
   const warnings: string[] = [];
+
+  const vaultArmed = input.linkSetVaultArmed === true;
+  if (vaultArmed && input.autoConfirm === "attested") {
+    warnings.push(
+      `${OE_CONNECTOR_LINKSET_VAULT_ENV} is armed, so EVERY confirmed member of an active link-set can mint that set's SHARED user-OAuth token (C.3) — ` +
+        `directory auto-confirm is therefore SUPPRESSED for ALL link-sets, not only the ones access config names (C2.4, threat (c)). ` +
+        `Every attested mapping lands as a suggestion awaiting the person's own DM confirmation, because an IdP edit must not hand a brand-new account somebody else's live credential.`,
+    );
+  }
 
   const rowByKey = new Map<string, { readonly row: LinkedIdRow; readonly set: LinkSetRow }>();
   const setById = new Map<string, LinkSetRow>();
@@ -200,10 +219,10 @@ export function planDirectorySync(input: {
 
     const targetId = target?.id ?? derivedId;
     const newSet = target === undefined;
-    const targetAccessReferenced = input.accessReferencedSets?.has(targetId) ?? false;
-    if (targetAccessReferenced && input.autoConfirm === "attested" && accounts.size > 0) {
+    const targetAccessReferenced = vaultArmed || (input.accessReferencedSets?.has(targetId) ?? false);
+    if (!vaultArmed && targetAccessReferenced && input.autoConfirm === "attested" && accounts.size > 0) {
       warnings.push(
-        `link-set ${targetId} is referenced by ACCESS config (admin roster / credential binding / group), so directory auto-confirm is SUPPRESSED for it (C2.4) — an attested mapping still lands as a suggestion awaiting the person's own DM confirmation, because an IdP attestation must not widen an access-bearing set without a human in the loop.`,
+        `link-set ${targetId} is referenced by ACCESS config (a \`principal\` credential binding or a person-group), so directory auto-confirm is SUPPRESSED for it (C2.4) — an attested mapping still lands as a suggestion awaiting the person's own DM confirmation, because an IdP attestation must not widen an access-bearing set without a human in the loop.`,
       );
     }
     for (const [key, acct] of accounts) {
@@ -280,6 +299,7 @@ export async function syncDirectoryOrg(input: {
   readonly provider?: DirectoryProvider;
   readonly autoConfirm?: DirectoryAutoConfirm;
   readonly accessReferencedSets?: ReadonlySet<string>;
+  readonly linkSetVaultArmed?: boolean;
   readonly now?: Date;
 }): Promise<DirectorySyncResult | null> {
   const provider = input.provider ?? directoryProvider();
@@ -287,10 +307,11 @@ export async function syncDirectoryOrg(input: {
   const policy = input.autoConfirm ?? directoryAutoConfirm();
   const startedAt = (input.now ?? new Date()).toISOString();
   const accessReferencedSets = input.accessReferencedSets ?? accessReferencedSetsFromConfig();
+  const vaultArmed = input.linkSetVaultArmed ?? directoryLinkSetVaultArmed();
 
   const people = await provider.listPeople();
   const current = await listLinkSetsWithIds(input.org);
-  const plan = planDirectorySync({ provider: provider.id, people, current, autoConfirm: policy, accessReferencedSets });
+  const plan = planDirectorySync({ provider: provider.id, people, current, autoConfirm: policy, accessReferencedSets, linkSetVaultArmed: vaultArmed });
 
   const refusals: string[] = [];
   let setsCreated = 0;

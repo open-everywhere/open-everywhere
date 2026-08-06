@@ -10,6 +10,7 @@ import {
   OE_DIRECTORY_AUTOCONFIRM_ENV,
   directoryAutoConfirm,
   directoryLinkSetId,
+  directoryLinkSetVaultArmed,
   lastDirectorySync,
   pendingDirectorySuggestionsFor,
   planDirectorySync,
@@ -19,6 +20,7 @@ import {
   type DirectoryLinkState,
 } from "../agent/identity/directory-sync.js";
 import { directoryProvider, registerDirectoryProvider, resetDirectoryProvider, type DirectoryPerson, type DirectoryProvider } from "../agent/identity/directory.js";
+import { OE_CONNECTOR_LINKSET_VAULT_ENV } from "../agent/connections/connector-flags.js";
 import {
   confirmedLinkSetPrincipals,
   expandLinkSet,
@@ -508,6 +510,50 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const next = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(next.applied.confirmed === 0, "F3: the next sync confirms nothing — Dan's accounts now span two sets");
   ok(next.plan.warnings.some((w) => w.includes(danSet) && w.includes(freshSet)), "🔴 F3: …and it warns LOUDLY, naming both sets, so an admin decides (never a silent merge)");
+}
+
+{
+  const erin: DirectoryPerson = {
+    externalId: "00u-erin",
+    displayName: "Erin",
+    accounts: [{ platform: "slack", nativeId: "U-ERIN", grade: "attested" }],
+    groups: [],
+    deprovisioned: false,
+  };
+  const erinSet = directoryLinkSetId("okta", "00u-erin");
+  registerDirectoryProvider(fakeDirectory(() => [erin]));
+
+  ok(directoryLinkSetVaultArmed({}) === false, "vault reader: unset ⇒ not armed (the id-keyed C2.4 guard alone, byte-identical to before C.3)");
+  ok(directoryLinkSetVaultArmed({ [OE_CONNECTOR_LINKSET_VAULT_ENV]: "0" }) === false, "vault reader: an OFF spelling is not armed");
+  ok(directoryLinkSetVaultArmed({ [OE_CONNECTOR_LINKSET_VAULT_ENV]: "1" }) === true, "vault reader: armed");
+  const unreadable = new Proxy({} as NodeJS.ProcessEnv, {
+    get() {
+      throw new Error("environment unreadable");
+    },
+  });
+  ok(
+    directoryLinkSetVaultArmed(unreadable) === true,
+    "🔴 vault reader FAILS CLOSED: an environment whose flag state cannot be determined resolves ARMED — a false positive only makes a mapping wait for its human, a false negative is a silent credential grant",
+  );
+
+  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
+  const armedRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
+  ok(armedRun.applied.suggested === 1 && armedRun.applied.confirmed === 0, "🔴 runner (vault armed): the attested mapping lands as a SUGGESTION and nothing is confirmed");
+  ok((await resolveLinkSet(ORG, "slack", "U-ERIN")) === null, "🔴 …so the new account is in no set yet — it cannot reach the set's shared OAuth token");
+  ok(
+    armedRun.plan.warnings.some((w) => w.includes(OE_CONNECTOR_LINKSET_VAULT_ENV) && w.includes("SUPPRESSED")),
+    "…and the run says LOUDLY why an operator's armed auto-confirm stopped confirming",
+  );
+  ok(
+    !armedRun.plan.warnings.some((w) => w.includes(erinSet)),
+    "…without naming the set: the reason is the deployment's flag, not anything about Erin's set (which no config mentions)",
+  );
+
+  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
+  const offRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
+  ok(offRun.applied.confirmed === 1, "🔴 runner (vault OFF): the SAME fixture auto-confirms exactly as before C.3 — the guard adds nothing when the vault is not armed");
+  ok((await resolveLinkSet(ORG, "slack", "U-ERIN"))?.id === erinSet, "…the account resolves to its directory-derived set");
+  ok(offRun.plan.warnings.length === 0, "…and no suppression warning is emitted");
 }
 
 resetDirectoryProvider();

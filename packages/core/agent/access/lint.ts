@@ -26,7 +26,7 @@ export function groupWidth(group: Group | undefined): string | undefined {
   if (!group) return undefined;
   const sets = group.members.filter(isLinkSetMember).length;
   if (sets > 0) {
-    return `it has ${sets} link-set member(s) — each is a HUMAN who, once link-set expansion is wired, resolves to every account they have confirmed, so the DMs this credential would reach grow with no diff to this binding/bundle/group. NOTE: link-set expansion is NOT yet live at runtime, so today these members grant nothing — this is flagged broad for the day it is wired`;
+    return `it has ${sets} link-set member(s) — each is a HUMAN who resolves to every account they have confirmed, so the DMs this credential reaches grow with no diff to this binding/bundle/group. This is LIVE at runtime: the DM connector gate resolves through the awaitable expander, so confirming a new account into one of these sets grants it this capability in that account's own DM with no change to any file`;
   }
   if (group.members.length >= GROUP_BROAD_MEMBERS) {
     return `it has ${group.members.length} members (at or over the ${GROUP_BROAD_MEMBERS}-member threshold) — every one of them gets this capability in their own DM`;

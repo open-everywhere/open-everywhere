@@ -202,6 +202,30 @@ await db.close();
 
   ok(accessReferencedLinkSets({ bindings: [{ bundle: "b", scope: { level: "principal", principal: `linkSet:${carolSet}` } }] }).has(carolSet), "a PRINCIPAL binding naming the derived set is what the guard reads — a directory addition cannot widen it without proof-of-control");
   ok(accessReferencedLinkSets({ groups: [{ name: "g", members: [{ linkSet: carolSet }] }] }).has(carolSet), "…and a GROUP naming the set is a widening source too");
+
+  ok(accessReferencedLinkSets({ bindings: [], groups: [] }).size === 0, "setup: with no binding and no group, NO set is access-REFERENCED — the id-keyed guard has nothing to suppress on");
+
+  const vaulted = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: true });
+  ok(
+    vaulted.steps.every((s) => s.kind !== "suggest" || s.autoConfirm === false),
+    "🔴 C.3 (k): with the shared OAuth vault ARMED, an attested auto-confirm is SUPPRESSED even for a set NO config names — membership alone mints that set's shared token, so an IdP edit must not confirm a stranger into it",
+  );
+  ok(vaulted.steps.every((s) => s.kind !== "confirm"), "…and no confirm step is emitted for it either");
+  ok(
+    vaulted.warnings.some((w) => w.includes("OE_CONNECTOR_LINKSET_VAULT") && w.includes("SUPPRESSED") && w.includes("ALL link-sets")),
+    "…with ONE loud deployment-level warning naming the flag (the reason is a property of the deployment, not of any one set)",
+  );
+  ok(
+    vaulted.warnings.filter((w) => w.includes("SUPPRESSED")).length === 1,
+    "…exactly one — the blanket reason is warned once per run, never once per person, or it would be buried",
+  );
+
+  const vaultOff = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: false });
+  assert.deepEqual(vaultOff, open, "🔴 vault OFF ⇒ the plan is IDENTICAL to the pre-C.3 baseline — the guard adds nothing when the vault is not armed");
+  passed++;
+
+  const vaultedOffPolicy = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "off", linkSetVaultArmed: true });
+  ok(vaultedOffPolicy.warnings.length === 0, "vault armed + autoconfirm OFF ⇒ no warning — the guard reports the escape it CLOSED, not one that was never open");
 }
 
 console.log(`✓ c2-linkset-access: ${passed} assertions passed`);
