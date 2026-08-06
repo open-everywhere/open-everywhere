@@ -15,7 +15,6 @@ function accessReferencedSetsFromConfig(): Set<string> {
   try {
     const cfg = getConfig();
     return accessReferencedLinkSets({
-      domains: cfg.loadDomains(),
       bindings: cfg.loadBindings(),
       groups: cfg.loadGroups?.() ?? [],
     });

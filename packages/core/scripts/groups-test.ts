@@ -32,7 +32,16 @@ import {
   stringifyGroups,
   type GroupsFile,
 } from "../agent/identity/groups-codemod.js";
-import { groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../agent/identity/group-sync.js";
+import {
+  OE_DIRECTORY_GROUP_ALLOWLIST_ENV,
+  directoryGroupAllowlist,
+  groupPlanIsNoop,
+  planDirectoryGroups,
+  planOverlayContent,
+  renderGroupPlan,
+} from "../agent/identity/group-sync.js";
+import { deliverGroupsOverlay, groupsPrBody, requireGroupsDeliveryConfig } from "../agent/identity/groups-delivery.js";
+import type { AccessRequestsConfig } from "../agent/access/config.js";
 import { directoryLinkSetId } from "../agent/identity/directory-sync.js";
 import type { DirectoryPerson } from "../agent/identity/directory.js";
 import { callerLinkSets, withLinkSetGroups } from "../agent/access/group-request.js";
@@ -55,6 +64,15 @@ function throwsWith(fn: () => void, fragment: string, label: string): void {
     return;
   }
   ok(false, `${label} (did not throw)`);
+}
+async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: string): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    ok(String(err).includes(fragment), `${label} (got: ${String(err).slice(0, 200)})`);
+    return;
+  }
+  ok(false, `${label} (did not reject)`);
 }
 
 {
@@ -310,6 +328,128 @@ const setOf = (externalId: string): string => directoryLinkSetId(PROVIDER, exter
 
   const p7 = planDirectoryGroups({ provider: PROVIDER, people: [person("alice", ["  "])], current: emptyGroupsFile() });
   ok(p7.warnings.length === 1 && p7.next.groups.length === 0, "a blank IdP group name is skipped with a warning");
+}
+
+{
+  const inBoth = (extId: string): DirectoryPerson => ({ ...person(extId, ["Payments", "Secret-Internal"]) });
+
+  const allowed = planDirectoryGroups({ provider: PROVIDER, people: [inBoth("alice")], current: emptyGroupsFile(), allowGroups: ["Payments"] });
+  ok(allowed.next.groups.length === 1 && allowed.next.groups[0]!.name === "directory:Payments", "allowlist: only the listed IdP group appears in the overlay");
+  ok(!allowed.steps.some((s) => "group" in s && s.group === "directory:Secret-Internal"), "allowlist: an unlisted IdP group produces no plan step at all");
+
+  const all = planDirectoryGroups({ provider: PROVIDER, people: [inBoth("alice")], current: emptyGroupsFile() });
+  ok(all.next.groups.length === 2, "allowlist: unset (undefined) syncs EVERY group — the default, unchanged");
+
+  const seeded = planDirectoryGroups({ provider: PROVIDER, people: [inBoth("alice")], current: emptyGroupsFile() }).next;
+  const narrowed = planDirectoryGroups({ provider: PROVIDER, people: [inBoth("alice")], current: seeded, allowGroups: ["Payments"] });
+  ok(narrowed.steps.some((s) => s.kind === "drop-group" && s.group === "directory:Secret-Internal"), "allowlist: adding an allowlist that excludes a synced group plans its removal (narrowing through the same review path)");
+
+  const emptied = planDirectoryGroups({
+    provider: PROVIDER,
+    people: [person("alice", ["Payments"], true)],
+    current: emptyGroupsFile(),
+    allowGroups: ["Payments"],
+  });
+  ok(emptied.next.groups.length === 0, "allowlist: an allowlisted-but-empty group is dropped like today (never emitted empty)");
+
+  ok(directoryGroupAllowlist({}) === undefined, "allowlist env: unset ⇒ undefined (sync everything)");
+  ok(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: "" }) === undefined, "allowlist env: blank ⇒ undefined (not a silent total narrowing)");
+  ok(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: " , " }) === undefined, "allowlist env: all-blank entries ⇒ undefined");
+  assert.deepEqual(directoryGroupAllowlist({ [OE_DIRECTORY_GROUP_ALLOWLIST_ENV]: "Payments, Secret-Internal ,Eng" }), ["Payments", "Secret-Internal", "Eng"]);
+  passed++;
+  ok(true, "allowlist env: comma-separated, per-entry trimmed, empties dropped");
+}
+
+{
+  interface DeliveryState {
+    branches: Record<string, string>;
+    files: Record<string, { content: string; sha: string }>;
+    puts: string[];
+    prs: { title: string; body: string; head: string; base: string }[];
+    prExisting?: boolean;
+  }
+  function deliveryDeps(state: DeliveryState) {
+    return {
+      resolveToken: async () => "tok_test",
+      getBranchSha: async ({ branch }: { branch: string }) => state.branches[branch] ?? null,
+      createBranch: async ({ branch, sha }: { branch: string; sha: string }) => {
+        state.branches[branch] = sha;
+        return "created" as const;
+      },
+      contents: {
+        getFile: async (_repo: string, path: string, branch: string) => state.files[`${branch}:${path}`] ?? null,
+        putFile: async (_repo: string, path: string, content: string, _msg: string, branch: string) => {
+          state.files[`${branch}:${path}`] = { content, sha: `sha-${state.puts.length + 1}` };
+          state.puts.push(content);
+          return "commit-sha";
+        },
+      },
+      createPr: async (opts: { title: string; body: string; head: string; base: string }) => {
+        state.prs.push(opts);
+        return { url: "https://github.com/acme/agent-config/pull/3", number: 3, updated: state.prExisting === true };
+      },
+      committer: { name: "open-everywhere[bot]", email: "bot@users.noreply.github.com" },
+    };
+  }
+  const deliveryConfig = (over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig => ({
+    configRepo: "acme/agent-config",
+    baseBundles: () => [],
+    baseBindings: () => [],
+    ...over,
+  });
+
+  const changed = planDirectoryGroups({ provider: PROVIDER, people: [person("alice", ["Payments"])], current: emptyGroupsFile() });
+  throwsWith(() => requireGroupsDeliveryConfig({ configRepo: undefined, baseBundles: () => [], baseBindings: () => [] }), "isn't configured", "delivery: an unset config repo fails closed");
+  await rejectsWith(
+    () => deliverGroupsOverlay(changed, { config: { configRepo: undefined, baseBundles: () => [], baseBindings: () => [] } }),
+    "isn't configured",
+    "delivery: deliverGroupsOverlay refuses when the config repo is unconfigured",
+  );
+
+  {
+    const state: DeliveryState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [] };
+    const out = await deliverGroupsOverlay(changed, { config: deliveryConfig(), ...deliveryDeps(state) });
+    const branch = "directory-groups/okta";
+    ok(state.branches[branch] === "base-sha", "delivery: the delivery branch is cut from the base sha");
+    ok(state.puts.length === 1 && state.puts[0] === emitGroupsModule(changed.next), "delivery: exactly one commit, whose bytes are the deterministic codemod output");
+    ok(state.files[`${branch}:agent/identity/groups.generated.ts`]!.content === planOverlayContent(changed), "delivery: the overlay is written at the default groups.generated.ts path");
+    const reparsed = parseGroupsModule(state.puts[0]!);
+    ok(emitGroupsModule(reparsed) === state.puts[0], "delivery: the committed overlay round-trips through the codemod byte-identically (data-only, lint:overlays-clean)");
+    ok(state.prs.length === 1 && state.prs[0].head === branch && state.prs[0].base === "main", "delivery: one PR opened head→base");
+    ok(state.prs[0].title === "Directory group sync: okta", "delivery: the PR title names the provider");
+    ok(out.outcome === "opened" && out.pr?.number === 3 && out.committed === true, "delivery: outcome reports an opened PR with a fresh commit");
+    const bodyLines = state.prs[0].body.split("\n");
+    ok(state.prs[0].body.includes("deterministic person-group codemod") && state.prs[0].body.includes("Merging this PR IS the approval"), "delivery: the PR body carries the merge-is-the-gate doctrine");
+    ok(bodyLines.filter((l) => l.trim() === "---").length === 1 && bodyLines.every((l) => !l.startsWith("#")), "delivery: the body has exactly the host footer rule and no heading (nothing model-authored)");
+  }
+
+  {
+    const branch = "directory-groups/okta";
+    const existing = emitGroupsModule(changed.next);
+    const state: DeliveryState = { branches: { main: "base-sha", [branch]: "base-sha" }, files: { [`${branch}:agent/identity/groups.generated.ts`]: { content: existing, sha: "sha-0" } }, puts: [], prs: [], prExisting: true };
+    const out = await deliverGroupsOverlay(changed, { config: deliveryConfig(), ...deliveryDeps(state) });
+    ok(state.puts.length === 0, "delivery(re-run): the branch already carries the identical overlay ⇒ no second commit");
+    ok(out.outcome === "updated" && out.committed === false, "delivery(re-run): the existing PR is updated, not re-created, and nothing was committed");
+  }
+
+  {
+    const seeded = planDirectoryGroups({ provider: PROVIDER, people: [person("alice", ["Payments"])], current: emptyGroupsFile() }).next;
+    const noop = planDirectoryGroups({ provider: PROVIDER, people: [person("alice", ["Payments"])], current: seeded });
+    ok(groupPlanIsNoop(noop), "delivery(no-op): the plan against its own output is a no-op");
+    const state: DeliveryState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [] };
+    const out = await deliverGroupsOverlay(noop, { config: deliveryConfig(), ...deliveryDeps(state) });
+    ok(out.outcome === "no-op" && !out.pr, "delivery(no-op): returns a no-op with no PR");
+    ok(Object.keys(state.branches).length === 1 && state.puts.length === 0 && state.prs.length === 0, "delivery(no-op): touched the SCM plane not at all — no branch, no commit, no PR");
+  }
+
+  {
+    const state: DeliveryState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [] };
+    await deliverGroupsOverlay(changed, { config: deliveryConfig({ groupsPath: "config/groups.generated.ts" }), ...deliveryDeps(state) });
+    ok(state.files["directory-groups/okta:config/groups.generated.ts"] !== undefined, "delivery: a configured groupsPath is where the overlay is written");
+  }
+
+  ok(groupsPrBody(changed) === groupsPrBody(changed), "delivery: groupsPrBody is deterministic");
+  ok(groupsPrBody(changed).includes("okta") && groupsPrBody(changed).includes("directory:Payments"), "delivery: the PR body names the provider and renders the machine diff from the plan alone");
 }
 
 const ORG = "default";

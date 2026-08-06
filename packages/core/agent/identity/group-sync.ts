@@ -31,8 +31,10 @@ export function planDirectoryGroups(input: {
   readonly provider: string;
   readonly people: readonly DirectoryPerson[];
   readonly current: GroupsFile;
+  readonly allowGroups?: readonly string[];
 }): GroupSyncPlan {
   const warnings: string[] = [];
+  const allow = input.allowGroups ? new Set(input.allowGroups) : undefined;
 
   const desired = new Map<string, { title: string; members: Set<string> }>();
   for (const person of input.people) {
@@ -43,6 +45,7 @@ export function planDirectoryGroups(input: {
         warnings.push(`directory person "${person.externalId}" carries an empty group name — skipped (fix the duplicate/blank group in the IdP).`);
         continue;
       }
+      if (allow && !allow.has(raw)) continue;
       const name = directoryGroupName(raw);
       const entry = desired.get(name) ?? { title: raw, members: new Set<string>() };
       entry.members.add(linkSet);
@@ -93,6 +96,18 @@ export function planDirectoryGroups(input: {
 
 export function planOverlayContent(plan: GroupSyncPlan): string {
   return emitGroupsModule(plan.next);
+}
+
+export const OE_DIRECTORY_GROUP_ALLOWLIST_ENV = "OE_DIRECTORY_GROUP_ALLOWLIST";
+
+export function directoryGroupAllowlist(env: NodeJS.ProcessEnv = process.env): readonly string[] | undefined {
+  const raw = env[OE_DIRECTORY_GROUP_ALLOWLIST_ENV]?.trim();
+  if (!raw) return undefined;
+  const names = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return names.length > 0 ? names : undefined;
 }
 
 export function renderGroupPlan(plan: GroupSyncPlan): string[] {

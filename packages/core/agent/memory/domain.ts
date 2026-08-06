@@ -1,6 +1,5 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
-import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
@@ -517,9 +516,9 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       );
     }
     for (const entry of d.admins ?? []) {
-      if (isQualifiedPrincipalKey(entry) || isValidLinkSetRef(entry)) continue;
+      if (isQualifiedPrincipalKey(entry)) continue;
       bad.push(
-        `  "${d.name}" lists admin "${entry}", which is neither a PLATFORM-QUALIFIED principal key \`platform/<principal-id>\` (e.g. "slack/U0EXUSER002", "discord/300000000000000104") nor a link-set reference \`linkSet:<link-set-id>\` — a bare vendor id names no namespace and can never match, so the person would silently hold no admin standing (identity/principal-key.ts, identity/link-set-ref.ts)`,
+        `  "${d.name}" lists admin "${entry}", which is not a PLATFORM-QUALIFIED principal key \`platform/<principal-id>\` (e.g. "slack/U0EXUSER002", "discord/300000000000000104"). Admin standing is exact-id ONLY — static and diff-auditable, with no runtime link-set resolution on the highest-privilege gate. A bare vendor id names no namespace and can never match; a \`linkSet:<id>\` reference is deliberately refused here (use a \`principal\` credential binding or a person-group for link-set-keyed grants). (identity/principal-key.ts)`,
       );
     }
     if (hasMatch) {

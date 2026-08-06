@@ -1,6 +1,5 @@
 import { actingPrincipalId, bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
 import { principalKey, rosterHasPrincipal } from "../identity/principal-key.js";
-import { rosterHasLinkSet } from "../identity/link-set-ref.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
 
@@ -13,12 +12,12 @@ export interface Role {
 
 const NO_ROLE: Role = { isOrgAdmin: false, isDomainAdmin: false };
 
-export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain[], callerLinkSets: readonly string[] = []): Role {
+export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain[]): Role {
   const principalId = actingPrincipalId(binding);
   if (!principalId) return NO_ROLE;
 
   const rosterAdmits = (roster: readonly string[] | undefined): boolean =>
-    rosterHasPrincipal(roster, binding.platform, principalId) || rosterHasLinkSet(roster, callerLinkSets);
+    rosterHasPrincipal(roster, binding.platform, principalId);
 
   const org = criteriaDomain("org", domains);
   const isOrgAdmin = rosterAdmits(org?.admins);
@@ -64,12 +63,11 @@ export function adminControlRoles(
   principalId: string | undefined,
   domains: readonly Domain[],
   platform: string | undefined,
-  callerLinkSets: readonly string[] = [],
 ): string[] {
   if (!principalId || !platform) return [];
   const key = principalKey(platform, principalId);
   const admits = (roster: readonly string[] | undefined): boolean =>
-    roster?.includes(key) === true || rosterHasLinkSet(roster, callerLinkSets);
+    roster?.includes(key) === true;
   if (admits(criteriaDomain("org", domains)?.admins)) return ["admin"];
   return domains.filter((d) => d.match === undefined && admits(d.admins)).map((d) => `domain:${d.name}`);
 }

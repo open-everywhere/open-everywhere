@@ -50,7 +50,7 @@ const {
   OE_CONNECTOR_LINKSET_VAULT_ENV,
 } = await import("../agent/connections/connector-flags.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { ratifyOauthVaultShare, sharedVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
+const { sharedVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { setLinkSetHold, revokeLinkSet } = await import("../agent/identity/link-store.js");
 const { deploymentOrg } = await import("../agent/identity/binding.js");
 
@@ -219,19 +219,17 @@ await eveContextStorage().run(new FakeSession(), async () => {
   await store.insertLinkedId(org, { org, platform: "slack", nativeId: "U_caller", linkSetId: SET, status: "confirmed", establishedBy: "test", evidenceJson: undefined, createdAt: at, updatedAt: at });
   const shared = sharedVaultSubject(org, SET);
 
+  {
+    const m = makeMinter("ok");
+    await getToken(dmAuth, m);
+    ok(m.calls[0].id === "U_caller", "C.3: flag OFF → RAW subject even for a confirmed member (no-regression, deliberate arming)");
+  }
+
   process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
   {
     const m = makeMinter("ok");
     const r = await getToken(dmAuth, m);
-    ok(r.token === "USER-TOKEN-U_caller" && m.calls[0].id === "U_caller", "C.3: linked but UNRATIFIED DM caller → RAW subject (no silent inheritance — threat g)");
-  }
-
-  const rat = await ratifyOauthVaultShare({ org, connector: "notion", actor: { platform: "slack", nativeId: "U_caller" } });
-  ok(rat.ok, "C.3: the caller ratifies sharing notion from their own DM");
-  {
-    const m = makeMinter("ok");
-    const r = await getToken(dmAuth, m);
-    ok(m.calls[0].id === shared && shared.startsWith("ls:") && shared.endsWith(`/${SET}`), "C.3: ratified DM caller → the SHARED link-set subject ls:<org>/<set> (not the raw principal)");
+    ok(m.calls[0].id === shared && shared.startsWith("ls:") && shared.endsWith(`/${SET}`), "C.3: confirmed DM member → the SHARED link-set subject ls:<org>/<set> with no ratify step (not the raw principal)");
     ok(r.token === `USER-TOKEN-${shared}`, "C.3: the shared subject is what the vault mint receives (same row across the person's linked DMs)");
   }
 
@@ -245,16 +243,8 @@ await eveContextStorage().run(new FakeSession(), async () => {
   {
     const m = makeMinter("ok");
     await getToken(dmAuth, m);
-    ok(m.calls[0].id === shared, "C.3: reactivate → sharing restored from the surviving grant");
+    ok(m.calls[0].id === shared, "C.3: reactivate → sharing restored from the surviving membership");
   }
-
-  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
-  {
-    const m = makeMinter("ok");
-    await getToken(dmAuth, m);
-    ok(m.calls[0].id === "U_caller", "C.3: flag OFF → RAW subject even for a ratified caller (no-regression, deliberate arming)");
-  }
-  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
 
   {
     const m = makeMinter("ok");

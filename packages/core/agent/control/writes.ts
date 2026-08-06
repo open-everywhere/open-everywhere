@@ -17,8 +17,9 @@ import { whereFromScope } from "../approvals/actions.js";
 import { listLinkSetsWithIds, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
 import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
-import { groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
+import { directoryGroupAllowlist, groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
 import { directoryGroupsOf } from "../identity/groups-codemod.js";
+import { deliverGroupsOverlay } from "../identity/groups-delivery.js";
 
 export const CONTROL_WRITE_TOOL_NAMES = [
   "set_spend_limit",
@@ -518,10 +519,10 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
   server.registerTool(
     "directory_groups_plan",
     {
-      title: "Plan the IdP person-group overlay (review mode — writes nothing)",
+      title: "Plan (or bot-PR-deliver) the IdP person-group overlay — review mode either way",
       description:
-        "Diff the directory's (Okta's) GROUP memberships against this deployment's machine-owned person-group overlay and return the next overlay file, plus a readable list of the additions and removals it would make. It APPLIES NOTHING: person-groups grant capability in each member's DM, so they are config-as-code and change only through a merged diff — commit the returned `overlayContent` to `agent/identity/groups.generated.ts` (or open a PR with it), and the memberships take effect on the next deploy. Groups are named `directory:<idp-group>` so they can never collide with hand-written ones, and members are link-set references, so a person only ever contributes the accounts they have CONFIRMED. A person the directory reports as deprovisioned is dropped from every group in the plan — and their link-set is separately suspended by directory_sync_now, which stops their access immediately without waiting for this diff. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
-      inputSchema: { org: z.string().min(1) },
+        "Diff the directory's (Okta's) GROUP memberships against this deployment's machine-owned person-group overlay. DEFAULT (deliver unset/false): returns the next overlay file plus a readable list of the additions and removals it would make, and APPLIES NOTHING — commit the returned `overlayContent` to `agent/identity/groups.generated.ts` (or open a PR with it) and the memberships take effect on the next deploy. With `deliver: true`: opens (or updates) a BOT-PR that writes that overlay to the config repo — the GitHub merge is the approval, so nothing takes effect until an admin merges and the config redeploys (still review mode, just automated; there is no silent auto-apply). Person-groups grant capability in each member's DM, so they are config-as-code and change only through a merged diff. Groups are named `directory:<idp-group>` so they can never collide with hand-written ones, and members are link-set references, so a person only ever contributes the accounts they have CONFIRMED. A person the directory reports as deprovisioned is dropped from every group — and their link-set is separately suspended by directory_sync_now, which stops their access immediately without waiting for this diff. If OE_DIRECTORY_GROUP_ALLOWLIST is set, only the listed IdP groups sync. `deliver:true` needs the config repo configured (OE_ACCESS_CONFIG_REPO) and refuses politely otherwise. Returns `{ provider: null }` when no directory adapter is wired. Org-admin only.",
+      inputSchema: { org: z.string().min(1), deliver: z.boolean().optional() },
     },
     async (a) => {
       const denial = requireOrgAdminForLinks("directory_groups_plan");
@@ -538,14 +539,50 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         }
         const current = directoryGroupsOf(getConfig().loadGroups?.() ?? []);
         const people = await provider.listPeople();
-        const plan = planDirectoryGroups({ provider: provider.id, people, current });
+        const allowGroups = directoryGroupAllowlist();
+        const plan = planDirectoryGroups({ provider: provider.id, people, current, allowGroups });
+        const noop = groupPlanIsNoop(plan);
+
+        if (a.deliver) {
+          const delivery = await deliverGroupsOverlay(plan);
+          await appendAudit({
+            org: a.org,
+            platform: "control",
+            workspace: "control",
+            principalId: actor,
+            action: "admin.identity.directory_groups_pr",
+            detail: {
+              provider: provider.id,
+              people: plan.people,
+              planned: plan.counts,
+              warnings: plan.warnings.length,
+              outcome: delivery.outcome,
+              ...(delivery.pr ? { pr: delivery.pr.number, url: delivery.pr.url, branch: delivery.branch } : {}),
+              ...(allowGroups ? { allowlisted: allowGroups.length } : {}),
+            },
+          });
+          return jsonResult({
+            ok: true,
+            org: a.org,
+            provider: provider.id,
+            people: plan.people,
+            planned: plan.counts,
+            changed: !noop,
+            diff: renderGroupPlan(plan),
+            warnings: plan.warnings,
+            delivered: delivery.outcome,
+            ...(delivery.pr ? { pr: delivery.pr } : {}),
+            note: delivery.note,
+          });
+        }
+
         await appendAudit({
           org: a.org,
           platform: "control",
           workspace: "control",
           principalId: actor,
           action: "admin.identity.directory_groups_plan",
-          detail: { provider: provider.id, people: plan.people, planned: plan.counts, warnings: plan.warnings.length },
+          detail: { provider: provider.id, people: plan.people, planned: plan.counts, warnings: plan.warnings.length, ...(allowGroups ? { allowlisted: allowGroups.length } : {}) },
         });
         return jsonResult({
           ok: true,
@@ -553,14 +590,14 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
           provider: provider.id,
           people: plan.people,
           planned: plan.counts,
-          changed: !groupPlanIsNoop(plan),
+          changed: !noop,
           diff: renderGroupPlan(plan),
           warnings: plan.warnings,
           overlayPath: "agent/identity/groups.generated.ts",
           overlayContent: planOverlayContent(plan),
-          note: groupPlanIsNoop(plan)
+          note: noop
             ? "the overlay already matches the directory — nothing to commit."
-            : "REVIEW MODE: nothing was applied. Commit `overlayContent` to `overlayPath` (a PR is the reviewed diff) — the memberships take effect on the next deploy of the merged config.",
+            : "REVIEW MODE: nothing was applied. Commit `overlayContent` to `overlayPath` (a PR is the reviewed diff), or re-run with deliver:true to open a bot-PR — the memberships take effect on the next deploy of the merged config.",
         });
       } catch (e) {
         return errorResult(`directory_groups_plan failed: ${e instanceof Error ? e.message : String(e)}`);

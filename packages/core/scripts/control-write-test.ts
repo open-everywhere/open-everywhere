@@ -133,6 +133,14 @@ await client.connect(clientT);
 }
 
 {
+  ok("CONTROL_WRITE_TOOL_NAMES lists directory_groups_plan", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("directory_groups_plan"));
+  const planOnly = await callJson(client, "directory_groups_plan", { org: "default" });
+  ok("directory_groups_plan is cleanly-off with no directory adapter (plan mode)", planOnly.ok === true && planOnly.provider === null);
+  const deliver = await callJson(client, "directory_groups_plan", { org: "default", deliver: true });
+  ok("directory_groups_plan deliver:true is cleanly-off with no directory adapter (never reaches the repo gate)", deliver.ok === true && deliver.provider === null);
+}
+
+{
   const r = await callJson(client, "set_spend_limit", { org: "default", scopeKey: "slack/T1/C1", level: "surface", monthlyTokens: 5000, ttlSeconds: 3600, reason: "blocked mid-task" });
   ok("set_spend_limit with ttlSeconds returns a future expiresAt", typeof r.expiresAt === "number" && r.expiresAt > Date.now());
   ok("a future-dated bridge is still applied", (await effectiveCaps("default", "slack/T1", "slack/T1/C1")).surfaceMonthlyTokens === 5000);

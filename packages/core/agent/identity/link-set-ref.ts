@@ -21,13 +21,3 @@ export function linkSetRefMatches(ref: string, callerLinkSets: Iterable<string>)
   for (const s of callerLinkSets) if (s === id) return true;
   return false;
 }
-
-export function rosterHasLinkSet(roster: readonly string[] | undefined, callerLinkSets: readonly string[]): boolean {
-  if (!roster || roster.length === 0 || callerLinkSets.length === 0) return false;
-  const mine = new Set(callerLinkSets);
-  for (const entry of roster) {
-    const id = parseLinkSetRef(entry);
-    if (id !== undefined && mine.has(id)) return true;
-  }
-  return false;
-}

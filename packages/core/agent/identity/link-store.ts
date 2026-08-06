@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { principalKey } from "./principal-key.js";
-import { severOauthVaultGrantsForAccountStrict, severOauthVaultGrantsForSet } from "./oauth-vault-share.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
@@ -320,11 +319,6 @@ export async function unlinkOwnId(input: {
     return { ok: false, reason: `${principalKey(target.platform, target.nativeId)} is not on your link-set — you can only unlink your own accounts.` };
   }
   if (row.status === "revoked") return { ok: false, reason: "that link was revoked — revocation is terminal." };
-  try {
-    await severOauthVaultGrantsForAccountStrict(input.org, target);
-  } catch {
-    return { ok: false, reason: "couldn't clear this account's shared-connector consent — nothing was unlinked; try again." };
-  }
   if (!(await store.deleteLinkedId(input.org, target.platform, target.nativeId))) {
     return { ok: false, reason: "that link had already gone." };
   }
@@ -362,7 +356,6 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
     return { ok: false, reason: set ? `link-set "${input.linkSetId}" is already revoked.` : `no link-set "${input.linkSetId}".` };
   }
   const tombstoned = await store.revokeLinkedIdsForSet(input.org, input.linkSetId, at);
-  await severOauthVaultGrantsForSet(input.org, input.linkSetId);
   await auditLink(input.org, "control", undefined, input.actor, "identity.link.revoked", { linkSetId: input.linkSetId, tombstoned });
   return { ok: true, linkSetId: input.linkSetId, note: `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned).` };
 }

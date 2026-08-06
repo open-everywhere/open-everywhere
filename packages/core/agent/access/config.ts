@@ -21,6 +21,7 @@ export interface AccessRequestsConfig {
   readonly grantsPath?: string;
   readonly hooksPath?: string;
   readonly agentsPath?: string;
+  readonly groupsPath?: string;
   baseWebhooks?(): readonly WebhookHook[];
   baseAgents?(): AgentsFile;
   baseDomains?(): readonly Domain[];
