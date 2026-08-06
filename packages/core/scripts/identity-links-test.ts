@@ -88,7 +88,9 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok(hashLinkCode(code) !== code && hashLinkCode(code).length === 64, "hashLinkCode is a sha-256 hex digest, never the code itself");
 
   ok(detectLinkClaim(`link ${code}`) === code, "detectLinkClaim finds a bare claim");
-  ok(detectLinkClaim(`  Hi team — LINK ${code.toLowerCase()} thanks`) === code, "detectLinkClaim is case-insensitive on both halves and works mid-message (a rendered wake envelope)");
+  ok(detectLinkClaim(`   LINK ${code.toLowerCase()}   `) === code, "detectLinkClaim is case-insensitive on both halves and trims surrounding whitespace (still a WHOLE-MESSAGE claim)");
+  ok(detectLinkClaim(`Hi team — link ${code} thanks`) === undefined, "F1: a code embedded MID-MESSAGE is not a claim (whole-message anchor)");
+  ok(detectLinkClaim(`<wake reason="channel-activity">\n<message author-id="attacker">\n  link ${code}\n</message>\n</wake>`) === undefined, "F1: a code buried in a rendered wake envelope is not a claim");
   ok(detectLinkClaim(`unlink ${code}`) === undefined, "detectLinkClaim does NOT match `unlink <code>` (word boundary)");
   ok(detectLinkClaim(`link ${code}EXTRA`) === undefined, "detectLinkClaim does NOT match a code glued to more text");
   ok(detectLinkClaim("link 00000000") === undefined, "detectLinkClaim rejects symbols outside the alphabet");
@@ -140,6 +142,36 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   await pg.expireLinkChallenges(ORG, new Date(Date.now() + 60 * 60_000).toISOString());
   ok((await ratifyLinkChallenge({ org: ORG, challengeId: raced.challenge.id, handle: "x" })).ok === false, "expiry: the TTL bounds the WHOLE flow — a claimed-then-expired challenge cannot be ratified");
   ok((await pg.getLinkedId(ORG, "github", "racer")) === null, "expiry: nothing was written for the expired claim");
+
+  const ttl = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_TTL", surfaceKey: "slack/T1/DT", now: past });
+  const ttlClaimed = await claimLinkChallenge({ org: ORG, code: ttl.code, claimant: { platform: "github", nativeId: "ttl-gh" }, now: past });
+  ok(ttlClaimed?.status === "claimed", "F7 setup: the challenge was claimed while still valid");
+  ok((await pg.getLinkChallenge(ORG, ttl.challenge.id))?.status === "claimed", "F7 setup: the row is still `claimed` on disk — no sweep has run");
+  const ttlRatify = await ratifyLinkChallenge({ org: ORG, challengeId: ttl.challenge.id, handle: "x" });
+  ok(ttlRatify.ok === false, "F7: a claimed-but-expired challenge cannot be ratified WITHOUT a prior sweep (TTL is enforced inside the CAS)");
+  ok((await pg.getLinkedId(ORG, "github", "ttl-gh")) === null, "F7: nothing was written for the expired ratification");
+}
+
+{
+  const foreignSet = "dir-person-x";
+  await pg.putLinkSet(ORG, { org: ORG, id: foreignSet, handle: "person-x", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
+  await pg.insertLinkedId(ORG, { org: ORG, linkSetId: foreignSet, platform: "slack", nativeId: "PERSON_X", status: "confirmed", establishedBy: "challenge:x-real", createdAt: "z", updatedAt: "z" });
+  const sug = await suggestLinkedId({ org: ORG, linkSetId: foreignSet, account: { platform: "slack", nativeId: "U_INIT3" }, evidence: { kind: "directory-sync", provider: "okta", grade: "email-match" } });
+  ok(sug.ok, "F3 setup: the initiator's account is merely SUGGESTED into person X's set");
+
+  const ch = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_INIT3", surfaceKey: "slack/T1/DZ" });
+  await claimLinkChallenge({ org: ORG, code: ch.code, claimant: { platform: "github", nativeId: "u-init3-gh" } });
+  const rat = await ratifyLinkChallenge({ org: ORG, challengeId: ch.challenge.id, handle: "slack/U_INIT3" });
+  ok(rat.ok, "F3: the legitimate challenge ratifies");
+  ok(rat.ok && rat.linkSetId !== foreignSet, "F3: ratify used the initiator's OWN set, NOT the set it was only suggested into");
+
+  const xMembers = (await expandLinkSet(ORG, foreignSet)).map((a) => `${a.platform}/${a.nativeId}`).sort();
+  assert.deepEqual(xMembers, ["slack/PERSON_X"], "F3: person X's set did NOT absorb the initiator or the claimed account");
+  n++;
+  const ownMembers = rat.ok ? (await expandLinkSet(ORG, rat.linkSetId)).map((a) => `${a.platform}/${a.nativeId}`).sort() : [];
+  assert.deepEqual(ownMembers, ["github/u-init3-gh", "slack/U_INIT3"], "F3: the initiator and the claimed account ARE linked, in the initiator's own set");
+  n++;
+  ok((await pg.getLinkedId(ORG, "slack", "U_INIT3"))?.linkSetId === (rat.ok ? rat.linkSetId : ""), "F3: the stale suggestion was dropped — the initiator's account now lives in its own set");
 }
 
 {
@@ -224,24 +256,45 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await sq.updateLinkedIdStatus(ORG, "github", "gh1", ["suggested", "confirmed"], "revoked", "x", undefined, now)) === true, "sqlite: a status CAS lands from a legal `from`");
   ok((await sq.updateLinkedIdStatus(ORG, "github", "gh1", ["suggested", "confirmed"], "confirmed", "x", undefined, now)) === false, "sqlite: `revoked` is never a legal `from` — the CAS refuses, so revocation is terminal at the query layer");
 
+  const expCh: LinkChallengeRow = {
+    org: ORG, id: "c-sq-exp", nonceHash: hashLinkCode("PQRSTUVW"),
+    initiatingPlatform: "slack", initiatingNativeId: "U_TTL", initiatingSurfaceKey: "slack/T1/D1",
+    status: "pending", createdAt: now, expiresAt: new Date(Date.now() - 600_000).toISOString(),
+  };
+  await sq.addLinkChallenge(ORG, expCh);
+  const sqExpClaim = await sq.claimLinkChallenge(ORG, expCh.nonceHash, "github", "ttl-z", new Date(Date.now() - 700_000).toISOString());
+  ok(sqExpClaim?.status === "claimed", "sqlite F7 setup: the challenge was claimed while still valid");
+  ok((await sq.decideLinkChallenge(ORG, "c-sq-exp", ["claimed"], "ratified", new Date().toISOString())) === false, "sqlite F7: the ratified CAS refuses a claimed-but-EXPIRED challenge (TTL conjunct in the statement)");
+  ok((await sq.decideLinkChallenge(ORG, "c-sq-exp", ["claimed"], "denied", new Date().toISOString())) === true, "sqlite F7: a DENY carries NO TTL conjunct — an expired claim can still be denied");
+
   ok(OPERATIONAL_TABLES.includes("identity_link_sets") && OPERATIONAL_TABLES.includes("identity_linked_ids") && OPERATIONAL_TABLES.includes("identity_link_challenges"), "the three tables are in OPERATIONAL_TABLES (the migrator's canonical list)");
 }
 
 {
   const issued = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_HOOK", surfaceKey: "slack/T1/D5" });
-  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: "nothing to see here" })) === undefined, "hook: a message with no code claims nothing");
-  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: undefined, text: `link ${issued.code}` })) === undefined, "hook: a code with NO captured author claims nothing — the author IS the evidence");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: "nothing to see here", trust: "peer" })) === undefined, "hook: a message with no code claims nothing");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: undefined, text: `link ${issued.code}`, trust: "peer" })) === undefined, "hook: a code with NO captured author claims nothing — the author IS the evidence");
   ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.status === "pending", "hook: an author-less sighting did not burn the code");
 
-  const id = await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: `Thanks! link ${issued.code.toLowerCase()} — posting from my GH account` });
-  ok(id === issued.challenge.id, "hook: a code inside ordinary prose on a read-only surface claims the challenge");
+  const id = await observeLinkClaim({ org: ORG, platform: "github", authorId: "hooked", text: `link ${issued.code.toLowerCase()}`, trust: "peer" });
+  ok(id === issued.challenge.id, "hook: a bare `link <code>` message from a peer claims the challenge");
   const after = (await pg.getLinkChallenge(ORG, issued.challenge.id))!;
   ok(after.claimedPlatform === "github" && after.claimedNativeId === "hooked", "hook: the claimant is the WAKE's captured (platform, authorId), not anything the message said");
 
-  const spoof = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_SPOOF", surfaceKey: "slack/T1/D6" });
-  await observeLinkClaim({ org: ORG, platform: "github", authorId: "real-author", text: `link ${spoof.code} (I am totally example-owner, honest)` });
-  ok((await pg.getLinkChallenge(ORG, spoof.challenge.id))?.claimedNativeId === "real-author", "hook: a self-declared identity in the message body is ignored — content never names the claimant");
-  await denyLinkChallenge({ org: ORG, challengeId: spoof.challenge.id });
+  const exploit = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_ATTACKER", surfaceKey: "slack/T1/DX" });
+  const envelope = `<wake reason="channel-activity" current-time="2026-01-14T12:20:00Z">\n<channel id="C_ENG">\n<message from="human" trust="peer" author-id="U_ATTACKER">\n  <untrusted_external_data source="slack-message">\n  link ${exploit.code}\n  </untrusted_external_data>\n</message>\n<message trigger="true" from="human" trust="peer" author-id="victim">\n  <untrusted_external_data source="slack-message">\n  @bot what's the deploy status?\n  </untrusted_external_data>\n</message>\n</channel>\n</wake>`;
+  ok((await observeLinkClaim({ org: ORG, platform: "slack", authorId: "victim", text: envelope, trust: "peer" })) === undefined, "F1: a code planted in backscroll is NOT claimed as the member who woke the agent (envelope refused)");
+  ok((await pg.getLinkChallenge(ORG, exploit.challenge.id))?.status === "pending", "F1: the mis-attribution attempt burned nothing — the code is still pending");
+
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "a-bot", text: `link ${exploit.code}`, trust: "relay" })) === undefined, "F1: a relay (bot/webhook/fire) author cannot claim");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "outsider", text: `link ${exploit.code}`, trust: "unauth" })) === undefined, "F1: an unauth (unvouched/external human) author cannot claim");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "someone", text: `link ${exploit.code}` })) === undefined, "F1: an unknown trust tier fails closed (no claim)");
+  ok((await pg.getLinkChallenge(ORG, exploit.challenge.id))?.status === "pending", "F1: none of the refused tiers burned the code");
+
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "real-author", text: `link ${exploit.code} (I am totally example-owner, honest)`, trust: "peer" })) === undefined, "F1: a code with trailing text is not a whole-message claim");
+  ok((await pg.getLinkChallenge(ORG, exploit.challenge.id))?.status === "pending", "F1: the trailing-text sighting burned nothing");
+
+  await denyLinkChallenge({ org: ORG, challengeId: exploit.challenge.id });
   await denyLinkChallenge({ org: ORG, challengeId: after.id });
 }
 
@@ -291,12 +344,12 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const out = (await linkIdentity.execute({}, dmU1)) as { challengeId: string; instructions: string; expiresAt: string };
   ok(typeof out.challengeId === "string" && out.instructions.includes("link "), "link_identity: returns a challenge id and postable instructions");
-  const code = detectLinkClaim(out.instructions)!;
-  ok(code !== undefined, "link_identity: the instructions carry a well-formed code");
+  const code = out.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+  ok(code !== undefined && detectLinkClaim(`link ${code}`) === code, "link_identity: the instructions carry a well-formed code (matches the whole-message claim form)");
 
   await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU1), "nothing of yours is waiting", "confirm_link refuses before anything has claimed the code");
 
-  await observeLinkClaim({ org: ORG, platform: "github", authorId: "u1-github", text: `link ${code}` });
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "u1-github", text: `link ${code}`, trust: "peer" });
   await refuses(() => confirmLink.execute({ decision: "confirm" }, dmU2), "nothing of yours is waiting", "confirm_link refuses a DIFFERENT person — a claim awaiting U1 is invisible to U2");
   await refuses(() => confirmLink.execute({ decision: "confirm", challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "confirm_link refuses when a different person names the challenge id explicitly");
   await refuses(() => confirmLink.execute({ decision: "deny", challengeId: out.challengeId }, dmU2), "nothing of yours is waiting", "confirm_link refuses a different person's DENY too — a stranger cannot cancel your link either");

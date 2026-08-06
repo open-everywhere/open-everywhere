@@ -5,6 +5,13 @@ import { detectLinkClaim } from "../identity/link-challenge.js";
 import { claimLinkChallenge } from "../identity/link-store.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { principalKey } from "../identity/principal-key.js";
+import type { WakeTrust } from "../channels/wake-envelope.js";
+
+function isEnvelopeShaped(text: string): boolean {
+  if (/<wake\b/i.test(text)) return true;
+  const authorMarkers = text.match(/\bauthor-id=/gi);
+  return (authorMarkers?.length ?? 0) >= 1 || (text.match(/<message\b/gi)?.length ?? 0) >= 1;
+}
 
 function log(line: string): void {
   console.log(`[open-everywhere:identity] ${line}`);
@@ -15,12 +22,21 @@ export async function observeLinkClaim(input: {
   readonly platform: string;
   readonly authorId: string | undefined;
   readonly text: string | undefined;
+  readonly trust?: WakeTrust;
   readonly now?: Date;
 }): Promise<string | undefined> {
   const code = detectLinkClaim(input.text);
   if (!code) return undefined;
+  if (input.text && isEnvelopeShaped(input.text)) {
+    log("link claim seen in envelope-shaped text (multiple authors) — ignored (a claim's code and its claimant must come from ONE message).");
+    return undefined;
+  }
   if (!input.authorId) {
     log("link claim seen with no captured author id — ignored (a claim is only ever as good as the author the surface resolved).");
+    return undefined;
+  }
+  if (input.trust !== "peer" && input.trust !== "principal") {
+    log(`link claim from a non-vouched author (trust=${input.trust ?? "unknown"}) — ignored (only an identified internal human may claim).`);
     return undefined;
   }
   const claimed = await claimLinkChallenge({
@@ -57,11 +73,14 @@ export default defineHook({
       if (!detectLinkClaim(raw)) return;
       try {
         const binding = bindFrom(ctx as BindableContext);
+        const authorId = actingPrincipalId(binding);
+        const trust: WakeTrust = authorId === undefined ? "relay" : binding.trust === "internal" ? "peer" : "unauth";
         await observeLinkClaim({
           org: binding.org,
           platform: binding.platform,
-          authorId: actingPrincipalId(binding),
+          authorId,
           text: raw,
+          trust,
         });
       } catch (err) {
         log(`link claim check skipped: ${String(err)}`);

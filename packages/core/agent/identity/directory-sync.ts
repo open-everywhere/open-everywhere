@@ -96,8 +96,10 @@ export function planDirectorySync(input: {
 
   const rowByKey = new Map<string, { readonly row: LinkedIdRow; readonly set: LinkSetRow }>();
   const setById = new Map<string, LinkSetRow>();
+  const idsBySetId = new Map<string, readonly LinkedIdRow[]>();
   for (const { set, ids } of input.current) {
     setById.set(set.id, set);
+    idsBySetId.set(set.id, ids);
     for (const row of ids) rowByKey.set(principalKey(row.platform, row.nativeId), { row, set });
   }
 
@@ -152,7 +154,17 @@ export function planDirectorySync(input: {
       if (!target) {
         steps.push({ kind: "noop", externalId: person.externalId, why: "deprovisioned in the directory, and holds no link-set here" });
       } else if (target.status === "active") {
-        steps.push({ kind: "suspend", externalId: person.externalId, linkSetId: target.id, handle: target.handle });
+        const members = idsBySetId.get(target.id) ?? [];
+        const challengeBuilt = members.some((r) => r.status !== "revoked" && r.establishedBy.startsWith("challenge:"));
+        if (challengeBuilt) {
+          steps.push({ kind: "noop", externalId: person.externalId, why: "deprovisioned, but the anchored link-set has challenge-proven members — refusing to suspend a set the directory did not build" });
+          warnings.push(
+            `directory person "${person.externalId}" is deprovisioned, but the link-set it anchors (${target.id}) contains challenge-established account(s) — refusing to suspend a proof-of-control-built set on an IdP deprovision. ` +
+              `If this offboarding is real, an admin has suspend_link_set / revoke_link_set.`,
+          );
+        } else {
+          steps.push({ kind: "suspend", externalId: person.externalId, linkSetId: target.id, handle: target.handle });
+        }
       } else {
         steps.push({ kind: "noop", externalId: person.externalId, why: `deprovisioned; link-set is already ${target.status}` });
       }
@@ -386,17 +398,21 @@ export async function pendingDirectorySuggestionsFor(org: string, platform: stri
   for (const { set, ids } of sets) {
     if (set.status !== "active") continue;
     const mine = ids.find((r) => principalKey(r.platform, r.nativeId) === me);
-    if (!mine || mine.status === "revoked") continue;
+    if (!mine || (mine.status !== "confirmed" && mine.status !== "suggested")) continue;
+    const bootstrapOnly = mine.status !== "confirmed";
     const out: PendingDirectorySuggestion[] = [];
     for (const row of ids) {
       if (row.status !== "suggested") continue;
       if (!row.establishedBy.startsWith("directory-sync:")) continue;
+      const isOwn = principalKey(row.platform, row.nativeId) === me;
+      if (bootstrapOnly && !isOwn) continue;
       let grade = "unknown";
       try {
         const parsed = JSON.parse(row.evidenceJson ?? "{}") as { grade?: unknown };
         if (typeof parsed.grade === "string") grade = parsed.grade;
       } catch {
       }
+      if (grade === "email-match" && !isOwn) continue;
       out.push({
         linkSetId: set.id,
         platform: row.platform,

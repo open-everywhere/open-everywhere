@@ -1890,9 +1890,11 @@ export const sqliteOperationalStore: OperationalStore = {
   },
 
   async decideLinkChallenge(org, id, from, to, at) {
+    const ttlConjunct = to === "ratified" ? " AND expires_at > ?" : "";
+    const args = to === "ratified" ? [to, at, org, id, ...from, at] : [to, at, org, id, ...from];
     const changes = getDb()
-      .prepare(`UPDATE identity_link_challenges SET status = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status IN (${placeholders(from.length)})`)
-      .run(to, at, org, id, ...from).changes;
+      .prepare(`UPDATE identity_link_challenges SET status = ?, decided_at = ? WHERE org_id = ? AND id = ? AND status IN (${placeholders(from.length)})${ttlConjunct}`)
+      .run(...args).changes;
     return Number(changes) > 0;
   },
 

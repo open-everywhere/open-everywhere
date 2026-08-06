@@ -65,14 +65,26 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
   const fetchImpl = deps.fetch ?? fetch;
   const resolveToken = deps.resolveToken ?? ((broker: string, ref: string) => getSecretVia(broker, ref));
 
+  const orgOrigin = new URL(config.orgUrl).origin;
+
   async function getAll<T>(path: string, token: string): Promise<T[]> {
     let url: string | undefined = path.startsWith("http") ? path : `${config.orgUrl}${path}`;
     const out: T[] = [];
     for (let page = 0; url && page < MAX_PAGES; page++) {
+      let reqOrigin: string;
+      try {
+        reqOrigin = new URL(url).origin;
+      } catch {
+        throw new Error(`Okta pagination produced an unparseable URL — refusing to send the API token to it.`);
+      }
+      if (reqOrigin !== orgOrigin) {
+        throw new Error(`Okta pagination tried to leave the org origin (${reqOrigin} ≠ ${orgOrigin}) — refusing to send the SSWS token off ${orgOrigin}.`);
+      }
       let res: Response;
       try {
         res = await fetchImpl(url, {
           method: "GET",
+          redirect: "error",
           headers: { authorization: `SSWS ${token}`, accept: "application/json" },
         });
       } catch (err) {

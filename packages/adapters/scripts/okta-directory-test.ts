@@ -178,6 +178,26 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
 }
 
 {
+  const seen: { url: string; auth: string | null }[] = [];
+  const EVIL = "https://evil.example/api/v1/users?after=x";
+  const routes: Record<string, Route> = {
+    [USERS_P1]: { next: EVIL, body: [{ id: "00u1", status: "ACTIVE", profile: { login: "a@acme.example" } }] },
+    [EVIL]: { body: [{ id: "00u2", status: "ACTIVE", profile: { login: "b@acme.example" } }] },
+  };
+  const provider = makeOktaDirectoryProvider({ config: { ...CONFIG, apps: [] }, fetch: fakeFetch(routes, seen), resolveToken: async () => TOKEN });
+  let msg = "";
+  try {
+    await provider.listPeople();
+  } catch (e) {
+    msg = e instanceof Error ? e.message : String(e);
+  }
+  ok(msg.toLowerCase().includes("origin"), `🔴 F6: a cross-origin Link header is REFUSED (got: ${msg})`);
+  ok(!seen.some((s) => s.url.startsWith("https://evil.example")), "🔴 F6: the token-bearing request was NEVER sent to the cross-origin host");
+  ok(seen.some((s) => s.url === USERS_P1), "F6: …the same-origin first page WAS fetched (the refusal is the cross-origin hop, not a blanket failure)");
+  ok(!msg.includes(TOKEN), "F6: and the refusal message never carries the token");
+}
+
+{
   ok(nextLink(undefined) === undefined && nextLink("") === undefined, "no Link header ⇒ no next page");
   ok(nextLink('<https://x/a>; rel="self"') === undefined, "a self-only Link header ⇒ no next page");
   ok(nextLink('<https://x/a>; rel="self", <https://x/b>; rel="next"') === "https://x/b", "the rel=\"next\" URL is extracted from a multi-part Link header");

@@ -92,7 +92,9 @@ function universeNote(scope: RequestingScope, groups: readonly Group[]): string 
   return (
     `Group grant for "${scope.group}" — ${g?.members.length ?? 0} member(s), link-set members: ${sets > 0 ? `yes (${sets})` : "no"}. ` +
     `It resolves in each member's own DM, never in a channel` +
-    (sets > 0 ? `, and the link-set member(s) expand at resolve time to every account those humans have confirmed.` : ".")
+    (sets > 0
+      ? `. NOTE: link-set expansion is NOT yet live at runtime — the ${sets} link-set member(s) grant nothing to those accounts today (only principal-key members are effective). Do not merge this expecting it to reach their DMs.`
+      : ".")
   );
 }
 

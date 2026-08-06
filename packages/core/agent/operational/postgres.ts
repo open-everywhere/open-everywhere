@@ -2274,10 +2274,12 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
     },
 
     async decideLinkChallenge(org, id, from, to, at) {
+      const ttlConjunct = to === "ratified" ? " AND expires_at > $6" : "";
+      const params = to === "ratified" ? [to, at, org, id, [...from], at] : [to, at, org, id, [...from]];
       const { rows } = await client.query(
         `UPDATE identity_link_challenges SET status = $1, decided_at = $2
-         WHERE org_id = $3 AND id = $4 AND status = ANY($5) RETURNING id`,
-        [to, at, org, id, [...from]],
+         WHERE org_id = $3 AND id = $4 AND status = ANY($5)${ttlConjunct} RETURNING id`,
+        params,
       );
       return (rows as unknown[]).length > 0;
     },

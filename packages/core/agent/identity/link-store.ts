@@ -173,7 +173,8 @@ export async function ratifyLinkChallenge(input: {
 
   const existingClaim = await store.getLinkedId(input.org, claimed.platform, claimed.nativeId);
   const existingInitiator = await store.getLinkedId(input.org, initiator.platform, initiator.nativeId);
-  const targetSetId = existingInitiator?.linkSetId;
+  const initiatorConfirmed = existingInitiator?.status === "confirmed";
+  const targetSetId = initiatorConfirmed ? existingInitiator!.linkSetId : undefined;
   if (existingClaim && existingClaim.linkSetId !== targetSetId) {
     return { ok: false, reason: `${principalKey(claimed.platform, claimed.nativeId)} already belongs to another person — an account is exactly one person. An admin must revoke that link-set first.` };
   }
@@ -189,13 +190,16 @@ export async function ratifyLinkChallenge(input: {
   }
 
   if (!(await store.decideLinkChallenge(input.org, challenge.id, ["claimed"], "ratified", nowIso))) {
-    return { ok: false, reason: "that link request was already decided." };
+    return { ok: false, reason: "that link request is no longer open — codes are single-use and expire." };
   }
 
   const evidence: LinkEvidence = { kind: "challenge", challengeId: challenge.id };
   const linkSetId = targetSetId ?? randomUUID();
   if (!targetSetId) {
     await store.putLinkSet(input.org, { org: input.org, id: linkSetId, handle: input.handle, status: "active", createdAt: nowIso, updatedAt: nowIso });
+    if (existingInitiator && !initiatorConfirmed) {
+      await store.deleteLinkedId(input.org, initiator.platform, initiator.nativeId);
+    }
   }
   await joinConfirmed(input.org, linkSetId, initiator, evidence, nowIso);
   await joinConfirmed(input.org, linkSetId, claimed, evidence, nowIso);

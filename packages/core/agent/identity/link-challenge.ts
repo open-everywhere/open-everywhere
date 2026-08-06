@@ -16,18 +16,19 @@ export function hashLinkCode(code: string): string {
   return createHash("sha256").update(code.trim().toUpperCase(), "utf8").digest("hex");
 }
 
-const CLAIM_RE = new RegExp(String.raw`\blink[\s:]+([${LINK_CODE_ALPHABET}]{${LINK_CODE_LENGTH}})\b`, "i");
+const CLAIM_RE = new RegExp(String.raw`^link[\s:]+([${LINK_CODE_ALPHABET}]{${LINK_CODE_LENGTH}})$`, "i");
 
 export function detectLinkClaim(text: string | undefined): string | undefined {
   if (!text) return undefined;
-  const m = CLAIM_RE.exec(text);
+  const m = CLAIM_RE.exec(text.trim());
   return m ? m[1]!.toUpperCase() : undefined;
 }
 
 export function linkClaimInstructions(code: string, ttlMinutes: number): string {
   return (
-    `Post this exact line from your OTHER account, on any surface I can read (a GitHub or Linear ` +
-    `comment, a Slack/Discord message — it does not have to be a DM):\n\n    link ${code}\n\n` +
+    `From your OTHER account, send me a message whose ENTIRE text is exactly this line and nothing ` +
+    `else — @mention me or DM me from that account so the message is addressed to me (a bare, ` +
+    `unaddressed line buried in a busy channel will not count):\n\n    link ${code}\n\n` +
     `It is single-use and expires in ${ttlMinutes} minutes. When it lands I will come back HERE, ` +
     `in this DM, and name the account that claimed it — the link is only written once you confirm ` +
     `that in this conversation. If a name you do not recognise comes back, deny it.`
