@@ -203,7 +203,7 @@ export function assertWindowSourcesVouched(domains: readonly Domain[], vouched: 
       const okay = vset.has(workspaceKey) || vset.has(ch) || trustEnv;
       if (!okay) {
         bad.push(
-          `  domain "${d.name}" includes UN-vouched source "${ch}" in a multi-source (${channels.length}-channel) cross-surface window — vouch it in agent/identity/trusted-surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`,
+          `  domain "${d.name}" includes UN-vouched source "${ch}" in a multi-source (${channels.length}-channel) cross-surface window — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`,
         );
       }
     }
@@ -266,7 +266,7 @@ export function assertGovernanceDomains(domains: readonly Domain[], vouched: rea
       if (BINDING_TRUSTED_PLATFORMS.has(platform)) continue;
       const workspaceKey = segs.slice(0, 2).join("/");
       if (!(vset.has(workspaceKey) || vset.has(ch) || trustEnv)) {
-        bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/trusted-surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`);
+        bad.push(`  "${d.name}" is governance but its channel "${ch}" is not operator-vouched-internal — vouch it in agent/identity/surfaces.ts (add "${ch}" or its workspace "${workspaceKey}"), or set OE_TRUST=internal for an internal-only deploy`);
       }
     }
   }

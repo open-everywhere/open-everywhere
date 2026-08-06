@@ -170,7 +170,8 @@ export { registerIdentityMapper, deploymentOrg, bindFrom, assertTurnSurface, cur
 export type { IdentityMapper, RawIdentity, Visibility, SurfaceBinding } from "./identity/binding.js";
 export type { SessionMode } from "./access/resolver.js";
 
-export { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "./identity/trust.js";
+export { registerSurfaces, defineSurface, _resetSurfacesForTest } from "./identity/trust.js";
+export type { Surface, SurfaceTrust } from "./identity/trust.js";
 
 export { matchesAgentName, agentNameTokens, agentNameTokenPattern, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
 

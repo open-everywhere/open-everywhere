@@ -7,8 +7,9 @@ import {
 } from "../agent/channels/notion-identity.js";
 import {
   bindFrom,
-  registerTrustedSurfaces,
-  _resetTrustedSurfacesForTest,
+  registerSurfaces,
+  defineSurface,
+  _resetSurfacesForTest,
   type BindableContext,
   type SurfaceBinding,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -67,7 +68,7 @@ ok(auth.attributes.comment_id === COMMENT, "comment_id stowed");
 const bare = buildNotionAuth({ workspaceId: WS });
 ok(bare.attributes.page_id === undefined && bare.principalId === "", "absent facts are omitted; principal empty when unknown");
 
-_resetTrustedSurfacesForTest();
+_resetSurfacesForTest();
 const b = dispatch();
 ok(b.platform === "notion", "platform binds to notion");
 ok(b.workspace === WS, "workspace = workspace_id");
@@ -86,13 +87,13 @@ process.env.OE_TRUST = "internal";
 ok(dispatch().trust === "internal", "OE_TRUST=internal narrows the whole deployment to internal");
 delete process.env.OE_TRUST;
 
-_resetTrustedSurfacesForTest();
-registerTrustedSurfaces([notionWorkspaceKey(WS)]);
+_resetSurfacesForTest();
+registerSurfaces([defineSurface({ key: notionWorkspaceKey(WS), trust: "internal" })]);
 ok(dispatch().trust === "internal", "a per-workspace vouch (notionWorkspaceKey) narrows to internal");
 ok(dispatch().surface === PAGE, "vouch does not disturb the surface");
-_resetTrustedSurfacesForTest();
-registerTrustedSurfaces(["notion/some-other-workspace"]);
+_resetSurfacesForTest();
+registerSurfaces([defineSurface({ key: "notion/some-other-workspace", trust: "internal" })]);
 ok(dispatch().trust === "external", "an unrelated workspace vouch leaves this surface external (fail-closed)");
-_resetTrustedSurfacesForTest();
+_resetSurfacesForTest();
 
 console.log(`\n✓ notion-identity: ${passed} assertions passed`);

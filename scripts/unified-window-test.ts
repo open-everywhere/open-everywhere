@@ -73,7 +73,8 @@ import {
   type DiscordRelayMessage,
   type DiscordGatewaySend,
 } from "@open-everywhere/provider-discord/agent/channels/discord-gateway.js";
-import { isVouchedInternal, isVouchedSurface, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "@open-everywhere/core/agent/identity/trust.js";
+import { isVouchedInternal, isVouchedSurface, registerSurfaces, defineSurface, _resetSurfacesForTest } from "@open-everywhere/core/agent/identity/trust.js";
+const vouch = (...keys: string[]) => registerSurfaces(keys.map((key) => defineSurface({ key, trust: "internal" as const })));
 import {
   handleTeamsSingleWindowDispatch,
   teamsSingleWindowPrivacyOk,
@@ -512,7 +513,7 @@ const stubCreateThread = async (): Promise<string | null> => {
 };
 const stubResolveParent = async (): Promise<string | undefined> => undefined;
 {
-  _resetTrustedSurfacesForTest();
+  _resetSurfacesForTest();
   delete process.env.OE_TRUST;
   const m1 = discordMsg({});
   await dispatchTurn(m1, authForRelayMessage(m1)!, discordSend, stubCreateThread, stubResolveParent, captureReceive);
@@ -523,7 +524,7 @@ const stubResolveParent = async (): Promise<string | undefined> => undefined;
 
   await getOperationalStore().rotateChannelSession("default", unifiedDomainSessionKey("payments"), RAW_TOKEN, new Date().toISOString());
 
-  registerTrustedSurfaces(["discord/G_WIN"]);
+  vouch("discord/G_WIN");
   discordBaseSends.length = 0;
   discordThreadAttempts = 0;
   const m2 = discordMsg({ id: "5002" });
@@ -677,13 +678,13 @@ await handleTeamsSingleWindowDispatch(
   ok(!teamsSingleWindowPrivacyOk(f({ scope: "personal" })) && !teamsSingleWindowPrivacyOk(f({ scope: "groupChat" })) && !teamsSingleWindowPrivacyOk(f({ scope: "unknown" })) && !teamsSingleWindowPrivacyOk(f({ scope: undefined })), "teams floor: personal/groupChat/unknown scopes never join the shared window (channels only)");
   ok(!teamsSingleWindowPrivacyOk(f({ tenantId: undefined })), "teams floor: no tenant anchor → refuse (the org boundary can't be established)");
 
-  _resetTrustedSurfacesForTest();
-  registerTrustedSurfaces([TEAMS_WS_KEY]);
+  _resetSurfacesForTest();
+  vouch(TEAMS_WS_KEY);
   ok(isVouchedInternal(TEAMS_WS_KEY, TEAMS_KEY), "teams vouch: a tenant-wide vouch satisfies isVouchedInternal (the any-grain check)");
   ok(!isVouchedSurface(TEAMS_KEY), "teams vouch: a tenant-wide vouch does NOT satisfy isVouchedSurface — so teams-front REFUSES the channel (a Connect channel can't be swept in by a coarse vouch)");
-  registerTrustedSurfaces([TEAMS_KEY]);
+  vouch(TEAMS_KEY);
   ok(isVouchedSurface(TEAMS_KEY), "teams vouch: a SURFACE-grain vouch admits — the operator asserted this specific channel is internal");
-  _resetTrustedSurfacesForTest();
+  _resetSurfacesForTest();
 
   ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/amer/"), "serviceUrl: the canonical regional Bot Connector host is trusted");
   ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net"), "serviceUrl: the bare smba.trafficmanager.net host is trusted");

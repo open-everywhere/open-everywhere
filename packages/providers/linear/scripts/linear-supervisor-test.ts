@@ -354,7 +354,7 @@ for (const [label, err] of [
 {
   const { registerConfig } = await import("@open-everywhere/core/agent/adapter-api.js");
   const { defineDomain } = await import("@open-everywhere/core/agent/adapter-api.js");
-  const { registerTrustedSurfaces, _resetTrustedSurfacesForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
+  const { registerSurfaces, defineSurface, _resetSurfacesForTest } = await import("@open-everywhere/core/agent/adapter-api.js");
   const { computeMentionRouting } = (await import("../agent/channels/linear.js")) as unknown as {
     computeMentionRouting: (event: unknown, teamId: string | undefined) => Promise<{ routing: string; isPrivate?: boolean }>;
   };
@@ -373,7 +373,7 @@ for (const [label, err] of [
     "issue-plain": { teamId: T_PLAIN, isPrivate: true },
   };
 
-  registerTrustedSurfaces([skFor(T_PRIV), skFor(T_FREE), skFor(T_PLAIN)]);
+  registerSurfaces([skFor(T_PRIV), skFor(T_FREE), skFor(T_PLAIN)].map((key) => defineSurface({ key, trust: "internal" as const })));
 
   const windowDomain = defineDomain({
     name: "payments",
@@ -475,7 +475,7 @@ for (const [label, err] of [
     if (prevWindowTopology === undefined) delete process.env.OE_WINDOW_TOPOLOGY;
     else process.env.OE_WINDOW_TOPOLOGY = prevWindowTopology;
     globalThis.fetch = realFetch;
-    _resetTrustedSurfacesForTest();
+    _resetSurfacesForTest();
   }
 }
 

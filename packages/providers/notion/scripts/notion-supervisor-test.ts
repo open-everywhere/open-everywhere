@@ -15,9 +15,10 @@ import {
 } from "../agent/channels/notion-supervisor.js";
 import {
   singleWindowMentionPolicy,
-  registerTrustedSurfaces,
+  registerSurfaces,
+  defineSurface,
   isVouchedInternal,
-  _resetTrustedSurfacesForTest,
+  _resetSurfacesForTest,
   renderWake,
   UNTRUSTED_OPEN,
   type UnifiedWindowWake,
@@ -165,7 +166,7 @@ const siblings: NotionWakeMessage[] = [
 }
 
 {
-  _resetTrustedSurfacesForTest();
+  _resetSurfacesForTest();
   const WS = "ws-vouch";
   const VOUCHED_PAGE = "page-vouched";
   const UNVOUCHED_PAGE = "page-unvouched";
@@ -173,15 +174,15 @@ const siblings: NotionWakeMessage[] = [
   const vouchedSk = `notion/${WS}/${VOUCHED_PAGE}`;
   const unvouchedSk = `notion/${WS}/${UNVOUCHED_PAGE}`;
   ok(!isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: with nothing registered, no Notion surface is internal (fail-closed default)");
-  registerTrustedSurfaces([wsKey]);
+  registerSurfaces([defineSurface({ key: wsKey, trust: "internal" })]);
   ok(isVouchedInternal(wsKey, vouchedSk), "vouch floor: a workspace-level vouch (notion/<ws>) admits a page under it");
   const resolve = (sk: string) => isVouchedInternal(wsKey, sk);
   ok(planNotionSingleWindow(true, true, resolve(vouchedSk), { discussionId: DISCUSSION, pageId: VOUCHED_PAGE, workspaceId: WS })?.addressing === "direct-mention", "vouch floor: a VOUCHED page's @mention diverts (addressing 'direct-mention')");
-  _resetTrustedSurfacesForTest();
-  registerTrustedSurfaces([vouchedSk]);
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: vouchedSk, trust: "internal" })]);
   ok(isVouchedInternal(wsKey, vouchedSk) && !isVouchedInternal(wsKey, unvouchedSk), "vouch floor: a surface-level vouch narrows to the one page (a sibling stays external)");
   ok(planNotionSingleWindow(true, true, resolve(unvouchedSk), { discussionId: DISCUSSION, pageId: UNVOUCHED_PAGE, workspaceId: WS }) === undefined, "vouch floor: an UN-VOUCHED page's @mention takes the NATIVE path (fail-closed — no cross-surface leak to an external guest)");
-  _resetTrustedSurfacesForTest();
+  _resetSurfacesForTest();
 }
 
 {

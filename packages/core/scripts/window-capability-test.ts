@@ -10,7 +10,7 @@ import { WINDOW_GATED_TOOLS, withheldFromGrain, resolveWindowGated } from "../ag
 import { defineDomain, assertWindowSourcesVouched } from "../agent/memory/domain.js";
 import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
-import { isVouchedInternal, registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "../agent/identity/trust.js";
+import { isVouchedInternal, registerSurfaces, defineSurface, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
 import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 
@@ -154,8 +154,8 @@ withWindowEnv(() => {
 
 console.log("P0-d — vouch is runtime today; config-validation twin staged:");
 
-_resetTrustedSurfacesForTest();
-registerTrustedSurfaces(["slack/T1/C_VOUCHED"]);
+_resetSurfacesForTest();
+registerSurfaces([defineSurface({ key: "slack/T1/C_VOUCHED", trust: "internal" })]);
 {
   const vouched = isVouchedInternal("slack/T1", "slack/T1/C_VOUCHED");
   const unvouched = isVouchedInternal("slack/T1", "slack/T1/C_OPEN");
@@ -167,7 +167,7 @@ registerTrustedSurfaces(["slack/T1/C_VOUCHED"]);
   const refused = singleWindowMentionPolicy(true, true, unvouched);
   eq(refused, { suppressNative: false, addressing: undefined }, "[P0-d] UN-vouched single-window mention ⇒ NOT admitted (native keeps the mention) — the runtime vouch");
 }
-_resetTrustedSurfacesForTest();
+_resetSurfacesForTest();
 
 {
   const orgGate = defineDomain({ name: "org", match: "org" });
