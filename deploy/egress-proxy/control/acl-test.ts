@@ -8,7 +8,14 @@ import {
   validatePolicy,
   type EgressPolicy,
 } from "./acl.ts";
-import { handlePolicyPush, handleAcl, isLoopbackAddr } from "./handlers.ts";
+import {
+  handlePolicyPush,
+  handleAcl,
+  isLoopbackAddr,
+  requireControlToken,
+  bearerMatches,
+  MISSING_TOKEN_FATAL,
+} from "./handlers.ts";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -141,4 +148,38 @@ const ok = (cond: boolean, label: string) => {
   ok(!isLoopbackAddr(undefined), "undefined remote address is NOT loopback (fail-closed)");
 }
 
-console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers + /acl loopback gate)\n`);
+{
+  ok(requireControlToken("s3cret") === "s3cret", "a token is returned as-is");
+  ok(requireControlToken("  s3cret  ") === "s3cret", "a token is trimmed");
+
+  const rejected: Array<[string | undefined, string]> = [
+    [undefined, "unset OE_EGRESS_PROXY_TOKEN is refused"],
+    ["", "empty OE_EGRESS_PROXY_TOKEN is refused"],
+    ["   ", "whitespace-only OE_EGRESS_PROXY_TOKEN is refused"],
+    ["\t\n", "tab/newline-only OE_EGRESS_PROXY_TOKEN is refused"],
+  ];
+  for (const [raw, label] of rejected) {
+    let msg: string | undefined;
+    try {
+      requireControlToken(raw);
+    } catch (err) {
+      msg = err instanceof Error ? err.message : String(err);
+    }
+    ok(msg === MISSING_TOKEN_FATAL, label);
+  }
+  ok(MISSING_TOKEN_FATAL.includes("OE_EGRESS_PROXY_TOKEN"), "the fatal names the env var an operator must set");
+}
+
+{
+  ok(bearerMatches("Bearer s3cret", "s3cret"), "the exact bearer token matches");
+  ok(!bearerMatches("Bearer wrong!", "s3cret"), "a same-length wrong token does not match");
+  ok(!bearerMatches("Bearer s3cre", "s3cret"), "a shorter token does not match (no length crash)");
+  ok(!bearerMatches("Bearer s3crets", "s3cret"), "a longer token does not match");
+  ok(!bearerMatches("s3cret", "s3cret"), "a bare token without the Bearer prefix does not match");
+  ok(!bearerMatches("bearer s3cret", "s3cret"), "the scheme is case-sensitive (Squid/app both send `Bearer`)");
+  ok(!bearerMatches(undefined, "s3cret"), "a missing Authorization header does not match (fail-closed)");
+  ok(!bearerMatches(["Bearer s3cret"], "s3cret"), "a duplicated (array) header does not match (fail-closed)");
+  ok(!bearerMatches("Bearer ", "s3cret"), "an empty bearer value does not match");
+}
+
+console.log(`\n✓ egress-proxy control: ${n} assertions passed (ACL match + wildcard + Tier A/B narrowing + store fail-closed + push/acl handlers + /acl loopback gate + token-required boot + bearer check)\n`);

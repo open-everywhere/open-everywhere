@@ -1,9 +1,33 @@
+import { timingSafeEqual } from "node:crypto";
 import { PolicyStore, validatePolicy, normalizeSourceIp, type AclRequest, type AclDecision } from "./acl.ts";
 
 export interface PushInput {
   readonly body: unknown;
   readonly remoteAddr: string;
   readonly authOk: boolean;
+}
+
+export const MISSING_TOKEN_FATAL =
+  "OE_EGRESS_PROXY_TOKEN is required — the control service writes the egress policy that is the " +
+  "only thing standing between the sandbox and the open internet, and it listens on the same " +
+  "network the sandbox runs on. Refusing to start without it. Generate one with " +
+  "`openssl rand -hex 32` and set it on BOTH the proxy and the app (docker-compose.yml passes " +
+  "it to both).";
+
+export function requireControlToken(raw: string | undefined): string {
+  const token = raw?.trim();
+  if (!token) throw new Error(MISSING_TOKEN_FATAL);
+  return token;
+}
+
+export function bearerMatches(header: string | string[] | undefined, token: string): boolean {
+  if (typeof header !== "string") return false;
+  const prefix = "Bearer ";
+  if (!header.startsWith(prefix)) return false;
+  const got = Buffer.from(header.slice(prefix.length), "utf-8");
+  const want = Buffer.from(token, "utf-8");
+  if (got.length !== want.length) return false;
+  return timingSafeEqual(got, want);
 }
 
 export interface PushResult {

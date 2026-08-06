@@ -1,16 +1,24 @@
 import http from "node:http";
 import { PolicyStore } from "./acl.ts";
-import { handlePolicyPush, handleAcl, isLoopbackAddr } from "./handlers.ts";
+import { handlePolicyPush, handleAcl, isLoopbackAddr, requireControlToken, bearerMatches } from "./handlers.ts";
 
 const store = new PolicyStore();
-const TOKEN = process.env.OE_EGRESS_PROXY_TOKEN?.trim() || undefined;
+
+function loadToken(): string {
+  try {
+    return requireControlToken(process.env.OE_EGRESS_PROXY_TOKEN);
+  } catch (err) {
+    console.error(`[oe-egress-control] FATAL: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+const TOKEN = loadToken();
 const PORT = Number(process.env.OE_EGRESS_CONTROL_PORT ?? 8080);
 const HOST = process.env.OE_EGRESS_CONTROL_HOST ?? "0.0.0.0";
 
 function authOk(req: http.IncomingMessage): boolean {
-  if (!TOKEN) return true;
-  const h = req.headers["authorization"];
-  return typeof h === "string" && h === `Bearer ${TOKEN}`;
+  return bearerMatches(req.headers["authorization"], TOKEN);
 }
 
 function remoteAddr(req: http.IncomingMessage): string {
@@ -77,5 +85,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[oe-egress-control] listening on ${HOST}:${PORT}${TOKEN ? " (auth required)" : " (no auth token set)"}`);
+  console.log(`[oe-egress-control] listening on ${HOST}:${PORT} (auth required on /policy)`);
 });
