@@ -133,4 +133,35 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   ok((await hasRatifiedShare("default", "S1", "notion", "slack", "U1")) === false, "fail-closed: hasRatifiedShare swallows a store outage as 'not ratified'");
 }
 
+{
+  const db2 = new PGlite();
+  const client2: PgClient = { query: (text, params) => db2.query(text, params ? [...params] : undefined) };
+  await initOperationalSchema(client2);
+  const pg2 = makeOperationalPostgresStore(client2);
+  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+  registerOperationalStore(pg2);
+  resetOperationalStore();
+
+  await mkSet(pg2, "default", "SP31", [
+    { platform: "slack", nativeId: "U1" },
+    { platform: "discord", nativeId: "D1" },
+  ]);
+  await ratifyOauthVaultShare({ org: "default", connector: "notion", actor: { platform: "discord", nativeId: "D1" } });
+  ok((await hasRatifiedShare("default", "SP31", "notion", "discord", "D1")) === true, "P3-1 setup: discord/D1 holds a ratified grant");
+
+  const faulting = { ...pg2, id: "faulting", deleteOauthVaultGrantsForAccount: async () => { throw new Error("grant-delete outage"); } } as unknown as OperationalStore;
+  process.env.OE_OPERATIONAL_PROVIDER = "faulting";
+  registerOperationalStore(faulting);
+  resetOperationalStore();
+
+  const un = await unlinkOwnId({ org: "default", actor: { platform: "discord", nativeId: "D1" }, target: { platform: "discord", nativeId: "D1" } });
+  ok(un.ok === false, "P3-1: unlink ABORTS when the shared-vault sever faults (does not report success)");
+
+  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+  registerOperationalStore(pg2);
+  resetOperationalStore();
+  ok((await pg2.getLinkedId("default", "discord", "D1"))?.linkSetId === "SP31", "P3-1: a faulted unlink left the membership row intact (linked, not orphaned)");
+  ok((await hasRatifiedShare("default", "SP31", "notion", "discord", "D1")) === true, "P3-1: a faulted unlink left the grant intact — the safe linked+ratified state, never unlinked+ratified");
+}
+
 console.log(`✓ c3-oauth-vault-share: ${n} assertions passed`);

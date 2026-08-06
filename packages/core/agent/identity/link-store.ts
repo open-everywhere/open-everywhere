@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { principalKey } from "./principal-key.js";
-import { severOauthVaultGrantsForAccount, severOauthVaultGrantsForSet } from "./oauth-vault-share.js";
+import { severOauthVaultGrantsForAccountStrict, severOauthVaultGrantsForSet } from "./oauth-vault-share.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
@@ -320,10 +320,14 @@ export async function unlinkOwnId(input: {
     return { ok: false, reason: `${principalKey(target.platform, target.nativeId)} is not on your link-set — you can only unlink your own accounts.` };
   }
   if (row.status === "revoked") return { ok: false, reason: "that link was revoked — revocation is terminal." };
+  try {
+    await severOauthVaultGrantsForAccountStrict(input.org, target);
+  } catch {
+    return { ok: false, reason: "couldn't clear this account's shared-connector consent — nothing was unlinked; try again." };
+  }
   if (!(await store.deleteLinkedId(input.org, target.platform, target.nativeId))) {
     return { ok: false, reason: "that link had already gone." };
   }
-  await severOauthVaultGrantsForAccount(input.org, target);
   await auditLink(input.org, input.actor.platform, undefined, principalKey(input.actor.platform, input.actor.nativeId), "identity.link.unlinked", {
     linkSetId: row.linkSetId,
     unlinked: principalKey(target.platform, target.nativeId),

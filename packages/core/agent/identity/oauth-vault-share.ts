@@ -71,16 +71,12 @@ export async function unshareOauthVault(input: {
   return { ok: true, linkSetId: input.linkSetId, note: `stopped sharing ${input.connector} from ${principalKey(input.actor.platform, input.actor.nativeId)}.` };
 }
 
-export async function severOauthVaultGrantsForAccount(org: string, account: LinkedAccount): Promise<number> {
-  try {
-    const removed = await getOperationalStore().deleteOauthVaultGrantsForAccount(org, account.platform, account.nativeId);
-    if (removed > 0) {
-      await auditVault(org, account.platform, principalKey(account.platform, account.nativeId), "identity.oauth_vault.severed", { removed });
-    }
-    return removed;
-  } catch {
-    return 0;
+export async function severOauthVaultGrantsForAccountStrict(org: string, account: LinkedAccount): Promise<number> {
+  const removed = await getOperationalStore().deleteOauthVaultGrantsForAccount(org, account.platform, account.nativeId);
+  if (removed > 0) {
+    await auditVault(org, account.platform, principalKey(account.platform, account.nativeId), "identity.oauth_vault.severed", { removed });
   }
+  return removed;
 }
 
 export async function severOauthVaultGrantsForSet(org: string, linkSetId: string): Promise<number> {
