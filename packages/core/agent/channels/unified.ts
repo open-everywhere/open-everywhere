@@ -2,7 +2,7 @@ import { defineChannel, GET, POST } from "eve/channels";
 import type { Session, RouteHandlerArgs } from "eve/channels";
 import { SELF_DISPATCH_PATH, handleSelfDispatch, postSelfDispatch, selfDispatchConfigured, type UnifiedDispatchPayload } from "./self-dispatch.js";
 import { appendAudit, auditSilencesEnabled } from "../audit/audit.js";
-import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, type BindableContext } from "../identity/binding.js";
+import { deploymentOrg, currentWakeId, currentTurnId, currentTurnAddressing, bindFrom, type BindableContext } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -18,6 +18,7 @@ import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
+import { ingressSpendGate } from "../spend/ingress-gate.js";
 
 function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
@@ -29,7 +30,7 @@ function rememberUnifiedReceive(receive: RouteHandlerArgs["receive"]): void {
 }
 
 async function deliverUnifiedDispatch(input: UnifiedDispatchPayload): Promise<void> {
-  if (rememberedReceive) return divertToUnifiedWindow(rememberedReceive, input);
+  if (rememberedReceive) return divertToUnifiedWindow(rememberedReceive, { ...input, internalDispatch: true });
   await postSelfDispatch(input);
 }
 
@@ -96,10 +97,27 @@ function windowSourcesForDivert(token: string, originPlatform: string): readonly
   return [originPlatform];
 }
 
+async function windowSpendGate(input: {
+  readonly window: UnifiedWindowWake;
+  readonly auth: { attributes?: Record<string, unknown> };
+}): Promise<"proceed" | "declined"> {
+  const platform = input.window.origin.platform;
+  const bindable = { channel: { kind: platform }, session: { auth: { current: input.auth } } } as unknown as BindableContext;
+  const principalId = bindFrom(bindable).principalId;
+  return ingressSpendGate({
+    bindable,
+    door: "window",
+    ...(principalId !== undefined ? { principalId } : {}),
+    post: async (text) => {
+      await postUnifiedReply(input.window.origin, text);
+    },
+  });
+}
+
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
   routes: [
     GET("/eve/v1/unified", async () => new Response("not found", { status: 404 })),
-    POST(SELF_DISPATCH_PATH, async (req, { receive }) => handleSelfDispatch(req, receive, (r, i) => divertToUnifiedWindow(r, i))),
+    POST(SELF_DISPATCH_PATH, async (req, { receive }) => handleSelfDispatch(req, receive, (r, i) => divertToUnifiedWindow(r, { ...i, internalDispatch: true }))),
   ],
   kindHint: "unified",
   async receive(input, { send }): Promise<Session> {
@@ -276,6 +294,7 @@ export async function divertToUnifiedWindow(
     readonly surfaceKey: string;
     readonly auth: { attributes?: Record<string, unknown> };
     readonly excludeTaskResultId?: string;
+    readonly internalDispatch?: true;
   },
 ): Promise<void> {
   if (!admitInboundSurface(input.window.origin.platform)) {
@@ -288,6 +307,10 @@ export async function divertToUnifiedWindow(
       action: "provider.unselected_wake_refused",
       detail: { wakeId: input.window.wakeId, selected: [...(providerSelection() ?? [])] },
     }).catch(() => undefined);
+    return;
+  }
+  if (input.internalDispatch !== true && (await windowSpendGate(input)) === "declined") {
+    ulog(`DECLINED single-window wake ${input.window.wakeId} from ${input.surfaceKey} — over its spend cap (refusal posted, no model turn)`);
     return;
   }
   rememberUnifiedReceive(receive);

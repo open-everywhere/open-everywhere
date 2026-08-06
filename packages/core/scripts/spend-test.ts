@@ -746,8 +746,10 @@ rmSync(dir, { recursive: true, force: true });
     ok(!/\bcapBypassFor\s*\(/.test(src), `OPE-267: ${rel.split("/").pop()} never CALLS capBypassFor — an autonomous fire cannot obtain the admin escape`);
     ok(!/from\s+"[^"]*spend\/bypass\.js"/.test(src), `OPE-267: ${rel.split("/").pop()} does not even import spend/bypass.js`);
   }
-  const gate = readFileSync(new URL("../../providers/slack/agent/channels/slack-spend-gate.ts", import.meta.url), "utf8");
-  ok(/\bcapBypassFor\b/.test(gate), "OPE-267: the ATTENDED slack ingress gate does consult capBypassFor — the escape exists, it is just unreachable from a fire");
+  const gate = readFileSync(new URL("../agent/spend/ingress-gate.ts", import.meta.url), "utf8");
+  ok(/\?\?\s*capBypassFor\b/.test(gate) && /from\s+"\.\/bypass\.js"/.test(gate), "OPE-267: the ATTENDED ingress gate does consult capBypassFor (its live default) — the escape exists, it is just unreachable from a fire");
+  const fireWindow = readFileSync(new URL("../agent/routines/fire-window.ts", import.meta.url), "utf8");
+  ok(/internalDispatch:\s*true/.test(fireWindow), "OPE-267: fire-window.ts marks its divert `internalDispatch` — a fire never reaches the attended gate, so it never reaches the admin escape");
 }
 
 console.log(`✓ spend: ${passed} assertions passed`);

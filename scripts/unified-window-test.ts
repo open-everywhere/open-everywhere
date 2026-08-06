@@ -85,7 +85,12 @@ import {
 import { buildTeamsAuth } from "@open-everywhere/provider-teams/agent/channels/teams-identity.js";
 import { isTrustedTeamsServiceUrl } from "@open-everywhere/provider-teams/agent/channels/teams-origin-codec.js";
 import { registerTeamsProvider } from "@open-everywhere/provider-teams/agent/register.js";
-import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { channelPlatform, isUnifiedWindowContext, currentWakeId, currentTurnAddressing, assertTurnSurface, bindFrom, deploymentOrg, windowSourcesOf, resolveWindowSources, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
+import { registerPostArm, postArm, type PostArm } from "@open-everywhere/core/agent/channels/post-arms.js";
+import { resolvePartition, domainKeyOf } from "@open-everywhere/core/agent/memory/partition.js";
+import { recordSpend } from "@open-everywhere/core/agent/spend/store.js";
+import { periodOf } from "@open-everywhere/core/agent/spend/spend.js";
+import { readAudit } from "@open-everywhere/core/agent/audit/audit.js";
 import replyTool from "@open-everywhere/core/agent/tools/reply.js";
 import readSlackChannel from "@open-everywhere/provider-slack/agent/tools/read_slack_channel.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -1237,6 +1242,117 @@ process.env.OE_WINDOW_TOPOLOGY = "0";
     session: { auth: { current: { attributes: { oe_platform: "github" }, principalId: "U", principalType: "github-user" } } },
   };
   ok(JSON.stringify(resolveWindowSources(unresolvable, [winDomain, org])) === JSON.stringify(["github"]), "resolveWindowSources fails closed to the SINGLE origin platform when neither stamp nor token resolves");
+}
+
+{
+  const ORG = deploymentOrg();
+  const slackAuth = { attributes: { team_id: "T_WIN", channel_id: "C_WINA", channel_type: "channel" } };
+  const dcAuth = authForRelayMessage(discordMsg({}))!;
+  const surfaces = [
+    { platform: "slack", key: SLACK_KEY, auth: slackAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "slack", channelId: "C_WINA" } as UnifiedWakeOrigin },
+    { platform: "github", key: GH_KEY, auth: ghAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "github", owner: "acme", repo: "payments-api", issueNumber: 55 } as UnifiedWakeOrigin },
+    { platform: "linear", key: LINEAR_KEY, auth: linAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "linear", agentSessionId: "as-1", issueId: "issue-uuid-77" } as UnifiedWakeOrigin },
+    { platform: "notion", key: NOTION_KEY, auth: notAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "notion", discussionId: "disc-win-1", pageId: "P_WINPAGE" } as UnifiedWakeOrigin },
+    { platform: "discord", key: DISCORD_KEY, auth: dcAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "discord", channelId: "CH_WIN", guildId: "G_WIN" } as UnifiedWakeOrigin },
+    { platform: "teams", key: TEAMS_KEY, auth: teamsAuth as unknown as { attributes?: Record<string, unknown> }, origin: { platform: "teams", serviceUrl: "https://smba.trafficmanager.net/emea/", conversationId: "19:winchan.tacv2;messageid=170001", replyToActivityId: "170001" } as UnifiedWakeOrigin },
+  ] as const;
+
+  const partitionFor = (s: { platform: string; auth: { attributes?: Record<string, unknown> } }) =>
+    resolvePartition({ channel: { kind: s.platform }, session: { auth: { current: s.auth } } } as unknown as BindableContext);
+  const capKeyFor = (s: (typeof surfaces)[number]): string => domainKeyOf(partitionFor(s));
+  for (const s of surfaces) {
+    if (s.platform === "teams") {
+      ok(capKeyFor(s) !== partitionFor(s).surfaceKey, "spend gate: the teams divert caps the CHANNEL grain (domainKeyOf), NOT the per-reply-chain surface key — the grain a cap is declared on");
+      continue;
+    }
+    ok(capKeyFor(s) === s.key, `spend gate: the ${s.platform} divert caps the fixture's domain-grain key (${s.key}) — the key a cap is declared on`);
+  }
+
+  const refusals: Array<{ platform: string; text: string }> = [];
+  const liveArms = surfaces.map((s) => postArm(s.platform)!);
+  for (const s of surfaces) {
+    registerPostArm({
+      ...(postArm(s.platform) as PostArm),
+      platform: s.platform,
+      dispatchUnified: async (_origin, text) => {
+        refusals.push({ platform: s.platform, text });
+        return `captured-${s.platform}`;
+      },
+    });
+  }
+
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [winDomain, org],
+    loadSilos: () => [],
+    domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
+    loadSpendBudgets: () => ({ perSurface: Object.fromEntries(surfaces.map((s) => [capKeyFor(s), { surfaceMonthlyTokens: 1 }])) }),
+  });
+  const nowIso = new Date().toISOString();
+  for (const s of surfaces) {
+    await recordSpend(partitionFor(s), { period: periodOf(nowIso), usage: { inputTokens: 100, outputTokens: 100 } });
+  }
+
+  const divert = (s: (typeof surfaces)[number], extra: Record<string, unknown> = {}) =>
+    divertToUnifiedWindow(captureReceive, {
+      message: `<wake>an attended mention on ${s.platform}</wake>`,
+      token: RAW_TOKEN,
+      window: { wakeId: mintWakeId(), origin: s.origin, addressing: "direct-mention" },
+      surfaceKey: s.key,
+      auth: s.auth,
+      ...extra,
+    });
+
+  for (const s of surfaces) {
+    const before = received.length;
+    refusals.length = 0;
+    await divert(s);
+    ok(received.length === before, `spend gate: an over-budget ${s.platform} single-window mention is DECLINED at the divert — nothing reaches the unified channel (no model turn)`);
+    ok(
+      refusals.length === 1 && refusals[0]!.platform === s.platform && refusals[0]!.text.includes(capKeyFor(s)),
+      `spend gate: the ${s.platform} decline posts a VISIBLE refusal through that surface's OWN post arm, naming the scope key an override must target`,
+    );
+    ok(refusals[0]!.text.includes("holding off"), `spend gate: the ${s.platform} refusal is the ONE shared copy (spend/ingress-gate.ts), not a per-surface fork`);
+  }
+
+  {
+    const rows = (await readAudit({ org: ORG, action: "spend.gate" })).filter((r) => r.detail?.door === "window");
+    ok(rows.length === surfaces.length, `spend gate: each declined divert writes exactly ONE spend.gate row (${surfaces.length} surfaces, ${rows.length} rows)`);
+    ok(
+      surfaces.every((s) => rows.some((r) => r.detail?.key === capKeyFor(s) && r.detail?.over === true)),
+      "spend gate: every row names the SPEND-GRAIN key that tripped (domainKeyOf), over:true",
+    );
+  }
+
+  {
+    const before = received.length;
+    refusals.length = 0;
+    await divert(surfaces[0], { internalDispatch: true });
+    ok(received.length === before + 1, "spend gate: an INTERNAL dispatch (completion/spawn/redrive/fire) on the SAME over-budget scope is DELIVERED — never starved of an admitted result");
+    ok(refusals.length === 0, "spend gate: an internal dispatch posts NO refusal (the silent-routine carve-out is not reachable through this door)");
+  }
+
+  {
+    registerConfig({
+      loadBundles: () => [],
+      loadBindings: () => [],
+      pluginRegistry: {},
+      skillContent: {},
+      loadDomains: () => [winDomain, org],
+      loadSilos: () => [],
+      domainsForSurface: ({ surface }) => (["C_WINA", "payments-api", "T_WINX", "P_WINPAGE", "CH_WIN", "19-winchan.tacv2"].includes(surface) ? ["payments"] : []),
+      loadSpendBudgets: () => ({}),
+    });
+    const before = received.length;
+    refusals.length = 0;
+    await divert(surfaces[1]);
+    ok(received.length === before + 1 && refusals.length === 0, "spend gate: with the cap removed the SAME wake is delivered, un-refused (the gate admits under budget — it is not a one-way door)");
+  }
+
+  for (const arm of liveArms) registerPostArm(arm);
 }
 
 console.log(`unified-window: ${n} assertions passed`);

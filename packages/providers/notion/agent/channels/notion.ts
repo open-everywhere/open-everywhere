@@ -1,11 +1,7 @@
 import { defineChannel, POST, type RouteHandlerArgs } from "eve/channels";
 import {
   appendAudit,
-  bindFrom,
-  resolvePartition,
-  scopeOverBudget,
-  capBypassFor,
-  domainKeyOf,
+  ingressSpendGate,
   auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
@@ -168,34 +164,13 @@ export default defineChannel<NotionState, { state: NotionState }>({
         const trustOf = (m: NotionWakeMessage) =>
           m.from === "human" && m.authorId ? resolveWakeTrustFromContext(wakeCtx, { id: m.authorId, isBot: false }) : ("relay" as const);
 
-        try {
-          const gPartition = resolvePartition(wakeCtx);
-          const gBinding = bindFrom(wakeCtx);
-          const verdict = await scopeOverBudget(gPartition, gBinding.mode, new Date().toISOString(), gBinding.trust, gBinding.principalId);
-          if (verdict.over) {
-            try {
-              await appendAudit({
-                org: gPartition.org, platform: gPartition.platform, workspace: gPartition.workspace, surface: gPartition.surface,
-                action: "spend.gate",
-                detail: { key: domainKeyOf(gPartition), mode: gBinding.mode, door: "mention", over: true, ...(verdict.reason ? { reason: verdict.reason } : {}) },
-              });
-            } catch {}
-            const bypass = await capBypassFor({ org: gBinding.org, principalId: d.auth.principalId || undefined, surfaceKey: domainKeyOf(gPartition), reason: verdict.reason });
-            if (bypass) {
-              if (bypass.warn) { try { await createCommentReply({ discussionId: d.discussionId, text: `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap, or change it in the spend-budgets config.`, apiKey: apiKey ?? "" }); } catch {} }
-            } else {
-              const isDm = gBinding.mode === "dm" || gBinding.mode === "mpim";
-              const scopeKey = domainKeyOf(gPartition), wsKey = `${gBinding.platform}/${gBinding.workspace}`;
-              try {
-                await createCommentReply({ discussionId: d.discussionId, text: isDm
-                  ? `I'm holding off — ${verdict.reason}. This is a cap on your own usage; I can't raise it from here. Ask an org admin to raise it in the spend-budgets config, or from a channel ask me to propose an override. Scope key: \`${scopeKey}\`.`
-                  : `I'm holding off here — ${verdict.reason}. An admin can raise this in the spend-budgets config, or DM me to propose a temporary override. Scope keys: this surface = \`${scopeKey}\`, whole workspace = \`${wsKey}\`.`, apiKey: apiKey ?? "" });
-              } catch {}
-              return;
-            }
-          }
-        } catch (e) {
-          console.warn(`[open-everywhere:notion:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+        if ((await ingressSpendGate({
+          bindable: wakeCtx,
+          door: "mention",
+          ...(d.auth.principalId ? { principalId: d.auth.principalId } : {}),
+          post: async (text) => { await createCommentReply({ discussionId: d.discussionId, text, apiKey: apiKey ?? "" }); },
+        })) === "declined") {
+          return;
         }
 
         await handleNotionSupervisorDispatch(

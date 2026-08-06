@@ -142,6 +142,7 @@ export async function divertTriggeredFire(
     window: { wakeId, origin: input.origin, addressing: "direct-mention" },
     surfaceKey: input.surfaceKey,
     auth: { ...input.auth, attributes },
+    internalDispatch: true,
   });
   return true;
 }

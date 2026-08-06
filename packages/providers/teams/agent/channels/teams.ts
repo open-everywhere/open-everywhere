@@ -7,11 +7,7 @@ import {
   postTerminalProse,
   consumeRepliedThisTurn,
   resolvePartition,
-  bindFrom,
-  scopeOverBudget,
-  capBypassFor,
-  appendAudit,
-  domainKeyOf,
+  ingressSpendGate,
   type ChatAuditPartition,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -94,35 +90,13 @@ export const teamsOnMessage = async (ctx: TeamsInboundMessageContext, message: T
       userType,
     });
 
-    try {
-      const gBindable = { channel: { kind: "teams" as const }, session: { auth: { current: auth } } };
-      const gPartition = resolvePartition(gBindable);
-      const gBinding = bindFrom(gBindable);
-      const verdict = await scopeOverBudget(gPartition, gBinding.mode, new Date().toISOString(), gBinding.trust, gBinding.principalId);
-      if (verdict.over) {
-        try {
-          await appendAudit({
-            org: gPartition.org, platform: gPartition.platform, workspace: gPartition.workspace, surface: gPartition.surface,
-            action: "spend.gate",
-            detail: { key: domainKeyOf(gPartition), mode: gBinding.mode, door: "mention", over: true, ...(verdict.reason ? { reason: verdict.reason } : {}) },
-          });
-        } catch {}
-        const bypass = await capBypassFor({ org: gBinding.org, principalId: message.from.id, surfaceKey: domainKeyOf(gPartition), reason: verdict.reason });
-        if (bypass) {
-          if (bypass.warn) { try { await ctx.thread.post(`⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap, or change it in the spend-budgets config.`); } catch {} }
-        } else {
-          const isDm = gBinding.mode === "dm" || gBinding.mode === "mpim";
-          const scopeKey = domainKeyOf(gPartition), wsKey = `${gBinding.platform}/${gBinding.workspace}`;
-          try {
-            await ctx.thread.post(isDm
-              ? `I'm holding off — ${verdict.reason}. This is a cap on your own usage; I can't raise it from here. Ask an org admin to raise it in the spend-budgets config, or from a channel ask me to propose an override. Scope key: \`${scopeKey}\`.`
-              : `I'm holding off here — ${verdict.reason}. An admin can raise this in the spend-budgets config, or DM me to propose a temporary override. Scope keys: this surface = \`${scopeKey}\`, whole workspace = \`${wsKey}\`.`);
-          } catch {}
-          return null;
-        }
-      }
-    } catch (e) {
-      console.warn(`[open-everywhere:teams:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+    if ((await ingressSpendGate({
+      bindable: { channel: { kind: "teams" as const }, session: { auth: { current: auth } } },
+      door: "mention",
+      principalId: message.from.id,
+      post: async (text) => { await ctx.thread.post(text); },
+    })) === "declined") {
+      return null;
     }
 
     return { auth };

@@ -111,7 +111,7 @@ export type { MemoryProvider } from "./memory/provider.js";
 export { registerGitHubMemory } from "./memory/github.js";
 export { initPostgresSchema } from "./memory/postgres.js";
 export type { PgClient } from "./memory/postgres.js";
-export { registerOperationalPostgres, getOperationalStore } from "./operational/provider.js";
+export { registerOperationalPostgres, getOperationalStore, registerOperationalStore, resetOperationalStore } from "./operational/provider.js";
 export { initOperationalSchema } from "./operational/postgres.js";
 export { registerOperationalPglite, pgliteOperationalDataDir } from "./operational/pglite-client.js";
 
@@ -340,6 +340,8 @@ export {
 
 export { scopeOverBudget } from "./spend/check.js";
 export { capBypassFor } from "./spend/bypass.js";
+export { ingressSpendGate, spendRefusalCopy, spendBypassWarnCopy, UNICODE_SPEND_BADGES, SLACK_SPEND_BADGES } from "./spend/ingress-gate.js";
+export type { IngressSpendGateInput, SpendGateBadges, SpendGateDecision, SpendGateDoor, SpendGateAuditRow } from "./spend/ingress-gate.js";
 
 export { classifyWakeMapping, unmappedWakeCopy, UNMAPPED_WAKE_DROP_REASON } from "./access/wake-mapping.js";
 export type { WakeMappingDecision, WakeMappingInput } from "./access/wake-mapping.js";

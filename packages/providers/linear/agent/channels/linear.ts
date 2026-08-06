@@ -36,11 +36,7 @@ import {
   completeSupervisorTurn,
   auditSupervisorFailure,
   appendAudit,
-  bindFrom,
-  resolvePartition,
-  scopeOverBudget,
-  capBypassFor,
-  domainKeyOf,
+  ingressSpendGate,
   auditAmbientSkip,
   deploymentOrg,
   resolveWakeTrustFromContext,
@@ -606,35 +602,16 @@ export const linearOnAgentSession = async (_ctx: LinearSessionContext, event: Li
       isPrivate,
     });
 
-    try {
-      const gBindable = { channel: { kind: "linear" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
-      const gPartition = resolvePartition(gBindable);
-      const gBinding = bindFrom(gBindable);
-      const verdict = await scopeOverBudget(gPartition, gBinding.mode, new Date().toISOString(), gBinding.trust, gBinding.principalId);
-      if (verdict.over) {
-        try {
-          await appendAudit({
-            org: gPartition.org, platform: gPartition.platform, workspace: gPartition.workspace, surface: gPartition.surface,
-            action: "spend.gate",
-            detail: { key: domainKeyOf(gPartition), mode: gBinding.mode, door: "mention", over: true, ...(verdict.reason ? { reason: verdict.reason } : {}) },
-          });
-        } catch {}
-        const bypass = await capBypassFor({ org: gBinding.org, principalId: creatorId, surfaceKey: domainKeyOf(gPartition), reason: verdict.reason });
-        if (bypass) {
-          if (bypass.warn) { try { await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or clear the cap, or change it in the spend-budgets config.` } } }); } catch {} }
-        } else {
-          const isDm = gBinding.mode === "dm" || gBinding.mode === "mpim";
-          const scopeKey = domainKeyOf(gPartition), wsKey = `${gBinding.platform}/${gBinding.workspace}`;
-          try {
-            await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: isDm
-              ? `I'm holding off — ${verdict.reason}. This is a cap on your own usage; I can't raise it from here. Ask an org admin to raise it in the spend-budgets config, or from a channel ask me to propose an override. Scope key: \`${scopeKey}\`.`
-              : `I'm holding off here — ${verdict.reason}. An admin can raise this in the spend-budgets config, or DM me to propose a temporary override. Scope keys: this surface = \`${scopeKey}\`, whole workspace = \`${wsKey}\`.` } } });
-          } catch {}
-          return null;
-        }
-      }
-    } catch (e) {
-      console.warn(`[open-everywhere:linear:spend-gate] check failed OPEN: ${e instanceof Error ? e.message : String(e)}`);
+    const refuse = async (text: string): Promise<void> => {
+      await createLinearAgentActivity({ credentials: linearAppActorCredentials, activity: { agentSessionId, content: { type: "error", body: text } } });
+    };
+    if ((await ingressSpendGate({
+      bindable: { channel: { kind: "linear" as const }, session: { auth: { current: auth as unknown as { attributes?: Readonly<Record<string, string>> } } } },
+      door: "mention",
+      ...(creatorId !== undefined ? { principalId: creatorId } : {}),
+      post: refuse,
+    })) === "declined") {
+      return null;
     }
 
     return { auth };
