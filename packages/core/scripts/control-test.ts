@@ -4,6 +4,9 @@ import { spendView, routinesView, auditView, accessView, usageSummaryView, usage
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
+import { builtInModelIds, modelPricing } from "../agent/spend/pricing.js";
+
+const PRICED_MODEL = builtInModelIds()[0];
 
 let n = 0;
 const ok = (label: string, cond: boolean) => {
@@ -71,7 +74,7 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
 
   const usageAll = await usageSummaryView({ org: CTL_ORG });
   ok("usageSummaryView (unscoped): sees every surface", usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_ENG") && usageAll.rows.some((r) => r.surfaceKey === "slack/T1/C_OTHER"));
-  ok("usageSummaryView: prices with the deploy's sole configured model by default", usageAll.pricedModel === "zai/glm-5.2" && usageAll.rows.every((r) => typeof r.costUsd === "number"));
+  ok("usageSummaryView: prices with the deploy's sole configured model by default", usageAll.pricedModel === PRICED_MODEL && usageAll.rows.every((r) => typeof r.costUsd === "number"));
 
   const usageDomain = await usageSummaryView({ org: CTL_ORG, domain: "eng" });
   ok("usageSummaryView (domain-scoped): only the domain's surfaces", usageDomain.rows.every((r) => r.surfaceKey === "slack/T1/C_ENG"));
@@ -147,22 +150,23 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   const nowISO = new Date().toISOString();
   const period = nowISO.slice(0, 7);
 
-  await store.recordSpend({ org: CTL_ORG, surfaceKey } as never, { period, usage: { inputTokens: 1_000_000 }, model: "zai/glm-5.2" });
+  await store.recordSpend({ org: CTL_ORG, surfaceKey } as never, { period, usage: { inputTokens: 1_000_000 }, model: PRICED_MODEL });
 
   const spendBefore = await spendView(period);
   const rowBefore = spendBefore.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
   ok("spendView: the seeded surface appears in this period's surfaces", rowBefore !== undefined);
-  ok("spendView: usd is rendered and matches the priced row ($1.40 @ zai/glm-5.2's built-in rate)", Math.abs((rowBefore?.usd ?? -1) - 1.4) < 1e-9);
+  ok("spendView: usd is rendered and matches the priced row (1M input tokens @ the built-in input rate)", Math.abs((rowBefore?.usd ?? -1) - modelPricing(PRICED_MODEL)!.inPerMtok) < 1e-9);
   ok("spendView: no cap configured anywhere -> both caps null, never over", rowBefore?.tokenCap === null && rowBefore?.usdCap === null && rowBefore?.over === false);
 
   const wsRowBefore = spendBefore.workspaces.find((w) => w.key === `${CTL_ORG}/slack/T1`);
   ok("spendView: a workspace row exists for the seeded org/workspace", wsRowBefore !== undefined);
-  ok("spendView: workspace usd rolls up at least the surface's contribution", (wsRowBefore?.usd ?? 0) >= 1.4 - 1e-9);
+  ok("spendView: workspace usd rolls up at least the surface's contribution", (wsRowBefore?.usd ?? 0) >= modelPricing(PRICED_MODEL)!.inPerMtok - 1e-9);
 
-  await opStore.setSpendLimit(CTL_ORG, surfaceKey, "surface", { monthlyUsd: 1 }, { reason: "test", setBy: "tester" });
+  const ctlUsdCap = modelPricing(PRICED_MODEL)!.inPerMtok / 2;
+  await opStore.setSpendLimit(CTL_ORG, surfaceKey, "surface", { monthlyUsd: ctlUsdCap }, { reason: "test", setBy: "tester" });
   const spendAfter = await spendView(period);
   const rowAfter = spendAfter.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
-  ok("spendView: an ACTIVE override changes the shown usd cap (report == gate)", rowAfter?.usdCap === 1);
+  ok("spendView: an ACTIVE override changes the shown usd cap (report == gate)", rowAfter?.usdCap === ctlUsdCap);
   ok("spendView: with the override active, the surface shows over", rowAfter?.usdOver === true && rowAfter?.over === true);
 
   await opStore.clearSpendLimit(CTL_ORG, surfaceKey, "surface");
@@ -175,26 +179,28 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   const UW_ORG = `uw-test-${process.pid}-${Date.now()}`;
   const t0 = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString();
-  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u1", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, model: "zai/glm-5.2", ts: iso(t0) });
-  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u2", principalId: "U2", kind: "channel", inputTokens: 1000, outputTokens: 500, model: "zai/glm-5.2", ts: iso(t0 + 1000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u1", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, model: PRICED_MODEL, ts: iso(t0) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u2", principalId: "U2", kind: "channel", inputTokens: 1000, outputTokens: 500, model: PRICED_MODEL, ts: iso(t0 + 1000) });
   await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u3", principalId: "U1", kind: "channel", inputTokens: 100, outputTokens: 10, model: "mystery/unpriced-9b", ts: iso(t0 + 2000) });
   await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u4", principalId: "U1", kind: "channel", inputTokens: 50, outputTokens: 5, ts: iso(t0 + 3000) });
-  await appendUsageEvent({ org: UW_ORG, surfaceKey: "discord/G1/CH1", sessionId: "u5", kind: "channel", inputTokens: 2000, outputTokens: 1000, model: "zai/glm-5.2", ts: iso(t0 + 4000) });
-  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u0", principalId: "U1", kind: "channel", inputTokens: 999999, outputTokens: 999999, model: "zai/glm-5.2", ts: iso(t0 - 86400e3) });
-  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TOTHER/C9", sessionId: "u6", kind: "channel", inputTokens: 777, outputTokens: 77, model: "zai/glm-5.2", ts: iso(t0 + 5000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "discord/G1/CH1", sessionId: "u5", kind: "channel", inputTokens: 2000, outputTokens: 1000, model: PRICED_MODEL, ts: iso(t0 + 4000) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TW1/C1", sessionId: "u0", principalId: "U1", kind: "channel", inputTokens: 999999, outputTokens: 999999, model: PRICED_MODEL, ts: iso(t0 - 86400e3) });
+  await appendUsageEvent({ org: UW_ORG, surfaceKey: "slack/TOTHER/C9", sessionId: "u6", kind: "channel", inputTokens: 777, outputTokens: 77, model: PRICED_MODEL, ts: iso(t0 + 5000) });
 
   const view = await usageWindowView({ org: UW_ORG, sinceIso: iso(t0 - 1000), workspaceKeys: ["slack/TW1", "discord/G1", "slack/TW1"] });
-  const glmRow = view.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === "zai/glm-5.2");
-  ok("usage_window: groups to (surface, model), summing calls/tokens across principals", glmRow?.calls === 2 && glmRow?.inputTokens === 2000 && glmRow?.outputTokens === 1000);
-  ok("usage_window: priced row carries the exact estimate at its own stamped model's rate", Math.abs((glmRow?.estimatedUsd ?? 0) - 0.0072) < 1e-12);
+  const pricedRow = view.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === PRICED_MODEL);
+  ok("usage_window: groups to (surface, model), summing calls/tokens across principals", pricedRow?.calls === 2 && pricedRow?.inputTokens === 2000 && pricedRow?.outputTokens === 1000);
+  const uwRate = modelPricing(PRICED_MODEL)!;
+  const uwExpected = (2000 * uwRate.inPerMtok + 1000 * uwRate.outPerMtok) / 1_000_000;
+  ok("usage_window: priced row carries the exact estimate at its own stamped model's rate", Math.abs((pricedRow?.estimatedUsd ?? 0) - uwExpected) < 1e-12);
   const mysteryRow = view.rows.find((r) => r.model === "mystery/unpriced-9b");
   ok("usage_window: unpriced model -> tokens shown, estimatedUsd OMITTED (never guessed)", mysteryRow !== undefined && !("estimatedUsd" in mysteryRow) && mysteryRow.inputTokens === 100);
   ok("usage_window: unpricedModels names the unpriced model", view.unpricedModels.includes("mystery/unpriced-9b"));
   const unstamped = view.rows.find((r) => r.surfaceKey === "slack/TW1/C1" && r.model === undefined);
   ok("usage_window: unstamped row -> tokens only, bucketed as (unstamped), NO assumed-model fallback", unstamped !== undefined && !("estimatedUsd" in unstamped) && view.unpricedModels.includes("(unstamped)"));
   const discordRow = view.rows.find((r) => r.surfaceKey === "discord/G1/CH1");
-  ok("usage_window: every requested workspace contributes", discordRow?.calls === 1 && Math.abs((discordRow?.estimatedUsd ?? 0) - 0.0072) < 1e-12);
-  ok("usage_window: totalUsd sums ONLY the priced rows (honest partial)", Math.abs(view.totalUsd - 0.0144) < 1e-12);
+  ok("usage_window: every requested workspace contributes", discordRow?.calls === 1 && Math.abs((discordRow?.estimatedUsd ?? 0) - uwExpected) < 1e-12);
+  ok("usage_window: totalUsd sums ONLY the priced rows (honest partial)", Math.abs(view.totalUsd - 2 * uwExpected) < 1e-12);
   ok("usage_window: rows older than sinceIso are excluded", !view.rows.some((r) => r.inputTokens > 100000));
   ok("usage_window: an unrequested workspace is excluded", !view.rows.some((r) => r.surfaceKey.startsWith("slack/TOTHER")));
   ok("usage_window: duplicate workspaceKeys are deduped (no double count)", view.workspaceKeys.length === 2);

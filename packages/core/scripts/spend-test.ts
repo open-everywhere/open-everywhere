@@ -11,6 +11,9 @@ __slackStubs.registerSlackFixtureMapper();
 
 import { turnKind } from "../agent/hooks/spend.js";
 import type { BindableContext } from "../agent/identity/binding.js";
+import { builtInModelIds, estimateCostUsd, modelPricing } from "../agent/spend/pricing.js";
+
+const PRICED_MODEL = builtInModelIds()[0];
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -421,7 +424,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
+  process.env.OE_MODEL_PRICING = JSON.stringify({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
   const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
   _resetPricingCacheForTest();
 
@@ -446,14 +449,14 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const seed = (surfaceKey: string, period: string, tokens: { inputTokens?: number; outputTokens?: number }, model?: string) =>
     store.recordSpend({ org, surfaceKey } as never, { period, usage: tokens, model });
 
-  await seed("slack/T9/C1", "2026-07", { inputTokens: 1_000_000 }, "zai/glm-5.2");
+  await seed("slack/T9/C1", "2026-07", { inputTokens: 1_000_000 }, PRICED_MODEL);
   await seed("slack/T9/C1", "2026-07", { outputTokens: 1_000_000 });
   await seed("slack/T9/C1", "2026-07", { inputTokens: 9_000_000 }, "mystery/unpriced");
-  await seed("slack/T9/C11", "2026-07", { inputTokens: 2_000_000 }, "zai/glm-5.2");
-  await seed("slack/T9/D1", "2026-07", { inputTokens: 1_000_000 }, "zai/glm-5.2");
-  await seed("slack/T9/C1", "2026-06", { inputTokens: 50_000_000 }, "zai/glm-5.2");
-  await seed("slack/T9/C1", "2026-09", { inputTokens: 50_000_000 }, "zai/glm-5.2");
-  await store.recordSpend({ org: "other-org", surfaceKey: "slack/T9/C1" } as never, { period: "2026-07", usage: { inputTokens: 50_000_000 }, model: "zai/glm-5.2" });
+  await seed("slack/T9/C11", "2026-07", { inputTokens: 2_000_000 }, PRICED_MODEL);
+  await seed("slack/T9/D1", "2026-07", { inputTokens: 1_000_000 }, PRICED_MODEL);
+  await seed("slack/T9/C1", "2026-06", { inputTokens: 50_000_000 }, PRICED_MODEL);
+  await seed("slack/T9/C1", "2026-09", { inputTokens: 50_000_000 }, PRICED_MODEL);
+  await store.recordSpend({ org: "other-org", surfaceKey: "slack/T9/C1" } as never, { period: "2026-07", usage: { inputTokens: 50_000_000 }, model: PRICED_MODEL });
 
   const usd = await scopeUsdSpend(org, "slack/T9", "slack/T9/C1", NOW_ISO);
   const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
@@ -624,7 +627,9 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok(!(await scopeOverBudget(mk("C_BUSY") as never, "channel", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: the person axis is DM-scoped — the same principal's channel turns are not gated by their DM allowance");
   ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal")).over, "OPE-268: no principal → no per-user cap can apply (never the unattributed bucket by accident)");
 
-  budgets3 = { perUser: { default: { surfaceMonthlyUsd: 0.000_05 } } };
+  const heavyUsd = estimateCostUsd({ inputTokens: 100 }, modelPricing(PRICED_MODEL));
+  ok(heavyUsd !== undefined && heavyUsd > 0, "OPE-268 precondition: the deploy prices its own sole model (else the USD axis below is vacuous)");
+  budgets3 = { perUser: { default: { surfaceMonthlyUsd: heavyUsd! / 2 } } };
   const usdVerdict = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY");
   ok(usdVerdict.over === true && usdVerdict.reason?.includes("your own monthly budget") === true, "OPE-268: a per-user cap trips in USD as well as tokens (both read the same principal-keyed ledger rows)");
 
@@ -662,7 +667,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
 }
 
 {
-  process.env.OE_MODEL_PRICING = JSON.stringify({ "zai/glm-5.2": { inPerMtok: 1, outPerMtok: 2 } });
+  process.env.OE_MODEL_PRICING = JSON.stringify({ [PRICED_MODEL]: { inPerMtok: 1, outPerMtok: 2 } });
   const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
   _resetPricingCacheForTest();
 
@@ -674,7 +679,7 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   const org = "usd-report-org";
   const wk = "slack/T7";
   const row = (surfaceKey: string, period: string, inputTokens: number) =>
-    store.recordSpend({ org, surfaceKey } as never, { period, usage: { inputTokens }, model: "zai/glm-5.2" });
+    store.recordSpend({ org, surfaceKey } as never, { period, usage: { inputTokens }, model: PRICED_MODEL });
 
   await row(`${wk}/C1`, "2026-05", 1_000_000);
   await row(`${wk}/C2`, "2026-05", 2_000_000);

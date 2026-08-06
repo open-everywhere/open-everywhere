@@ -11,6 +11,7 @@ import { assertExposedAgentsCurated } from "@open-everywhere/core/agent/memory/a
 import { applyRoleDefaults } from "@open-everywhere/core/agent/roles/role.js";
 import { loadRoles } from "../roles/roles.js";
 import { loadAgentsOverlay } from "./agents-overlay.js";
+import { UTILITY_MODEL, SUPERVISOR_MODEL } from "../model/models.js";
 
 const silos: MemorySilo[] = [
   defineMemorySilo({ name: "org-brain", provider: "postgres" }),
@@ -38,10 +39,10 @@ const E2E_NOTION_SURFACE = "notion/40000000-0000-4000-8000-000000000001/40000000
 const rawDomains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true,
     admins: ["U0EXOWNER", "U0EXUSER002", "300000000000000104"],
-    models: { supervisor: { id: "deepseek/deepseek-v4-flash", reasoning: "low" } } }),
+    models: { supervisor: { id: SUPERVISOR_MODEL, reasoning: "low" } } }),
 
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } } }),
+    models: { primary: { id: UTILITY_MODEL } } }),
 
   ...(process.env.OE_MEMORY_EVAL === "1"
     ? []
@@ -50,7 +51,7 @@ const rawDomains: Domain[] = [
           name: "e2e-b",
           channels: ["slack/T0EXAMPLE/C0EXCHAN005"],
           memory: "e2e-b-brain",
-          models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+          models: { primary: { id: UTILITY_MODEL } },
         }),
       ]),
 
@@ -63,7 +64,7 @@ const rawDomains: Domain[] = [
     mode: "unified",
     engagementTier: "neutral",
     reasoningCeiling: "high",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" }, supervisor: { id: "deepseek/deepseek-v4-flash", reasoning: "medium" } },
+    models: { primary: { id: UTILITY_MODEL }, supervisor: { id: SUPERVISOR_MODEL, reasoning: "medium" } },
   }),
 
   ...(process.env.OE_MEMORY_EVAL === "1"
@@ -88,7 +89,7 @@ const rawDomains: Domain[] = [
     ambientSupervisor: true,
     mode: "solo",
     engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+    models: { primary: { id: UTILITY_MODEL } },
   }),
 
   defineDomain({
@@ -98,7 +99,7 @@ const rawDomains: Domain[] = [
     ambientSupervisor: true,
     mode: "solo",
     engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+    models: { primary: { id: UTILITY_MODEL } },
   }),
 
   defineDomain({
@@ -107,7 +108,7 @@ const rawDomains: Domain[] = [
     memory: "e2e-brain",
     ambientSupervisor: true,
     engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+    models: { primary: { id: UTILITY_MODEL } },
   }),
 
   defineDomain({
@@ -115,7 +116,7 @@ const rawDomains: Domain[] = [
     channels: ["slack/T0EXAMPLE/C0EXCHAN007"],
     memory: "e2e-brain",
     engagementTier: "neutral",
-    models: { primary: { id: "deepseek/deepseek-v4-flash" } },
+    models: { primary: { id: UTILITY_MODEL } },
   }),
 
 ];

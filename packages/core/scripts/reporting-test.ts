@@ -12,6 +12,8 @@ import {
   pricedModelIds,
   soleConfiguredModel,
   _resetPricingCacheForTest,
+  builtInModelIds,
+  modelPricing,
 } from "../agent/spend/pricing.js";
 import { estimateSandboxCostUsd, sandboxMemoryGiB, sandboxGiBHourUsd } from "../agent/spend/sandbox-pricing.js";
 import {
@@ -40,6 +42,10 @@ import spendReportTool from "../agent/tools/spend_report.js";
 import usageReportTool from "../agent/tools/usage_report.js";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+
+const PRICED_MODEL = builtInModelIds()[0];
+
+const FIXTURE_DAY = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
 registerSlackFixtureMapper();
 
 
@@ -84,8 +90,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 {
   delete process.env.OE_MODEL_PRICING;
   _resetPricingCacheForTest();
-  ok(pricedModelIds().length === 1 && pricedModelIds()[0] === "zai/glm-5.2", "pricedModelIds: just the one built-in, verified model by default");
-  ok(soleConfiguredModel() === "zai/glm-5.2", "soleConfiguredModel: resolves the sole priced model");
+  ok(pricedModelIds().length === 1 && pricedModelIds()[0] === PRICED_MODEL, "pricedModelIds: just the one built-in, verified model by default");
+  ok(soleConfiguredModel() === PRICED_MODEL, "soleConfiguredModel: resolves the sole priced model");
 
   process.env.OE_MODEL_PRICING = JSON.stringify({ "acme/two": { inPerMtok: 1, outPerMtok: 2 } });
   _resetPricingCacheForTest();
@@ -137,11 +143,11 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   delete process.env.OE_MODEL_PRICING;
   _resetPricingCacheForTest();
   const auto = resolveAssumedModel(undefined);
-  ok(auto.model === "zai/glm-5.2" && auto.pricing !== undefined, "resolveAssumedModel: falls back to the sole configured model");
+  ok(auto.model === PRICED_MODEL && auto.pricing !== undefined, "resolveAssumedModel: falls back to the sole configured model");
   ok(/only priced model/.test(auto.note), "resolveAssumedModel: note explains the auto-assumption");
 
-  const explicit = resolveAssumedModel("zai/glm-5.2");
-  ok(explicit.model === "zai/glm-5.2" && /you supplied/.test(explicit.note), "resolveAssumedModel: an explicit model id is honoured and labelled as caller-supplied");
+  const explicit = resolveAssumedModel(PRICED_MODEL);
+  ok(explicit.model === PRICED_MODEL && /you supplied/.test(explicit.note), "resolveAssumedModel: an explicit model id is honoured and labelled as caller-supplied");
 
   const unpriced = resolveAssumedModel("no/such-model");
   ok(unpriced.model === "no/such-model" && unpriced.pricing === undefined && /no configured pricing/.test(unpriced.note), "resolveAssumedModel: an unpriced explicit model -> no pricing, explained, never a guessed rate");
@@ -158,7 +164,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
   _resetPricingCacheForTest();
 
-  const explicitAssumed = resolveAssumedModel("zai/glm-5.2");
+  const explicitAssumed = resolveAssumedModel(PRICED_MODEL);
   const ambiguousAssumed = resolveAssumedModel(undefined);
 
   const exactRow = { model: "anthropic/claude-sonnet-5", inputTokens: 1_000_000, outputTokens: 0 };
@@ -167,7 +173,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
   ok(rowCostUsd(exactRow, explicitAssumed) === 3, "rowCostUsd: a stamped, priced model prices at ITS OWN rate ($3 = 1M in-tokens @ $3/Mtok)");
   ok(rowCostUsd(exactRow, ambiguousAssumed) === 3, "rowCostUsd: own-model pricing doesn't need the assumed model to resolve at all");
-  ok(rowCostUsd(stamplessRow, explicitAssumed) === 1.4, "rowCostUsd: a stampless row falls back to the assumed model's rate");
+  ok(rowCostUsd(stamplessRow, explicitAssumed) === modelPricing(PRICED_MODEL)!.inPerMtok, "rowCostUsd: a stampless row falls back to the assumed model's rate");
   ok(rowCostUsd(stamplessRow, ambiguousAssumed) === undefined, "rowCostUsd: stampless row + no assumable model -> omitted, not guessed");
   ok(rowCostUsd(stampedUnpricedRow, explicitAssumed) === undefined, "rowCostUsd: a stamped model with NO configured rate is never priced at the assumed model's DIFFERENT rate — omitted, not silently wrong");
 
@@ -278,16 +284,16 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const empty = await sessionCostTool.execute({}, ctxEng("sess-empty") as never);
   ok(empty.events === 0 && empty.inputTokens === 0 && empty.sandboxSeconds === 0 && empty.costUsd === 0, "session_cost: an empty session reports all zeros, incl. a real $0 (not a fabricated non-zero)");
 
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, ts: "2026-07-07T22:45:00Z" });
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 200, outputTokens: 100, ts: "2026-07-07T22:46:00Z" });
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", kind: "sandbox", detail: { sandboxSeconds: 3600 }, ts: "2026-07-07T22:47:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 1000, outputTokens: 500, ts: FIXTURE_DAY + "T09:00:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", principalId: "U1", kind: "channel", inputTokens: 200, outputTokens: 100, ts: FIXTURE_DAY + "T09:01:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-cost", kind: "sandbox", detail: { sandboxSeconds: 3600 }, ts: FIXTURE_DAY + "T09:02:00Z" });
 
   delete process.env.OE_MODEL_PRICING;
   _resetPricingCacheForTest();
   const populated = await sessionCostTool.execute({}, ctxEng("sess-cost") as never);
   ok(populated.events === 2, "session_cost: events count excludes the sandbox row");
   ok(populated.inputTokens === 1200 && populated.outputTokens === 600, "session_cost: token totals sum the non-sandbox rows");
-  ok(populated.pricedModel === "zai/glm-5.2" && populated.costUsd !== undefined, "session_cost: auto-assumes the deploy's sole priced model");
+  ok(populated.pricedModel === PRICED_MODEL && populated.costUsd !== undefined, "session_cost: auto-assumes the deploy's sole priced model");
   ok(populated.sandboxSeconds === 3600 && populated.sandboxCostUsd !== undefined && Math.abs(populated.sandboxCostUsd - 0.0848) < 1e-9, "session_cost: sandbox seconds + $ estimate from the verified rate");
 
   const withExplicitModel = await sessionCostTool.execute({ assumedModelId: "no/such-model" }, ctxEng("sess-cost") as never);
@@ -304,21 +310,24 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     model: "anthropic/claude-sonnet-5",
     inputTokens: 1_000_000,
     outputTokens: 0,
-    ts: "2026-07-07T22:45:00Z",
+    ts: FIXTURE_DAY + "T09:00:00Z",
   });
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-mixed", principalId: "U1", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: "2026-07-07T22:46:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-mixed", principalId: "U1", kind: "channel", inputTokens: 1_000_000, outputTokens: 0, ts: FIXTURE_DAY + "T09:01:00Z" });
 
   process.env.OE_MODEL_PRICING = JSON.stringify({ "anthropic/claude-sonnet-5": { inPerMtok: 3, outPerMtok: 15 } });
   _resetPricingCacheForTest();
 
-  const mixed = await sessionCostTool.execute({ assumedModelId: "zai/glm-5.2" }, ctxEng("sess-mixed") as never);
-  ok(mixed.costUsd !== undefined && Math.abs(mixed.costUsd - 4.4) < 1e-9, "session_cost: mixed stamped+stampless rows sum EXACT + ASSUMED pricing, not a single blended rate");
+  const mixed = await sessionCostTool.execute({ assumedModelId: PRICED_MODEL }, ctxEng("sess-mixed") as never);
+  const mixedExpected = 3 + modelPricing(PRICED_MODEL)!.inPerMtok;
+  ok(mixed.costUsd !== undefined && Math.abs(mixed.costUsd - mixedExpected) < 1e-9, "session_cost: mixed stamped+stampless rows sum EXACT + ASSUMED pricing, not a single blended rate");
   ok(/priced exactly by their own recorded model/.test(mixed.note) && /no recorded model/.test(mixed.note), "session_cost: note honestly describes the exact/assumed mix");
 
-  const mixedReport = await spendReportTool.execute({ scope: "domain", assumedModelId: "zai/glm-5.2" }, ctxEng() as never);
+  const mixedReport = await spendReportTool.execute({ scope: "domain", assumedModelId: PRICED_MODEL }, ctxEng() as never);
   const engChannel = mixedReport.bySurfaceAndKind.find((r) => r.surfaceKey === "slack/T1/C_ENG" && r.kind === "channel");
-  const expectedStamplessCost = (1_001_200 * 1.4 + 600 * 4.4) / 1_000_000;
+  const assumedRate = modelPricing(PRICED_MODEL)!;
+  const expectedStamplessCost = (1_001_200 * assumedRate.inPerMtok + 600 * assumedRate.outPerMtok) / 1_000_000;
   const expectedExactCost = (1_000_000 * 3) / 1_000_000;
+  console.error("DEBUG grouped:", { actual: engChannel?.costUsd, expectedStampless: expectedStamplessCost, expectedExact: expectedExactCost, sum: expectedStamplessCost + expectedExactCost, rate: assumedRate });
   ok(engChannel?.costUsd !== undefined && Math.abs(engChannel.costUsd - (expectedStamplessCost + expectedExactCost)) < 1e-6, "spend_report: a (surfaceKey, kind) group prices EACH underlying summary row at its own resolution, then sums — never one blended rate across a merged group");
   ok(/priced exactly by their own recorded model/.test(mixedReport.note) && /no recorded model/.test(mixedReport.note), "spend_report: note honestly describes the exact/assumed mix at rollup scope too");
 
@@ -327,7 +336,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_OTHER", sessionId: "sess-other", principalId: "U9", kind: "channel", inputTokens: 5_000_000, outputTokens: 0, ts: "2026-07-07T22:45:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_OTHER", sessionId: "sess-other", principalId: "U9", kind: "channel", inputTokens: 5_000_000, outputTokens: 0, ts: FIXTURE_DAY + "T09:00:00Z" });
 
   const domainReport = await spendReportTool.execute({ scope: "domain" }, ctxEng() as never);
   ok(domainReport.domain === "eng", "spend_report: domain scope reports the caller's own domain");
@@ -351,13 +360,13 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const opStore = getOperationalStore();
   const { scopeOverBudget } = await import("../agent/spend/check.js");
 
-  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_CAP", model: "zai/glm-5.2" });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_CAP", model: PRICED_MODEL });
   await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: currentPeriod, usage: { inputTokens: 9_000_000 }, principalId: "U_CAP", model: "mystery/unpriced" });
 
   const before = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
   const rowBefore = before.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(rowBefore !== undefined, "spend_report ledger: the seeded surface appears in ledger.surfaces");
-  ok(Math.abs(rowBefore!.usd - 1.4) < 1e-9, `spend_report ledger: usd sums only the priced write ($1.40 @ zai/glm-5.2's built-in rate); the unpriced-model write contributed $0 at write time, never guessed (got ${rowBefore!.usd})`);
+  ok(Math.abs(rowBefore!.usd - modelPricing(PRICED_MODEL)!.inPerMtok) < 1e-9, `spend_report ledger: usd sums only the priced write (1M input tokens @ the built-in input rate); the unpriced-model write contributed $0 at write time, never guessed (got ${rowBefore!.usd})`);
   ok(rowBefore!.tokens === 10_000_000, "spend_report ledger: tokens sum BOTH writes — an unpriced model's tokens still count against a token cap");
   ok(rowBefore!.tokenCap === null && rowBefore!.usdCap === null, "spend_report ledger: no cap configured anywhere -> both caps null");
   ok(rowBefore!.tokenOver === false && rowBefore!.usdOver === false && rowBefore!.over === false, "spend_report ledger: no cap -> never over");
@@ -367,7 +376,9 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(wsRowBefore!.usd >= rowBefore!.usd - 1e-9, "spend_report ledger: the workspace usd rolls up at least its surface's contribution");
   ok(wsRowBefore!.tokens >= rowBefore!.tokens, "spend_report ledger: the workspace tokens roll up at least its surface's contribution");
 
-  await opStore.setSpendLimit(org, wsSurface, "surface", { monthlyUsd: 1 }, { reason: "test bridge", setBy: "tester" });
+  const seededUsd = modelPricing(PRICED_MODEL)!.inPerMtok;
+  const usdCap = seededUsd / 2;
+  await opStore.setSpendLimit(org, wsSurface, "surface", { monthlyUsd: usdCap }, { reason: "test bridge", setBy: "tester" });
   const gateVerdict = await scopeOverBudget(
     { org, platform: "slack", workspace: "T1", surface: "C_CAPTEST", workspaceKey: "slack/T1", surfaceKey: wsSurface, key: wsSurface } as never,
     "channel",
@@ -377,7 +388,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 
   const afterOverride = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
   const rowAfter = afterOverride.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
-  ok(rowAfter!.usdCap === 1, "spend_report ledger: an ACTIVE override changes the shown cap (was null, now the override's $1)");
+  ok(rowAfter!.usdCap === usdCap, "spend_report ledger: an ACTIVE override changes the shown cap (was null, now the override's)");
   ok(rowAfter!.usdOver === true && rowAfter!.over === true, "spend_report ledger: with the override active the report shows over — the SAME verdict as the gate (report == gate)");
   ok(Math.abs(rowAfter!.usd - rowBefore!.usd) < 1e-9, "spend_report ledger: the override changes the CAP shown, never the observed spend figure itself");
 
@@ -390,12 +401,13 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const prevDate = new Date(Date.UTC(curYear, curMonth1Indexed - 1, 1));
   prevDate.setUTCMonth(prevDate.getUTCMonth() - 1);
   const prevPeriod = prevDate.toISOString().slice(0, 7);
-  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: prevPeriod, usage: { inputTokens: 2_000_000 }, principalId: "U_CAP", model: "zai/glm-5.2" });
+  await store.recordSpend({ org, surfaceKey: wsSurface } as never, { period: prevPeriod, usage: { inputTokens: 2_000_000 }, principalId: "U_CAP", model: PRICED_MODEL });
   const prevReport = await spendReportTool.execute({ scope: "org", period: prevPeriod }, ctxOrgAdmin as never);
   const prevRow = prevReport.ledger.surfaces.find((s) => s.surfaceKey === wsSurface);
   ok(prevReport.ledger.period === prevPeriod, "spend_report ledger: an explicit past period is honoured");
   ok(prevRow!.tokens === 2_000_000, "spend_report ledger: a past period's tokens come from THAT month's ledger rows, not the current one");
-  ok(Math.abs(prevRow!.usd - 2.8) < 1e-9, `spend_report ledger: a past period's usd is THAT calendar month's ledger sum (2,000,000 in-tokens @ $1.4/Mtok = $2.80, got ${prevRow!.usd})`);
+  const prevExpected = 2 * modelPricing(PRICED_MODEL)!.inPerMtok;
+  ok(Math.abs(prevRow!.usd - prevExpected) < 1e-9, `spend_report ledger: a past period's usd is THAT calendar month's ledger sum (2,000,000 in-tokens at the built-in input rate = $${prevExpected}, got ${prevRow!.usd})`);
 }
 
 {
@@ -406,10 +418,10 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const store = await import("../agent/spend/store.js");
   const opStore = getOperationalStore();
 
-  await store.recordSpend({ org, surfaceKey: dmA } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DM_A", model: "zai/glm-5.2" });
-  await store.recordSpend({ org, surfaceKey: dmB } as never, { period: currentPeriod, usage: { inputTokens: 500_000 }, principalId: "U_DM_B", model: "zai/glm-5.2" });
+  await store.recordSpend({ org, surfaceKey: dmA } as never, { period: currentPeriod, usage: { inputTokens: 1_000_000 }, principalId: "U_DM_A", model: PRICED_MODEL });
+  await store.recordSpend({ org, surfaceKey: dmB } as never, { period: currentPeriod, usage: { inputTokens: 500_000 }, principalId: "U_DM_B", model: PRICED_MODEL });
 
-  await opStore.setSpendLimit(org, dmA, "surface", { monthlyUsd: 0.5 }, { reason: "test", setBy: "tester" });
+  await opStore.setSpendLimit(org, dmA, "surface", { monthlyUsd: modelPricing(PRICED_MODEL)!.inPerMtok / 2 }, { reason: "test", setBy: "tester" });
 
   const report = await spendReportTool.execute({ scope: "org" }, ctxOrgAdmin as never);
   const dmBucket = report.ledger.surfaces.find((s) => s.surfaceKey === "slack/T1/(dms)");
@@ -425,8 +437,8 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u1", principalId: "U_A", kind: "channel", inputTokens: 10, outputTokens: 5, ts: "2026-07-07T22:45:00Z" });
-  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u2", principalId: "U_B", kind: "channel", inputTokens: 20, outputTokens: 10, ts: "2026-07-07T22:45:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u1", principalId: "U_A", kind: "channel", inputTokens: 10, outputTokens: 5, ts: FIXTURE_DAY + "T09:00:00Z" });
+  await appendUsageEvent({ org: "default", surfaceKey: "slack/T1/C_ENG", sessionId: "sess-u2", principalId: "U_B", kind: "channel", inputTokens: 20, outputTokens: 10, ts: FIXTURE_DAY + "T09:00:00Z" });
 
   const report = await usageReportTool.execute({ scope: "domain" }, ctxEng() as never);
   ok(report.domain === "eng", "usage_report: domain scope reports the caller's own domain");

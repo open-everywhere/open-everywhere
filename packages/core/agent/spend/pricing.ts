@@ -5,7 +5,7 @@ export interface ModelPricing {
 }
 
 const BUILT_IN: Readonly<Record<string, ModelPricing>> = {
-  "zai/glm-5.2": { inPerMtok: 1.4, outPerMtok: 4.4, cachedInPerMtok: 0.26 },
+  "deepseek/deepseek-v4-flash-0731": { inPerMtok: 0.14, outPerMtok: 0.28, cachedInPerMtok: 0.028 },
 };
 
 let envTable: Readonly<Record<string, ModelPricing>> | null | undefined;
@@ -97,6 +97,10 @@ export function modelPricing(modelId: string): ModelPricing | undefined {
 
 export function pricedModelIds(): string[] {
   return [...new Set([...Object.keys(BUILT_IN), ...Object.keys(envPricingTable())])];
+}
+
+export function builtInModelIds(): readonly string[] {
+  return Object.keys(BUILT_IN);
 }
 
 export function soleConfiguredModel(): string | undefined {

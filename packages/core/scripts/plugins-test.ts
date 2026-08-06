@@ -7,6 +7,7 @@ import { parsePluginDir } from "../agent/plugins/parse.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import type { Binding, Bundle } from "../agent/access/bundle.js";
 import type { ParsedPlugin, PluginRegistry } from "../agent/plugins/types.js";
+import { defaultAgentModelId } from "../agent/model/default-model.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -111,7 +112,7 @@ const byPath = (p: string) => files.find((f) => f.path === p);
   ok(!!instr && instr.content.includes("careful researcher"), "agent body became instructions.md");
   ok(report.notes.some((nt) => nt.includes("researcher") && nt.includes("Read, Grep")), "restricted tools surfaced as a note");
   const scribe = byPath("agent/subagents/acme-tools__scribe/agent.ts");
-  ok(!!scribe && scribe.content.includes('"zai/glm-5.2"'), "subagent with no model defaults to the root model");
+  ok(!!scribe && scribe.content.includes(`"${defaultAgentModelId()}"`), "subagent with no model defaults to the root model");
   ok(report.notes.some((nt) => nt.includes("scribe") && nt.includes("defaulted")), "the model default is noted");
 }
 
