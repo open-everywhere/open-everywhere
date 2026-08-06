@@ -346,7 +346,35 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await observeLinkClaim({ org: ORG, platform: "notion", authorId: "outsider", text: `oe link ${addr5.code}`, addressed: true, addressTokens: nameTokens, trust: "unauth" })) === undefined, "addressed: an unauth author cannot claim even on a direct wake");
   ok((await pg.getLinkChallenge(ORG, addr5.challenge.id))?.status === "pending", "addressed: the refused trust tiers burned nothing on the direct wake");
 
-  for (const id of [addr1.challenge.id, addr2.challenge.id, addr3.challenge.id, addr4.challenge.id, addr5.challenge.id, f1.challenge.id]) {
+  const notices: string[] = [];
+  const recorder = (text: string): void => void notices.push(text);
+
+  const ev1 = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_EV1", surfaceKey: "slack/T1/DE1" });
+  const ev1Id = await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-claimant", text: `link ${ev1.code}`, trust: "unauth", trustIsEvidence: false, notifyRefusal: recorder });
+  ok(ev1Id === ev1.challenge.id, "evidence-scoping: an `unauth` claim from a platform whose verdict is NOT evidence (github) CLAIMS — the headline flow works on a stock deployment");
+  ok((await pg.getLinkChallenge(ORG, ev1.challenge.id))?.claimedNativeId === "gh-claimant", "evidence-scoping: the claimant is still the wake's captured author");
+  ok(notices.length === 0, "evidence-scoping: a successful claim posts no refusal notice");
+
+  const ev2 = await issueLinkChallenge({ org: ORG, platform: "slack", nativeId: "U_EV2", surfaceKey: "slack/T1/DE2" });
+  ok((await observeLinkClaim({ org: ORG, platform: "slack", authorId: "slack-outsider", text: `link ${ev2.code}`, trust: "unauth", trustIsEvidence: true, notifyRefusal: recorder })) === undefined, "evidence-scoping: an `unauth` claim on an EVIDENCE platform (slack) is still refused");
+  ok((await pg.getLinkChallenge(ORG, ev2.challenge.id))?.status === "pending", "evidence-scoping: the refused evidence-platform claim burned nothing");
+  ok(notices.length === 1 && /can't confirm this surface is inside your organization/.test(notices[0]!), "visibility: the tier refusal is REPORTED to the claimant, not just logged");
+
+  ok((await observeLinkClaim({ org: ORG, platform: "slack", authorId: "slack-outsider", text: `link ${ev2.code}`, trust: "unauth" })) === undefined, "evidence-scoping: an ABSENT trustIsEvidence defaults to evidence ⇒ refused (fail-closed)");
+
+  const relayNotices = notices.length;
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "a-bot", text: `link ${ev2.code}`, trust: "relay", trustIsEvidence: false, notifyRefusal: recorder })) === undefined, "evidence-scoping: `relay` is refused even where the trust verdict is NOT evidence — machine-ness is platform-independent");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "nobody", text: `link ${ev2.code}`, trustIsEvidence: false, notifyRefusal: recorder })) === undefined, "evidence-scoping: an UNKNOWN tier still fails closed even where the verdict is not evidence");
+  ok((await pg.getLinkChallenge(ORG, ev2.challenge.id))?.status === "pending", "evidence-scoping: neither relay nor unknown-tier burned the code");
+  ok(notices.length === relayNotices, "visibility: a relay / unknown-tier refusal posts NO notice (nobody to tell)");
+
+  notices.length = 0;
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-someone", text: `link ${mintLinkCode()}`, trust: "peer", notifyRefusal: recorder })) === undefined, "CAS null: a well-formed code that never existed claims nothing");
+  ok((await observeLinkClaim({ org: ORG, platform: "github", authorId: "gh-someone-else", text: `link ${ev1.code}`, trust: "peer", notifyRefusal: recorder })) === undefined, "CAS null: an already-claimed code claims nothing a second time");
+  ok(notices.length === 2 && notices[0] === notices[1], "visibility: an unknown code and a SPENT code produce the IDENTICAL notice — no oracle over the code space");
+  ok(/didn't work/.test(notices[0]!) && !new RegExp(ev1.code, "i").test(notices[0]!), "visibility: the CAS-null notice is actionable and never echoes the code back");
+
+  for (const id of [addr1.challenge.id, addr2.challenge.id, addr3.challenge.id, addr4.challenge.id, addr5.challenge.id, f1.challenge.id, ev1.challenge.id, ev2.challenge.id]) {
     await denyLinkChallenge({ org: ORG, challengeId: id });
   }
 

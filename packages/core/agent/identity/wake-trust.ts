@@ -5,6 +5,7 @@ import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
 import { rosterHasPrincipal } from "./principal-key.js";
 import { getConfig } from "../access/config.js";
+import { platformOfScopeKey } from "../access/scope-key.js";
 import { isAllowlistedDriverAuthor } from "../testing/driver-allowlist.js";
 
 export interface WakeTrustFacts {
@@ -28,7 +29,7 @@ export function wakeAuthorIsAdmin(
   domains: readonly Domain[],
 ): boolean {
   if (!authorId || !channelKey) return false;
-  const platform = channelKey.split("/")[0];
+  const platform = platformOfScopeKey(channelKey);
   const admits = (roster: readonly string[] | undefined): boolean =>
     rosterHasPrincipal(roster, platform, authorId);
   if (admits(criteriaDomain("org", domains)?.admins)) return true;

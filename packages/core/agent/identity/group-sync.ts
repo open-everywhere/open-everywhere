@@ -118,7 +118,7 @@ export function renderGroupPlan(plan: GroupSyncPlan): string[] {
       case "drop-group":
         return `- group "${s.group}" (had ${s.members} member(s)) — no longer in the directory`;
       case "add-member":
-        return `+ ${s.linkSet} → "${s.group}" (link-set expansion is NOT yet live at runtime — this grants nothing to those accounts until it is wired)`;
+        return `+ ${s.linkSet} → "${s.group}" (LIVE once merged — every CONFIRMED account of this link-set gets the group's bundle in its own DM)`;
       case "remove-member":
         return `- ${s.linkSet} from "${s.group}"`;
     }

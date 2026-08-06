@@ -326,6 +326,11 @@ const setOf = (externalId: string): string => directoryLinkSetId(PROVIDER, exter
   ok(true, "the planned overlay parses AND passes assertGroupsValid merged with a hand-written group");
   ok(renderGroupPlan(p4).some((l) => l.startsWith("- ")), "renderGroupPlan renders a removal as a minus line");
 
+  const addLines = renderGroupPlan(p3).filter((l) => l.startsWith("+ ") && l.includes("→"));
+  ok(addLines.length > 0, "renderGroupPlan renders an added member as a plus line");
+  ok(addLines.every((l) => /LIVE/.test(l) && /CONFIRMED/.test(l)), "the add-member plan line states that merging is EFFECTIVE for every confirmed account (C2.3 — link-set expansion is live)");
+  ok(addLines.every((l) => !/grants nothing|not yet live|until it is wired/i.test(l)), "the add-member plan line never claims the membership grants nothing — that wording was falsified by C2.3");
+
   const p7 = planDirectoryGroups({ provider: PROVIDER, people: [person("alice", ["  "])], current: emptyGroupsFile() });
   ok(p7.warnings.length === 1 && p7.next.groups.length === 0, "a blank IdP group name is skipped with a warning");
 }
