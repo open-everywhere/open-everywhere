@@ -46,6 +46,7 @@ const BOT_PR_TARGETS: readonly { path: string; flow: string }[] = [
   { path: "agent/access/grants.generated.ts", flow: "request_access (access/grants-codemod.ts)" },
   { path: "agent/access/credential-bindings.generated.ts", flow: "credential binding (access/credential-bindings-codemod.ts)" },
   { path: "agent/webhooks/hooks.generated.ts", flow: "declare_webhook (webhooks/hooks-codemod.ts)" },
+  { path: "agent/memory/agents.generated.ts", flow: "create_agent (approvals/agent-create.ts)" },
 ];
 
 for (const t of BOT_PR_TARGETS) {
