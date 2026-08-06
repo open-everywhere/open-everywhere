@@ -379,6 +379,20 @@ function getDb(): DatabaseSync {
       PRIMARY KEY (org_id, id)
     );
     CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash);
+    -- identity_oauth_vault_grants (C.3): the per-(link-set, connector, account) shared-vault
+    -- ratification. A row = this account consented (from its own DM) to reach the link-set's shared
+    -- user-OAuth token for this connector. PK is the whole tuple (consent is never blanket); the
+    -- sever/revoke cascade DELETEs it so a re-join starts unratified (threat (h)).
+    CREATE TABLE IF NOT EXISTS identity_oauth_vault_grants (
+      org_id         TEXT NOT NULL,
+      link_set_id    TEXT NOT NULL,
+      connector      TEXT NOT NULL,
+      platform       TEXT NOT NULL,
+      native_id      TEXT NOT NULL,
+      established_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, link_set_id, connector, platform, native_id)
+    );
+    CREATE INDEX IF NOT EXISTS identity_oauth_vault_grants_org_account ON identity_oauth_vault_grants (org_id, platform, native_id);
     CREATE TABLE IF NOT EXISTS instance_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -1904,6 +1918,48 @@ export const sqliteOperationalStore: OperationalStore = {
         .prepare("UPDATE identity_link_challenges SET status = 'expired', decided_at = ? WHERE org_id = ? AND status IN ('pending', 'claimed') AND expires_at <= ?")
         .run(nowIso, org, nowIso).changes,
     );
+  },
+
+  async putOauthVaultGrant(org, row) {
+    getDb()
+      .prepare(
+        `INSERT INTO identity_oauth_vault_grants (org_id, link_set_id, connector, platform, native_id, established_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, link_set_id, connector, platform, native_id) DO NOTHING`,
+      )
+      .run(org, row.linkSetId, row.connector, row.platform, row.nativeId, row.establishedAt);
+  },
+
+  async getOauthVaultGrant(org, linkSetId, connector, platform, nativeId) {
+    const r = getDb()
+      .prepare(
+        `SELECT link_set_id, connector, platform, native_id, established_at FROM identity_oauth_vault_grants
+         WHERE org_id = ? AND link_set_id = ? AND connector = ? AND platform = ? AND native_id = ?`,
+      )
+      .get(org, linkSetId, connector, platform, nativeId) as
+      | { link_set_id: string; connector: string; platform: string; native_id: string; established_at: string }
+      | undefined;
+    return r ? { org, linkSetId: r.link_set_id, connector: r.connector, platform: r.platform, nativeId: r.native_id, establishedAt: r.established_at } : null;
+  },
+
+  async deleteOauthVaultGrant(org, linkSetId, connector, platform, nativeId) {
+    return (
+      Number(
+        getDb()
+          .prepare("DELETE FROM identity_oauth_vault_grants WHERE org_id = ? AND link_set_id = ? AND connector = ? AND platform = ? AND native_id = ?")
+          .run(org, linkSetId, connector, platform, nativeId).changes,
+      ) > 0
+    );
+  },
+
+  async deleteOauthVaultGrantsForAccount(org, platform, nativeId) {
+    return Number(
+      getDb().prepare("DELETE FROM identity_oauth_vault_grants WHERE org_id = ? AND platform = ? AND native_id = ?").run(org, platform, nativeId).changes,
+    );
+  },
+
+  async deleteOauthVaultGrantsForSet(org, linkSetId) {
+    return Number(getDb().prepare("DELETE FROM identity_oauth_vault_grants WHERE org_id = ? AND link_set_id = ?").run(org, linkSetId).changes);
   },
 
   async getMeta(key) {

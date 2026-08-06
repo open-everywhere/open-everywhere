@@ -32,6 +32,7 @@ export const OPERATIONAL_TABLES = [
   "identity_link_sets",
   "identity_linked_ids",
   "identity_link_challenges",
+  "identity_oauth_vault_grants",
 ] as const;
 
 export const EVENT_DEDUPE_MAX_RETENTION_MS = 24 * 60 * 60_000;
@@ -494,6 +495,15 @@ export interface LinkChallengeFilter {
   readonly status?: LinkChallengeStatus;
 }
 
+export interface OauthVaultGrantRow {
+  readonly org: string;
+  readonly linkSetId: string;
+  readonly connector: string;
+  readonly platform: string;
+  readonly nativeId: string;
+  readonly establishedAt: string;
+}
+
 export interface OperationalStore {
   readonly id: string;
   root(): string;
@@ -649,6 +659,12 @@ export interface OperationalStore {
   claimLinkChallenge(org: string, nonceHash: string, platform: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
   decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
   expireLinkChallenges(org: string, nowIso: string): Promise<number>;
+
+  putOauthVaultGrant(org: string, row: OauthVaultGrantRow): Promise<void>;
+  getOauthVaultGrant(org: string, linkSetId: string, connector: string, platform: string, nativeId: string): Promise<OauthVaultGrantRow | null>;
+  deleteOauthVaultGrant(org: string, linkSetId: string, connector: string, platform: string, nativeId: string): Promise<boolean>;
+  deleteOauthVaultGrantsForAccount(org: string, platform: string, nativeId: string): Promise<number>;
+  deleteOauthVaultGrantsForSet(org: string, linkSetId: string): Promise<number>;
 
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;

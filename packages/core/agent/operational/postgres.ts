@@ -322,6 +322,16 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      PRIMARY KEY (org_id, id)
    )`,
   `CREATE INDEX IF NOT EXISTS identity_link_challenges_org_nonce ON identity_link_challenges (org_id, nonce_hash)`,
+  `CREATE TABLE IF NOT EXISTS identity_oauth_vault_grants (
+     org_id         text NOT NULL,
+     link_set_id    text NOT NULL,
+     connector      text NOT NULL,
+     platform       text NOT NULL,
+     native_id      text NOT NULL,
+     established_at text NOT NULL,
+     PRIMARY KEY (org_id, link_set_id, connector, platform, native_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS identity_oauth_vault_grants_org_account ON identity_oauth_vault_grants (org_id, platform, native_id)`,
   `CREATE TABLE IF NOT EXISTS instance_meta (
      key   text PRIMARY KEY,
      value text NOT NULL
@@ -377,6 +387,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE identity_link_sets ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_linked_ids ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE identity_link_challenges ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE identity_oauth_vault_grants ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE usage_events FORCE ROW LEVEL SECURITY`,
   `ALTER TABLE domain_skill_revisions FORCE ROW LEVEL SECURITY`,
@@ -412,6 +423,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `DROP POLICY IF EXISTS identity_link_sets_org_isolation ON identity_link_sets`,
   `DROP POLICY IF EXISTS identity_linked_ids_org_isolation ON identity_linked_ids`,
   `DROP POLICY IF EXISTS identity_link_challenges_org_isolation ON identity_link_challenges`,
+  `DROP POLICY IF EXISTS identity_oauth_vault_grants_org_isolation ON identity_oauth_vault_grants`,
   `CREATE POLICY spend_org_isolation ON spend_ledger
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
@@ -487,6 +499,9 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
   `CREATE POLICY identity_link_challenges_org_isolation ON identity_link_challenges
+     USING ${ORG_GUC}
+     WITH CHECK ${ORG_GUC}`,
+  `CREATE POLICY identity_oauth_vault_grants_org_isolation ON identity_oauth_vault_grants
      USING ${ORG_GUC}
      WITH CHECK ${ORG_GUC}`,
 ];
@@ -810,6 +825,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   identity_link_sets: ["SELECT", "INSERT", "UPDATE"],
   identity_linked_ids: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   identity_link_challenges: ["SELECT", "INSERT", "UPDATE"],
+  identity_oauth_vault_grants: ["SELECT", "INSERT", "DELETE"],
 };
 
 function mutableTableGrantsSql(role: string): string[] {
@@ -2289,6 +2305,50 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         `UPDATE identity_link_challenges SET status = 'expired', decided_at = $1
          WHERE org_id = $2 AND status IN ('pending', 'claimed') AND expires_at <= $1 RETURNING id`,
         [nowIso, org],
+      );
+      return (rows as unknown[]).length;
+    },
+
+    async putOauthVaultGrant(org, row) {
+      await client.query(
+        `INSERT INTO identity_oauth_vault_grants (org_id, link_set_id, connector, platform, native_id, established_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (org_id, link_set_id, connector, platform, native_id) DO NOTHING`,
+        [org, row.linkSetId, row.connector, row.platform, row.nativeId, row.establishedAt],
+      );
+    },
+
+    async getOauthVaultGrant(org, linkSetId, connector, platform, nativeId) {
+      const { rows } = await client.query(
+        `SELECT link_set_id, connector, platform, native_id, established_at FROM identity_oauth_vault_grants
+         WHERE org_id = $1 AND link_set_id = $2 AND connector = $3 AND platform = $4 AND native_id = $5`,
+        [org, linkSetId, connector, platform, nativeId],
+      );
+      const r = (rows as { link_set_id: string; connector: string; platform: string; native_id: string; established_at: string }[])[0];
+      return r ? { org, linkSetId: r.link_set_id, connector: r.connector, platform: r.platform, nativeId: r.native_id, establishedAt: r.established_at } : null;
+    },
+
+    async deleteOauthVaultGrant(org, linkSetId, connector, platform, nativeId) {
+      const { rows } = await client.query(
+        `DELETE FROM identity_oauth_vault_grants
+         WHERE org_id = $1 AND link_set_id = $2 AND connector = $3 AND platform = $4 AND native_id = $5 RETURNING native_id`,
+        [org, linkSetId, connector, platform, nativeId],
+      );
+      return (rows as unknown[]).length > 0;
+    },
+
+    async deleteOauthVaultGrantsForAccount(org, platform, nativeId) {
+      const { rows } = await client.query(
+        "DELETE FROM identity_oauth_vault_grants WHERE org_id = $1 AND platform = $2 AND native_id = $3 RETURNING native_id",
+        [org, platform, nativeId],
+      );
+      return (rows as unknown[]).length;
+    },
+
+    async deleteOauthVaultGrantsForSet(org, linkSetId) {
+      const { rows } = await client.query(
+        "DELETE FROM identity_oauth_vault_grants WHERE org_id = $1 AND link_set_id = $2 RETURNING native_id",
+        [org, linkSetId],
       );
       return (rows as unknown[]).length;
     },

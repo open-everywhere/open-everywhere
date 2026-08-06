@@ -11,6 +11,12 @@ export function connectorUserPrincipalEnabled(): boolean {
   return armed(OE_CONNECTOR_USER_PRINCIPAL_ENV);
 }
 
+export const OE_CONNECTOR_LINKSET_VAULT_ENV = "OE_CONNECTOR_LINKSET_VAULT";
+
+export function connectorLinkSetVaultEnabled(): boolean {
+  return armed(OE_CONNECTOR_LINKSET_VAULT_ENV);
+}
+
 export const OE_CONNECTOR_OP_TIERING_ENV = "OE_CONNECTOR_OP_TIERING";
 
 export function connectorOpTieringEnabled(): boolean {

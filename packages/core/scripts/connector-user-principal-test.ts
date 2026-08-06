@@ -46,7 +46,13 @@ const { userAwareProviderToken } = await import("../agent/connections/connector-
 const {
   connectorUserPrincipalEnabled,
   OE_CONNECTOR_USER_PRINCIPAL_ENV,
+  connectorLinkSetVaultEnabled,
+  OE_CONNECTOR_LINKSET_VAULT_ENV,
 } = await import("../agent/connections/connector-flags.js");
+const { getOperationalStore } = await import("../agent/operational/provider.js");
+const { ratifyOauthVaultShare, sharedVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
+const { setLinkSetHold, revokeLinkSet } = await import("../agent/identity/link-store.js");
+const { deploymentOrg } = await import("../agent/identity/binding.js");
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -199,6 +205,70 @@ await eveContextStorage().run(new FakeSession(), async () => {
   ok(r.token === "STATIC-TEAM-KEY", "channel + wall OFF → falls through to the app fallback key (universe gate blocks user-oauth on a channel)");
   ok(m.calls.length === 0, "still no per-user mint on a channel even with the wall disarmed");
   delete process.env.OE_CONNECTOR_DM_ONLY;
+}
+
+{
+  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
+  ok(!connectorLinkSetVaultEnabled(), "C.3: OE_CONNECTOR_LINKSET_VAULT unset → OFF (default, raw-principal keying)");
+
+  const org = deploymentOrg();
+  const store = getOperationalStore();
+  const at = new Date().toISOString();
+  const SET = "S_caller";
+  await store.putLinkSet(org, { org, id: SET, handle: "the caller", status: "active", createdAt: at, updatedAt: at });
+  await store.insertLinkedId(org, { org, platform: "slack", nativeId: "U_caller", linkSetId: SET, status: "confirmed", establishedBy: "test", evidenceJson: undefined, createdAt: at, updatedAt: at });
+  const shared = sharedVaultSubject(org, SET);
+
+  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
+  {
+    const m = makeMinter("ok");
+    const r = await getToken(dmAuth, m);
+    ok(r.token === "USER-TOKEN-U_caller" && m.calls[0].id === "U_caller", "C.3: linked but UNRATIFIED DM caller → RAW subject (no silent inheritance — threat g)");
+  }
+
+  const rat = await ratifyOauthVaultShare({ org, connector: "notion", actor: { platform: "slack", nativeId: "U_caller" } });
+  ok(rat.ok, "C.3: the caller ratifies sharing notion from their own DM");
+  {
+    const m = makeMinter("ok");
+    const r = await getToken(dmAuth, m);
+    ok(m.calls[0].id === shared && shared.startsWith("ls:") && shared.endsWith(`/${SET}`), "C.3: ratified DM caller → the SHARED link-set subject ls:<org>/<set> (not the raw principal)");
+    ok(r.token === `USER-TOKEN-${shared}`, "C.3: the shared subject is what the vault mint receives (same row across the person's linked DMs)");
+  }
+
+  await setLinkSetHold({ org, linkSetId: SET, hold: "suspended", actor: "admin" });
+  {
+    const m = makeMinter("ok");
+    await getToken(dmAuth, m);
+    ok(m.calls[0].id === "U_caller", "C.3: suspended set → RAW subject (offboarding severs shared-token reach immediately — threat b)");
+  }
+  await setLinkSetHold({ org, linkSetId: SET, hold: "active", actor: "admin" });
+  {
+    const m = makeMinter("ok");
+    await getToken(dmAuth, m);
+    ok(m.calls[0].id === shared, "C.3: reactivate → sharing restored from the surviving grant");
+  }
+
+  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
+  {
+    const m = makeMinter("ok");
+    await getToken(dmAuth, m);
+    ok(m.calls[0].id === "U_caller", "C.3: flag OFF → RAW subject even for a ratified caller (no-regression, deliberate arming)");
+  }
+  process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
+
+  {
+    const m = makeMinter("ok");
+    const r = await getToken(channelAuth, m);
+    ok(r.token === undefined && /DM-only/.test(r.err ?? "") && m.calls.length === 0, "C.3: channel + wall on → refused DM-only, derivation never reached (threat f)");
+  }
+
+  await revokeLinkSet({ org, linkSetId: SET, actor: "admin" });
+  {
+    const m = makeMinter("ok");
+    await getToken(dmAuth, m);
+    ok(m.calls[0].id === "U_caller", "C.3: revoke link-set → severed account falls back to RAW subject (threat b)");
+  }
+  delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
 }
 
 rmSync(tmp, { recursive: true, force: true });

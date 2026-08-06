@@ -16,8 +16,10 @@ import {
 import { vercelConnectorOf } from "../access/providers.js";
 import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
-import { connectorOpTieringEnabled } from "./connector-flags.js";
+import { sharedVaultSubjectFor } from "../access/group-request.js";
+import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
+import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, bindFrom, deploymentOrg } from "../identity/binding.js";
 import { appendAudit } from "../audit/audit.js";
 import {
@@ -163,15 +165,26 @@ export function connectorAuthRequiredUserMessage(connector: string, authorizeCla
 
 export async function resolveDmPrincipal(
   auth: import("eve/context").SessionAuth,
-): Promise<{ mode?: string; principalId?: string }> {
+): Promise<{ mode?: string; principalId?: string; platform?: string; org?: string }> {
   const bindCtx = await surfaceContextFromAuth(auth);
   if (!bindCtx) return {};
   try {
     const b = bindFrom(bindCtx);
-    return { mode: b.mode, principalId: actingPrincipalId(b) };
+    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, org: resolvePartition(bindCtx).org };
   } catch {
     return {};
   }
+}
+
+async function effectiveUserVaultSubject(
+  connector: string,
+  org: string | undefined,
+  platform: string | undefined,
+  principalId: string,
+): Promise<string> {
+  if (!connectorLinkSetVaultEnabled()) return principalId;
+  if (!org || !platform) return principalId;
+  return (await sharedVaultSubjectFor(org, connector, platform, principalId)) ?? principalId;
 }
 
 function classifyUserAuthRequired(e: unknown): boolean {
@@ -189,10 +202,11 @@ async function memoSelfHealsUserGrant(
   if (cred?.type !== "user-oauth") return false;
   const providerRef = vercelConnectorOf(cred);
   if (!providerRef) return false;
-  const { mode, principalId } = await resolveDmPrincipal(auth);
+  const { mode, principalId, platform, org } = await resolveDmPrincipal(auth);
   if (mode !== "dm" || !principalId) return false;
+  const subjectId = await effectiveUserVaultSubject(connector, org, platform, principalId);
   const probe = flow.hasFreshGrant.bind(flow);
-  if (!(await freshGrantConfirmed(() => probe(providerRef, { type: "user", id: principalId })))) return false;
+  if (!(await freshGrantConfirmed(() => probe(providerRef, { type: "user", id: subjectId })))) return false;
   clearConnectorAuthRequired(connector);
   return true;
 }
@@ -213,7 +227,7 @@ export function userAwareProviderToken(
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
       if (cred?.type === "user-oauth") {
-        const { mode, principalId } = await resolveDmPrincipal(ctx.session.auth);
+        const { mode, principalId, platform, org } = await resolveDmPrincipal(ctx.session.auth);
         if (mode !== "dm") {
           throw new Error(
             `connection "${opts.connector}": a per-user credential resolved on a non-DM surface ` +
@@ -229,9 +243,10 @@ export function userAwareProviderToken(
         const connector = vercelConnectorOf(cred);
         if (!connector)
           throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
+        const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, principalId);
         try {
-          const minted = await mintUser(connector, { subject: { type: "user", id: principalId } });
-          await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok" });
+          const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });
+          await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok", shared: subjectId !== principalId });
           return minted;
         } catch (e) {
           const authRequired = classifyUserAuthRequired(e);
@@ -244,7 +259,7 @@ export function userAwareProviderToken(
           if (authRequired) {
             let url: string | undefined;
             try {
-              url = (await startAuth(connector, { subject: { type: "user", id: principalId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
+              url = (await startAuth(connector, { subject: { type: "user", id: subjectId } }, { expiresInMs: AUTH_URL_TTL_MS })).url;
             } catch {
             }
             markConnectorAuthRequired(opts.connector, url);

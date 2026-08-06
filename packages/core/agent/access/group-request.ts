@@ -3,6 +3,7 @@ import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/b
 import { groupsForPrincipal, type Group } from "../identity/groups.js";
 import { principalKey } from "../identity/principal-key.js";
 import { resolveLinkSet } from "../identity/link-store.js";
+import { hasRatifiedShare, sharedVaultSubject } from "../identity/oauth-vault-share.js";
 import { getConfig } from "./config.js";
 import { buildResolveRequest } from "./request.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest } from "./resolver.js";
@@ -13,6 +14,23 @@ export async function callerLinkSets(org: string, platform: string, nativeId: st
     return set ? [set.id] : [];
   } catch {
     return [];
+  }
+}
+
+export async function sharedVaultSubjectFor(
+  org: string,
+  connector: string,
+  platform: string,
+  nativeId: string,
+): Promise<string | undefined> {
+  try {
+    const sets = await callerLinkSets(org, platform, nativeId);
+    const linkSetId = sets[0];
+    if (linkSetId === undefined) return undefined;
+    if (!(await hasRatifiedShare(org, linkSetId, connector, platform, nativeId))) return undefined;
+    return sharedVaultSubject(org, linkSetId);
+  } catch {
+    return undefined;
   }
 }
 
