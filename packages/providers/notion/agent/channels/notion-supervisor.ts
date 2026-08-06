@@ -4,6 +4,7 @@ import {
   shouldRotate,
   mintWakeId,
   singleWindowMentionPolicy,
+  matchesAgentName,
   type NormalizedWake,
   type WakeEngagementTier,
   type WakeMessageInput,
@@ -30,14 +31,7 @@ export interface NotionClassification {
 }
 
 export function notionNameDrop(text: string, botName?: string): boolean {
-  if (!text) return false;
-  const patterns: RegExp[] = [/\bopen\s?everywhere\b/iu, /\boe\b/iu];
-  const name = botName?.trim();
-  if (name && name.length >= 2) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    patterns.push(new RegExp(`\\b${escaped}\\b`, "iu"));
-  }
-  return patterns.some((re) => re.test(text));
+  return matchesAgentName(text, botName);
 }
 
 export function classifyNotionComment(comment: NotionComment, botUserId: string | undefined, botName?: string): NotionClassification {

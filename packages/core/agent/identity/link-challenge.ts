@@ -24,6 +24,32 @@ export function detectLinkClaim(text: string | undefined): string | undefined {
   return m ? m[1]!.toUpperCase() : undefined;
 }
 
+export function detectAddressedLinkClaim(text: string | undefined, addressTokens: readonly string[] = []): string | undefined {
+  if (!text) return undefined;
+  const trimmed = text.trim();
+  const bare = detectLinkClaim(trimmed);
+  if (bare) return bare;
+  const rest = stripLeadingAddress(trimmed, addressTokens);
+  return rest === undefined ? undefined : detectLinkClaim(rest);
+}
+
+const ADDRESS_SEP = String.raw`[\s,:]+`;
+
+function stripLeadingAddress(text: string, addressTokens: readonly string[]): string | undefined {
+  const mention = new RegExp(String.raw`^(?:<@[!&]?[^>\s]+>|@[\p{L}\p{N}][\p{L}\p{N}_.-]*)${ADDRESS_SEP}`, "u");
+  const m = mention.exec(text);
+  if (m) return text.slice(m[0].length);
+  for (const tok of addressTokens) {
+    const t = tok.trim();
+    if (t.length < 2) continue;
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&").replace(/\s+/gu, "\\s*");
+    const re = new RegExp(String.raw`^${escaped}(?=$|[^\p{L}\p{N}_])${ADDRESS_SEP}`, "iu");
+    const mm = re.exec(text);
+    if (mm) return text.slice(mm[0].length);
+  }
+  return undefined;
+}
+
 export function linkClaimInstructions(code: string, ttlMinutes: number): string {
   return (
     `From your OTHER account, send me a message whose ENTIRE text is exactly this line and nothing ` +

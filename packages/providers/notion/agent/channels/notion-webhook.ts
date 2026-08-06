@@ -13,6 +13,7 @@ import {
 } from "./notion-api.js";
 import { buildNotionAuth, notionSurfaceKey } from "./notion-identity.js";
 import { classifyNotionComment, type NotionSupervisorDispatch, type NotionWakeMessage } from "./notion-supervisor.js";
+import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
 
 export interface NotionReplyTarget {
   readonly discussionId: string;
@@ -147,6 +148,10 @@ async function deliver(
     commentId,
     principalId: comment.created_by?.id,
   });
+  if (classification.addressing === "direct") {
+    auth.attributes[OE_ADDRESSED_ATTR] = "1";
+    if (botName && botName.trim().length >= 2) auth.attributes[OE_BOT_NAME_ATTR] = botName.trim();
+  }
 
   let engagementTier: "aggressive" | "neutral" | "reserved" | undefined;
   try {

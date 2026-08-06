@@ -169,6 +169,18 @@ export function currentTurnAddressing(ctx: BindableContext): string | undefined 
   return attr(authOf(ctx)?.attributes, ["oe_addressing", "oeAddressing"]);
 }
 
+export function currentTurnAddressed(ctx: BindableContext): boolean {
+  const a = authOf(ctx)?.attributes;
+  const flag = attr(a, ["oe_addressed", "oeAddressed"]);
+  if (flag !== undefined) return flag === "1" || flag.toLowerCase() === "true";
+  const addressing = attr(a, ["oe_addressing", "oeAddressing"]);
+  return addressing === "direct-mention" || addressing === "direct";
+}
+
+export function currentTurnBotName(ctx: BindableContext): string | undefined {
+  return attr(authOf(ctx)?.attributes, ["oe_bot_name", "oeBotName"]);
+}
+
 export function currentTurnIssue(ctx: BindableContext): string | undefined {
   return attr(authOf(ctx)?.attributes, ["issue_id", "issueId", "issue_identifier", "issueIdentifier"]);
 }

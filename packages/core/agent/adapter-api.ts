@@ -172,6 +172,8 @@ export type { SessionMode } from "./access/resolver.js";
 
 export { registerTrustedSurfaces, _resetTrustedSurfacesForTest } from "./identity/trust.js";
 
+export { matchesAgentName, agentNameTokens, agentNameTokenPattern, DEFAULT_AGENT_SHORT_NAME, DEFAULT_AGENT_FULL_NAME, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "./identity/bot-name.js";
+
 export { setRegisteredProviders, resetRegisteredProviders } from "./access/providers.js";
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";

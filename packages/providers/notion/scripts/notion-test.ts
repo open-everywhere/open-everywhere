@@ -24,7 +24,7 @@ import {
   type NotionBlock,
 } from "../agent/channels/notion-api.js";
 import { handleNotionDelivery } from "../agent/channels/notion-webhook.js";
-import { setRegisteredProviders, resetRegisteredProviders } from "@open-everywhere/core/agent/adapter-api.js";
+import { setRegisteredProviders, resetRegisteredProviders, OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "@open-everywhere/core/agent/adapter-api.js";
 import type { NotionSupervisorDispatch } from "../agent/channels/notion-supervisor.js";
 import { registerNotionProvider } from "../agent/register.js";
 
@@ -187,6 +187,7 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
   ok(captured!.auth.authenticator === "notion" && captured!.auth.principalId === AUTHOR, "auth carries notion + the author principal (unchanged — invariant 1)");
   ok(captured!.trigger.text === "just a normal comment" && captured!.trigger.from === "human", "the triggering comment is the trigger message");
   ok(captured!.threadComments.length === 1 && captured!.threadComments[0].text === "an earlier note in this thread", "the OTHER discussion comments become backscroll siblings (trigger excluded)");
+  ok(captured!.auth.attributes[OE_ADDRESSED_ATTR] === undefined, "ambient/channel-watch: NO oe_addressed stamp — link claims stay whole-message strict (F1 path unchanged)");
 }
 
 {
@@ -232,6 +233,22 @@ function baseDeps(fetchImpl: FetchLike, dispatch: (d: NotionSupervisorDispatch) 
   const out = await handleNotionDelivery(raw, sign(raw), baseDeps(makeFetch({ comment: triggerMention, listResults: [priorComment, triggerMention] }), async (d) => { captured = d; }));
   ok(out.action === "dispatched" && captured?.addressing === "direct", "structured bot @mention -> dispatched as direct");
   ok(captured!.trigger.text === "@OE please summarise this page", "direct trigger = the triggering comment text (the request)");
+  ok(captured!.auth.attributes[OE_ADDRESSED_ATTR] === "1", "direct: oe_addressed='1' stamped on the wake auth (arms the addressed link-claim recogniser)");
+}
+
+{
+  const nameDropRT = [{ type: "text", plain_text: "hey Aria, can you check this?", text: { content: "hey Aria, can you check this?" } }];
+  const triggerNameDrop: NotionComment = { ...triggerMention, rich_text: nameDropRT };
+  const raw = commentEvent();
+  let captured: NotionSupervisorDispatch | undefined;
+  const out = await handleNotionDelivery(
+    raw,
+    sign(raw),
+    baseDeps(makeFetch({ comment: triggerNameDrop, listResults: [triggerNameDrop] }), async (d) => { captured = d; }, { resolveBotName: () => Promise.resolve("Aria") }),
+  );
+  ok(out.action === "dispatched" && captured?.addressing === "direct", "name-drop matching the resolved integration name -> direct");
+  ok(captured!.auth.attributes[OE_ADDRESSED_ATTR] === "1", "name-drop direct: oe_addressed='1' stamped");
+  ok(captured!.auth.attributes[OE_BOT_NAME_ATTR] === "Aria", "name-drop direct: the resolved integration name is stamped (oe_bot_name) for the claim recogniser");
 }
 
 {

@@ -1,7 +1,8 @@
 import { defineHook } from "eve/hooks";
 import { bindFrom, type BindableContext } from "../identity/binding.js";
-import { actingPrincipalId } from "../identity/binding.js";
-import { detectLinkClaim } from "../identity/link-challenge.js";
+import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../identity/binding.js";
+import { detectLinkClaim, detectAddressedLinkClaim } from "../identity/link-challenge.js";
+import { agentNameTokens } from "../identity/bot-name.js";
 import { claimLinkChallenge } from "../identity/link-store.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { principalKey } from "../identity/principal-key.js";
@@ -22,10 +23,14 @@ export async function observeLinkClaim(input: {
   readonly platform: string;
   readonly authorId: string | undefined;
   readonly text: string | undefined;
+  readonly addressed?: boolean;
+  readonly addressTokens?: readonly string[];
   readonly trust?: WakeTrust;
   readonly now?: Date;
 }): Promise<string | undefined> {
-  const code = detectLinkClaim(input.text);
+  const code = input.addressed
+    ? detectAddressedLinkClaim(input.text, input.addressTokens ?? [])
+    : detectLinkClaim(input.text);
   if (!code) return undefined;
   if (input.text && isEnvelopeShaped(input.text)) {
     log("link claim seen in envelope-shaped text (multiple authors) — ignored (a claim's code and its claimant must come from ONE message).");
@@ -70,7 +75,10 @@ export default defineHook({
     "message.received": async (event, ctx) => {
       const raw = (event as { data?: { message?: unknown } }).data?.message;
       if (typeof raw !== "string") return;
-      if (!detectLinkClaim(raw)) return;
+      const addressed = currentTurnAddressed(ctx as BindableContext);
+      const addressTokens = addressed ? agentNameTokens(currentTurnBotName(ctx as BindableContext)) : [];
+      const preCode = addressed ? detectAddressedLinkClaim(raw, addressTokens) : detectLinkClaim(raw);
+      if (!preCode) return;
       try {
         const binding = bindFrom(ctx as BindableContext);
         const authorId = actingPrincipalId(binding);
@@ -80,6 +88,8 @@ export default defineHook({
           platform: binding.platform,
           authorId,
           text: raw,
+          addressed,
+          addressTokens,
           trust,
         });
       } catch (err) {
