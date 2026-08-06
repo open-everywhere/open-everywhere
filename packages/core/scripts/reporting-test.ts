@@ -327,7 +327,6 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const assumedRate = modelPricing(PRICED_MODEL)!;
   const expectedStamplessCost = (1_001_200 * assumedRate.inPerMtok + 600 * assumedRate.outPerMtok) / 1_000_000;
   const expectedExactCost = (1_000_000 * 3) / 1_000_000;
-  console.error("DEBUG grouped:", { actual: engChannel?.costUsd, expectedStampless: expectedStamplessCost, expectedExact: expectedExactCost, sum: expectedStamplessCost + expectedExactCost, rate: assumedRate });
   ok(engChannel?.costUsd !== undefined && Math.abs(engChannel.costUsd - (expectedStamplessCost + expectedExactCost)) < 1e-6, "spend_report: a (surfaceKey, kind) group prices EACH underlying summary row at its own resolution, then sums — never one blended rate across a merged group");
   ok(/priced exactly by their own recorded model/.test(mixedReport.note) && /no recorded model/.test(mixedReport.note), "spend_report: note honestly describes the exact/assumed mix at rollup scope too");
 

@@ -87,6 +87,38 @@ const domainReq: AwsIdentityRequest = {
 }
 
 {
+  process.env.AWS_WEB_IDENTITY_TOKEN_FILE = "/var/run/secrets/oidc-token";
+  const captured: { url: string; body: string }[] = [];
+  const expiration = new Date(Date.now() + 3600_000).toISOString();
+  const provider = makeAwsStsProvider({
+    fetch: (async (url: string, init?: RequestInit) => {
+      captured.push({ url: String(url), body: String(init?.body ?? "") });
+      return new Response(xmlOk(expiration), { status: 200, headers: { "content-type": "text/xml" } });
+    }) as typeof fetch,
+    readTokenFile: () => "fake-oidc-jwt-token",
+  });
+
+  const reqA: AwsIdentityRequest = {
+    kind: "domain-role",
+    roleArn: "arn:aws:iam::123456789012:role/oe-shared-domain",
+    region: "eu-west-1",
+    roleSessionName: "oe-domain-a",
+  };
+  const reqB: AwsIdentityRequest = { ...reqA, roleSessionName: "oe-domain-b" };
+
+  await provider.mint(reqA);
+  await provider.mint(reqB);
+  ok(captured.length === 2, "two requests differing ONLY in roleSessionName do NOT share a cache entry (both re-federate)");
+  const formA = new URLSearchParams(captured[0].body);
+  const formB = new URLSearchParams(captured[1].body);
+  ok(formA.get("RoleSessionName") === "oe-domain-a", "first mint federates under its own RoleSessionName");
+  ok(formB.get("RoleSessionName") === "oe-domain-b", "second mint federates under ITS OWN RoleSessionName, not the first's");
+
+  await provider.mint(reqA);
+  ok(captured.length === 2, "re-minting the FIRST identity again reuses its own warm cache entry (no third POST)");
+}
+
+{
   process.env.AWS_WEB_IDENTITY_TOKEN_FILE = "/no/such/token";
   delete process.env.OE_AWS_WEB_IDENTITY_TOKEN;
   let fetched = false;

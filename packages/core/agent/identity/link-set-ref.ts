@@ -14,10 +14,3 @@ export function parseLinkSetRef(value: string): string | undefined {
 export function isValidLinkSetRef(value: string): boolean {
   return parseLinkSetRef(value) !== undefined;
 }
-
-export function linkSetRefMatches(ref: string, callerLinkSets: Iterable<string>): boolean {
-  const id = parseLinkSetRef(ref);
-  if (id === undefined) return false;
-  for (const s of callerLinkSets) if (s === id) return true;
-  return false;
-}
