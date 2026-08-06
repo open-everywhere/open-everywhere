@@ -112,7 +112,7 @@ for (const acct of [{ platform: "slack", nativeId: "U1" }, { platform: "discord"
   await suggestLinkedId({ org: ORG, linkSetId: "set-admin", account: acct, evidence });
   await confirmLinkedId({ org: ORG, account: acct, evidence });
 }
-await suggestLinkedId({ org: ORG, linkSetId: "set-admin", account: { platform: "telegram", nativeId: "T1" }, evidence });
+await suggestLinkedId({ org: ORG, linkSetId: "set-admin", account: { platform: "teams", nativeId: "T1" }, evidence });
 
 const ADMIN_DOMAINS: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["linkSet:set-admin"] }),
@@ -127,9 +127,9 @@ const ADMIN_DOMAINS: Domain[] = [
   const d1Sets = await callerLinkSets(ORG, "discord", "D1");
   ok(roleForBinding(bind({ platform: "discord", principalId: "D1" }), ADMIN_DOMAINS, d1Sets).isOrgAdmin, "a link-set admin entry covers the human on EVERY confirmed account (discord too)");
 
-  const t1Sets = await callerLinkSets(ORG, "telegram", "T1");
+  const t1Sets = await callerLinkSets(ORG, "teams", "T1");
   ok(t1Sets.length === 0, "🔴 a SUGGESTED account resolves to no set — a directory proposal is not membership");
-  ok(!roleForBinding(bind({ platform: "telegram", principalId: "T1" }), ADMIN_DOMAINS, t1Sets).isOrgAdmin, "a suggested member is NOT an admin (threat (a))");
+  ok(!roleForBinding(bind({ platform: "teams", principalId: "T1" }), ADMIN_DOMAINS, t1Sets).isOrgAdmin, "a suggested member is NOT an admin (threat (a))");
 
   const strangerSets = await callerLinkSets(ORG, "slack", "U-stranger");
   ok(!roleForBinding(bind({ principalId: "U-stranger" }), ADMIN_DOMAINS, strangerSets).isOrgAdmin, "a non-member is not an admin");
@@ -154,7 +154,7 @@ const ADMIN_DOMAINS: Domain[] = [
   });
   ok(resolveAccess(await dm("slack", "U1"), bundles, bindings).repos.includes("acme/personal"), "a link-set principal binding grants in a confirmed member's DM");
   ok(resolveAccess(await dm("discord", "D1"), bundles, bindings).repos.includes("acme/personal"), "…in EVERY confirmed account's DM");
-  ok(resolveAccess(await dm("telegram", "T1"), bundles, bindings).repos.length === 0, "…but NOT in a suggested-only account's DM (threat (a))");
+  ok(resolveAccess(await dm("teams", "T1"), bundles, bindings).repos.length === 0, "…but NOT in a suggested-only account's DM (threat (a))");
   ok(resolveAccess(await dm("slack", "U-stranger"), bundles, bindings).repos.length === 0, "…and not for a non-member");
   ok(resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1", principalLinkSets: ["set-admin"] }, bundles, bindings).repos.length === 0, "a link-set principal binding contributes NOTHING in a channel (two universes)");
 }
@@ -169,7 +169,7 @@ const ADMIN_DOMAINS: Domain[] = [
     return { mode: "dm", platform, workspace: "W", channel: "D", principalId: id, groups: groupsForPrincipal(groups, principalKey(platform, id), sets) };
   };
   ok(resolveAccess(await dmGroups("slack", "U1"), bundles, bindings).repos.includes("acme/team"), "a { linkSet } group member RECEIVES the group bundle in their DM (F4 live — the assertion that was impossible before)");
-  ok(resolveAccess(await dmGroups("telegram", "T1"), bundles, bindings).repos.length === 0, "a suggested member gets nothing from the group (confirmed-only)");
+  ok(resolveAccess(await dmGroups("teams", "T1"), bundles, bindings).repos.length === 0, "a suggested member gets nothing from the group (confirmed-only)");
 }
 
 {

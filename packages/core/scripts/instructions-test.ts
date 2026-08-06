@@ -93,7 +93,7 @@ ok(assembleAccessInstructions(base) === null, "bare scope -> null (no scope-spec
   ok(!md.includes("update_reply"), "teams guide never mentions the dropped update_reply verb");
 }
 
-ok(renderSurfaceGuide("telegram") === "", "an unlisted platform (e.g. telegram) renders no surface guide");
+ok(renderSurfaceGuide("linear") === "", "an unlisted platform (e.g. linear) renders no surface guide");
 ok(renderSurfaceGuide("") === "", "an empty platform renders no surface guide");
 
 {

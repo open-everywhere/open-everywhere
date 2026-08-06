@@ -229,7 +229,7 @@ const REJECTS: ReadonlyArray<readonly [string, unknown]> = [
   ["a number", 42],
   ["an array", []],
   ["no platform", { channelId: "C1" }],
-  ["unknown platform", { platform: "telegram", channelId: "C1" }],
+  ["unknown platform", { platform: "irc", channelId: "C1" }],
   ["empty platform", { platform: "", channelId: "C1" }],
   ["non-string platform", { platform: 5, channelId: "C1" }],
   ["prototype-chain platform (constructor)", { platform: "constructor", channelId: "C1" }],
@@ -350,7 +350,7 @@ for (const f of FIXTURES) {
   eq(await resolveUnifiedWakeTarget(store, "default", "wk-corrupt"), null, "a malformed-JSON row resolves null (fail closed)");
   rows.set("default:wk-badshape", '{"platform":"slack"}');
   eq(await resolveUnifiedWakeTarget(store, "default", "wk-badshape"), null, "a valid-JSON invalid-shape row resolves null (fail closed)");
-  rows.set("default:wk-unknown-arm", '{"platform":"telegram","chatId":"7"}');
+  rows.set("default:wk-unknown-arm", '{"platform":"irc","chatId":"7"}');
   eq(await resolveUnifiedWakeTarget(store, "default", "wk-unknown-arm"), null, "an unknown-platform row resolves null (unregistered arm ⇒ fail closed)");
 }
 

@@ -1,5 +1,4 @@
 import type { Channel } from "eve/channels";
-import type { TelegramReceiveTarget } from "eve/channels/telegram";
 import type { DiscordReceiveTarget } from "eve/channels/discord";
 import type { SessionMode } from "../access/resolver.js";
 import { reportDestinationOf, type Routine } from "../routines/routine.js";
@@ -9,7 +8,7 @@ import { bridgeSlackChannel } from "../channels/slack-bridge.js";
 
 export interface DispatchTarget {
   readonly channel: Channel<any, any, any>;
-  readonly target: { channelId: string; threadTs?: string } | TelegramReceiveTarget | DiscordReceiveTarget | Readonly<Record<string, unknown>>;
+  readonly target: { channelId: string; threadTs?: string } | DiscordReceiveTarget | Readonly<Record<string, unknown>>;
   readonly mode: SessionMode;
   readonly attributes: Readonly<Record<string, string>>;
   readonly origin?: UnifiedWakeOrigin;

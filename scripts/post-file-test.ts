@@ -160,7 +160,7 @@ const restoreFetch = () => {
 };
 
 await inSession(async () => {
-  for (const surface of ["teams", "telegram"]) {
+  for (const surface of ["teams"]) {
     await assert.rejects(
       () => postFile.execute({ files: [{ source: { path: "a.png" }, filename: "a.png" }] }, platformCtx(surface)),
       /not supported on/,

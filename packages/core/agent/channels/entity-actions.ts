@@ -74,7 +74,7 @@ export async function resolveEntityAction(
   if (!ref) {
     throw new Error(
       `${verb}: no ticket entity for this turn — pass \`ref\` explicitly ({ platform, id }), or call this from a turn on a ticketing entity (a Linear issue or a GitHub issue/PR). ` +
-        `Chat surfaces (Slack, Discord, Teams, Telegram) and Notion have no entity for this verb — not supported there.`,
+        `Chat surfaces (Slack, Discord, Teams) and Notion have no entity for this verb — not supported there.`,
     );
   }
   const sources = resolveWindowSources(ctx, domains);

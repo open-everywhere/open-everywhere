@@ -38,10 +38,10 @@ function isToolEntry(v: unknown): v is { execute: unknown; description: unknown 
 
 const EVENTS = ["session.started"] as const;
 
-const NON_SLACK_KINDS = ["discord", "teams", "telegram", "linear", "local", "channel:discord", "channel:teams"];
+const NON_SLACK_KINDS = ["discord", "teams", "linear", "local", "channel:discord", "channel:teams"];
 
 const CARD_PATH_KINDS = ["slack", "channel:slack", "discord", "channel:discord"];
-const NON_CARD_KINDS = ["teams", "telegram", "linear", "local", "channel:teams"];
+const NON_CARD_KINDS = ["teams", "linear", "local", "channel:teams"];
 
 async function assertGate(name: string, def: unknown, descNeedle: string, armedKinds: readonly string[] = ["slack", "channel:slack"], hiddenKinds: readonly string[] = NON_SLACK_KINDS): Promise<void> {
   const d = def as DynamicLike;

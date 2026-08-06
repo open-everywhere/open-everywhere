@@ -2,7 +2,7 @@ const PLATFORM_ALIASES: Readonly<Record<string, string>> = {
   "discord-gateway": "discord",
 };
 
-const PLATFORM_PREFIXES: readonly string[] = ["slack", "discord", "teams", "telegram", "linear"];
+const PLATFORM_PREFIXES: readonly string[] = ["slack", "discord", "teams", "linear"];
 
 export function normalizePlatform(bare: string | undefined): string | undefined {
   if (!bare) return bare;

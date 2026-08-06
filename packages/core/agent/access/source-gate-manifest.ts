@@ -13,7 +13,7 @@ export const SOURCE_SCOPED_TOOLS: Readonly<Record<string, string>> = {
 
 export const GENERIC_READ_VERBS: readonly string[] = ["read_channel", "read_thread"];
 
-const PLATFORM_SLUGS = ["slack", "notion", "github", "linear", "discord", "teams", "telegram"];
+const PLATFORM_SLUGS = ["slack", "notion", "github", "linear", "discord", "teams"];
 
 function armsOnUnifiedPerSurface(source: string): boolean {
   if (!source.includes("isUnifiedWindowContext")) return false;

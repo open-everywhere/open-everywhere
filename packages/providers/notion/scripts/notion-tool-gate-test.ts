@@ -30,7 +30,7 @@ function isToolEntry(v: unknown): v is { execute: unknown; description: unknown 
 const EVENTS = ["session.started"] as const;
 
 const ARMED_KINDS = ["notion", "channel:notion"];
-const HIDDEN_KINDS = ["slack", "channel:slack", "discord", "teams", "telegram", "linear", "local", "channel:discord"];
+const HIDDEN_KINDS = ["slack", "channel:slack", "discord", "teams", "linear", "local", "channel:discord"];
 
 async function assertGate(name: string, def: unknown, descNeedle: string): Promise<void> {
   const d = def as DynamicLike;

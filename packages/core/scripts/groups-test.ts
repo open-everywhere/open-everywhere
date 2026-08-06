@@ -325,7 +325,7 @@ registerOperationalStore(makeOperationalPostgresStore(client));
     await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: acct, evidence });
     await confirmLinkedId({ org: ORG, account: acct, evidence });
   }
-  await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: { platform: "telegram", nativeId: "T1" }, evidence });
+  await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: { platform: "teams", nativeId: "T1" }, evidence });
 
   const expanded = await expandLinkSet(ORG, "set-rowan");
   ok(expanded.length === 2, "expandLinkSet returns the CONFIRMED accounts only — the suggested one is invisible");
@@ -339,7 +339,7 @@ registerOperationalStore(makeOperationalPostgresStore(client));
     ok(resolveAccess(req, bundles, bindings).repos.includes("acme/team"), `a link-set member's ${acct.platform} DM gets the group's bundle`);
   }
   {
-    const req = await withLinkSetGroups({ mode: "dm", platform: "telegram", workspace: "W", channel: "D", principalId: "T1" }, ORG, groups);
+    const req = await withLinkSetGroups({ mode: "dm", platform: "teams", workspace: "W", channel: "D", principalId: "T1" }, ORG, groups);
     ok((req.groups ?? []).length === 0 && resolveAccess(req, bundles, bindings).repos.length === 0, "a SUGGESTED-only account gets NOTHING — a directory proposal never widens access");
   }
   {

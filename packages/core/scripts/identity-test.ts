@@ -133,14 +133,14 @@ ok(
   const roster = ["slack/U_ADMIN", "discord/300000000000000104"];
   ok(rosterHasPrincipal(roster, "slack", "U_ADMIN"), "rosterHasPrincipal matches the qualified entry");
   ok(rosterHasPrincipal(roster, "discord", "300000000000000104"), "…on either platform in one roster");
-  ok(!rosterHasPrincipal(roster, "telegram", "300000000000000104"), "🔴 …and NOT the same digits on another platform — the collision this grammar exists to delete");
+  ok(!rosterHasPrincipal(roster, "teams", "300000000000000104"), "🔴 …and NOT the same digits on another platform — the collision this grammar exists to delete");
   ok(!rosterHasPrincipal(roster, undefined, "U_ADMIN"), "rosterHasPrincipal FAILS CLOSED with no platform");
   ok(!rosterHasPrincipal(roster, "slack", undefined), "…and with no id");
   ok(!rosterHasPrincipal(undefined, "slack", "U_ADMIN"), "…and with no roster at all");
   ok(!rosterHasPrincipal(["U_ADMIN"], "slack", "U_ADMIN"), "…and a BARE roster entry never matches (which is why config load refuses one)");
 
   ok(JSON.stringify(principalIdsOnPlatform(roster, "slack")) === JSON.stringify(["U_ADMIN"]), "principalIdsOnPlatform projects the roster down to one platform's bare ids");
-  ok(principalIdsOnPlatform(roster, "telegram").length === 0, "…dropping every other platform's entries");
+  ok(principalIdsOnPlatform(roster, "teams").length === 0, "…dropping every other platform's entries");
   ok(principalIdsOnPlatform([...roster, "junk"], "slack").length === 1, "…and malformed entries");
   ok(principalIdsOnPlatform(roster, undefined).length === 0, "…and yielding nothing at all with no platform (fail closed)");
 }

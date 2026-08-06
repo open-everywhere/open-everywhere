@@ -164,17 +164,17 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const COLLIDING_ID = "300000000000000104";
   const bundles: Bundle[] = [
     { name: "discord-personal", repos: ["acme/discord-scratch"] },
-    { name: "telegram-personal", repos: ["acme/telegram-scratch"] },
+    { name: "teams-personal", repos: ["acme/teams-scratch"] },
   ];
   const bindings: Binding[] = [
     { bundle: "discord-personal", scope: { level: "principal", principal: `discord/${COLLIDING_ID}` } },
-    { bundle: "telegram-personal", scope: { level: "principal", principal: `telegram/${COLLIDING_ID}` } },
+    { bundle: "teams-personal", scope: { level: "principal", principal: `teams/${COLLIDING_ID}` } },
   ];
   const dmOn = (platform: string): ResolveRequest => ({ mode: "dm", platform, workspace: "W1", channel: "D1", principalId: COLLIDING_ID });
   const d = resolveAccess(dmOn("discord"), bundles, bindings);
-  const t = resolveAccess(dmOn("telegram"), bundles, bindings);
+  const t = resolveAccess(dmOn("teams"), bundles, bindings);
   ok(d.repos.length === 1 && d.repos[0] === "acme/discord-scratch", "identical digit ids: the discord DM resolves ONLY the discord principal's bundle");
-  ok(t.repos.length === 1 && t.repos[0] === "acme/telegram-scratch", "identical digit ids: the telegram DM resolves ONLY the telegram principal's bundle");
+  ok(t.repos.length === 1 && t.repos[0] === "acme/teams-scratch", "identical digit ids: the teams DM resolves ONLY the teams principal's bundle");
   ok(resolveAccess(dmOn("slack"), bundles, bindings).repos.length === 0, "…and a third platform with the same id resolves nothing at all");
 }
 

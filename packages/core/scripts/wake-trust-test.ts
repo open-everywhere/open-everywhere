@@ -63,11 +63,11 @@ ok(wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_ENG", DOMAINS, ["set-admin"]), "
 
 const COLLIDING: readonly Domain[] = [
   defineDomain({ name: "org", match: "org", admins: ["discord/300000000000000104"] }),
-  defineDomain({ name: "tg", channels: ["telegram/W1/C_TG"], admins: ["telegram/900900900"] }),
+  defineDomain({ name: "tm", channels: ["teams/W1/C_TM"], admins: ["teams/900900900"] }),
 ];
 ok(wakeAuthorIsAdmin("300000000000000104", "discord/G1/C_ANY", COLLIDING), "the digit-string id IS an org admin on discord, its own namespace");
-ok(!wakeAuthorIsAdmin("300000000000000104", "telegram/W1/C_TG", COLLIDING), "🔴 …and the SAME digits on telegram are NOT — a bare-id roster would have granted a stranger principal-tier standing");
-ok(wakeAuthorIsAdmin("900900900", "telegram/W1/C_TG", COLLIDING), "the telegram domain admin matches on the telegram surface");
+ok(!wakeAuthorIsAdmin("300000000000000104", "teams/W1/C_TM", COLLIDING), "🔴 …and the SAME digits on teams are NOT — a bare-id roster would have granted a stranger principal-tier standing");
+ok(wakeAuthorIsAdmin("900900900", "teams/W1/C_TM", COLLIDING), "the teams domain admin matches on the teams surface");
 ok(!wakeAuthorIsAdmin("900900900", "discord/G1/C_ANY", COLLIDING), "…and not on a discord surface, even though nothing but the platform distinguishes the two ids");
 
 ok(resolveWakeTrust({ authorIsBot: false, authorId: "U_ORG_ADMIN", surfaceInternal: true, channelKey: "slack/T1/C_ENG", domains: DOMAINS }) === "principal", "resolveWakeTrust: org admin on internal channel → principal");

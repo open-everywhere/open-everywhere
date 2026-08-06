@@ -152,7 +152,6 @@ ok(armReply(reply, { channel: { kind: "slack" } }) !== null, "reply arms on a Sl
 ok(armReply(reply, { channel: { kind: "discord" } }) !== null, "reply arms on a Discord session");
 ok(armReply(reply, { channel: { kind: "discord-gateway" } }) !== null, "reply arms on a Discord gateway session (alias → discord)");
 ok(armReply(reply, { channel: { kind: "notion" } }) === null, "reply is hidden on notion in core alone (bundle-registered manifest — fail-closed NONE default)");
-ok(armReply(reply, { channel: { kind: "telegram" } }) === null, "reply is hidden on telegram in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "teams" } }) === null, "reply is hidden on teams in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "linear" } }) === null, "reply is hidden on linear in core alone (bundle-registered manifest — fail-closed NONE default)");
 ok(armReply(reply, { channel: { kind: "github" } }) === null, "reply is hidden on GitHub (eve exports no public proactive comment seam)");
@@ -173,7 +172,6 @@ ok(armReply(reply, { channel: { kind: "local" } }) === null, "reply is hidden on
   const discordTarget = resolveReplyTarget(discordCtx("D1") as never);
   ok(discordTarget?.platform === "discord" && discordTarget.channelId === "D1" && (discordTarget as { threadTs?: string }).threadTs === undefined, "resolveReplyTarget: discord carries channel, never a threadTs");
   ok(resolveReplyTarget({ channel: { kind: "notion" } } as never) === null, "resolveReplyTarget: notion → null in core alone (arm is bundle-registered)");
-  ok(resolveReplyTarget({ channel: { kind: "telegram" } } as never) === null, "resolveReplyTarget: telegram → null in core alone (arm is bundle-registered)");
 
   ok(resolveReplyTarget(teamsCtx("conv-1") as never) === null, "resolveReplyTarget: teams → null in core alone (arm is bundle-registered)");
 

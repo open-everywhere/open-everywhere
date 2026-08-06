@@ -67,7 +67,6 @@ const PROVIDER_VENDOR_STRINGS: Record<string, string[]> = {
   discord: ["discord.com/api"],
   github: ["x-hub-signature-256"],
   teams: ["graph.microsoft.com", "smba.trafficmanager.net"],
-  telegram: ["api.telegram.org", "TELEGRAM_BOT_TOKEN"],
 };
 
 function discoverBundles(): string[] {

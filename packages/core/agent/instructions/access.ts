@@ -63,7 +63,6 @@ function renderIdentity(name: string | undefined): string {
 const SURFACE_NAMES: Record<string, string> = {
   slack: "Slack",
   discord: "Discord",
-  telegram: "Telegram",
   teams: "Microsoft Teams",
   linear: "Linear",
 };

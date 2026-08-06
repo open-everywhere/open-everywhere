@@ -28,7 +28,6 @@ eq(capabilitiesForPlatform("teams"), { midTurnPost: false, reactions: false }, "
 eq(capabilitiesForPlatform("linear"), { midTurnPost: false, reactions: false }, "linear (unregistered in core alone → NONE)");
 eq(capabilitiesForPlatform("github"), { midTurnPost: false, reactions: false }, "github");
 eq(capabilitiesForPlatform("notion"), { midTurnPost: false, reactions: false }, "notion (unregistered in core alone → NONE)");
-eq(capabilitiesForPlatform("telegram"), { midTurnPost: false, reactions: false }, "telegram (unregistered in core alone → NONE)");
 
 eq(capabilitiesForPlatform("local"), { midTurnPost: false, reactions: false }, "local → NONE");
 eq(capabilitiesForPlatform("nope"), { midTurnPost: false, reactions: false }, "unknown platform → NONE");

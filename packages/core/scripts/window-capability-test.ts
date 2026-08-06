@@ -254,9 +254,9 @@ console.log("P0-e — assertWindowSourcesVouched direct unit tests:");
     "[P0-e] a Slack source is EXEMPT from the register check (internal-by-binding) — only github must be vouched",
   );
   assert.throws(
-    () => assertWindowSourcesVouched([win(["slack/T1/C_X", "telegram/g123/topic"]), orgGate], []),
-    /telegram\/g123\/topic/,
-    "[P0-e] a NON-binding-trusted platform (telegram) still throws when unvouched",
+    () => assertWindowSourcesVouched([win(["slack/T1/C_X", "teams/g123/topic"]), orgGate], []),
+    /teams\/g123\/topic/,
+    "[P0-e] a NON-binding-trusted platform (teams) still throws when unvouched",
   );
   n++;
   assert.throws(

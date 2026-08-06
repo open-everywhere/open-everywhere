@@ -8,7 +8,6 @@ export type ReplyTarget =
   | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
   | { readonly platform: "discord"; readonly channelId: string }
   | { readonly platform: "notion"; readonly discussionId: string }
-  | { readonly platform: "telegram"; readonly chatId: string; readonly messageThreadId?: number }
   | { readonly platform: "teams"; readonly serviceUrl: string; readonly conversationId: string; readonly replyToActivityId?: string }
   | { readonly platform: "linear"; readonly agentSessionId: string };
 

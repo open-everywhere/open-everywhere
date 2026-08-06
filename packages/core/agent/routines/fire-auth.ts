@@ -18,7 +18,7 @@ export function routineFireAttributes(
     ...(r.createdBy ? { [FIRE_PRINCIPAL_ATTR]: r.createdBy } : {}),
     ...(creatorInternal === true ? { [FIRE_PRINCIPAL_TRUST_ATTR]: "internal" } : {}),
     ...rootDmGrainAttrs(
-      mode === "dm" || mode === "mpim" || destAttributes["chat_type"] === "group" || destAttributes["chat_type"] === "supergroup",
+      mode === "dm" || mode === "mpim",
     ),
     ...jobFireAttrs(isJobRoutine(r), r.jobTainted === true),
     [ROUTINE_MARKER.id]: r.id,

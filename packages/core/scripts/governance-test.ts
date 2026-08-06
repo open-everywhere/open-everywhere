@@ -117,10 +117,10 @@ const ok = (cond: boolean, label: string) => {
   ok(set.has("U_A") && set.has("U_ORG") && set.size === 2, "governanceAdminSet = domain admins ∪ org admins, PROJECTED to bare ids in the channel's own platform namespace (a RoomRoster speaks the platform's ids, not qualified keys)");
   const crossPlatform = [
     defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/U_A"] }),
-    defineDomain({ name: "org", match: "org", admins: ["discord/U_A", "telegram/U_ORG"] }),
+    defineDomain({ name: "org", match: "org", admins: ["discord/U_A", "teams/U_ORG"] }),
   ];
   const projected = governanceAdminSet("slack/T1/C_ADMIN", crossPlatform);
-  ok(projected.has("U_A") && projected.size === 1, "🔴 governanceAdminSet drops other platforms' roster entries — a discord/U_A admin is not U_A in a Slack governance room, and telegram/U_ORG contributes nothing");
+  ok(projected.has("U_A") && projected.size === 1, "🔴 governanceAdminSet drops other platforms' roster entries — a discord/U_A admin is not U_A in a Slack governance room, and teams/U_ORG contributes nothing");
   ok(governanceAdminSet("eng", domains).size === 0, "governanceAdminSet on a key with no readable platform (a bare domain name) is EMPTY — fail closed, never a bare-id match");
 }
 

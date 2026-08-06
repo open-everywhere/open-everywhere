@@ -226,7 +226,7 @@ const staleBag = delivered[1]!.attributes;
   ok(stalePlan.reads.some((r) => r.silo.name === "@personal"), "stale: the personal silo is unaffected — it was never the thing at stake");
   ok((await recheckFireCreator({ createdBy: CREATOR, platform: "slack", mode: "dm", check: async () => true })) === true, "stale: the recheck reports a current member");
   ok((await recheckFireCreator({ createdBy: CREATOR, platform: "slack", mode: "dm", check: async () => false })) === false, "stale: …and reports a departed one, off the same stored row — nothing about standing is stored");
-  ok((await recheckFireCreator({ createdBy: CREATOR, platform: "telegram", mode: "dm", check: async () => true })) === undefined, "stale: a platform with no membership-verification gate is never asked — 'cannot check' is a real answer, not a default of yes");
+  ok((await recheckFireCreator({ createdBy: CREATOR, platform: "discord", mode: "dm", check: async () => true })) === undefined, "stale: a platform with no membership-verification gate is never asked — 'cannot check' is a real answer, not a default of yes");
   ok((await recheckFireCreator({ createdBy: undefined, platform: "slack", mode: "dm", check: async () => true })) === undefined, "stale: a row with no creator has no question to ask");
 }
 

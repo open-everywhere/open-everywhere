@@ -188,7 +188,7 @@ throws(
 );
 throws(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["300000000000000104"] })]),
-  "validation: a bare DIGIT-STRING admin id → throws (the exact shape a discord/telegram collision needs)",
+  "validation: a bare DIGIT-STRING admin id → throws (the exact shape a cross-platform digit-id collision needs)",
 );
 throws(
   () => assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]),

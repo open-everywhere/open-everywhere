@@ -239,7 +239,7 @@ export default defineTool({
     if (!canPostHere) {
       if (report?.kind === "silent") {
         throw new Error(
-          `A "never"-posting routine still has to run somewhere, and "${binding.platform}" has no wired post-back at all, so there is nowhere to run it. Create it from a surface that can post (Slack, Discord, Teams, Telegram).`,
+          `A "never"-posting routine still has to run somewhere, and "${binding.platform}" has no wired post-back at all, so there is nowhere to run it. Create it from a surface that can post (Slack, Discord, Teams).`,
         );
       }
       const configured = reportChannelFor(domainKeyOf(p), getConfig().loadDomains());
@@ -251,7 +251,7 @@ export default defineTool({
       const reportTarget = reportTargetForSurface(configured);
       if (!reportTarget) {
         throw new Error(
-          `This domain's \`reportChannel\` is "${configured}", but that surface's post-back target can't be derived from its key alone (Telegram chat ids are sign-encoded, and Teams needs a stored conversation reference), so a routine reporting there would never post. Point \`reportChannel\` at a Slack or Discord channel in the same domain (agent/config/domains.ts).`,
+          `This domain's \`reportChannel\` is "${configured}", but that surface's post-back target can't be derived from its key alone (Teams needs a stored conversation reference), so a routine reporting there would never post. Point \`reportChannel\` at a Slack or Discord channel in the same domain (agent/config/domains.ts).`,
         );
       }
       report = { kind: "surface", surfaceKey: configured, target: reportTarget };

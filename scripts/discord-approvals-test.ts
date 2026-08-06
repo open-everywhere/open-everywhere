@@ -451,7 +451,7 @@ const store = getOperationalStore();
   ok(unqualified.outcome === "denied", "🔴 …and with NO clicker platform and nothing to derive one from, the ROSTER arm fails closed — a bare id is never matched against a qualified roster");
 
   await store.addPendingAction(row({ id: "dp-or-foreign", domain: null }));
-  const foreign = await resolveApprovalClick({ org: "default", id: "dp-or-foreign", decision: "reject", clickerId: "U_ORG_ADMIN", clickerPlatform: "telegram" });
+  const foreign = await resolveApprovalClick({ org: "default", id: "dp-or-foreign", decision: "reject", clickerId: "U_ORG_ADMIN", clickerPlatform: "teams" });
   ok(foreign.outcome === "denied", "🔴 …and the same id clicking from ANOTHER platform is a different person — the roster names discord/U_ORG_ADMIN");
 }
 

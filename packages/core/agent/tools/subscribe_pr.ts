@@ -109,7 +109,7 @@ export default defineTool({
     const subscribeBinding = bindFrom(ctx);
     if (!canDispatchRoutinesOn(subscribeBinding.platform)) {
       throw new Error(
-        `I can't watch a PR from here — "${subscribeBinding.platform}" has no wired post-back, so the check would come due and never report. Ask me from Slack, Discord, Teams or Telegram.`,
+        `I can't watch a PR from here — "${subscribeBinding.platform}" has no wired post-back, so the check would come due and never report. Ask me from Slack, Discord or Teams.`,
       );
     }
 

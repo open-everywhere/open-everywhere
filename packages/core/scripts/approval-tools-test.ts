@@ -88,7 +88,7 @@ const uncapped = { tokens: null, usd: null } as const;
   ok(plan.args.scopeKey === "discord/G123/C456", "planSetSpendLimit accepts a Discord binding (card path exists) and scopes to the guild surface");
 }
 throwsWith(
-  () => planSetSpendLimit(slackBinding({ platform: "telegram" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
+  () => planSetSpendLimit(slackBinding({ platform: "teams" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
   "approval-card path",
   "planSetSpendLimit refuses a binding with no approval-card path",
 );
