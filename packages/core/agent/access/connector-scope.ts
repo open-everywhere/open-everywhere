@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { SessionAuth } from "eve/context";
 import { bindFrom, deploymentOrg, type BindableContext } from "../identity/binding.js";
-import { resolveAccessFor } from "./request.js";
+import { resolveAccessForWithGroups } from "./group-request.js";
 import { assertConnectorDisclosure } from "./connector-disclosure.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getOperationalStore } from "../operational/provider.js";
@@ -151,7 +151,7 @@ export async function grantedConnectors(auth: SessionAuth): Promise<readonly str
 
 async function grantedForCtx(ctx: BindableContext): Promise<readonly string[] | null> {
   try {
-    const base = resolveAccessFor(ctx).connectors;
+    const base = (await resolveAccessForWithGroups(ctx)).connectors;
     try {
       const p = resolvePartition(ctx);
       const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);
@@ -172,7 +172,7 @@ export async function boundConnectorCredential(
   const ctx = await surfaceContextFromAuth(auth);
   if (!ctx) return null;
   try {
-    return resolveAccessFor(ctx).connectorCredentials[connection] ?? null;
+    return (await resolveAccessForWithGroups(ctx)).connectorCredentials[connection] ?? null;
   } catch {
     return null;
   }

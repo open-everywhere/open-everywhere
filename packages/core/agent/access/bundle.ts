@@ -1,5 +1,6 @@
 import type { ProviderGrant } from "./providers.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { Group } from "../identity/groups.js";
 
 export type ScopeLevel = "org" | "tenant" | "domain" | "surface" | "group" | "principal";
@@ -245,11 +246,11 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
         `  ${where} scope.group "${group}" is not a declared person-group — define it with defineGroup() in agent/identity/groups.ts (or fix the name). A binding onto a group nobody declared can never match, so it is refused rather than ignored.`,
       );
     }
-    if (principal !== undefined && !isQualifiedPrincipalKey(principal)) {
+    if (principal !== undefined && !isQualifiedPrincipalKey(principal) && !isValidLinkSetRef(principal)) {
       bad.push(
         principal.startsWith("dm:")
           ? `  ${where} scope.principal "${principal}" still carries the old \`workspace: "dm:<id>"\` sentinel — the DM universe is the first-class \`principal\` level now, so drop the "dm:" prefix and write the PLATFORM-QUALIFIED key "platform/<principal-id>" (e.g. "slack/U0123ABC")`
-          : `  ${where} scope.principal "${principal}" must be the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC", "discord/300000000000000104") — a BARE member id has no platform namespace and will NEVER match (identity/principal-key.ts)`,
+          : `  ${where} scope.principal "${principal}" must be the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC", "discord/300000000000000104") or a link-set reference "linkSet:<link-set-id>" (one human across their confirmed accounts) — a BARE member id has no platform namespace and will NEVER match (identity/principal-key.ts, identity/link-set-ref.ts)`,
       );
     }
   }

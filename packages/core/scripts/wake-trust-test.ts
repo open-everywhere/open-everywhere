@@ -50,6 +50,17 @@ ok(!wakeAuthorIsAdmin("U_MEMBER", "slack/T1/C_ENG", DOMAINS), "a plain member ne
 ok(!wakeAuthorIsAdmin(undefined, "slack/T1/C_ENG", DOMAINS), "no author id → not an admin (fail closed)");
 ok(!wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_ENG", []), "empty rosters → nobody is an admin");
 
+const LS_DOMAINS: readonly Domain[] = [
+  defineDomain({ name: "org", match: "org", admins: ["linkSet:set-admin"] }),
+  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["linkSet:set-eng"] }),
+];
+ok(wakeAuthorIsAdmin("U_X", "slack/T1/C_RANDOM", LS_DOMAINS, ["set-admin"]), "a link-set ORG admin: the author whose confirmed set is the referenced one is an admin everywhere");
+ok(!wakeAuthorIsAdmin("U_X", "slack/T1/C_RANDOM", LS_DOMAINS, []), "🔴 no precomputed link-set membership (the sync/fail-closed default) → a link-set admin entry admits NOBODY");
+ok(!wakeAuthorIsAdmin("U_X", "slack/T1/C_RANDOM", LS_DOMAINS, ["set-other"]), "a DIFFERENT link-set membership does not match the referenced set");
+ok(wakeAuthorIsAdmin("U_X", "slack/T1/C_ENG", LS_DOMAINS, ["set-eng"]), "a link-set DOMAIN admin holds on the domain's own channel");
+ok(!wakeAuthorIsAdmin("U_X", "slack/T1/C_OTHER", LS_DOMAINS, ["set-eng"]), "a link-set domain admin is NOT an admin on another channel");
+ok(wakeAuthorIsAdmin("U_ORG_ADMIN", "slack/T1/C_ENG", DOMAINS, ["set-admin"]), "a principal-key entry still matches even when a link-set value is also supplied");
+
 const COLLIDING: readonly Domain[] = [
   defineDomain({ name: "org", match: "org", admins: ["discord/300000000000000104"] }),
   defineDomain({ name: "tg", channels: ["telegram/W1/C_TG"], admins: ["telegram/900900900"] }),

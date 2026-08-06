@@ -1,5 +1,6 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
 import { principalKey } from "../identity/principal-key.js";
+import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
 
@@ -13,6 +14,7 @@ export interface ResolveRequest {
   readonly domains?: readonly string[];
   readonly principalId?: string;
   readonly groups?: readonly string[];
+  readonly principalLinkSets?: readonly string[];
 }
 
 export interface ReachableHost {
@@ -47,6 +49,8 @@ export interface EffectiveAccess {
 }
 
 const SPECIFICITY: Record<Scope["level"], number> = { org: 0, tenant: 1, domain: 2, surface: 3, group: 4, principal: 5 };
+const PRINCIPAL_LINKSET_SPECIFICITY = 5;
+const PRINCIPAL_EXACT_SPECIFICITY = 6;
 
 export function tenantKeyOf(req: Pick<ResolveRequest, "platform" | "workspace">): string {
   return `${req.platform}/${req.workspace}`;
@@ -109,30 +113,45 @@ export function resolveAccess(
 
   const callerGroups = new Set(req.groups ?? []);
 
-  const applied: { scope: Scope; bundle: Bundle }[] = [];
+  const callerLinkSets = new Set(req.principalLinkSets ?? []);
+
+  const principalMatch = (scope: Scope): number | undefined => {
+    if (callerKey === undefined || scope.principal === undefined) return undefined;
+    if (scope.principal === callerKey) return PRINCIPAL_EXACT_SPECIFICITY;
+    if (isLinkSetRef(scope.principal)) {
+      const id = parseLinkSetRef(scope.principal);
+      if (id !== undefined && callerLinkSets.has(id)) return PRINCIPAL_LINKSET_SPECIFICITY;
+    }
+    return undefined;
+  };
+
+  const applied: { scope: Scope; bundle: Bundle; specificity: number }[] = [];
   for (const binding of bindings) {
-    const inScope =
-      req.mode === "dm"
-        ? (callerKey !== undefined &&
-            binding.scope.level === "principal" &&
-            binding.scope.principal === callerKey) ||
-          (callerKey !== undefined &&
-            binding.scope.level === "group" &&
-            binding.scope.group !== undefined &&
-            callerGroups.has(binding.scope.group))
-        : scopeMatches(binding.scope, req);
-    if (!inScope) continue;
+    let specificity: number | undefined;
+    if (req.mode === "dm") {
+      if (binding.scope.level === "principal") {
+        specificity = principalMatch(binding.scope);
+      } else if (
+        callerKey !== undefined &&
+        binding.scope.level === "group" &&
+        binding.scope.group !== undefined &&
+        callerGroups.has(binding.scope.group)
+      ) {
+        specificity = SPECIFICITY.group;
+      }
+    } else if (scopeMatches(binding.scope, req)) {
+      specificity = SPECIFICITY[binding.scope.level];
+    }
+    if (specificity === undefined) continue;
     const bundle = byName.get(binding.bundle);
     if (!bundle) {
       warnings.push(`binding references unknown bundle "${binding.bundle}" — ignored`);
       continue;
     }
-    applied.push({ scope: binding.scope, bundle });
+    applied.push({ scope: binding.scope, bundle, specificity });
   }
 
-  const ordered = [...applied].sort(
-    (a, b) => SPECIFICITY[a.scope.level] - SPECIFICITY[b.scope.level],
-  );
+  const ordered = [...applied].sort((a, b) => a.specificity - b.specificity);
 
   const connById = new Map<string, Connection>();
   for (const { bundle } of ordered) {

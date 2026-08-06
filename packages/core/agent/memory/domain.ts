@@ -1,5 +1,6 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
@@ -516,9 +517,9 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
       );
     }
     for (const entry of d.admins ?? []) {
-      if (isQualifiedPrincipalKey(entry)) continue;
+      if (isQualifiedPrincipalKey(entry) || isValidLinkSetRef(entry)) continue;
       bad.push(
-        `  "${d.name}" lists admin "${entry}", which is not a PLATFORM-QUALIFIED principal key \`platform/<principal-id>\` (e.g. "slack/U0EXUSER002", "discord/300000000000000104") — a bare vendor id names no namespace and can never match, so the person would silently hold no admin standing (identity/principal-key.ts)`,
+        `  "${d.name}" lists admin "${entry}", which is neither a PLATFORM-QUALIFIED principal key \`platform/<principal-id>\` (e.g. "slack/U0EXUSER002", "discord/300000000000000104") nor a link-set reference \`linkSet:<link-set-id>\` — a bare vendor id names no namespace and can never match, so the person would silently hold no admin standing (identity/principal-key.ts, identity/link-set-ref.ts)`,
       );
     }
     if (hasMatch) {

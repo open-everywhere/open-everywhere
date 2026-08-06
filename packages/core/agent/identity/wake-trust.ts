@@ -4,6 +4,7 @@ import type { BindableContext } from "./binding.js";
 import { bindFrom } from "./binding.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
 import { rosterHasPrincipal } from "./principal-key.js";
+import { rosterHasLinkSet } from "./link-set-ref.js";
 import { getConfig } from "../access/config.js";
 import { isAllowlistedDriverAuthor } from "../testing/driver-allowlist.js";
 
@@ -26,11 +27,14 @@ export function wakeAuthorIsAdmin(
   authorId: string | undefined,
   channelKey: string | undefined,
   domains: readonly Domain[],
+  callerLinkSets: readonly string[] = [],
 ): boolean {
   if (!authorId || !channelKey) return false;
   const platform = channelKey.split("/")[0];
-  if (rosterHasPrincipal(criteriaDomain("org", domains)?.admins, platform, authorId)) return true;
-  return rosterHasPrincipal(domainForChannel(channelKey, domains)?.admins, platform, authorId);
+  const admits = (roster: readonly string[] | undefined): boolean =>
+    rosterHasPrincipal(roster, platform, authorId) || rosterHasLinkSet(roster, callerLinkSets);
+  if (admits(criteriaDomain("org", domains)?.admins)) return true;
+  return admits(domainForChannel(channelKey, domains)?.admins);
 }
 
 export function loadDomainsForWakeTrust(): readonly Domain[] {

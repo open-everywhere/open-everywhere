@@ -4,6 +4,7 @@ import { z } from "zod";
 import { actingPrincipalId, bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { adminControlRoles } from "../access/roles.js";
+import { callerLinkSetsForCtx } from "../access/group-request.js";
 import { memoryReadView } from "../control/views.js";
 import { siloScopeDenial } from "../control/auth.js";
 import { MEMORY_WRITE_MAX_BYTES } from "../control/writes.js";
@@ -33,7 +34,8 @@ export default defineTool({
       );
     }
     const domains = getConfig().loadDomains();
-    const roles = adminControlRoles(caller, domains, binding.platform);
+    const callerSets = await callerLinkSetsForCtx(ctx);
+    const roles = adminControlRoles(caller, domains, binding.platform, callerSets);
     if (roles.length === 0) {
       throw new Error(
         `memory_admin_read requires an org admin, or a domain admin for at least one memory domain. Your id ("${caller}") ` +

@@ -16,17 +16,26 @@ export async function callerLinkSets(org: string, platform: string, nativeId: st
   }
 }
 
+export async function callerLinkSetsForCtx(ctx: BindableContext): Promise<readonly string[]> {
+  const acting = actingPrincipalId(bindFrom(ctx));
+  if (acting === undefined) return [];
+  return callerLinkSets(resolvePartition(ctx).org, bindFrom(ctx).platform, acting);
+}
+
 export async function withLinkSetGroups(
   req: ResolveRequest,
   org: string,
   groups: readonly Group[] = getConfig().loadGroups?.() ?? [],
 ): Promise<ResolveRequest> {
-  if (req.principalId === undefined || groups.length === 0) return req;
+  if (req.mode !== "dm" || req.principalId === undefined) return req;
   const sets = await callerLinkSets(org, req.platform, req.principalId);
   if (sets.length === 0) return req;
-  const viaSets = groupsForPrincipal(groups, principalKey(req.platform, req.principalId), sets);
-  if (viaSets.length === 0) return req;
-  return { ...req, groups: [...new Set([...(req.groups ?? []), ...viaSets])].sort() };
+  let out: ResolveRequest = { ...req, principalLinkSets: [...new Set([...(req.principalLinkSets ?? []), ...sets])].sort() };
+  if (groups.length > 0) {
+    const viaSets = groupsForPrincipal(groups, principalKey(req.platform, req.principalId), sets);
+    if (viaSets.length > 0) out = { ...out, groups: [...new Set([...(req.groups ?? []), ...viaSets])].sort() };
+  }
+  return out;
 }
 
 export async function buildResolveRequestWithGroups(ctx: BindableContext): Promise<ResolveRequest> {

@@ -3,10 +3,25 @@ import { appendAudit, readAudit } from "../audit/audit.js";
 import { directoryProvider, type DirectoryGrade, type DirectoryPerson, type DirectoryProvider } from "./directory.js";
 import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, suggestLinkedId, type LinkEvidence } from "./link-store.js";
 import { principalKey } from "./principal-key.js";
+import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
+import { getConfig } from "../access/config.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:identity/directory-sync] ${msg}`);
+}
+
+function accessReferencedSetsFromConfig(): Set<string> {
+  try {
+    const cfg = getConfig();
+    return accessReferencedLinkSets({
+      domains: cfg.loadDomains(),
+      bindings: cfg.loadBindings(),
+      groups: cfg.loadGroups?.() ?? [],
+    });
+  } catch {
+    return new Set<string>();
+  }
 }
 
 export type DirectoryAutoConfirm = "off" | "attested";
@@ -90,6 +105,7 @@ export function planDirectorySync(input: {
   readonly people: readonly DirectoryPerson[];
   readonly current: DirectoryLinkState;
   readonly autoConfirm: DirectoryAutoConfirm;
+  readonly accessReferencedSets?: ReadonlySet<string>;
 }): DirectorySyncPlan {
   const steps: DirectorySyncStep[] = [];
   const warnings: string[] = [];
@@ -185,9 +201,15 @@ export function planDirectorySync(input: {
 
     const targetId = target?.id ?? derivedId;
     const newSet = target === undefined;
+    const targetAccessReferenced = input.accessReferencedSets?.has(targetId) ?? false;
+    if (targetAccessReferenced && input.autoConfirm === "attested" && accounts.size > 0) {
+      warnings.push(
+        `link-set ${targetId} is referenced by ACCESS config (admin roster / credential binding / group), so directory auto-confirm is SUPPRESSED for it (C2.4) — an attested mapping still lands as a suggestion awaiting the person's own DM confirmation, because an IdP attestation must not widen an access-bearing set without a human in the loop.`,
+      );
+    }
     for (const [key, acct] of accounts) {
       const found = rowByKey.get(key);
-      const mayAutoConfirm = input.autoConfirm === "attested" && acct.grade === "attested";
+      const mayAutoConfirm = input.autoConfirm === "attested" && acct.grade === "attested" && !targetAccessReferenced;
       if (!found) {
         steps.push({
           kind: "suggest",
@@ -258,16 +280,18 @@ export async function syncDirectoryOrg(input: {
   readonly org: string;
   readonly provider?: DirectoryProvider;
   readonly autoConfirm?: DirectoryAutoConfirm;
+  readonly accessReferencedSets?: ReadonlySet<string>;
   readonly now?: Date;
 }): Promise<DirectorySyncResult | null> {
   const provider = input.provider ?? directoryProvider();
   if (!provider) return null;
   const policy = input.autoConfirm ?? directoryAutoConfirm();
   const startedAt = (input.now ?? new Date()).toISOString();
+  const accessReferencedSets = input.accessReferencedSets ?? accessReferencedSetsFromConfig();
 
   const people = await provider.listPeople();
   const current = await listLinkSetsWithIds(input.org);
-  const plan = planDirectorySync({ provider: provider.id, people, current, autoConfirm: policy });
+  const plan = planDirectorySync({ provider: provider.id, people, current, autoConfirm: policy, accessReferencedSets });
 
   const refusals: string[] = [];
   let setsCreated = 0;

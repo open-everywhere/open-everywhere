@@ -133,6 +133,34 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 }
 
 {
+  const conn = (id: string, secretRef: string) => ({ id, credentialType: "bearer" as const, secretRef, allowedWebsites: ["api.example.com"], methods: ["GET" as const] });
+  const bundles: Bundle[] = [
+    { name: "human", repos: ["acme/human"], connections: [conn("shared", "HUMAN_KEY")], instructions: "team rule" },
+    { name: "exact", repos: ["acme/exact"], connections: [conn("shared", "EXACT_KEY")], instructions: "my rule" },
+  ];
+  const lsBinding: Binding[] = [{ bundle: "human", scope: { level: "principal", principal: "linkSet:set-rowan" } }];
+  const base = { mode: "dm" as const, platform: "slack", workspace: "T1", channel: "D1" };
+
+  ok(resolveAccess({ ...base, principalId: "U1", principalLinkSets: ["set-rowan"] }, bundles, lsBinding).repos.includes("acme/human"), "a link-set principal binding grants in a member's DM (their confirmed set is on the request)");
+  ok(resolveAccess({ ...base, principalId: "U1" }, bundles, lsBinding).repos.length === 0, "🔴 no principalLinkSets on the request → a link-set principal binding grants NOTHING (fail-closed: absent is not a wildcard)");
+  ok(resolveAccess({ ...base, principalId: "U1", principalLinkSets: ["set-other"] }, bundles, lsBinding).repos.length === 0, "a different confirmed set does not match the referenced link-set");
+  ok(resolveAccess({ ...base, principalLinkSets: ["set-rowan"] }, bundles, lsBinding).repos.length === 0, "principalLinkSets with no principalId grants nothing — the caller must be present");
+  ok(resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1", principalLinkSets: ["set-rowan"] }, bundles, lsBinding).repos.length === 0, "a link-set principal binding contributes NOTHING in a channel");
+
+  const both: Binding[] = [
+    { bundle: "human", scope: { level: "principal", principal: "linkSet:set-rowan" } },
+    { bundle: "exact", scope: { level: "principal", principal: "slack/U1" } },
+  ];
+  const tie = resolveAccess({ ...base, principalId: "U1", principalLinkSets: ["set-rowan"] }, bundles, both);
+  ok(tie.connections.length === 1 && tie.connections[0]!.secretRef === "EXACT_KEY", "🔴 narrowest-wins: an EXACT principal binding beats a LINK-SET principal binding for the same connection id");
+  ok(tie.repos.includes("acme/human") && tie.repos.includes("acme/exact"), "…while additive fields (repos) UNION across the exact and link-set principal bindings");
+  ok(tie.instructionStack.length === 2 && tie.instructionStack[0]!.source === "principal:linkSet:set-rowan" && tie.instructionStack[1]!.source === "principal:slack/U1", "instructions order link-set → exact (the exact/personal layer outranks)");
+
+  const other = resolveAccess({ ...base, principalId: "U2", principalLinkSets: ["set-rowan"] }, bundles, both);
+  ok(other.connections.length === 1 && other.connections[0]!.secretRef === "HUMAN_KEY", "a set member with no exact binding gets the shared link-set credential");
+}
+
+{
   const COLLIDING_ID = "300000000000000104";
   const bundles: Bundle[] = [
     { name: "discord-personal", repos: ["acme/discord-scratch"] },
