@@ -1,0 +1,228 @@
+import {
+  MIN_TIGHTEN_OBSERVATIONS,
+  MIN_TIGHTEN_WINDOW_DAYS,
+  MIN_WIDEN_REFUSALS,
+  entryCoversCommand,
+  type AwsGrantUsage,
+  type ConnectorGrantUsage,
+  type PermissionEvidence,
+} from "./permission-evidence.js";
+
+export const PERMISSION_CONFIG_FILE = "agent/access/bundles.ts";
+
+export interface PermissionDiff {
+  readonly file: string;
+  readonly bundles: readonly string[];
+  readonly path: string;
+  readonly before: readonly string[];
+  readonly after: readonly string[];
+  readonly text: string;
+}
+
+export interface PermissionProposal {
+  readonly id: string;
+  readonly direction: "widen" | "tighten";
+  readonly subject: string;
+  readonly summary: string;
+  readonly evidence: readonly string[];
+  readonly diff?: PermissionDiff;
+  readonly remedy?: string;
+}
+
+function renderDiffText(path: string, bundles: readonly string[], before: readonly string[], after: readonly string[]): string {
+  const head = `--- ${PERMISSION_CONFIG_FILE}  (bundle ${bundles.map((b) => JSON.stringify(b)).join(" | ")})`;
+  const lines = [head, `@@ ${path} @@`];
+  for (const entry of before) lines.push(`${after.includes(entry) ? " " : "-"}  ${JSON.stringify(entry)},`);
+  for (const entry of after) if (!before.includes(entry)) lines.push(`+  ${JSON.stringify(entry)},`);
+  return lines.join("\n");
+}
+
+function diff(bundles: readonly string[], path: string, before: readonly string[], after: readonly string[]): PermissionDiff {
+  return { file: PERMISSION_CONFIG_FILE, bundles, path, before, after, text: renderDiffText(path, bundles, before, after) };
+}
+
+function awsAllowPath(roleArn: string): string {
+  return `awsRoles[roleArn=${JSON.stringify(roleArn)}].allow`;
+}
+
+function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
+  const out: PermissionProposal[] = [];
+  const awsUsage = new Map<string, AwsGrantUsage>();
+  for (const u of ev.usage) if (u.kind === "aws-role") awsUsage.set(u.roleArn, u);
+
+  for (const r of ev.refusals) {
+    if (r.kind === "aws-allow-list") {
+      if (r.refusals < MIN_WIDEN_REFUSALS) continue;
+      const declared = awsUsage.get(r.roleArn);
+      const before = declared?.allow ?? r.allow;
+      const bundles = declared?.bundles ?? [];
+      if (before.some((entry) => entryCoversCommand(entry, r.command))) continue;
+      const after = [...before, r.iamEntry];
+      out.push({
+        id: `widen:aws:${r.roleArn}:${r.command}`,
+        direction: "widen",
+        subject: `AWS grant ${r.roleArn} — \`${r.command}\``,
+        summary:
+          `\`${r.command}\` (\`aws ${r.command.replace(":", " ")}\`) was refused ${r.refusals}× by this grant's host-side allow-list ` +
+          `(${r.unattendedRefusals} of them on an unattended run). The allow-list does not cover it; the IAM role behind it may well.`,
+        evidence: [
+          `${r.refusals} \`aws.refused\` row(s) with reason \`allow-list\`, ${r.firstSeen} → ${r.lastSeen}.`,
+          `${r.unattendedRefusals} of those had no human behind the turn.`,
+          `Allow-list at refusal time: ${r.allow.length > 0 ? r.allow.map((a) => `\`${a}\``).join(", ") : "(none recorded)"}.`,
+        ],
+        diff: diff(bundles, awsAllowPath(r.roleArn), before, after),
+        remedy:
+          "Widening the allow-list re-permits only what the IAM role already allows — the screen can never widen past the role. " +
+          "If the role itself lacks the action, the diff will merge and the command will still fail, in AWS, which is the right place for it to fail.",
+      });
+      continue;
+    }
+
+    const unattendedReason = r.reasons.find((x) => x.label === "ask-unattended");
+    if (unattendedReason === undefined || unattendedReason.count < MIN_WIDEN_REFUSALS) continue;
+    out.push({
+      id: `widen:unattended:${r.tool}`,
+      direction: "widen",
+      subject: `\`${r.tool}\` on unattended runs`,
+      summary:
+        `${unattendedReason.count} unattended run(s) were denied \`${r.tool}\` because an approval card has nobody to answer it. ` +
+        `The work keeps arriving; the standing permission does not exist.`,
+      evidence: [
+        `${r.denies} \`approval.chain\` deny row(s) for \`${r.tool}\`, ${r.firstSeen} → ${r.lastSeen}; ${r.unattendedDenies} unattended.`,
+        `Reasons: ${r.reasons.map((x) => `${x.label} ×${x.count}`).join(", ")}.`,
+        `Decided by: ${r.resolvedBy.map((x) => `${x.label} ×${x.count}`).join(", ") || "(not recorded)"}.`,
+        ...(r.domains.length > 0 ? [`Domains: ${r.domains.join(", ")}.`] : []),
+      ],
+      remedy:
+        `This one is NOT a config-file diff, so none is offered. An unattended deny means the fire lacked a STANDING permission for ` +
+        `\`${r.tool}\`, and standing permissions are granted by a human tap on the routine's own creation card (they are per-routine ` +
+        `store rows, not bundle config). Re-arm it with \`edit_routine\`/the creation card, or — if this scope should never card ` +
+        `\`${r.tool}\` at all — add an operator approver to the bundle's \`approvers\` in a reviewed PR, which IS a config diff but one ` +
+        `only a human should author, because it changes policy for every caller in the scope rather than for one routine.`,
+    });
+  }
+  return out;
+}
+
+function tightenAws(u: AwsGrantUsage): PermissionProposal | undefined {
+  if (u.uses === 0) {
+    return {
+      id: `tighten:aws:${u.roleArn}`,
+      direction: "tighten",
+      subject: `AWS grant ${u.roleArn} — unused`,
+      summary: `This scope may assume ${u.roleArn}, and did not, once, in the window — while other AWS calls were made. The grant is a standing capability nobody is using.`,
+      evidence: [
+        `0 \`aws.exec\` rows for this roleArn in the window.`,
+        `Granted allow-list: ${u.allow.map((a) => `\`${a}\``).join(", ")}.`,
+      ],
+      diff: diff(u.bundles, `awsRoles[roleArn=${JSON.stringify(u.roleArn)}]`, u.allow, []),
+      remedy: "Remove the whole `awsRoles` entry (the `allow` lines above are shown as the body being deleted, not as a narrowing to an empty list — an empty `allow` is a config error, never the tightened form).",
+    };
+  }
+  if (u.allow.some((e) => e.trim() === "*") && u.services.length > 0) {
+    const after = u.services;
+    return {
+      id: `tighten:aws:${u.roleArn}`,
+      direction: "tighten",
+      subject: `AWS grant ${u.roleArn} — unrestricted, narrowly used`,
+      summary: `The grant is spelled \`["*"]\` (unrestricted) but ${u.uses} call(s) in the window touched only ${u.services.map((s) => `\`${s}\``).join(", ")}.`,
+      evidence: [
+        `${u.uses} \`aws.exec\` row(s); commands: ${u.commands.map((c) => `${c.label} ×${c.count}`).join(", ")}.`,
+      ],
+      diff: diff(u.bundles, awsAllowPath(u.roleArn), u.allow, after),
+      remedy: "Narrowed to the SERVICES observed, not to the exact operations — service grain is the least likely to send the next ordinary call straight back through loop 1. Tighten further by hand if the operations are genuinely fixed.",
+    };
+  }
+  if (u.unexercised.length > 0 && u.covering.length > 0) {
+    return {
+      id: `tighten:aws:${u.roleArn}`,
+      direction: "tighten",
+      subject: `AWS grant ${u.roleArn} — ${u.unexercised.length} unexercised allow entr${u.unexercised.length === 1 ? "y" : "ies"}`,
+      summary: `${u.unexercised.map((e) => `\`${e}\``).join(", ")} covered nothing this scope ran in the window; ${u.covering.length} other entr${u.covering.length === 1 ? "y" : "ies"} carried all ${u.uses} call(s).`,
+      evidence: [
+        `${u.uses} \`aws.exec\` row(s); commands: ${u.commands.map((c) => `${c.label} ×${c.count}`).join(", ")}.`,
+        `Coverage was tested with the live screen (\`awsCommandVerdict\`), one allow entry at a time — the same function that refuses a command at runtime.`,
+      ],
+      diff: diff(u.bundles, awsAllowPath(u.roleArn), u.allow, u.covering),
+    };
+  }
+  return undefined;
+}
+
+function tightenConnector(u: ConnectorGrantUsage): PermissionProposal | undefined {
+  if (u.uses > 0) return undefined;
+  const after = u.bundleConnectors.filter((c) => c !== u.connector);
+  return {
+    id: `tighten:connector:${u.bundle}:${u.connector}`,
+    direction: "tighten",
+    subject: `Connector \`${u.connector}\` — unused`,
+    summary: `Bundle \`${u.bundle}\` grants \`${u.connector}\` and no operation on it was recorded in the window, while other connectors were used.`,
+    evidence: [`0 \`connector.op\` rows for \`${u.connector}\` in the window.`],
+    diff: diff([u.bundle], "connectors", u.bundleConnectors, after),
+  };
+}
+
+function tightenProposals(ev: PermissionEvidence): PermissionProposal[] {
+  const out: PermissionProposal[] = [];
+  if (ev.window.days < MIN_TIGHTEN_WINDOW_DAYS) return out;
+  for (const u of ev.usage) {
+    if (u.kind === "aws-role") {
+      if (ev.activity.awsExec < MIN_TIGHTEN_OBSERVATIONS) continue;
+      const p = tightenAws(u);
+      if (p !== undefined) out.push(p);
+    } else {
+      if (ev.activity.connectorOps < MIN_TIGHTEN_OBSERVATIONS) continue;
+      const p = tightenConnector(u);
+      if (p !== undefined) out.push(p);
+    }
+  }
+  return out;
+}
+
+export type ProposalDirection = "both" | "widen" | "tighten";
+
+export function proposePermissionChanges(ev: PermissionEvidence, direction: ProposalDirection = "both"): readonly PermissionProposal[] {
+  return [
+    ...(direction === "tighten" ? [] : widenProposals(ev)),
+    ...(direction === "widen" ? [] : tightenProposals(ev)),
+  ];
+}
+
+export function renderPermissionProposals(ev: PermissionEvidence, proposals: readonly PermissionProposal[]): string {
+  const lines: string[] = [];
+  lines.push(`Permission fit — ${ev.window.since} → ${ev.window.until} (${ev.window.days}d)`);
+  lines.push(
+    `evidence: ${ev.rowsConsidered} audit row(s) in window · ${ev.activity.awsExec} aws execution(s) · ` +
+      `${ev.activity.connectorOps} connector op(s) · ${ev.activity.chainResolutions} approval-chain resolution(s)`,
+  );
+  lines.push(`grants examined: ${ev.usage.length} · refusal clusters: ${ev.refusals.length}`);
+  lines.push("");
+
+  if (proposals.length === 0) {
+    lines.push("No proposals.");
+    if (ev.rowsConsidered === 0) {
+      lines.push("Nothing was recorded in this window at all — that is an absence of evidence, not evidence that the grants fit.");
+    } else if (ev.window.days < MIN_TIGHTEN_WINDOW_DAYS) {
+      lines.push(`Tightening was not evaluated: the window is shorter than the ${MIN_TIGHTEN_WINDOW_DAYS}-day floor.`);
+    } else {
+      lines.push("Grants that were exercised drew no refusals, and nothing granted went unused against enough activity to say so.");
+    }
+    lines.push("");
+    lines.push("Nothing here gates anything: this is a scan, and every proposal it can make is a config PR a human merges.");
+    return lines.join("\n");
+  }
+
+  for (const p of proposals) {
+    lines.push(`[${p.direction.toUpperCase()}] ${p.subject}`);
+    lines.push(`  ${p.summary}`);
+    for (const e of p.evidence) lines.push(`  · ${e}`);
+    if (p.diff !== undefined) {
+      lines.push("  proposed config change:");
+      for (const l of p.diff.text.split("\n")) lines.push(`    ${l}`);
+    }
+    if (p.remedy !== undefined) lines.push(`  note: ${p.remedy}`);
+    lines.push("");
+  }
+  lines.push("Every proposal above is TEXT. The actuator is a reviewed pull request against the config repo — nothing changed, and nothing is gated on your reading this.");
+  return lines.join("\n");
+}
