@@ -21,7 +21,7 @@ import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
-import { checkApprovalVenue, describeVenueRefusal } from "../approvals/card-venue.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
 import { domainKeyOf } from "../memory/partition.js";
@@ -325,8 +325,8 @@ export default defineTool({
       nextRunAt: next ? next.toISOString() : null,
       preview,
       message:
-        `card posted${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).` +
-        (venue.sameRoom ? "" : ` This surface can't host an approval card, so it went to the card-capable channel in this domain — tell the user where it is, by name, and that someone there has to arm it.`),
+        `${cardPostedPrefix(venue)} — ${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).` +
+        describeVenueRedirect(venue, "arm it"),
     };
   },
 });

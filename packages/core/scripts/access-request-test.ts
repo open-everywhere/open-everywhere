@@ -123,15 +123,12 @@ function planCtxFor(channel: string): PlanContext {
 
 const extras = { scopeKey: "slack/T1/C1", channelId: "C1", configRepo: "acme/agent-config", domains } as const;
 
-await rejectsWith(
-  () => planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
-  "needs a surface with an approval-card path",
-  "plan: refuses a surface with no approval-card path",
-);
 {
+  const teamsArgs = planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
+  ok(teamsArgs.delta.kind === "grant-connector", "plan: 🔴 PLANS on a card-less surface — the authorization posture is decidable from the inputs, and it was the only thing this layer could honestly answer");
   registerCardPoster("discord", async () => undefined);
-  const args = await planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
-  ok(typeof args.scopeKey === "string", "plan: 🔴 a surface that REGISTERS a card poster is admitted — the card is what a member taps, so the requirement was always 'can this render one'");
+  const args = planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
+  ok(typeof args.scopeKey === "string", "plan: a surface that REGISTERS a card poster plans exactly as Slack does");
 }
 await rejectsWith(
   () => planRequestAccess(slackBinding({ mode: "dm" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),

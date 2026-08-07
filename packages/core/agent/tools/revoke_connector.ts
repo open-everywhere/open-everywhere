@@ -3,10 +3,12 @@ import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
+import { resolvePartition } from "../memory/partition.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
 
 export interface RevokeConnectorInput {
   readonly connector: string;
@@ -27,9 +29,6 @@ export interface ConnectorRevokePlan {
 }
 
 export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnectorInput, domain: string | null): ConnectorRevokePlan {
-  if (!hasApprovalCardPath(binding.platform)) {
-    throw new Error(`revoke_connector needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
-  }
   if (!actingPrincipalId(binding)) {
     throw new Error("revoke_connector needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and break-glass is a person's decision, not a schedule's. Ask someone in this conversation to propose the revoke.");
   }
@@ -52,7 +51,7 @@ export function planRevokeConnector(binding: SurfaceBinding, input: RevokeConnec
 
 export default defineTool({
   description:
-    "Break-glass PROPOSE: cut an Eve connector (by name, e.g. \"notion\") from this surface at runtime — this does NOT revoke anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve before the hard gate blocks it (no redeploy needed once approved). Use for incidents (leaked token, abuse) where the change needs to happen NOW, not after a PR review. A revoke is STICKY once approved (no auto-expiry) — revert with clear_connector_override or a PR removing the grant. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.",
+    "Break-glass PROPOSE: cut an Eve connector (by name, e.g. \"notion\") from this surface at runtime — this does NOT revoke anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve before the hard gate blocks it (no redeploy needed once approved). Use for incidents (leaked token, abuse) where the change needs to happen NOW, not after a PR review. A revoke is STICKY once approved (no auto-expiry) — revert with clear_connector_override or a PR removing the grant. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
   inputSchema: z.object({
     connector: z.string().min(1).describe('Connector name to revoke, e.g. "notion".'),
     reason: z.string().min(1).describe("Why — shown on the approval card (e.g. \"suspected leaked token\")."),
@@ -75,10 +74,11 @@ export default defineTool({
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const plan = planRevokeConnector(binding, input, domain);
 
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("revoke_connector couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
+    const venueResult = await checkApprovalVenue(binding, resolvePartition(ctx), () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "revoke that connector"));
     }
+    const venue = venueResult.venue;
 
     const posted = await requestApproval(
       {
@@ -88,11 +88,11 @@ export default defineTool({
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `revoke "${plan.args.connector}" from "${plan.args.scopeKey}"`;
@@ -108,7 +108,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${subject} (pending ${posted.id}).`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
     };
   },
 });

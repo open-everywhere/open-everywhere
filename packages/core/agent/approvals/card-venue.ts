@@ -77,21 +77,30 @@ export async function checkApprovalVenue(
   };
 }
 
-export function describeVenueRefusal(refusal: ApprovalVenueRefusal, platform: string): string {
+export function describeVenueRefusal(refusal: ApprovalVenueRefusal, platform: string, action = "set that up"): string {
   if (refusal.reason === "no-domain") {
     return (
-      `I can't set that up from here: "${platform}" has no approval-card path, and this channel isn't in an explicit domain, so there's nowhere in-domain to put the card a human has to click. ` +
+      `I can't ${action} from here: "${platform}" has no approval-card path, and this channel isn't in an explicit domain, so there's nowhere in-domain to put the card a human has to click. ` +
       `Add this channel to a domain (agent/config/domains.ts) that also contains a Slack or Discord channel, or ask me in one of those channels.`
     );
   }
   if (refusal.reason === "no-internal-card-channel") {
     return (
-      `I can't set that up from here: "${platform}" has no approval-card path, so the card has to go to a Slack or Discord channel in domain "${refusal.domain}" — and every one of those is shared outside your org (or has an observed guest), so an approval card there would spell out exactly what would execute to people outside it. ` +
+      `I can't ${action} from here: "${platform}" has no approval-card path, so the card has to go to a Slack or Discord channel in domain "${refusal.domain}" — and every one of those is shared outside your org (or has an observed guest), so an approval card there would spell out exactly what would execute to people outside it. ` +
       `Add an internal Slack or Discord channel to "${refusal.domain}".channels (agent/config/domains.ts), or stop sharing the one that's there, and I'll use it.`
     );
   }
   return (
-    `I can't set that up from here: "${platform}" has no approval-card path, and domain "${refusal.domain}" has no Slack or Discord channel to put the card in. ` +
+    `I can't ${action} from here: "${platform}" has no approval-card path, and domain "${refusal.domain}" has no Slack or Discord channel to put the card in. ` +
     `Add one to "${refusal.domain}".channels (agent/config/domains.ts), or ask me from a Slack or Discord channel.`
   );
+}
+
+export function cardPostedPrefix(venue: ApprovalVenue): string {
+  return venue.sameRoom ? "card posted" : `card posted in ${venue.surfaceKey}`;
+}
+
+export function describeVenueRedirect(venue: ApprovalVenue, whatNext: string): string {
+  if (venue.sameRoom) return "";
+  return ` This surface can't host an approval card, so it went to the card-capable channel in this domain — tell the user where it is, by name, and that someone there has to ${whatNext}.`;
 }

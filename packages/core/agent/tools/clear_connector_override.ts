@@ -1,11 +1,13 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { actingPrincipalId, bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
+import { resolvePartition } from "../memory/partition.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface ClearConnectorOverrideInput {
@@ -25,9 +27,6 @@ export interface ConnectorClearPlan {
 }
 
 export function planClearConnectorOverride(binding: SurfaceBinding, input: ClearConnectorOverrideInput, domain: string | null): ConnectorClearPlan {
-  if (!hasApprovalCardPath(binding.platform)) {
-    throw new Error(`clear_connector_override needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
-  }
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_connector_override needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and restoring cut access is a person's decision. Ask someone in this conversation to propose it.");
   }
@@ -46,7 +45,7 @@ export function planClearConnectorOverride(binding: SurfaceBinding, input: Clear
 
 const clearConnectorOverrideEntry = defineTool({
   description:
-    "PROPOSE reverting an earlier break-glass connector revoke, restoring this surface's config-as-code bundle grants for that connector — this does NOT clear anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve (this widens access back to config, so the admin click is the gate). Use to undo revoke_connector once the incident is resolved. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.",
+    "PROPOSE reverting an earlier break-glass connector revoke, restoring this surface's config-as-code bundle grants for that connector — this does NOT clear anything itself. Posts a confirmation card; an org admin, or a domain admin whose domain covers this scope, must click Approve (this widens access back to config, so the admin click is the gate). Use to undo revoke_connector once the incident is resolved. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
   inputSchema: z.object({
     connector: z.string().min(1).describe('Connector name to restore, e.g. "notion".'),
     scopeKey: z
@@ -67,10 +66,11 @@ const clearConnectorOverrideEntry = defineTool({
     const domain = domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null;
     const plan = planClearConnectorOverride(binding, input, domain);
 
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("clear_connector_override couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
+    const venueResult = await checkApprovalVenue(binding, resolvePartition(ctx), () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "clear that override"));
     }
+    const venue = venueResult.venue;
 
     const posted = await requestApproval(
       {
@@ -80,11 +80,11 @@ const clearConnectorOverrideEntry = defineTool({
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `clear override for "${plan.args.connector}" on "${plan.args.scopeKey}"`;
@@ -100,7 +100,7 @@ const clearConnectorOverrideEntry = defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${subject} (pending ${posted.id}).`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
     };
   },
 });
@@ -108,9 +108,6 @@ preRegisterDynamicEntry("clear_connector_override", "_single", clearConnectorOve
 
 export default defineDynamic({
   events: {
-    "session.started": (_event, ctx) => {
-      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
-      return clearConnectorOverrideEntry;
-    },
+    "session.started": () => clearConnectorOverrideEntry,
   },
 });

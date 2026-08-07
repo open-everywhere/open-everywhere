@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { actingPrincipalId, bindFrom, channelPlatform, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
 import { buildResolveRequest, resolveAccessFor } from "../access/request.js";
 import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
@@ -14,8 +14,9 @@ import type { Binding, Bundle } from "../access/bundle.js";
 import type { Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -105,9 +106,6 @@ export function planRequestAccess(
   input: RequestAccessInput,
   extras: { scopeKey: string; channelId: string; configRepo: string; permalink?: string; domains?: readonly Domain[] },
 ): RequestAccessArgs {
-  if (!hasApprovalCardPath(binding.platform)) {
-    throw new Error(`request_access needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the request card renders as a message with a tap-to-send button.`);
-  }
   const target = requestTargetOf(input);
   if (target === "channel" && binding.mode !== "channel") {
     throw new Error(
@@ -189,7 +187,7 @@ export function planRequestAccess(
 
 const requestAccessEntry = defineTool({
         description:
-          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default, THIS room — must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call.",
+          "PROPOSE widening access — this grants nothing itself. Use when someone asks for access they don't have. Exactly two request shapes exist: kind=widen-connection (add HTTP methods and/or path prefixes to a connection ALREADY available in the target) and kind=grant-connector (enable a connector this deployment already defines but the target doesn't have). Anything else — a new website/host, a new credential or API key, a new repo, a brand-new integration — is NOT requestable this way: refuse and say an admin needs to PR it by hand. `target` picks the universe: \"channel\" (default, THIS room — must be asked from that channel), \"personal\" (the ASKER's own DM access — only from their DM, and only ever for themselves: never use it to ask on someone else's behalf), or \"group\" (a declared person-group, landing in every member's DM — org admins only, and name the group in `group`). On success a \"Request access\" card is posted in this thread; any member's tap sends the request as a bot-PR that an admin merges in GitHub — nothing changes until that merge. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
         inputSchema: z.object({
           kind: z.enum(["widen-connection", "grant-connector"]).describe("Which of the two request shapes this ask maps to."),
           target: z
@@ -266,6 +264,12 @@ const requestAccessEntry = defineTool({
             domains: cfg.loadDomains(),
           });
 
+          const venueResult = await checkApprovalVenue(binding, partition, () => cfg.loadDomains());
+          if ("refusal" in venueResult) {
+            throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "request that access"));
+          }
+          const venue = venueResult.venue;
+
           const posted = await requestApproval(
             {
               org: args.org,
@@ -274,11 +278,11 @@ const requestAccessEntry = defineTool({
               scopeKey: args.scopeKey,
               domain,
               requestedBy: args.requestedBy,
-              channelId,
-              threadTs: binding.threadTs ?? null,
-              postedTo: postedToSurfaceKey(binding, channelId),
+              channelId: venue.channelId,
+              threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+              postedTo: venue.surfaceKey,
             },
-            approvalPostDeps(binding.platform),
+            approvalPostDeps(venue.platform),
           );
 
           if (posted.autoApproved) {
@@ -293,7 +297,7 @@ const requestAccessEntry = defineTool({
             requested: true,
             pendingId: posted.id,
             expiresAt: posted.expiresAt,
-            note: `card posted — ${grantSentence(args.delta)} (pending ${posted.id}).`,
+            note: `${cardPostedPrefix(venue)} — ${grantSentence(args.delta)} (pending ${posted.id}).` + describeVenueRedirect(venue, "tap it to send the request"),
           };
         },
 });
@@ -301,9 +305,6 @@ preRegisterDynamicEntry("request_access", "_single", requestAccessEntry);
 
 export default defineDynamic({
   events: {
-    "session.started": (_event, ctx) => {
-      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
-      return requestAccessEntry;
-    },
+    "session.started": () => requestAccessEntry,
   },
 });
