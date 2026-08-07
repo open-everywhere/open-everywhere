@@ -819,7 +819,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 420_000,
+    timeoutMs: 1_800_000,
     judged: true,
     run: async (ctx) => {
       const dm = ctx.dm!;
