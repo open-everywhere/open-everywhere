@@ -148,6 +148,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_slack_channel: open("read of a channel the bot is already in, into that conversation"),
   read_slack_thread: open("same-surface thread read"),
   session_cost: open("read of this session's own spend"),
+  explain_permission: open(
+    "the approver chain's PROSPECTIVE simulator (OPE-296 P6): resolves the REAL chain (access/approver-chain.ts) for a named tool in this scope and returns the verdict trace — the retrospective approval.chain audit row's twin, rendered by the same formatter. Strictly a simulation: it executes nothing, proposes nothing, posts nothing, writes nothing (not even an audit row — logging what-ifs would bury the rows that record decisions). Discloses only this scope's OWN policy — which elements/mode govern the surface the asker is already in — which is the legible-seam pitch itself ('you can see exactly what this domain can see, and who can ask it'); gating the explainer would make the policy less inspectable than the actions it governs",
+  ),
   spend_report: delegated(
     "resolveReportScope",
     "packages/core/agent/spend/reporting.ts",
