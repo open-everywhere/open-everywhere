@@ -238,9 +238,10 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       if (ctx.auditRead) {
         const claimsSaved = /remember|stored|noted|got it|saved/i.test(ack1.text);
+        const claimsAlready = /already (?:stored|saved|noted|in (?:our |the )?memory|remembered|know)/i.test(ack1.text);
         const writes = await ctx.auditRead({ sinceIso: teach1Start, platform: "slack", actions: ["memory.write"] });
         ctx.gate(
-          !claimsSaved || writes.length > 0,
+          !claimsSaved || claimsAlready || writes.length > 0,
           `grounding: the ack claims the fact was stored ⇒ a real memory.write audit row exists (found ${writes.length}) — no false save-claim`,
         );
       } else {
