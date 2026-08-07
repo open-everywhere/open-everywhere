@@ -41,7 +41,7 @@ export function untrustedModelOutput(
 }
 
 export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
-  markUntrustedIngestedThisTurn();
+  markUntrustedIngestedThisTurn(opts.ingestion?.kind);
   noteIngestionDryRun(opts.ingestion, true);
   return wrapUntrusted(content, opts);
 }

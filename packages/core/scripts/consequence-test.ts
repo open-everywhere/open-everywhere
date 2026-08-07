@@ -55,7 +55,7 @@ const gatedSource = (kind: string) => `
   ];
   const registry: Record<string, ConsequenceEntry> = {
     a_read: { tier: "open", via: { kind: "none" }, reason: "read" },
-    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "card", reason: "gated" },
+    a_gate: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "disclose", reason: "gated" },
   };
   ok(chk(tools, policyOf, registry).length === 0, "a total, matching registry is clean");
 
@@ -233,7 +233,7 @@ firesWith(
     chk(
       [{ name: "bash", source: gatedSource("test.member") }],
       policyOf,
-      { bash: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "card", reason: "overridden + gated" } },
+      { bash: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, taint: "disclose", reason: "overridden + gated" } },
       ["bash"],
     ).length === 0,
     "an OE-overridden framework tool is scanned as an authored file (may be gated)",

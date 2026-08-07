@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { beginTaintTurn, markUntrustedIngestedThisTurn, untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { beginTaintTurn, markUntrustedIngestedThisTurn, untrustedIngestedThisTurn, taintKindsThisTurn } from "../agent/access/taint-signal.js";
 import { openTaintTurn, TAINT_SEED_ATTRS } from "../agent/hooks/spawn-taint.js";
 
 let n = 0;
@@ -107,5 +107,20 @@ await inSession(async () => {
     ok(untrustedIngestedThisTurn() === false, "…and clears at the first boundary that can prove a new turn");
   });
 }
+
+await inSession(async () => {
+  boundary("turn-kinds");
+  ok(taintKindsThisTurn().length === 0, "kinds: a clean turn has no breakdown");
+  markUntrustedIngestedThisTurn("web");
+  markUntrustedIngestedThisTurn("github");
+  markUntrustedIngestedThisTurn("web");
+  ok(JSON.stringify(taintKindsThisTurn()) === JSON.stringify(["web", "github"]), "kinds: recorded first-seen and DEDUPED — this is what a card's disclosure line names");
+
+  boundary("turn-kinds-next");
+  ok(untrustedIngestedThisTurn() === false && taintKindsThisTurn().length === 0, "kinds: cleared at the turn boundary along with the flag");
+
+  markUntrustedIngestedThisTurn();
+  ok(untrustedIngestedThisTurn() === true && taintKindsThisTurn().length === 0, "kinds: a kindless mark taints with an EMPTY breakdown — empty ≠ clean");
+});
 
 console.log(`✓ taint-signal: ${n} assertions passed`);

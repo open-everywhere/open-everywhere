@@ -28,6 +28,7 @@ import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclos
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
 import { sessionGrantKind } from "./session-grant.js";
 import { markCardPostedThisTurn } from "./card-signal.js";
+import { withTaintDisclosure } from "./taint-disclosure.js";
 import { withArmingApproval } from "./arming-context.js";
 import type { PendingActionRow, PendingStatus } from "./types.js";
 import "./memory-forget.js";
@@ -271,7 +272,7 @@ export async function requestApproval(
 
   await store.addPendingAction(row);
 
-  const summaryLines = input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args);
+  const summaryLines = withTaintDisclosure(input.summaryLines ? [...input.summaryLines] : kindDef.summarize(input.args), input.args);
 
   let messageTs: string | undefined;
   if (deps.postCard) {
@@ -391,7 +392,8 @@ function summaryLinesFor(row: PendingActionRow): string[] {
   const kindDef = actionKind(row.kind);
   if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];
   try {
-    return kindDef.summarize(JSON.parse(row.argsJson));
+    const args = JSON.parse(row.argsJson);
+    return withTaintDisclosure(kindDef.summarize(args), args, { live: false });
   } catch {
     return ["(failed to render this pending's summary)"];
   }

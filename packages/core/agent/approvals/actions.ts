@@ -3,6 +3,7 @@ import { appendAudit } from "../audit/audit.js";
 import { parseScopeKey } from "../access/scope-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
+import { withTaintDisclosure } from "./taint-disclosure.js";
 
 const REGISTRY = new Map<string, ActionKind<any>>();
 
@@ -22,7 +23,8 @@ export function summarizeFrozenRow(row: PendingActionRow): string[] {
   const kindDef = actionKind(row.kind);
   if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];
   try {
-    return kindDef.summarize(JSON.parse(row.argsJson));
+    const args = JSON.parse(row.argsJson);
+    return withTaintDisclosure(kindDef.summarize(args), args, { live: false });
   } catch {
     return ["(failed to render this pending's summary)"];
   }

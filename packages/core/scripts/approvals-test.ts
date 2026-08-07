@@ -128,6 +128,40 @@ function row(over: Partial<PendingActionRow> = {}): PendingActionRow {
 }
 
 {
+  const { withTaintDisclosure, taintDisclosureLine, TAINT_DISCLOSURE_PREFIX } = await import("../agent/approvals/taint-disclosure.js");
+  const { summarizeFrozenRow } = await import("../agent/approvals/actions.js");
+  const { markUntrustedIngestedThisTurn } = await import("../agent/access/taint-signal.js");
+
+  ok(taintDisclosureLine(false) === undefined, "disclosure: an untainted proposal renders NO line (positive-only, so a clean card is unchanged)");
+  ok(taintDisclosureLine(true)!.startsWith(TAINT_DISCLOSURE_PREFIX), "disclosure: the line opens with the one exported prefix");
+  ok(taintDisclosureLine(true, ["web", "github"])!.includes("from web, github"), "disclosure: the line NAMES the source kinds when the turn recorded them");
+  ok(!taintDisclosureLine(true)!.includes("from "), "disclosure: …and degrades to the bare fact when it has no breakdown (a seeded taint knows the bit, not the sources)");
+
+  const plain = withTaintDisclosure(["Open a PR against acme/web"], { tainted: true }, { live: false });
+  ok(plain.length === 2 && plain[1]!.startsWith(TAINT_DISCLOSURE_PREFIX), "disclosure: a kind with no ⚠ prose of its own gains the generic line");
+  const clean = withTaintDisclosure(["Open a PR against acme/web"], { tainted: false }, { live: false });
+  ok(clean.length === 1, "disclosure: negative control — a clean proposal's lines are untouched");
+
+  const bespoke = ["Set a cap", "⚠ proposed in a turn that read external content — confirm a person actually asked"];
+  ok(withTaintDisclosure(bespoke, { tainted: true }, { live: false }).length === 2, "disclosure: a kind that already discloses is NOT given a second, redundant line");
+  const enriched = withTaintDisclosure(bespoke, { tainted: true }, { live: false, kinds: ["notion"] });
+  ok(enriched.length === 3 && enriched[2]!.includes("notion"), "disclosure: …but the SOURCE breakdown is still added, because its own line cannot carry it");
+
+  await inSession(async () => {
+    markUntrustedIngestedThisTurn("web");
+    const live = withTaintDisclosure(["Forget one bullet"], { siloName: "eng" });
+    ok(live.length === 2 && live[1]!.includes("from web"), "disclosure: a kind that freezes NO tainted flag still discloses at propose time, naming the live source");
+    const frozenOnly = withTaintDisclosure(["Forget one bullet"], { siloName: "eng" }, { live: false });
+    ok(frozenOnly.length === 1, "disclosure: …and a RE-RENDER (live:false) shows nothing — a clicker's own turn must never leak onto someone else's card");
+
+    const rendered = summarizeFrozenRow(row({ kind: "test.member", argsJson: JSON.stringify({ tainted: true }) }));
+    ok(rendered.some((l) => l.startsWith(TAINT_DISCLOSURE_PREFIX)), "disclosure: summarizeFrozenRow (the click/control-plane renderer) carries the line from the FROZEN flag");
+    const renderedClean = summarizeFrozenRow(row({ kind: "test.member", argsJson: JSON.stringify({}) }));
+    ok(!renderedClean.some((l) => l.startsWith(TAINT_DISCLOSURE_PREFIX)), "disclosure: …and a clean frozen row renders none, in the same tainted turn (frozen beats live on a re-render)");
+  });
+}
+
+{
   delete process.env.GITHUB_TOKEN;
   const store = getOperationalStore();
   const now = new Date().toISOString();
@@ -1069,4 +1103,4 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   _resetAudienceFloorCacheForTest();
 }
 
-console.log(`\n✓ approvals: ${n} assertions passed (card render, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate)\n`);
+console.log(`\n✓ approvals: ${n} assertions passed (card render, OPE-307 taint disclosure, store CAS, registry, execute parity, click matrix, card-signal, TTL sweep, cross-thread decision wake, sweep expiry feedback, OPE-185 clicker gate, OPE-220 card audience gate)\n`);

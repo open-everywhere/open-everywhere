@@ -123,9 +123,11 @@ ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "u
 {
   const names = TRANSFORM_TABLE.map((t) => t.name);
   ok(
-    JSON.stringify(names) === JSON.stringify(["mode:DANGEROUSLY_BYPASS", "mode:APPROVE_ALL", "mode:DENY_ALL", "judge:AUTO", "unattended", "taint:refuse", "taint:card"]),
-    "pin3: the transform table declares exactly the seven known arrows",
+    JSON.stringify(names) === JSON.stringify(["mode:DANGEROUSLY_BYPASS", "mode:APPROVE_ALL", "mode:DENY_ALL", "judge:AUTO", "unattended", "taint:refuse"]),
+    "pin3: the transform table declares exactly the six known arrows",
   );
+  ok(!names.includes("taint:card"), "pin3: there is NO taint:card arrow — a taint marking does not move a verdict (OPE-307)");
+  ok(TRANSFORM_TABLE.filter((t) => t.stage === "taint").length === 1, "pin3: exactly ONE taint arrow survives, and it is the four-sink refusal");
   ok(TRANSFORM_TABLE.every((t) => !(t.from as readonly string[]).includes("deny")), "pin3: no arrow's `from` contains deny — deny never enters the pipeline");
 
   const bypass = await resolveApproverChain(req("create_ticket", { mode: { mode: "DANGEROUSLY_BYPASS" } }));
@@ -243,16 +245,43 @@ const EXAMPLES: readonly ApprovalScenario[] = [
 }
 
 ok(taintToleranceOf("add_routine_rule") === "refuse", "taint: add_routine_rule is a refuse-sink");
-ok(taintToleranceOf("remember") === "card", "taint: remember is a card-sink");
+ok(taintToleranceOf("remember") === "disclose", "taint: remember DISCLOSES — the column is now marking vocabulary, not a gate (OPE-307)");
 ok(taintToleranceOf("reply") === undefined, "taint: an open conversational verb carries no tolerance — a tainted turn can still reply");
-ok(taintToleranceOf("notion__create_page") === "card", "taint: a connector write cards on a tainted turn");
+ok(taintToleranceOf("notion__create_page") === "disclose", "taint: a connector write discloses on a tainted turn");
 ok(taintToleranceOf("notion__search") === undefined, "taint: a connector read is not taint-gated");
 ok(taintToleranceOf("no_such_tool") === "refuse", "taint: an unknown name fails closed to refuse");
 {
-  const carded = await resolveApproverChain(req("notion__search", { tainted: true }));
-  ok(carded.verdict === "allow", "taint: tainted connector read stays allow (no blanket all-tools-to-ask)");
+  const refusing = Object.entries(TOOL_CONSEQUENCE)
+    .filter(([, e]) => e.taint === "refuse")
+    .map(([t]) => t)
+    .sort();
+  ok(
+    JSON.stringify(refusing) === JSON.stringify(["add_routine_rule", "declare_webhook", "remove_routine_rule", "rotate_webhook"]),
+    `taint: exactly the four standing-instruction/ingress sinks declare refuse (got ${refusing.join(", ")})`,
+  );
+
+  const read = await resolveApproverChain(req("notion__search", { tainted: true }));
+  ok(read.verdict === "allow", "taint: tainted connector read stays allow (no blanket all-tools-to-ask)");
   const write = await resolveApproverChain(req("notion__create_page", { tainted: true }));
-  ok(write.verdict === "ask" && write.transforms.length === 0, "taint: tainted connector write was already ask — card arrow leaves ask unchanged");
+  ok(write.verdict === "ask" && write.transforms.length === 0, "taint: a tainted connector write was ALREADY ask — no taint arrow moved it");
+
+  const lowered = await resolveApproverChain(req("remember", { tainted: true }), { approvers: [approver("domain-lower", "allow")] });
+  ok(lowered.verdict === "allow", "taint: a tainted turn's CONFIG-LOWERED allow proceeds — the demoted arrow is really gone");
+  ok(lowered.transforms.length === 0, "taint: …and no transform fired at all on that resolution");
+  const detail = chainAuditDetail(req("remember", { tainted: true }), lowered);
+  ok(detail.tainted === true, "taint: …while the audit row still DISCLOSES the provenance (marking, not gating)");
+
+  const clean = await resolveApproverChain(req("remember", { tainted: false }), { approvers: [approver("domain-lower", "allow")] });
+  ok(clean.verdict === "allow" && clean.transforms.length === 0, "taint: the untainted control resolves the same way");
+
+  const grantedFire = await resolveApproverChain(
+    req("open_pull_request", { tainted: true, unattended: true, principalId: undefined, grant: { kind: "pr.open", grantedBy: "U7" } }),
+  );
+  ok(grantedFire.verdict === "allow", "taint: a GRANTED action on a tainted unattended fire proceeds — no card is minted into an empty room");
+  ok(grantedFire.transforms.length === 0, "taint: …and the fire's resolution applies no transform at all");
+
+  const refused = await resolveApproverChain(req("add_routine_rule", { tainted: true }), { approvers: [approver("domain-lower", "allow")] });
+  ok(refused.verdict === "deny" && refused.transforms.some((t) => t.name === "taint:refuse"), "taint: a refuse-sink still denies — even against a config-lowered allow");
 }
 
 ok(toolForActionKind("ticket.create") === "create_ticket", "kind map: ticket.create → create_ticket");

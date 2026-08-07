@@ -1,6 +1,6 @@
 import { classifyConnectorOp, isConnectorOpTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
-import { untrustedIngestedThisTurn } from "./taint-signal.js";
+import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
 import { getConfig } from "./config.js";
 import { resolveAccess } from "./resolver.js";
 
@@ -34,6 +34,10 @@ export interface ApprovalChainRequest {
 
 export function chainTaintSignal(): boolean {
   return untrustedIngestedThisTurn();
+}
+
+export function chainTaintKinds(): readonly string[] {
+  return taintKindsThisTurn();
 }
 
 function taintedOf(req: ApprovalChainRequest): boolean {
@@ -96,8 +100,8 @@ export function registryVerdictOf(tool: string): "allow" | "ask" {
   return row.tier === "open" ? "allow" : "ask";
 }
 
-export function taintToleranceOf(tool: string): "refuse" | "card" | undefined {
-  if (isConnectorOpTool(tool)) return classifyConnectorOp(tool) === "open" ? undefined : "card";
+export function taintToleranceOf(tool: string): "refuse" | "disclose" | undefined {
+  if (isConnectorOpTool(tool)) return classifyConnectorOp(tool) === "open" ? undefined : "disclose";
   const row = TOOL_CONSEQUENCE[tool];
   if (row === undefined) return "refuse";
   if (row.taint !== undefined) return row.taint;
@@ -183,14 +187,6 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     reason: "taint-refused",
     fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "refuse",
     to: () => "deny",
-  },
-  {
-    name: "taint:card",
-    stage: "taint",
-    from: ["allow"],
-    reason: "taint-carded",
-    fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "card",
-    to: () => "ask",
   },
 ];
 
@@ -391,6 +387,7 @@ export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution
     ...(res.denyAbsolute !== undefined ? { denyAbsolute: true } : {}),
     unattended: req.unattended,
     tainted: taintedOf(req),
+    ...(taintedOf(req) && chainTaintKinds().length > 0 ? { taintKinds: [...chainTaintKinds()] } : {}),
     ...(req.mode !== undefined ? { mode: req.mode.mode } : {}),
     ...(req.domain !== undefined ? { domain: req.domain } : {}),
   };
@@ -414,7 +411,12 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
     lines.push("transforms (in order):");
     for (const t of res.transforms) lines.push(`  ${t.name}: ${t.from} → ${t.to}${t.reason !== undefined ? ` (${t.reason})` : ""}`);
   }
-  const context = [`unattended: ${req.unattended}`, `tainted: ${taintedOf(req)}`, ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : [])];
+  const kinds = taintedOf(req) ? chainTaintKinds() : [];
+  const context = [
+    `unattended: ${req.unattended}`,
+    `tainted: ${taintedOf(req)}${kinds.length > 0 ? ` (${kinds.join(", ")})` : ""}`,
+    ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : []),
+  ];
   lines.push(`context: ${context.join(" · ")}`);
   return lines;
 }

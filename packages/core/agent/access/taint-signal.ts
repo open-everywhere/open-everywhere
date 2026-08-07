@@ -1,8 +1,10 @@
 import { defineState } from "eve/context";
+import type { IngestionKind } from "./taint-tiers.js";
 
 interface TaintState {
   readonly turn?: string;
   readonly tainted: boolean;
+  readonly kinds?: readonly string[];
 }
 
 const slot = defineState<TaintState>("open-everywhere.untrusted-ingested", () => ({ tainted: false }));
@@ -11,8 +13,13 @@ function readState(v: unknown): TaintState {
   if (v === true) return { tainted: true };
   if (v === false || v === undefined || v === null) return { tainted: false };
   if (typeof v === "object" && "tainted" in (v as Record<string, unknown>)) {
-    const s = v as { turn?: unknown; tainted?: unknown };
-    return { turn: typeof s.turn === "string" ? s.turn : undefined, tainted: s.tainted === true };
+    const s = v as { turn?: unknown; tainted?: unknown; kinds?: unknown };
+    const kinds = Array.isArray(s.kinds) ? s.kinds.filter((k): k is string => typeof k === "string") : [];
+    return {
+      turn: typeof s.turn === "string" ? s.turn : undefined,
+      tainted: s.tainted === true,
+      ...(kinds.length > 0 ? { kinds } : {}),
+    };
   }
   return { tainted: false };
 }
@@ -29,11 +36,14 @@ export function beginTaintTurn(turnId: string | undefined): void {
   }
 }
 
-export function markUntrustedIngestedThisTurn(): void {
+export function markUntrustedIngestedThisTurn(kind?: IngestionKind): void {
   try {
     slot.update((cur) => {
       const state = readState(cur);
-      return state.tainted ? state : { turn: state.turn, tainted: true };
+      const kinds = state.kinds ?? [];
+      const nextKinds = kind !== undefined && !kinds.includes(kind) ? [...kinds, kind] : kinds;
+      if (state.tainted && nextKinds.length === kinds.length) return state;
+      return { turn: state.turn, tainted: true, ...(nextKinds.length > 0 ? { kinds: nextKinds } : {}) };
     });
   } catch {
   }
@@ -44,6 +54,14 @@ export function untrustedIngestedThisTurn(): boolean {
     return readState(slot.get()).tainted;
   } catch {
     return false;
+  }
+}
+
+export function taintKindsThisTurn(): readonly string[] {
+  try {
+    return readState(slot.get()).kinds ?? [];
+  } catch {
+    return [];
   }
 }
 
