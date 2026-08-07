@@ -340,6 +340,7 @@ interface FakeState {
   puts: string[];
   prs: { title: string; body: string; head: string; base: string }[];
   posts: { method: string; body: URLSearchParams }[];
+  threadNotes?: { platform: string; channelId: string; text: string; threadTs?: string | null }[];
   prExisting?: boolean;
   adminPostFails?: boolean;
 }
@@ -370,6 +371,10 @@ function fakeDeps(state: FakeState) {
       if (state.adminPostFails && params.get("channel") === "C_ADMIN") return { ok: false };
       return { ok: true, ts: "1.2" };
     },
+    postThreadNote: async (platform: string, target: { channelId: string; text: string; threadTs?: string | null }) => {
+      (state.threadNotes ??= []).push({ platform, ...target });
+      return "note-ts";
+    },
   };
 }
 
@@ -390,8 +395,13 @@ function fakeDeps(state: FakeState) {
   );
   const admin = state.posts.find((p) => p.body.get("channel") === "C_ADMIN");
   ok(admin !== undefined && admin.body.get("text")!.includes("pull/7") && admin.body.get("text")!.includes("U_ASK"), "execute: plain admin-channel notification with PR link (no decide card)");
-  const thread = state.posts.find((p) => p.body.get("channel") === "C1");
-  ok(thread !== undefined && thread.body.get("thread_ts") === args.threadTs && thread.body.get("text")!.includes("pull/7"), "execute: requesting thread told where its PR went");
+  const thread = (state.threadNotes ?? [])[0];
+  ok(thread !== undefined && thread.threadTs === args.threadTs && thread.text.includes("pull/7"), "execute: requesting thread told where its PR went");
+  ok(thread?.platform === "slack" && thread.channelId === "C1", "execute: …on the ASKING surface's own platform, derived from the frozen scopeKey — never assumed Slack");
+  ok(
+    !state.posts.some((p) => p.body.get("channel") === "C1"),
+    "execute: …and the requester note does NOT ride the admin channel's Slack form any more (the bug: a Discord channel id sent to Slack's Web API)",
+  );
   ok(outcome.includes("opened PR #7") && outcome.includes("merges it in GitHub"), "execute: outcome line for the decided card");
   const audit = await readAudit({ org: "default", limit: 5 });
   const entry = audit.find((a) => a.action === "access.request.pr_opened" && (a.detail as { pr?: number }).pr === 7);
@@ -551,6 +561,38 @@ function fakeDeps(state: FakeState) {
   ok(decided === true, "e2e: the tap is ours and handled");
   const update = posts.find((p) => p.method === "chat.update");
   ok(update !== undefined && update.body.get("text")!.includes("dry-run —"), "e2e: member tap executed the kind (dry-run) and the card shows the outcome");
+}
+
+{
+  const { registerSurfaceMessageOps, resolveMessagePermalink } = await import("../agent/channels/surface-message-ops.js");
+
+  ok((await resolveMessagePermalink("nowhere", { channelId: "C1", messageId: "M1" })) === undefined, "permalink: an unregistered surface resolves undefined — the PR body has always treated the link as optional");
+
+  registerSurfaceMessageOps({
+    platform: "nowhere",
+    postText: async () => "m1",
+    editMessage: async () => undefined,
+    postFiles: async () => undefined,
+    permalink: async (ref) => `https://nowhere.example/${ref.workspace ?? "-"}/${ref.channelId}/${ref.messageId}`,
+  });
+  ok(
+    (await resolveMessagePermalink("nowhere", { channelId: "C1", messageId: "M1", workspace: "W1" })) === "https://nowhere.example/W1/C1/M1",
+    "permalink: 🔴 a surface that REGISTERS one carries the flow — the whole ref (workspace included) reaches its composer",
+  );
+
+  registerSurfaceMessageOps({ platform: "linkless", postText: async () => "m1", editMessage: async () => undefined, postFiles: async () => undefined });
+  ok((await resolveMessagePermalink("linkless", { channelId: "C1", messageId: "M1" })) === undefined, "permalink: a registered surface with no permalink op resolves undefined, never throws");
+
+  registerSurfaceMessageOps({
+    platform: "brokenlink",
+    postText: async () => "m1",
+    editMessage: async () => undefined,
+    postFiles: async () => undefined,
+    permalink: async () => {
+      throw new Error("permalink service down");
+    },
+  });
+  ok((await resolveMessagePermalink("brokenlink", { channelId: "C1", messageId: "M1" })) === undefined, "permalink: a THROWING composer degrades to undefined — it is display-only and may not fail the request");
 }
 
 rmSync(dir, { recursive: true, force: true });

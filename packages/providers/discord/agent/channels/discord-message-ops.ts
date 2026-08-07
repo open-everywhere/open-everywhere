@@ -22,6 +22,10 @@ export const discordMessageOps: SurfaceMessageOps = {
     });
     if (!res.ok) throw new Error(`Discord edit-message failed (${res.status}) for channel ${channelId}`);
   },
+  async permalink(ref) {
+    const guild = ref.dm ? "@me" : ref.workspace;
+    return guild ? `https://discord.com/channels/${guild}/${ref.channelId}/${ref.messageId}` : undefined;
+  },
   async postFiles(channelId, files: readonly OutboundFile[], comment) {
     const form = new FormData();
     const attachments = files.map((file, i) => ({ id: i, filename: file.filename, ...(file.caption ? { description: file.caption } : {}) }));

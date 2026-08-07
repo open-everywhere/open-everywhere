@@ -269,8 +269,8 @@ export { postOnce, outboundKey } from "./operational/post-once.js";
 
 export { liveMemoryDeltaDep } from "./memory/wake-delta.js";
 
-export { registerSurfaceMessageOps, surfaceMessageOps } from "./channels/surface-message-ops.js";
-export type { SurfaceMessageOps, OutboundFile } from "./channels/surface-message-ops.js";
+export { registerSurfaceMessageOps, surfaceMessageOps, postSurfaceText, resolveMessagePermalink } from "./channels/surface-message-ops.js";
+export type { SurfaceMessageOps, OutboundFile, MessageRef } from "./channels/surface-message-ops.js";
 
 export {
   registerCardPoster,

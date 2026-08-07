@@ -13,7 +13,7 @@ import { isLinkSetMember, type Group } from "../identity/groups.js";
 import type { Binding, Bundle } from "../access/bundle.js";
 import type { Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
-import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { resolveMessagePermalink } from "../channels/surface-message-ops.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -249,14 +249,14 @@ const requestAccessEntry = defineTool({
             groups,
           };
 
-          let permalink: string | undefined;
-          if (binding.threadTs && binding.platform === "slack") {
-            const q = new URLSearchParams();
-            q.set("channel", channelId);
-            q.set("message_ts", binding.threadTs);
-            const res = await bridgeSlackForm("chat.getPermalink", q.toString());
-            permalink = res?.ok === true && typeof res.permalink === "string" ? res.permalink : undefined;
-          }
+          const permalink = binding.threadTs
+            ? await resolveMessagePermalink(binding.platform, {
+                channelId,
+                messageId: binding.threadTs,
+                workspace: binding.workspace,
+                dm: binding.mode === "dm",
+              })
+            : undefined;
 
           const args = planRequestAccess(binding, planCtx, input, {
             scopeKey: partition.surfaceKey,

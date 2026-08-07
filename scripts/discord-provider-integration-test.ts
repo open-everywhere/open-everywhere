@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { registerDiscordProvider } from "@open-everywhere/provider-discord/agent/register.js";
 import { capabilitiesForPlatform, capabilitiesFor } from "@open-everywhere/core/agent/identity/capabilities.js";
+import { resolveMessagePermalink } from "@open-everywhere/core/agent/channels/surface-message-ops.js";
+import { nativeMemberCheck } from "@open-everywhere/core/agent/access/native-admin.js";
+import { canDecideMemberStanding } from "@open-everywhere/core/agent/approvals/memory-float.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import reply from "@open-everywhere/core/agent/tools/reply.js";
 
@@ -32,4 +35,21 @@ const bridgedDiscord = bindFrom({
 ok(bridgedDiscord.platform === "discord" && bridgedDiscord.workspace === "G7" && bridgedDiscord.surface === "C7",
   "binding-bridge: a 'discord-gateway' stamp reconstitutes the full binding via the registered discord mapper (workspace=guild, surface=channel)");
 
-console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming, composed core + bundle)`);
+ok(
+  (await resolveMessagePermalink("discord", { channelId: "C7", messageId: "M9", workspace: "G7" })) === "https://discord.com/channels/G7/C7/M9",
+  "permalink: a discord channel message composes the canonical /channels/<guild>/<channel>/<message> URL",
+);
+ok(
+  (await resolveMessagePermalink("discord", { channelId: "C7", messageId: "M9", workspace: "U_dm", dm: true })) === "https://discord.com/channels/@me/C7/M9",
+  "permalink: 🔴 a DM composes the @me form — a discord DM binds `workspace` to the USER id, and a user id in the guild slot is a URL that looks right and resolves to nothing",
+);
+ok(
+  (await resolveMessagePermalink("discord", { channelId: "C7", messageId: "M9" })) === undefined,
+  "permalink: no workspace and not a DM ⇒ undefined, never a guess — the PR body already treats the link as optional",
+);
+ok((await resolveMessagePermalink("teams", { channelId: "C7", messageId: "M9", workspace: "W1" })) === undefined, "permalink: a surface with no registered ops resolves undefined");
+
+ok(nativeMemberCheck("discord") !== undefined, "native member check: the bundle registers one, so core's float-undo gate can decide standing on discord at all");
+ok(canDecideMemberStanding("discord"), "native member check: …which is exactly what the honest-availability predicate reports (no platform literal anywhere in the path)");
+
+console.log(`✓ discord-provider-integration: ${n} assertions passed (capability manifest + namespace/alias resolution + reply arming + message permalink + native member check, composed core + bundle)`);
