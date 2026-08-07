@@ -52,7 +52,7 @@ export function eventPrompt(
   const body = [ev.summary, ev.url, ev.entity].filter((s): s is string => Boolean(s)).join("\n");
   const rules = renderPolicyBlock(routine);
   const head = rules.length > 0 ? `${renderFailureBlock()}\n\n${rules}` : renderFailureBlock();
-  return `${head}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event" })}`;
+  return `${head}\n\n${routine.prompt}\n\n${ingestUntrusted(body, { source: "github event", ingestion: { kind: "routine-event", label: "github-event" } })}`;
 }
 
 export function verifyGithubSignature(secret: string, body: string, signatureHeader: string | null | undefined): boolean {

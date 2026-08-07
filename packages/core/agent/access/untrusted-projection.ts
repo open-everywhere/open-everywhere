@@ -67,7 +67,10 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
         } else {
           text = typeof output === "string" ? output : JSON.stringify(output ?? null);
         }
-        return ingestUntrustedModelOutput(text, { source: `connector ${name}` });
+        return ingestUntrustedModelOutput(text, {
+          source: `connector ${name}`,
+          ingestion: { kind: "connector", label: name },
+        });
       };
     }
   }

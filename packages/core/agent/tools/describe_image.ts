@@ -191,6 +191,9 @@ export default defineTool({
     const body =
       `Image description:\n${output.description ?? ""}` +
       (output.ocrText ? `\n\nText in image (OCR):\n${output.ocrText}` : "");
-    return ingestUntrustedModelOutput(body, { source: "describe_image" });
+    return ingestUntrustedModelOutput(body, {
+      source: "describe_image",
+      ingestion: { kind: "image-description", label: "describe_image" },
+    });
   },
 });

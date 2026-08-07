@@ -64,7 +64,10 @@ export function browserContentModelOutput(name: string, output: unknown): { type
   const op = name.startsWith("browser_") ? name.slice("browser_".length) : name;
   const domain = browserDomainOf(output);
   const text = typeof output === "string" ? output : JSON.stringify(output ?? null);
-  return ingestUntrustedModelOutput(text, { source: domain ? `browser ${op} ${domain}` : `browser ${op}` });
+  return ingestUntrustedModelOutput(text, {
+    source: domain ? `browser ${op} ${domain}` : `browser ${op}`,
+    ingestion: { kind: "web", label: `browser_${op}` },
+  });
 }
 
 let registered: Readonly<Record<string, BrowserToolEntry>> | undefined;

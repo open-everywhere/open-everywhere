@@ -57,7 +57,10 @@ const readChannelEntry = defineTool({
     return { platform, channel: input.target.channel, count: messages.length, messages: messages.map((m) => ({ author: m.author, ts: m.ts, text: m.text })) };
   },
   toModelOutput(output) {
-    return ingestUntrustedModelOutput(renderChannelBody(output), { source: channelReadSource(output) });
+    return ingestUntrustedModelOutput(renderChannelBody(output), {
+      source: channelReadSource(output),
+      ingestion: { kind: "chat-message", label: `read_channel:${output.platform}` },
+    });
   },
 });
 preRegisterDynamicEntry("read_channel", "_single", readChannelEntry);

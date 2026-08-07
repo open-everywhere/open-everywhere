@@ -48,7 +48,10 @@ export const readNotionPageEntry = defineTool({
           const header = output.text.length === 0 ? `Notion page ${output.page} has no readable text.` : `Notion page ${output.page}:`;
           const suffix = output.truncated ? "\n\n[truncated — the page has more content than shown]" : "";
           const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}`;
-          return ingestUntrustedModelOutput(body, { source: `notion page ${output.page}` });
+          return ingestUntrustedModelOutput(body, {
+            source: `notion page ${output.page}`,
+            ingestion: { kind: "notion", label: "read_notion_page" },
+          });
         },
 });
 preRegisterDynamicEntry("read_notion_page", "_single", readNotionPageEntry);

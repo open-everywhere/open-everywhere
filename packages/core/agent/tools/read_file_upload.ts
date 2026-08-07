@@ -143,6 +143,9 @@ export default defineTool({
       return { type: "text", value: output.message ?? "file could not be read." };
     }
     const header = output.name ? `File: ${output.name}${output.mimeType ? ` (${output.mimeType})` : ""}\n\n` : "";
-    return ingestUntrustedModelOutput(`${header}${output.content ?? ""}`, { source: "read_file_upload" });
+    return ingestUntrustedModelOutput(`${header}${output.content ?? ""}`, {
+      source: "read_file_upload",
+      ingestion: { kind: "file-upload", label: "read_file_upload" },
+    });
   },
 });

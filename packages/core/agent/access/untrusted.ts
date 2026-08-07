@@ -1,6 +1,8 @@
 import { markUntrustedIngestedThisTurn } from "./taint-signal.js";
 import { capResult } from "./result-cap.js";
 import { noteToolResultLoop } from "./loop-breaker.js";
+import { noteIngestionDryRun } from "./taint-dryrun.js";
+import type { IngestionSource } from "./taint-tiers.js";
 
 export const UNTRUSTED_OPEN = "<untrusted_external_data";
 export const UNTRUSTED_CLOSE = "</untrusted_external_data>";
@@ -12,6 +14,7 @@ const NOTICE =
 
 export interface UntrustedOpts {
   source?: string;
+  ingestion?: IngestionSource;
 }
 
 function defangDelimiters(content: string): string {
@@ -39,6 +42,7 @@ export function untrustedModelOutput(
 
 export function ingestUntrusted(content: string, opts: UntrustedOpts = {}): string {
   markUntrustedIngestedThisTurn();
+  noteIngestionDryRun(opts.ingestion, true);
   return wrapUntrusted(content, opts);
 }
 

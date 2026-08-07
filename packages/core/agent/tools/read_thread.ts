@@ -59,7 +59,10 @@ const readThreadEntry = defineTool({
     };
   },
   toModelOutput(output) {
-    return ingestUntrustedModelOutput(renderThreadBody(output), { source: threadReadSource(output) });
+    return ingestUntrustedModelOutput(renderThreadBody(output), {
+      source: threadReadSource(output),
+      ingestion: { kind: "chat-message", label: `read_thread:${output.platform}` },
+    });
   },
 });
 preRegisterDynamicEntry("read_thread", "_single", readThreadEntry);

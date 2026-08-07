@@ -100,7 +100,10 @@ export const readNotionCommentsEntry = defineTool({
         : `Notion page ${output.page} — ${output.comments} comment(s) across ${output.discussions} discussion(s):`;
     const suffix = output.truncated ? "\n\n[truncated — the page has more comments/blocks than shown]" : "";
     const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}`;
-    return ingestUntrustedModelOutput(body, { source: `notion comments ${output.page}` });
+    return ingestUntrustedModelOutput(body, {
+      source: `notion comments ${output.page}`,
+      ingestion: { kind: "notion", label: "read_notion_comments" },
+    });
   },
 });
 preRegisterDynamicEntry("read_notion_comments", "_single", readNotionCommentsEntry);

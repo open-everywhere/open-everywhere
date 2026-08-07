@@ -76,7 +76,10 @@ export const readLinearIssueEntry = defineTool({
       output.comments === 0
         ? "\n\nNo comments."
         : `\n\n${output.comments} comment(s)${output.truncated ? " (truncated — the issue has more)" : ""}:\n${output.text}`;
-    return ingestUntrustedModelOutput(`${header}${bodyBlock}${commentsBlock}`, { source: `linear issue ${ref}` });
+    return ingestUntrustedModelOutput(`${header}${bodyBlock}${commentsBlock}`, {
+      source: `linear issue ${ref}`,
+      ingestion: { kind: "linear", label: "read_linear_issue" },
+    });
   },
 });
 preRegisterDynamicEntry("read_linear_issue", "_single", readLinearIssueEntry);

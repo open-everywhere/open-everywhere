@@ -179,6 +179,10 @@ export { setRegisteredProviders, resetRegisteredProviders } from "./access/provi
 
 export { ingestUntrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "./access/untrusted.js";
 
+export type { IngestionSource, IngestionKind, IngestionTier, IngestionVerdict } from "./access/taint-tiers.js";
+export { classifyIngestion, INGESTION_KINDS } from "./access/taint-tiers.js";
+export { noteIngestionDryRun } from "./access/taint-dryrun.js";
+
 export { sourceScopedMount } from "./access/source-scoped-mount.js";
 
 export { preRegisterDynamicEntry, replayStepNames } from "./access/window-gated.js";

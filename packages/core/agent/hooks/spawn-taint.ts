@@ -2,7 +2,21 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { OE_SPAWN_TAINTED_ATTR } from "../channels/unified.js";
 import { beginTaintTurn, markUntrustedIngestedThisTurn, OE_TAINTED_FIRE_ATTR, OE_RESULT_TAINTED_ATTR } from "../access/taint-signal.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
-import { currentTurnId, type BindableContext } from "../identity/binding.js";
+import { registerTaintDryRunSink, type TaintDryRunRow } from "../access/taint-dryrun.js";
+import { appendAudit } from "../audit/audit.js";
+import { currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
+
+export const TAINT_DRYRUN_ACTION = "taint.dryrun";
+
+registerTaintDryRunSink((row: TaintDryRunRow) => {
+  void appendAudit({
+    org: deploymentOrg(),
+    platform: "ingest",
+    workspace: row.kind,
+    action: TAINT_DRYRUN_ACTION,
+    detail: { ...row },
+  }).catch(() => undefined);
+});
 
 export const TAINT_SEED_ATTRS: readonly string[] = [OE_SPAWN_TAINTED_ATTR, OE_TAINTED_FIRE_ATTR, OE_RESULT_TAINTED_ATTR, JOB_TAINT_ATTR];
 

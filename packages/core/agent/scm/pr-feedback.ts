@@ -177,13 +177,14 @@ function truncNote(n: number, unit: string): string {
 }
 
 export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
+  const ingestion = { kind: "github", label: `get_pr_feedback:${d.repo}` } as const;
   const out: string[] = [`PR feedback for ${d.repo}#${d.number}`];
 
   out.push("", `Reviews (${d.reviews.length}${truncNote(d.truncation.reviewsDropped, "reviews")}):`);
   if (d.reviews.length === 0) out.push("  (none)");
   d.reviews.forEach((r, i) => {
     const head = `  [${i + 1}] ${r.author} — ${r.state}`;
-    if (r.body.trim()) out.push(`${head}:`, ingestUntrusted(r.body, { source: `pr review by ${r.author}` }));
+    if (r.body.trim()) out.push(`${head}:`, ingestUntrusted(r.body, { source: `pr review by ${r.author}`, ingestion }));
     else out.push(`${head} (no comment)`);
   });
 
@@ -192,7 +193,7 @@ export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
   d.reviewComments.forEach((c, i) => {
     const loc = `${c.path}:${c.line ?? "?"}`;
     const head = `  [${i + 1}] ${loc} — ${c.author}`;
-    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr review comment by ${c.author} on ${loc}` }));
+    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr review comment by ${c.author} on ${loc}`, ingestion }));
     else out.push(`${head} (no body)`);
   });
 
@@ -200,7 +201,7 @@ export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
   if (d.issueComments.length === 0) out.push("  (none)");
   d.issueComments.forEach((c, i) => {
     const head = `  [${i + 1}] ${c.author}`;
-    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr comment by ${c.author}` }));
+    if (c.body.trim()) out.push(`${head}:`, ingestUntrusted(c.body, { source: `pr comment by ${c.author}`, ingestion }));
     else out.push(`${head} (empty)`);
   });
 
@@ -213,7 +214,7 @@ export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
   );
   d.checks.forEach((c) => {
     const head = `  - ${c.name}: ${c.status}${c.conclusion ? `/${c.conclusion}` : ""}`;
-    if (c.summary.trim()) out.push(`${head} —`, ingestUntrusted(c.summary, { source: `pr check ${c.name}` }));
+    if (c.summary.trim()) out.push(`${head} —`, ingestUntrusted(c.summary, { source: `pr check ${c.name}`, ingestion }));
     else out.push(head);
   });
 
