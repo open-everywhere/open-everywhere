@@ -61,7 +61,10 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "memory",
-    headline: "Commit something to the team's durable memory, take it back out, or audit what is stored",
+    headline:
+      "Commit something to the team's durable memory, take it back out, or audit what is stored. " +
+      "A plain fact saves instantly; only a standing INSTRUCTION (a rule future turns must obey) is " +
+      "gated behind a human approval card — so brief a fact as a fact, never as a rule",
     tools: ["remember", "forget", "memory_admin_list", "memory_admin_read"],
   },
   {
