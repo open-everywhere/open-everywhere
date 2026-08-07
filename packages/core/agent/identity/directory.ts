@@ -1,4 +1,4 @@
-export type DirectoryGrade = "attested" | "email-match";
+export type DirectoryGrade = "attested" | "asserted" | "email-match";
 
 export interface DirectoryAccount {
   readonly platform: string;

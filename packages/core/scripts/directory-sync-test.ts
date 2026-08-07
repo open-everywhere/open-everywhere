@@ -1,3 +1,4 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
@@ -576,6 +577,76 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok(offRun.applied.confirmed === 1, "🔴 runner (vault OFF): the SAME fixture auto-confirms exactly as before C.3 — the guard adds nothing when the vault is not armed");
   ok((await resolveLinkSet(ORG, "slack", "U-ERIN"))?.id === erinSet, "…the account resolves to its directory-derived set");
   ok(offRun.plan.warnings.length === 0, "…and no suppression warning is emitted");
+}
+
+{
+  const dupe = (a: "attested" | "asserted" | "email-match", b: "attested" | "asserted" | "email-match"): string => {
+    const person: DirectoryPerson = {
+      externalId: "00u-dupe",
+      displayName: "Dupe",
+      accounts: [
+        { platform: "slack", nativeId: "U-DUPE", grade: a },
+        { platform: "slack", nativeId: "U-DUPE", grade: b },
+      ],
+      groups: [],
+      deprovisioned: false,
+    };
+    const plan = planDirectorySync({ provider: "okta", people: [person], current: [], autoConfirm: "off" });
+    const step = plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest")!;
+    return step.grade;
+  };
+  ok(dupe("attested", "asserted") === "attested" && dupe("asserted", "attested") === "attested", "grade order: attested BEATS asserted (a provisioning fact beats an IdP statement), whichever arrives first");
+  ok(dupe("asserted", "email-match") === "asserted" && dupe("email-match", "asserted") === "asserted", "grade order: asserted BEATS email-match (a statement about THIS platform beats an inference over a shared attribute), whichever arrives first");
+  ok(dupe("attested", "email-match") === "attested" && dupe("email-match", "attested") === "attested", "grade order: attested still beats email-match — the pre-existing pair is unchanged");
+  ok(dupe("asserted", "asserted") === "asserted", "grade order: a grade compared with itself is itself");
+
+  const dave: DirectoryPerson = {
+    externalId: "00u-dave",
+    displayName: "Dave",
+    accounts: [{ platform: "slack", nativeId: "U-DAVE", grade: "attested" }],
+    groups: [],
+    deprovisioned: false,
+  };
+  const daveSet = directoryLinkSetId("okta", "00u-dave");
+  let daveNow: DirectoryPerson = dave;
+  registerDirectoryProvider(fakeDirectory(() => [daveNow]));
+
+  const priorPolicy = process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+  process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = "attested";
+  ok(directoryAutoConfirm() === "attested", "asserted: the escape really is armed for this block (read from the env, not passed in)");
+
+  const daveRun1 = (await syncDirectoryOrg({ org: ORG }))!;
+  ok(daveRun1.applied.confirmed === 1 && (await resolveLinkSet(ORG, "slack", "U-DAVE"))?.id === daveSet, "asserted: (setup) Dave's ATTESTED slack account auto-confirms under the armed escape, making him a confirmed member");
+
+  daveNow = {
+    ...dave,
+    accounts: [
+      ...dave.accounts,
+      { platform: "github", nativeId: "gh-dave", grade: "asserted" },
+      { platform: "linear", nativeId: "lin-dave", grade: "attested" },
+    ],
+  };
+  const daveRun2 = (await syncDirectoryOrg({ org: ORG }))!;
+  const assertedSuggest = daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "gh-dave")!;
+  ok(assertedSuggest.grade === "asserted" && assertedSuggest.autoConfirm === false, "🔴 asserted: an ASSERTED mapping is NOT marked auto-confirmable even with OE_DIRECTORY_AUTOCONFIRM=attested — the escape is narrowed to downstream-confirmed facts");
+  ok(daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "lin-dave")!.autoConfirm === true, "asserted: …while the sibling ATTESTED mapping in the very same run still confirms — the narrowing is per-grade, not a blanket off-switch");
+  ok((await resolveLinkSet(ORG, "github", "gh-dave")) === null, "🔴 asserted: end-to-end, the asserted account resolves to NOTHING — it is waiting for a human");
+  ok((await resolveLinkSet(ORG, "linear", "lin-dave"))?.id === daveSet, "asserted: …and the attested one resolved immediately");
+
+  const daveRun3 = (await syncDirectoryOrg({ org: ORG }))!;
+  const why = daveRun3.plan.steps.find((s) => s.kind === "noop" && s.nativeId === "gh-dave") as Extract<DirectorySyncPlan["steps"][number], { kind: "noop" }>;
+  ok(why.why.includes("asserted") && why.why.includes("platform never confirmed"), "asserted: the noop `why` names the grade AND the reason (grade-keyed, not the old binary attested/email-match ternary)");
+
+  const daveStanding = await pendingDirectorySuggestionsFor(ORG, "slack", "U-DAVE");
+  ok(!daveStanding.some((s) => s.principal === "github/gh-dave"), "🔴 asserted: a CONFIRMED member of the set cannot ratify somebody's asserted account — an editable IdP field is not proof of control");
+  const ownStanding = await pendingDirectorySuggestionsFor(ORG, "github", "gh-dave");
+  ok(ownStanding.some((s) => s.principal === "github/gh-dave" && s.grade === "asserted"), "asserted: …the account ITSELF sees its own asserted suggestion, to ratify from its own DM (never returned to anyone else)");
+  const dmDave = ctxFor({ channelId: "D-DAVE", channelType: "im", principalId: "U-DAVE" });
+  await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/gh-dave"] }, dmDave), "nothing of yours", "🔴 asserted: …and confirm_link refuses it by name from Dave's own DM — the read's narrowness is what the tool enforces");
+  ok((await resolveLinkSet(ORG, "github", "gh-dave")) === null, "🔴 asserted: …and nothing was linked by the attempt");
+
+  if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+  else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;
 }
 
 resetDirectoryProvider();

@@ -43,7 +43,7 @@ export function directoryAutoConfirm(env: NodeJS.ProcessEnv = process.env): Dire
   throw new Error(
     `${OE_DIRECTORY_AUTOCONFIRM_ENV}="${env[OE_DIRECTORY_AUTOCONFIRM_ENV]}" is not a policy — use "off" (default: every ` +
       `directory suggestion waits for the person's own DM confirmation) or "attested" (mappings the IdP itself ` +
-      `provisions are auto-confirmed; email-match joins still wait).`,
+      `provisions are auto-confirmed; weaker "asserted" and "email-match" mappings still wait).`,
   );
 }
 
@@ -104,8 +104,28 @@ export function planIsNoop(plan: DirectorySyncPlan): boolean {
 
 export type DirectoryLinkState = readonly { readonly set: LinkSetRow; readonly ids: readonly LinkedIdRow[] }[];
 
+const GRADE_ORDER: readonly DirectoryGrade[] = ["attested", "asserted", "email-match"];
+
+function gradeRank(g: DirectoryGrade): number {
+  const i = GRADE_ORDER.indexOf(g);
+  return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+}
+
 function strongerGrade(a: DirectoryGrade, b: DirectoryGrade): DirectoryGrade {
-  return a === "attested" || b === "attested" ? "attested" : "email-match";
+  return gradeRank(a) <= gradeRank(b) ? a : b;
+}
+
+function whyNotConfirmed(grade: DirectoryGrade): string {
+  switch (grade) {
+    case "attested":
+      return "suggested — awaiting this person's DM confirmation";
+    case "asserted":
+      return "suggested (asserted) — the IdP states this mapping but the platform never confirmed it; only this account can";
+    case "email-match":
+      return "suggested (email-match) — only a person can confirm this one";
+    default:
+      return `suggested (${String(grade)}) — unrecognised evidence grade; only this account can confirm it`;
+  }
 }
 
 export function planDirectorySync(input: {
@@ -263,7 +283,7 @@ export function planDirectorySync(input: {
           externalId: person.externalId,
           platform: acct.platform,
           nativeId: acct.nativeId,
-          why: acct.grade === "attested" ? "suggested — awaiting this person's DM confirmation" : "suggested (email-match) — only a person can confirm this one",
+          why: whyNotConfirmed(acct.grade),
         });
       }
     }
@@ -456,7 +476,7 @@ export async function pendingDirectorySuggestionsFor(org: string, platform: stri
         if (typeof parsed.grade === "string") grade = parsed.grade;
       } catch {
       }
-      if (grade === "email-match" && !isOwn) continue;
+      if (grade !== "attested" && !isOwn) continue;
       out.push({
         linkSetId: set.id,
         platform: row.platform,

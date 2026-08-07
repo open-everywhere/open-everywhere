@@ -133,7 +133,7 @@ export function makeOktaDirectoryProvider(deps: OktaDirectoryDeps): DirectoryPro
         const nativeId = appSideId(a, app);
         if (!nativeId) continue;
         const list = byUser.get(a.id) ?? [];
-        list.push({ platform: app.platform, nativeId, grade: "attested" });
+        list.push({ platform: app.platform, nativeId, grade: app.field === "userName" ? "asserted" : "attested" });
         byUser.set(a.id, list);
       }
     }

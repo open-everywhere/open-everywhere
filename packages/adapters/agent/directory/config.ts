@@ -42,6 +42,22 @@ export function parseOktaAppMap(raw: string | undefined): readonly OktaAppMappin
   return out;
 }
 
+function requireHttpsOrgUrl(raw: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`${OE_DIRECTORY_OKTA_ORG_URL_ENV}="${raw}" is not a URL — expected your Okta org URL, e.g. "https://acme.okta.com".`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(
+      `${OE_DIRECTORY_OKTA_ORG_URL_ENV}="${raw}" is not https — refusing to arm directory sync. Every Okta request carries the ` +
+        `SSWS API token in an authorization header, so a plaintext org URL would put an admin credential on the wire on every ` +
+        `sync. Use "https://<your-org>.okta.com".`,
+    );
+  }
+}
+
 export function loadOktaDirectoryConfig(env: NodeJS.ProcessEnv = process.env): OktaDirectoryConfig {
   const orgUrl = env[OE_DIRECTORY_OKTA_ORG_URL_ENV]?.trim();
   const tokenRef = env[OE_DIRECTORY_OKTA_TOKEN_REF_ENV]?.trim();
@@ -51,6 +67,7 @@ export function loadOktaDirectoryConfig(env: NodeJS.ProcessEnv = process.env): O
   if (missing.length) {
     throw new Error(`${OE_DIRECTORY_PROVIDER_ENV}="okta" but ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} not set — directory sync cannot be armed.`);
   }
+  requireHttpsOrgUrl(orgUrl!);
   const apps = parseOktaAppMap(env[OE_DIRECTORY_OKTA_APPS_ENV]);
   return {
     orgUrl: orgUrl!.replace(/\/+$/u, ""),

@@ -135,8 +135,12 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
 
   const rowanAccounts = [...rowan.accounts].map((a) => `${a.platform}/${a.nativeId}:${a.grade}`).sort();
   ok(
-    rowanAccounts.join(" ") === "github/gh-rowan:attested linear/lin-rowan:attested slack/U0ROWAN:attested",
-    `every mapped app assignment becomes an "attested" account (got: ${rowanAccounts.join(" ")})`,
+    rowanAccounts.join(" ") === "github/gh-rowan:attested linear/lin-rowan:asserted slack/U0ROWAN:attested",
+    `the grade is a function of WHICH FIELD was read: externalId ⇒ "attested", userName ⇒ "asserted" (got: ${rowanAccounts.join(" ")})`,
+  );
+  ok(
+    rowan.accounts.every((a) => (a.platform === "linear") === (a.grade === "asserted")),
+    "🔴 …and the branch is per-APP, not per-person: the same person's externalId-mapped accounts keep the stronger grade in the very same snapshot",
   );
   ok(
     [...by.get("00u1")!.accounts].some((a) => a.platform === "linear" && a.nativeId === "lin-rowan"),
@@ -259,6 +263,32 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
       OE_DIRECTORY_OKTA_APPS: "",
     }).tokenBroker === "db",
     "config: the broker is selectable, so the token can live in the encrypted db home instead of env",
+  );
+
+  const orgUrlThrows = (value: string, label: string): void => {
+    let message = "";
+    try {
+      loadOktaDirectoryConfig({
+        OE_DIRECTORY_PROVIDER: "okta",
+        OE_DIRECTORY_OKTA_ORG_URL: value,
+        OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
+      });
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    ok(message.includes("OE_DIRECTORY_OKTA_ORG_URL"), `${label} (got: ${message || "NO THROW"})`);
+  };
+  orgUrlThrows("http://acme.okta.com", "🔴 config: a plaintext http:// org URL is REFUSED at boot — the SSWS token must never go out in clear");
+  orgUrlThrows("http://localhost:8080", "🔴 config: …and there is no localhost carve-out — an escape hatch that exists for tests is an escape hatch in production");
+  orgUrlThrows("acme.okta.com", "config: a scheme-less value is refused too (it is not a URL, and `new URL` would have thrown from a scheduled tick instead)");
+  orgUrlThrows("ftp://acme.okta.com", "config: any non-https scheme is refused, not just http");
+  ok(
+    loadOktaDirectoryConfig({
+      OE_DIRECTORY_PROVIDER: "okta",
+      OE_DIRECTORY_OKTA_ORG_URL: "https://acme.oktapreview.com",
+      OE_DIRECTORY_OKTA_TOKEN_REF: "OKTA_API_TOKEN",
+    }).orgUrl === "https://acme.oktapreview.com",
+    "config: an https org URL (including an *.oktapreview.com sandbox) still loads — the check narrows the scheme, not the host",
   );
 }
 
