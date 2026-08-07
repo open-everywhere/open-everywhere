@@ -1,5 +1,5 @@
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, type MemoryRecallRoute } from "./window-gate-manifest.js";
-import { allowedOnLeanSeat } from "./lean-seat.js";
+import { DM_SEAT_CARVE_IN, allowedOnLeanSeat } from "./lean-seat.js";
 import type { WindowGrain } from "../identity/binding.js";
 
 export interface WorkerCapabilityGroup {
@@ -127,7 +127,7 @@ export function workerOnlyTools(
 ): readonly string[] {
   const surface = [...new Set([...Object.keys(gated), ...ungated])];
   return surface
-    .filter((n) => !WORKER_INDEX_MACHINERY.has(n) && !WORKER_INDEX_LIFECYCLE.has(n))
+    .filter((n) => !WORKER_INDEX_MACHINERY.has(n) && !WORKER_INDEX_LIFECYCLE.has(n) && !DM_SEAT_CARVE_IN.has(n))
     .filter((n) => mountedOn(n, "task", gated, ungated) && (!mountedOn(n, grain, gated, ungated) || !allowedOnLeanSeat(n)))
     .sort();
 }

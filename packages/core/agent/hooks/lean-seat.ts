@@ -2,7 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
 import { jobFireStamped } from "../access/job-posture.js";
-import { canDelegateFromSeat } from "../access/delegation-mount.js";
+import { canDelegateFromSeat, resolveDmDelegationAnchor } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
@@ -40,7 +40,7 @@ function grainOf(ctx: BindableContext): WindowGrain {
 
 const auditedLeanSessions = new Set<string>();
 
-async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain): Promise<void> {
+async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain, dmSeat: boolean): Promise<void> {
   try {
     const c = ctx as unknown as BindableContext;
     const sessionId = (c as { session?: { id?: string } }).session?.id ?? domainLabelOf(c);
@@ -50,7 +50,7 @@ async function auditLeanSeatOnce(ctx: HookContext, grain: WindowGrain): Promise<
       org: deploymentOrg(),
       domain: domainLabelOf(c),
       grain,
-      withheld: withheldFromLeanSeat(WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS),
+      withheld: withheldFromLeanSeat(WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, dmSeat),
       wakeId: currentWakeId(c) ?? null,
       sessionId: (c as { session?: { id?: string } }).session?.id ?? null,
       reason: "lean-seat",
@@ -67,8 +67,14 @@ async function classifyWake(ctx: HookContext): Promise<void> {
   const grain = grainOf(c);
   const posture = resolveLeanSeatPosture({ grain, canDelegate: canDelegateFromSeat(c), unattendedFire: false });
   if (posture !== "lean") return;
-  setLeanSeatWake(true);
-  await auditLeanSeatOnce(ctx, grain);
+  let dmSeat = false;
+  try {
+    dmSeat = resolveDmDelegationAnchor(c) !== undefined;
+  } catch {
+    dmSeat = false;
+  }
+  setLeanSeatWake(true, dmSeat);
+  await auditLeanSeatOnce(ctx, grain, dmSeat);
 }
 
 export default defineHook({

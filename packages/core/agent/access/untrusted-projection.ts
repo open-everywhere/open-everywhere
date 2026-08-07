@@ -2,7 +2,7 @@ import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "./untrusted
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 import { restrictToolsetForLeanSeat } from "./lean-seat.js";
-import { currentLeanSeatPosture } from "./lean-seat-state.js";
+import { currentLeanSeatIsDm, currentLeanSeatPosture } from "./lean-seat-state.js";
 
 const AUTH_PENDING_BRAND = "__eveAuthorizationPending";
 
@@ -48,7 +48,7 @@ function isStatusOnlyConnectionSearch(output: unknown): boolean {
 
 export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
-  else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset);
+  else if (currentLeanSeatPosture() === "lean") restrictToolsetForLeanSeat(toolset, currentLeanSeatIsDm());
 
   for (const [name, raw] of Object.entries(toolset)) {
     if (raw === null || typeof raw !== "object") continue;

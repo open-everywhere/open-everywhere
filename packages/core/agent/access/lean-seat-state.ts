@@ -1,19 +1,32 @@
 import { defineState } from "eve/context";
 import type { LeanSeatPosture } from "./lean-seat.js";
 
-const leanSeatSlot = defineState<boolean>("open-everywhere.lean-seat", () => false);
+interface LeanSeatWake {
+  readonly lean: boolean;
+  readonly dmSeat: boolean;
+}
 
-export function setLeanSeatWake(lean: boolean): void {
+const leanSeatSlot = defineState<LeanSeatWake>("open-everywhere.lean-seat", () => ({ lean: false, dmSeat: false }));
+
+export function setLeanSeatWake(lean: boolean, dmSeat = false): void {
   try {
-    leanSeatSlot.update(() => lean);
+    leanSeatSlot.update(() => ({ lean, dmSeat }));
   } catch {
   }
 }
 
 export function currentLeanSeatPosture(): LeanSeatPosture {
   try {
-    return leanSeatSlot.get() ? "lean" : "full";
+    return leanSeatSlot.get().lean ? "lean" : "full";
   } catch {
     return "full";
+  }
+}
+
+export function currentLeanSeatIsDm(): boolean {
+  try {
+    return leanSeatSlot.get().dmSeat;
+  } catch {
+    return false;
   }
 }
