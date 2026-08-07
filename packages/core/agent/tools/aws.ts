@@ -1,8 +1,22 @@
 import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
+import { actingPrincipalIdOf } from "../access/request.js";
+import { auditToolAction } from "../audit/tool-action.js";
+import type { BindableContext } from "../identity/binding.js";
 import { requireAwsExecutor } from "../connections/aws-exec.js";
 import { isAwsCommandAllowed, resolveAwsIdentity } from "../connections/aws-identity.js";
+
+function awsCommandLabel(args: readonly string[]): string {
+  const service = args[0] ?? "(none)";
+  const operation = args[1];
+  return operation ? `${service}:${operation}` : service;
+}
+
+function sessionIdOf(ctx: unknown): string | null {
+  const id = (ctx as { session?: { id?: unknown } }).session?.id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
 
 export default defineTool({
   description:
@@ -30,6 +44,8 @@ export default defineTool({
   }),
   approval: never(),
   async execute(input, ctx) {
+    const unattended = actingPrincipalIdOf(ctx) === undefined;
+    const command = awsCommandLabel(input.args);
     const resolved = await resolveAwsIdentity(ctx, {
       roleArn: input.roleArn,
       as: input.identity === "me" ? "user-sso" : "domain-role",
@@ -38,6 +54,16 @@ export default defineTool({
       const service = input.args[0] ?? "(none)";
       const operation = input.args[1];
       const attempted = operation ? `${service} ${operation}` : service;
+      await auditToolAction(ctx as BindableContext, "aws.refused", {
+        roleArn: resolved.roleArn,
+        identity: resolved.boundAs,
+        domain: resolved.domain ?? null,
+        sessionId: sessionIdOf(ctx),
+        command,
+        unattended,
+        reason: "allow-list",
+        allow: resolved.allow ?? null,
+      });
       throw new Error(
         `aws command "${attempted}" is not permitted by this channel's AWS grant: the role "${resolved.roleArn}" ` +
           `carries a host-side allow-list (${resolved.allow!.join(", ")}) and \`${operation ? `${service}:${operation}` : service}\` ` +
@@ -49,6 +75,16 @@ export default defineTool({
       credentials: resolved.credentials,
       region: resolved.region,
       args: input.args,
+    });
+    await auditToolAction(ctx as BindableContext, "aws.exec", {
+      roleArn: resolved.roleArn,
+      identity: resolved.boundAs,
+      domain: resolved.domain ?? null,
+      sessionId: sessionIdOf(ctx),
+      region: resolved.region ?? null,
+      command,
+      exitCode: result.exitCode,
+      unattended,
     });
     return {
       exitCode: result.exitCode,

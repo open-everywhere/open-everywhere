@@ -234,6 +234,33 @@ try {
   ok(rec.last?.roleArn === "arn:aws:iam::123456789012:role/oe-ops", "resolve: the mint request carried the granted roleArn");
   ok(rec.last?.roleSessionName === "oe-ops", "resolve: the mint request carried the derived RoleSessionName");
   ok(rec.last?.principalId === undefined, "resolve: a domain-role mint names no principalId");
+  ok(resolved.domain === "ops", "resolve: the PLAN's domain rides onto ResolvedAwsIdentity — the audit row's `channel/domain` half (aws-access-plan.md §9), carried out rather than re-derived so it cannot disagree with the RoleSessionName");
+
+  const fireCtx: BindableContext = {
+    channel: { kind: "local" },
+    session: {
+      auth: {
+        current: {
+          principalType: "service",
+          principalId: "U_ROUTINE_CREATOR",
+          attributes: { oe_fire_principal: "U_ROUTINE_CREATOR", oe_fire_unattended: "true" },
+        },
+      },
+    },
+  };
+  registerAwsIdentityProvider(fakeProvider);
+  rec.calls = 0;
+  await rejectsWith(
+    () => resolveAwsIdentity(fireCtx, { as: "user-sso" }),
+    "acting as your AWS SSO identity needs a verified sender on this turn",
+    "fire-path: 🔴 a routine fire may NOT assume a human's SSO identity — the attended-human fence survives the ctx→plan wiring, not just the pure call",
+  );
+  ok(rec.calls === 0, "fire-path: …and it refused BEFORE minting — no credential is ever created for an identity the fire may not have");
+
+  const fireResolved = await resolveAwsIdentity(fireCtx);
+  ok(fireResolved.boundAs === "domain-role", "fire-path: the DEFAULT path still works for a fire — running under the domain's service role is shipped design intent, not an oversight");
+  ok(rec.last?.principalId === undefined, "fire-path: …and that mint names NO principal, so nothing downstream can read a borrowed human out of it");
+  ok(rec.last?.roleSessionName === "oe-ops", "fire-path: the RoleSessionName is the DOMAIN's, so CloudTrail attributes the call to the service identity rather than to a person who was not there");
 
   resetAwsIdentityProvider();
   await rejectsWith(

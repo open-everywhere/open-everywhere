@@ -32,6 +32,7 @@ export interface ResolvedAwsIdentity {
   readonly region?: string;
   readonly boundAs: AwsIdentityKind;
   readonly roleSessionName: string;
+  readonly domain?: string;
   readonly allow?: readonly string[];
 }
 
@@ -93,6 +94,7 @@ export interface AwsIdentityPlan {
   readonly grant: AwsRoleGrant;
   readonly roleSessionName: string;
   readonly principalId?: string;
+  readonly domain?: string;
 }
 
 export interface AwsIdentityOptions {
@@ -137,6 +139,7 @@ export function planAwsIdentity(input: {
   }
 
   const kind: AwsIdentityKind = opts.as ?? "domain-role";
+  const domain = domains[0];
   if (kind === "user-sso") {
     if (!actingPrincipalId) {
       throw new Error(
@@ -151,10 +154,16 @@ export function planAwsIdentity(input: {
           "apply in a shared channel; use the domain role there.",
       );
     }
-    return { kind, grant, roleSessionName: awsRoleSessionName(actingPrincipalId), principalId: actingPrincipalId };
+    return {
+      kind,
+      grant,
+      roleSessionName: awsRoleSessionName(actingPrincipalId),
+      principalId: actingPrincipalId,
+      ...(domain !== undefined ? { domain } : {}),
+    };
   }
 
-  return { kind, grant, roleSessionName: awsRoleSessionName(domains[0] ?? surfaceKey) };
+  return { kind, grant, roleSessionName: awsRoleSessionName(domain ?? surfaceKey), ...(domain !== undefined ? { domain } : {}) };
 }
 
 export async function resolveAwsIdentity(
@@ -184,6 +193,7 @@ export async function resolveAwsIdentity(
     region: plan.grant.region,
     boundAs: plan.kind,
     roleSessionName: plan.roleSessionName,
+    ...(plan.domain !== undefined ? { domain: plan.domain } : {}),
     allow: plan.grant.allow,
   };
 }
