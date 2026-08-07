@@ -1,17 +1,47 @@
 import { defineState } from "eve/context";
 
-const slot = defineState<boolean>("open-everywhere.untrusted-ingested", () => false);
+interface TaintState {
+  readonly turn?: string;
+  readonly tainted: boolean;
+}
+
+const slot = defineState<TaintState>("open-everywhere.untrusted-ingested", () => ({ tainted: false }));
+
+function readState(v: unknown): TaintState {
+  if (v === true) return { tainted: true };
+  if (v === false || v === undefined || v === null) return { tainted: false };
+  if (typeof v === "object" && "tainted" in (v as Record<string, unknown>)) {
+    const s = v as { turn?: unknown; tainted?: unknown };
+    return { turn: typeof s.turn === "string" ? s.turn : undefined, tainted: s.tainted === true };
+  }
+  return { tainted: false };
+}
+
+export function beginTaintTurn(turnId: string | undefined): void {
+  try {
+    slot.update((cur) => {
+      const state = readState(cur);
+      if (turnId === undefined) return state;
+      if (state.turn === turnId) return state;
+      return { turn: turnId, tainted: false };
+    });
+  } catch {
+  }
+}
 
 export function markUntrustedIngestedThisTurn(): void {
   try {
-    slot.update(() => true);
+    slot.update((cur) => {
+      const state = readState(cur);
+      return state.tainted ? state : { turn: state.turn, tainted: true };
+    });
   } catch {
   }
 }
 
 export function untrustedIngestedThisTurn(): boolean {
   try {
-    return slot.get();
+    return readState(slot.get()).tainted;
   } catch {
     return false;
   }

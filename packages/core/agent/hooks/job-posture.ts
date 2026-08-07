@@ -1,7 +1,6 @@
 import { defineHook, type HookContext } from "eve/hooks";
-import { jobFireStamped, jobTaintStamped, withheldFromJobWake } from "../access/job-posture.js";
+import { jobFireStamped, withheldFromJobWake } from "../access/job-posture.js";
 import { markJobSession, setJobWakeEscalated, isJobSession } from "../access/job-session-state.js";
-import { markUntrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { currentTurnAddressing, currentWakeId, deploymentOrg, windowGrainOf, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
@@ -49,10 +48,6 @@ async function classifyWake(ctx: HookContext): Promise<void> {
   }
   if (stamped) {
     markJobSession();
-    try {
-      if (jobTaintStamped(attrsOf(ctx))) markUntrustedIngestedThisTurn();
-    } catch {
-    }
     await auditRestrictedJobWake(ctx);
     return;
   }
