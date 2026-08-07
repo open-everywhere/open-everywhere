@@ -850,7 +850,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: probeTs } = await pub.post(
         pub.mention(`what's my favourite cheese from ${batch}? if you don't know, say so plainly`),
       );
-      const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: REPLY_WAIT });
+      const probe = await pub.awaitThreadReply(probeTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(
         !probe.text.toLowerCase().includes(cheese.toLowerCase()),
         "personal-silo fact does NOT surface in the public channel (hard recall-miss gate)",
