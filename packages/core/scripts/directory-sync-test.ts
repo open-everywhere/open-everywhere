@@ -162,6 +162,7 @@ const linkIdentity = linkIdentityTool as unknown as ExecTool;
 function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
   const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, trust_checked: "true" };
   if (opts.channelType) attributes.channel_type = opts.channelType;
+  if (opts.channelType === "im") attributes.dm_partner_trust = "internal";
   return {
     channel: { kind: "slack" },
     session: { auth: { current: { attributes, principalId: opts.principalId ?? "U1", principalType: "slack-user" } } },

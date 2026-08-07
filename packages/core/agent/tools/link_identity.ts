@@ -6,6 +6,7 @@ import { actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { issueLinkChallenge } from "../identity/link-store.js";
+import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { linkClaimInstructions, LINK_CHALLENGE_TTL_MS } from "../identity/link-challenge.js";
 
 export default defineTool({
@@ -29,6 +30,8 @@ export default defineTool({
     if (!actor) {
       throw new Error("link_identity needs a verified person on this turn — a link is a statement about a human, and there is nobody here to make it.");
     }
+    const refusal = linkInitiatorRefusal(binding, "start a link");
+    if (refusal) throw new Error(refusal);
     const p = resolvePartition(ctx);
     const issued = await issueLinkChallenge({
       org: binding.org,

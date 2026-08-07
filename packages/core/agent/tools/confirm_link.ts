@@ -6,6 +6,7 @@ import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey } from "../identity/principal-key.js";
 import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
+import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
 
 export default defineTool({
@@ -41,6 +42,8 @@ export default defineTool({
     if (!actor) {
       throw new Error("confirm_link needs a verified person on this turn — only the human who started the link can confirm it.");
     }
+    const refusal = linkInitiatorRefusal(binding, "confirm a link");
+    if (refusal) throw new Error(refusal);
 
     const store = getOperationalStore();
     await store.expireLinkChallenges(binding.org, new Date().toISOString());

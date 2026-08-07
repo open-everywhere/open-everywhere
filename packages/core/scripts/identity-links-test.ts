@@ -67,16 +67,17 @@ const linkIdentity = linkIdentityTool as unknown as ExecTool;
 const confirmLink = confirmLinkTool as unknown as ExecTool;
 const unlinkIdentity = unlinkIdentityTool as unknown as ExecTool;
 
-function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
+function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string; dmPartnerTrust?: "internal" | "external" }): BindableContext {
   const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, trust_checked: "true" };
   if (opts.channelType) attributes.channel_type = opts.channelType;
+  if (opts.dmPartnerTrust) attributes.dm_partner_trust = opts.dmPartnerTrust;
   return {
     channel: { kind: "slack" },
     session: { auth: { current: { attributes, principalId: opts.principalId ?? "U1", principalType: "slack-user" } } },
   } as BindableContext;
 }
-const dmU1 = ctxFor({ channelId: "D1", channelType: "im", principalId: "U1" });
-const dmU2 = ctxFor({ channelId: "D2", channelType: "im", principalId: "U2" });
+const dmU1 = ctxFor({ channelId: "D1", channelType: "im", principalId: "U1", dmPartnerTrust: "internal" });
+const dmU2 = ctxFor({ channelId: "D2", channelType: "im", principalId: "U2", dmPartnerTrust: "internal" });
 const channelU1 = ctxFor({ channelId: "C_ENG", principalId: "U1" });
 const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" });
 
@@ -454,6 +455,40 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   const self = (await unlinkIdentity.execute({}, dmU1)) as { unlinked: string };
   ok(self.unlinked === "slack/U1", "unlink_identity: with no target it removes the account the caller is speaking from");
   await refuses(() => unlinkIdentity.execute({}, dmU2), "no linked accounts", "unlink_identity refuses a caller with no link-set at all");
+}
+
+{
+  const dmGuest = ctxFor({ channelId: "D_GUEST", channelType: "im", principalId: "U_GUEST", dmPartnerTrust: "external" });
+  await refuses(() => linkIdentity.execute({}, dmGuest), "can't confirm you're inside this organisation", "OPE-289: link_identity refuses an EXTERNAL-trust Slack DM (the initiator-trust gate)");
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, dmGuest), "can't confirm you're inside this organisation", "OPE-289: confirm_link refuses the same DM — the standing is checked at BOTH ends of the flow");
+  ok((await getOperationalStore().listLinkChallenges(ORG, { initiatingPlatform: "slack", initiatingNativeId: "U_GUEST" })).length === 0, "OPE-289: the refused initiator minted NO challenge at all");
+  const dmUnchecked = ctxFor({ channelId: "D_UNCH", channelType: "im", principalId: "U_UNCH" });
+  await refuses(() => linkIdentity.execute({}, dmUnchecked), "can't confirm you're inside this organisation", "OPE-289: an UNVERIFIED Slack DM partner is refused too — on an evidence platform, unchecked is external");
+
+  const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+  registerIdentityMapper("discord", (c) => {
+    const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+    return { workspace: a["guild_id"], surface: a["channel_id"], mode: "dm", visibility: "private", principalId: c.session?.auth?.current?.principalId, target: undefined };
+  });
+  const dmDiscord = {
+    channel: { kind: "discord" },
+    session: { auth: { current: { attributes: { guild_id: "G1", channel_id: "DC1" }, principalId: "DU1", principalType: "discord-user" } } },
+  } as BindableContext;
+  const { bindFrom } = await import("../agent/identity/binding.js");
+  ok(bindFrom(dmDiscord).trust === "external" && bindFrom(dmDiscord).mode === "dm", "OPE-289 setup: a Discord DM really does bind `external` (no mapper verdict exists) — the assertion below is not vacuous");
+  const dcOut = (await linkIdentity.execute({}, dmDiscord)) as { challengeId: string; instructions: string };
+  ok(typeof dcOut.challengeId === "string" && dcOut.instructions.includes("link "), "🔴 OPE-289 scoping: an `external` DISCORD DM (platform NOT in BINDING_TRUSTED_PLATFORMS) STILL LINKS — absence of a membership check is not evidence of an outsider");
+  const dcCode = dcOut.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+  await observeLinkClaim({ org: ORG, platform: "github", authorId: "dc-gh", text: `link ${dcCode}`, trust: "unauth", trustIsEvidence: false });
+  const dcConfirmed = (await confirmLink.execute({ decision: "confirm" }, dmDiscord)) as { decided: string; claimant: string };
+  ok(dcConfirmed.decided === "confirmed" && dcConfirmed.claimant === "github/dc-gh", "🔴 OPE-289 scoping: confirm_link admits the same Discord DM — the gate is scoped identically at both ends");
+
+  const fireCtx = {
+    channel: { kind: "slack" },
+    session: { auth: { current: { attributes: { team_id: "T1", channel_id: "D1", channel_type: "im", trust_checked: "true", dm_partner_trust: "internal", oe_fire_principal: "U1", oe_fire_unattended: "true" }, principalId: "U1", principalType: "slack-user" } } },
+  } as BindableContext;
+  await refuses(() => linkIdentity.execute({}, fireCtx), "needs a verified person on this turn", "OPE-289: an unattended fire is still refused by the PRINCIPAL gate, which precedes the trust gate");
+  await refuses(() => confirmLink.execute({ decision: "confirm" }, fireCtx), "needs a verified person on this turn", "OPE-289: confirm_link refuses the fire the same way");
 }
 
 {
