@@ -7,7 +7,7 @@ import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
 import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -66,8 +66,9 @@ const clearSpendLimitEntry = defineTool({
   outputSchema: z.object({
     requested: z.boolean(),
     pendingId: z.string(),
-    expiresAt: z.string(),
+    expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
@@ -117,11 +118,20 @@ const clearSpendLimitEntry = defineTool({
         note: `Already pending — an identical clear of the ${plan.args.level} override on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
       };
     }
+    const subject = `clear ${plan.args.level} override on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        requested: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        note: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — clear ${plan.args.level} override on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""} (pending ${posted.id}).`,
+      note: `card posted — ${subject} (pending ${posted.id}).`,
     };
   },
 });

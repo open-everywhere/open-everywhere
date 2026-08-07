@@ -15,7 +15,7 @@ import {
   policyTextProblem,
 } from "../routines/policy.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -57,6 +57,7 @@ export default defineTool({
     routineId: z.string(),
     ruleId: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -154,12 +155,23 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `standing rule ${ruleId} for routine ${routineId} (${description})`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        routineId,
+        ruleId,
+        message: `${autoApprovedNote(subject, posted.autoApproved)} It applies from the next fire on.`,
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       routineId,
       ruleId,
-      message: `card posted — standing rule ${ruleId} for routine ${routineId} (${description}) awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.`,
     };
   },
 });

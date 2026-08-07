@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -22,6 +22,7 @@ export default defineTool({
     pendingId: z.string().optional(),
     id: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -64,11 +65,21 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       id,
-      message: `card posted — cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""} awaiting a human to confirm (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
 });

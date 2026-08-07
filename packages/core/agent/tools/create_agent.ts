@@ -16,7 +16,7 @@ import {
 } from "../memory/agents-codemod.js";
 import type { MemorySilo } from "../memory/silo.js";
 import type { AgentCreateArgs } from "../approvals/agent-create.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -68,8 +68,9 @@ export default defineTool({
   outputSchema: z.object({
     requested: z.boolean(),
     pendingId: z.string(),
-    expiresAt: z.string(),
+    expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -192,13 +193,22 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const memoryClause = spec.memory.kind === "new-readonly" ? `a new read-only ${spec.memory.provider} silo` : `existing silo "${spec.memory.silo}"`;
+    if (posted.autoApproved) {
+      return {
+        requested: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        note: autoApprovedNote(`PR against ${ar.configRepo} provisioning agent "${name}" (reading ${memoryClause}) for this channel`, posted.autoApproved),
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
       note:
         `card posted — approving it opens a PR against ${ar.configRepo} provisioning agent "${name}" ` +
-        `(reading ${spec.memory.kind === "new-readonly" ? `a new read-only ${spec.memory.provider} silo` : `existing silo "${spec.memory.silo}"`}) for this channel (pending ${posted.id}). ` +
+        `(reading ${memoryClause}) for this channel (pending ${posted.id}). ` +
         `Nothing is provisioned until an admin merges the PR.`,
     };
   },

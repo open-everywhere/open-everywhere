@@ -5,7 +5,7 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { listDomainSkills, domainSkillRefusalMessage, resolveSkillDomainDetailed } from "../skills/domain-skills.js";
 import { resolvePartition } from "../memory/partition.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -21,6 +21,7 @@ export default windowGated("delete_skill", defineTool({
     domain: z.string(),
     name: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "delete_skill");
@@ -65,12 +66,23 @@ export default windowGated("delete_skill", defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `delete of skill "${name}" (domain "${domain}")`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        domain,
+        name,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       domain,
       name,
-      message: `card posted — delete of skill "${name}" (domain "${domain}") awaiting a human to confirm (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
 }));

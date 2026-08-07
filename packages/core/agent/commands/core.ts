@@ -220,6 +220,12 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
     },
     approvalPostDeps(binding.platform),
   );
+  if (posted.autoApproved) {
+    return (
+      `Done — $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` is already in force: the approver chain auto-approved it ` +
+      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}`
+    );
+  }
   return (
     `Card posted in this channel — proposing $${usd.toFixed(2)}/month on \`${plan.scopeKey}\` ` +
     `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.`
@@ -256,6 +262,12 @@ export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDe
     },
     approvalPostDeps(binding.platform),
   );
+  if (posted.autoApproved) {
+    return (
+      `Done — the override on \`${plan.scopeKey}\` is already back to the config-as-code cap: the approver chain auto-approved it ` +
+      `(${posted.autoApproved.resolvedBy}), so no card was posted — ${posted.autoApproved.outcome}`
+    );
+  }
   return (
     `Card posted in this channel — proposing to clear the override on \`${plan.scopeKey}\` back to the config-as-code cap ` +
     `(pending \`${posted.id}\`, expires ${posted.expiresAt}). An admin needs to Approve it.`

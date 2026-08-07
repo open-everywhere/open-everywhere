@@ -6,7 +6,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveAccessFor } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import {
@@ -39,6 +39,7 @@ export default windowGated("create_skill", defineTool({
     pending: z.boolean(),
     pendingId: z.string().optional(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "create_skill");
@@ -100,6 +101,19 @@ export default windowGated("create_skill", defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        ok: true,
+        name,
+        domain,
+        action,
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       ok: true,
       name,
@@ -107,7 +121,7 @@ export default windowGated("create_skill", defineTool({
       action,
       pending: true,
       pendingId: posted.id,
-      message: `card posted — skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""} awaiting a human to arm it (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to arm it (pending ${posted.id}).`,
     };
   },
 }));

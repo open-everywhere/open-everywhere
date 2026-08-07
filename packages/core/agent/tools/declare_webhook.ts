@@ -8,7 +8,7 @@ import { bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
@@ -105,6 +105,7 @@ export default defineTool({
     id: z.string(),
     readableBy: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -240,6 +241,24 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const tail =
+      `Its events will be readable by ${describeReadableBy(readableBy)}. ` +
+      (target === undefined ? "It fires nothing by itself — create an `event` routine subscribed to it to decide what happens. " : "") +
+      `Nothing exists until an admin merges the PR, and nothing can authenticate until the secret is set` +
+      (secretHome === "db"
+        ? ` — after the merge, ask me to rotate the "${id}" webhook and you'll get a one-time link with a freshly generated secret to paste into the sender. No redeploy, and I never see the value.`
+        : ` in \`${declaration.secretRef}\` — I never see that value.`);
+    if (posted.autoApproved) {
+      return {
+        proposed: true,
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        id,
+        readableBy: describeReadableBy(readableBy),
+        message: `${autoApprovedNote(`PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}"`, posted.autoApproved)} ${tail}`,
+      };
+    }
     return {
       proposed: true,
       pending: true,
@@ -248,12 +267,7 @@ export default defineTool({
       readableBy: describeReadableBy(readableBy),
       message:
         `card posted — approving it opens a PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}" (pending ${posted.id}). ` +
-        `Its events will be readable by ${describeReadableBy(readableBy)}. ` +
-        (target === undefined ? "It fires nothing by itself — create an `event` routine subscribed to it to decide what happens. " : "") +
-        `Nothing exists until an admin merges the PR, and nothing can authenticate until the secret is set` +
-        (secretHome === "db"
-          ? ` — after the merge, ask me to rotate the "${id}" webhook and you'll get a one-time link with a freshly generated secret to paste into the sender. No redeploy, and I never see the value.`
-          : ` in \`${declaration.secretRef}\` — I never see that value.`),
+        tail,
     };
   },
 });

@@ -5,7 +5,7 @@ import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/bi
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 
 export interface RevokeConnectorInput {
@@ -64,8 +64,9 @@ export default defineTool({
   outputSchema: z.object({
     requested: z.boolean(),
     pendingId: z.string(),
-    expiresAt: z.string(),
+    expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -94,11 +95,20 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `revoke "${plan.args.connector}" from "${plan.args.scopeKey}"`;
+    if (posted.autoApproved) {
+      return {
+        requested: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        note: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — revoke "${plan.args.connector}" from "${plan.args.scopeKey}" (pending ${posted.id}).`,
+      note: `card posted — ${subject} (pending ${posted.id}).`,
     };
   },
 });

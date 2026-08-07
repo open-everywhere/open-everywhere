@@ -4,7 +4,7 @@ import { actingPrincipalId, bindFrom, channelPlatform, type SurfaceBinding, type
 import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -57,8 +57,9 @@ const clearConnectorOverrideEntry = defineTool({
   outputSchema: z.object({
     requested: z.boolean(),
     pendingId: z.string(),
-    expiresAt: z.string(),
+    expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     const binding = bindFrom(ctx);
@@ -86,11 +87,20 @@ const clearConnectorOverrideEntry = defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `clear override for "${plan.args.connector}" on "${plan.args.scopeKey}"`;
+    if (posted.autoApproved) {
+      return {
+        requested: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        note: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — clear override for "${plan.args.connector}" on "${plan.args.scopeKey}" (pending ${posted.id}).`,
+      note: `card posted — ${subject} (pending ${posted.id}).`,
     };
   },
 });

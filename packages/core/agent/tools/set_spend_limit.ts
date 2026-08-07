@@ -7,7 +7,7 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
-import { requestApproval, postedToSurfaceKey, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 
 const LEVELS = ["surface", "workspace", "domain"] as const;
@@ -132,8 +132,9 @@ export default defineTool({
   outputSchema: z.object({
     requested: z.boolean(),
     pendingId: z.string(),
-    expiresAt: z.string(),
+    expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
     note: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -188,11 +189,20 @@ export default defineTool({
         note: `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
       };
     }
+    const subject = `${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        requested: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        note: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""} (pending ${posted.id}).`,
+      note: `card posted — ${subject} (pending ${posted.id}).`,
     };
   },
 });

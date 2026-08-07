@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineGrantGeneration } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -30,6 +30,7 @@ export default defineTool({
     id: z.string(),
     trigger: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -98,12 +99,23 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `rewrite of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        id,
+        trigger: description,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       id,
       trigger: description,
-      message: `card posted — rewrite of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""} awaiting a human to confirm (pending ${posted.id}). Its schedule, history and run state are kept; its standing approvals are revoked on confirm.`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). Its schedule, history and run state are kept; its standing approvals are revoked on confirm.`,
     };
   },
 });

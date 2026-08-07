@@ -14,7 +14,7 @@ import type { Binding, Bundle } from "../access/bundle.js";
 import type { Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
@@ -211,8 +211,9 @@ const requestAccessEntry = defineTool({
         outputSchema: z.object({
           requested: z.boolean(),
           pendingId: z.string(),
-          expiresAt: z.string(),
+          expiresAt: z.string().optional().describe("Absent when the chain auto-approved: the row is already decided, so nothing expires."),
           note: z.string(),
+          autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
         }),
         async execute(input, ctx) {
           await requireSessionContinuation(ctx, "request_access");
@@ -280,6 +281,14 @@ const requestAccessEntry = defineTool({
             approvalPostDeps(binding.platform),
           );
 
+          if (posted.autoApproved) {
+            return {
+              requested: false,
+              autoApproved: true,
+              pendingId: posted.id,
+              note: autoApprovedNote(grantSentence(args.delta), posted.autoApproved),
+            };
+          }
           return {
             requested: true,
             pendingId: posted.id,

@@ -20,7 +20,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { CHECK_IN_DOCTRINE } from "../routines/check-in.js";
 import { declaredPermissionKinds } from "../routines/grants.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval } from "../approvals/flow.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal } from "../approvals/card-venue.js";
 import { canDispatchRoutinesOn, reportTargetForSurface } from "../schedules/routine-dispatch.js";
 import { reportChannelFor, BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -161,6 +161,7 @@ export default defineTool({
           "block contradicts what they asked for, the trigger or the post policy is wrong, not the prompt.",
       ),
     message: z.string().describe("Relay the substance of this to the user. When the approval card had to be posted in a DIFFERENT channel (this surface can't host one), it names that channel — say so explicitly, or they'll think nothing happened."),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -299,6 +300,22 @@ export default defineTool({
       ...(report ? { report } : {}),
       ...(input.job ? { sessionMode: "job" as const } : {}),
     });
+
+    if (posted.autoApproved) {
+      return {
+        created: true,
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        trigger: describeTrigger(t, report),
+        nextRunAt: next ? next.toISOString() : null,
+        preview,
+        message: autoApprovedNote(
+          `${input.job ? "durable job" : "routine"} ${describeTrigger(t, report)}${tainted ? " ⚠ tainted" : ""}`,
+          posted.autoApproved,
+        ),
+      };
+    }
 
     return {
       created: false,

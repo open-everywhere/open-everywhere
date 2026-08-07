@@ -118,6 +118,25 @@ export function cardPosterFor(platform: string | undefined): CardPoster | undefi
   return platform === undefined ? undefined : CARD_POSTERS.get(platform);
 }
 
+export interface AutoApprovedOutcome {
+  readonly outcome: string;
+  readonly resolvedBy: string;
+}
+
+export interface RequestApprovalResult {
+  readonly id: string;
+  readonly expiresAt: string;
+  readonly deduped?: boolean;
+  readonly autoApproved?: AutoApprovedOutcome;
+}
+
+export function autoApprovedNote(what: string, autoApproved: AutoApprovedOutcome): string {
+  return (
+    `done — ${what}: the approver chain auto-approved this (${autoApproved.resolvedBy}), so no card was posted and it has ALREADY run — ` +
+    `${autoApproved.outcome}. Tell the user; there is no card for them to see.`
+  );
+}
+
 export interface RequestApprovalDeps {
   readonly post?: PostFn;
   readonly postCard?: CardPoster;
@@ -126,7 +145,7 @@ export interface RequestApprovalDeps {
 export async function requestApproval(
   input: RequestApprovalInput,
   deps: RequestApprovalDeps = {},
-): Promise<{ id: string; expiresAt: string; deduped?: boolean; autoApproved?: { outcome: string; resolvedBy: string } }> {
+): Promise<RequestApprovalResult> {
   const kindDef = actionKind(input.kind);
   if (!kindDef) {
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);

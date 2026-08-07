@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import type { TicketAssignArgs } from "../approvals/ticket-actions.js";
@@ -52,6 +52,7 @@ export const assignEntry = defineTool({
     platform: z.string(),
     id: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
@@ -100,12 +101,23 @@ export const assignEntry = defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `assign ${ref.platform} ${ref.id} to ${input.assignee}`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        platform: ref.platform,
+        id: ref.id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       platform: ref.platform,
       id: ref.id,
-      message: `card posted — assign ${ref.platform} ${ref.id} to ${input.assignee} awaiting a human to confirm (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
 });

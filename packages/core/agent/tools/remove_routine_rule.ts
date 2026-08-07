@@ -8,7 +8,7 @@ import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
 import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -25,6 +25,7 @@ export default defineTool({
     routineId: z.string(),
     ruleId: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -102,12 +103,23 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `removal of standing rule ${target.id} from routine ${routineId} (${description})`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        routineId,
+        ruleId: target.id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       routineId,
       ruleId: target.id,
-      message: `card posted — removal of standing rule ${target.id} from routine ${routineId} (${description}) awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.`,
     };
   },
 });

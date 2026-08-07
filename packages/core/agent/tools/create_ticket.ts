@@ -7,7 +7,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels/ticket-create.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketCreateArgs } from "../approvals/ticket-create.js";
@@ -50,6 +50,7 @@ export const createTicketEntry = defineTool({
     platform: z.string(),
     target: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
@@ -103,12 +104,23 @@ export const createTicketEntry = defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `file "${input.title}" on ${platform} (${target})`;
+    if (posted.autoApproved) {
+      return {
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        platform,
+        target,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       pending: true,
       pendingId: posted.id,
       platform,
       target,
-      message: `card posted — file "${input.title}" on ${platform} (${target}) awaiting a human to confirm (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
     };
   },
 });

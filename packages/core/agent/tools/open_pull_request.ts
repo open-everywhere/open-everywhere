@@ -13,7 +13,7 @@ import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
@@ -67,6 +67,7 @@ export default windowGated("open_pull_request", defineTool({
     pending: z.boolean(),
     pendingId: z.string().optional(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   async execute(input, ctx) {
     await requireSessionContinuation(ctx, "open_pull_request");
@@ -198,13 +199,25 @@ export default windowGated("open_pull_request", defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""}`;
+    if (posted.autoApproved) {
+      return {
+        ok: true,
+        repo: input.repo,
+        head: input.head,
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       ok: true,
       repo: input.repo,
       head: input.head,
       pending: true,
       pendingId: posted.id,
-      message: `card posted — PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""} awaiting a human to approve the publish (pending ${posted.id}).`,
+      message: `card posted — ${subject} awaiting a human to approve the publish (pending ${posted.id}).`,
     };
   },
 }));

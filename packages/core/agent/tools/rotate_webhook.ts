@@ -5,7 +5,7 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveMode } from "../access/request.js";
 import { bindFrom } from "../identity/binding.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
 import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { revealPageAvailable } from "../webhooks/reveal-page.js";
@@ -28,6 +28,7 @@ export default defineTool({
     pendingId: z.string().optional(),
     source: z.string(),
     message: z.string(),
+    autoApproved: z.boolean().optional().describe("The approver chain lowered this verb: no card was posted and it has ALREADY run."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -97,12 +98,23 @@ export default defineTool({
       approvalPostDeps(binding.platform),
     );
 
+    const subject = `issuing a fresh signing secret for the "${declared.id}" webhook`;
+    if (posted.autoApproved) {
+      return {
+        rotated: true,
+        pending: false,
+        autoApproved: true,
+        pendingId: posted.id,
+        source: declared.id,
+        message: autoApprovedNote(subject, posted.autoApproved),
+      };
+    }
     return {
       rotated: false,
       pending: true,
       pendingId: posted.id,
       source: declared.id,
-      message: `card posted — issuing a fresh signing secret for the "${declared.id}" webhook, awaiting a human to approve it (pending ${posted.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
+      message: `card posted — ${subject}, awaiting a human to approve it (pending ${posted.id}). On approval they get a private one-time link with it; nothing needs redeploying.`,
     };
   },
 });
