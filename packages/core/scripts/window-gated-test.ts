@@ -11,6 +11,7 @@ delete process.env.OE_ORG;
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
+import { canDelegateFromSeat } from "../agent/access/delegation-mount.js";
 import {
   WINDOW_GATED_TOOLS,
   withheldFromGrain,
@@ -96,6 +97,23 @@ eq([...withheldFromGrain("standing")].sort(), [...WIDE_HANDS, "complete_task", "
   eq(memoryRecallRouteFor("standing", ON.wide, ON.armed), "agent", "recall/flag-on: a standing seat delegates the lookup via `agent` — THE OPE-121 route");
   eq(memoryRecallRouteFor("thread", ON.wide, ON.armed), "agent", "recall/flag-on: a thread seat delegates too (agent is the conversational-root pair)");
   eq(memoryRecallRouteFor("native", ON.wide, ON.armed), "none", "recall/flag-on: a NATIVE @mention seat can neither read memory nor delegate (T5 gap — pinned so the regression is visible, not silent)");
+
+  eq(memoryRecallRouteFor("standing", ON.wide, ON.armed, false), "none", "recall/seat: a standing seat with NO WINDOW (a DM root) is `none`, not `agent` — the verb's window wall refuses there every time");
+  eq(memoryRecallRouteFor("standing", OFF.wide, OFF.armed, false), "none", "recall/seat: …and flag-off the same seat is `none`, not `spawn_task` (both verbs share the window requirement)");
+  eq(memoryRecallRouteFor("thread", ON.wide, ON.armed, false), "none", "recall/seat: a thread seat with no window token is `none` too — the seat half is grain-independent");
+  eq(memoryRecallRouteFor("task", ON.wide, ON.armed, false), "file-tools", "recall/seat: a worker's OWN file tools are unaffected — the seat half only ever downgrades a DELEGATION answer");
+  eq(memoryRecallRouteFor("standing", ON.wide, ON.armed, true), memoryRecallRouteFor("standing", ON.wide, ON.armed), "recall/seat: the parameter DEFAULTS TRUE — every ctx-less caller keeps today's answer byte-for-byte");
+}
+
+{
+  const can = (ctx: BindableContext) => canDelegateFromSeat(ctx);
+  ok(can(ctxOf(STANDING_TOKEN)), "seat: a unified WINDOW token carries a domain+generation ⇒ can delegate");
+  ok(can(ctxOf(TASK_TOKEN, { grainStamp: "task" })), "seat: a task token is a window token too (the recursion guard is a SEPARATE wall — this predicate is only about having a window)");
+  ok(!can(ctxOf(NATIVE_TOKEN)), "seat: a native token (the DM / group-DM root) has no window ⇒ CANNOT delegate");
+  ok(!can(ctxOf(PER_CONTAINER_TOKEN)), "seat: a per-container `<chan>:oe-sup:g` token has no window either ⇒ CANNOT delegate");
+  ok(can(ctxOf(undefined)), "seat: NO readable identity ⇒ fail-OPEN (mount; the execute wall stays authoritative)");
+  const bomb = { channel: { kind: "unified", get continuationToken(): string { throw new Error("boom"); } }, session: { auth: { current: { attributes: {} } } } } as unknown as BindableContext;
+  ok(can(bomb), "seat: an identity read that THROWS ⇒ fail-OPEN as well (never fewer signals than the wall behind it)");
 }
 eq([...withheldFromGrain("task")].sort(), ["agent", "complete_thread", "spawn_task", "spawn_thread_session"].sort(), "task (the worker) withholds agent + the standing-only spawners + complete_thread (it has its own wide hands + complete_task + return_result; a worker leaf must not delegate recursively — since #96 that is ABSENCE, not an execute refusal)");
 eq([...withheldFromGrain("native")].sort(), ["agent", "complete_task", "complete_thread", "return_result", "spawn_task", "spawn_thread_session"].sort(), "native withholds agent + the delegation/lifecycle set; flag-off it KEEPS the wide hands (the byte-identical Stage-C state — narrowing is flag-on)");

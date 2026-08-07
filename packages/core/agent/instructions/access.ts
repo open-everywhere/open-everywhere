@@ -10,6 +10,7 @@ import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
 import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
+import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
 import { bridgeReadableChannelList, bridgeBotDisplayName } from "../channels/slack-bridge.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
@@ -343,6 +344,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   let accessMd = "";
   let memoryMd = "";
   let roleMd = "";
+  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
   if (domain && anchor) {
     try {
       const access = resolveAccess(
@@ -359,7 +361,6 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     }
     try {
       const plan = resolveMemoryPlan(anchor.binding, anchor.partition, { domains: cfg.loadDomains(), silos: cfg.loadSilos() });
-      const recall = memoryRecallRouteFor(windowGrainOf(ctx));
       memoryMd = plan.reads.length > 0 ? frozenMemoryIndex(renderMemoryIndex(plan.reads, [], recall)) : frozenMemoryIndex("");
     } catch {
       memoryMd = "";
@@ -383,7 +384,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     renderSupervisorPersona(ctx, { messageToolOnly: true }),
     roleMd,
     accessMd,
-    renderApprovalPreviewFor(windowGrainOf(ctx)),
+    renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     memoryMd,
     ...(soloMode ? [renderChannelScope(ctx), renderNoiseDoctrine(ctx)] : []),
   ]
@@ -396,7 +397,8 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
   for (const w of access.warnings) console.log(`[open-everywhere:access] warning: ${w}`);
   const binding = bindFrom(ctx);
   const plan = planFor(binding, resolvePartition(ctx));
-  const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], memoryRecallRouteFor(windowGrainOf(ctx))) : "";
+  const recall = memoryRecallRouteFor(windowGrainOf(ctx), undefined, undefined, canDelegateFromSeat(ctx));
+  const memoryMd = plan.reads.length > 0 ? renderMemoryIndex(plan.reads, [], recall) : "";
   const name = await surfaceAgentName(ctx);
   return [
     renderIdentity(name),
@@ -405,7 +407,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderSupervisorPersona(ctx),
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",
-    renderApprovalPreviewFor(windowGrainOf(ctx)),
+    renderApprovalPreviewFor(windowGrainOf(ctx), recall),
     memoryMd,
     renderChannelScope(ctx),
     renderNoiseDoctrine(ctx),

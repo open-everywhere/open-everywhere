@@ -89,9 +89,9 @@ export function renderApprovalPreview(preview: ApprovalPreview): string {
   return lines.join("\n");
 }
 
-export function renderApprovalPreviewFor(grain: WindowGrain): string {
+export function renderApprovalPreviewFor(grain: WindowGrain, route?: MemoryRecallRoute): string {
   try {
-    return renderApprovalPreview(approvalPreviewFor(grain));
+    return renderApprovalPreview(approvalPreviewFor(grain, undefined, undefined, undefined, route));
   } catch {
     return "";
   }

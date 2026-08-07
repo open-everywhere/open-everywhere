@@ -113,8 +113,10 @@ export function memoryRecallRouteFor(
   grain: WindowGrain,
   wideHandsGrains: readonly WindowGrain[] = FULL_KIT,
   armed: boolean = oneshotAgentEnabled(),
+  canDelegate: boolean = true,
 ): MemoryRecallRoute {
   if (wideHandsGrains.includes(grain)) return "file-tools";
+  if (!canDelegate) return "none";
   const delegator = armed ? "agent" : "spawn_task";
   return WINDOW_GATED_TOOLS[delegator].includes(grain) ? delegator : "none";
 }
