@@ -1,3 +1,4 @@
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,7 @@ const { recordSpend } = await import("@open-everywhere/core/agent/spend/store.js
 const { periodOf } = await import("@open-everywhere/core/agent/spend/spend.js");
 const { markThreadEngaged } = await import("@open-everywhere/core/agent/channels/engagement.js");
 const { resolvePartition } = await import("@open-everywhere/core/agent/memory/partition.js");
+const { readAudit } = await import("@open-everywhere/core/agent/audit/audit.js");
 const { buildDiscordAuth } = await import("@open-everywhere/provider-discord/agent/channels/discord-identity.js");
 const { markCardPostedThisTurn } = await import("@open-everywhere/core/agent/approvals/card-signal.js");
 const { NO_REPLY_SENTINEL } = await import("@open-everywhere/core/agent/channels/turn-delivery.js");
@@ -215,5 +217,63 @@ await scenario(
   { failNextThreadCreate: true },
 );
 
+await scenario("10-cap-decline-engaged-door", async (s) => {
+  const p = partitionFor({ userId: "U_TALK10", guildId: "G10", channelId: "C10", channelType: "0" });
+  await markThreadEngaged(p, "C10", new Date().toISOString());
+  await getOperationalStore().setSpendLimit(p.org, p.surfaceKey, "surface", { monthlyTokens: 50 }, { setBy: "scenario-seed" });
+  await recordSpend(p, { period: periodOf(new Date().toISOString()), usage: { inputTokens: 200, outputTokens: 5 } });
+  s.note(`channel C10 engaged; surface cap 50 tokens/month on ${p.surfaceKey}; 205 tokens already recorded`);
+  await s.inbound({
+    id: "M101",
+    content: "so what did we decide about the migration?",
+    channelId: "C10",
+    channelType: "0",
+    guildId: "G10",
+    authorId: "U_TALK10",
+    mentionsBot: false,
+  });
+});
+
+const gateRows = async (part: Partition): Promise<{ door?: unknown; over?: unknown }[]> =>
+  (await readAudit({ org: part.org, action: "spend.gate" })).filter((r) => r.detail?.key === part.surfaceKey).map((r) => r.detail ?? {});
+
+let auditAssertions = 0;
+let auditFailures = 0;
+const okAudit = (cond: boolean, label: string): void => {
+  if (cond) auditAssertions++;
+  else {
+    console.error(`✗ ${label}`);
+    auditFailures++;
+  }
+};
+
+const mentionDecline = await gateRows(partitionFor({ userId: "U_RANDO6", guildId: "G6", channelId: "C6", channelType: "0" }));
+okAudit(
+  mentionDecline.length === 1 && mentionDecline[0]!.door === "mention" && mentionDecline[0]!.over === true,
+  "spend.gate: an over-budget Discord MENTION decline writes ONE row (door=mention, over=true)",
+);
+
+const engagedDecline = await gateRows(partitionFor({ userId: "U_TALK10", guildId: "G10", channelId: "C10", channelType: "0" }));
+okAudit(
+  engagedDecline.length === 1 && engagedDecline[0]!.door === "engagement" && engagedDecline[0]!.over === true,
+  "spend.gate: an over-budget Discord ENGAGED wake writes ONE row (door=engagement — not mention)",
+);
+
+const bypassed = await gateRows(partitionFor({ userId: "U_ADMIN7", guildId: "G7", channelId: "C7", channelType: "0" }));
+okAudit(
+  bypassed.length === 2 && bypassed.every((d) => d.over === true && d.door === "mention"),
+  "spend.gate: an ADMIN BYPASS still writes the row (the cap tripped) — one per over-cap wake",
+);
+
+for (const [label, part] of [
+  ["a mention in an UNCAPPED channel (01)", partitionFor({ userId: "U_DEV1", guildId: "G1", channelId: "C1", channelType: "0" })],
+  ["an UNCAPPED DM (03)", partitionFor({ userId: "U_DM3", channelId: "D3", channelType: "1" })],
+] as const) {
+  okAudit((await gateRows(part)).length === 0, `spend.gate: ${label} writes NO row (the row is OVER-only, not per-wake)`);
+}
+
+if (auditFailures > 0) console.error(`\n✗ spend.gate audit rows: ${auditFailures} assertion(s) failed\n`);
+else console.log(`✓ spend.gate audit rows: ${auditAssertions} assertions passed (mention/engagement door, admin bypass, uncapped negative control)`);
+
 rmSync(tmp, { recursive: true, force: true });
-runner.finish("scenarios (discord-gateway sequencing)");
+runner.finish("scenarios (discord-gateway sequencing)", auditFailures);

@@ -1,4 +1,7 @@
+
 import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
 import {
@@ -635,6 +638,19 @@ function relayEnvelope(message: Record<string, unknown>): Record<string, unknown
   ok(stripLeadingMention("<@!99>  stop following") === "stop following", "stripLeadingMention: nickname-form mention + extra space removed");
   ok(stripLeadingMention("stop") === "stop", "stripLeadingMention: no mention → unchanged");
   ok(stripLeadingMention("hey <@123> stop") === "hey <@123> stop", "stripLeadingMention: only a LEADING mention is stripped");
+}
+
+{
+  const src = readFileSync(fileURLToPath(new URL("../packages/providers/discord/agent/channels/discord-gateway.ts", import.meta.url)), "utf8");
+  const gateAt = src.indexOf("await ingressSpendGate(");
+  const divertAt = src.indexOf("await divertDiscordWakeToUnifiedWindow(");
+  ok(gateAt > 0, "spend-gate order: the ingress calls the SHARED gate (ingressSpendGate), not a hand-rolled copy");
+  ok(divertAt > 0, "spend-gate order: the ingress still has a single-window divert to order against");
+  ok(gateAt < divertAt, "spend-gate order: the spend gate runs BEFORE the single-window divert — a windowed Discord wake is never diverted ungated");
+  ok(
+    /=== "declined"\s*\)\s*\{\s*return;/.test(src.slice(gateAt, divertAt)),
+    'spend-gate order: a "declined" verdict RETURNS (drops the wake) rather than falling through to the divert',
+  );
 }
 
 console.log(`✓ discord-gateway: ${passed} assertions passed (HMAC fail-closed, payload→identity, bot drop, wake gate incl. DM + name-drop, reply split, auto-thread decision + toggle + naming + fail-open re-key, status-UX toggle + completion plan + consume-once turn status, thread→parent grain + channel-info cache)`);

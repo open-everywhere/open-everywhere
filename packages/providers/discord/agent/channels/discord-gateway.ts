@@ -22,7 +22,6 @@ import {
   nameDropWakeEnabled,
   engagementTierFor,
   getConfig,
-  bindFrom,
   deploymentOrg,
   isVouchedInternal,
   resolveWakeTrustFromContext,
@@ -50,8 +49,8 @@ import {
   isThreadEngaged,
   markThreadEngaged,
   WARM_SILENT_LIMIT,
-  scopeOverBudget,
-  capBypassFor,
+  ingressSpendGate,
+  type SpendGateDoor,
   consumeCardPostedThisTurn,
   peekCardPostedThisTurn,
   consumeRepliedThisTurn,
@@ -835,44 +834,18 @@ export async function dispatchTurn(
     log(`name-drop wake on ${partition.surfaceKey} ("${msg.botName}")`);
   }
 
-  const binding = bindFrom(ctxFromAuth(auth));
-  try {
-    const verdict = await scopeOverBudget(partition, binding.mode, new Date().toISOString(), binding.trust, binding.principalId);
-    if (verdict.over) {
-      const bypass = await capBypassFor({
-        org: binding.org,
-        principalId: msg.author.id,
-        surfaceKey: domainKeyOf(partition),
-        reason: verdict.reason,
-      });
-      if (bypass) {
-        if (bypass.warn) {
-          await discordCreateMessage(
-            msg.channelId,
-            `⚠️ ${verdict.reason} — proceeding because you're an admin. Ask me here to raise or ` +
-              `clear the cap (an approval card follows), or change it permanently in the ` +
-              `spend-budgets config.`,
-          );
-        }
-        log(`cap bypassed (${bypass.standing}${bypass.warn ? "" : ", warn throttled"}) on ${domainKeyOf(partition)} by ${msg.author.id}`);
-      } else {
-        await discordCreateMessage(
-          msg.channelId,
-          binding.mode === "dm" || binding.mode === "mpim"
-            ? `⛔ I'm holding off — ${verdict.reason}. This is a cap on your own usage, and I can't ` +
-              `raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets ` +
-              `config, or temporarily by asking me from a channel to propose an override — an admin ` +
-              `approves that on a card. The scope key for this conversation is \`${domainKeyOf(partition)}\`.`
-            : `⛔ I'm holding off here — ${verdict.reason}. An admin can raise this permanently in the ` +
-              `spend-budgets config, or DM me to propose a temporary override — an admin approves it ` +
-              `on a card. Scope keys for the override: this channel = \`${domainKeyOf(partition)}\`, ` +
-              `whole server = \`${binding.platform}/${binding.workspace}\`.`,
-        );
-        log(`declined ${domainKeyOf(partition)}: over budget (${verdict.reason ?? "over cap"})`);
-        return;
-      }
-    }
-  } catch {
+  const spendDoor: SpendGateDoor = msg.mentionsBot || isDm ? "mention" : "engagement";
+  if (
+    (await ingressSpendGate({
+      bindable: ctxFromAuth(auth),
+      door: spendDoor,
+      principalId: msg.author.id,
+      post: async (text) => {
+        await discordCreateMessage(msg.channelId, text);
+      },
+    })) === "declined"
+  ) {
+    return;
   }
 
   const windowGrain = discordGrainFor(domainKeyOf(partition));

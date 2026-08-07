@@ -456,9 +456,11 @@ export class ScenarioRunner {
     if (!checkGolden(name, driver.timeline)) this.failures++;
   }
 
-  finish(suiteLabel: string): void {
-    if (this.failures > 0) {
-      console.error(`\n✗ ${suiteLabel}: ${this.failures}/${this.ran} golden timeline(s) diverged\n`);
+  finish(suiteLabel: string, extraFailures = 0): void {
+    if (this.failures > 0 || extraFailures > 0) {
+      const parts = [`${this.failures}/${this.ran} golden timeline(s) diverged`];
+      if (extraFailures > 0) parts.push(`${extraFailures} post-scenario assertion(s) failed`);
+      console.error(`\n✗ ${suiteLabel}: ${parts.join("; ")}\n`);
       process.exit(1);
     }
     console.log(`\n✓ ${suiteLabel}: ${this.ran} golden timelines matched\n`);
