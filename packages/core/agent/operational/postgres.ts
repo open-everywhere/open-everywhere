@@ -801,7 +801,7 @@ const MUTABLE_TABLE_VERBS: Readonly<Record<string, readonly DmlVerb[]>> = {
   thread_ownership: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   task_result: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   slack_attachment: ["SELECT", "INSERT", "UPDATE", "DELETE"],
-  stored_credential: ["SELECT", "INSERT", "UPDATE"],
+  stored_credential: ["SELECT", "INSERT", "UPDATE", "DELETE"],
   credential_intake: ["SELECT", "INSERT", "UPDATE"],
   webhook_capture_window: ["SELECT", "INSERT", "UPDATE"],
   unified_wake_target: ["SELECT", "INSERT", "UPDATE", "DELETE"],
@@ -1922,6 +1922,11 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         createdBy: r.created_by,
         createdAt: r.created_at,
       };
+    },
+
+    async deleteStoredCredential(org, ref) {
+      const { rows } = await client.query("DELETE FROM stored_credential WHERE org_id = $1 AND ref = $2 RETURNING ref", [org, ref]);
+      return rows.length > 0;
     },
 
     async putGitHubInstallation(org, rec) {

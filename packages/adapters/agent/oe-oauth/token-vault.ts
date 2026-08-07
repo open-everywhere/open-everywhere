@@ -7,6 +7,7 @@ import {
   buildAuthorizationUrl,
   exchangeCode,
   refreshToken,
+  revokeToken,
   type OAuthFetch,
   type OAuthTokenResponse,
 } from "./oauth-client.js";
@@ -21,6 +22,7 @@ interface DcrClientRecord {
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;
   readonly registrationEndpoint: string;
+  readonly revocationEndpoint?: string;
   readonly resource: string;
   readonly scopes?: readonly string[];
   readonly registeredAt: number;
@@ -135,6 +137,7 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
         authorizationEndpoint: endpoints.authorizationEndpoint,
         tokenEndpoint: endpoints.tokenEndpoint,
         registrationEndpoint: endpoints.registrationEndpoint,
+        ...(endpoints.revocationEndpoint ? { revocationEndpoint: endpoints.revocationEndpoint } : {}),
         resource: cfg.resource,
         ...(cfg.scopes ? { scopes: cfg.scopes } : {}),
         registeredAt: now(),
@@ -161,8 +164,45 @@ export function makeOeOauthTokenVault(providers: ReadonlyMap<string, OeOauthProv
     return record;
   }
 
+  async function forget(providerRef: string, subject: OeOauthSubject): Promise<boolean> {
+    const ref = tokRef(providerRef, subject);
+    return vault.withLock(ref, async () => {
+      const rec = await readJson<TokenRecord>(ref);
+      if (rec) {
+        const client = await readJson<DcrClientRecord>(dcrRef(providerRef));
+        const token = rec.refreshToken ?? rec.accessToken;
+        if (client?.revocationEndpoint && token) {
+          try {
+            await revokeToken(client.revocationEndpoint, { token, clientId: client.clientId, tokenTypeHint: rec.refreshToken ? "refresh_token" : "access_token" }, doFetch);
+          } catch (e) {
+            console.warn(`[oe-oauth] revocation at the provider failed for "${providerRef}" (purging locally anyway): ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
+      return vault.delete(ref);
+    });
+  }
+
   return {
     subjectKey,
+
+    forget,
+
+    async forgetAll(subject: OeOauthSubject): Promise<number> {
+      let purged = 0;
+      let failures = 0;
+      let lastError: unknown;
+      for (const providerRef of providers.keys()) {
+        try {
+          if (await forget(providerRef, subject)) purged++;
+        } catch (e) {
+          failures++;
+          lastError = e;
+        }
+      }
+      if (failures > 0 && purged === 0 && failures === providers.size) throw lastError;
+      return purged;
+    },
 
     async hasToken(providerRef: string, subject: OeOauthSubject): Promise<boolean> {
       return (await readJson<TokenRecord>(tokRef(providerRef, subject))) !== null;

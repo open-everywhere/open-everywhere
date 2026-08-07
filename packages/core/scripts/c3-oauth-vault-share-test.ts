@@ -1,15 +1,22 @@
+
 process.env.OE_SQLITE_PATH = ":memory:";
 process.env.OE_OPERATIONAL_PROVIDER = "postgres";
 
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
+
+process.env.OE_CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+
 import { initOperationalSchema, makeOperationalPostgresStore, type PgClient } from "../agent/operational/postgres.js";
 import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
 import { registerOperationalStore, resetOperationalStore, getOperationalStore } from "../agent/operational/provider.js";
 import { OPERATIONAL_TABLES, type OperationalStore } from "../agent/operational/store.js";
-import { revokeLinkSet, setLinkSetHold, unlinkOwnId } from "../agent/identity/link-store.js";
+import { purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold, unlinkOwnId } from "../agent/identity/link-store.js";
 import { rawVaultSubject, sharedVaultSubject, RAW_VAULT_SUBJECT_PREFIX, SHARED_VAULT_SUBJECT_PREFIX } from "../agent/identity/oauth-vault-share.js";
 import { sharedVaultSubjectFor } from "../agent/access/group-request.js";
+import { encryptedKvVault } from "../agent/credentials/kv-vault.js";
+import { registerCredentialPurgeHook, resetCredentialPurgeHook } from "../agent/credentials/purge.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -80,7 +87,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   ok((await sharedVaultSubjectFor(ORG, C, "slack", "NOBODY")) === undefined, label("an account in no set → RAW subject (unlinked, byte-identical to today)"));
 
   await setLinkSetHold({ org: ORG, linkSetId: "S1", hold: "suspended", actor: "admin" });
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === undefined, label("suspended set → RAW subject (membership resolves to nothing — the SOLE severance mechanism)"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === undefined, label("suspended set → RAW subject (membership resolves to nothing — the SOLE REACHABILITY-severance mechanism; credential DEATH is §PURGE)"));
   await setLinkSetHold({ org: ORG, linkSetId: "S1", hold: "active", actor: "admin" });
   ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === sharedVaultSubject(ORG, "S1"), label("reactivate → sharing restored from the surviving membership"));
 
@@ -114,6 +121,107 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   registerOperationalStore(sqliteOperationalStore);
   resetOperationalStore();
   await runInvariants(sqliteOperationalStore, "sqlite");
+}
+
+{
+  process.env.OE_OPERATIONAL_PROVIDER = "postgres";
+  const db = new PGlite();
+  const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
+  await initOperationalSchema(client);
+  const store = makeOperationalPostgresStore(client);
+  registerOperationalStore(store);
+  resetOperationalStore();
+
+  const ORG = "default";
+  const vault = encryptedKvVault();
+  const tokRef = (subject: string) => `oe-oauth:tok:notion:user:${subject}`;
+  const seed = (subject: string) => vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT", refreshToken: "RT", obtainedAt: 0 }), { provider: "notion" });
+  const rowOf = (subject: string) => store.getStoredCredential(ORG, tokRef(subject));
+  const lastRevokeDetail = async (setId: string): Promise<Record<string, unknown>> => {
+    const rows = await store.readAudit({ org: ORG });
+    const row = rows.filter((r) => r.action === "identity.link.revoked" && (r.detail as { linkSetId?: string } | undefined)?.linkSetId === setId).at(-1);
+    return (row?.detail ?? {}) as Record<string, unknown>;
+  };
+
+  {
+    registerCredentialPurgeHook({
+      purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0),
+    });
+    await mkSet(store, ORG, "P1", [{ platform: "slack", nativeId: "PU1" }]);
+    const subject = sharedVaultSubject(ORG, "P1");
+    await seed(subject);
+    ok((await rowOf(subject)) !== null, "purge setup: the shared subject's credential row exists before the revoke");
+
+    const res = await revokeLinkSet({ org: ORG, linkSetId: "P1", actor: "admin" });
+    ok(res.ok, "purge: revoke succeeded");
+    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU1")) === undefined, "purge: reachability is still severed (the pre-existing property is intact)");
+    ok((await rowOf(subject)) === null, "🔴 purge: the stored_credential ROW IS GONE — revoke is credential DEATH, not merely unreachability");
+    const detail = await lastRevokeDetail("P1");
+    ok(detail.credentialsPurged === 1, "purge: the identity.link.revoked audit row states how many credentials were purged");
+    ok(detail.purgeFailed === undefined, "purge: a clean purge stamps no failure flag");
+  }
+
+  {
+    registerCredentialPurgeHook({
+      purgeSubject: async () => {
+        throw new Error("vault backing unavailable");
+      },
+    });
+    await mkSet(store, ORG, "P2", [{ platform: "slack", nativeId: "PU2" }]);
+    const subject = sharedVaultSubject(ORG, "P2");
+    await seed(subject);
+
+    const res = await revokeLinkSet({ org: ORG, linkSetId: "P2", actor: "admin" });
+    ok(res.ok, "🔴 purge failure: the REVOKE still succeeds — a vault outage never blocks an offboarding");
+    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU2")) === undefined, "purge failure: the tombstone landed regardless (reachability severed)");
+    const detail = await lastRevokeDetail("P2");
+    ok(detail.purgeFailed === true && detail.credentialsPurged === 0, "🔴 purge failure: the audit row records purgeFailed — the residue is VISIBLE, never silent");
+    ok(res.ok && res.note.includes("purge_link_set_credentials"), "purge failure: the operator is told the exact repair verb to re-run");
+    ok((await rowOf(subject)) !== null, "purge failure: nothing was destroyed (the assertion above is not vacuous)");
+
+    registerCredentialPurgeHook({ purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
+    const repair = await purgeLinkSetCredentials({ org: ORG, linkSetId: "P2", actor: "admin" });
+    ok(repair.ok && repair.purged === 1, "purge repair: purge_link_set_credentials finishes a purge that failed at revoke time");
+    ok((await rowOf(subject)) === null, "purge repair: the row is gone");
+    ok((await purgeLinkSetCredentials({ org: ORG, linkSetId: "P2", actor: "admin" })).ok, "purge repair: re-running on an already-purged set is a clean no-op (idempotent)");
+    ok(!(await purgeLinkSetCredentials({ org: ORG, linkSetId: "NO_SUCH_SET", actor: "admin" })).ok, "purge repair: an unknown link-set is a REFUSAL, never a cheerful 0-purged");
+  }
+
+  {
+    registerCredentialPurgeHook({ purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
+    await mkSet(store, ORG, "P3", [{ platform: "slack", nativeId: "PU3" }]);
+    const subject = sharedVaultSubject(ORG, "P3");
+    await seed(subject);
+
+    let revoked!: Promise<unknown>;
+    await vault.withLock(tokRef(subject), async () => {
+      revoked = revokeLinkSet({ org: ORG, linkSetId: "P3", actor: "admin" });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      await vault.write(tokRef(subject), JSON.stringify({ accessToken: "AT-rotated", refreshToken: "RT-rotated", obtainedAt: 1 }), { provider: "notion" });
+      ok((await rowOf(subject)) !== null, "purge race: the holder's rotated row is really there mid-critical-section");
+    });
+    await revoked;
+    ok((await rowOf(subject)) === null, "🔴 purge race: the ROTATED row is destroyed too — a refresh racing a purge cannot resurrect the credential");
+
+    await seed(subject);
+    ok((await store.claimStoredCredential(ORG, tokRef(subject), "claim-1", "2026-08-07T00:00:10Z", "2026-08-07T00:00:00Z")) === true, "purge race: a claim is held on the row");
+    ok((await store.deleteStoredCredential(ORG, tokRef(subject))) === true, "purge race: a CLAIMED row still deletes (a held lease never wedges a purge)");
+    ok((await store.claimStoredCredential(ORG, tokRef(subject), "claim-2", "2026-08-07T00:00:20Z", "2026-08-07T00:00:00Z")) === false, "purge race: claiming the destroyed row LOSES — no orphan claim state survives the delete");
+    ok((await store.deleteStoredCredential(ORG, tokRef(subject))) === false, "purge: deleting an absent row reports false, never throws (idempotent)");
+
+    await store.putStoredCredential("orgZ", { ref: tokRef(subject), ciphertext: "opaque", createdBy: "test", createdAt: new Date().toISOString() });
+    await seed(subject);
+    ok((await store.deleteStoredCredential(ORG, tokRef(subject))) === true, "purge: the deployment org's row goes");
+    ok((await store.getStoredCredential("orgZ", tokRef(subject))) !== null, "🔴 purge: ANOTHER org's row under the same ref is untouched (the delete is org-scoped)");
+  }
+
+  {
+    resetCredentialPurgeHook();
+    await mkSet(store, ORG, "P4", [{ platform: "slack", nativeId: "PU4" }]);
+    const res = await revokeLinkSet({ org: ORG, linkSetId: "P4", actor: "admin" });
+    const detail = await lastRevokeDetail("P4");
+    ok(res.ok && detail.credentialsPurged === 0 && detail.purgeFailed === undefined, "no purge hook registered: revoke reports 0 purged and NO failure (nothing to destroy is not an outage)");
+  }
 }
 
 {

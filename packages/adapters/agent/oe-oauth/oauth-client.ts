@@ -6,6 +6,7 @@ export interface DiscoveredEndpoints {
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;
   readonly registrationEndpoint: string;
+  readonly revocationEndpoint?: string;
 }
 
 export interface OAuthTokenResponse {
@@ -56,14 +57,16 @@ export async function discoverEndpoints(resource: string, fetchImpl: OAuthFetch)
     authorization_endpoint?: unknown;
     token_endpoint?: unknown;
     registration_endpoint?: unknown;
+    revocation_endpoint?: unknown;
   };
   const authorizationEndpoint = typeof as.authorization_endpoint === "string" ? as.authorization_endpoint : undefined;
   const tokenEndpoint = typeof as.token_endpoint === "string" ? as.token_endpoint : undefined;
   const registrationEndpoint = typeof as.registration_endpoint === "string" ? as.registration_endpoint : undefined;
+  const revocationEndpoint = typeof as.revocation_endpoint === "string" && as.revocation_endpoint ? as.revocation_endpoint : undefined;
   if (!authorizationEndpoint || !tokenEndpoint || !registrationEndpoint) {
     throw new OeOauthError(`authorization-server metadata for ${asBase} is missing authorization/token/registration endpoints`);
   }
-  return { authorizationEndpoint, tokenEndpoint, registrationEndpoint };
+  return { authorizationEndpoint, tokenEndpoint, registrationEndpoint, ...(revocationEndpoint ? { revocationEndpoint } : {}) };
 }
 
 export async function registerClient(
@@ -145,6 +148,29 @@ export function exchangeCode(
     },
     fetchImpl,
   );
+}
+
+export async function revokeToken(
+  revocationEndpoint: string,
+  input: { readonly token: string; readonly clientId: string; readonly tokenTypeHint?: "refresh_token" | "access_token" },
+  fetchImpl: OAuthFetch,
+): Promise<void> {
+  const res = await fetchImpl(revocationEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({
+      token: input.token,
+      client_id: input.clientId,
+      ...(input.tokenTypeHint ? { token_type_hint: input.tokenTypeHint } : {}),
+    }).toString(),
+  });
+  if (!res.ok) {
+    const { oauthError } = await readError(res);
+    throw new OeOauthError(`revocation endpoint ${revocationEndpoint} returned ${res.status}${oauthError ? ` (${oauthError})` : ""}`, {
+      httpStatus: res.status,
+      ...(oauthError ? { oauthError } : {}),
+    });
+  }
 }
 
 export function refreshToken(

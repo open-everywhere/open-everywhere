@@ -144,6 +144,12 @@ function memVault(shared?: SharedBacking): EncryptedKvVault & SharedBacking {
     async write(ref, plaintext) {
       raw.set(ref, plaintext);
     },
+    async delete(ref) {
+      const had = raw.has(ref);
+      raw.delete(ref);
+      claims.delete(ref);
+      return had;
+    },
     async withLock(key, fn) {
       const prev = tails.get(key) ?? Promise.resolve();
       let release!: () => void;
@@ -411,6 +417,9 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
       throw new Error("vault backing unavailable");
     },
     async write() {},
+    async delete() {
+      return false;
+    },
     async withLock(_k, fn) {
       return fn();
     },
@@ -430,4 +439,137 @@ const tokRef = "oe-oauth:tok:notion:user:U1";
   ok(!threw && result === false, "hasFreshGrant: a vault read that throws is caught ⇒ false (never crashes the resume)");
 }
 
-console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, typed errors)`);
+{
+  const REVOKE_URL = `${AS}/revoke`;
+  interface RevokeCall {
+    token: string;
+    hint: string | null;
+    clientId: string | null;
+  }
+  function purgeFetch(opts: { revocation: boolean; status?: number }, calls: RevokeCall[]) {
+    return async (input: string, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (input.endsWith("/.well-known/oauth-protected-resource")) return json({ authorization_servers: [AS] });
+      if (input.endsWith("/.well-known/oauth-authorization-server")) {
+        return json({
+          authorization_endpoint: `${AS}/authorize`,
+          token_endpoint: TOKEN_URL,
+          registration_endpoint: REG_URL,
+          ...(opts.revocation ? { revocation_endpoint: REVOKE_URL } : {}),
+        });
+      }
+      if (input === REG_URL && method === "POST") return json({ client_id: "CID-1" });
+      if (input === REVOKE_URL && method === "POST") {
+        const form = new URLSearchParams(String(init?.body ?? ""));
+        calls.push({ token: form.get("token") ?? "", hint: form.get("token_type_hint"), clientId: form.get("client_id") });
+        return opts.status && opts.status >= 400 ? json({ error: "invalid_request" }, opts.status) : new Response("", { status: 200 });
+      }
+      return new Response("unexpected", { status: 404 });
+    };
+  }
+
+  const seedTok = (v: EncryptedKvVault, ref: string, rec: Record<string, unknown>) => v.write(ref, JSON.stringify(rec));
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", expiresAt: 9_999_999_999_999, obtainedAt: 0 });
+
+    ok((await vault.forget("notion", { type: "user", id: "U1" })) === true, "purge: forget reports the row went");
+    ok(calls.length === 1, "purge: the provider's RFC 7009 revocation endpoint was called exactly once");
+    ok(calls[0].token === "RT-live", "purge: the REFRESH token is what is presented (revoking it kills the whole grant family)");
+    ok(calls[0].hint === "refresh_token", "purge: token_type_hint names the refresh token");
+    ok(calls[0].clientId === "CID-1", "purge: the public client_id is presented (no secret exists to present)");
+    ok((await v.read(tokRef)) === null, "🔴 purge: the ciphertext row is GONE from the vault — not merely unreachable");
+    ok((await v.read("oe-oauth:dcr:notion")) !== null, "purge: the provider's DCR client registration SURVIVES (a purge forgets a person, not the deployment's client)");
+
+    ok((await vault.forget("notion", { type: "user", id: "U1" })) === false, "purge: a second purge of the same subject reports false (idempotent)");
+    ok(calls.length === 1, "purge: nothing is presented to the vendor when there was no record to revoke");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: false }, calls), redirectUri: () => REDIRECT });
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });
+
+    ok((await vault.forget("notion", { type: "user", id: "U1" })) === true, "purge (no revocation_endpoint): the row still goes");
+    ok(calls.length === 0, "purge (no revocation_endpoint): nothing is called — an absent optional endpoint is skipped, never an error");
+    ok((await v.read(tokRef)) === null, "purge (no revocation_endpoint): the ciphertext is destroyed anyway (local death does not depend on the vendor)");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: true, status: 400 }, calls), redirectUri: () => REDIRECT });
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });
+
+    let threw = false;
+    let purged: boolean | undefined;
+    try {
+      purged = await vault.forget("notion", { type: "user", id: "U1" });
+    } catch {
+      threw = true;
+    }
+    ok(!threw, "purge (vendor 4xx): forget does not throw — a vendor failure is advisory, never fatal to the purge");
+    ok(purged === true, "purge (vendor 4xx): the row still went");
+    ok(calls.length === 1, "purge (vendor 4xx): the vendor was attempted before the local delete");
+    ok((await v.read(tokRef)) === null, "🔴 purge (vendor 4xx): the ciphertext is destroyed anyway");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
+    await vault.startAuthorization("notion", { type: "user", id: "U1" }, {});
+    await seedTok(v, tokRef, { accessToken: "AT-only", obtainedAt: 0 });
+
+    await vault.forget("notion", { type: "user", id: "U1" });
+    ok(calls[0].token === "AT-only" && calls[0].hint === "access_token", "purge: with no refresh token stored, the ACCESS token is presented and hinted as such");
+  }
+
+  {
+    const calls: RevokeCall[] = [];
+    const multi = new Map<string, OeOauthProviderConfig>([
+      ["notion", { ref: "notion", resource: RESOURCE }],
+      ["linear", { ref: "linear", resource: RESOURCE }],
+    ]);
+    const v = memVault();
+    const { purge } = makeOeOauth(multi, { vault: v, fetch: purgeFetch({ revocation: true }, calls), redirectUri: () => REDIRECT });
+    const LS = "ls:default/SET-1";
+    await seedTok(v, `oe-oauth:tok:notion:user:${LS}`, { accessToken: "A1", refreshToken: "R1", obtainedAt: 0 });
+    await seedTok(v, `oe-oauth:tok:linear:user:${LS}`, { accessToken: "A2", refreshToken: "R2", obtainedAt: 0 });
+    await seedTok(v, "oe-oauth:tok:notion:user:ls:default/SET-2", { accessToken: "A3", refreshToken: "R3", obtainedAt: 0 });
+
+    ok((await purge.purgeSubject(LS)) === 2, "purge hook: sweeps EVERY configured provider for the subject (2 rows)");
+    ok((await v.read(`oe-oauth:tok:notion:user:${LS}`)) === null && (await v.read(`oe-oauth:tok:linear:user:${LS}`)) === null, "purge hook: both of the subject's rows are destroyed");
+    ok((await v.read("oe-oauth:tok:notion:user:ls:default/SET-2")) !== null, "🔴 purge hook: ANOTHER subject's credential is untouched (a purge is scoped to one person)");
+    ok((await purge.purgeSubject(LS)) === 0, "purge hook: re-purging an already-purged subject reports 0, never an error");
+  }
+
+  {
+    const v = memVault();
+    const vault = makeOeOauthTokenVault(providers, { vault: v, fetch: purgeFetch({ revocation: false }, []) });
+    await seedTok(v, tokRef, { accessToken: "AT-live", refreshToken: "RT-live", obtainedAt: 0 });
+
+    const state = { purgeFinished: false };
+    let inFlight!: Promise<void>;
+    await v.withLock(tokRef, async () => {
+      inFlight = vault.forget("notion", { type: "user", id: "U1" }).then(() => {
+        state.purgeFinished = true;
+      });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      ok(state.purgeFinished === false, "🔴 purge takes the refresh lock: it cannot run inside another holder's critical section");
+      await v.write(tokRef, JSON.stringify({ accessToken: "AT-rotated", refreshToken: "RT-rotated", obtainedAt: 1 }));
+    });
+    await inFlight;
+    ok(state.purgeFinished === true, "purge takes the refresh lock: it runs once the holder releases");
+    ok((await v.read(tokRef)) === null, "🔴 purge takes the refresh lock: the ROTATED token written inside the critical section is destroyed too (no resurrection)");
+  }
+}
+
+console.log(`✓ oe-oauth: ${n} assertions passed (PKCE, DCR/authorize, in-process + cross-process single-flight, crashed-winner steal, loser-timeout, recovery, real-store claim CAS, RFC 9728 well-known derivation, hasFreshGrant probe, RFC 7009 purge, typed errors)`);

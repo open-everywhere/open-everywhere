@@ -58,6 +58,9 @@ export type { GitHubInstallationRow } from "./operational/store.js";
 export { encryptedKvVault } from "./credentials/kv-vault.js";
 export type { EncryptedKvVault, EncryptedKvVaultDeps } from "./credentials/kv-vault.js";
 
+export { registerCredentialPurgeHook } from "./credentials/purge.js";
+export type { CredentialPurgeHook, CredentialPurgeOutcome } from "./credentials/purge.js";
+
 export { captureHandshakeSecret, secretFingerprint, HANDSHAKE_REVEAL_PRINCIPAL } from "./webhooks/handshake-capture.js";
 export type { CaptureHandshakeSecretInput, CaptureHandshakeSecretDeps, CaptureHandshakeSecretOutcome } from "./webhooks/handshake-capture.js";
 export { NOTION_HANDSHAKE_REF_NAMESPACE } from "./credentials/reserved-refs.js";

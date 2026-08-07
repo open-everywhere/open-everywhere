@@ -305,6 +305,11 @@ function portalCredsJson(expirationMs: number): string {
     async write(ref, plaintext) {
       writes.push({ ref, value: plaintext });
     },
+    async delete(ref) {
+      const had = writes.some((w) => w.ref === ref);
+      for (let i = writes.length - 1; i >= 0; i--) if (writes[i].ref === ref) writes.splice(i, 1);
+      return had;
+    },
     async withLock(_key, fn) {
       return fn();
     },

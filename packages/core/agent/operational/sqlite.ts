@@ -1551,6 +1551,10 @@ export const sqliteOperationalStore: OperationalStore = {
     };
   },
 
+  async deleteStoredCredential(org, ref) {
+    return getDb().prepare("DELETE FROM stored_credential WHERE org_id = ? AND ref = ?").run(org, ref).changes > 0;
+  },
+
   async putGitHubInstallation(org, rec) {
     getDb()
       .prepare(

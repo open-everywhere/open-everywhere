@@ -757,8 +757,10 @@ const store = makeOperationalPostgresStore(client);
     await client.query("DELETE FROM event_dedupe WHERE org_id = 'nobody'");
     ok(true, "two-role: …while DELETE on event_dedupe is permitted (the org-scoped TTL prune still runs)");
     await denied("DELETE FROM pending_actions", "permission denied", "two-role: DELETE pending_actions is permission-DENIED (a decided action is retained)");
-    await denied("DELETE FROM stored_credential", "permission denied", "two-role: DELETE stored_credential is permission-DENIED (revocation flips status, never deletes)");
     await denied("DELETE FROM spend_ledger", "permission denied", "two-role: DELETE spend_ledger is permission-DENIED (deleting a period would silently lower spend against a limit)");
+    await store.putStoredCredential("acme", { ref: "two-role-purge", ciphertext: "opaque", createdBy: "test", createdAt: "2026-08-07T00:00:00Z" });
+    ok((await store.deleteStoredCredential("acme", "two-role-purge")) === true, "two-role: the runtime role can DELETE stored_credential (OPE-287 — offboarding must be able to destroy a credential, not merely unaddress it)");
+    ok((await store.getStoredCredential("acme", "two-role-purge")) === null, "two-role: …and the row is really gone under RLS (the FOR ALL policy covers DELETE)");
     await denied("TRUNCATE spend_ledger", "permission denied", "two-role: TRUNCATE on a mutable table is permission-DENIED (RLS does not filter TRUNCATE — privileges are the only gate)");
     await denied("TRUNCATE routine", "permission denied", "two-role: TRUNCATE is denied even where DELETE is granted (routine has full CRUD)");
 

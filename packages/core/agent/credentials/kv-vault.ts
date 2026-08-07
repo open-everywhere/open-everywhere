@@ -6,13 +6,14 @@ import type { StoredCredentialRow } from "../operational/store.js";
 export interface EncryptedKvVault {
   read(ref: string): Promise<string | null>;
   write(ref: string, plaintext: string, labels?: { provider?: string; domain?: string; createdBy?: string }): Promise<void>;
+  delete(ref: string): Promise<boolean>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
   claim(ref: string, claimId: string, nowMs: number, leaseTtlMs: number): Promise<boolean>;
   releaseClaim(ref: string, claimId: string): Promise<void>;
 }
 
 export interface EncryptedKvVaultDeps {
-  readonly getStore?: () => Pick<ReturnType<typeof getOperationalStore>, "getStoredCredential" | "putStoredCredential" | "claimStoredCredential" | "releaseStoredCredential">;
+  readonly getStore?: () => Pick<ReturnType<typeof getOperationalStore>, "getStoredCredential" | "putStoredCredential" | "deleteStoredCredential" | "claimStoredCredential" | "releaseStoredCredential">;
   readonly org?: () => string;
   readonly encrypt?: (plaintext: string) => string;
   readonly decrypt?: (envelope: string) => string;
@@ -59,6 +60,9 @@ export function encryptedKvVault(deps: EncryptedKvVaultDeps = {}): EncryptedKvVa
         createdAt: new Date().toISOString(),
       };
       await store().putStoredCredential(org(), rec);
+    },
+    async delete(ref) {
+      return store().deleteStoredCredential(org(), ref);
     },
     withLock: withKeyedLock,
     async claim(ref, claimId, nowMs, leaseTtlMs) {

@@ -3,6 +3,8 @@ import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { principalKey } from "./principal-key.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
+import { sharedVaultSubject } from "./oauth-vault-share.js";
+import { purgeSubjectCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
 import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
 
@@ -356,8 +358,39 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
     return { ok: false, reason: set ? `link-set "${input.linkSetId}" is already revoked.` : `no link-set "${input.linkSetId}".` };
   }
   const tombstoned = await store.revokeLinkedIdsForSet(input.org, input.linkSetId, at);
-  await auditLink(input.org, "control", undefined, input.actor, "identity.link.revoked", { linkSetId: input.linkSetId, tombstoned });
-  return { ok: true, linkSetId: input.linkSetId, note: `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned).` };
+  const purge = await purgeLinkSetCredentialsBestEffort(input.org, input.linkSetId);
+  await auditLink(input.org, "control", undefined, input.actor, "identity.link.revoked", {
+    linkSetId: input.linkSetId,
+    tombstoned,
+    credentialsPurged: purge.purged,
+    ...(purge.failed ? { purgeFailed: true } : {}),
+  });
+  return {
+    ok: true,
+    linkSetId: input.linkSetId,
+    note:
+      `revoked link-set ${input.linkSetId} (${tombstoned} account(s) tombstoned, ${purge.purged} credential(s) purged)` +
+      (purge.failed ? " — the credential purge FAILED; the revoke stands, re-run purge_link_set_credentials." : "."),
+  };
+}
+
+async function purgeLinkSetCredentialsBestEffort(org: string, linkSetId: string): Promise<CredentialPurgeOutcome> {
+  return purgeSubjectCredentials(sharedVaultSubject(org, linkSetId));
+}
+
+export async function purgeLinkSetCredentials(input: { readonly org: string; readonly linkSetId: string; readonly actor: string }): Promise<LinkWriteResult & { readonly purged?: number }> {
+  const store = getOperationalStore();
+  const set = await store.getLinkSet(input.org, input.linkSetId);
+  if (!set) return { ok: false, reason: `no link-set "${input.linkSetId}".` };
+  const purge = await purgeLinkSetCredentialsBestEffort(input.org, input.linkSetId);
+  await auditLink(input.org, "control", undefined, input.actor, "identity.link.credentials_purged", {
+    linkSetId: input.linkSetId,
+    setStatus: set.status,
+    credentialsPurged: purge.purged,
+    ...(purge.failed ? { purgeFailed: true } : {}),
+  });
+  if (purge.failed) return { ok: false, reason: `credential purge for link-set "${input.linkSetId}" failed — nothing was destroyed; check the vault/adapter and retry.` };
+  return { ok: true, linkSetId: input.linkSetId, purged: purge.purged, note: `purged ${purge.purged} credential(s) for link-set ${input.linkSetId} (set is ${set.status}).` };
 }
 
 async function auditLink(org: string, platform: string, surfaceKey: string | undefined, principalId: string, action: string, detail: Record<string, unknown>): Promise<void> {

@@ -188,8 +188,10 @@ function recorder() {
   for (const table of ["stored_credential", "credential_intake"]) {
     const granted = verbsFor(table, "GRANT");
     ok(granted.has("SELECT") && granted.has("INSERT") && granted.has("UPDATE"), `runtime-role: ${table} is granted SELECT+INSERT+UPDATE (the broker upserts and then rotates/stamps)`);
-    ok(!granted.has("DELETE") && verbsFor(table, "REVOKE").has("DELETE"), `runtime-role: ${table} is NOT granted DELETE, and DELETE is explicitly revoked (tightens a role provisioned by an older build)`);
   }
+  ok(!verbsFor("credential_intake", "GRANT").has("DELETE") && verbsFor("credential_intake", "REVOKE").has("DELETE"), "runtime-role: credential_intake is NOT granted DELETE, and DELETE is explicitly revoked (tightens a role provisioned by an older build)");
+  ok(verbsFor("stored_credential", "GRANT").has("DELETE"), "runtime-role: stored_credential IS granted DELETE (OPE-287 — a purge must be able to destroy the ciphertext, not merely unaddress it)");
+  ok(!verbsFor("stored_credential", "REVOKE").has("DELETE"), "runtime-role: …and DELETE is not simultaneously revoked (a grant plus a revoke would leave the purge dead at the engine)");
 }
 
 {

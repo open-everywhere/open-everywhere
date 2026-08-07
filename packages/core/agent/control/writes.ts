@@ -14,7 +14,7 @@ import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
 import { whereFromScope } from "../approvals/actions.js";
-import { listLinkSetsWithIds, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
+import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
 import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
 import { directoryGroupAllowlist, groupPlanIsNoop, planDirectoryGroups, planOverlayContent, renderGroupPlan } from "../identity/group-sync.js";
@@ -433,6 +433,28 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, status: "revoked", note: res.note });
       } catch (e) {
         return errorResult(`revoke_link_set failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "purge_link_set_credentials",
+    {
+      title: "Purge a link-set's stored credentials",
+      description:
+        "DESTROY the OAuth credentials stored against a person's link-set: revoked at the provider (RFC 7009) where the provider supports it, then deleted from the encrypted vault. revoke_link_set already does this as part of offboarding — reach for this verb for the two cases it does not cover: a set REVOKED BEFORE this existed (its tokens are unreachable but still stored), and a suspected token compromise where you want the credential dead without spending the terminal revoke. Works on a set in any status; purging only ever removes authority, never grants it. Not reversible — the person re-authorizes through the ordinary consent flow. Org-admin only. Get the id from link_sets_list.",
+      inputSchema: { org: z.string().min(1), linkSetId: z.string().min(1) },
+    },
+    async (a) => {
+      const denial = requireOrgAdminForLinks("purge_link_set_credentials");
+      if (denial) return errorResult(denial);
+      try {
+        const res = await purgeLinkSetCredentials({ org: a.org, linkSetId: a.linkSetId, actor });
+        if (!res.ok) return errorResult(`purge_link_set_credentials failed: ${res.reason}`);
+        await appendAudit({ org: a.org, platform: "control", workspace: "control", principalId: actor, action: "admin.identity.purge_link_set_credentials", detail: { linkSetId: a.linkSetId, credentialsPurged: res.purged ?? 0 } });
+        return jsonResult({ ok: true, org: a.org, linkSetId: a.linkSetId, purged: res.purged ?? 0, note: res.note });
+      } catch (e) {
+        return errorResult(`purge_link_set_credentials failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );
