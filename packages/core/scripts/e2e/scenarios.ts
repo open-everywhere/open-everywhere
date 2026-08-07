@@ -232,9 +232,11 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: teachTs } = await a.post(a.mention("remember: our deploy day is Thursday"));
       const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
-        closedQA("Does it confirm it stored the fact?", { mustMatch: [/remember|stored|noted|got it|saved/i] }),
+        closedQA("Does it indicate the fact is in memory — stored just now, or already stored / already known?", {
+          mustMatch: [/remember|stored|noted|got it|saved|already|in (?:our |the )?memory/i],
+        }),
         ack1.text,
-        "remember: deploy-day stored (was S4)",
+        "remember: deploy-day stored or already-stored (was S4)",
       );
       if (ctx.auditRead) {
         const claimsSaved = /remember|stored|noted|got it|saved/i.test(ack1.text);
