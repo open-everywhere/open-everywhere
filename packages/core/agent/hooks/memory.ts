@@ -8,9 +8,9 @@ import { bindFrom } from "../identity/binding.js";
 import { planFor, type ResolvedMemory } from "../memory/resolve.js";
 import { providerById } from "../memory/provider.js";
 import { renderMemoryIndex } from "../memory/listing.js";
-import { tierId, storeRoot, type MemoryFiles } from "../memory/store.js";
+import { tierId, storeRoot, type MemoryFiles, type Tier } from "../memory/store.js";
 import { seedFor } from "../memory/layout.js";
-import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, tierSandboxDir } from "../memory/sandbox-sync.js";
+import { syncTierIntoSandbox, readTierFromSandbox, removeTierFiles, removeTierDir, tierSandboxDir } from "../memory/sandbox-sync.js";
 import { readOnlyBanner, hasReadOnlyBanner, lockCommand, unlockCommand } from "../memory/readonly.js";
 import { startMemorySyncTiming, emitMemorySyncTiming, byteSize } from "../memory/sync-timing.js";
 import type { MemorySilo } from "../memory/silo.js";
@@ -37,6 +37,11 @@ const readSyncVersions = defineState<Record<string, string | null>>(
 
 const failedReadSilos = defineState<Record<string, string>>(
   "open-everywhere.memory.failedReadSilos",
+  () => ({}),
+);
+
+const materialisedTiers = defineState<Record<string, { tier: Tier; silo: string; readOnly: boolean }>>(
+  "open-everywhere.memory.materialisedTiers",
   () => ({}),
 );
 
@@ -358,17 +363,62 @@ async function refreshReadOnlyTier(
   }
 }
 
+async function unmaterialiseDroppedTiers(
+  sandbox: Awaited<ReturnType<HookContext["getSandbox"]>>,
+  dropped: readonly { tierId: string; tier: Tier; silo: string; readOnly: boolean }[],
+): Promise<string[]> {
+  const removed: string[] = [];
+  for (const d of dropped) {
+    const dir = tierSandboxDir(d.tier);
+    try {
+      const present = await readTierFromSandbox(sandbox, d.tier);
+      if (d.readOnly) await sandbox.run({ command: unlockCommand(dir) });
+      const rels = Object.keys(present);
+      if (rels.length > 0) await removeTierFiles(sandbox, d.tier, rels);
+      await removeTierDir(sandbox, d.tier);
+      removed.push(d.tierId);
+    } catch (err) {
+      log(`turn.started UN-MATERIALISE FAILED for ${d.tierId} ← ${d.silo} (other tiers unaffected): ${String(err)}`);
+    }
+  }
+  return removed;
+}
+
 async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   const binding = bindFrom(ctx);
   const p = resolvePartition(ctx);
   const plan = planFor(binding, p);
-  if (plan.reads.length === 0) return;
+  const planned = new Set(plan.reads.map((r) => tierId(r.tier)));
+  const known = materialisedTiers.get();
+  const dropped = Object.entries(known)
+    .filter(([tid]) => !planned.has(tid))
+    .map(([tid, v]) => ({ tierId: tid, ...v }));
+  if (plan.reads.length === 0 && dropped.length === 0) return;
   const last = readSyncVersions.get();
   const next: Record<string, string | null> = { ...last };
   let sandbox: Awaited<ReturnType<HookContext["getSandbox"]>> | null = null;
   const resynced: string[] = [];
   const healed: string[] = [];
   const stillFailed = { ...failedReadSilos.get() };
+
+  let removed: string[] = [];
+  const removedNames: string[] = [];
+  if (dropped.length > 0) {
+    sandbox = await ctx.getSandbox();
+    removed = await unmaterialiseDroppedTiers(sandbox, dropped);
+    if (removed.length > 0) {
+      const gone = new Set(removed);
+      for (const tid of removed) {
+        removedNames.push(known[tid]!.silo);
+        delete next[tid];
+        delete stillFailed[tid];
+      }
+      writeBaseline.update((b) => Object.fromEntries(Object.entries(b).filter(([tid]) => !gone.has(tid))));
+      materialisedTiers.update((m) => Object.fromEntries(Object.entries(m).filter(([tid]) => !gone.has(tid))));
+      log(`turn.started UN-MATERIALISED ${removed.length} dropped tier(s) [${removed.join(", ")}] for ${p.key}`);
+    }
+  }
+
   for (const rm of plan.reads) {
     const tid = tierId(rm.tier);
     try {
@@ -382,6 +432,7 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
       else await refreshWritableTier(sandbox, p, rm);
       next[tid] = version;
       resynced.push(tid);
+      materialisedTiers.update((m) => ({ ...m, [tid]: { tier: rm.tier, silo: rm.silo.name, readOnly: rm.readOnly === true } }));
       if (stillFailed[tid]) {
         delete stillFailed[tid];
         healed.push(tid);
@@ -393,8 +444,10 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
   if (resynced.length > 0) {
     readSyncVersions.update(() => next);
     log(`turn.started re-materialised ${resynced.length} advanced silo(s) [${resynced.join(", ")}] for ${p.key}`);
+  } else if (removed.length > 0) {
+    readSyncVersions.update(() => next);
   }
-  if (healed.length > 0 && sandbox) {
+  if ((healed.length > 0 || removed.length > 0) && sandbox) {
     failedReadSilos.update(() => stillFailed);
     try {
       const okReads = plan.reads.filter((r) => !stillFailed[tierId(r.tier)]);
@@ -403,7 +456,11 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
       await sandbox.run({ command: unlockCommand("memory/MEMORY.md") });
       await sandbox.writeTextFile({ path: "memory/MEMORY.md", content: renderMemoryIndex(okReads, failedNames) });
       await lock(sandbox, "memory/MEMORY.md");
-      log(`turn.started healed ${healed.length} previously-failed silo(s) [${healed.join(", ")}]; refreshed memory index for ${p.key}`);
+      log(
+        `turn.started refreshed the memory index for ${p.key}` +
+          `${healed.length ? ` — healed ${healed.length} previously-failed silo(s) [${healed.join(", ")}]` : ""}` +
+          `${removed.length ? ` — dropped ${removed.length} un-planned tier(s) [${removed.join(", ")}]` : ""}`,
+      );
       try {
         await appendAudit({
           org: p.org,
@@ -412,13 +469,17 @@ async function resyncSupervisorReads(ctx: HookContext): Promise<void> {
           surface: p.surface,
           principalId: binding.principalId,
           action: "memory.index_change",
-          detail: { healed: healedNames, ...(ctx.channel?.continuationToken ? { continuationToken: ctx.channel.continuationToken } : {}) },
+          detail: {
+            healed: healedNames,
+            ...(removedNames.length ? { removed: removedNames } : {}),
+            ...(ctx.channel?.continuationToken ? { continuationToken: ctx.channel.continuationToken } : {}),
+          },
         });
       } catch (err) {
         log(`turn.started index_change audit skipped (index already refreshed on disk): ${String(err)}`);
       }
     } catch (err) {
-      log(`turn.started index refresh after heal failed (silos still materialised): ${String(err)}`);
+      log(`turn.started index refresh failed (silo materialisation itself already applied): ${String(err)}`);
     }
   }
 }
@@ -522,6 +583,9 @@ export default defineHook({
           const tVersions = timing ? timing.now() : 0;
           await recordReadVersions(p, okReads);
           failedReadSilos.update(() => failedTiers);
+          materialisedTiers.update(() =>
+            Object.fromEntries(okReads.map((r) => [tierId(r.tier), { tier: r.tier, silo: r.silo.name, readOnly: r.readOnly === true }])),
+          );
           warnGitlessReadSilos(plan.reads);
           timing?.mark("versions", tVersions);
         }

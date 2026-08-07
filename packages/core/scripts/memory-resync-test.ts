@@ -90,6 +90,14 @@ class FakeSandbox {
       const rels = [...this.files.keys()].filter((k) => k.startsWith(`${dir}/`)).map((k) => k.slice(dir.length + 1));
       return { stdout: rels.join("\n") };
     }
+    if (command.startsWith("rm -rf ")) {
+      for (const m of command.matchAll(/'([^']+)'/g)) {
+        const dir = m[1];
+        for (const k of [...this.files.keys()]) if (k === dir || k.startsWith(`${dir}/`)) this.files.delete(k);
+        this.locked.delete(dir);
+      }
+      return { stdout: "" };
+    }
     if (command.startsWith("rm -f ")) {
       for (const m of command.matchAll(/'([^']+)'/g)) this.files.delete(m[1]);
       return { stdout: "" };
@@ -190,27 +198,29 @@ const flakyProvider: MemoryProvider = {
 };
 registerProvider(flakyProvider);
 
+let domains: { name: string; channels?: string[]; match?: string; memory?: string[]; ambientSupervisor?: boolean }[] = [
+  {
+    name: "payments",
+    channels: ["slack/T1/C1"],
+    memory: ["brain-silo", "baseline-silo", "noprobe-silo"],
+    ambientSupervisor: true,
+  },
+  {
+    name: "eng",
+    channels: ["slack/T1/C2"],
+    memory: ["eng-silo"],
+    ambientSupervisor: true,
+  },
+  { name: "heal", channels: ["slack/T1/C3"], memory: ["flaky-silo"], ambientSupervisor: true },
+  { name: "public", match: "public", memory: ["public-silo"] },
+];
+
 registerConfig({
   loadBundles: () => [],
   loadBindings: () => [],
   pluginRegistry: {},
   skillContent: {},
-  loadDomains: () => [
-    {
-      name: "payments",
-      channels: ["slack/T1/C1"],
-      memory: ["brain-silo", "baseline-silo", "noprobe-silo"],
-      ambientSupervisor: true,
-    },
-    {
-      name: "eng",
-      channels: ["slack/T1/C2"],
-      memory: ["eng-silo"],
-      ambientSupervisor: true,
-    },
-    { name: "heal", channels: ["slack/T1/C3"], memory: ["flaky-silo"], ambientSupervisor: true },
-    { name: "public", match: "public", memory: ["public-silo"] },
-  ],
+  loadDomains: () => domains,
   loadSilos: () => [
     { name: "brain-silo", provider: "fake-brain" },
     { name: "baseline-silo", provider: "fake-ro", readOnly: true },
@@ -511,4 +521,54 @@ process.env.OE_WINDOW_TOPOLOGY = "1";
   );
 }
 
-console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistOnEnd + append still lands)\n`);
+const DEFAULT_PAYMENTS_MEMORY = ["brain-silo", "baseline-silo", "noprobe-silo"];
+const setPaymentsMemory = (memory: string[]) => {
+  domains = domains.map((d) => (d.name === "payments" ? { ...d, memory } : d));
+};
+{
+  const s = makeSession("sup-drop", SUP_TOKEN);
+  await fire(s, "session.started");
+  ok(!!s.sandbox.files.get("memory/brain-silo/MEMORY.md"), "G4 setup: the writable brain is materialised");
+  ok(!!s.sandbox.files.get("memory/baseline-silo/MEMORY.md"), "G4 setup: the read-only baseline is materialised (and locked)");
+  ok(s.sandbox.locked.has("memory/baseline-silo"), "G4 setup: the read-only tier is LOCKED — the removal has to unlock before it can rm");
+  ok((s.sandbox.files.get("memory/MEMORY.md") ?? "").includes("baseline-silo"), "G4 setup: the index lists it");
+
+  setPaymentsMemory(["brain-silo", "noprobe-silo"]);
+  await fire(s, "turn.started");
+
+  ok(s.sandbox.files.get("memory/baseline-silo/MEMORY.md") === undefined, "🔴 G4: a tier that dropped OUT of the plan is GONE from the live sandbox — un-vouching a surface no longer leaves its silo readable for the rest of the session");
+  ok([...s.sandbox.files.keys()].every((k) => !k.startsWith("memory/baseline-silo")), "G4: the whole tier dir goes, not just the files the last sync happened to know about");
+  ok(!s.sandbox.locked.has("memory/baseline-silo"), "G4: the removed read-only tier's lock entry goes with the dir (it was unlocked to be deleted, and there is nothing left to re-lock)");
+  ok(!!s.sandbox.files.get("memory/brain-silo/MEMORY.md"), "🔴 G4: a STILL-PLANNED tier is untouched (the removal is a diff, not a wipe)");
+  ok(!!s.sandbox.files.get("memory/noprobe-silo/MEMORY.md"), "G4: the probe-less silo — which the refresh half never touches — is also untouched by the removal");
+
+  const idx = s.sandbox.files.get("memory/MEMORY.md") ?? "";
+  ok(!idx.includes("baseline-silo"), "G4: the on-disk index stops listing the removed silo (otherwise the agent keeps citing a map to nothing and reads the empty grep as 'we never knew that')");
+  ok(idx.includes("brain-silo"), "G4: …and still lists the silos that remain");
+  const change = (await readAudit({ action: "memory.index_change" })).find((e) => Array.isArray((e.detail as { removed?: unknown })?.removed));
+  ok((change?.detail as { removed?: string[] })?.removed?.includes("baseline-silo") === true, "G4: a memory.index_change row carries the removal — the wake-delta PUSH is the only signal the model gets that its frozen index snapshot moved");
+  ok(JSON.stringify(change?.detail ?? {}).includes("baseline-silo") && !JSON.stringify(change?.detail ?? {}).includes("# baseline"), "G4: the row carries silo NAMES only, never memory content (the taint rule)");
+
+  const runs = s.sandbox.runs;
+  const writes = s.sandbox.writes;
+  await fire(s, "turn.started");
+  ok(s.sandbox.runs === runs && s.sandbox.writes === writes, "G4: a second turn on the same narrowed plan takes ZERO sandbox actions — the diff is against what is MATERIALISED, so it cannot re-remove or thrash");
+}
+
+{
+  setPaymentsMemory(DEFAULT_PAYMENTS_MEMORY);
+  const s = makeSession("sup-empty", SUP_TOKEN);
+  await fire(s, "session.started");
+  ok([...s.sandbox.files.keys()].some((k) => k.startsWith("memory/brain-silo")), "G4 empty-plan setup: silos are materialised");
+  setPaymentsMemory([]);
+  await fire(s, "turn.started");
+  ok(
+    [...s.sandbox.files.keys()].every((k) => k === "memory/MEMORY.md"),
+    "🔴 G4: a plan that collapses to EMPTY un-materialises EVERYTHING — the `no reads ⇒ return early` path no longer strands a whole sandbox of memory",
+  );
+  ok((s.sandbox.files.get("memory/MEMORY.md") ?? "").length > 0, "G4: the index is still written (an empty map, not a stale one)");
+  ok(!(s.sandbox.files.get("memory/MEMORY.md") ?? "").includes("brain-silo"), "G4: …and it names none of the removed silos");
+  setPaymentsMemory(DEFAULT_PAYMENTS_MEMORY);
+}
+
+console.log(`\n✓ memory-resync: ${n} assertions passed (concurrent write visible on turn.started, version-gated skip, read-only relock, probe-less skip, edit-preserving refresh, non-supervisor + gate-off byte-identical; FIX-1 unlock-leak re-lock; FIX-2 delete propagation + no persist-resurrection + agent-edit preserved + read-only ghost removal; trust/domain isolation; failed-silo heal index refresh; OPE-245 destructive-write floor wired into persistOnEnd + append still lands; OPE-300 G4 un-materialisation of dropped tiers)\n`);

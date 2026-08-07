@@ -57,6 +57,11 @@ export async function removeTierFiles(
   await sandbox.run({ command: `rm -f ${quoted}` });
 }
 
+export async function removeTierDir(sandbox: SandboxSession, tier: Tier): Promise<void> {
+  const dir = tierSandboxDir(tier);
+  await sandbox.run({ command: `rm -rf '${dir.replace(/'/g, "'\\''")}'` });
+}
+
 export async function readTierFile(
   sandbox: SandboxSession,
   tier: Tier,
