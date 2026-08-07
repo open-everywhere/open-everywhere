@@ -27,7 +27,7 @@ function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallR
   const saveVerb = delegated
     ? `to save something, delegate it THIS turn — \`${recall}\`${recall === "agent" ? ` with \`mode: "sync"\`` : ""} and a brief of exactly this shape: ` +
       `"Call remember to save this fact for the team (category \\"note\\", or \\"decision\\" if it records a choice): <the fact, verbatim>". ` +
-      `A fact is not a standing rule — never frame it as one. Report it saved only after the worker confirms the write`
+      `A fact is not a standing rule — never frame it as one. Only after the worker confirms the write, reply naming what was saved ("Saved: <the fact>") — never before, and never a bare "Done."`
     : "save durable facts here with the `remember` tool";
   if (!readOnly) return `writable — ${saveVerb}`;
   if (isProjectedCache(silo)) {
