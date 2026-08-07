@@ -3,7 +3,16 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkConsequenceRegistry, TOOL_CONSEQUENCE, type ConsequenceEntry, type ToolSource } from "../agent/access/consequence.js";
+import {
+  checkActionKindRegistry,
+  checkApprovalSites,
+  checkConsequenceRegistry,
+  findEveApprovalSites,
+  NON_TOOL_ACTION_KINDS,
+  TOOL_CONSEQUENCE,
+  type ConsequenceEntry,
+  type ToolSource,
+} from "../agent/access/consequence.js";
 import { actionKind } from "../agent/approvals/actions.js";
 import "../agent/approvals/flow.js";
 
@@ -156,6 +165,51 @@ firesWith(
 );
 
 {
+  const chkD = (
+    tools: ToolSource[],
+    registry: Record<string, ConsequenceEntry>,
+    modules: Map<string, string>,
+  ) => checkConsequenceRegistry(tools, [], policyOf, registry, [], modules);
+
+  const toolSrc = { name: "report", source: "async execute(i, ctx) { const s = resolveScope(ctx, i.scope); }" };
+  const row: ConsequenceEntry = { tier: "open", via: { kind: "delegated-roles", helper: "resolveScope", module: "pkg/scope.ts" }, reason: "x" };
+  const gatedModule = new Map([["pkg/scope.ts", 'export function resolveScope(ctx) { if (s === "org") requireOrgAdmin(ctx); }']]);
+
+  ok(chkD([toolSrc], { report: row }, gatedModule).length === 0, "delegated-roles: a tool that calls its declared helper, whose module really gates, is clean");
+
+  firesWith(
+    chkD([{ name: "report", source: "async execute() { return rows(); }" }], { report: row }, gatedModule),
+    "never calls it",
+    "delegated-roles: a tool that DOESN'T call its declared helper FAILS — the row would otherwise point at a gate the tool never reaches",
+  );
+  firesWith(
+    chkD([toolSrc], { report: row }, new Map([["pkg/scope.ts", "export function resolveScope(ctx) { return { org: ctx.org }; }"]])),
+    "the gate it points at is gone",
+    "delegated-roles: 🔴 a module that STOPPED gating FAILS — this is the direction a per-file scan can never see, and the whole reason the delegation is declared",
+  );
+  firesWith(
+    chkD([toolSrc], { report: row }, new Map()),
+    "refusing to pass a gate nobody read",
+    "delegated-roles: an unsupplied module FAILS rather than passing — 'we could not read the gate' must not produce the same green as 'the gate is there'",
+  );
+  firesWith(
+    chkD([toolSrc], { report: { ...row, tier: "gate:member" } }, gatedModule),
+    "the tier is either gate:admin",
+    "delegated-roles: a gate:member tier FAILS — the delegated mechanism enforces ADMIN standing, so member would be a claim the gate cannot deliver",
+  );
+
+  firesWith(
+    chkD(
+      [toolSrc, { name: "sneaky", source: "async execute(ctx) { resolveScope(ctx, \"org\"); return all(); }" }],
+      { report: row, sneaky: { tier: "open", via: { kind: "none" }, reason: "x" } },
+      gatedModule,
+    ),
+    'calls "resolveScope", which "report" declares as a cross-file admin gate',
+    "delegated-roles: 🔴 a SECOND tool calling the same helper while declaring open/none FAILS — otherwise the hole just reopens one file over",
+  );
+}
+
+{
   firesWith(
     chk([], policyOf, {}, ["web_search"]),
     'framework tool "web_search" is mounted by eve at runtime but has NO consequence declaration',
@@ -182,6 +236,55 @@ firesWith(
 }
 
 {
+  const toolReg: Record<string, ConsequenceEntry> = {
+    t: { tier: "gate:member", via: { kind: "action-kind", action: "test.member" }, reason: "x" },
+  };
+  const pinned = { "test.orphan": { tier: "gate:member" as const, reason: "raised by a hook, not a verb" } };
+  const pol = (a: string) => ({ "test.member": "member" as const, "test.orphan": "member" as const })[a];
+
+  ok(checkActionKindRegistry(["test.member", "test.orphan"], pol, toolReg, pinned).length === 0, "action-kinds: a kind proposed by a tiered tool plus a pinned orphan is clean");
+  firesWith(
+    checkActionKindRegistry(["test.member", "test.loose"], pol, toolReg, pinned),
+    'no tool proposes it and it has no row in NON_TOOL_ACTION_KINDS',
+    "action-kinds: 🔴 a registered kind nothing proposes and nothing pins FAILS — a live approval bar nobody recorded a decision about",
+  );
+  firesWith(
+    checkActionKindRegistry(["test.member", "test.orphan"], (a) => (a === "test.orphan" ? "admin" : "member"), toolReg, pinned),
+    "the declaration and the runtime bar disagree",
+    "action-kinds: a pinned tier that no longer matches the kind's live ApproverPolicy FAILS — the same cross-check the tool rows get",
+  );
+  firesWith(
+    checkActionKindRegistry(["test.member"], pol, toolReg, pinned),
+    "no such kind is registered",
+    "action-kinds: a STALE pin FAILS — a pin for a kind that is gone reads as coverage and is the opposite",
+  );
+  firesWith(
+    checkActionKindRegistry(["test.member"], pol, toolReg, { "test.member": { tier: "gate:member", reason: "x" } }),
+    "is declared TWICE",
+    "action-kinds: a kind declared in BOTH tables FAILS — two declarations for one bar are free to drift apart",
+  );
+}
+
+{
+  const src = 'export default defineMcpClientConnection({\n  auth: a,\n  approval: connectorApprovalPolicy(),\n});';
+  const sites = findEveApprovalSites("agent/connections/x.ts", src);
+  ok(sites.length === 1 && sites[0]!.line === 3, "approval-sites: an eve-native `approval:` outside a tool file is FOUND, at its line");
+  ok(findEveApprovalSites("agent/connections/x.ts", "  approval: never(),").length === 0, "approval-sites: `approval: never()` is not a site — it is the explicit ABSENCE of a policy, and the tool arm agrees (same predicate)");
+
+  firesWith(
+    checkApprovalSites(sites, {}),
+    "must be accounted for in NON_TOOL_APPROVAL_SITES",
+    "approval-sites: 🔴 an unaccounted-for site FAILS — an eve approval has no approver-standing check, so a new one on a consequential path is exactly what must not appear silently",
+  );
+  ok(checkApprovalSites(sites, { "agent/connections/x.ts": "the connector plane's defence-in-depth" }).length === 0, "approval-sites: …and an accounted-for one is clean");
+  firesWith(
+    checkApprovalSites([], { "agent/connections/gone.ts": "was a thing" }),
+    "no longer contains an `approval:` site",
+    "approval-sites: a stale entry FAILS — a reason nobody will read again still reads as coverage",
+  );
+}
+
+{
   const toolsDir = join(dirname(fileURLToPath(import.meta.url)), "../agent/tools");
   const tools: ToolSource[] = readdirSync(toolsDir)
     .filter((f) => f.endsWith(".ts") && !f.startsWith("_"))
@@ -200,7 +303,15 @@ firesWith(
   const subagentNames = existsSync(subagentDir)
     ? readdirSync(subagentDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
     : [];
-  const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry, subagentNames);
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const delegatedModules = new Map<string, string>();
+  for (const entry of Object.values(TOOL_CONSEQUENCE)) {
+    if (entry.via.kind === "delegated-roles" && !delegatedModules.has(entry.via.module)) {
+      delegatedModules.set(entry.via.module, readFileSync(join(repoRoot, entry.via.module), "utf8"));
+    }
+  }
+  ok(delegatedModules.size >= 2, `the registry really does declare cross-file gates (saw ${delegatedModules.size} module(s)) — zero would make the arm below vacuous`);
+  const problems = checkConsequenceRegistry(tools, FRAMEWORK_TOOL_NAMES, (action) => actionKind(action)?.policy, coreRegistry, subagentNames, delegatedModules);
   ok(problems.length === 0, `the REAL tool set + framework tools match the registry (problems: ${JSON.stringify(problems)})`);
   ok(tools.length >= 37, `the real scan actually covered the tools dir (saw ${tools.length})`);
   ok(FRAMEWORK_TOOL_NAMES.length >= 10, `the eve framework enumeration is populated (saw ${FRAMEWORK_TOOL_NAMES.length})`);
@@ -216,6 +327,16 @@ firesWith(
   ok(actionKind("pr.open")?.policy === "member", "the pr.open kind is registered with member policy");
   ok(TOOL_CONSEQUENCE.set_spend_limit.tier === "gate:admin", "set_spend_limit is declared gate:admin");
   ok(TOOL_CONSEQUENCE.reply.tier === "open", "reply is declared open (same-room, fails all three rubric axes)");
+
+  for (const kind of ["session.checkpoint", "memory.float-undo", "executor.op"]) {
+    const pin = NON_TOOL_ACTION_KINDS[kind];
+    ok(pin?.tier === "gate:member", `${kind} is pinned gate:member as a non-tool ActionKind`);
+    ok((pin?.reason.length ?? 0) > 60, `${kind}'s pin carries a real reason, not a rubber stamp`);
+  }
+  ok(
+    Object.keys(NON_TOOL_ACTION_KINDS).every((k) => TOOL_CONSEQUENCE[k] === undefined),
+    "no non-tool ActionKind name collides with a TOOL_CONSEQUENCE tool slug — the two tables address different things and must not overlap",
+  );
 
   for (const [tool, kind] of [["delete_skill", "skill.delete"], ["cancel_routine", "routine.cancel"]] as const) {
     const entry = TOOL_CONSEQUENCE[tool];

@@ -14,6 +14,10 @@ export function actionKind(kind: string): ActionKind<any> | undefined {
   return REGISTRY.get(kind);
 }
 
+export function registeredActionKinds(): string[] {
+  return [...REGISTRY.keys()].sort();
+}
+
 export function summarizeFrozenRow(row: PendingActionRow): string[] {
   const kindDef = actionKind(row.kind);
   if (!kindDef) return [`(no registered ActionKind for "${row.kind}")`];

@@ -68,7 +68,12 @@ export type GatingMechanism =
   | { readonly kind: "none" }
   | { readonly kind: "action-kind"; readonly action: string }
   | { readonly kind: "admin-roles" }
-  | { readonly kind: "eve-hitl" };
+  | { readonly kind: "eve-hitl" }
+  | {
+      readonly kind: "delegated-roles";
+      readonly helper: string;
+      readonly module: string;
+    };
 
 export interface ConsequenceEntry {
   readonly tier: ConsequenceTier;
@@ -77,6 +82,11 @@ export interface ConsequenceEntry {
 }
 
 const open = (reason: string): ConsequenceEntry => ({ tier: "open", via: { kind: "none" }, reason });
+const delegated = (helper: string, module: string, reason: string): ConsequenceEntry => ({
+  tier: "open",
+  via: { kind: "delegated-roles", helper, module },
+  reason,
+});
 const member = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, reason });
 const admin = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, reason });
 
@@ -135,10 +145,20 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   read_slack_channel: open("read of a channel the bot is already in, into that conversation"),
   read_slack_thread: open("same-surface thread read"),
   session_cost: open("read of this session's own spend"),
-  spend_report: open("aggregate read; the org-wide scope additionally requires org-admin inside spend/reporting.ts's resolveReportScope"),
-  usage_report: open("aggregate read; same shared resolveReportScope gate as spend_report for org scope"),
-  query_analytics: open(
-    "constrained analytics read (OPE-66): the model forms a structured query object (never SQL) over a fixed schema; org scope + rows mode are gated inside via access/analytics-scope.ts's resolveAnalyticsScope, and tainted/ambient turns degrade to aggregates — same in-tool-gating shape as spend_report. Every call + refusal is audited (analytics.query / analytics.refused)",
+  spend_report: delegated(
+    "resolveReportScope",
+    "packages/core/agent/spend/reporting.ts",
+    "aggregate read; the org-wide scope additionally requires org-admin inside spend/reporting.ts's resolveReportScope. DECLARED as delegated-roles rather than left as an unqualified `open` (OPE-295 item 5): the gate is one import away, so the per-file scan could not see it, and a row that neither names the helper nor the module would read identically to a tool that had quietly stopped gating",
+  ),
+  usage_report: delegated(
+    "resolveReportScope",
+    "packages/core/agent/spend/reporting.ts",
+    "aggregate read; the SAME shared resolveReportScope gate as spend_report for org scope — declared, so the two cannot drift apart and neither can silently lose it",
+  ),
+  query_analytics: delegated(
+    "resolveAnalyticsScope",
+    "packages/core/agent/access/analytics-scope.ts",
+    "constrained analytics read (OPE-66): the model forms a structured query object (never SQL) over a fixed schema; org scope + rows mode are gated inside via access/analytics-scope.ts's resolveAnalyticsScope, and tainted/ambient turns degrade to aggregates — same in-tool-gating shape as spend_report, and declared for the same reason. Every call + refusal is audited (analytics.query / analytics.refused)",
   ),
   web_fetch: open("read via the egress allowlist; default-deny hosts bound what it can reach"),
 
@@ -290,6 +310,121 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   },
 };
 
+export interface ActionKindEntry {
+  readonly tier: Exclude<ConsequenceTier, "open">;
+  readonly reason: string;
+}
+
+export const NON_TOOL_ACTION_KINDS: Readonly<Record<string, ActionKindEntry>> = {
+  "session.checkpoint": {
+    tier: "gate:member",
+    reason:
+      "the SOFT session cost checkpoint (OPE-62): past a configured per-session spend threshold, consequential work pauses on a card until a human confirms continuing. Raised by the spend path, not by a verb — which is precisely why it needs pinning here: the tier is a real decision (a member may unblock their own session's spend, an admin bar would make an ordinary long task need an admin) and nothing else in the tree records that it was made",
+  },
+  "memory.float-undo": {
+    tier: "gate:member",
+    reason:
+      "the ❌-reaction undo of a FLOATED memory write (Stage T3): removes the bullet the float notice named. Raised by a reaction, so there is no tool source to scan. Member is the symmetric bar to the write it reverses — the float itself is ungated, and gating the undo harder than the write would make the reversible half the expensive one",
+  },
+  "executor.op": {
+    tier: "gate:member",
+    reason:
+      "a connector WRITE that paused inside Executor and resumes on the click (connections/executor-approval-bridge.ts). Registered by that module rather than by a tool because the op is eve-injected — it has no authored file anywhere. Member, matching the connector-op plane's own write tier (classifyConnectorOp): this is the one connector-write path that DOES get a frozen-args card plus a verified clicker, and the honest note is that the eve-injected path for the same effect gets only a session-scoped confirmation (the split-brain recorded at the top of this file). Pinning it here is what stops the stronger of the two bars being lowered silently",
+  },
+};
+
+export function checkActionKindRegistry(
+  registeredKinds: readonly string[],
+  policyOf: (action: string) => "admin" | "member" | undefined,
+  toolRegistry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
+  nonToolRegistry: Readonly<Record<string, ActionKindEntry>> = NON_TOOL_ACTION_KINDS,
+): string[] {
+  const problems: string[] = [];
+  const boundToTool = new Map<string, string>();
+  for (const [tool, entry] of Object.entries(toolRegistry)) {
+    if (entry.via.kind === "action-kind") boundToTool.set(entry.via.action, tool);
+  }
+
+  for (const kind of registeredKinds) {
+    const tool = boundToTool.get(kind);
+    const pinned = nonToolRegistry[kind];
+    if (tool !== undefined && pinned !== undefined) {
+      problems.push(
+        `ActionKind "${kind}" is declared TWICE — by tool "${tool}" in TOOL_CONSEQUENCE and again in NON_TOOL_ACTION_KINDS. One kind, one declaration: remove the non-tool row, whose cross-check would otherwise be free to disagree with the tool's`,
+      );
+      continue;
+    }
+    if (tool !== undefined) continue;
+    if (pinned === undefined) {
+      problems.push(
+        `ActionKind "${kind}" is registered but no tool proposes it and it has no row in NON_TOOL_ACTION_KINDS (access/consequence.ts) — a live approval bar that nothing records a decision about. Add a row (fail-closed: there is deliberately no default)`,
+      );
+      continue;
+    }
+    const policy = policyOf(kind);
+    const expected = pinned.tier === "gate:admin" ? "admin" : "member";
+    if (policy !== expected) {
+      problems.push(
+        `ActionKind "${kind}" is pinned ${pinned.tier} in NON_TOOL_ACTION_KINDS but registers ApproverPolicy "${policy ?? "(none)"}" — the declaration and the runtime bar disagree`,
+      );
+    }
+  }
+
+  for (const kind of Object.keys(nonToolRegistry)) {
+    if (!registeredKinds.includes(kind)) {
+      problems.push(
+        `NON_TOOL_ACTION_KINDS pins "${kind}" but no such kind is registered — remove the row or fix the name (a stale pin reads as coverage and is the opposite)`,
+      );
+    }
+  }
+  return problems;
+}
+
+export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
+  "packages/core/agent/connections/notion.ts":
+    "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself",
+  "packages/core/agent/plugins/extract.ts":
+    "NOT a live policy: the match is inside a TEMPLATE LITERAL — the `approval: once()` line that the plugin extractor GENERATES into a scaffolded `agent/connections/<slug>.ts`. It is reviewed where it lands, by whoever reads the generated file, and the header of that generated file says so",
+  "packages/core/agent/access/window-gated.ts":
+    "NOT a policy: `replayStepNames` returns `{ execute, approval }` — eve's deterministic replay STEP NAMES for a dynamic tool entry. The value is a string identifier, and the property is named `approval` because that is what eve calls the step",
+};
+
+export interface ApprovalSite {
+  readonly file: string;
+  readonly line: number;
+}
+
+export function findEveApprovalSites(file: string, source: string): ApprovalSite[] {
+  const sites: ApprovalSite[] = [];
+  source.split("\n").forEach((line, i) => {
+    if (EVE_HITL.test(line)) sites.push({ file, line: i + 1 });
+  });
+  return sites;
+}
+
+export function checkApprovalSites(
+  sites: readonly ApprovalSite[],
+  registry: Readonly<Record<string, string>> = NON_TOOL_APPROVAL_SITES,
+): string[] {
+  const problems: string[] = [];
+  const found = new Set(sites.map((s) => s.file));
+  for (const site of sites) {
+    if (registry[site.file] === undefined) {
+      problems.push(
+        `${site.file}:${site.line} sets an eve-native \`approval:\` outside agent/tools/, where lint:consequence cannot reach it — an eve approval has NO approver-standing check (design §7.2), so it must be accounted for in NON_TOOL_APPROVAL_SITES (access/consequence.ts) with what it actually is, or moved onto a tool file where the registry can tier it`,
+      );
+    }
+  }
+  for (const file of Object.keys(registry)) {
+    if (!found.has(file)) {
+      problems.push(
+        `NON_TOOL_APPROVAL_SITES accounts for "${file}" but it no longer contains an \`approval:\` site — remove the entry (a stale reason reads as coverage of something that is gone)`,
+      );
+    }
+  }
+  return problems;
+}
+
 export interface ToolSource {
   readonly name: string;
   readonly source: string;
@@ -305,10 +440,15 @@ export function checkConsequenceRegistry(
   policyOf: (action: string) => "admin" | "member" | undefined,
   registry: Readonly<Record<string, ConsequenceEntry>> = TOOL_CONSEQUENCE,
   subagentNames: readonly string[] = [],
+  moduleSources: ReadonlyMap<string, string> = new Map(),
 ): string[] {
   const problems: string[] = [];
   const seen = new Set<string>();
   const authored = new Set(tools.map((t) => t.name));
+  const delegatedHelpers = new Map<string, string>();
+  for (const [name, entry] of Object.entries(registry)) {
+    if (entry.via.kind === "delegated-roles") delegatedHelpers.set(entry.via.helper, name);
+  }
 
   for (const tool of tools) {
     seen.add(tool.name);
@@ -333,6 +473,13 @@ export function checkConsequenceRegistry(
           problems.push(
             `tool "${tool.name}" is declared open/ungated but its source carries a gating construct (${[hasPropose && "requestApproval", hasRoles && "admin-roles check", hasHitl && "eve approval:"].filter(Boolean).join(", ")}) — update its TOOL_CONSEQUENCE row so the change is a visible diff`,
           );
+        }
+        for (const [helper, declaredBy] of delegatedHelpers) {
+          if (new RegExp(`\\b${helper}\\s*\\(`).test(tool.source)) {
+            problems.push(
+              `tool "${tool.name}" is declared open/ungated but calls "${helper}", which "${declaredBy}" declares as a cross-file admin gate (delegated-roles) — declare it the same way so the gate is visible in this table, or stop calling it`,
+            );
+          }
         }
         break;
       case "action-kind": {
@@ -365,6 +512,29 @@ export function checkConsequenceRegistry(
           problems.push(`tool "${tool.name}" declares an admin-roles gate but its source has no requireOrgAdmin/requireDomainAdminOrOrg/adminControlRoles call (under-gated)`);
         }
         break;
+      case "delegated-roles": {
+        if (entry.tier !== "open" && entry.tier !== "gate:admin") {
+          problems.push(
+            `tool "${tool.name}" declares ${entry.tier} via delegated-roles — that mechanism enforces admin standing on one branch, so the tier is either gate:admin (it gates everything) or open (a partial, per-scope check)`,
+          );
+        }
+        if (!new RegExp(`\\b${entry.via.helper}\\s*\\(`).test(tool.source)) {
+          problems.push(
+            `tool "${tool.name}" declares a delegated gate through "${entry.via.helper}" but its source never calls it — the row points at a gate the tool doesn't reach (under-gated)`,
+          );
+        }
+        const moduleSource = moduleSources.get(entry.via.module);
+        if (moduleSource === undefined) {
+          problems.push(
+            `tool "${tool.name}" delegates its gate to "${entry.via.module}", whose source was not supplied — refusing to pass a gate nobody read (a missing module and an ungated one must not look the same)`,
+          );
+        } else if (!ADMIN_ROLES.test(moduleSource)) {
+          problems.push(
+            `tool "${tool.name}" delegates its gate to "${entry.via.module}", but that module has no requireOrgAdmin/requireDomainAdminOrOrg/adminControlRoles call — the gate it points at is gone, and this tool is now genuinely ungated`,
+          );
+        }
+        break;
+      }
       case "eve-hitl":
         if (entry.tier !== "open") {
           problems.push(
