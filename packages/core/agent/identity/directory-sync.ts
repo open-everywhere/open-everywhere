@@ -5,7 +5,7 @@ import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, su
 import { principalKey } from "./principal-key.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
-import { connectorLinkSetVaultEnabled, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
+import { directoryLinkSetVaultArmed, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
 import type { LinkSetRow, LinkedIdRow } from "../operational/store.js";
 
 function log(msg: string): void {
@@ -24,13 +24,7 @@ function accessReferencedSetsFromConfig(): Set<string> {
   }
 }
 
-export function directoryLinkSetVaultArmed(env: NodeJS.ProcessEnv = process.env): boolean {
-  try {
-    return connectorLinkSetVaultEnabled(env);
-  } catch {
-    return true;
-  }
-}
+export { directoryLinkSetVaultArmed };
 
 export type DirectoryAutoConfirm = "off" | "attested";
 

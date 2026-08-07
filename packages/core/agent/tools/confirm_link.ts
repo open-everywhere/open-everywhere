@@ -7,6 +7,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { principalKey } from "../identity/principal-key.js";
 import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
+import { notifyLinkSetMembers } from "../channels/post-arms.js";
 import { pendingDirectorySuggestionsFor } from "../identity/directory-sync.js";
 
 export default defineTool({
@@ -83,9 +84,22 @@ export default defineTool({
       handle: principalKey(binding.platform, actor),
     });
     if (!result.ok) throw new Error(result.reason);
+    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, nativeId: actor });
     return { decided: "confirmed", claimant, linkSetId: result.linkSetId, note: result.note };
   },
 });
+
+async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, initiator: { platform: string; nativeId: string }): Promise<void> {
+  const n = await notifyLinkSetMembers(
+    org,
+    linkSetId,
+    `**${joined}** was just linked to your identity, so it now speaks as you across the surfaces I ` +
+      `can see.\n\nIf that was you, nothing to do. If it was not, remove it now — ask me to unlink ` +
+      `${joined} — and tell whoever runs this workspace.`,
+    { except: [initiator] },
+  );
+  if (n > 0) console.log(`[open-everywhere:identity] link-set ${linkSetId} grew by ${joined} — notified ${n} other member account(s).`);
+}
 
 async function decideDirectorySuggestions(input: {
   readonly org: string;
@@ -139,6 +153,7 @@ async function decideDirectorySuggestions(input: {
   if (confirmed.length === 0) {
     throw new Error(`could not confirm ${failed.join("; ")}`);
   }
+  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), { platform: input.platform, nativeId: input.actor });
   return {
     decided: "confirmed",
     accounts: confirmed,

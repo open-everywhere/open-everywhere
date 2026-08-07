@@ -5,6 +5,7 @@ import { principalKey } from "./principal-key.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import { sharedVaultSubject } from "./oauth-vault-share.js";
 import { purgeSubjectCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
+import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
 
@@ -211,6 +212,7 @@ export async function ratifyLinkChallenge(input: {
     linkSetId,
     linked: [principalKey(initiator.platform, initiator.nativeId), principalKey(claimed.platform, claimed.nativeId)],
     evidence: evidenceLabel(evidence),
+    ...(await linkSetBlastRadius(input.org, linkSetId)),
   });
   return { ok: true, linkSetId, note: `linked ${principalKey(claimed.platform, claimed.nativeId)} to ${principalKey(initiator.platform, initiator.nativeId)}.` };
 }
@@ -300,6 +302,7 @@ export async function confirmLinkedId(input: {
     linkSetId: row.linkSetId,
     linked: [principalKey(input.account.platform, input.account.nativeId)],
     evidence: label,
+    ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
   return { ok: true, linkSetId: row.linkSetId, note: `confirmed ${principalKey(input.account.platform, input.account.nativeId)}.` };
 }
@@ -328,6 +331,7 @@ export async function unlinkOwnId(input: {
     linkSetId: row.linkSetId,
     unlinked: principalKey(target.platform, target.nativeId),
     at,
+    ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
   return { ok: true, linkSetId: row.linkSetId, note: `unlinked ${principalKey(target.platform, target.nativeId)}.` };
 }
@@ -391,6 +395,15 @@ export async function purgeLinkSetCredentials(input: { readonly org: string; rea
   });
   if (purge.failed) return { ok: false, reason: `credential purge for link-set "${input.linkSetId}" failed — nothing was destroyed; check the vault/adapter and retry.` };
   return { ok: true, linkSetId: input.linkSetId, purged: purge.purged, note: `purged ${purge.purged} credential(s) for link-set ${input.linkSetId} (set is ${set.status}).` };
+}
+
+async function linkSetBlastRadius(org: string, linkSetId: string): Promise<{ memberCount: number; vaultArmed: boolean }> {
+  const vaultArmed = directoryLinkSetVaultArmed();
+  try {
+    return { memberCount: (await expandLinkSet(org, linkSetId)).length, vaultArmed };
+  } catch {
+    return { memberCount: -1, vaultArmed };
+  }
 }
 
 async function auditLink(org: string, platform: string, surfaceKey: string | undefined, principalId: string, action: string, detail: Record<string, unknown>): Promise<void> {

@@ -17,6 +17,14 @@ export function connectorLinkSetVaultEnabled(env: NodeJS.ProcessEnv = process.en
   return armed(OE_CONNECTOR_LINKSET_VAULT_ENV, env);
 }
 
+export function directoryLinkSetVaultArmed(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    return connectorLinkSetVaultEnabled(env);
+  } catch {
+    return true;
+  }
+}
+
 export const OE_CONNECTOR_OP_TIERING_ENV = "OE_CONNECTOR_OP_TIERING";
 
 export function connectorOpTieringEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

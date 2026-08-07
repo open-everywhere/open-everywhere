@@ -5,6 +5,7 @@ import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { normalizePlatform } from "../identity/platform.js";
 import { unlinkOwnId } from "../identity/link-store.js";
+import { canDeliverDirectMessage, dispatchDirectMessage, notifyLinkSetMembers } from "../channels/post-arms.js";
 
 export default defineTool({
   description:
@@ -38,6 +39,22 @@ export default defineTool({
       ...(target ? { target } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
-    return { unlinked: target ? `${target.platform}/${target.nativeId}` : `${binding.platform}/${actor}`, linkSetId: result.linkSetId, note: result.note };
+    const removed = target ? `${target.platform}/${target.nativeId}` : `${binding.platform}/${actor}`;
+    const caller = { platform: binding.platform, nativeId: actor };
+    const notice =
+      `**${removed}** was just removed from your linked identity. It no longer speaks as you, and ` +
+      `it no longer reaches anything this identity reaches.\n\nIf that was you, nothing to do. If ` +
+      `it was not, tell whoever runs this workspace — someone with access to one of your accounts ` +
+      `changed who you are here.`;
+    const n = await notifyLinkSetMembers(binding.org, result.linkSetId, notice, { except: [caller] });
+    if (target && !(target.platform === caller.platform && target.nativeId === caller.nativeId) && canDeliverDirectMessage(target.platform)) {
+      try {
+        await dispatchDirectMessage(target.platform, { principalId: target.nativeId, text: notice });
+      } catch (err) {
+        console.log(`[open-everywhere:identity] unlink ${removed}: the severed account could not be notified: ${String(err)}`);
+      }
+    }
+    if (n > 0) console.log(`[open-everywhere:identity] link-set ${result.linkSetId} lost ${removed} — notified ${n} remaining member account(s).`);
+    return { unlinked: removed, linkSetId: result.linkSetId, note: result.note };
   },
 });

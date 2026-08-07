@@ -27,6 +27,8 @@ import {
 } from "../agent/identity/link-store.js";
 import { unionPrincipals } from "../agent/identity/link-resolve.js";
 import { observeLinkClaim } from "../agent/hooks/link-claim.js";
+import { canDeliverDirectMessage } from "../agent/channels/post-arms.js";
+import { directoryLinkSetVaultArmed } from "../agent/connections/connector-flags.js";
 import { currentTurnAddressed, currentTurnBotName } from "../agent/identity/binding.js";
 import { OE_ADDRESSED_ATTR, OE_BOT_NAME_ATTR } from "../agent/identity/bot-name.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -489,6 +491,96 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   } as BindableContext;
   await refuses(() => linkIdentity.execute({}, fireCtx), "needs a verified person on this turn", "OPE-289: an unattended fire is still refused by the PRINCIPAL gate, which precedes the trust gate");
   await refuses(() => confirmLink.execute({ decision: "confirm" }, fireCtx), "needs a verified person on this turn", "OPE-289: confirm_link refuses the fire the same way");
+}
+
+{
+  const { registerPostArm } = await import("../agent/channels/post-arms.js");
+  type Notice = { platform: string; to: string; text: string };
+  const notices: Notice[] = [];
+  let slackThrows = false;
+  registerPostArm({
+    platform: "slack",
+    deliverDirectMessage: async (input) => {
+      if (slackThrows) throw new Error("slack DM arm is down");
+      notices.push({ platform: "slack", to: input.principalId, text: input.text });
+      return { surfaceId: `D-${input.principalId}`, messageId: "m1" };
+    },
+  });
+  registerPostArm({
+    platform: "discord",
+    deliverDirectMessage: async (input) => {
+      notices.push({ platform: "discord", to: input.principalId, text: input.text });
+      return { surfaceId: `DD-${input.principalId}`, messageId: "m1" };
+    },
+  });
+  ok(canDeliverDirectMessage("slack") && canDeliverDirectMessage("discord") && !canDeliverDirectMessage("github"), "OPE-288 setup: slack + discord can DM, github cannot — the unreachable-account limit is real in this fixture");
+
+  const dmN1 = ctxFor({ channelId: "D_N1", channelType: "im", principalId: "U_N1", dmPartnerTrust: "internal" });
+  const dmDc = {
+    channel: { kind: "discord" },
+    session: { auth: { current: { attributes: { guild_id: "G1", channel_id: "DC_N1" }, principalId: "dc-n1", principalType: "discord-user" } } },
+  } as BindableContext;
+
+  async function link(ctx: BindableContext, claimant: { platform: string; nativeId: string }): Promise<string> {
+    const out = (await linkIdentity.execute({}, ctx)) as { instructions: string };
+    const code = out.instructions.match(new RegExp(String.raw`link (${"[" + LINK_CODE_ALPHABET + "]"}{${LINK_CODE_LENGTH}})`))![1]!;
+    await observeLinkClaim({ org: ORG, platform: claimant.platform, authorId: claimant.nativeId, text: `link ${code}`, trust: "peer" });
+    notices.length = 0;
+    const res = (await confirmLink.execute({ decision: "confirm" }, ctx)) as { linkSetId: string };
+    return res.linkSetId;
+  }
+
+  const setId = await link(dmN1, { platform: "github", nativeId: "gh-n1" });
+  ok(notices.length === 0, "OPE-288: no set notice when the only other member is DM-incapable — and the initiator is never notified about their own act");
+
+  await link(dmN1, { platform: "discord", nativeId: "dc-n1" });
+  ok(notices.length === 1 && notices[0]!.platform === "discord" && notices[0]!.to === "dc-n1", "OPE-288: the joining account is a member and hears about the join; github (no DM arm) does not; the initiator is not double-notified");
+
+  const grown = await link(dmDc, { platform: "github", nativeId: "gh-n2" });
+  ok(grown === setId, "OPE-288 setup: the discord member grew the SAME set (not a new one)");
+  const members = (await expandLinkSet(ORG, setId)).map((a) => `${a.platform}/${a.nativeId}`).sort();
+  assert.deepEqual(members, ["discord/dc-n1", "github/gh-n1", "github/gh-n2", "slack/U_N1"], "OPE-288 setup: the set now holds four accounts, two of them DM-incapable");
+  n++;
+  ok(notices.length === 1 && notices[0]!.platform === "slack" && notices[0]!.to === "U_N1", "🔴 OPE-288: EVERY other DM-capable member is told when a member grows the set — the compromised-member case cannot be silent");
+  ok(!notices.some((x) => x.platform === "discord"), "OPE-288: the member who DID the growing is excluded — no double-notify (they hold the tool's own answer)");
+  ok(/github\/gh-n2/.test(notices[0]!.text) && /unlink/i.test(notices[0]!.text), "OPE-288: the notice NAMES the account that joined and points at the one-call remedy");
+
+  slackThrows = true;
+  notices.length = 0;
+  const survived = await link(dmDc, { platform: "github", nativeId: "gh-n3" });
+  ok(survived === setId, "🔴 OPE-288: a THROWING DM arm does not fail the tool — the link committed and the undeliverable notice was swallowed");
+  ok((await resolveLinkSet(ORG, "github", "gh-n3"))?.id === setId, "OPE-288: …and the link it wrote is really there");
+  ok(notices.length === 0, "OPE-288: the throwing arm delivered nothing (the assertion above is not passing by accident)");
+  slackThrows = false;
+
+  notices.length = 0;
+  await unlinkIdentity.execute({ platform: "discord", nativeId: "dc-n1" }, dmN1);
+  ok(notices.length === 1 && notices[0]!.platform === "discord" && notices[0]!.to === "dc-n1", "🔴 OPE-288: a SEVER reaches the REMOVED account on its other surface — being cut out of your own set is not something you learn by accident");
+  ok(/removed from your linked identity/.test(notices[0]!.text), "OPE-288: the sever notice says what happened, in core-owned text");
+  ok(!notices.some((x) => x.platform === "slack"), "OPE-288: the caller who did the unlinking is not notified about their own act");
+
+  await link(dmN1, { platform: "discord", nativeId: "dc-n1" });
+  notices.length = 0;
+  await unlinkIdentity.execute({ platform: "github", nativeId: "gh-n3" }, dmDc);
+  ok(notices.length === 1 && notices[0]!.platform === "slack" && notices[0]!.to === "U_N1", "OPE-288: a sever of an unreachable account still tells the REMAINING DM-capable members");
+  ok(/github\/gh-n3/.test(notices[0]!.text), "OPE-288: the sever notice names the account that was removed");
+
+  const rows = await pg.readAudit({ org: ORG });
+  const conf = rows.filter((r) => r.action === "identity.link.confirmed" && (r.detail as { linkSetId?: string })?.linkSetId === setId);
+  const unl = rows.filter((r) => r.action === "identity.link.unlinked" && (r.detail as { linkSetId?: string })?.linkSetId === setId);
+  ok(conf.length > 0 && unl.length > 0, "OPE-288 setup: this set produced both confirmed and unlinked audit rows");
+  ok(conf.every((r) => typeof (r.detail as { memberCount?: unknown }).memberCount === "number"), "OPE-288: identity.link.confirmed carries memberCount");
+  ok(conf.every((r) => typeof (r.detail as { vaultArmed?: unknown }).vaultArmed === "boolean"), "OPE-288: identity.link.confirmed carries vaultArmed — the flag state AT THE TIME, which is not recoverable later");
+  ok(unl.every((r) => typeof (r.detail as { memberCount?: unknown }).memberCount === "number" && typeof (r.detail as { vaultArmed?: unknown }).vaultArmed === "boolean"), "OPE-288: identity.link.unlinked carries both too");
+  const counts = conf.map((r) => (r.detail as { memberCount: number }).memberCount);
+  ok(counts[counts.length - 1] === 2, "OPE-288: the FIRST confirmed row for this set recorded 2 accounts — the size the set actually was then");
+  ok(new Set(counts).size > 1, "🔴 OPE-288: memberCount MOVED across the set's rows — it is a live count, not a constant, and a later snapshot could not recover it");
+  ok((unl[0]!.detail as { memberCount: number }).memberCount === (await expandLinkSet(ORG, setId)).length, "OPE-288: the newest unlink row recorded the set size AFTER the sever");
+  ok(conf.every((r) => (r.detail as { vaultArmed: boolean }).vaultArmed === directoryLinkSetVaultArmed()), "OPE-288: vaultArmed is the flag reader's own answer (fail-closed), not an independent re-derivation");
+
+  registerPostArm({ platform: "slack" });
+  registerPostArm({ platform: "discord" });
+  ok(!canDeliverDirectMessage("slack") && !canDeliverDirectMessage("discord"), "OPE-288 teardown: the recorder arms are gone");
 }
 
 {
