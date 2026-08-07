@@ -2,7 +2,7 @@ import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
 import { bindFrom, resolveWindowSources } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { principalIdOf, actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
@@ -95,6 +95,7 @@ export const assignEntry = defineTool({
         channelId,
         threadTs: binding.threadTs ?? null,
         postedTo: postedToSurfaceKey(binding, channelId),
+        chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
       approvalPostDeps(binding.platform),
     );

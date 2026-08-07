@@ -1,6 +1,8 @@
 import { classifyConnectorOp, isConnectorOpTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn } from "./taint-signal.js";
+import { getConfig } from "./config.js";
+import { resolveAccess } from "./resolver.js";
 
 export type ApproverVerdict = "allow" | "deny" | "ask" | undefined;
 
@@ -415,6 +417,29 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
   const context = [`unattended: ${req.unattended}`, `tainted: ${taintedOf(req)}`, ...(req.mode !== undefined ? [`mode: ${req.mode.mode}`] : [])];
   lines.push(`context: ${context.join(" · ")}`);
   return lines;
+}
+
+export function approvalModeForDomain(domain: string | undefined): ApprovalModeConfig | undefined {
+  if (domain === undefined) return undefined;
+  try {
+    return getConfig().loadDomains().find((d) => d.name === domain)?.approvalMode;
+  } catch {
+    return undefined;
+  }
+}
+
+export function approversForScopeKey(scopeKey: string | undefined, domain: string | undefined): readonly OperatorApprover[] {
+  if (scopeKey === undefined) return [];
+  const parts = scopeKey.split("/");
+  if (parts.length !== 3 || parts.some((p) => p.length === 0)) return [];
+  const [platform, workspace, channel] = parts as [string, string, string];
+  try {
+    const cfg = getConfig();
+    const domains = domain !== undefined ? [domain] : cfg.domainsForSurface({ workspaceKey: `${platform}/${workspace}`, surface: channel });
+    return resolveAccess({ mode: "channel", platform, workspace, channel, domains }, cfg.loadBundles(), cfg.loadBindings(), cfg.pluginRegistry, cfg.loadProviders?.() ?? []).approvers;
+  } catch {
+    return [];
+  }
 }
 
 let kindToTool: ReadonlyMap<string, string> | undefined;

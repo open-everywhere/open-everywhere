@@ -13,6 +13,14 @@ import { dispatchApprovalDecisionWake } from "../channels/unified.js";
 import { surfaceMessageOps } from "../channels/surface-message-ops.js";
 import { renderApprovalDecisionMessage, type ApprovalOutcome } from "./decision-wake.js";
 import { actionKind, whereFromScope } from "./actions.js";
+import {
+  approvalModeForDomain,
+  approversForScopeKey,
+  chainAuditDetail,
+  resolveApproverChain,
+  toolForActionKind,
+  type ApprovalChainRequest,
+} from "../access/approver-chain.js";
 import { platformOfScopeKey } from "../access/scope-key.js";
 import { principalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
@@ -91,6 +99,10 @@ export interface RequestApprovalInput {
   readonly threadTs?: string | null;
   readonly postedTo?: string | null;
   readonly summaryLines?: readonly string[];
+  readonly chain?: {
+    readonly unattended?: boolean;
+    readonly tainted?: boolean;
+  };
 }
 
 export type CardPoster = (row: PendingActionRow, summaryLines: readonly string[]) => Promise<string | undefined>;
@@ -111,10 +123,82 @@ export interface RequestApprovalDeps {
   readonly postCard?: CardPoster;
 }
 
-export async function requestApproval(input: RequestApprovalInput, deps: RequestApprovalDeps = {}): Promise<{ id: string; expiresAt: string; deduped?: boolean }> {
+export async function requestApproval(
+  input: RequestApprovalInput,
+  deps: RequestApprovalDeps = {},
+): Promise<{ id: string; expiresAt: string; deduped?: boolean; autoApproved?: { outcome: string; resolvedBy: string } }> {
   const kindDef = actionKind(input.kind);
   if (!kindDef) {
     throw new Error(`requestApproval: no registered ActionKind for "${input.kind}"`);
+  }
+
+  const chainTool = toolForActionKind(input.kind);
+  if (chainTool !== undefined) {
+    const chainReq: ApprovalChainRequest = {
+      tool: chainTool,
+      action: input.kind,
+      args: input.args,
+      scopeKey: input.scopeKey,
+      ...(input.domain != null ? { domain: input.domain } : {}),
+      principalId: input.requestedBy,
+      unattended: input.chain?.unattended ?? false,
+      ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
+      ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
+    };
+    const resolution = await resolveApproverChain(chainReq, { approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined) });
+    await appendAudit({
+      ...whereFromScope(input.org, input.scopeKey),
+      principalId: input.requestedBy,
+      action: "approval.chain",
+      detail: chainAuditDetail(chainReq, resolution),
+    }).catch(() => undefined);
+
+    if (resolution.verdict === "deny") {
+      emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });
+      const reason = resolution.transforms.find((t) => t.to === "deny")?.reason;
+      throw new Error(
+        `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
+          `nothing was proposed and no card was posted. ${
+            reason === "ask-unattended"
+              ? "An unattended run cannot wait on an approval card; arm the permission on the routine's creation card, or ask a person to do this."
+              : "This refusal is config-reviewed policy; a config diff to the denying element is the only way to lift it."
+          }`,
+      );
+    }
+
+    if (resolution.verdict === "allow" && resolution.registryVerdict === "ask") {
+      const store = getOperationalStore();
+      const now = new Date();
+      const decidedBy = `chain:${resolution.resolvedBy}`;
+      const row: PendingActionRow = {
+        id: randomUUID(),
+        org: input.org,
+        kind: input.kind,
+        argsJson: JSON.stringify(input.args ?? null),
+        scopeKey: input.scopeKey,
+        domain: input.domain ?? null,
+        requestedBy: input.requestedBy,
+        channelId: input.channelId,
+        threadTs: input.threadTs ?? null,
+        messageTs: null,
+        postedTo: input.postedTo ?? null,
+        status: "approved",
+        createdAt: now.toISOString(),
+        expiresAt: now.toISOString(),
+        decidedBy,
+        decidedAt: now.toISOString(),
+      };
+      await store.addPendingAction(row);
+      const outcome = await kindDef.execute(input.args, decidedBy);
+      await appendAudit({
+        ...whereFromScope(input.org, input.scopeKey),
+        principalId: input.requestedBy,
+        action: "approval.autoapproved",
+        detail: { id: row.id, kind: input.kind, scopeKey: input.scopeKey, resolvedBy: resolution.resolvedBy, transforms: resolution.transforms.map((t) => t.name) },
+      }).catch(() => undefined);
+      emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "autoapproved" });
+      return { id: row.id, expiresAt: row.expiresAt, autoApproved: { outcome, resolvedBy: resolution.resolvedBy } };
+    }
   }
 
   if (input.postedTo) {

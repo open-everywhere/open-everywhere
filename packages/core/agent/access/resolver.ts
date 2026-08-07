@@ -1,4 +1,5 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
+import type { OperatorApprover } from "./approver-chain.js";
 import { principalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import type { PluginRegistry } from "../plugins/types.js";
@@ -39,6 +40,7 @@ export interface EffectiveAccess {
   readonly reachableHosts: readonly ReachableHost[];
   readonly repos: readonly string[];
   readonly awsRoles: readonly AwsRoleGrant[];
+  readonly approvers: readonly OperatorApprover[];
   readonly plugins: readonly string[];
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
@@ -197,6 +199,8 @@ export function resolveAccess(
   }
   const awsRoles = [...awsRoleMap.values()].sort((a, b) => a.roleArn.localeCompare(b.roleArn));
 
+  const approvers = ordered.flatMap(({ bundle }) => bundle.approvers ?? []);
+
   const plugins = [...new Set(ordered.flatMap(({ bundle }) => bundle.plugins ?? []))].sort();
   const pluginConnectors = new Set<string>();
   const skillSet = new Set<string>();
@@ -293,6 +297,7 @@ export function resolveAccess(
     reachableHosts,
     repos,
     awsRoles,
+    approvers,
     plugins,
     skills,
     subagents,

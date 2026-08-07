@@ -2,6 +2,7 @@ import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
+import type { ApprovalModeConfig } from "../access/approver-chain.js";
 
 export type DomainMatch = "org" | "public" | "dm";
 
@@ -47,6 +48,7 @@ export interface Domain {
   readonly match?: DomainMatch;
   readonly memory?: string | readonly string[];
   readonly includeOrg?: "readonly" | "inherit";
+  readonly approvalMode?: ApprovalModeConfig;
   readonly nameDropWake?: boolean;
   readonly ambientSupervisor?: boolean;
   readonly awarenessWake?: boolean;
@@ -514,6 +516,18 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
           ? `  "${d.name}" claims container "${key}", but INTERMEDIATE containers are not supported yet — a containers entry must be a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>"), never a deeper path. List the concrete surfaces in channels instead.`
           : `  "${d.name}" claims container "${key}", which is not a two-segment tenant key \`platform/<tenant>\` (e.g. "github/acme", "linear/<orgId>", "notion/<workspaceId>")`,
       );
+    }
+    if (d.approvalMode !== undefined) {
+      const mode = d.approvalMode.mode;
+      if (mode !== "DANGEROUSLY_BYPASS" && mode !== "APPROVE_ALL" && mode !== "DENY_ALL") {
+        bad.push(`  "${d.name}" sets approvalMode.mode "${String(mode)}" — must be DANGEROUSLY_BYPASS, APPROVE_ALL or DENY_ALL (access/approver-chain.ts)`);
+      }
+      if (d.approvalMode.allowlist !== undefined && mode !== "APPROVE_ALL") {
+        bad.push(`  "${d.name}" sets approvalMode.allowlist under ${mode} — the allowlist is APPROVE_ALL's restoration list and means nothing on any other mode (remove it, or it reads as an escape hatch that does not exist)`);
+      }
+      if (d.approvalMode.allowlist?.some((t) => t.trim() === "")) {
+        bad.push(`  "${d.name}" approvalMode.allowlist has an empty entry — every entry must name a tool`);
+      }
     }
     for (const entry of d.admins ?? []) {
       if (isQualifiedPrincipalKey(entry)) continue;

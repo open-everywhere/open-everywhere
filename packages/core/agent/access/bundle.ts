@@ -1,4 +1,5 @@
 import type { ProviderGrant } from "./providers.js";
+import type { OperatorApprover } from "./approver-chain.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { Group } from "../identity/groups.js";
@@ -65,6 +66,7 @@ export interface Bundle {
   readonly domains?: readonly string[];
   readonly plugins?: readonly string[];
   readonly awsRoles?: readonly AwsRoleGrant[];
+  readonly approvers?: readonly OperatorApprover[];
   readonly instructions?: string;
 }
 
@@ -179,6 +181,20 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
           bad.push(`  bundle "${b.name}" awsRoles allow lists "${entry}" (role "${grant.roleArn}") more than once — remove the duplicate`);
         }
         seenAllow.add(norm);
+      }
+    }
+    const approverNames = new Set<string>();
+    for (const a of b.approvers ?? []) {
+      const name = a.name?.trim() ?? "";
+      if (name === "") {
+        bad.push(`  bundle "${b.name}" has an approver with an empty name — the audit row's resolvedBy is "custom:<name>", so every element needs one`);
+        continue;
+      }
+      if (approverNames.has(name)) bad.push(`  bundle "${b.name}" declares approver "${name}" more than once — names must be unique within a bundle (resolvedBy would be ambiguous)`);
+      approverNames.add(name);
+      if (typeof a.approve !== "function") bad.push(`  bundle "${b.name}" approver "${name}" has no callable approve() — an element that cannot answer is config that means nothing`);
+      if (a.mayAllow === true && (a.source === undefined || a.source === "operator")) {
+        bad.push(`  bundle "${b.name}" approver "${name}" sets mayAllow on an operator-authored element — mayAllow is the clamp escape for source:"connector"/"remote" elements only (an operator element already holds the full verdict range)`);
       }
     }
   }

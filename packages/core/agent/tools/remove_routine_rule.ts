@@ -2,7 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
-import { principalIdOf } from "../access/request.js";
+import { principalIdOf, actingPrincipalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
@@ -97,6 +97,7 @@ export default defineTool({
         channelId,
         threadTs: binding.threadTs ?? null,
         postedTo: postedToSurfaceKey(binding, channelId),
+        chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
       approvalPostDeps(binding.platform),
     );

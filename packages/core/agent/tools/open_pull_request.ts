@@ -3,7 +3,7 @@ import { windowGated } from "../access/window-gated.js";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { resolvePartition } from "../memory/partition.js";
-import { principalIdOf, resolveAccessFor } from "../access/request.js";
+import { principalIdOf, resolveAccessFor, actingPrincipalIdOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getGitHubApp, repoAllowed } from "../scm/provider.js";
 import { isSafeBranchName, isSafeCheckoutDir, parseStagedSha, redactSecret, stagePushCommand } from "../scm/git.js";
@@ -193,6 +193,7 @@ export default windowGated("open_pull_request", defineTool({
         channelId,
         threadTs: binding.threadTs ?? null,
         postedTo: postedToSurfaceKey(binding, channelId),
+        chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
       approvalPostDeps(binding.platform),
     );
