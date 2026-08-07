@@ -199,7 +199,9 @@ export function renderWorkerCapabilityIndex(
       : "",
     "",
     "And never say you cannot do something that a worker can. Route it, say you have routed it, and",
-    "come back with the answer.",
+    "come back with the answer. Routed work is NOT done until the worker reports back: acknowledge",
+    'it is underway ("handing this off — will report back"), and never tell the room something is',
+    "saved, posted or finished before the worker's own report says so.",
   );
   return lines.filter((l, i, a) => !(l === "" && a[i - 1] === "")).join("\n").trimEnd();
 }
