@@ -192,8 +192,30 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const standing = await pendingDirectorySuggestionsFor(ORG, "slack", "U-ROWAN");
   ok(standing.map((s) => s.principal).sort().join() === "github/gh-rowan,linear/lin-rowan", "F2(a): once CONFIRMED, standing exposes the set's other attested suggestions");
-  const rest = await confirmLink.execute({ decision: "confirm" }, dmRowan);
-  ok(rest.accounts.sort().join() === "github/gh-rowan,linear/lin-rowan", "…and confirms every remaining attested suggestion in one tap");
+
+  let blanket = "";
+  try {
+    await confirmLink.execute({ decision: "confirm" }, dmRowan);
+  } catch (e) {
+    blanket = e instanceof Error ? e.message : String(e);
+  }
+  ok(blanket.includes("2 accounts are waiting"), `🔴 OPE-291: a blanket yes over SEVERAL pending suggestions is refused, not batched (got: ${blanket || "no error"})`);
+  ok(
+    blanket.includes("github/gh-rowan") && blanket.includes("linear/lin-rowan"),
+    "🔴 OPE-291: …and the refusal NAMES every account waiting, so the person can answer about ones they were shown",
+  );
+  ok((await resolveLinkSet(ORG, "github", "gh-rowan")) === null, "🔴 OPE-291: …and the refusal is a REFUSAL — nothing was linked");
+  ok((await expandLinkSet(ORG, setId)).length === 1, "🔴 OPE-291: …the set still holds only the bootstrap account");
+
+  const denyMany = await confirmLink.execute({ decision: "deny" }, dmRowan);
+  ok(
+    denyMany.decided === "denied" && denyMany.accounts.sort().join() === "github/gh-rowan,linear/lin-rowan",
+    "OPE-291: a bare DENY over several pending suggestions still works in one tap — the fence is on `confirm` only",
+  );
+  ok((await expandLinkSet(ORG, setId)).length === 1, "…and denying wrote nothing");
+
+  const rest = await confirmLink.execute({ decision: "confirm", accounts: ["github/gh-rowan", "linear/lin-rowan"] }, dmRowan);
+  ok(rest.accounts.sort().join() === "github/gh-rowan,linear/lin-rowan", "…and NAMING the remaining attested suggestions confirms them all in the one call");
   ok((await expandLinkSet(ORG, setId)).length === 3, "…so all three accounts are now confirmed members of the set");
 
   const row = (await listLinkSetsWithIds(ORG)).find((r) => r.set.id === setId)!.ids.find((r) => r.platform === "github")!;

@@ -21,7 +21,7 @@ export default defineTool({
       .array(z.string())
       .optional()
       .describe(
-        "Only for directory-suggested accounts: which ones to confirm, as principal keys (\"github/octocat\"). Omit to decide every account the directory proposed for this person. Ignored when a link code claim is waiting.",
+        "Only for directory-suggested accounts: which ones to confirm, as principal keys (\"github/octocat\"). Omit only when exactly one account is waiting, or when denying — confirming several at once REQUIRES naming them, and the tool refuses (listing them) if you do not. Ignored when a link code claim is waiting.",
       ),
   }),
   outputSchema: z.object({
@@ -95,6 +95,13 @@ async function decideDirectorySuggestions(input: {
   if (pending.length === 0) {
     throw new Error(
       "nothing of yours is waiting for a decision — no link code has been claimed (codes last ~10 minutes) and no identity-directory sync has suggested an account for you. Start a link yourself with link_identity.",
+    );
+  }
+  if (!input.only?.length && input.decision === "confirm" && pending.length > 1) {
+    throw new Error(
+      `${pending.length} accounts are waiting for your decision — name the ones you recognise ` +
+        `(accounts: ["github/octocat"]). A blanket yes over several accounts is the one shape that ` +
+        `could confirm an account you were never shown. Waiting on: ${pending.map((p) => p.principal).join(", ")}.`,
     );
   }
   const chosen = input.only?.length
