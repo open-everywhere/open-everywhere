@@ -715,7 +715,7 @@ async function judgeFailure(input: { probe: string; expectedFact: string; prose:
   const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) return null;
   const base = (process.env.AI_GATEWAY_BASE_URL ?? "https://ai-gateway.vercel.sh/v1").replace(/\/+$/, "");
-  const model = process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini";
+  const model = process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-5.6-luna";
   const sys =
     "You classify why an ambient team-assistant turn failed to deliver a reply. You are given the user's probe, " +
     "the fact the assistant should have recalled, the assistant's terminal prose (may be empty), and its reasoning trace. " +
@@ -788,12 +788,12 @@ async function classifyFailures(turns: TurnResult[], attribution: Attribution): 
     if (!verdict) { judgeReachable = false; t.failureClass = "unjudged"; t.failureRationale = "judge call failed/unreachable — stage-2 skipped from here on"; continue; }
     judgedAny = true;
     t.failureClass = verdict.failureClass;
-    t.failureRationale = `judge(${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini"}): ${verdict.rationale}`;
+    t.failureRationale = `judge(${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-5.6-luna"}): ${verdict.rationale}`;
   }
 
   const note = process.env.AI_GATEWAY_API_KEY
     ? judgedAny
-      ? `stage-1 deterministic + stage-2 LLM judge (${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-4o-mini"})${transcriptOk ? "" : "; transcript unavailable → prose=none"}`
+      ? `stage-1 deterministic + stage-2 LLM judge (${process.env.AMBIENT_JUDGE_MODEL ?? "openai/gpt-5.6-luna"})${transcriptOk ? "" : "; transcript unavailable → prose=none"}`
       : `stage-1 deterministic only (no turn needed the judge)${transcriptOk ? "" : "; transcript unavailable"}`
     : `stage-1 deterministic only — NO judge credential (AI_GATEWAY_API_KEY) reachable; stage-2 turns marked "unjudged"`;
   return { judged: !!process.env.AI_GATEWAY_API_KEY, note };

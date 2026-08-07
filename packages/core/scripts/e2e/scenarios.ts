@@ -110,7 +110,8 @@ const SILENCE_WINDOW = 45_000;
 const isFillerAck = (text: string): boolean =>
   /\b(one sec|a sec|hang on|hold on|let me (?:look|check|see)|looking (?:at|into)|checking (?:now|it)?|on it|give me a (?:sec|moment)|working on|just a (?:sec|moment)|will (?:look|check|report|update)|hand(?:ed|ing) (?:this |it )?off|report back|delegat(?:ed|ing)|spun up a worker|standing by)\b/i.test(
     text.trim(),
-  );
+  ) ||
+  /^(?:done|ok|okay|sorted|sure|got it|will do|no problem)[.!]?\s*(?::[a-z_+-]+:|✅|👍)?$/i.test(text.trim());
 
 const STOP_ACK = "Standing down";
 const DISCORD_STOP_ACK = "Stopped following here";

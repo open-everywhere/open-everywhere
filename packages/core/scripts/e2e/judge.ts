@@ -179,6 +179,6 @@ export function resolveJudge(): ReplyJudge {
   const key = process.env.AI_GATEWAY_API_KEY;
   if (!key) return new FallbackJudge("no AI_GATEWAY_API_KEY reachable — source .env.e2e to enable the LLM judge");
   const base = (process.env.AI_GATEWAY_BASE_URL ?? "https://ai-gateway.vercel.sh/v1").replace(/\/+$/, "");
-  const model = process.env.E2E_JUDGE_MODEL ?? "openai/gpt-4o-mini";
+  const model = process.env.E2E_JUDGE_MODEL ?? "openai/gpt-5.6-luna";
   return new LlmJudge(gatewayTransport({ key, base, model }), model);
 }
