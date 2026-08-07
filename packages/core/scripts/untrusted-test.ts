@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { wrapUntrusted, untrustedModelOutput, UNTRUSTED_OPEN, UNTRUSTED_CLOSE } from "../agent/access/untrusted.js";
 import { capResult, DEFAULT_MAX_RESULT_CHARS } from "../agent/access/result-cap.js";
+
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -22,6 +27,14 @@ const ok = (cond: boolean, label: string) => {
   const noSrc = wrapUntrusted("hello");
   ok(noSrc.startsWith(`${UNTRUSTED_OPEN}>`), "omits source= when none given");
   ok(noSrc.includes("hello") && noSrc.includes(UNTRUSTED_CLOSE), "still wraps content without a source");
+
+  ok(/redirect your task/.test(w), "valve: trigger 1 — content trying to REDIRECT the task");
+  ok(/escalate your access/.test(w), "valve: trigger 2 — content trying to ESCALATE access");
+  ok(/wouldn't expect/.test(w), "valve: trigger 3 — content asking for something the people you work for wouldn't expect");
+  ok(/check with them first/.test(w), "valve: the remedy is CHECKING WITH A HUMAN, not a hedge sentence");
+  ok(w.indexOf(UNTRUSTED_CLOSE) < w.indexOf("redirect your task"), "valve: it rides the trailing notice, AFTER the fence closes — never inside content the body could edit");
+  ok(w.split("redirect your task").length - 1 === 1, "valve: exactly ONCE per fence — the shared formatter owns it, so no site can double- or half-stamp it");
+  ok(/redirect your task/.test(untrustedModelOutput("x").value), "valve: the tool-result projection carries it too");
 }
 
 {
@@ -84,4 +97,14 @@ const ok = (cond: boolean, label: string) => {
   ok(normal.includes("ordinary body") && !normal.includes("truncated"), "funnel: an under-cap body is wrapped verbatim, no marker");
 }
 
-console.log(`\n✓ untrusted: ${n} assertions passed (wrap, model-output shape, result-cap)\n`);
+{
+  const base = readFileSync(join(REPO, "agent/instructions.md"), "utf8");
+  ok(/redirect your task/.test(base), "valve layer 1: the base instructions carry trigger 1 (redirect the task)");
+  ok(/escalate your access/.test(base), "valve layer 1: …trigger 2 (escalate access)");
+  ok(/wouldn't expect/.test(base), "valve layer 1: …trigger 3 (something the people you work for wouldn't expect)");
+  ok(/ask_question/.test(base), "valve layer 1: the remedy names the room-facing question tool, not a generic 'ask the user'");
+  ok(/prompt injection|attempt/i.test(base), "valve layer 1: the general form — flag a suspected injection in a tool result rather than continuing");
+  ok(/display name/i.test(base) && /never as an authority/.test(base), "valve layer 1: names/handles/filenames are marked as author-chosen labels (the unfenced-attribute class)");
+}
+
+console.log(`\n✓ untrusted: ${n} assertions passed (wrap, model-output shape, result-cap, OPE-307 two-layer escalation valve)\n`);
