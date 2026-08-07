@@ -25,7 +25,9 @@ export function sourceLabel(silo: MemorySilo): string {
 function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallRoute): string {
   const delegated = recall === "agent" || recall === "spawn_task";
   const saveVerb = delegated
-    ? `delegate the save (\`${recall}\`, stating the fact plainly) — the worker's \`remember\` writes here`
+    ? `to save something, delegate it THIS turn — \`${recall}\`${recall === "agent" ? ` with \`mode: "sync"\`` : ""} and a brief of exactly this shape: ` +
+      `"Call remember to save this fact for the team (category \\"note\\", or \\"decision\\" if it records a choice): <the fact, verbatim>". ` +
+      `A fact is not a standing rule — never frame it as one. Report it saved only after the worker confirms the write`
     : "save durable facts here with the `remember` tool";
   if (!readOnly) return `writable — ${saveVerb}`;
   if (isProjectedCache(silo)) {
