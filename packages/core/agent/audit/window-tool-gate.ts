@@ -8,7 +8,7 @@ export async function auditWindowToolGate(input: {
   readonly withheld: readonly string[];
   readonly wakeId?: string | null;
   readonly sessionId?: string | null;
-  readonly reason?: "job-wake";
+  readonly reason?: "job-wake" | "lean-seat";
 }): Promise<void> {
   if (input.withheld.length === 0) return;
   await appendAudit({

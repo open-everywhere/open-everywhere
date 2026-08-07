@@ -8,13 +8,15 @@ export interface GatedToolEntry {
   approval?(ctx: any): any;
   toModelOutput?(output: any): any;
 }
-import { windowGrainOf, currentWakeId, deploymentOrg, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { windowGrainOf, currentWakeId, deploymentOrg, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
 import { classifySessionId } from "../channels/window-key.js";
 import { registerReplayModelProjection } from "./untrusted-projection.js";
 import { WINDOW_GATED_TOOLS, withheldFromGrain, FULL_KIT } from "./window-gate-manifest.js";
 import { allowedOnRestrictedJobWake, jobFireStamped, resolveJobWakePosture } from "./job-posture.js";
 import { isJobSession, jobWakeEscalated } from "./job-session-state.js";
+import { allowedOnLeanSeat, resolveLeanSeatPosture } from "./lean-seat.js";
+import { canDelegateFromSeat } from "./delegation-mount.js";
 export { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, checkWindowGateManifest, FULL_KIT } from "./window-gate-manifest.js";
 export type { WindowToolSource } from "./window-gate-manifest.js";
 
@@ -30,7 +32,7 @@ function grainOf(ctx: BindableContext): WindowGrain {
   }
 }
 
-function domainLabelOf(ctx: BindableContext): string {
+export function domainLabelOf(ctx: BindableContext): string {
   try {
     const raw = ctx.channel?.continuationToken;
     const sid = classifySessionId(raw);
@@ -96,6 +98,20 @@ export async function grainBackstopAtExecute(
       `${name} is not available on an un-escalated durable-job fire — a job runs on its own schedule with nobody in the room, so it keeps reads, its replies and its own progress ledger. Report what you found and record it with record_job_state; a person in this thread can take the step that needs ${name}.`,
     );
   }
+  if (leanSeatWithholds(name, ctx)) {
+    await auditWindowToolGate({
+      org: deploymentOrg(),
+      domain: domainLabelOf(ctx),
+      grain,
+      withheld: [name],
+      wakeId: currentWakeId(ctx) ?? null,
+      sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
+      reason: "lean-seat",
+    }).catch(() => undefined);
+    throw new Error(
+      `${name} is not held by this conversational seat — this seat talks and delegates. Hand the work to a worker (\`agent\`, or \`spawn_thread_session\` for anything long): the worker holds the full kit, and its result comes back to you to relay.`,
+    );
+  }
   if (allowed.includes(grain)) return;
   await auditWindowToolGate({
     org: deploymentOrg(),
@@ -106,6 +122,20 @@ export async function grainBackstopAtExecute(
     sessionId: (ctx as { session?: { id?: string } }).session?.id ?? null,
   }).catch(() => undefined);
   throw new Error(refusal(grain));
+}
+
+function leanSeatWithholds(name: string, ctx: BindableContext): boolean {
+  try {
+    if (allowedOnLeanSeat(name)) return false;
+    const attrs = ctx.session?.auth?.current?.attributes ?? ctx.session?.auth?.initiator?.attributes;
+    const v = attrs?.[FIRE_UNATTENDED_ATTR];
+    const unattended = (typeof v === "string" ? v : Array.isArray(v) ? v[0] : undefined) === "true";
+    if (unattended || jobFireStamped(attrs)) return false;
+    const posture = resolveLeanSeatPosture({ grain: grainOf(ctx), canDelegate: canDelegateFromSeat(ctx), unattendedFire: false });
+    return posture === "lean";
+  } catch {
+    return false;
+  }
 }
 
 function jobWakeWithholds(name: string, ctx: BindableContext): boolean {

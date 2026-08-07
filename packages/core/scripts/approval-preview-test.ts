@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, withheldFromGrain, memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
+import { allowedOnLeanSeat } from "../agent/access/lean-seat.js";
 import { routinePermissionKind } from "../agent/approvals/session-grant.js";
 import { approvalPreviewFor, renderApprovalPreview, renderApprovalPreviewFor } from "../agent/access/approval-preview.js";
 import type { WindowGrain } from "../agent/identity/binding.js";
@@ -17,6 +18,15 @@ const eq = (a: unknown, b: unknown, label: string) => {
 };
 
 const GRAINS: readonly WindowGrain[] = ["standing", "native", "thread", "task"];
+
+const leanFor = (grain: WindowGrain): boolean => {
+  const route = memoryRecallRouteFor(grain);
+  return (grain === "standing" || grain === "thread") && (route === "agent" || route === "spawn_task");
+};
+const holds = (name: string, grain: WindowGrain): boolean => {
+  const mounted = WINDOW_GATED_TOOLS[name] ? WINDOW_GATED_TOOLS[name].includes(grain) : WINDOW_UNGATED_TOOLS.has(name);
+  return mounted && (!leanFor(grain) || allowedOnLeanSeat(name));
+};
 
 const CARDED = Object.entries(TOOL_CONSEQUENCE)
   .filter(([, e]) => e.via.kind === "action-kind")
@@ -51,8 +61,8 @@ ok(!approvalPreviewFor("task").member.includes("post_file"), "post_file is not s
 const hitl = nonCarding.filter((name) => TOOL_CONSEQUENCE[name].via.kind === "eve-hitl").sort();
 for (const grain of GRAINS) {
   const p = approvalPreviewFor(grain);
-  const expected = hitl.filter((name) => (WINDOW_GATED_TOOLS[name] ? WINDOW_GATED_TOOLS[name].includes(grain) : WINDOW_UNGATED_TOOLS.has(name)));
-  eq([...p.confirm], expected, `[${grain}] the confirm bucket is exactly the eve-hitl rows this grain mounts`);
+  const expected = hitl.filter((name) => holds(name, grain));
+  eq([...p.confirm], expected, `[${grain}] the confirm bucket is exactly the eve-hitl rows this seat holds (mount tables minus the lean filter)`);
 }
 ok(approvalPreviewFor("task").confirm.includes("post_file"), "a worker holding post_file is told it may be asked to confirm");
 ok(!approvalPreviewFor("standing").confirm.includes("post_file"), "a standing seat does not mount post_file, so it is not told about a confirm it will never see");
@@ -65,14 +75,21 @@ for (const grain of GRAINS) {
   for (const name of p.member) eq(TOOL_CONSEQUENCE[name].tier, "gate:member", `[${grain}] ${name} is in the member bucket because its ROW says gate:member`);
 
   const withheld = new Set(withheldFromGrain(grain));
-  const expected = CARDED.filter((name) => (WINDOW_GATED_TOOLS[name] ? withheld.has(name) : !WINDOW_UNGATED_TOOLS.has(name))).sort();
-  eq([...p.elsewhere], expected, `[${grain}] elsewhere == the carded tools the posture tables withhold from this grain`);
+  const expected = CARDED.filter((name) => !holds(name, grain)).sort();
+  eq([...p.elsewhere], expected, `[${grain}] elsewhere == the carded tools this seat does not hold (posture tables minus the lean filter)`);
+  for (const name of expected.filter((x) => WINDOW_GATED_TOOLS[x] !== undefined && !leanFor(grain))) {
+    ok(withheld.has(name), `[${grain}] gated elsewhere entry ${name} agrees with withheldFromGrain (the independent computation)`);
+  }
 }
 
 const standing = approvalPreviewFor("standing");
-eq([...standing.elsewhere], ["create_skill", "delete_skill", "open_pull_request"], "a standing seat's carded-but-absent set is the skill-authoring pair + open_pull_request");
-ok(standing.member.includes("create_routine") && standing.member.includes("create_ticket"), "a standing seat DOES hold carded routine/ticket verbs — the section is not empty for the orchestrator");
-ok(standing.admin.includes("set_spend_limit"), "spend control is in the admin bucket");
+eq([...standing.member, ...standing.admin], [], "a DELEGATING standing seat holds no carded verb itself — the lean roster cards nothing");
+eq([...standing.elsewhere], CARDED, "…so every carded verb is elsewhere: reachable through a worker, carded the same there");
+
+const dmStanding = approvalPreviewFor("standing", undefined, undefined, undefined, "none");
+eq([...dmStanding.elsewhere], ["create_skill", "delete_skill", "open_pull_request"], "a NON-delegating standing seat's carded-but-absent set is still just the skill-authoring pair + open_pull_request");
+ok(dmStanding.member.includes("create_routine") && dmStanding.member.includes("create_ticket"), "a non-delegating standing seat DOES hold carded routine/ticket verbs — nothing was stripped from the seat that cannot route");
+ok(dmStanding.admin.includes("set_spend_limit"), "spend control is in the admin bucket");
 
 eq([...approvalPreviewFor("task").elsewhere], [], "the one-shot worker holds every carded verb — its section has no out-of-reach clause");
 

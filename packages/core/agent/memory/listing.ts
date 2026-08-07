@@ -22,13 +22,19 @@ export function sourceLabel(silo: MemorySilo): string {
   }
 }
 
-function accessClause(silo: MemorySilo, readOnly: boolean): string {
-  if (!readOnly) return "writable — save durable facts here with the `remember` tool";
+function accessClause(silo: MemorySilo, readOnly: boolean, recall: MemoryRecallRoute): string {
+  const delegated = recall === "agent" || recall === "spawn_task";
+  const saveVerb = delegated
+    ? `delegate the save (\`${recall}\`, stating the fact plainly) — the worker's \`remember\` writes here`
+    : "save durable facts here with the `remember` tool";
+  if (!readOnly) return `writable — ${saveVerb}`;
   if (isProjectedCache(silo)) {
     const via = silo.skill ? `the ${code(silo.skill)} skill` : "the Notion tools";
     return `read-only cache — edits are BLOCKED; to update, use ${via} (never edit these files)`;
   }
-  return "read-only — edits are blocked; use `remember` for this channel's own memory";
+  return delegated
+    ? "read-only — edits are blocked; this channel's own memory is written the same delegated way"
+    : "read-only — edits are blocked; use `remember` for this channel's own memory";
 }
 
 const RECALL_GUIDANCE: Readonly<Record<MemoryRecallRoute, { readonly lead: string; readonly heading: string }>> = {
@@ -122,7 +128,7 @@ export function renderMemoryIndex(
     for (const r of reads) {
       const dir = tierSandboxDir(r.tier);
       const desc = r.silo.description ? `${r.silo.description} — ` : "";
-      lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly)}. Start with ${code(dir + "/MEMORY.md")}.`);
+      lines.push(`- **${r.silo.name}** (${dir + "/"}) — ${desc}source: ${sourceLabel(r.silo)}; ${accessClause(r.silo, r.readOnly, recall)}. Start with ${code(dir + "/MEMORY.md")}.`);
     }
     lines.push("");
   }

@@ -203,10 +203,12 @@ _resetWindowGateAuditForTest();
   const entry = (await resolveWindowGated(gated, grainCtx.task())) as GatedToolEntry;
   eq(await entry.execute({ v: "x" }, grainCtx.task()), { ran: "bash" }, "backstop passes an allowed grain through to the tool");
   const before = (await readAudit({ action: "turn.tool_gated" })).length;
-  await assert.rejects(() => Promise.resolve(entry.execute({ v: "x" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-backstop", wakeId: "wake-backstop" }))), /not available on a standing/, "backstop refuses a standing-grain execute fail-closed");
+  await assert.rejects(() => Promise.resolve(entry.execute({ v: "x" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-backstop", wakeId: "wake-backstop" }))), /not held by this conversational seat/, "backstop refuses a delegating standing-seat execute fail-closed (the lean arm speaks first)");
   n++;
   const rows = await readAudit({ action: "turn.tool_gated" });
   eq(rows.length, before + 1, "backstop stamps a per-ATTEMPT turn.tool_gated row");
+  await assert.rejects(() => Promise.resolve(entry.execute({ v: "x" }, ctxOf(PER_CONTAINER_TOKEN, { sessionId: "sess-backstop-dm" }))), /not available on a standing/, "a NON-delegating standing seat still gets the grain refusal — the lean arm never touches it");
+  n++;
   const attemptRow = rows.find((r) => (r.detail as Record<string, unknown>).wakeId === "wake-backstop");
   ok(attemptRow !== undefined, "the attempt row is wakeId-locatable");
   const attempt = attemptRow!.detail as Record<string, unknown>;
@@ -228,7 +230,7 @@ console.log("5. replay pre-registration (eve step registry):");
 
   const fn = reg.get(single.execute) as (cv: unknown, input: unknown, ctx: unknown) => Promise<unknown>;
   eq(await fn({}, { v: "y" }, grainCtx.native()), { ran: "bash" }, "the replayed execute runs the real tool on an allowed grain");
-  await assert.rejects(() => fn({}, { v: "y" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-replay" })), /not available on a standing/, "the replayed execute STILL carries the grain backstop (replay cannot shed the gate)");
+  await assert.rejects(() => fn({}, { v: "y" }, ctxOf(STANDING_TOKEN, { sessionId: "sess-replay" })), /not held by this conversational seat/, "the replayed execute STILL carries the backstop (replay cannot shed the gate; on a delegating standing seat the lean arm speaks)");
   n++;
 
   const approvalCalls: unknown[] = [];

@@ -1,4 +1,5 @@
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, type MemoryRecallRoute } from "./window-gate-manifest.js";
+import { allowedOnLeanSeat } from "./lean-seat.js";
 import type { WindowGrain } from "../identity/binding.js";
 
 export interface WorkerCapabilityGroup {
@@ -23,7 +24,6 @@ export const WORKER_INDEX_SEAT_VERBS: ReadonlySet<string> = new Set([
   "no_reply",
   "react",
   "update_status",
-  "describe_image",
   "ask_question",
   "todo",
 ]);
@@ -56,8 +56,8 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "conversation-history",
-    headline: "Re-read a room's own history in full, and open what was uploaded into it",
-    tools: ["read_channel", "read_thread", "read_slack_channel", "read_slack_thread", "read_file_upload", "read_routine_transcript"],
+    headline: "Re-read a room's own history in full, and open or describe what was uploaded into it",
+    tools: ["read_channel", "read_thread", "read_slack_channel", "read_slack_thread", "read_file_upload", "describe_image", "read_routine_transcript"],
   },
   {
     id: "memory",
@@ -128,7 +128,7 @@ export function workerOnlyTools(
   const surface = [...new Set([...Object.keys(gated), ...ungated])];
   return surface
     .filter((n) => !WORKER_INDEX_MACHINERY.has(n) && !WORKER_INDEX_LIFECYCLE.has(n))
-    .filter((n) => mountedOn(n, "task", gated, ungated) && !mountedOn(n, grain, gated, ungated))
+    .filter((n) => mountedOn(n, "task", gated, ungated) && (!mountedOn(n, grain, gated, ungated) || !allowedOnLeanSeat(n)))
     .sort();
 }
 

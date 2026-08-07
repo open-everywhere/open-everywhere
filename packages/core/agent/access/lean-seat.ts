@@ -1,0 +1,47 @@
+import type { WindowGrain } from "../identity/binding.js";
+import { HARNESS_INTERNAL_TOOLS } from "./job-posture.js";
+
+export const LEAN_SEAT_TOOLS: ReadonlySet<string> = new Set([
+  "reply",
+  "no_reply",
+  "react",
+  "update_status",
+  "agent",
+  "spawn_task",
+  "spawn_thread_session",
+  "complete_thread",
+  "ask_question",
+  "todo",
+]);
+
+export type LeanSeatPosture = "lean" | "full";
+
+export interface LeanSeatSignals {
+  readonly grain: WindowGrain;
+  readonly canDelegate: boolean;
+  readonly unattendedFire: boolean;
+}
+
+export function resolveLeanSeatPosture(s: LeanSeatSignals): LeanSeatPosture {
+  if (s.unattendedFire) return "full";
+  if (s.grain !== "standing" && s.grain !== "thread") return "full";
+  return s.canDelegate ? "lean" : "full";
+}
+
+export function allowedOnLeanSeat(name: string): boolean {
+  return LEAN_SEAT_TOOLS.has(name) || HARNESS_INTERNAL_TOOLS.has(name);
+}
+
+export function restrictToolsetForLeanSeat(toolset: Record<string, unknown>): string[] {
+  const removed: string[] = [];
+  for (const name of Object.keys(toolset)) {
+    if (allowedOnLeanSeat(name)) continue;
+    delete toolset[name];
+    removed.push(name);
+  }
+  return removed.sort();
+}
+
+export function withheldFromLeanSeat(gated: Readonly<Record<string, readonly string[]>>, ungated: ReadonlySet<string>): string[] {
+  return [...new Set([...Object.keys(gated), ...ungated])].filter((name) => !allowedOnLeanSeat(name)).sort();
+}

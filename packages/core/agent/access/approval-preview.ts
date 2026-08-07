@@ -1,5 +1,6 @@
 import { TOOL_CONSEQUENCE, type ConsequenceTier } from "./consequence.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS, memoryRecallRouteFor, type MemoryRecallRoute } from "./window-gate-manifest.js";
+import { allowedOnLeanSeat } from "./lean-seat.js";
 import type { WindowGrain } from "../identity/binding.js";
 
 export interface ApprovalPreview {
@@ -26,13 +27,15 @@ export function approvalPreviewFor(
   const admin: string[] = [];
   const elsewhere: string[] = [];
   const confirm: string[] = [];
+  const lean = (grain === "standing" || grain === "thread") && (route === "agent" || route === "spawn_task");
+  const holds = (name: string): boolean => mountedOn(name, grain, gated, ungated) && (!lean || allowedOnLeanSeat(name));
   for (const [name, entry] of Object.entries(registry)) {
     if (entry.via.kind === "eve-hitl") {
-      if (mountedOn(name, grain, gated, ungated)) confirm.push(name);
+      if (holds(name)) confirm.push(name);
       continue;
     }
     if (entry.via.kind !== "action-kind") continue;
-    if (!mountedOn(name, grain, gated, ungated)) elsewhere.push(name);
+    if (!holds(name)) elsewhere.push(name);
     else if (entry.tier === "gate:admin") admin.push(name);
     else member.push(name);
   }

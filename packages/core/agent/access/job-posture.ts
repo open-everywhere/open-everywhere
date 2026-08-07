@@ -38,7 +38,7 @@ export function resolveJobWakePosture(s: JobWakeSignals): JobWakePosture {
   return s.humanPrincipal ? "unrestricted" : "restricted";
 }
 
-const HARNESS_INTERNAL_TOOLS: ReadonlySet<string> = new Set(["final_output"]);
+export const HARNESS_INTERNAL_TOOLS: ReadonlySet<string> = new Set(["final_output"]);
 
 export function allowedOnRestrictedJobWake(name: string, jobKit: ReadonlySet<string> = JOB_WAKE_TOOLS): boolean {
   if (jobKit.has(name)) return true;
