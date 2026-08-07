@@ -221,7 +221,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
 
     const unchanged = await enforceEgress("turn.started", r.deps as never);
     ok(r.applied.length === 1, "G1: an UNCHANGED turn makes NO firewall call (skip-unchanged — the steady-state cost is a compile)");
-    ok(unchanged.reason === "unchanged" && unchanged.enforced, "G1: the skipped turn still reports enforced (the standing policy is what enforces it)");
+    ok(unchanged.reason === "unchanged" && unchanged.enforced === undefined, "G1: a skipped turn asserts NOTHING about enforcement — it never reached the firewall, so the field is absent rather than a cheerful true");
     ok(r.audits.filter((a) => a.action === "egress.policy").length === 1, "G1: an unchanged turn writes NO audit row (a per-turn 'still the same' would bury the rows that mean something)");
 
     secret = "ROTATED";
@@ -251,7 +251,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
     const appliesBefore = r.applied.length;
     const retried = await enforceEgress("turn.started", r.deps as never);
     ok(retried.applied && r.applied.length === appliesBefore + 1, "G1: the next turn RETRIES the same policy (a failed apply deliberately records no fingerprint, so the skip-unchanged gate cannot swallow it)");
-    ok(retried.enforced && retried.enforceError === undefined, "G1: the retry succeeds and the session catches back up to its config");
+    ok(retried.enforced === true && retried.enforceError === undefined, "G1: the retry succeeds and the session catches back up to its config");
 
     secret = "OLD";
     const backToOld = await enforceEgress("turn.started", r.deps as never);
