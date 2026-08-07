@@ -227,9 +227,10 @@ export const SCENARIOS: readonly Scenario[] = [
       const a = ctx.slack!;
       const b = ctx.slackB!;
       const colour = factToken("topaz");
+      const svc = factToken("svc");
 
       const teach1Start = new Date().toISOString();
-      const { ts: teachTs } = await a.post(a.mention("remember: our deploy day is Thursday"));
+      const { ts: teachTs } = await a.post(a.mention(`remember: the deploy day for service ${svc} is Thursday`));
       const ack1 = await a.awaitThreadReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       await ctx.judgePass(
         closedQA("Does it indicate the fact is in memory — stored just now, or already stored / already known?", {
@@ -269,7 +270,7 @@ export const SCENARIOS: readonly Scenario[] = [
         "cross-domain: channel-B declines cleanly (was S12)",
       );
 
-      const { ts: dayTs } = await a.post(a.mention("which day do we deploy?"));
+      const { ts: dayTs } = await a.post(a.mention(`which day do we deploy service ${svc}?`));
       const day = await a.awaitThreadReply(dayTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(day.threadTs === dayTs, "freshness: deploy-day recall lands in its OWN fresh thread (was S4)");
       await ctx.judgePass(
