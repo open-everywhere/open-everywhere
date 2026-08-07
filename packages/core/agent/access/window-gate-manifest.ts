@@ -40,6 +40,7 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "read_routine_transcript",
   "list_skills",
   "explain_permission",
+  "permission_fit_report",
   "list_webhooks",
   "read_webhook_history",
   "capture_events",
@@ -150,6 +151,7 @@ export const JOB_WAKE_TOOLS: ReadonlySet<string> = new Set([
   "spend_report",
   "usage_report",
   "query_analytics",
+  "permission_fit_report",
   "todo",
   "load_skill",
 ]);

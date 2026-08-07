@@ -151,6 +151,9 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   explain_permission: open(
     "the approver chain's PROSPECTIVE simulator (OPE-296 P6): resolves the REAL chain (access/approver-chain.ts) for a named tool in this scope and returns the verdict trace — the retrospective approval.chain audit row's twin, rendered by the same formatter. Strictly a simulation: it executes nothing, proposes nothing, posts nothing, writes nothing (not even an audit row — logging what-ifs would bury the rows that record decisions). Discloses only this scope's OWN policy — which elements/mode govern the surface the asker is already in — which is the legible-seam pitch itself ('you can see exactly what this domain can see, and who can ask it'); gating the explainer would make the policy less inspectable than the actions it governs",
   ),
+  permission_fit_report: open(
+    "permission homeostasis (OPE-297): a RETROSPECTIVE read of this domain's own grants against its own audit counts, returning PROPOSED config diffs. It proposes only — nothing is granted, revoked, gated or delayed by it, and the actuator is a reviewed config PR (merge is the privilege gate), so running it is never itself a consequential act. Open for `explain_permission`'s reason and one more: the whole output vocabulary is (tool, aws command label, refusal reason, connector op, integer count) with NO principal in it, so it discloses the shape of the scope's own authority — the legible-seam pitch — and not a single fact about a person. Gating a permission review behind an approval would make the review rarer than the drift it exists to catch",
+  ),
   spend_report: delegated(
     "resolveReportScope",
     "packages/core/agent/spend/reporting.ts",
