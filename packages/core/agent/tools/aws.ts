@@ -4,6 +4,7 @@ import { z } from "zod";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { approvalModeForDomain, resolveApproverChain } from "../access/approver-chain.js";
 import { awsCommandVerdict } from "../access/aws-screen.js";
+import { redactAwsOutput, redactionCount, renderAwsResultForModel } from "../access/aws-output.js";
 import { auditToolAction } from "../audit/tool-action.js";
 import type { BindableContext } from "../identity/binding.js";
 import { requireAwsExecutor } from "../connections/aws-exec.js";
@@ -43,6 +44,9 @@ export default defineTool({
     stderr: z.string(),
     roleArn: z.string().describe("The role actually assumed for this call."),
     identity: z.enum(["domain-role", "user-sso"]).describe("Which identity mode the call ran under."),
+    redactions: z
+      .array(z.object({ rule: z.string(), count: z.number().int() }))
+      .describe("Credential-shaped values Open Everywhere removed from stdout/stderr before returning them — rule names and counts, never the removed values. Empty on an ordinary call."),
   }),
   approval: never(),
   async execute(input, ctx) {
@@ -97,6 +101,11 @@ export default defineTool({
       region: resolved.region,
       args: input.args,
     });
+    const redacted = redactAwsOutput({
+      stdout: result.stdout,
+      stderr: result.stderr,
+      secrets: [resolved.credentials.accessKeyId, resolved.credentials.secretAccessKey, resolved.credentials.sessionToken],
+    });
     await auditToolAction(ctx as BindableContext, "aws.exec", {
       roleArn: resolved.roleArn,
       identity: resolved.boundAs,
@@ -106,13 +115,18 @@ export default defineTool({
       command,
       exitCode: result.exitCode,
       unattended,
+      redactions: redactionCount(redacted.hits),
     });
     return {
       exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: redacted.stdout,
+      stderr: redacted.stderr,
       roleArn: resolved.roleArn,
       identity: resolved.boundAs,
+      redactions: redacted.hits.map((h) => ({ rule: h.rule, count: h.count })),
     };
+  },
+  toModelOutput(output) {
+    return { type: "text" as const, value: renderAwsResultForModel(output) };
   },
 });

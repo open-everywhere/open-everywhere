@@ -10,8 +10,11 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { registerAwsIdentityProvider, resetAwsIdentityProvider } = await import("../agent/connections/aws-identity.js");
 const { registerAwsExecutor, resetAwsExecutor } = await import("../agent/connections/aws-exec.js");
 const { readAudit } = await import("../agent/audit/audit.js");
+const { UNTRUSTED_OPEN, UNTRUSTED_CLOSE } = await import("../agent/access/untrusted.js");
+type AwsOut = { stdout: string; stderr: string; redactions: { rule: string; count: number }[] };
 const awsTool = (await import("../agent/tools/aws.js")).default as {
-  execute(input: { args: string[]; roleArn?: string; identity?: "domain" | "me" }, ctx: unknown): Promise<unknown>;
+  execute(input: { args: string[]; roleArn?: string; identity?: "domain" | "me" }, ctx: unknown): Promise<AwsOut>;
+  toModelOutput(output: AwsOut): { type: string; value: string };
 };
 
 let passed = 0;
@@ -36,17 +39,23 @@ registerConfig({
   domainsForSurface: () => ["ops"],
 });
 
+const MINTED = {
+  accessKeyId: "ASIAEXAMPLEEXAMPLE01",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  sessionToken: "IQoJb3JpZ2luX2VjEExampleSessionTokenValue0123456789",
+};
 registerAwsIdentityProvider({
   async mint() {
-    return { accessKeyId: "AKIA_FAKE", secretAccessKey: "fake-secret", sessionToken: "fake-session-token" };
+    return { ...MINTED };
   },
 });
 
 const runs: { args: readonly string[] }[] = [];
+let nextResult = { exitCode: 3, stdout: "{\"secretish\":\"account data\"}", stderr: "boom" };
 registerAwsExecutor({
   async run(req: { args: readonly string[] }) {
     runs.push({ args: req.args });
-    return { exitCode: 3, stdout: "{\"secretish\":\"account data\"}", stderr: "boom" };
+    return nextResult;
   },
 });
 
@@ -75,7 +84,7 @@ async function rowsFor(action: string): Promise<Row[]> {
 }
 
 try {
-  await awsTool.execute({ args: ["logs", "start-query", "--log-group-name", "/prod"] }, attendedCtx);
+  const plainOut = await awsTool.execute({ args: ["logs", "start-query", "--log-group-name", "/prod"] }, attendedCtx);
 
   const exec = await rowsFor("aws.exec");
   ok(exec.length === 1, `exec: exactly one aws.exec row (got ${exec.length})`);
@@ -94,6 +103,18 @@ try {
     "exec: 🔴 NEITHER stdout NOR stderr is in the row — the audit log is append-only and outside the erasure path, so the account's own bytes must never be parked in it",
   );
   ok(runs.length === 1 && runs[0]?.args[1] === "start-query", "exec: the CLI ran exactly once, with the caller's args");
+
+  ok(typeof awsTool.toModelOutput === "function", "fence: the tool AUTHORS a toModelOutput at all — `aws` is a STATIC tool, so eve preserves it natively");
+  const fenced = awsTool.toModelOutput(plainOut).value;
+  ok(fenced.split(UNTRUSTED_OPEN).length - 1 === 2, `fence: 🔴 BOTH streams are wrapped — exactly two untrusted envelopes (got ${fenced.split(UNTRUSTED_OPEN).length - 1})`);
+  ok(fenced.split(UNTRUSTED_CLOSE).length - 1 === 2, "fence: …both closed");
+  ok(fenced.includes("account data") && fenced.includes("boom"), "fence: the bodies still reach the model — this is a wrap, not a filter");
+  ok(
+    fenced.slice(0, fenced.indexOf(UNTRUSTED_OPEN)).includes("aws exited 3"),
+    "fence: the host-derived scaffold (exit code, role, identity) stays OUTSIDE the envelope, so the model is not told to discount OE's own statement about which stream it is reading",
+  );
+  ok(Array.isArray(plainOut.redactions) && plainOut.redactions.length === 0, "fence: ordinary output redacts NOTHING — a redactor that fires on benign bytes is worse than none");
+  ok(d["redactions"] === 0, "fence: …and the audit row says so with a COUNT (never a value), so a call whose output carried credential shapes is visible to an auditor");
 
   let threw = "";
   try {
@@ -124,6 +145,30 @@ try {
   );
   ok(fired?.detail?.["sessionId"] === "sess_fire", "unattended: the fire's own session id rides too — a fire has no conversation to reconstruct it from, so the transcript join is the only route left");
   ok(fired?.principalId === "U_CREATOR", "unattended: the row still names the attested creator — non-empty, which is exactly why `unattended` cannot be inferred from the principal column");
+
+  nextResult = {
+    exitCode: 1,
+    stdout: `{"note":"a log line somebody left a key in","key":"AKIAIOSFODNN7EXAMPLE","token":"${MINTED.sessionToken}"}`,
+    stderr: `An error occurred (AccessDenied): <AWSAccessKeyId>${MINTED.accessKeyId}</AWSAccessKeyId>`,
+  };
+  const red = await awsTool.execute({ args: ["logs", "get-log-events"] }, attendedCtx);
+
+  ok(!red.stderr.includes(MINTED.accessKeyId), "redaction: 🔴 the call's OWN minted key id, echoed back by S3's error body, is struck from the RETURNED stderr");
+  ok(!red.stdout.includes(MINTED.sessionToken), "redaction: …and the minted session token from the returned stdout");
+  ok(!red.stdout.includes("AKIAIOSFODNN7EXAMPLE"), "redaction: a THIRD-PARTY key id sitting in a log line the agent legitimately read is struck too");
+  ok(red.stdout.includes("a log line somebody left a key in"), "redaction: …and the rest of the payload survives — this is a strike, not a drop");
+  ok(red.stderr.includes("AccessDenied"), "redaction: …as does the reason the call failed, which is the one thing the model needs from stderr");
+  ok(red.redactions.length > 0, "redaction: the hits ride back on the result");
+  ok(!JSON.stringify(red.redactions).includes(MINTED.secretAccessKey) && !JSON.stringify(red.redactions).includes(MINTED.sessionToken), "redaction: 🔴 the hits carry rule names and counts ONLY — a tally that quoted the value would defeat the whole exercise");
+
+  const redRow = (await rowsFor("aws.exec")).find((r) => r.detail?.["command"] === "logs:get-log-events");
+  ok(typeof redRow?.detail?.["redactions"] === "number" && (redRow.detail["redactions"] as number) > 0, "redaction: the audit row carries the COUNT — either OE's own credential came back in an error body, or the account is storing keys where the agent can read them, and both are facts an auditor wants");
+  ok(!JSON.stringify(redRow?.detail ?? {}).includes(MINTED.accessKeyId), "redaction: …and never the value (the audit log is append-only and outside the erasure path)");
+
+  const redFenced = awsTool.toModelOutput(red).value;
+  ok(!redFenced.includes(MINTED.accessKeyId) && !redFenced.includes("AKIAIOSFODNN7EXAMPLE"), "redaction: nothing struck reappears in what the model is shown");
+  ok(redFenced.includes("REDACTED"), "redaction: 🔴 …and the removal is DISCLOSED — a silent deletion makes the model report the marker back as the account's own data");
+  ok(redFenced.slice(redFenced.lastIndexOf(UNTRUSTED_CLOSE)).includes("REDACTED"), "redaction: the disclosure sits OUTSIDE the last envelope — it is Open Everywhere's statement, not the account's data");
 } finally {
   resetAwsIdentityProvider();
   resetAwsExecutor();

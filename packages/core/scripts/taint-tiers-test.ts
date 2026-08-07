@@ -68,12 +68,23 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   ok(classifyIngestion({ kind: "file-upload" }).assumed, "file-upload: an unknown uploader is fail-closed AND marked assumed");
 }
 
+{
+  const aws = classifyIngestion({ kind: "aws", label: "aws" });
+  eq(aws.tier, "untrusted", "aws: the `aws` CLI's own output is untrusted — an AWS account is a SUBSTRATE, not an authoring surface, so org ownership says nothing about who wrote the log line");
+  eq(aws.assumed, false, "🔴 aws: …and that is a POSITIVE ruling, not the fail-closed default wearing a row's clothes — nothing absent could have decided it otherwise");
+  eq(
+    classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantTrust: "internal", uploader: "member" }).tier,
+    "untrusted",
+    "aws: NO metadata branch — no field declared for another row can flip it (a per-service or per-account branch OE cannot decide correctly would be false precision)",
+  );
+}
+
 for (const kind of INGESTION_KINDS) {
   const v = classifyIngestion({ kind: kind as IngestionKind });
   ok(v.tier === "trusted" || v.tier === "untrusted", `every kind resolves to a tier — "${kind}"`);
   ok(typeof v.reason === "string" && v.reason.length > 0, `every kind carries prose reasoning — "${kind}"`);
 }
-eq(INGESTION_KINDS.length, 11, "the table has exactly the 11 ruled kinds (a 12th means a design decision, not a drive-by add)");
+eq(INGESTION_KINDS.length, 12, "the table has exactly the 12 ruled kinds (a 13th means a design decision, not a drive-by add — the 12th, `aws`, was one: OPE-305)");
 
 console.log("2. the dry run:");
 

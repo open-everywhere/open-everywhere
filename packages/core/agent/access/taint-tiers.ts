@@ -11,7 +11,8 @@ export type IngestionKind =
   | "routine-event"
   | "delegation-result"
   | "image-description"
-  | "file-upload";
+  | "file-upload"
+  | "aws";
 
 export interface IngestionSource {
   readonly kind: IngestionKind;
@@ -75,6 +76,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
       if (src.uploader === "member") return trusted("uploaded by a workspace member (⚠ FLAGGED 2026-08-07, pending review: an AUTHOR rule, and a member forwarding an outside file passes it)");
       if (src.uploader === "external") return untrusted("uploaded by a non-member");
       return unknownInstance("the uploader's membership");
+
+    case "aws":
+      return untrusted("the `aws` CLI's own output — an AWS account is a SUBSTRATE, not an authoring surface: nothing gates who writes a log line, a table item or an object body, so org ownership of the account says nothing about who wrote the bytes");
   }
 }
 
@@ -90,4 +94,5 @@ export const INGESTION_KINDS: readonly IngestionKind[] = [
   "delegation-result",
   "image-description",
   "file-upload",
+  "aws",
 ];
