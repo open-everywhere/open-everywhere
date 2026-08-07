@@ -5,6 +5,11 @@ export type PrincipalAccessor = "bound" | "acting" | "opaque";
 
 export const BINDING_RECEIVERS: readonly string[] = ["binding", "b"];
 
+export const DESTRUCTURED_PRINCIPAL_KEYS: Readonly<Record<string, PrincipalAccessor>> = {
+  actingPrincipalId: "acting",
+  principalId: "opaque",
+};
+
 export const INTENT_FOR_ACCESSOR: Readonly<Partial<Record<PrincipalAccessor, PrincipalGateIntent>>> = {
   bound: "accountability",
   acting: "presence",
@@ -76,6 +81,27 @@ function accessorOn(code: string): { accessor: PrincipalAccessor; expr: string }
   return undefined;
 }
 
+const DESTRUCTURE_DECL_RE = /^\s*(?:const|let)\s*\{(.*)\}\s*=/;
+
+function destructuredPrincipalBindings(code: readonly string[]): Map<string, PrincipalAccessor> {
+  const bound = new Map<string, PrincipalAccessor>();
+  for (const line of code) {
+    const m = DESTRUCTURE_DECL_RE.exec(line);
+    if (!m) continue;
+    for (const raw of (m[1] ?? "").split(",")) {
+      const lhs = (raw.split("=")[0] ?? "").trim();
+      const parts = lhs.split(":");
+      const key = (parts[0] ?? "").trim();
+      const name = (parts[1] ?? parts[0] ?? "").trim();
+      const accessor = DESTRUCTURED_PRINCIPAL_KEYS[key];
+      if (accessor === undefined || !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+      const prior = bound.get(name);
+      bound.set(name, prior !== undefined && prior !== accessor ? "opaque" : accessor);
+    }
+  }
+  return bound;
+}
+
 const THROW_WINDOW = 4;
 const BINDING_WINDOW = 20;
 
@@ -97,6 +123,7 @@ export function findPrincipalGates(file: string, source: string): PrincipalGate[
   const lines = source.split("\n");
   const code = stripComments(lines);
   const gates: PrincipalGate[] = [];
+  const destructured = destructuredPrincipalBindings(code);
 
   const hasThrowWithin = (from: number): boolean => {
     for (let j = from; j < Math.min(from + 1 + THROW_WINDOW, code.length); j++) {
@@ -108,7 +135,13 @@ export function findPrincipalGates(file: string, source: string): PrincipalGate[
   for (let i = 0; i < code.length; i++) {
     const c = code[i] ?? "";
     const found = accessorOn(c);
-    if (!found) continue;
+    if (!found) {
+      const refused = destructuredRefusalOn(c, destructured);
+      if (refused && hasThrowWithin(i)) {
+        gates.push({ file, line: i + 1, accessor: refused.accessor, expr: refused.name, ...markerFields(lines, i + 1) });
+      }
+      continue;
+    }
 
     if (/\bif\s*\(\s*!/.test(c) && hasThrowWithin(i)) {
       gates.push({ file, line: i + 1, ...found, ...markerFields(lines, i + 1) });
@@ -126,6 +159,18 @@ export function findPrincipalGates(file: string, source: string): PrincipalGate[
     }
   }
   return gates;
+}
+
+function destructuredRefusalOn(
+  code: string,
+  destructured: ReadonlyMap<string, PrincipalAccessor>,
+): { readonly name: string; readonly accessor: PrincipalAccessor } | undefined {
+  if (destructured.size === 0 || !/\bif\s*\(/.test(code)) return undefined;
+  for (const [name, accessor] of destructured) {
+    const falsy = new RegExp(`\\bif\\s*\\(\\s*(?:!${name}\\s*\\)|${name}\\s*===\\s*undefined\\s*\\))`);
+    if (falsy.test(code)) return { name, accessor };
+  }
+  return undefined;
 }
 
 function markerFields(lines: readonly string[], line: number): Pick<PrincipalGate, "intent" | "reason" | "unknownIntent"> {

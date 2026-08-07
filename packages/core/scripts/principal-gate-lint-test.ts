@@ -3,6 +3,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   BINDING_RECEIVERS,
+  DESTRUCTURED_PRINCIPAL_KEYS,
   INTENT_FOR_ACCESSOR,
   PRINCIPAL_GATE_INTENTS,
   checkPrincipalGates,
@@ -111,6 +112,58 @@ function f(role) {
 }
 
 {
+  const bagGate = `
+function plan(input) {
+  const { grants, mode, actingPrincipalId, domains, surfaceKey, opts = {} } = input;
+  if (grants.length === 0) throw new Error("no grant");
+  if (!actingPrincipalId) {
+    throw new Error("needs a verified sender");
+  }
+}`;
+  ok(gatesIn(bagGate).length === 1, "shape-c: 🔴 a refusal over a DESTRUCTURED `actingPrincipalId` is SEEN at all — the state before this was a real gate the checker certified as absent");
+  ok(gatesIn(bagGate)[0]!.accessor === "acting", "shape-c: …classified from the KEY, which is the only name written — `actingPrincipalId` is a name one thing in this tree has");
+  ok(rules(bagGate).join() === "unmarked", "shape-c: …and it is RED unmarked, so the shape is now subject to the same rule as every other gate");
+  ok(gatesIn(bagGate)[0]!.line === 5, "shape-c: reported at the REFUSAL, not the six-field destructure — a marker above that line could not say which of the six it meant");
+
+  ok(gatesIn(`
+function plan(input) {
+  const { opts = {}, actingPrincipalId } = input;
+  if (!actingPrincipalId) throw new Error("x");
+}`).length === 1, "shape-c: a `{}` default inside the pattern doesn't hide keys after it — the brace match is anchored on the pattern's own close");
+
+  ok(gatesIn(`
+function plan(input) {
+  const { actingPrincipalId: who } = input;
+  if (!who) throw new Error("x");
+}`)[0]!.accessor === "acting", "shape-c: a rename is followed — the key still appears, so the classification is unchanged");
+
+  const dmGate = `
+async function getToken(auth) {
+  const { mode, principalId } = await resolveDmPrincipal(auth);
+  if (!principalId) throw new Error("no user identity");
+}`;
+  ok(gatesIn(dmGate)[0]!.accessor === "opaque", "shape-c: 🔴 destructured `principalId` is OPAQUE — resolveDmPrincipal returns the ACTING principal, so a guess of \"bound\" would call a correct presence gate a mismatch");
+  ok(defectsIn(`
+async function getToken(auth) {
+  const { mode, principalId } = await resolveDmPrincipal(auth);
+  // principal-gate: presence — this id becomes the OAuth subject a personal token is minted as.
+  if (!principalId) throw new Error("no user identity");
+}`).length === 0, "shape-c: …so rule 2 is skipped and the marker's own reason carries the claim, same as any opaque read");
+
+  ok(gatesIn(`
+function f(ctx) {
+  const { actingPrincipalId } = input;
+  const who = actingPrincipalIdOf(ctx);
+  if (!who) throw new Error("x");
+}`).length === 1, "shape-c: a call-form read in a file that ALSO destructures is counted ONCE — shape C only runs where the accessor matchers found nothing");
+
+  ok(gatesIn(`const { actingPrincipalId } = input; const name = actingPrincipalId ?? "anon";`).length === 0, "shape-c: a destructure with no falsy refusal is not a gate — the unit is still the refusal");
+  ok(gatesIn(`
+// was: const { actingPrincipalId } = input; if (!actingPrincipalId) throw new Error("x");
+const x = 1;`).length === 0, "shape-c: …and the same idiom quoted in a comment is not a gate, so this file can keep explaining itself");
+}
+
+{
   const sitesIn = (src: string) => findUnattendedDispatchSites("fixture.ts", src);
   const r4 = (src: string) => checkUnattendedDispatch(sitesIn(src));
 
@@ -162,6 +215,9 @@ function tsFilesUnder(dir: string): string[] {
   ok(at("tools/create_ticket.ts")?.intent === "accountability", "real: create_ticket is SEEN and stays accountability — a routine filing work is the product, and this test is what stops a future 'fences everywhere' sweep converting it");
   ok(at("tools/forget.ts")?.accessor === "bound", "real: forget's `binding.principalId` is SEEN as a BOUND property read — the exact spelling five of OPE-273's seven gates used");
   ok(at("access/analytics-scope.ts")?.accessor === "opaque", "real: analytics-scope's `role.principalId` is SEEN as opaque — the measured case the third accessor value exists for");
+  ok(at("connections/aws-identity.ts")?.accessor === "acting", "real: planAwsIdentity's DESTRUCTURED fence is SEEN and reads acting — a fire may not assume a human's AWS SSO identity, and the lint certified this file as gate-free until shape C landed");
+  ok(at("connections/connector-auth.ts")?.intent === "presence", "real: the Connect per-user mint's `principalId` refusal is SEEN — destructured off resolveDmPrincipal, which returns the ACTING principal despite the bound-looking spelling");
+  ok(at("connections/executor-user-oauth.ts")?.intent === "presence", "real: …and its Executor twin too, so the pair cannot drift apart unnoticed");
 
   const presence = gates.filter((g) => g.intent === "presence").length;
   ok(presence >= 15 && gates.length >= 25, `real: the inventory is the size the three sweeps left behind (${gates.length} gates, ${presence} presence) — a collapse here means the detector stopped seeing, not that the gates went away`);
@@ -179,6 +235,8 @@ function tsFilesUnder(dir: string): string[] {
   ok(INTENT_FOR_ACCESSOR.bound === "accountability" && INTENT_FOR_ACCESSOR.acting === "presence", "vocabulary: each accessor maps to the one intent it can deliver");
   ok(INTENT_FOR_ACCESSOR.opaque === undefined, "vocabulary: 🔴 `opaque` maps to NOTHING — a deliverable for it would be a claim the checker cannot support");
   ok(BINDING_RECEIVERS.includes("binding") && BINDING_RECEIVERS.includes("b"), "vocabulary: the classified receivers are the two evidenced in the tree, not a guess at what a binding might be called");
+  ok(DESTRUCTURED_PRINCIPAL_KEYS["actingPrincipalId"] === "acting", "vocabulary: the destructured `actingPrincipalId` key delivers presence — the KEY classifies, because in a pattern the source field's own name is what is written");
+  ok(DESTRUCTURED_PRINCIPAL_KEYS["principalId"] === "opaque", "vocabulary: 🔴 …while a destructured `principalId` declines to claim, for the same measured reason `role.principalId` does — the two shipped gates on it are ACTING reads wearing a bound-looking name");
 }
 
 console.log(`✓ principal-gate-lint: ${passed} assertions passed`);
