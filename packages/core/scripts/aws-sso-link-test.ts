@@ -86,7 +86,7 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
 }
 
 {
-  const opsBundle: Bundle = { name: "aws-ops", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe-ops", region: "eu-west-2" }] };
+  const opsBundle: Bundle = { name: "aws-ops", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/oe-ops", region: "eu-west-2", allow: ["*"] }] };
   const opsBinding: Binding = { bundle: "aws-ops", scope: { level: "principal", principal: "local/U_ALICE" } };
   registerConfig({
     loadBundles: () => [opsBundle],

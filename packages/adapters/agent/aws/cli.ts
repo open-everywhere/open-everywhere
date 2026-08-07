@@ -31,18 +31,33 @@ const defaultRunner: AwsRunner = (inv) =>
     });
   });
 
-const AMBIENT_AWS_IDENTITY_ENV = [
-  "AWS_PROFILE",
-  "AWS_DEFAULT_PROFILE",
-  "AWS_ROLE_ARN",
-  "AWS_WEB_IDENTITY_TOKEN_FILE",
-  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+const CHILD_ENV_PASSTHROUGH = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "TZ",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "https_proxy",
+  "http_proxy",
+  "no_proxy",
 ] as const;
 
 function childEnv(credentials: AwsCredentials, region: string | undefined): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const k of AMBIENT_AWS_IDENTITY_ENV) delete env[k];
+  const env: NodeJS.ProcessEnv = {};
+  for (const k of CHILD_ENV_PASSTHROUGH) {
+    if (process.env[k] !== undefined) env[k] = process.env[k];
+  }
+  for (const k of Object.keys(process.env)) {
+    if (k.startsWith("LC_")) env[k] = process.env[k];
+  }
+  env.AWS_CONFIG_FILE = "/dev/null";
+  env.AWS_SHARED_CREDENTIALS_FILE = "/dev/null";
+  env.AWS_EC2_METADATA_DISABLED = "true";
   env.AWS_ACCESS_KEY_ID = credentials.accessKeyId;
   env.AWS_SECRET_ACCESS_KEY = credentials.secretAccessKey;
   env.AWS_SESSION_TOKEN = credentials.sessionToken;

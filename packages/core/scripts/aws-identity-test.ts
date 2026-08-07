@@ -19,6 +19,7 @@ import {
   type AwsExecutor,
 } from "../agent/connections/aws-exec.js";
 import { assertBundlesValid, type AwsRoleGrant, type Binding, type Bundle } from "../agent/access/bundle.js";
+import { awsCommandVerdict, awsSessionPolicyFromAllow } from "../agent/access/aws-screen.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
 import { registerConfig } from "../agent/access/config.js";
 import type { BindableContext } from "../agent/identity/binding.js";
@@ -54,8 +55,8 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
   ok(false, `${label} (did not reject)`);
 }
 
-const g1: AwsRoleGrant = { roleArn: "arn:aws:iam::123456789012:role/oe-payments", region: "eu-west-2" };
-const g2: AwsRoleGrant = { roleArn: "arn:aws:iam::123456789012:role/oe-readonly" };
+const g1: AwsRoleGrant = { roleArn: "arn:aws:iam::123456789012:role/oe-payments", region: "eu-west-2", allow: ["*"] };
+const g2: AwsRoleGrant = { roleArn: "arn:aws:iam::123456789012:role/oe-readonly", allow: ["*"] };
 
 function plan(over: Partial<Parameters<typeof planAwsIdentity>[0]> = {}) {
   return planAwsIdentity({
@@ -234,6 +235,11 @@ try {
   ok(rec.last?.roleArn === "arn:aws:iam::123456789012:role/oe-ops", "resolve: the mint request carried the granted roleArn");
   ok(rec.last?.roleSessionName === "oe-ops", "resolve: the mint request carried the derived RoleSessionName");
   ok(rec.last?.principalId === undefined, "resolve: a domain-role mint names no principalId");
+  ok(typeof rec.last?.sessionPolicy === "string", "resolve: the domain-role mint carries the compiled STS session policy");
+  {
+    const acts = (JSON.parse(rec.last!.sessionPolicy!) as { Statement: { Action: string[] }[] }).Statement[0]!.Action;
+    ok(acts.includes("logs:*") && acts.includes("s3:GetObject"), "resolve: the session policy is the grant's own allow grammar, compiled");
+  }
   ok(resolved.domain === "ops", "resolve: the PLAN's domain rides onto ResolvedAwsIdentity — the audit row's `channel/domain` half (aws-access-plan.md §9), carried out rather than re-derived so it cannot disagree with the RoleSessionName");
 
   const fireCtx: BindableContext = {
@@ -274,12 +280,12 @@ try {
 
 {
   throwsWith(
-    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "not-an-arn" }] }]),
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "not-an-arn", allow: ["*"] }] }]),
     "must be an IAM role ARN",
     "bundle-valid: a malformed roleArn is refused",
   );
 
-  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x" }] }]);
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x", allow: ["*"] }] }]);
   ok(true, "bundle-valid: a well-formed IAM role ARN passes");
 
   throwsWith(
@@ -288,8 +294,8 @@ try {
         {
           name: "b",
           awsRoles: [
-            { roleArn: "arn:aws:iam::123456789012:role/x" },
-            { roleArn: "arn:aws:iam::123456789012:role/x" },
+            { roleArn: "arn:aws:iam::123456789012:role/x", allow: ["*"] },
+            { roleArn: "arn:aws:iam::123456789012:role/x", allow: ["*"] },
           ],
         },
       ]),
@@ -298,15 +304,15 @@ try {
   );
 
   throwsWith(
-    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x", region: "EU_WEST_2" }] }]),
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x", region: "EU_WEST_2", allow: ["*"] }] }]),
     "not a well-formed AWS region",
     "bundle-valid: a malformed region is refused",
   );
 
-  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x", region: "us-east-1" }] }]);
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws:iam::123456789012:role/x", region: "us-east-1", allow: ["*"] }] }]);
   ok(true, "bundle-valid: a well-formed region passes");
 
-  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws-us-gov:iam::123456789012:role/x", region: "us-gov-east-1" }] }]);
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: "arn:aws-us-gov:iam::123456789012:role/x", region: "us-gov-east-1", allow: ["*"] }] }]);
   ok(true, "bundle-valid: a gov-partition region (us-gov-east-1) passes");
 }
 
@@ -315,9 +321,19 @@ try {
 
   assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs", "s3:cp", "dynamodb:query"] }] }]);
   ok(true, "bundle-valid: a well-formed allow list (service + service:operation) passes");
+  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs:Describe*", "s3:GetObject", "*"] }] }]);
+  ok(true, "bundle-valid: IAM-native glob entries and the explicit unrestricted `*` pass");
 
-  assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: [] }] }]);
-  ok(true, "bundle-valid: an empty allow list passes (unrestricted)");
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: [] }] }]),
+    "REQUIRED",
+    "bundle-valid: an EMPTY allow list is refused — unrestricted must be spelled [\"*\"] explicitly",
+  );
+  throwsWith(
+    () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE } as unknown as AwsRoleGrant] }]),
+    "REQUIRED",
+    "bundle-valid: an ABSENT allow list (a JS config dodging the type) is refused the same way",
+  );
 
   throwsWith(
     () => assertBundlesValid([{ name: "b", awsRoles: [{ roleArn: ROLE, allow: ["logs", "  "] }] }]),
@@ -355,8 +371,42 @@ try {
 }
 
 {
-  ok(isAwsCommandAllowed(["logs", "start-query"], undefined), "allow: undefined allow ⇒ allowed (unrestricted)");
-  ok(isAwsCommandAllowed(["s3", "rm", "--recursive"], []), "allow: empty allow ⇒ allowed (unrestricted)");
+  ok(!isAwsCommandAllowed(["logs", "start-query"], undefined), "allow: undefined allow ⇒ REFUSED (unrestricted must be [\"*\"])");
+  ok(!isAwsCommandAllowed(["s3", "rm", "--recursive"], []), "allow: empty allow ⇒ REFUSED");
+  ok(isAwsCommandAllowed(["s3", "rm", "x"], ["*"]), "allow: the explicit [\"*\"] is unrestricted");
+
+  ok(!isAwsCommandAllowed(["configure", "export-credentials"], ["*"]), "fence1: `configure export-credentials` refused under [\"*\"]");
+  ok(!isAwsCommandAllowed(["configure", "list"], ["*"]), "fence1: `configure list` refused under [\"*\"]");
+  ok(!isAwsCommandAllowed(["logs", "describe-log-groups", "--debug"], ["*"]), "fence1: `--debug` refused anywhere in argv (prints the credential chain)");
+  {
+    const v = awsCommandVerdict({ argv: ["configure", "export-credentials"], allow: ["*"] });
+    ok(!v.ok && v.code === "credential-read", "fence1: the verdict carries the closed reason code credential-read");
+  }
+
+  ok(
+    !isAwsCommandAllowed(["logs", "--endpoint-url", "https://attacker/", "describe-log-groups"], ["logs"]),
+    "fence2: 🔴 the --endpoint-url defeat is DEAD — the whole argv is screened, not args[0..1]",
+  );
+  ok(!isAwsCommandAllowed(["logs", "describe-log-groups", "--endpoint-url=https://attacker/"], ["logs"]), "fence2: the --opt=value form is refused too");
+  ok(!isAwsCommandAllowed(["s3", "cp", "a", "b", "--no-verify-ssl"], ["*"]), "fence2: --no-verify-ssl refused (TLS defeat)");
+  ok(!isAwsCommandAllowed(["s3", "cp", "a", "b", "--ca-bundle", "/tmp/x"], ["*"]), "fence2: --ca-bundle refused (spoofed endpoint trust)");
+  ok(!isAwsCommandAllowed(["logs", "describe-log-groups", "--profile", "prod"], ["*"]), "fence2: --profile refused (ambient identity)");
+  ok(!isAwsCommandAllowed(["s3api", "get-object", "--bucket", "b", "--key", "k", "--outfile", "/etc/x"], ["*"]), "fence2: --outfile refused (host write)");
+  ok(!isAwsCommandAllowed(["dynamodb", "put-item", "--item", "file:///etc/passwd"], ["*"]), "fence2: a file:// value refused anywhere in argv (host read)");
+  {
+    const v = awsCommandVerdict({ argv: ["logs", "--endpoint-url", "https://x/", "describe-log-groups"], allow: ["logs"] });
+    ok(!v.ok && v.code === "argv-option", "fence2: the verdict carries the closed reason code argv-option");
+  }
+
+  ok(isAwsCommandAllowed(["logs", "describe-log-groups"], ["logs:Describe*"]), "grammar: an IAM-native glob (logs:Describe*) matches the CLI kebab op");
+  ok(!isAwsCommandAllowed(["logs", "start-query"], ["logs:Describe*"]), "grammar: …and refuses ops outside the glob");
+  ok(isAwsCommandAllowed(["logs", "start-query"], ["logs:StartQuery"]), "grammar: an exact IAM-native name matches its kebab CLI spelling (kebab→Pascal is mechanical)");
+  ok(isAwsCommandAllowed(["s3api", "get-object", "--bucket", "b", "--key", "k"], ["s3:GetObject"]), "grammar: the s3api CLI service maps to the s3 IAM prefix");
+  ok(isAwsCommandAllowed(["dynamodb", "query"], ["*:Query"]), "grammar: a service-glob entry (*:Query) matches across services");
+  ok(!isAwsCommandAllowed(["s3", "cp", "a", "b"], ["s3:GetObject"]), "fanout: s3 cp refused on a Get-only grant (it also needs PutObject+ListBucket)");
+  ok(isAwsCommandAllowed(["s3", "cp", "a", "b"], ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]), "fanout: s3 cp allowed when every fanned-out action is covered");
+  ok(isAwsCommandAllowed(["s3", "ls"], ["s3:List*"]), "fanout: s3 ls allowed by a List* glob");
+  ok(!isAwsCommandAllowed(["s3", "rm", "x"], ["s3:GetObject", "s3:PutObject", "s3:ListBucket"]), "fanout: s3 rm refused without DeleteObject");
 
   ok(isAwsCommandAllowed(["logs", "start-query"], ["logs"]), "allow: bare-service entry allows any op of that service");
   ok(isAwsCommandAllowed(["logs", "describe-log-groups"], ["logs"]), "allow: bare-service entry allows a different op of the same service");
@@ -379,15 +429,35 @@ try {
 }
 
 {
+  ok(awsSessionPolicyFromAllow(["*"]) === undefined, "policy: [\"*\"] compiles to NO session policy (explicitly unrestricted — nothing to narrow)");
+  ok(awsSessionPolicyFromAllow([]) === undefined, "policy: an (invalid) empty list compiles to nothing — the screen refuses it anyway");
+
+  const compiled = awsSessionPolicyFromAllow(["logs", "s3:cp", "dynamodb:Query"]);
+  ok(compiled !== undefined, "policy: a compilable grammar produces a policy document");
+  const doc = JSON.parse(compiled!) as { Version: string; Statement: { Effect: string; Action: string[]; Resource: string }[] };
+  ok(doc.Version === "2012-10-17" && doc.Statement[0]!.Effect === "Allow", "policy: standard IAM document shape");
+  const actions = doc.Statement[0]!.Action;
+  ok(actions.includes("logs:*"), "policy: a bare service compiles to service:*");
+  ok(actions.includes("s3:GetObject") && actions.includes("s3:PutObject") && actions.includes("s3:ListBucket"), "policy: the s3 cp CLI entry compiles to its enumerated fan-out");
+  ok(actions.includes("dynamodb:Query"), "policy: an IAM-native entry passes through unchanged");
+
+  const kebab = awsSessionPolicyFromAllow(["logs:start-query", "logs:describe-*"]);
+  const kebabActions = (JSON.parse(kebab!) as { Statement: { Action: string[] }[] }).Statement[0]!.Action;
+  ok(kebabActions.includes("logs:StartQuery") && kebabActions.includes("logs:Describe*"), "policy: kebab CLI entries translate to Pascal (globs survive)");
+
+  ok(awsSessionPolicyFromAllow(["logs", "*:Get*"]) === undefined, "policy: any uncompilable entry declines the WHOLE policy (a partial intersection would break allowed commands)");
+}
+
+{
   const roleShared = "arn:aws:iam::123456789012:role/oe-shared";
   const roleDomain = "arn:aws:iam::123456789012:role/oe-domain-only";
 
-  const wide: Bundle = { name: "wide", awsRoles: [{ roleArn: roleShared, region: "us-east-1", audience: "aud-wide" }] };
+  const wide: Bundle = { name: "wide", awsRoles: [{ roleArn: roleShared, region: "us-east-1", audience: "aud-wide", allow: ["*"] }] };
   const narrow: Bundle = {
     name: "narrow",
     awsRoles: [
-      { roleArn: roleShared, region: "eu-west-2", audience: "aud-narrow" },
-      { roleArn: roleDomain, region: "eu-west-2" },
+      { roleArn: roleShared, region: "eu-west-2", audience: "aud-narrow", allow: ["logs"] },
+      { roleArn: roleDomain, region: "eu-west-2", allow: ["*"] },
     ],
   };
   const bindings: Binding[] = [

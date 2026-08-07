@@ -119,6 +119,38 @@ const domainReq: AwsIdentityRequest = {
 }
 
 {
+  process.env.AWS_WEB_IDENTITY_TOKEN_FILE = "/var/run/secrets/oidc-token";
+  const captured: { body: string }[] = [];
+  const expiration = new Date(Date.now() + 3600_000).toISOString();
+  const provider = makeAwsStsProvider({
+    fetch: (async (_url: string, init?: RequestInit) => {
+      captured.push({ body: String(init?.body ?? "") });
+      return new Response(xmlOk(expiration), { status: 200, headers: { "content-type": "text/xml" } });
+    }) as typeof fetch,
+    readTokenFile: () => "fake-oidc-jwt-token",
+  });
+
+  const policy = JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: ["logs:*"], Resource: "*" }] });
+  const withPolicy: AwsIdentityRequest = {
+    kind: "domain-role",
+    roleArn: "arn:aws:iam::123456789012:role/oe-policied",
+    region: "eu-west-1",
+    roleSessionName: "oe-policied",
+    sessionPolicy: policy,
+  };
+  await provider.mint(withPolicy);
+  ok(new URLSearchParams(captured[0].body).get("Policy") === policy, "session policy: a domain-role mint carries `Policy` on AssumeRoleWithWebIdentity (AWS-enforced intersection)");
+
+  const withoutPolicy: AwsIdentityRequest = { ...withPolicy, sessionPolicy: undefined };
+  await provider.mint(withoutPolicy);
+  ok(captured.length === 2, "session policy: the cache key is policy-sensitive — same role+sessionName with a different policy re-federates");
+  ok(new URLSearchParams(captured[1].body).get("Policy") === null, "session policy: an unrestricted grant sends NO Policy parameter");
+
+  await provider.mint(withPolicy);
+  ok(captured.length === 2, "session policy: re-minting the policied identity reuses ITS OWN cache entry");
+}
+
+{
   process.env.AWS_WEB_IDENTITY_TOKEN_FILE = "/no/such/token";
   delete process.env.OE_AWS_WEB_IDENTITY_TOKEN;
   let fetched = false;
@@ -183,6 +215,32 @@ const domainReq: AwsIdentityRequest = {
 }
 
 {
+  process.env.AWS_WEB_IDENTITY_TOKEN_FILE = "/var/run/secrets/oidc-token";
+  let delegated: AwsIdentityRequest | undefined;
+  let stsFetched = false;
+  const provider = makeAwsStsProvider({
+    fetch: (async () => {
+      stsFetched = true;
+      return new Response("", { status: 200 });
+    }) as typeof fetch,
+    readTokenFile: () => "fake-oidc-jwt-token",
+    mintUserSso: async (req) => {
+      delegated = req;
+      return { accessKeyId: "ASIASSOUSER", secretAccessKey: "s", sessionToken: "t" };
+    },
+  });
+  const creds = await provider.mint({
+    kind: "user-sso",
+    roleArn: "arn:aws:iam::123456789012:role/oe-user",
+    roleSessionName: "oe-alice",
+    principalId: "alice",
+  });
+  ok(creds.accessKeyId === "ASIASSOUSER", "user-sso delegates to the Identity Center minter when wired");
+  ok(delegated !== undefined && delegated.sessionPolicy === undefined, "🔴 the user-sso mint request carries NO session policy — the per-user path structurally cannot enforce one");
+  ok(!stsFetched, "user-sso never touches the STS federation path (no Policy parameter could ride it)");
+}
+
+{
   const creds: AwsCredentials = {
     accessKeyId: "ASIACHILD",
     secretAccessKey: "childSecret",
@@ -192,6 +250,9 @@ const domainReq: AwsIdentityRequest = {
   const args = ["logs", "start-query", "--log-group-name", "/oe/app", "--query-string", "fields @message"];
 
   {
+    process.env.DATABASE_URL = "postgres://user:SECRET@db.internal/oe";
+    process.env.OE_SPAWN_DISPATCH_SECRET = "spawn-secret";
+    process.env.AWS_PROFILE = "ambient-prod";
     let seen: AwsExecInvocation | undefined;
     const executor = makeAwsCliExecutor({
       run: async (inv) => {
@@ -200,6 +261,9 @@ const domainReq: AwsIdentityRequest = {
       },
     });
     const res = await executor.run({ credentials: creds, region: "us-west-2", args });
+    delete process.env.DATABASE_URL;
+    delete process.env.OE_SPAWN_DISPATCH_SECRET;
+    delete process.env.AWS_PROFILE;
     ok(res.exitCode === 0 && res.stdout.includes("q-1"), "executor returns the runner's stdout + exit 0");
     ok(seen !== undefined && seen.file === "aws", "the launched binary is `aws`");
     ok(JSON.stringify(seen!.args) === JSON.stringify(args), "argv is exactly the args after `aws`");
@@ -209,7 +273,12 @@ const domainReq: AwsIdentityRequest = {
     ok(seen!.env.AWS_REGION === "us-west-2" && seen!.env.AWS_DEFAULT_REGION === "us-west-2", "child env carries the region");
     const argvBlob = seen!.args.join(" ");
     ok(!argvBlob.includes("ASIACHILD") && !argvBlob.includes("childSecret") && !argvBlob.includes("childSession"), "creds are NEVER on argv");
-    ok(seen!.env.AWS_PROFILE === undefined, "ambient AWS_PROFILE is stripped from the child env");
+    ok(seen!.env.AWS_PROFILE === undefined, "ambient AWS_PROFILE never reaches the child (deny-by-default)");
+    ok(seen!.env.DATABASE_URL === undefined, "🔴 the deployment's DATABASE_URL never reaches the child — deny-by-default, not strip-a-list");
+    ok(seen!.env.OE_SPAWN_DISPATCH_SECRET === undefined, "🔴 OE's own dispatch secret never reaches the child");
+    ok(seen!.env.PATH === process.env.PATH, "the enumerated pass-through (PATH) survives so the binary can be found");
+    ok(seen!.env.AWS_CONFIG_FILE === "/dev/null" && seen!.env.AWS_SHARED_CREDENTIALS_FILE === "/dev/null", "config/credential files are pinned to /dev/null — no on-host profile is ever readable");
+    ok(seen!.env.AWS_EC2_METADATA_DISABLED === "true", "IMDS lookup is disabled — the injected creds are the ONLY identity the CLI can resolve");
   }
 
   {

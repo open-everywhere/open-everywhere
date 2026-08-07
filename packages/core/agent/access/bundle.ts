@@ -52,7 +52,7 @@ export interface AwsRoleGrant {
   readonly roleArn: string;
   readonly region?: string;
   readonly audience?: string;
-  readonly allow?: readonly string[];
+  readonly allow: readonly string[];
 }
 
 export interface Bundle {
@@ -156,6 +156,11 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
       roleArns.add(grant.roleArn);
       if (grant.region !== undefined && !AWS_REGION_FORM.test(grant.region)) {
         bad.push(`  bundle "${b.name}" awsRoles region "${grant.region}" is not a well-formed AWS region (e.g. "eu-west-2")`);
+      }
+      if (grant.allow === undefined || grant.allow.length === 0) {
+        bad.push(
+          `  bundle "${b.name}" awsRoles grant "${grant.roleArn}" has no \`allow\` list — REQUIRED: spell unrestricted access explicitly as allow: ["*"] (an absent narrowing and a decision not to narrow must not look the same; at runtime an allow-less grant REFUSES, never passes through)`,
+        );
       }
       const seenAllow = new Set<string>();
       for (const entry of grant.allow ?? []) {

@@ -1,4 +1,5 @@
 import type { AwsRoleGrant } from "../access/bundle.js";
+import { awsCommandVerdict, awsSessionPolicyFromAllow } from "../access/aws-screen.js";
 import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor } from "../access/request.js";
 import { surfaceKeyOf } from "../access/resolver.js";
 import { bindFrom } from "../identity/binding.js";
@@ -20,6 +21,7 @@ export interface AwsIdentityRequest {
   readonly audience?: string;
   readonly roleSessionName: string;
   readonly principalId?: string;
+  readonly sessionPolicy?: string;
 }
 
 export interface AwsIdentityProvider {
@@ -33,31 +35,11 @@ export interface ResolvedAwsIdentity {
   readonly boundAs: AwsIdentityKind;
   readonly roleSessionName: string;
   readonly domain?: string;
-  readonly allow?: readonly string[];
-}
-
-function normalizeAwsOp(token: string): string {
-  return token.trim().toLowerCase().replace(/_/gu, "-");
+  readonly allow: readonly string[];
 }
 
 export function isAwsCommandAllowed(args: readonly string[], allow: readonly string[] | undefined): boolean {
-  if (allow === undefined || allow.length === 0) return true;
-  const service = args[0];
-  if (service === undefined) return false;
-  const operation = args[1];
-  const normService = service.trim().toLowerCase();
-  const normOperation = operation === undefined ? undefined : normalizeAwsOp(operation);
-  for (const entry of allow) {
-    const sep = entry.indexOf(":");
-    if (sep < 0) {
-      if (entry.trim().toLowerCase() === normService) return true;
-      continue;
-    }
-    const entryService = entry.slice(0, sep).trim().toLowerCase();
-    const entryOperation = normalizeAwsOp(entry.slice(sep + 1));
-    if (entryService === normService && normOperation !== undefined && entryOperation === normOperation) return true;
-  }
-  return false;
+  return awsCommandVerdict({ argv: args, allow }).ok;
 }
 
 let registered: AwsIdentityProvider | undefined;
@@ -166,12 +148,9 @@ export function planAwsIdentity(input: {
   return { kind, grant, roleSessionName: awsRoleSessionName(domain ?? surfaceKey), ...(domain !== undefined ? { domain } : {}) };
 }
 
-export async function resolveAwsIdentity(
-  ctx: BindableContext,
-  opts?: AwsIdentityOptions,
-): Promise<ResolvedAwsIdentity> {
+export function planAwsIdentityFor(ctx: BindableContext, opts?: AwsIdentityOptions): AwsIdentityPlan {
   const access = resolveAccessFor(ctx);
-  const plan = planAwsIdentity({
+  return planAwsIdentity({
     grants: access.awsRoles,
     mode: bindFrom(ctx).mode,
     actingPrincipalId: actingPrincipalIdOf(ctx),
@@ -179,6 +158,10 @@ export async function resolveAwsIdentity(
     surfaceKey: surfaceKeyOf(buildResolveRequest(ctx)),
     opts,
   });
+}
+
+export async function mintPlannedAwsIdentity(plan: AwsIdentityPlan): Promise<ResolvedAwsIdentity> {
+  const sessionPolicy = plan.kind === "domain-role" ? awsSessionPolicyFromAllow(plan.grant.allow ?? []) : undefined;
   const credentials = await requireAwsIdentityProvider().mint({
     kind: plan.kind,
     roleArn: plan.grant.roleArn,
@@ -186,6 +169,7 @@ export async function resolveAwsIdentity(
     audience: plan.grant.audience,
     roleSessionName: plan.roleSessionName,
     principalId: plan.principalId,
+    ...(sessionPolicy !== undefined ? { sessionPolicy } : {}),
   });
   return {
     credentials,
@@ -194,6 +178,13 @@ export async function resolveAwsIdentity(
     boundAs: plan.kind,
     roleSessionName: plan.roleSessionName,
     ...(plan.domain !== undefined ? { domain: plan.domain } : {}),
-    allow: plan.grant.allow,
+    allow: plan.grant.allow ?? [],
   };
+}
+
+export async function resolveAwsIdentity(
+  ctx: BindableContext,
+  opts?: AwsIdentityOptions,
+): Promise<ResolvedAwsIdentity> {
+  return mintPlannedAwsIdentity(planAwsIdentityFor(ctx, opts));
 }
