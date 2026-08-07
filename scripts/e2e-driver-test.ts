@@ -1176,6 +1176,11 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(ok2.seen.join(",") === "(unstamped),test/model-a,test/unpriced", "checkExpectedModels reports the distinct model set it saw (sorted)");
   const ok3 = checkExpectedModels(rows, ["test/model-a"]);
   ok(!ok3.ok && ok3.unexpected.includes("test/unpriced"), "checkExpectedModels flags an unexpected routed model (the routing-regression catch)");
+  const withSandbox = [...rows, { surfaceKey: "slack/T1/C1", calls: 2, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }];
+  const ok4 = checkExpectedModels(withSandbox, ["test/model-a", "test/unpriced", "(unstamped)"]);
+  ok(ok4.ok && !ok4.seen.includes("(sandbox)"), "checkExpectedModels ignores zero-token model-less rows (sandbox runtime billing, not a model call)");
+  const ok5 = checkExpectedModels([{ surfaceKey: "slack/T1/C1", calls: 1, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }], ["test/model-a"]);
+  ok(ok5.ok && ok5.seen.length === 0, "a window containing ONLY sandbox runtime rows passes with an empty seen set");
 }
 
 {

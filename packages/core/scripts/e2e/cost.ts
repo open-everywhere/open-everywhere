@@ -73,7 +73,10 @@ export function checkExpectedModels(
   expected: readonly string[],
 ): { ok: boolean; seen: readonly string[]; unexpected: readonly string[] } {
   const expectedSet = new Set(expected);
-  const seen = [...new Set(rows.map((r) => r.model ?? "(unstamped)"))].sort();
+  const modelCalls = rows.filter(
+    (r) => r.model !== undefined || r.inputTokens + r.outputTokens + r.cacheReadTokens + r.cacheWriteTokens > 0,
+  );
+  const seen = [...new Set(modelCalls.map((r) => r.model ?? "(unstamped)"))].sort();
   const unexpected = seen.filter((m) => !expectedSet.has(m));
   return { ok: unexpected.length === 0, seen, unexpected };
 }
