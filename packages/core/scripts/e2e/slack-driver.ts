@@ -228,12 +228,13 @@ export class SlackDriver {
     return pollUntil(async () => find(await this.replies(rootTs)), { timeoutMs: opts.timeoutMs, what: opts.what });
   }
 
-  async awaitAnyReply(anchorTs: string, opts: { timeoutMs: number }): Promise<SlackMessage> {
+  async awaitAnyReply(anchorTs: string, opts: { timeoutMs: number; skip?: (m: SlackMessage) => boolean }): Promise<SlackMessage> {
+    const wanted = (m: SlackMessage): boolean => this.isBotReply(m) && !(opts.skip?.(m) ?? false);
     return pollUntil(
       async () => {
-        const threaded = (await this.replies(anchorTs)).find((m) => this.isBotReply(m) && tsAfter(m.ts, anchorTs));
+        const threaded = (await this.replies(anchorTs)).find((m) => wanted(m) && tsAfter(m.ts, anchorTs));
         if (threaded) return threaded;
-        return (await this.history(anchorTs)).find((m) => this.isBotReply(m));
+        return (await this.history(anchorTs)).find(wanted);
       },
       { timeoutMs: opts.timeoutMs, what: `a bot reply (threaded or top-level) after ${anchorTs}` },
     );

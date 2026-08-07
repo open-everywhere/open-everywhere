@@ -829,12 +829,12 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: teachTs } = await dm.post(teach);
       const taught = await forge.message({ text: teach, userId, teamId, ts: teachTs });
       ctx.gate(taught.status === 200, "synthetic DM (teach) acked 200");
-      await dm.awaitAnyReply(teachTs, { timeoutMs: REPLY_WAIT });
+      await dm.awaitAnyReply(teachTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       const askDm = `what's my favourite cheese from ${batch}? give its exact name as stored; if you don't know, say so plainly`;
       const { ts: askTs } = await dm.post(askDm);
       const asked = await forge.message({ text: askDm, userId, teamId, ts: askTs });
       ctx.gate(asked.status === 200, "synthetic DM (recall) acked 200");
-      const recall = await dm.awaitAnyReply(askTs, { timeoutMs: REPLY_WAIT });
+      const recall = await dm.awaitAnyReply(askTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(
         recall.text.toLowerCase().includes(cheese.toLowerCase()),
         "DM recall HITS from the personal silo (hard gate: taught token present)",
@@ -2578,11 +2578,11 @@ export const SCENARIOS: readonly Scenario[] = [
               }
               continue;
             }
-            if (m.text.trim().length > 0) pending = pending ?? m;
+            if (m.text.trim().length > 0 && !isFillerAck(m.text)) pending = pending ?? m;
           }
           return pending;
         },
-        { timeoutMs: 300_000, what: "a substantive (non-card) bot reply to the DM Notion-pages ask" },
+        { timeoutMs: FILE_REPLY_WAIT, what: "a substantive (non-card, non-ack) bot reply to the DM Notion-pages ask" },
       );
       ctx.gate(answer.text.trim().length > 0, "the DM personal-Notion ask drew a substantive bot reply");
       await ctx.judgePass(
