@@ -8,7 +8,7 @@ import { sqliteOperationalStore } from "../agent/operational/sqlite.js";
 import { registerOperationalStore, resetOperationalStore, getOperationalStore } from "../agent/operational/provider.js";
 import { OPERATIONAL_TABLES, type OperationalStore } from "../agent/operational/store.js";
 import { revokeLinkSet, setLinkSetHold, unlinkOwnId } from "../agent/identity/link-store.js";
-import { sharedVaultSubject } from "../agent/identity/oauth-vault-share.js";
+import { rawVaultSubject, sharedVaultSubject, RAW_VAULT_SUBJECT_PREFIX, SHARED_VAULT_SUBJECT_PREFIX } from "../agent/identity/oauth-vault-share.js";
 import { sharedVaultSubjectFor } from "../agent/access/group-request.js";
 
 let n = 0;
@@ -16,6 +16,25 @@ const ok = (cond: boolean, label: string) => {
   assert.ok(cond, label);
   n++;
 };
+
+{
+  const a = rawVaultSubject("acme", "slack", "U1");
+  ok(a === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/U1`, "raw subject: composes p:<org>/<platform>/<native-id> — the same platform/id grammar principal-key.ts owns, org-qualified like the shared form");
+  ok(a !== "U1", "raw subject: 🔴 NOT the bare native id — that spelling is what OPE-286 deleted");
+
+  ok(rawVaultSubject("acme", "slack", "U1") !== rawVaultSubject("beta", "slack", "U1"), "raw subject: 🔴 the SAME Slack member id in two orgs → two DIFFERENT subjects (two humans can hold one U-id; they must not hold one credential row)");
+  ok(rawVaultSubject("acme", "slack", "U1") !== rawVaultSubject("acme", "discord", "U1"), "raw subject: 🔴 the same native id on two platforms → two DIFFERENT subjects (six id namespaces that never agreed to share one)");
+
+  ok(rawVaultSubject("acme-x", "slack", "U1") !== rawVaultSubject("acme", "x-slack", "U1"), "raw subject: distinct (org, platform) pairs compose distinct subjects — the segments cannot be re-split into a collision");
+
+  ok(!rawVaultSubject("acme", "slack", "ls:evil/x").startsWith(SHARED_VAULT_SUBJECT_PREFIX), "disjoint: a native id crafted as 'ls:evil/x' still composes a RAW subject — it can never be mistaken for a link-set's shared row");
+  ok(rawVaultSubject("acme", "slack", "ls:evil/x") === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/ls:evil/x`, "disjoint: …the crafted id rides VERBATIM in the tail (never interpreted, never stripped) — the qualifier is what makes it inert");
+  ok(!sharedVaultSubject("acme", "S1").startsWith(RAW_VAULT_SUBJECT_PREFIX), "disjoint: a shared subject can never take the raw shape either");
+  ok(!sharedVaultSubject("ls:evil", "S1").startsWith(RAW_VAULT_SUBJECT_PREFIX), "disjoint: …including when the org itself is crafted");
+  const rawPrefix: string = RAW_VAULT_SUBJECT_PREFIX;
+  const sharedPrefix: string = SHARED_VAULT_SUBJECT_PREFIX;
+  ok(rawPrefix !== sharedPrefix && !rawPrefix.startsWith(sharedPrefix) && !sharedPrefix.startsWith(rawPrefix), "disjoint: the two prefixes are distinct literals, NEITHER of which prefixes the other — the property every assertion above is anchored on");
+}
 
 ok(!(OPERATIONAL_TABLES as readonly string[]).includes("identity_oauth_vault_grants"), "registry: the per-connector grant table is GONE — consent collapsed to link-level, no ratification machinery");
 

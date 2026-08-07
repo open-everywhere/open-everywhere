@@ -18,6 +18,7 @@ import {
   requireAwsExecutor,
   type AwsExecutor,
 } from "../agent/connections/aws-exec.js";
+import { rawVaultSubject } from "../agent/identity/oauth-vault-share.js";
 import { assertBundlesValid, type AwsRoleGrant, type Binding, type Bundle } from "../agent/access/bundle.js";
 import { awsCommandVerdict, awsSessionPolicyFromAllow } from "../agent/access/aws-screen.js";
 import { resolveAccess, type ResolveRequest } from "../agent/access/resolver.js";
@@ -63,6 +64,8 @@ function plan(over: Partial<Parameters<typeof planAwsIdentity>[0]> = {}) {
     grants: [g1],
     mode: "channel",
     actingPrincipalId: undefined,
+    org: "acme",
+    platform: "slack",
     domains: ["payments"],
     surfaceKey: "slack/T1/C1",
     ...over,
@@ -88,7 +91,8 @@ function validSessionName(name: string): boolean {
   ok(p.grant === g1, "plan: the sole granted role is selected");
   ok(p.roleSessionName === awsRoleSessionName("payments"), "plan: domain-role RoleSessionName derives from domains[0]");
   ok(p.roleSessionName === "oe-payments", "plan: derived RoleSessionName is the oe-<domain> form");
-  ok(p.principalId === undefined, "plan: a domain-role plan names no principal (it is not a person's identity)");
+  ok(p.principalSubject === undefined, "plan: a domain-role plan names no principal subject (it is not a person's identity)");
+  ok(p.org === "acme", "plan: the org rides onto the plan for BOTH kinds — the adapter's cache key is org-scoped even with nobody named (OPE-286)");
   ok(validSessionName(p.roleSessionName), "plan: domain-role RoleSessionName is a valid oe-… name ≤64");
 
   const p2 = plan({ grants: [g1], domains: [], surfaceKey: "slack/T1/C1" });
@@ -129,9 +133,20 @@ function validSessionName(name: string): boolean {
 
   const p = plan({ mode: "dm", actingPrincipalId: "U_ALICE", domains: [], opts: { as: "user-sso" } });
   ok(p.kind === "user-sso", "plan: user-sso in an attended DM → user-sso identity");
-  ok(p.principalId === "U_ALICE", "plan: user-sso carries the verified sender's principalId");
   ok(p.roleSessionName === awsRoleSessionName("U_ALICE"), "plan: user-sso RoleSessionName is the acting principal (not the domain)");
   ok(validSessionName(p.roleSessionName), "plan: user-sso RoleSessionName is a valid oe-… name");
+
+  ok(p.principalSubject === rawVaultSubject("acme", "slack", "U_ALICE"), "plan: user-sso carries the ONE composer's qualified subject for the verified sender");
+  ok(p.principalSubject !== "U_ALICE", "plan: 🔴 the subject is NOT the bare native id — that spelling is what OPE-286 deleted");
+  ok(p.principalSubject!.startsWith("p:") && p.principalSubject!.includes("/slack/"), "plan: the subject carries its namespace prefix + the platform from the BINDING (never sniffed from the id)");
+  ok(p.org === "acme", "plan: the user-sso plan carries the org too (the adapter's cache key is org-scoped for both kinds)");
+
+  ok(p.roleSessionName !== p.principalSubject, "plan: the CloudTrail label and the vault key are DISTINCT derivations — a label never addresses a credential row");
+
+  const other = plan({ mode: "dm", actingPrincipalId: "U_ALICE", org: "other", domains: [], opts: { as: "user-sso" } });
+  ok(other.principalSubject !== p.principalSubject, "plan: same native id, DIFFERENT org → a different vault subject (no cross-org alias)");
+  const otherPlatform = plan({ mode: "dm", actingPrincipalId: "U_ALICE", platform: "discord", domains: [], opts: { as: "user-sso" } });
+  ok(otherPlatform.principalSubject !== p.principalSubject, "plan: same native id, DIFFERENT platform → a different vault subject (no cross-vendor alias)");
 }
 
 {
@@ -234,7 +249,8 @@ try {
   ok(rec.last?.kind === "domain-role", "resolve: the mint request carried kind domain-role");
   ok(rec.last?.roleArn === "arn:aws:iam::123456789012:role/oe-ops", "resolve: the mint request carried the granted roleArn");
   ok(rec.last?.roleSessionName === "oe-ops", "resolve: the mint request carried the derived RoleSessionName");
-  ok(rec.last?.principalId === undefined, "resolve: a domain-role mint names no principalId");
+  ok(rec.last?.principalSubject === undefined, "resolve: a domain-role mint names no principal subject");
+  ok(typeof rec.last?.org === "string" && rec.last.org.length > 0, "resolve: the domain-role mint carries the org — its cache key cannot be composed by a second tenant with a same-named domain");
   ok(typeof rec.last?.sessionPolicy === "string", "resolve: the domain-role mint carries the compiled STS session policy");
   {
     const acts = (JSON.parse(rec.last!.sessionPolicy!) as { Statement: { Action: string[] }[] }).Statement[0]!.Action;
@@ -265,7 +281,7 @@ try {
 
   const fireResolved = await resolveAwsIdentity(fireCtx);
   ok(fireResolved.boundAs === "domain-role", "fire-path: the DEFAULT path still works for a fire — running under the domain's service role is shipped design intent, not an oversight");
-  ok(rec.last?.principalId === undefined, "fire-path: …and that mint names NO principal, so nothing downstream can read a borrowed human out of it");
+  ok(rec.last?.principalSubject === undefined, "fire-path: …and that mint names NO principal subject, so nothing downstream can read a borrowed human out of it");
   ok(rec.last?.roleSessionName === "oe-ops", "fire-path: the RoleSessionName is the DOMAIN's, so CloudTrail attributes the call to the service identity rather than to a person who was not there");
 
   resetAwsIdentityProvider();

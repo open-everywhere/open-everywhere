@@ -6,7 +6,7 @@ export interface AwsSsoCallbackArgs {
 }
 
 export interface AwsSsoCallbackResult {
-  readonly principalId: string;
+  readonly principalSubject: string;
 }
 
 export interface AwsSsoCallbackCompleter {

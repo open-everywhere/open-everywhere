@@ -21,6 +21,7 @@ const fakeHome = (name: string, hw: boolean): CredentialHome => ({ name, hostWri
 const { executorCredentialRef } = await import("../agent/credentials/ref.js");
 const { buildConnectCard, handleConnectClick, OE_CONNECT_ACTION_PREFIX } = await import("../agent/connections/connector-card.js");
 const { AUTH_URL_TTL_MS } = await import("../agent/connections/connector-auth.js");
+const { rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 type Provider = import("../agent/access/providers.js").Provider;
 const { vercelConnectorHome, executorHome } = await import("../agent/access/providers.js");
@@ -170,7 +171,8 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const st = starter();
   ok((await handleConnectClick(click("user-oauth", "U_ANYONE", "D999"), deps({ post: rec.post, startAuth: st.startAuth }))) === true, "personal-oauth DM click is ours");
   eq(st.calls.length, 1, "personal-oauth ⇒ exactly one mint");
-  eq(st.calls[0].subject, { type: "user", id: "U_ANYONE" }, "personal-oauth mints a {type:user} subject for the CLICKER");
+  eq(st.calls[0].subject, { type: "user", id: rawVaultSubject(ORG, "slack", "U_ANYONE") }, "personal-oauth mints a {type:user} subject = the CLICKER's QUALIFIED vault subject (the same string the later token read composes)");
+  ok((st.calls[0].subject as { id?: string }).id !== "U_ANYONE", "🔴 NOT the bare Slack member id — that spelling let two workspaces' humans share one personal-token row");
   eq(st.calls[0].expiresInMs, AUTH_URL_TTL_MS, "the URL is minted with the short capability TTL");
   ok(rec.methods().includes("chat.postEphemeral"), "the URL is delivered EPHEMERALLY (clicker-only)");
   ok(rec.calls.some((c) => c.body.includes(encodeURIComponent(FAKE_URL)) || c.body.includes(FAKE_URL)), "the ephemeral post carries the URL");

@@ -4,6 +4,7 @@ import { actingPrincipalIdOf, buildResolveRequest, resolveAccessFor } from "../a
 import { surfaceKeyOf } from "../access/resolver.js";
 import { bindFrom } from "../identity/binding.js";
 import type { BindableContext } from "../identity/binding.js";
+import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 
 export interface AwsCredentials {
   readonly accessKeyId: string;
@@ -20,7 +21,8 @@ export interface AwsIdentityRequest {
   readonly region?: string;
   readonly audience?: string;
   readonly roleSessionName: string;
-  readonly principalId?: string;
+  readonly org?: string;
+  readonly principalSubject?: string;
   readonly sessionPolicy?: string;
 }
 
@@ -75,7 +77,8 @@ export interface AwsIdentityPlan {
   readonly kind: AwsIdentityKind;
   readonly grant: AwsRoleGrant;
   readonly roleSessionName: string;
-  readonly principalId?: string;
+  readonly org: string;
+  readonly principalSubject?: string;
   readonly domain?: string;
 }
 
@@ -88,11 +91,13 @@ export function planAwsIdentity(input: {
   readonly grants: readonly AwsRoleGrant[];
   readonly mode: string;
   readonly actingPrincipalId: string | undefined;
+  readonly org: string;
+  readonly platform: string;
   readonly domains: readonly string[];
   readonly surfaceKey: string;
   readonly opts?: AwsIdentityOptions;
 }): AwsIdentityPlan {
-  const { grants, mode, actingPrincipalId, domains, surfaceKey, opts = {} } = input;
+  const { grants, mode, actingPrincipalId, org, platform, domains, surfaceKey, opts = {} } = input;
   if (grants.length === 0) {
     throw new Error(
       "no AWS role is granted to this scope — an admin binds an `awsRoles` grant to this channel's " +
@@ -140,20 +145,24 @@ export function planAwsIdentity(input: {
       kind,
       grant,
       roleSessionName: awsRoleSessionName(actingPrincipalId),
-      principalId: actingPrincipalId,
+      org,
+      principalSubject: rawVaultSubject(org, platform, actingPrincipalId),
       ...(domain !== undefined ? { domain } : {}),
     };
   }
 
-  return { kind, grant, roleSessionName: awsRoleSessionName(domain ?? surfaceKey), ...(domain !== undefined ? { domain } : {}) };
+  return { kind, grant, roleSessionName: awsRoleSessionName(domain ?? surfaceKey), org, ...(domain !== undefined ? { domain } : {}) };
 }
 
 export function planAwsIdentityFor(ctx: BindableContext, opts?: AwsIdentityOptions): AwsIdentityPlan {
   const access = resolveAccessFor(ctx);
+  const binding = bindFrom(ctx);
   return planAwsIdentity({
     grants: access.awsRoles,
-    mode: bindFrom(ctx).mode,
+    mode: binding.mode,
     actingPrincipalId: actingPrincipalIdOf(ctx),
+    org: binding.org,
+    platform: binding.platform,
     domains: access.domains,
     surfaceKey: surfaceKeyOf(buildResolveRequest(ctx)),
     opts,
@@ -168,7 +177,8 @@ export async function mintPlannedAwsIdentity(plan: AwsIdentityPlan): Promise<Res
     region: plan.grant.region,
     audience: plan.grant.audience,
     roleSessionName: plan.roleSessionName,
-    principalId: plan.principalId,
+    org: plan.org,
+    principalSubject: plan.principalSubject,
     ...(sessionPolicy !== undefined ? { sessionPolicy } : {}),
   });
   return {

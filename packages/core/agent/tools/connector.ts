@@ -149,7 +149,13 @@ const connectorEntry = defineTool({
       });
       return link?.url;
     };
-    const { text, issued } = await renderNonSlackConnect(provider.name, options, { mode, principalId: binding.principalId }, undefined, issuePageLink);
+    const { text, issued } = await renderNonSlackConnect(
+      provider.name,
+      options,
+      { mode, principalId: binding.principalId, org: binding.org, platform: binding.platform },
+      undefined,
+      issuePageLink,
+    );
     const audit: ReplyAudit = {
       org: partition.org,
       platform: partition.platform,

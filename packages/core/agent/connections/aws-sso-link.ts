@@ -1,7 +1,7 @@
 export interface AwsSsoLinkStore {
-  read(principalId: string): Promise<string | null>;
-  write(principalId: string, token: string): Promise<void>;
-  clear(principalId: string): Promise<void>;
+  read(principalSubject: string): Promise<string | null>;
+  write(principalSubject: string, token: string): Promise<void>;
+  clear(principalSubject: string): Promise<void>;
 }
 
 let registered: AwsSsoLinkStore | undefined;

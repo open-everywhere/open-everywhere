@@ -28,7 +28,7 @@ interface AwsSsoTokenRecord {
 }
 
 interface AwsSsoPendingRecord {
-  readonly principalId: string;
+  readonly principalSubject: string;
   readonly verifier: string;
   readonly region: string;
   readonly createdAt: number;
@@ -58,16 +58,16 @@ export function isAwsSsoLinkRequired(e: unknown): boolean {
 }
 
 export function makeAwsSsoLinkStore(vault: EncryptedKvVault = encryptedKvVault()): AwsSsoLinkStore {
-  const tokRef = (principalId: string) => `aws-sso:tok:${principalId}`;
+  const tokRef = (principalSubject: string) => `aws-sso:tok:${principalSubject}`;
   return {
-    async read(principalId: string): Promise<string | null> {
-      return vault.read(tokRef(principalId));
+    async read(principalSubject: string): Promise<string | null> {
+      return vault.read(tokRef(principalSubject));
     },
-    async write(principalId: string, token: string): Promise<void> {
-      await vault.write(tokRef(principalId), token, { provider: "aws-sso" });
+    async write(principalSubject: string, token: string): Promise<void> {
+      await vault.write(tokRef(principalSubject), token, { provider: "aws-sso" });
     },
-    async clear(principalId: string): Promise<void> {
-      await vault.write(tokRef(principalId), "", { provider: "aws-sso" });
+    async clear(principalSubject: string): Promise<void> {
+      await vault.write(tokRef(principalSubject), "", { provider: "aws-sso" });
     },
   };
 }
@@ -94,8 +94,8 @@ export interface AwsSsoMinterOptions {
 
 export interface AwsSsoMinter {
   mint(req: AwsIdentityRequest): Promise<AwsCredentials>;
-  startLink(principalId: string): Promise<{ url: string }>;
-  completeLink(state: string, code: string): Promise<{ principalId: string }>;
+  startLink(principalSubject: string): Promise<{ url: string }>;
+  completeLink(state: string, code: string): Promise<{ principalSubject: string }>;
 }
 
 function defaultRedirectUri(): string | undefined {
@@ -163,7 +163,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
   const tokenEndpoint = () => `https://oidc.${requireRegion()}.amazonaws.com/token`;
   const portalEndpoint = () => `https://portal.sso.${requireRegion()}.amazonaws.com/federation/credentials`;
 
-  async function startLink(principalId: string): Promise<{ url: string }> {
+  async function startLink(principalSubject: string): Promise<{ url: string }> {
     const reg = requireRegion();
     const cid = requireClientId();
     const redirectUri = redirectUriOf();
@@ -176,7 +176,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     const pkce = newPkce();
     const state = newState();
     const pending: AwsSsoPendingRecord = {
-      principalId,
+      principalSubject,
       verifier: pkce.verifier,
       region: reg,
       createdAt: now(),
@@ -194,7 +194,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     return { url: u.toString() };
   }
 
-  async function completeLink(state: string, code: string): Promise<{ principalId: string }> {
+  async function completeLink(state: string, code: string): Promise<{ principalSubject: string }> {
     const cid = requireClientId();
     const redirectUri = redirectUriOf();
     if (!redirectUri) throw new Error("AWS SSO link: OE_PUBLIC_BASE_URL is unset — cannot complete without a redirect_uri.");
@@ -217,9 +217,9 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       region: pending.region,
       obtainedAtMs: now(),
     };
-    await store().write(pending.principalId, JSON.stringify(record));
+    await store().write(pending.principalSubject, JSON.stringify(record));
     await pendingStore.write(state, JSON.stringify({ ...pending, consumed: true, verifier: "" }));
-    return { principalId: pending.principalId };
+    return { principalSubject: pending.principalSubject };
   }
 
   interface OidcTokenResponse {
@@ -259,30 +259,30 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     return body;
   }
 
-  async function freshAccessToken(principalId: string): Promise<string> {
-    const raw = await store().read(principalId);
+  async function freshAccessToken(principalSubject: string): Promise<string> {
+    const raw = await store().read(principalSubject);
     if (!raw) {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "no linked AWS Identity Center identity");
     }
     let rec: AwsSsoTokenRecord;
     try {
       rec = JSON.parse(raw) as AwsSsoTokenRecord;
     } catch {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "your stored AWS link is unreadable");
     }
     const expired = rec.expiresAtMs !== undefined && now() >= rec.expiresAtMs - skew;
     if (!expired) return rec.accessToken;
     if (!rec.refreshToken) {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "your AWS session expired and cannot be refreshed");
     }
     let tok: OidcTokenResponse;
     try {
       tok = await exchangeToken({ grant_type: "refresh_token", refresh_token: rec.refreshToken, client_id: requireClientId() });
     } catch {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "your AWS session expired and the refresh was rejected");
     }
     const updated: AwsSsoTokenRecord = {
@@ -292,7 +292,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       region: rec.region,
       obtainedAtMs: now(),
     };
-    await store().write(principalId, JSON.stringify(updated));
+    await store().write(principalSubject, JSON.stringify(updated));
     return updated.accessToken;
   }
 
@@ -307,7 +307,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
 
   async function getRoleCredentials(
     accessToken: string,
-    principalId: string,
+    principalSubject: string,
     accountId: string,
     roleName: string,
   ): Promise<AwsCredentials> {
@@ -323,7 +323,7 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
       );
     }
     if (res.status === 401) {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "your AWS session token was rejected");
     }
     if (!res.ok) {
@@ -345,32 +345,32 @@ export function makeAwsSsoMinter(opts: AwsSsoMinterOptions = {}): AwsSsoMinter {
     };
   }
 
-  const warm = warmCredential<{ req: AwsIdentityRequest; principalId: string }>({
+  const warm = warmCredential<{ req: AwsIdentityRequest; principalSubject: string }>({
     name: "aws.sso-role-credentials",
     platform: "aws",
     auditAction: "aws.sso.mint_failed",
     refresh: "re-mint",
     fallbackTtlSeconds: DEFAULT_CRED_TTL_SECONDS,
-    key: ({ req, principalId }) => `user-sso:${req.roleArn}:${principalId}`,
-    mint: async ({ req, principalId }) => {
+    key: ({ req, principalSubject }) => `user-sso:${req.roleArn}:${principalSubject}`,
+    mint: async ({ req, principalSubject }) => {
       const { accountId, roleName } = parseRoleArn(req.roleArn);
-      const accessToken = await freshAccessToken(principalId);
-      const creds = await getRoleCredentials(accessToken, principalId, accountId, roleName);
+      const accessToken = await freshAccessToken(principalSubject);
+      const creds = await getRoleCredentials(accessToken, principalSubject, accountId, roleName);
       return { value: JSON.stringify(creds), ...(creds.expiresAtMs !== undefined ? { expiresAtMs: creds.expiresAtMs } : {}) };
     },
   });
 
   async function mint(req: AwsIdentityRequest): Promise<AwsCredentials> {
-    const principalId = req.principalId;
-    if (!principalId) {
-      throw new Error("AWS SSO mint: a user-sso request arrived with no principalId — refusing. Fail-closed.");
+    const principalSubject = req.principalSubject;
+    if (!principalSubject) {
+      throw new Error("AWS SSO mint: a user-sso request arrived with no principalSubject — refusing. Fail-closed.");
     }
-    const existing = await store().read(principalId);
+    const existing = await store().read(principalSubject);
     if (!existing) {
-      const { url } = await startLink(principalId);
+      const { url } = await startLink(principalSubject);
       throw new AwsSsoLinkRequiredError(url, "no linked AWS Identity Center identity");
     }
-    const serialised = await warm.get({ req, principalId });
+    const serialised = await warm.get({ req, principalSubject });
     return JSON.parse(serialised) as AwsCredentials;
   }
 

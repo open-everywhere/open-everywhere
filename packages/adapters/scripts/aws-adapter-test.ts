@@ -205,7 +205,7 @@ const domainReq: AwsIdentityRequest = {
       kind: "user-sso",
       roleArn: "arn:aws:iam::123456789012:role/oe-user",
       roleSessionName: "oe-alice",
-      principalId: "alice",
+      principalSubject: "p:acme/slack/alice",
     });
   } catch (e) {
     threw = String(e);
@@ -233,7 +233,7 @@ const domainReq: AwsIdentityRequest = {
     kind: "user-sso",
     roleArn: "arn:aws:iam::123456789012:role/oe-user",
     roleSessionName: "oe-alice",
-    principalId: "alice",
+    principalSubject: "p:acme/slack/alice",
   });
   ok(creds.accessKeyId === "ASIASSOUSER", "user-sso delegates to the Identity Center minter when wired");
   ok(delegated !== undefined && delegated.sessionPolicy === undefined, "🔴 the user-sso mint request carries NO session policy — the per-user path structurally cannot enforce one");

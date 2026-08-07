@@ -50,7 +50,7 @@ const {
   OE_CONNECTOR_LINKSET_VAULT_ENV,
 } = await import("../agent/connections/connector-flags.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
-const { sharedVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
+const { sharedVaultSubject, rawVaultSubject } = await import("../agent/identity/oauth-vault-share.js");
 const { setLinkSetHold, revokeLinkSet } = await import("../agent/identity/link-store.js");
 const { deploymentOrg } = await import("../agent/identity/binding.js");
 
@@ -75,6 +75,8 @@ function slackAuth(attrs: Record<string, string>) {
 }
 const dmAuth = slackAuth({ channel_id: "D_DM", channel_type: "im", user_id: "U_caller" });
 const channelAuth = slackAuth({ channel_id: "C_CHAN", channel_type: "channel", user_id: "U_caller" });
+
+const RAW = rawVaultSubject(deploymentOrg(), "slack", "U_caller");
 
 interface MintCall { connector: string; id: string }
 function makeMinter(mode: "ok" | "auth-required") {
@@ -153,8 +155,15 @@ delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
 {
   const m = makeMinter("ok");
   const r = await getToken(dmAuth, m);
-  ok(r.token === "USER-TOKEN-U_caller", "DM → mints a per-user token via the injected minter");
-  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-user" && m.calls[0].id === "U_caller", "mint used the user-oauth vercelConnector + subject id = surface principal");
+  ok(r.token === `USER-TOKEN-${RAW}`, "DM → mints a per-user token via the injected minter");
+  ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-user" && m.calls[0].id === RAW, "mint used the user-oauth vercelConnector + subject id = the caller's QUALIFIED subject");
+  ok(m.calls[0].id !== "U_caller", "🔴 the vault subject is NOT the bare native id — the spelling OPE-286 deleted");
+  ok(m.calls[0].id.startsWith("p:") && m.calls[0].id.endsWith("/slack/U_caller"), "the raw subject carries its own prefix + the platform from the BINDING (never sniffed from the id's shape)");
+  ok(rawVaultSubject(deploymentOrg(), "slack", "U_caller") !== rawVaultSubject("other-org", "slack", "U_caller"), "🔴 same native id, different org → different vault subject (no cross-tenant alias)");
+  ok(rawVaultSubject(deploymentOrg(), "slack", "U_caller") !== rawVaultSubject(deploymentOrg(), "discord", "U_caller"), "🔴 same native id, different platform → different vault subject (no cross-vendor alias)");
+  ok(!m.calls[0].id.startsWith("ls:"), "🔴 a raw subject can never take the SHARED (ls:) shape — the two producers use disjoint prefixes");
+  ok(!rawVaultSubject(deploymentOrg(), "slack", "ls:evil/x").startsWith("ls:"), "🔴 a native id CRAFTED as 'ls:evil/x' still composes a raw subject — it cannot be mistaken for a link-set's shared row");
+  ok(!sharedVaultSubject(deploymentOrg(), "S_evil").startsWith("p:"), "🔴 …and a shared subject can never take the raw shape either (disjoint in both directions)");
 }
 
 {
@@ -166,7 +175,7 @@ delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
   ok(!/user_authorization_required/i.test(r.err ?? ""), "the raw SDK error is NOT surfaced to the model");
   ok((r.err ?? "").includes("https://connect.vercel.com/auth/PERSONAL-LINK"), "the minted PERSONAL authorization URL appears in the relayed error");
   ok(/expires/i.test(r.err ?? "") && /YOU with YOUR own access/.test(r.err ?? ""), "keeps the personal + expiry framing (link is personal, acts as YOU)");
-  ok(s.calls.length === 1 && s.calls[0].connector === "oauth/notion-user" && s.calls[0].id === "U_caller", "#112: startAuthorization used the user-oauth vercelConnector + subject id = surface principal");
+  ok(s.calls.length === 1 && s.calls[0].connector === "oauth/notion-user" && s.calls[0].id === RAW, "#112: startAuthorization used the user-oauth vercelConnector + the SAME qualified subject the mint would use (threat j)");
   ok(typeof s.calls[0].expiresInMs === "number" && (s.calls[0].expiresInMs ?? 0) > 0 && (s.calls[0].expiresInMs ?? 0) <= 20 * 60 * 1000, "a short (~15 min) TTL is passed to the mint");
 }
 
@@ -222,7 +231,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   {
     const m = makeMinter("ok");
     await getToken(dmAuth, m);
-    ok(m.calls[0].id === "U_caller", "C.3: flag OFF → RAW subject even for a confirmed member (no-regression, deliberate arming)");
+    ok(m.calls[0].id === RAW, "C.3: flag OFF → the caller OWN qualified raw subject even for a confirmed member (deliberate arming; qualified since OPE-286)");
   }
 
   process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
@@ -237,7 +246,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   {
     const m = makeMinter("ok");
     await getToken(dmAuth, m);
-    ok(m.calls[0].id === "U_caller", "C.3: suspended set → RAW subject (offboarding severs shared-token reach immediately — threat b)");
+    ok(m.calls[0].id === RAW, "C.3: suspended set → RAW subject (offboarding severs shared-token reach immediately — threat b)");
   }
   await setLinkSetHold({ org, linkSetId: SET, hold: "active", actor: "admin" });
   {
@@ -256,7 +265,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   {
     const m = makeMinter("ok");
     await getToken(dmAuth, m);
-    ok(m.calls[0].id === "U_caller", "C.3: revoke link-set → severed account falls back to RAW subject (threat b)");
+    ok(m.calls[0].id === RAW, "C.3: revoke link-set → severed account falls back to RAW subject (threat b)");
   }
   delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
 }

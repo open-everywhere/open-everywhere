@@ -17,6 +17,7 @@ import { vercelConnectorOf } from "../access/providers.js";
 import { isConnectorOpTool } from "../access/consequence.js";
 import { effectiveConnectorOpTier } from "../access/connector-op-gating.js";
 import { sharedVaultSubjectFor } from "../access/group-request.js";
+import { rawVaultSubject, SHARED_VAULT_SUBJECT_PREFIX } from "../identity/oauth-vault-share.js";
 import { connectorOpTieringEnabled, connectorLinkSetVaultEnabled } from "./connector-flags.js";
 import { getSecretVia } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
@@ -182,9 +183,15 @@ async function effectiveUserVaultSubject(
   platform: string | undefined,
   principalId: string,
 ): Promise<string> {
-  if (!connectorLinkSetVaultEnabled()) return principalId;
-  if (!org || !platform) return principalId;
-  return (await sharedVaultSubjectFor(org, connector, platform, principalId)) ?? principalId;
+  if (!org || !platform) {
+    throw new Error(
+      `connection "${connector}": cannot key a per-user credential — this DM surface resolved no ` +
+        `${!org ? "org" : "platform"}, and a vault subject must be qualified by both. Fail closed.`,
+    );
+  }
+  const raw = rawVaultSubject(org, platform, principalId);
+  if (!connectorLinkSetVaultEnabled()) return raw;
+  return (await sharedVaultSubjectFor(org, connector, platform, principalId)) ?? raw;
 }
 
 function classifyUserAuthRequired(e: unknown): boolean {
@@ -203,7 +210,7 @@ async function memoSelfHealsUserGrant(
   const providerRef = vercelConnectorOf(cred);
   if (!providerRef) return false;
   const { mode, principalId, platform, org } = await resolveDmPrincipal(auth);
-  if (mode !== "dm" || !principalId) return false;
+  if (mode !== "dm" || !principalId || !org || !platform) return false;
   const subjectId = await effectiveUserVaultSubject(connector, org, platform, principalId);
   const probe = flow.hasFreshGrant.bind(flow);
   if (!(await freshGrantConfirmed(() => probe(providerRef, { type: "user", id: subjectId })))) return false;
@@ -246,7 +253,11 @@ export function userAwareProviderToken(
         const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, principalId);
         try {
           const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });
-          await auditMintOutcome(opts.connector, { subject: "user", outcome: "ok", shared: subjectId !== principalId });
+          await auditMintOutcome(opts.connector, {
+            subject: "user",
+            outcome: "ok",
+            shared: subjectId.startsWith(SHARED_VAULT_SUBJECT_PREFIX),
+          });
           return minted;
         } catch (e) {
           const authRequired = classifyUserAuthRequired(e);

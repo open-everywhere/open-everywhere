@@ -2,7 +2,8 @@ import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { appendAudit } from "../audit/audit.js";
 import { getConfig } from "../access/config.js";
 import { roleForBinding } from "../access/roles.js";
-import { type SurfaceBinding } from "../identity/binding.js";
+import { deploymentOrg, type SurfaceBinding } from "../identity/binding.js";
+import { rawVaultSubject } from "../identity/oauth-vault-share.js";
 import type { Domain } from "../memory/domain.js";
 import type { Provider, ProviderCredentialType } from "../access/providers.js";
 import { executorHomeOf, vercelConnectorOf } from "../access/providers.js";
@@ -66,7 +67,7 @@ async function mintOAuthUrl(
 export async function renderNonSlackConnect(
   providerName: string,
   options: readonly ConnectorOption[],
-  ctx: { readonly mode: ConnectMode; readonly principalId?: string },
+  ctx: { readonly mode: ConnectMode; readonly principalId?: string; readonly org: string; readonly platform: string },
   startAuth: ConnectorAuthorizationStarter = defaultConnectorAuthStarter,
   issuePageLink?: (o: ConnectorOption) => Promise<string | undefined>,
 ): Promise<{ text: string; issued: ConnectorOption[] }> {
@@ -93,7 +94,10 @@ export async function renderNonSlackConnect(
     if (o.route.kind === "url" && o.vercelConnector && o.credentialType === "user-oauth") {
       if (!(ctx.mode === "dm" && ctx.principalId)) continue;
       try {
-        const url = await mintOAuthUrl(startAuth, o.vercelConnector, { type: "user", id: ctx.principalId });
+        const url = await mintOAuthUrl(startAuth, o.vercelConnector, {
+          type: "user",
+          id: rawVaultSubject(ctx.org, ctx.platform, ctx.principalId),
+        });
         lines.push(`• *${optionLabel(o)}* — connect your personal account (expires soon): ${url}`);
         issued.push(o);
       } catch {
@@ -198,7 +202,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       }
       return await mintAndDeliverOAuth(post, startAuth, {
         org, teamId, channelId, clickerId, providerName, vercelConnector: userConnector,
-        subject: { type: "user", id: clickerId }, subjectLabel: "user",
+        subject: { type: "user", id: rawVaultSubject(deploymentOrg(), "slack", clickerId) }, subjectLabel: "user",
       });
     }
 

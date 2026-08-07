@@ -12,7 +12,7 @@ const ok = (cond: boolean, label: string) => {
 const P = cb.OE_AWS_SSO_CALLBACK_PATH;
 const call = (query: string) => cb.handleAwsSsoCallback(new Request(`https://oe.example${P}${query}`));
 
-function spy(impl: (args: { state: string; code: string }) => Promise<{ principalId: string }>) {
+function spy(impl: (args: { state: string; code: string }) => Promise<{ principalSubject: string }>) {
   const rec: { calls: number; last?: { state: string; code: string } } = { calls: 0 };
   const completer: AwsSsoCallbackCompleter = {
     async complete(args) {
@@ -28,7 +28,7 @@ ok(P === "/oauth/v1/aws-sso/callback", "callback path is /oauth/v1/aws-sso/callb
 
 {
   cb.resetAwsSsoCallbackCompleter();
-  const { completer, rec } = spy(async () => ({ principalId: "U_ALICE" }));
+  const { completer, rec } = spy(async () => ({ principalSubject: "p:acme/slack/U_ALICE" }));
   cb.registerAwsSsoCallbackCompleter(completer);
 
   const res = await call("?state=STATE-123&code=AUTHCODE-SECRET");
@@ -58,7 +58,7 @@ ok(P === "/oauth/v1/aws-sso/callback", "callback path is /oauth/v1/aws-sso/callb
 
 {
   cb.resetAwsSsoCallbackCompleter();
-  const { completer, rec } = spy(async () => ({ principalId: "U" }));
+  const { completer, rec } = spy(async () => ({ principalSubject: "p:acme/slack/U" }));
   cb.registerAwsSsoCallbackCompleter(completer);
 
   ok((await call("?code=c")).status === 400, "missing state ⇒ 400");
@@ -84,7 +84,7 @@ ok(P === "/oauth/v1/aws-sso/callback", "callback path is /oauth/v1/aws-sso/callb
   const res = await call("?state=s&code=c");
   ok(res.status !== 200, "unarmed route never renders a success (fail closed)");
 
-  const { completer } = spy(async () => ({ principalId: "U" }));
+  const { completer } = spy(async () => ({ principalSubject: "p:acme/slack/U" }));
   cb.registerAwsSsoCallbackCompleter(completer);
   ok(cb.awsSsoCallbackCompleter() === completer, "accessor returns the registered completer");
   ok(cb.requireAwsSsoCallbackCompleter() === completer, "require returns the registered completer (no throw)");

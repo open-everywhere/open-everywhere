@@ -129,7 +129,8 @@ export function makeAwsStsProvider(opts: AwsStsProviderOptions = {}): AwsIdentit
     auditAction: "aws.sts.mint_failed",
     refresh: "re-mint",
     fallbackTtlSeconds: durationSeconds,
-    key: (req) => `${req.kind}:${req.roleArn}:${req.roleSessionName}:${req.principalId ?? ""}:${req.sessionPolicy ?? ""}`,
+    key: (req) =>
+      `${req.kind}:${req.org ?? ""}:${req.roleArn}:${req.roleSessionName}:${req.principalSubject ?? ""}:${req.sessionPolicy ?? ""}`,
     mint: async (req) => {
       const creds = await assumeRoleWithWebIdentity(req, fetchImpl, readTokenFile, durationSeconds, defaultRegion);
       return { value: JSON.stringify(creds), ...(creds.expiresAtMs !== undefined ? { expiresAtMs: creds.expiresAtMs } : {}) };
