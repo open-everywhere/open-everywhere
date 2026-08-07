@@ -9,7 +9,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isDmAnchoredTaskToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
@@ -41,6 +41,8 @@ function crossProcessDispatchAvailable(): boolean {
 
 function pickRedriveSurfaceKey(domain: string | undefined, platform: string): string | null {
   if (!domain) return null;
+  const dmSurface = dmSurfaceKeyFromAnchorDomain(domain);
+  if (dmSurface) return dmSurface;
   try {
     const d = getConfig().loadDomains().find((dm) => dm.name === domain && dm.channels && dm.channels.length > 0);
     if (!d?.channels || d.channels.length === 0) return null;
@@ -58,7 +60,9 @@ export interface UnifiedReceiveTarget {
   readonly context?: readonly string[];
 }
 
-function windowEnabledFor(surfaceKey: string): boolean {
+function windowEnabledFor(surfaceKey: string, token: string): boolean {
+  const dmAnchorSurface = isDmAnchoredTaskToken(token) ? dmSurfaceKeyFromAnchorDomain(parseWindowToken(token)?.domain) : undefined;
+  if (dmAnchorSurface !== undefined) return dmAnchorSurface === surfaceKey;
   try {
     const domains = getConfig().loadDomains();
     return windowedSupervisorEnabled(surfaceKey, domains);
@@ -134,7 +138,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     ) {
       throw new Error("unified receive: malformed target (host dispatch bug) — refusing the wake");
     }
-    if (!windowEnabledFor(t.surfaceKey)) {
+    if (!windowEnabledFor(t.surfaceKey, t.token)) {
       throw new Error(`unified receive: no standing window is enabled for ${t.surfaceKey} — refusing the wake (fail-closed)`);
     }
     const org = deploymentOrg();

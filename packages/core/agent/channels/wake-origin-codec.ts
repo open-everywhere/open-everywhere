@@ -6,6 +6,13 @@ export interface WakeOriginCodec<O extends UnifiedWakeOrigin = UnifiedWakeOrigin
   threadRef(origin: O): UnifiedThreadRef;
   isThreadScoped(origin: O): boolean;
   containerId(origin: O): string;
+  dmOrigin?(binding: DmOriginBinding): O | undefined;
+}
+
+export interface DmOriginBinding {
+  readonly surface: string;
+  readonly threadTs?: string;
+  readonly mode: "dm" | "mpim";
 }
 
 const WAKE_ORIGIN_CODECS = new Map<string, WakeOriginCodec>();

@@ -1,5 +1,6 @@
 import { windowTopologyEnabled } from "../access/capabilities.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { DM_ANCHOR_DOMAIN_PREFIX } from "../channels/window-key.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 import type { ApprovalModeConfig } from "../access/approver-chain.js";
@@ -503,6 +504,11 @@ export function assertDomainsValid(domains: readonly Domain[]): void {
   const byMatch = new Map<DomainMatch, string>();
   let hasOrg = false;
   for (const d of domains) {
+    if (d.name.startsWith(DM_ANCHOR_DOMAIN_PREFIX)) {
+      bad.push(
+        `  "${d.name}" starts with the RESERVED prefix "${DM_ANCHOR_DOMAIN_PREFIX}" — that namespace belongs to the DM delegation anchor (channels/window-key.ts dmAnchorDomain, OPE-306) and can never be a configured domain name. Rename it.`,
+      );
+    }
     const hasExplicit = d.channels !== undefined || d.containers !== undefined;
     const hasMatch = d.match !== undefined;
     if (hasExplicit === hasMatch) {

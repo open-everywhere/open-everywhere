@@ -115,6 +115,36 @@ export function dmSeatRegistryKey(dmChannelId: string): string {
   return `oe-dm-seat::${dmChannelId}`;
 }
 
+export const DM_ANCHOR_DOMAIN_PREFIX = "oe-dm/";
+
+export const DM_ANCHOR_GENERATION = 0;
+
+export function dmAnchorDomain(dmSurfaceKey: string): string {
+  if (dmSurfaceKey.length === 0) throw new Error("dmAnchorDomain: dmSurfaceKey must be non-empty");
+  if (dmSurfaceKey.includes(":")) {
+    throw new Error(`dmAnchorDomain: a DM anchor's surface key must be colon-free (it becomes the token's <domain> segment) — got "${dmSurfaceKey}"`);
+  }
+  return `${DM_ANCHOR_DOMAIN_PREFIX}${dmSurfaceKey}`;
+}
+
+export function isDmAnchorDomain(domain: unknown): domain is string {
+  return typeof domain === "string" && domain.startsWith(DM_ANCHOR_DOMAIN_PREFIX) && domain.length > DM_ANCHOR_DOMAIN_PREFIX.length;
+}
+
+export function dmSurfaceKeyFromAnchorDomain(domain: unknown): string | undefined {
+  return isDmAnchorDomain(domain) ? domain.slice(DM_ANCHOR_DOMAIN_PREFIX.length) : undefined;
+}
+
+export function dmAnchorWindowKey(dmSurfaceKey: string): WindowKey {
+  const domain = dmAnchorDomain(dmSurfaceKey);
+  return { domain, windowId: domain, generation: DM_ANCHOR_GENERATION };
+}
+
+export function isDmAnchoredTaskToken(token: unknown): boolean {
+  const key = parseWindowToken(typeof token === "string" && token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token);
+  return key !== undefined && isTaskWindowId(key.windowId) && isDmAnchorDomain(key.domain);
+}
+
 const SUBAGENT_TOKEN_RE = /^subagent:(.+):([^:]+)$/;
 
 export function parseSubagentToken(token: unknown): { parentSessionId: string; callId: string } | undefined {
