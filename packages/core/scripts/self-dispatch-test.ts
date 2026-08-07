@@ -19,7 +19,7 @@ delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { unifiedSupervisorToken } from "../agent/channels/unified-supervisor.js";
-import { formatWindowToken, taskWindowId, parseWindowToken } from "../agent/channels/window-key.js";
+import { formatWindowToken, taskWindowId, parseWindowToken, dmAnchorDomain, DM_ANCHOR_GENERATION } from "../agent/channels/window-key.js";
 import { verifyWebhookSignature } from "../agent/webhooks/gate.js";
 import { readAudit } from "../agent/audit/audit.js";
 import {
@@ -217,6 +217,27 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   ok(jb.ok === true && jb.wakeId === "w-123", "200 body echoes the payload's wakeId");
   eq(diverted.length, 1, "exactly one divert");
   eq(diverted[0].payload, (parseSelfDispatchPayload(goodPayload()) as { payload: UnifiedDispatchPayload }).payload, "divert payload round-trips byte-for-byte");
+
+  const DM_SURFACE = "slack/T1/D999";
+  const dmToken = formatWindowToken({
+    domain: dmAnchorDomain(DM_SURFACE),
+    windowId: taskWindowId("slack_T1_D999", "D999", "n-dm-1"),
+    generation: DM_ANCHOR_GENERATION,
+  });
+  const dmMismatch = JSON.stringify(goodPayload({ token: dmToken, surfaceKey: "slack/T1/C-OTHER", message: "dm mismatch probe" }));
+  eq(
+    (await handleSelfDispatch(mkReq(dmMismatch, signSelfDispatchBody(SECRET, dmMismatch)), fakeReceive, captureDivert, armed)).status,
+    400,
+    "DM-anchored token to a DIFFERENT surface → 400 (self-consistency, fail-closed)",
+  );
+  eq(diverted.length, 1, "no divert for the mismatched DM dispatch");
+  const dmGood = JSON.stringify(goodPayload({ token: dmToken, surfaceKey: DM_SURFACE, message: "dm delegation dispatch" }));
+  eq(
+    (await handleSelfDispatch(mkReq(dmGood, signSelfDispatchBody(SECRET, dmGood)), fakeReceive, captureDivert, armed)).status,
+    200,
+    "DM-anchored token to ITS OWN surface → 200 (the OPE-306 carve-in, no config domain involved)",
+  );
+  eq(diverted.length, 2, "the DM dispatch diverted");
 
   const boom = async (): Promise<void> => {
     throw new Error("receive refused");

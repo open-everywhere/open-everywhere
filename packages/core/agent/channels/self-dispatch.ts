@@ -5,7 +5,7 @@ import { getConfig } from "../access/config.js";
 import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { isUnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
-import { parseWindowToken } from "./window-key.js";
+import { parseWindowToken, isDmAnchoredTaskToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { appendAudit } from "../audit/audit.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { postOnce, outboundKey } from "../operational/post-once.js";
@@ -176,8 +176,15 @@ export async function handleSelfDispatch(
 
   let windowOk = false;
   try {
-    const domains = getConfig().loadDomains();
-    windowOk = windowedSupervisorEnabled(payload.surfaceKey, domains);
+    const dmAnchorSurface = isDmAnchoredTaskToken(payload.token)
+      ? dmSurfaceKeyFromAnchorDomain(parseWindowToken(payload.token)?.domain)
+      : undefined;
+    if (dmAnchorSurface !== undefined) {
+      windowOk = dmAnchorSurface === payload.surfaceKey;
+    } else {
+      const domains = getConfig().loadDomains();
+      windowOk = windowedSupervisorEnabled(payload.surfaceKey, domains);
+    }
   } catch {
     windowOk = false;
   }
