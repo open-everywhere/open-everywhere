@@ -17,6 +17,7 @@ import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
+import { resultTaintedAttrs } from "../access/taint-signal.js";
 import { admitInboundSurface, providerSelection } from "../access/provider-selection.js";
 import { ingressSpendGate } from "../spend/ingress-gate.js";
 
@@ -326,6 +327,7 @@ export async function divertToUnifiedWindow(
     ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
   };
   let recovered: { taskIds: readonly string[]; overflow: number } | null = null;
+  let recoveredTainted = false;
   let message = input.message;
   if (oneshotAgentEnabled()) {
     try {
@@ -335,13 +337,17 @@ export async function divertToUnifiedWindow(
         if (delta) {
           message = `${message}\n\n${delta.reminder}`;
           recovered = { taskIds: delta.taskIds, overflow: delta.overflow };
+          recoveredTainted = delta.tainted;
         }
       }
     } catch {
       recovered = null;
     }
   }
-  await receive(channel, { message, target, auth: auth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
+  const deliveredAuth = recoveredTainted
+    ? { ...auth, attributes: { ...auth.attributes, ...resultTaintedAttrs(true) } }
+    : auth;
+  await receive(channel, { message, target, auth: deliveredAuth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
   if (recovered) {
     const org = deploymentOrg();
     await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());

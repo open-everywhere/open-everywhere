@@ -22,3 +22,9 @@ export const OE_TAINTED_FIRE_ATTR = "oe_tainted_fire";
 export function taintedFireAttrs(tainted: boolean): Record<string, string> {
   return tainted ? { [OE_TAINTED_FIRE_ATTR]: "true" } : {};
 }
+
+export const OE_RESULT_TAINTED_ATTR = "oe_result_tainted";
+
+export function resultTaintedAttrs(tainted: boolean): Record<string, string> {
+  return tainted ? { [OE_RESULT_TAINTED_ATTR]: "true" } : {};
+}
