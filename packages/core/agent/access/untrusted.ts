@@ -54,3 +54,12 @@ export function ingestUntrustedModelOutput(
   const nudge = noteToolResultLoop(opts.source, content);
   return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
 }
+
+export function hostAuthoredModelOutput(
+  content: string,
+  opts: UntrustedOpts = {},
+): { type: "text"; value: string } {
+  const wrapped = wrapUntrusted(content, opts);
+  const nudge = noteToolResultLoop(opts.source, content);
+  return { type: "text", value: nudge ? `${wrapped}\n\n${nudge}` : wrapped };
+}

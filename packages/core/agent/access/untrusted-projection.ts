@@ -1,4 +1,4 @@
-import { ingestUntrustedModelOutput } from "./untrusted.js";
+import { hostAuthoredModelOutput, ingestUntrustedModelOutput } from "./untrusted.js";
 import { restrictToolsetForJobWake } from "./job-posture.js";
 import { currentJobWakePosture } from "./job-session-state.js";
 
@@ -34,6 +34,16 @@ function isConnectorExternalName(name: string): boolean {
   return (name.includes("__") || name === "connection_search") && !authoredProjections.has(name);
 }
 
+function isStatusOnlyConnectionSearch(output: unknown): boolean {
+  if (!Array.isArray(output) || output.length === 0) return false;
+  return output.every((el) => {
+    if (el === null || typeof el !== "object") return false;
+    const row = el as Record<string, unknown>;
+    if ("tool" in row || "qualifiedName" in row) return false;
+    return typeof row.error === "string" || row.needsAuthorization === true;
+  });
+}
+
 export function projectToolSet(toolset: Record<string, unknown>): void {
   if (currentJobWakePosture() === "restricted") restrictToolsetForJobWake(toolset);
 
@@ -66,6 +76,9 @@ export function projectToolSet(toolset: Record<string, unknown>): void {
           text = base.type === "text" ? String(base.value) : JSON.stringify(base.value ?? null);
         } else {
           text = typeof output === "string" ? output : JSON.stringify(output ?? null);
+        }
+        if (name === "connection_search" && isStatusOnlyConnectionSearch(output)) {
+          return hostAuthoredModelOutput(text, { source: `connector ${name}` });
         }
         return ingestUntrustedModelOutput(text, {
           source: `connector ${name}`,
