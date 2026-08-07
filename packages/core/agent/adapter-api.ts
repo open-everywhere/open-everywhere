@@ -285,8 +285,8 @@ export { clickerFloorRefusalNotice } from "./approvals/clicker-floor.js";
 export type { ClickerFloorRefusal } from "./approvals/clicker-floor.js";
 export type { ApprovalOutcome } from "./approvals/decision-wake.js";
 
-export { registerNativeAdminCheck } from "./access/native-admin.js";
-export type { NativeAdminCheck } from "./access/native-admin.js";
+export { registerNativeAdminCheck, registerNativeMemberCheck } from "./access/native-admin.js";
+export type { NativeAdminCheck, NativeMemberCheck } from "./access/native-admin.js";
 
 export { registerScopeLabelResolver } from "./approvals/scope-label.js";
 export type { ScopeLabelResolver } from "./approvals/scope-label.js";

@@ -34,7 +34,7 @@ const {
 const { postDiscordApprovalCard, parseDiscordComponentClick, discordResponseFor, handleDiscordApprovalInteraction } = await import(
   "@open-everywhere/provider-discord/agent/approvals/discord-flow.js"
 );
-const { guildIdFromScopeKey, isGuildAdminViaRest } = await import("@open-everywhere/provider-discord/agent/approvals/discord-admin.js");
+const { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } = await import("@open-everywhere/provider-discord/agent/approvals/discord-admin.js");
 const { clickerFloorRefusalNotice } = await import("@open-everywhere/core/agent/adapter-api.js");
 const {
   PUBLIC_DISCORD_ROUTE,
@@ -649,6 +649,54 @@ const store = getOperationalStore();
       }) as typeof fetch,
     })) === true,
     "verdicts are cached inside the TTL (no second REST round-trip)",
+  );
+}
+
+{
+  const memberRes = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as typeof fetch;
+
+  ok(
+    (await isGuildMemberViaRest("Ma", "U-in", { token: "t", fetchFn: memberRes(200, { user: { id: "U-in" } }) })) === true,
+    "a guild member is a member",
+  );
+  ok(
+    (await isGuildMemberViaRest("Mb", "U-out", { token: "t", fetchFn: memberRes(404, {}) })) === false,
+    "FAIL-CLOSED: a 404 IS the platform's own not-a-member answer",
+  );
+  ok(
+    (await isGuildMemberViaRest("Mc", "U-bot", { token: "t", fetchFn: memberRes(200, { user: { id: "U-bot", bot: true } }) })) === false,
+    "a BOT is a guild member by Discord's reckoning and is NOT a person — the undo gate must not admit one",
+  );
+  ok(
+    (await isGuildMemberViaRest("Md", "U-asked", { token: "t", fetchFn: memberRes(200, { user: { id: "U-somebody-else" } }) })) === false,
+    "FAIL-CLOSED: a 200 describing a DIFFERENT user is an answer we did not get",
+  );
+  ok(
+    (await isGuildMemberViaRest("Me", "U-any", { token: "t", fetchFn: memberRes(200, { roles: [] }) })) === false,
+    "FAIL-CLOSED: a 200 with an unreadable body (no user object) is not a member",
+  );
+  ok((await isGuildMemberViaRest("Mf", "U-any", { token: "" })) === false, "FAIL-CLOSED: no bot token is not a member");
+  ok(
+    (await isGuildMemberViaRest("Mg", "U-any", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("network down");
+      }) as typeof fetch,
+    })) === false,
+    "FAIL-CLOSED: a thrown fetch is not a member (never throws out)",
+  );
+  ok(
+    (await isGuildMemberViaRest("Ga", "U-owner", { token: "t", fetchFn: memberRes(404, {}) })) === false,
+    "the member verdict cache is distinct from the admin one — a cached admin `true` may never satisfy a membership question",
+  );
+  ok(
+    (await isGuildMemberViaRest("Ma", "U-in", {
+      token: "t",
+      fetchFn: (async () => {
+        throw new Error("should not be called — cached");
+      }) as typeof fetch,
+    })) === true,
+    "member verdicts are cached inside the TTL (no second REST round-trip)",
   );
 }
 

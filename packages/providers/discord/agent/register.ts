@@ -9,6 +9,7 @@ import {
   registerCardPoster,
   registerRoutineDispatch,
   registerNativeAdminCheck,
+  registerNativeMemberCheck,
   registerScopeLabelResolver,
   registerProviderDocs,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -21,7 +22,7 @@ import { discordReadAdapter } from "./channels/discord-read.js";
 import { discordMessageOps } from "./channels/discord-message-ops.js";
 import { postDiscordApprovalCard } from "./approvals/discord-flow.js";
 import { discordScopeLabelResolver } from "./approvals/discord-scope-label.js";
-import { guildIdFromScopeKey, isGuildAdminViaRest } from "./approvals/discord-admin.js";
+import { guildIdFromScopeKey, isGuildAdminViaRest, isGuildMemberViaRest } from "./approvals/discord-admin.js";
 
 export function registerDiscordProvider(): void {
   registerIdentityMapper("discord", bindDiscord);
@@ -36,6 +37,10 @@ export function registerDiscordProvider(): void {
   registerNativeAdminCheck("discord", async (scopeKey, principalId) => {
     const guildId = guildIdFromScopeKey(scopeKey);
     return guildId ? isGuildAdminViaRest(guildId, principalId) : false;
+  });
+  registerNativeMemberCheck("discord", async (scopeKey, principalId) => {
+    const guildId = guildIdFromScopeKey(scopeKey);
+    return guildId ? isGuildMemberViaRest(guildId, principalId) : false;
   });
   registerScopeLabelResolver("discord", discordScopeLabelResolver);
   registerProviderDocs("discord", PROVIDER_DOCS);
