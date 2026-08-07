@@ -9,9 +9,11 @@ import { bindFrom } from "../identity/binding.js";
 import { planFor, resolveMemoryPlan } from "../memory/resolve.js";
 import { effectiveRoleFor, renderRoleInstructions } from "../roles/role.js";
 import { renderMemoryIndex } from "../memory/listing.js";
-import { memoryRecallRouteFor } from "../access/window-gate-manifest.js";
+import { memoryRecallRouteFor, type MemoryRecallRoute } from "../access/window-gate-manifest.js";
 import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { renderApprovalPreviewFor } from "../access/approval-preview.js";
+import { renderWorkerCapabilityIndex } from "../access/worker-capabilities.js";
+import { WORKER_ONLY_TOOLS_STANDING, WORKER_ONLY_TOOLS_THREAD } from "../access/worker-capability-index.generated.js";
 import { bridgeReadableChannelList, bridgeBotDisplayName } from "../channels/slack-bridge.js";
 import { genericReadVerbsEnabled } from "../access/source-scoped-mount.js";
 import { isSupervisorSession } from "../model/routing.js";
@@ -335,6 +337,18 @@ function frozenMemoryIndex(live: string): string {
   }
 }
 
+function renderWorkerCapabilitiesFor(ctx: BindableContext, recall: MemoryRecallRoute): string {
+  try {
+    const grain = windowGrainOf(ctx);
+    if (grain !== "standing" && grain !== "thread") return "";
+    const workerOnly = grain === "thread" ? WORKER_ONLY_TOOLS_THREAD : WORKER_ONLY_TOOLS_STANDING;
+    const asyncVerb = grain === "standing" && recall === "agent" ? ("spawn_thread_session" as const) : undefined;
+    return renderWorkerCapabilityIndex(workerOnly, recall, undefined, asyncVerb);
+  } catch {
+    return "";
+  }
+}
+
 async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
   const domainName = unifiedDomainFromToken(ctx.channel?.continuationToken);
   const cfg = getConfig();
@@ -385,6 +399,7 @@ async function renderUnifiedScope(ctx: BindableContext): Promise<string> {
     roleMd,
     accessMd,
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
+    renderWorkerCapabilitiesFor(ctx, recall),
     memoryMd,
     ...(soloMode ? [renderChannelScope(ctx), renderNoiseDoctrine(ctx)] : []),
   ]
@@ -408,6 +423,7 @@ async function renderPerSurfaceScope(ctx: BindableContext): Promise<string> {
     renderRolePrompt(ctx),
     assembleAccessInstructions(access) ?? "",
     renderApprovalPreviewFor(windowGrainOf(ctx), recall),
+    renderWorkerCapabilitiesFor(ctx, recall),
     memoryMd,
     renderChannelScope(ctx),
     renderNoiseDoctrine(ctx),
