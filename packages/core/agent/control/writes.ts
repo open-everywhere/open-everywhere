@@ -14,6 +14,7 @@ import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
 import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
 import { whereFromScope } from "../approvals/actions.js";
+import { supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
 import { directoryProvider } from "../identity/directory.js";
 import { lastDirectorySync, syncDirectoryOrg } from "../identity/directory-sync.js";
@@ -26,6 +27,7 @@ export const CONTROL_WRITE_TOOL_NAMES = [
   "clear_spend_limit",
   "revoke_connector",
   "clear_connector_override",
+  "revoke_session_grants",
   "cancel_routine",
   "delete_skill",
   "memory_write_file",
@@ -167,6 +169,49 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         return jsonResult({ ok: true, cleared, org: a.org, surfaceKey: a.surfaceKey, connector: a.connector });
       } catch (e) {
         return errorResult(`clear_connector_override failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "revoke_session_grants",
+    {
+      title: "Revoke a session's standing approval grants (break-glass)",
+      description:
+        "Break-glass: withdraw every \"Approve for session\" grant held by a surface's LIVE session, so the next PR-open or connector write in it gets a fresh approval card again. Use when a session was granted too widely, or when a seat is behaving oddly and you want its standing discretion gone without cancelling the work. Narrowing only — it can never grant. Note what it does NOT do: a session grant only skips the human card, so this does not remove any capability; to cut ACCESS use revoke_connector. surfaceKey is 'platform/workspace/surface'; the live session is resolved from the channel-session registry (a windowed domain resolves to its window). Pass sessionId to target a session that has no registry row (a thread seat, a routine grant key) directly. reason is recorded in the audit row.",
+      inputSchema: {
+        org: z.string().min(1),
+        surfaceKey: z.string().min(1),
+        sessionId: z.string().min(1).optional(),
+        reason: z.string().optional(),
+      },
+    },
+    async (a) => {
+      const denial = scopeDenial(roles, { org: a.org, surfaceKey: a.surfaceKey });
+      if (denial) return errorResult(denial);
+      try {
+        let sessionId = a.sessionId;
+        if (!sessionId) {
+          const registryKey = supervisorGrainFor(a.surfaceKey, getConfig().loadDomains()).registryKey;
+          const row = await store().getChannelSession(a.org, registryKey);
+          if (!row) {
+            return errorResult(
+              `revoke_session_grants: no live session registered for "${a.surfaceKey}" (registry key "${registryKey}"). ` +
+                `A per-thread, task or native session has no registry row — pass its sessionId explicitly.`,
+            );
+          }
+          sessionId = row.token;
+        }
+        const revoked = await store().revokeSessionApprovals(a.org, sessionId);
+        await appendAudit({
+          ...whereFromScope(a.org, a.surfaceKey),
+          principalId: actor,
+          action: "admin.session_grants.revoke",
+          detail: { surfaceKey: a.surfaceKey, sessionId, revoked, ...(a.reason ? { reason: a.reason } : {}) },
+        });
+        return jsonResult({ ok: true, org: a.org, surfaceKey: a.surfaceKey, sessionId, revoked });
+      } catch (e) {
+        return errorResult(`revoke_session_grants failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     },
   );

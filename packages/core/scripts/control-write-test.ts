@@ -176,9 +176,48 @@ await client.connect(clientT);
 }
 
 {
+  ok("CONTROL_WRITE_TOOL_NAMES lists revoke_session_grants", (CONTROL_WRITE_TOOL_NAMES as readonly string[]).includes("revoke_session_grants"));
+
+  const store = getOperationalStore();
+  const now = new Date();
+  const future = new Date(now.getTime() + 3_600_000).toISOString();
+  await store.rotateChannelSession("default", "slack/T1/C1", "tok-C1-g1", now.toISOString());
+  await store.rotateChannelSession("default", "slack/T1/C2", "tok-C2-g1", now.toISOString());
+  for (const [sid, kind] of [
+    ["tok-C1-g1", "pr.open"],
+    ["tok-C1-g1", "connector.op:notion"],
+    ["tok-C2-g1", "pr.open"],
+  ] as const) {
+    await store.setSessionApproval({ org: "default", sessionId: sid, kind, grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+  }
+
+  const r = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C1", reason: "granted too widely" });
+  ok("revoke_session_grants resolves the live session off the registry and revokes its whole grant set", r.ok === true && r.revoked === 2 && r.sessionId === "tok-C1-g1");
+  ok("…so the next pr.open in that session gets a card again", (await store.getSessionApproval("default", "tok-C1-g1", "pr.open", new Date().toISOString())) === null);
+  ok("…and its connector write-session grant is gone too", (await store.getSessionApproval("default", "tok-C1-g1", "connector.op:notion", new Date().toISOString())) === null);
+  ok(
+    "🔴 SCOPED: another surface's live session keeps its grants (revoking one seat is not a blast radius)",
+    (await store.getSessionApproval("default", "tok-C2-g1", "pr.open", new Date().toISOString()))?.grantedBy === "U_ADMIN",
+  );
+
+  const missing = await client.callTool({ name: "revoke_session_grants", arguments: { org: "default", surfaceKey: "slack/T1/C_NONE" } });
+  const missingText = (missing.content as { type: string; text: string }[])[0].text;
+  ok("a surface with no live session REFUSES with the reason + the way out (pass sessionId)", missing.isError === true && missingText.includes("no live session registered") && missingText.includes("sessionId"));
+
+  await store.setSessionApproval({ org: "default", sessionId: "thread-1719000000.1", kind: "pr.open", grantedBy: "U_ADMIN", createdAt: now.toISOString(), expiresAt: future });
+  const direct = await callJson(client, "revoke_session_grants", { org: "default", surfaceKey: "slack/T1/C1", sessionId: "thread-1719000000.1" });
+  ok("an explicit sessionId revokes a session with no registry row (thread seat / routine grant key)", direct.ok === true && direct.revoked === 1);
+
+  const rows = await readAudit({ org: "default", action: "admin.session_grants.revoke" });
+  const row = rows.find((e) => (e.detail as { sessionId?: string })?.sessionId === "tok-C1-g1");
+  ok("revoke_session_grants is audited with the actor, the resolved session and the count", row?.principalId === "admin@example.com" && (row?.detail as { revoked?: number })?.revoked === 2 && (row?.detail as { reason?: string })?.reason === "granted too widely");
+  ok("both revokes wrote their own row (the explicit-sessionId path is audited too)", rows.length === 2);
+}
+
+{
   const audit = await readAudit({ org: "default" });
   const actions = audit.map((e) => e.action);
-  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel", "skill.delete"]) {
+  for (const a of ["admin.spend.set_limit", "admin.spend.clear_limit", "admin.connector.revoke", "admin.connector.clear_override", "admin.routine.cancel", "skill.delete", "admin.session_grants.revoke"]) {
     ok(`audited: ${a}`, actions.includes(a));
   }
   ok("write actions carry the acting principal", audit.filter((e) => e.action.startsWith("admin.")).every((e) => e.principalId === "admin@example.com"));
