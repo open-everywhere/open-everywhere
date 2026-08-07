@@ -79,7 +79,10 @@ export interface ConsequenceEntry {
   readonly tier: ConsequenceTier;
   readonly via: GatingMechanism;
   readonly reason: string;
+  readonly taint?: "refuse" | "card";
 }
+
+type TaintTolerance = "refuse" | "card";
 
 const open = (reason: string): ConsequenceEntry => ({ tier: "open", via: { kind: "none" }, reason });
 const delegated = (helper: string, module: string, reason: string): ConsequenceEntry => ({
@@ -87,8 +90,8 @@ const delegated = (helper: string, module: string, reason: string): ConsequenceE
   via: { kind: "delegated-roles", helper, module },
   reason,
 });
-const member = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, reason });
-const admin = (action: string, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, reason });
+const member = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, taint, reason });
+const admin = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, taint, reason });
 
 export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   bash: open("sandbox execution; reach is bounded by the egress plane (L1), not by this table"),
@@ -181,31 +184,25 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
       "the eve-HITL residue by design §7.2 (the artifact URL is org-opt-in and unlisted).",
   },
 
-  cancel_routine: member("routine.cancel", "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms"),
-  edit_routine: member(
-    "routine.edit",
+  cancel_routine: member("routine.cancel", "card", "behaviour-persisting removal: silently cancelling a watch/schedule removes a guardrail the surface relies on; reversible by re-creation, but a human confirms"),
+  edit_routine: member("routine.edit", "card",
     "self-modification at instruction granularity (OPE-147): rewrites the TRUSTED text a standing routine hands to unattended future fires — the create_routine rubric applied to the moment that text changes, which is the moment a human must read it. The card renders before AND after, which cancel+create could not. Confirming also bumps the routine's authority generation, revoking every standing grant keyed on the old text, so an edit can never launder approvals onto an instruction nobody read",
   ),
-  enable_routine: member(
-    "routine.enable",
+  enable_routine: member("routine.enable", "card",
     "re-arming standing autonomy (OPE-147): after the click the routine fires again with no human present, indefinitely — the same property routine.create is gated on, and having been armed once before does not make the second arming unattended-safe (whatever it was failing on may be exactly why it should stay off). The card names the disable reason, so the clicker confirms a diagnosis rather than pressing a button",
   ),
-  delete_skill: member("skill.delete", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
-  add_routine_rule: member(
-    "routine.policy.add",
+  delete_skill: member("skill.delete", "card", "behaviour-persisting removal: silently deleting a shared domain skill/runbook removes a guardrail; reversible by re-creation, but a human confirms"),
+  add_routine_rule: member("routine.policy.add", "refuse",
     "self-modification at RULE granularity (OPE-141): arms a standing instruction that is rendered as TRUSTED text into every future unattended fire of one routine, indefinitely — the create_routine/edit_routine rubric axis, scoped to a clause instead of the whole prompt, and with a longer reach than either because it is never re-read by anyone once armed. Deliberately NOT a lighter gate than edit_routine despite touching less text: what makes an instruction consequential here is that an unwatched run obeys it, which is equally true of one sentence. The card is not the load-bearing control — this tool HARD-REFUSES on a tainted turn (unlike remember/create_routine/edit_routine, which warn and card) and HARD-REFUSES inside a routine fire (the host-set ROUTINE_MARKER stamp), so no run can amend its own doctrine and no fetched content can reach a card; it is also absent from JOB_WAKE_TOOLS. Those refusals are what buy the right to render the block trusted at all",
   ),
-  remove_routine_rule: member(
-    "routine.policy.remove",
+  remove_routine_rule: member("routine.policy.remove", "refuse",
     "behaviour-persisting removal (OPE-141): dropping a standing rule silently takes away a guardrail a human armed after an incident, and every later fire stops following it with no notice — the cancel_routine/delete_skill shape, reversible by re-adding, but a human confirms against the rule's stated reason. It carries add_routine_rule's tainted-turn and routine-fire refusals for a sharper reason than symmetry: stripping the rule written to stop an attack is an easier act than authoring a malicious one. There is deliberately no edit verb — an edit is remove + add, two cards, so each wording is read on its own and no rule's provenance is mutated under a rewrite",
   ),
 
-  declare_webhook: member(
-    "webhook.declare",
+  declare_webhook: member("webhook.declare", "refuse",
     "proposes an inbound webhook in either shape: FUSED (an ingress bound to a standing instruction and a named channel, which runs unattended with that channel's full existing access on anyone's POST, indefinitely) or EMIT-ONLY (an ingress and nothing else, whose consequences are decided later by separately-approved `event` routines). Which is exactly why this tool arms nothing: approving OPENS A PULL REQUEST, and the privilege gate is the MERGE, behind branch protection + CODEOWNERS on the config repo. An unmerged PR declares nothing, and even a merged one authenticates nobody until the signing secret exists — no secret is minted, seen, or transported by this flow, so there is no disclosure axis and no private-delivery precondition (arming a `broker: \"db\"` hook's value is rotate_webhook's separate, card-gated act). Same tier and same two-step as request_access, whose flow it reuses. HARD-REFUSES on a tainted turn: a durable external wake path aimed at a named channel is the act no card text can honestly anchor once the request originated in fetched content",
   ),
-  rotate_webhook: member(
-    "webhook.rotate",
+  rotate_webhook: member("webhook.rotate", "refuse",
     "mints and DISCLOSES a signing secret for an ingress a merged PR ALREADY declared — it widens nothing (no new endpoint, no new authority, no new audience), and the DISCLOSURE is the whole reason for the bar. It is also the only way a `broker: \"db\"` hook ever gets a value at all, which is what lets a declared hook go live without a redeploy; refused by name for any other broker, whose value is set outside this deployment. This is likewise the ONLY recovery path, deliberately: there is no re-reveal anywhere in the design, because a re-reveal is indistinguishable in the audit log from exfiltration of a live secret. Whether the superseded key keeps working is the DECLARATION's own choice — a second `secretRef` entry is the overlap, ended by a PR rather than a timer — so the model cannot choose that window either. Hard-refuses on taint: no card text can honestly anchor a request to mint a live signing secret when the request originated in fetched content",
   ),
   list_webhooks: open(
@@ -271,41 +268,39 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "de-escalation only: removes an account from the CALLER'S OWN link-set, and there is no configuration in which it widens anything — afterwards that account is attributed to strictly fewer things. Gating the off switch for your own identity would mean needing someone else's permission to stop being associated with an account, which is the one direction this must never require. Refuses without an ACTING principal (so a fire cannot detach its creator's accounts) and audited (identity.link.unlinked)",
   ),
 
-  create_skill: member("skill.create", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
-  create_routine: member("routine.create", "self-modification: a standing scheduled behaviour that outlives the turn"),
-  remember: member(
-    "memory.remember",
+  create_skill: member("skill.create", "card", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
+  create_routine: member("routine.create", "card", "self-modification: a standing scheduled behaviour that outlives the turn"),
+  remember: member("memory.remember", "card",
     "self-modification, CONDITIONAL: a plain fact writes directly (not consequential); a standing RULE or any fact from a tainted turn freezes onto a card",
   ),
-  forget: member("memory.forget", "hard-to-reverse: destroys memory (and the frozen args carry only the bullet's hash — GDPR redaction)"),
-  open_pull_request: member(
-    "pr.open",
+  forget: member("memory.forget", "card", "hard-to-reverse: destroys memory (and the frozen args carry only the bullet's hash — GDPR redaction)"),
+  open_pull_request: member("pr.open", "card",
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
   ),
-  request_access: member("access.request", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
-  create_agent: member(
-    "agent.create",
+  request_access: member("access.request", "card", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
+  create_agent: member("agent.create", "card",
     "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate",
   ),
-  set_state: member("ticket.set_state", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
-  assign: member("ticket.assign", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
-  create_ticket: member(
-    "ticket.create",
+  set_state: member("ticket.set_state", "card", "audience-expanding: a ticket's state change (e.g. close/reopen) is visible to every watcher of the entity (repo/team members, CI, other assignees), not just the asking room"),
+  assign: member("ticket.assign", "card", "audience-expanding: assignment makes the entity someone's explicit responsibility, visible to the whole team/repo, not just the asking room"),
+  create_ticket: member("ticket.create", "card",
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
   ),
 
-  set_spend_limit: admin("spend.set", "self-modification + money: changes what the org will spend"),
-  clear_spend_limit: admin("spend.clear", "reverts a spend control — same bar as setting one"),
-  revoke_connector: admin("connector.revoke", "kills a live capability for a scope — an org-level control change"),
-  clear_connector_override: admin("connector.clear", "re-arms a revoked capability — same bar as the revoke"),
+  set_spend_limit: admin("spend.set", "card", "self-modification + money: changes what the org will spend"),
+  clear_spend_limit: admin("spend.clear", "card", "reverts a spend control — same bar as setting one"),
+  revoke_connector: admin("connector.revoke", "card", "kills a live capability for a scope — an org-level control change"),
+  clear_connector_override: admin("connector.clear", "card", "re-arms a revoked capability — same bar as the revoke"),
   memory_admin_list: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },
+    taint: "card",
     reason: "audience-expanding read: enumerates silos beyond this room's own memory — role-scoped disclosure (access/roles.ts adminControlRoles)",
   },
   memory_admin_read: {
     tier: "gate:admin",
     via: { kind: "admin-roles" },
+    taint: "card",
     reason: "audience-expanding read: pulls another room's silo contents into this one — role-scoped disclosure",
   },
 };
@@ -458,6 +453,12 @@ export function checkConsequenceRegistry(
         `tool "${tool.name}" has NO consequence declaration — add it to access/consequence.ts's TOOL_CONSEQUENCE (there is deliberately no default tier)`,
       );
       continue;
+    }
+
+    if (entry.tier !== "open" && entry.taint === undefined) {
+      problems.push(
+        `tool "${tool.name}" is gated (${entry.tier}) but declares no taint tolerance — add \`taint: "refuse" | "card"\` to its TOOL_CONSEQUENCE row (fail-closed: an undeclared gated sink refuses tainted turns, and that must be a decision, not an omission)`,
+      );
     }
 
     const hasPropose = REQUEST_APPROVAL.test(tool.source);
