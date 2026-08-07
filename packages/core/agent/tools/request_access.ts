@@ -15,6 +15,7 @@ import type { Domain } from "../memory/domain.js";
 import { resolveSkillDomain } from "../skills/domain-skills.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
@@ -104,8 +105,8 @@ export function planRequestAccess(
   input: RequestAccessInput,
   extras: { scopeKey: string; channelId: string; configRepo: string; permalink?: string; domains?: readonly Domain[] },
 ): RequestAccessArgs {
-  if (binding.platform !== "slack") {
-    throw new Error(`request_access is Slack-only for now (this surface is "${binding.platform}") — the request card renders as a Slack message.`);
+  if (!hasApprovalCardPath(binding.platform)) {
+    throw new Error(`request_access needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the request card renders as a message with a tap-to-send button.`);
   }
   const target = requestTargetOf(input);
   if (target === "channel" && binding.mode !== "channel") {
@@ -230,7 +231,7 @@ const requestAccessEntry = defineTool({
 
           const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
           if (!channelId) {
-            throw new Error("request_access couldn't resolve this Slack channel's id — try again from a real channel, not a synthetic context.");
+            throw new Error("request_access couldn't resolve this channel's id — try again from a real channel, not a synthetic context.");
           }
 
           const req = buildResolveRequest(ctx);
@@ -248,7 +249,7 @@ const requestAccessEntry = defineTool({
           };
 
           let permalink: string | undefined;
-          if (binding.threadTs) {
+          if (binding.threadTs && binding.platform === "slack") {
             const q = new URLSearchParams();
             q.set("channel", channelId);
             q.set("message_ts", binding.threadTs);
@@ -264,17 +265,20 @@ const requestAccessEntry = defineTool({
             domains: cfg.loadDomains(),
           });
 
-          const posted = await requestApproval({
-            org: args.org,
-            kind: "access.request",
-            args,
-            scopeKey: args.scopeKey,
-            domain,
-            requestedBy: args.requestedBy,
-            channelId,
-            threadTs: binding.threadTs ?? null,
-            postedTo: postedToSurfaceKey(binding, channelId),
-          });
+          const posted = await requestApproval(
+            {
+              org: args.org,
+              kind: "access.request",
+              args,
+              scopeKey: args.scopeKey,
+              domain,
+              requestedBy: args.requestedBy,
+              channelId,
+              threadTs: binding.threadTs ?? null,
+              postedTo: postedToSurfaceKey(binding, channelId),
+            },
+            approvalPostDeps(binding.platform),
+          );
 
           return {
             requested: true,
@@ -289,7 +293,7 @@ preRegisterDynamicEntry("request_access", "_single", requestAccessEntry);
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
       return requestAccessEntry;
     },
   },

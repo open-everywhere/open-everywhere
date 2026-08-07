@@ -22,7 +22,11 @@ import {
 } from "../agent/webhooks/capture-window.js";
 import { registerEventNormalizer, resetEventNormalizersForTest, type NormalizedEvent } from "../agent/routines/event-model.js";
 import { admitTrigger } from "../agent/routines/ingress.js";
-import { renderCaptureWindow, type CaptureWindowView } from "../agent/control/capture-window-read.js";
+import { armCaptureWindow, readCaptureWindow, renderCaptureWindow, type CaptureWindowView } from "../agent/control/capture-window-read.js";
+import type { AuditInput } from "../agent/audit/audit.js";
+import type { Partition } from "../agent/memory/partition.js";
+import type { EffectiveAccess } from "../agent/access/resolver.js";
+import type { WebhookHook } from "../agent/webhooks/config.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -314,6 +318,65 @@ async function admit(over: Record<string, unknown>): Promise<{ readonly calls: u
   ok(errored.includes("could not be evaluated"), "dry run: an unrunnable candidate says so");
   ok(errored.includes("it never ran"), "🔴 dry run: an unrunnable candidate must NOT read as 'matches nothing' — a broken filter must not look like a working one that found nothing");
   ok(!errored.includes("matched 0 of"), "dry run: no score is printed for a candidate that never ran");
+}
+
+{
+  const PARTITION = {
+    org: "acme",
+    platform: "slack",
+    workspace: "T1",
+    surface: "C1",
+    workspaceKey: "slack/T1",
+    surfaceKey: "slack/T1/C1",
+    key: "slack/T1/C1",
+  } as unknown as Partition;
+  const access = (domain = "payments") =>
+    ({ mode: "channel", scopeKey: "slack/T1/C1", domains: [domain], tenantKey: "slack/T1", surfaceKey: "slack/T1/C1" }) as unknown as EffectiveAccess;
+  const CFG = {
+    id: "attrib-hook",
+    source: "attrib-hook",
+    posture: "content-bearing",
+    target: "slack/T1/C1",
+    readableBy: [{ level: "domain", domain: "payments" }],
+  } as unknown as WebhookHook;
+
+  const written: AuditInput[] = [];
+  const armCalls: { by: string }[] = [];
+  const baseDeps = {
+    configHooks: () => [CFG],
+    resolve: () => access(),
+    audit: async (e: AuditInput) => {
+      written.push(e);
+    },
+  };
+
+  await armCaptureWindow(
+    { partition: PARTITION, source: "attrib-hook", armedBy: "U_ARMER" },
+    { ...baseDeps, clear: async () => undefined, arm: async (_o, _h, _u, by) => { armCalls.push({ by }); }, now: () => new Date(T0) },
+  );
+  const armRow = written.find((e) => e.action === "webhook.capture_arm");
+  ok(armRow?.principalId === "U_ARMER", "attribution: 🔴 arming a capture window NAMES the armer on the audit row — retention of an outside party's bytes must never be an anonymous act");
+  ok(armCalls[0]?.by === "U_ARMER", "attribution: …and the SAME value reaches the window row's own `armed_by`, so the two records cannot name different people for one act");
+
+  written.length = 0;
+  await readCaptureWindow(
+    { partition: PARTITION, source: "attrib-hook", principalId: "U_READER" },
+    { ...baseDeps, list: async () => [] },
+  );
+  const readRow = written.find((e) => e.action === "webhook.capture_read");
+  ok(readRow?.principalId === "U_READER", "attribution: the read that returns payload-derived values names the READER — this is the only read in the tree that shows what a third party wrote");
+
+  written.length = 0;
+  await readCaptureWindow(
+    { partition: PARTITION, source: "attrib-hook", principalId: "U_NOSY" },
+    { ...baseDeps, resolve: () => access("support"), list: async () => [] },
+  );
+  const refusedRow = written.find((e) => e.action === "webhook.capture_read");
+  ok(refusedRow?.principalId === "U_NOSY" && refusedRow.detail?.["granted"] === false, "attribution: a REFUSED read is attributed too, with granted:false");
+
+  written.length = 0;
+  await readCaptureWindow({ partition: PARTITION, source: "attrib-hook" }, { ...baseDeps, list: async () => [] });
+  ok(written.length === 1 && written[0]!.principalId === undefined, "attribution: an unattributable caller still writes the row (the field is omitted, the record is not)");
 }
 
 resetEventNormalizersForTest();

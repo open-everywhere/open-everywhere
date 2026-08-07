@@ -40,7 +40,12 @@ export interface CaptureReadDeps extends DeliveryHistoryDeps {
 }
 
 export async function readCaptureWindow(
-  request: { readonly partition: Partition; readonly source: string; readonly candidate?: string },
+  request: {
+    readonly partition: Partition;
+    readonly source: string;
+    readonly candidate?: string;
+    readonly principalId?: string;
+  },
   deps: CaptureReadDeps = {},
 ): Promise<CaptureWindowResult> {
   const org = request.partition.org;
@@ -67,6 +72,7 @@ export async function readCaptureWindow(
     platform: request.partition.platform,
     workspace: request.partition.workspace,
     surface: request.partition.surface,
+    ...(request.principalId !== undefined ? { principalId: request.principalId } : {}),
     action: WEBHOOK_CAPTURE_READ,
     detail: {
       hookId: hook.id,
@@ -141,7 +147,12 @@ export type CaptureArmResult =
   | { readonly ok: false; readonly message: string };
 
 export async function armCaptureWindow(
-  request: { readonly partition: Partition; readonly source: string; readonly windowMs?: number; readonly armedBy?: string },
+  request: {
+    readonly partition: Partition;
+    readonly source: string;
+    readonly windowMs?: number;
+    readonly armedBy?: string;
+  },
   deps: CaptureReadDeps & {
     readonly now?: () => Date;
     readonly arm?: (org: string, hookId: string, until: string, armedBy: string, at: string) => Promise<void>;
@@ -191,6 +202,7 @@ export async function armCaptureWindow(
     platform: request.partition.platform,
     workspace: request.partition.workspace,
     surface: request.partition.surface,
+    ...(request.armedBy !== undefined ? { principalId: request.armedBy } : {}),
     action: WEBHOOK_CAPTURE_ARM,
     detail: { hookId: resolved.id, source: resolved.source, posture: configHookPosture(declared), until, readableBy: grantText },
   }).catch(() => undefined);

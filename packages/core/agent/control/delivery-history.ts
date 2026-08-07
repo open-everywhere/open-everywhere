@@ -156,7 +156,11 @@ function rejectedRecord(row: AuditEntry): DeliveryRecord {
 }
 
 export async function readDeliveryHistory(
-  request: { readonly partition: Partition; readonly source: string },
+  request: {
+    readonly partition: Partition;
+    readonly source: string;
+    readonly principalId?: string;
+  },
   deps: DeliveryHistoryDeps = {},
 ): Promise<DeliveryHistoryResult> {
   const org = request.partition.org;
@@ -185,6 +189,7 @@ export async function readDeliveryHistory(
     platform: request.partition.platform,
     workspace: request.partition.workspace,
     surface: request.partition.surface,
+    ...(request.principalId !== undefined ? { principalId: request.principalId } : {}),
     action: WEBHOOK_HISTORY_READ,
     detail: {
       hookId: hook.id,

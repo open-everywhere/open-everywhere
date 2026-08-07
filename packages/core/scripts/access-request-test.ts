@@ -18,7 +18,7 @@ process.env.OE_SQLITE_PATH = join(dir, "ops.sqlite3");
 const { registerConfig } = await import("../agent/access/config.js");
 const { resolveAccess } = await import("../agent/access/resolver.js");
 const { readAudit } = await import("../agent/audit/audit.js");
-const { requestApproval, handleApprovalPayload } = await import("../agent/approvals/flow.js");
+const { requestApproval, handleApprovalPayload, registerCardPoster } = await import("../agent/approvals/flow.js");
 const { actionKind } = await import("../agent/approvals/actions.js");
 const { executeAccessRequest, requireAccessRequestsConfig } = await import("../agent/approvals/access-request.js");
 const { planRequestAccess, groupEffectiveAccess, requestTargetOf, requestingScopeFor } = await import("../agent/tools/request_access.js");
@@ -124,10 +124,15 @@ function planCtxFor(channel: string): PlanContext {
 const extras = { scopeKey: "slack/T1/C1", channelId: "C1", configRepo: "acme/agent-config", domains } as const;
 
 await rejectsWith(
-  () => planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
-  "Slack-only",
-  "plan: refuses off Slack",
+  () => planRequestAccess(slackBinding({ platform: "teams" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
+  "needs a surface with an approval-card path",
+  "plan: refuses a surface with no approval-card path",
 );
+{
+  registerCardPoster("discord", async () => undefined);
+  const args = await planRequestAccess(slackBinding({ platform: "discord" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras);
+  ok(typeof args.scopeKey === "string", "plan: 🔴 a surface that REGISTERS a card poster is admitted — the card is what a member taps, so the requirement was always 'can this render one'");
+}
 await rejectsWith(
   () => planRequestAccess(slackBinding({ mode: "dm" }), planCtxFor("C1"), { kind: "grant-connector", connector: "linear" }, extras),
   "not a DM",

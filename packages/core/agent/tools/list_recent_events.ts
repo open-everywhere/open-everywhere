@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
+import { principalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { readCaptureWindow, renderCaptureWindow } from "../control/capture-window-read.js";
 
@@ -24,9 +25,11 @@ export default defineTool({
   }),
   async execute(input, ctx) {
     const partition = resolvePartition(ctx);
+    const principalId = principalIdOf(ctx);
     const result = await readCaptureWindow({
       partition,
       source: input.source,
+      ...(principalId !== undefined ? { principalId } : {}),
       ...(input.filter !== undefined ? { candidate: input.filter } : {}),
     });
     if (!result.ok) return { ok: false, events: "", message: result.message };

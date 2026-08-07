@@ -1,5 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
+import { principalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { armCaptureWindow } from "../control/capture-window-read.js";
 import { CAPTURE_MAX_DELIVERIES, CAPTURE_MAX_WINDOW_MS } from "../operational/store.js";
@@ -22,9 +23,11 @@ export default defineTool({
   }),
   async execute(input, ctx) {
     const partition = resolvePartition(ctx);
+    const armedBy = principalIdOf(ctx);
     const result = await armCaptureWindow({
       partition,
       source: input.source,
+      ...(armedBy !== undefined ? { armedBy } : {}),
       ...(input.minutes !== undefined ? { windowMs: input.minutes * 60_000 } : {}),
     });
     if (!result.ok) return { ok: false, message: result.message };

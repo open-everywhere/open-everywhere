@@ -350,4 +350,20 @@ function harness(over: {
   ok(DELIVERY_ID_MAX_CHARS > 0 && DELIVERY_ID_MAX_CHARS <= 1000, "12a: a sender-supplied delivery id has a stated bound before it enters a permanent row");
 }
 
+{
+  const h = harness({
+    rows: { "webhook.fired": [row("webhook.fired", at(5), { hookId: "deploy-status", bytes: 10, matched: 1, fired: 1, skipped: 0 })] },
+  });
+  await readDeliveryHistory({ partition: PARTITION, source: "deploy-status", principalId: "U_READER" }, h.deps);
+  ok(h.written.length === 1 && h.written[0].principalId === "U_READER", "13a: 🔴 the history read's audit row NAMES the reader — an unattributed row cannot answer 'who ran this'");
+
+  const h2 = harness({ domains: ["support"] });
+  await readDeliveryHistory({ partition: PARTITION, source: "deploy-status", principalId: "U_NOSY" }, h2.deps);
+  ok(h2.written.length === 1 && h2.written[0].principalId === "U_NOSY" && h2.written[0].detail?.["granted"] === false, "13b: …and a REFUSED read is attributed too, which is the row worth counting per person");
+
+  const h3 = harness({ rows: {} });
+  await readDeliveryHistory({ partition: PARTITION, source: "deploy-status" }, h3.deps);
+  ok(h3.written.length === 1 && h3.written[0].principalId === undefined, "13c: an unattributable caller still writes the row (the field is omitted, the record is not)");
+}
+
 console.log(`✓ webhook-history-test: ${passed} assertions passed`);

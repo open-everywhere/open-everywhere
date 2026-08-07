@@ -5,6 +5,7 @@ import { principalIdOf } from "../access/request.js";
 import { domainForChannel } from "../memory/domain.js";
 import { getConfig } from "../access/config.js";
 import { requestApproval, postedToSurfaceKey } from "../approvals/flow.js";
+import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
 export interface ClearConnectorOverrideInput {
@@ -24,8 +25,8 @@ export interface ConnectorClearPlan {
 }
 
 export function planClearConnectorOverride(binding: SurfaceBinding, input: ClearConnectorOverrideInput, domain: string | null): ConnectorClearPlan {
-  if (binding.platform !== "slack") {
-    throw new Error(`clear_connector_override is Slack-only for now (this surface is "${binding.platform}") — the approval card renders as a Slack message with Approve/Reject buttons.`);
+  if (!hasApprovalCardPath(binding.platform)) {
+    throw new Error(`clear_connector_override needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
   }
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_connector_override needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and restoring cut access is a person's decision. Ask someone in this conversation to propose it.");
@@ -67,20 +68,23 @@ const clearConnectorOverrideEntry = defineTool({
 
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
-      throw new Error("clear_connector_override couldn't resolve this Slack channel's id — try again from a real channel or DM, not a synthetic context.");
+      throw new Error("clear_connector_override couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
     }
 
-    const posted = await requestApproval({
-      org: plan.args.org,
-      kind: plan.kind,
-      args: plan.args,
-      scopeKey: plan.scopeKey,
-      domain: plan.domain,
-      requestedBy: principalIdOf(ctx)!,
-      channelId,
-      threadTs: binding.threadTs ?? null,
-      postedTo: postedToSurfaceKey(binding, channelId),
-    });
+    const posted = await requestApproval(
+      {
+        org: plan.args.org,
+        kind: plan.kind,
+        args: plan.args,
+        scopeKey: plan.scopeKey,
+        domain: plan.domain,
+        requestedBy: principalIdOf(ctx)!,
+        channelId,
+        threadTs: binding.threadTs ?? null,
+        postedTo: postedToSurfaceKey(binding, channelId),
+      },
+      approvalPostDeps(binding.platform),
+    );
 
     return {
       requested: true,
@@ -95,7 +99,7 @@ preRegisterDynamicEntry("clear_connector_override", "_single", clearConnectorOve
 export default defineDynamic({
   events: {
     "session.started": (_event, ctx) => {
-      if (channelPlatform(ctx as BindableContext) !== "slack") return null;
+      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
       return clearConnectorOverrideEntry;
     },
   },

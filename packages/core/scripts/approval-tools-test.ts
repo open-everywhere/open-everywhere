@@ -1,4 +1,4 @@
-import setSpendLimitTool, { planSetSpendLimit, defaultScopeKey } from "../agent/tools/set_spend_limit.js";
+import setSpendLimitTool, { planSetSpendLimit, defaultScopeKey, hasApprovalCardPath } from "../agent/tools/set_spend_limit.js";
 import { rosterStanding } from "../agent/spend/bypass.js";
 import clearSpendLimitDynamic, { planClearSpendLimit } from "../agent/tools/clear_spend_limit.js";
 import { planRevokeConnector } from "../agent/tools/revoke_connector.js";
@@ -151,8 +151,8 @@ throwsWith(
 }
 throwsWith(
   () => planRevokeConnector(slackBinding({ platform: "linear" }), { connector: "notion", reason: "x" }, null),
-  "Slack-only",
-  "planRevokeConnector refuses a non-Slack binding",
+  "needs a surface with an approval-card path",
+  "planRevokeConnector refuses a surface with no approval-card path",
 );
 throwsWith(
   () => planRevokeConnector(slackBinding({ principalId: undefined }), { connector: "notion", reason: "x" }, null),
@@ -178,10 +178,27 @@ throwsWith(
   ok(plan.domain === "eng", "planClearConnectorOverride freezes the passed-in domain");
 }
 throwsWith(
-  () => planClearConnectorOverride(slackBinding({ platform: "discord" }), { connector: "notion" }, null),
-  "Slack-only",
-  "planClearConnectorOverride refuses a non-Slack binding",
+  () => planClearConnectorOverride(slackBinding({ platform: "linear" }), { connector: "notion" }, null),
+  "needs a surface with an approval-card path",
+  "planClearConnectorOverride refuses a surface with no approval-card path",
 );
+
+{
+  ok(hasApprovalCardPath("discord") && !hasApprovalCardPath("teams"), "card-path: a REGISTERED poster makes a surface card-capable and an unregistered one does not — the predicate is a capability question, not a list of names");
+  ok(
+    planRevokeConnector(slackBinding({ platform: "discord" }), { connector: "notion", reason: "x" }, null).kind === "connector.revoke",
+    "card-path: 🔴 …and break-glass revoke now PLANS on Discord — the capability the `slack` literal was withholding from a surface that could render the card all along",
+  );
+  ok(
+    planClearConnectorOverride(slackBinding({ platform: "discord" }), { connector: "notion" }, null).kind === "connector.clear",
+    "card-path: …and so does its clear, which MUST widen with it — revoke-without-clear would be a one-way door",
+  );
+  throwsWith(
+    () => planRevokeConnector(slackBinding({ platform: "teams" }), { connector: "notion", reason: "x" }, null),
+    "needs a surface with an approval-card path",
+    "card-path: a still-card-less surface is still refused — the predicate widened, the fence did not disappear",
+  );
+}
 throwsWith(
   () => planClearConnectorOverride(slackBinding({ principalId: undefined }), { connector: "notion" }, null),
   "verified sender",

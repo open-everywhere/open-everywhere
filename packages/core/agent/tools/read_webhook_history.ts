@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { ingestUntrustedModelOutput } from "../access/untrusted.js";
+import { principalIdOf } from "../access/request.js";
 import { resolvePartition } from "../memory/partition.js";
 import { readDeliveryHistory, renderDeliveryHistory } from "../control/delivery-history.js";
 
@@ -17,7 +18,8 @@ export default defineTool({
   }),
   async execute(input, ctx) {
     const partition = resolvePartition(ctx);
-    const result = await readDeliveryHistory({ partition, source: input.source });
+    const principalId = principalIdOf(ctx);
+    const result = await readDeliveryHistory({ partition, source: input.source, ...(principalId !== undefined ? { principalId } : {}) });
     if (!result.ok) return { ok: false, history: "", message: result.message };
     return { ok: true, history: renderDeliveryHistory(result.history), message: "" };
   },
