@@ -3,6 +3,7 @@ import {
   assertBundlesValid,
   defineBinding,
   defineBundle,
+  PACKAGE_REGISTRY_HOSTS,
   type Binding,
   type Bundle,
 } from "@open-everywhere/core/agent/access/bundle.js";
@@ -21,6 +22,7 @@ const bundles: Bundle[] = [
   defineBundle({
     name: "coding",
     repos: ["open-everywhere/open-everywhere"],
+    domains: [...PACKAGE_REGISTRY_HOSTS],
     instructions:
       "open-everywhere/open-everywhere is this agent's own source repository. Changes go via branch + open_pull_request; never push to main.",
   }),

@@ -76,6 +76,18 @@ export interface Binding {
   readonly allowBroad?: string;
 }
 
+export const PACKAGE_REGISTRY_HOSTS: readonly string[] = [
+  "registry.npmjs.org",
+  "jsr.io",
+  "npm.jsr.io",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "crates.io",
+  "static.crates.io",
+  "proxy.golang.org",
+  "sum.golang.org",
+];
+
 export function defineBundle(bundle: Bundle): Bundle {
   return bundle;
 }

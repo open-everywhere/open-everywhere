@@ -34,7 +34,12 @@ export function assembleAccessInstructions(access: EffectiveAccess): string | nu
     parts.push(
       `### What you can access in this channel\n\n${caps.join("\n")}\n\n` +
         `Anything not listed is blocked at the firewall. If a task needs something you don't ` +
-        `have, say so plainly — don't try to route around the restriction.`,
+        `have, say so plainly — don't try to route around the restriction.\n\n` +
+        `A blocked request is policy, never a blip: **don't retry it**, and don't reach for a ` +
+        `mirror or a proxy. Report which host you needed and why — the individual block isn't ` +
+        `recorded anywhere, so your report is the only signal it happened, and widening is a ` +
+        `reviewed config change either way. Inside the sandbox, \`egress/STATUS.json\` lists what ` +
+        `is reachable right now and \`egress/README.md\` explains the rest.`,
     );
   }
 
