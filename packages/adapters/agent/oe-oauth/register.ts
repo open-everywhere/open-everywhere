@@ -16,6 +16,6 @@ export function registerOeOauth(opts: RegisterOeOauthOptions = {}) {
   const { flow, completer, purge } = makeOeOauth(providers, opts.deps ?? {});
   registerUserAuthFlow(flow);
   registerOeOauthCallbackCompleter(completer);
-  registerCredentialPurgeHook(purge);
+  registerCredentialPurgeHook("oe-oauth", purge);
   return { flow, completer, purge };
 }

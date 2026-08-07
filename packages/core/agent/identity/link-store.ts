@@ -3,8 +3,8 @@ import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { principalKey } from "./principal-key.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
-import { sharedVaultSubject } from "./oauth-vault-share.js";
-import { purgeSubjectCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
+import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
+import { purgeSubjectCredentials, purgeSubjectsCredentials, type CredentialPurgeOutcome } from "../credentials/purge.js";
 import { directoryLinkSetVaultArmed } from "../connections/connector-flags.js";
 import type { LinkChallengeRow, LinkSetRow, LinkSetStatus, LinkedIdRow, LinkedIdStatus } from "../operational/store.js";
 import type { LinkSetPrincipal } from "./link-resolve.js";
@@ -327,10 +327,13 @@ export async function unlinkOwnId(input: {
   if (!(await store.deleteLinkedId(input.org, target.platform, target.nativeId))) {
     return { ok: false, reason: "that link had already gone." };
   }
+  const purge = await purgeSubjectCredentials(rawVaultSubject(input.org, target.platform, target.nativeId));
   await auditLink(input.org, input.actor.platform, undefined, principalKey(input.actor.platform, input.actor.nativeId), "identity.link.unlinked", {
     linkSetId: row.linkSetId,
     unlinked: principalKey(target.platform, target.nativeId),
     at,
+    credentialsPurged: purge.purged,
+    ...(purge.failed ? { purgeFailed: true } : {}),
     ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
   return { ok: true, linkSetId: row.linkSetId, note: `unlinked ${principalKey(target.platform, target.nativeId)}.` };
@@ -379,7 +382,13 @@ export async function revokeLinkSet(input: { readonly org: string; readonly link
 }
 
 async function purgeLinkSetCredentialsBestEffort(org: string, linkSetId: string): Promise<CredentialPurgeOutcome> {
-  return purgeSubjectCredentials(sharedVaultSubject(org, linkSetId));
+  const rows = await getOperationalStore()
+    .listLinkedIds(org, linkSetId)
+    .catch(() => [] as readonly LinkedIdRow[]);
+  return purgeSubjectsCredentials([
+    sharedVaultSubject(org, linkSetId),
+    ...rows.map((r) => rawVaultSubject(org, r.platform, r.nativeId)),
+  ]);
 }
 
 export async function purgeLinkSetCredentials(input: { readonly org: string; readonly linkSetId: string; readonly actor: string }): Promise<LinkWriteResult & { readonly purged?: number }> {

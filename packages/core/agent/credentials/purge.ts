@@ -2,18 +2,18 @@ export interface CredentialPurgeHook {
   purgeSubject(subjectId: string): Promise<number>;
 }
 
-let registeredHook: CredentialPurgeHook | undefined;
+const registeredHooks = new Map<string, CredentialPurgeHook>();
 
-export function registerCredentialPurgeHook(hook: CredentialPurgeHook): void {
-  registeredHook = hook;
+export function registerCredentialPurgeHook(name: string, hook: CredentialPurgeHook): void {
+  registeredHooks.set(name, hook);
 }
 
 export function resetCredentialPurgeHook(): void {
-  registeredHook = undefined;
+  registeredHooks.clear();
 }
 
-export function credentialPurgeHook(): CredentialPurgeHook | undefined {
-  return registeredHook;
+export function credentialPurgeHooks(): ReadonlyMap<string, CredentialPurgeHook> {
+  return registeredHooks;
 }
 
 export interface CredentialPurgeOutcome {
@@ -22,12 +22,26 @@ export interface CredentialPurgeOutcome {
 }
 
 export async function purgeSubjectCredentials(subjectId: string): Promise<CredentialPurgeOutcome> {
-  const hook = registeredHook;
-  if (!hook) return { purged: 0, failed: false };
-  try {
-    return { purged: await hook.purgeSubject(subjectId), failed: false };
-  } catch (e) {
-    console.warn(`[credential-purge] purge for subject failed (offboarding still applied): ${e instanceof Error ? e.message : String(e)}`);
-    return { purged: 0, failed: true };
+  let purged = 0;
+  let failed = false;
+  for (const [name, hook] of registeredHooks) {
+    try {
+      purged += await hook.purgeSubject(subjectId);
+    } catch (e) {
+      failed = true;
+      console.warn(`[credential-purge] purge for subject failed in "${name}" (offboarding still applied): ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
+  return { purged, failed };
+}
+
+export async function purgeSubjectsCredentials(subjectIds: readonly string[]): Promise<CredentialPurgeOutcome> {
+  let purged = 0;
+  let failed = false;
+  for (const subjectId of new Set(subjectIds)) {
+    const outcome = await purgeSubjectCredentials(subjectId);
+    purged += outcome.purged;
+    failed ||= outcome.failed;
+  }
+  return { purged, failed };
 }

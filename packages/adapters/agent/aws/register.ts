@@ -3,12 +3,13 @@ import {
   registerAwsExecutor,
   registerAwsSsoLinkStore,
   registerAwsSsoCallbackCompleter,
+  registerCredentialPurgeHook,
   type AwsIdentityProvider,
   type AwsExecutor,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { makeAwsStsProvider, type AwsStsProviderOptions } from "./sts.js";
 import { makeAwsCliExecutor, type AwsCliExecutorOptions } from "./cli.js";
-import { makeAwsSsoMinter, makeAwsSsoLinkStore, type AwsSsoMinter, type AwsSsoMinterOptions } from "./sso.js";
+import { makeAwsSsoMinter, makeAwsSsoLinkStore, makeAwsSsoPurgeHook, type AwsSsoMinter, type AwsSsoMinterOptions } from "./sso.js";
 import { loadAwsAccessConfig, loadAwsSsoConfig } from "./config.js";
 
 export interface RegisterAwsAccessOptions {
@@ -26,6 +27,7 @@ export function registerAwsAccess(opts: RegisterAwsAccessOptions = {}): {
   const ssoCfg = loadAwsSsoConfig();
 
   registerAwsSsoLinkStore(makeAwsSsoLinkStore());
+  registerCredentialPurgeHook("aws-sso", makeAwsSsoPurgeHook());
   const sso = makeAwsSsoMinter({
     ...(ssoCfg.region ? { region: ssoCfg.region } : defaultRegion ? { region: defaultRegion } : {}),
     ...(ssoCfg.clientId ? { clientId: ssoCfg.clientId } : {}),

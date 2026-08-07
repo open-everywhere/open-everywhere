@@ -9,7 +9,7 @@ import { canDeliverDirectMessage, dispatchDirectMessage, notifyLinkSetMembers } 
 
 export default defineTool({
   description:
-    "Remove a linked account from the caller's own identity link-set — their current account by default, or another account already on their set (platform + nativeId). DM only, and it can only ever touch the caller's OWN set. Takes effect immediately; the account can be linked again later with link_identity.",
+    "Remove a linked account from the caller's own identity link-set — their current account by default, or another account already on their set (platform + nativeId). DM only, and it can only ever touch the caller's OWN set. Takes effect immediately, and it also destroys any credentials stored for that account (its own OAuth or AWS sign-in), so re-linking it later with link_identity means signing in again.",
   inputSchema: z.object({
     platform: z.string().optional().describe("Platform of the account to unlink (e.g. \"github\"). Omit to unlink the account this person is speaking from."),
     nativeId: z.string().optional().describe("That platform's native account id. Required when `platform` is given."),

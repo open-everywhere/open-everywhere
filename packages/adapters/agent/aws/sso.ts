@@ -6,6 +6,7 @@ import {
   type AwsCredentials,
   type AwsIdentityRequest,
   type AwsSsoLinkStore,
+  type CredentialPurgeHook,
   type EncryptedKvVault,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { makePkce, makeState } from "../oe-oauth/pkce.js";
@@ -57,17 +58,28 @@ export function isAwsSsoLinkRequired(e: unknown): boolean {
   return code === "aws_sso_link_required" || e.name === "AwsSsoLinkRequiredError";
 }
 
+export function awsSsoTokenRef(principalSubject: string): string {
+  return `aws-sso:tok:${principalSubject}`;
+}
+
 export function makeAwsSsoLinkStore(vault: EncryptedKvVault = encryptedKvVault()): AwsSsoLinkStore {
-  const tokRef = (principalSubject: string) => `aws-sso:tok:${principalSubject}`;
   return {
     async read(principalSubject: string): Promise<string | null> {
-      return vault.read(tokRef(principalSubject));
+      return vault.read(awsSsoTokenRef(principalSubject));
     },
     async write(principalSubject: string, token: string): Promise<void> {
-      await vault.write(tokRef(principalSubject), token, { provider: "aws-sso" });
+      await vault.write(awsSsoTokenRef(principalSubject), token, { provider: "aws-sso" });
     },
     async clear(principalSubject: string): Promise<void> {
-      await vault.write(tokRef(principalSubject), "", { provider: "aws-sso" });
+      await vault.write(awsSsoTokenRef(principalSubject), "", { provider: "aws-sso" });
+    },
+  };
+}
+
+export function makeAwsSsoPurgeHook(vault: EncryptedKvVault = encryptedKvVault()): CredentialPurgeHook {
+  return {
+    async purgeSubject(subjectId: string): Promise<number> {
+      return (await vault.delete(awsSsoTokenRef(subjectId))) ? 1 : 0;
     },
   };
 }

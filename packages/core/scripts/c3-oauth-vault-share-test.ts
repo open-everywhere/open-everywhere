@@ -144,8 +144,8 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   };
 
   {
-    registerCredentialPurgeHook({
-      purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0),
+    registerCredentialPurgeHook("oe-oauth", {
+      purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0),
     });
     await mkSet(store, ORG, "P1", [{ platform: "slack", nativeId: "PU1" }]);
     const subject = sharedVaultSubject(ORG, "P1");
@@ -162,7 +162,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   }
 
   {
-    registerCredentialPurgeHook({
+    registerCredentialPurgeHook("oe-oauth", {
       purgeSubject: async () => {
         throw new Error("vault backing unavailable");
       },
@@ -179,7 +179,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     ok(res.ok && res.note.includes("purge_link_set_credentials"), "purge failure: the operator is told the exact repair verb to re-run");
     ok((await rowOf(subject)) !== null, "purge failure: nothing was destroyed (the assertion above is not vacuous)");
 
-    registerCredentialPurgeHook({ purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
+    registerCredentialPurgeHook("oe-oauth", { purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
     const repair = await purgeLinkSetCredentials({ org: ORG, linkSetId: "P2", actor: "admin" });
     ok(repair.ok && repair.purged === 1, "purge repair: purge_link_set_credentials finishes a purge that failed at revoke time");
     ok((await rowOf(subject)) === null, "purge repair: the row is gone");
@@ -188,7 +188,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   }
 
   {
-    registerCredentialPurgeHook({ purgeSubject: async (subjectId) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
+    registerCredentialPurgeHook("oe-oauth", { purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
     await mkSet(store, ORG, "P3", [{ platform: "slack", nativeId: "PU3" }]);
     const subject = sharedVaultSubject(ORG, "P3");
     await seed(subject);
@@ -221,6 +221,65 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     const res = await revokeLinkSet({ org: ORG, linkSetId: "P4", actor: "admin" });
     const detail = await lastRevokeDetail("P4");
     ok(res.ok && detail.credentialsPurged === 0 && detail.purgeFailed === undefined, "no purge hook registered: revoke reports 0 purged and NO failure (nothing to destroy is not an outage)");
+  }
+
+  {
+    resetCredentialPurgeHook();
+    const ssoRef = (subject: string) => `aws-sso:tok:${subject}`;
+    registerCredentialPurgeHook("oe-oauth", { purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
+    registerCredentialPurgeHook("aws-sso", { purgeSubject: async (subjectId: string) => ((await vault.delete(ssoRef(subjectId))) ? 1 : 0) });
+
+    await mkSet(store, ORG, "P5", [
+      { platform: "slack", nativeId: "PU5" },
+      { platform: "github", nativeId: "gh-PU5" },
+    ]);
+    const shared = sharedVaultSubject(ORG, "P5");
+    const rawSlack = rawVaultSubject(ORG, "slack", "PU5");
+    const rawGithub = rawVaultSubject(ORG, "github", "gh-PU5");
+    await mkSet(store, ORG, "P6", [{ platform: "slack", nativeId: "PU6" }]);
+    const strangerRaw = rawVaultSubject(ORG, "slack", "PU6");
+
+    await seed(shared);
+    await vault.write(ssoRef(rawSlack), "sso-token-blob", { provider: "aws-sso" });
+    await seed(rawGithub);
+    await vault.write(ssoRef(strangerRaw), "someone-elses-sso", { provider: "aws-sso" });
+
+    const res = await revokeLinkSet({ org: ORG, linkSetId: "P5", actor: "admin" });
+    ok(res.ok, "G3: the revoke succeeded");
+    ok((await store.getStoredCredential(ORG, ssoRef(rawSlack))) === null, "🔴 G3: the offboarded person's AWS Identity Center SSO TOKEN is gone — it is keyed per-person and was untouchable through the shared subject alone");
+    ok((await rowOf(shared)) === null, "G3: the shared subject's OAuth row still goes (the OPE-287 property is intact)");
+    ok((await rowOf(rawGithub)) === null, "G3: a SECOND tombstoned account's raw row goes too — the sweep is per-account, not per-set-plus-one");
+    ok((await store.getStoredCredential(ORG, ssoRef(strangerRaw))) !== null, "🔴 G3: ANOTHER person's raw row is untouched — the sweep is scoped to the accounts ON THE SET, never every raw row in the org");
+    ok((await lastRevokeDetail("P5")).credentialsPurged === 3, "G3: the audit row counts every credential destroyed across BOTH holders (shared OAuth + SSO + the second account's OAuth)");
+
+    registerCredentialPurgeHook("broken", {
+      purgeSubject: async () => {
+        throw new Error("holder down");
+      },
+    });
+    await mkSet(store, ORG, "P7", [{ platform: "slack", nativeId: "PU7" }]);
+    await vault.write(ssoRef(rawVaultSubject(ORG, "slack", "PU7")), "sso-token-blob", { provider: "aws-sso" });
+    const res7 = await revokeLinkSet({ org: ORG, linkSetId: "P7", actor: "admin" });
+    ok(res7.ok, "G3: a failing holder still never blocks the offboarding (the one deliberate fail-open, unchanged)");
+    ok((await store.getStoredCredential(ORG, ssoRef(rawVaultSubject(ORG, "slack", "PU7")))) === null, "G3: …and the WORKING holder still destroyed its row (per-holder isolation)");
+    const d7 = await lastRevokeDetail("P7");
+    ok(d7.purgeFailed === true && d7.credentialsPurged === 1, "G3: the audit reports BOTH what went and that something did not — never 'everything went' while a row survives");
+    registerCredentialPurgeHook("broken", { purgeSubject: async () => 0 });
+
+    await mkSet(store, ORG, "P8", [
+      { platform: "slack", nativeId: "PU8" },
+      { platform: "github", nativeId: "gh-PU8" },
+    ]);
+    const keptRaw = rawVaultSubject(ORG, "slack", "PU8");
+    const goneRaw = rawVaultSubject(ORG, "github", "gh-PU8");
+    await vault.write(ssoRef(keptRaw), "kept-sso", { provider: "aws-sso" });
+    await vault.write(ssoRef(goneRaw), "severed-sso", { provider: "aws-sso" });
+    const unlinked = await unlinkOwnId({ org: ORG, actor: { platform: "slack", nativeId: "PU8" }, target: { platform: "github", nativeId: "gh-PU8" } });
+    ok(unlinked.ok, "G3: the unlink succeeded");
+    ok((await store.getStoredCredential(ORG, ssoRef(goneRaw))) === null, "🔴 G3: unlinking an account DESTROYS its own stored credentials — a severed account must not keep minting on a token it earned while it had standing");
+    ok((await store.getStoredCredential(ORG, ssoRef(keptRaw))) !== null, "G3: the accounts still on the set are untouched by an unlink");
+    const unlinkRow = (await store.readAudit({ org: ORG })).filter((r) => r.action === "identity.link.unlinked").at(-1);
+    ok((unlinkRow?.detail as { credentialsPurged?: number } | undefined)?.credentialsPurged === 1, "G3: the unlink audit row states how many credentials were destroyed");
   }
 }
 

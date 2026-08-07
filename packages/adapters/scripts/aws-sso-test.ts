@@ -1,6 +1,8 @@
 import {
   makeAwsSsoMinter,
   makeAwsSsoLinkStore,
+  makeAwsSsoPurgeHook,
+  awsSsoTokenRef,
   parseRoleArn,
   isAwsSsoLinkRequired,
   AwsSsoLinkRequiredError,
@@ -328,6 +330,15 @@ function portalCredsJson(expirationMs: number): string {
   ok((await store.read(ALICE_OTHER_ORG)) === null, "vault ref: 🔴 the same native id in another ORG addresses a different row");
   ok((await store.read(ALICE_OTHER_PLATFORM)) === null, "vault ref: 🔴 the same native id on another PLATFORM addresses a different row");
   ok(reads.every((r) => r.startsWith("aws-sso:tok:")), "vault ref: every read goes through the one ref composer (no second spelling)");
+
+  const purge = makeAwsSsoPurgeHook(fakeVault);
+  await store.write(ALICE, "blob-alice");
+  await store.write(ALICE_OTHER_ORG, "blob-other-org");
+  ok((await purge.purgeSubject(ALICE)) === 1, "G3 purge: the hook destroys the principal's SSO token row and reports 1");
+  ok((await store.read(ALICE)) === null, "🔴 G3 purge: the row is GONE — a real delete, not the link store's clear() (which writes an empty string and leaves the row)");
+  ok((await store.read(ALICE_OTHER_ORG)) === "blob-other-org", "🔴 G3 purge: another subject's row is untouched (subject-scoped, through the one ref composer)");
+  ok((await purge.purgeSubject(ALICE)) === 0, "G3 purge: a second purge of the same subject reports 0 (idempotent, as the hook contract requires)");
+  ok(awsSsoTokenRef(ALICE) === `aws-sso:tok:${ALICE}`, "G3 purge: store and purge share ONE exported ref composer — they cannot drift onto different rows");
 }
 
 {
@@ -359,4 +370,4 @@ function portalCredsJson(expirationMs: number): string {
   ok(bearers.length === 3, "warm: a repeat mint for the SAME subject inside the TTL still reuses its entry — separation did not defeat the cache");
 }
 
-console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying)`);
+console.log(`✓ aws-sso: ${passed} assertions passed (mint happy path + parse + refresh + unlinked/not-entitled/re-link + warm cache + link roundtrip + OPE-286 qualified-subject keying + OPE-300 purge hook)`);
