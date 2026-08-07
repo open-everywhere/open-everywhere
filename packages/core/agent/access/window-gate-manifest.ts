@@ -102,7 +102,6 @@ export const WINDOW_UNGATED_TOOLS: ReadonlySet<string> = new Set([
   "load_skill",
   "connection_search",
   "fresh_eyes_review",
-  "recall_verification",
 ]);
 
 export function withheldFromGrain(grain: WindowGrain): string[] {

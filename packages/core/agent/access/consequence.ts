@@ -115,9 +115,6 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   fresh_eyes_review: open(
     "declared subagent: an independent review pass over text the caller already holds. Zero tools (disableTool() sentinel set, lint-pinned), no sandbox reach, no audience — the verdict returns into the calling session only",
   ),
-  recall_verification: open(
-    "declared subagent: entailment check of a claim against evidence the caller quotes. Zero tools (lint-pinned) — it reads no memory itself, so it discloses nothing the caller did not already have",
-  ),
 
   check_pr_status: open("read of a PR's state"),
   get_pr_feedback: open("read of a PR's reviews/comments/check runs via the read-scoped credential; disclosure is bounded by the channel's repo grant (membership is the ACL), and the digest is size-capped"),

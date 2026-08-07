@@ -5,7 +5,7 @@ import { subagentParentOf, turnKind } from "../agent/hooks/spend.js";
 import { checkDeclaredSubagents, listDeclaredSubagents, type DeclaredSubagentSource } from "../agent/subagents/declared.js";
 import { checkConsequenceRegistry, type ConsequenceEntry } from "../agent/access/consequence.js";
 import { checkWindowGateManifest } from "../agent/access/window-gate-manifest.js";
-import { FRESH_EYES_REVIEW_OUTPUT, RECALL_VERIFICATION_OUTPUT } from "../agent/subagents/contracts.js";
+import { FRESH_EYES_REVIEW_OUTPUT } from "../agent/subagents/contracts.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -186,17 +186,6 @@ function expectProblem(subject: DeclaredSubagentSource, needle: string, label: s
   eq(review.recommendation, "block", "fresh_eyes_review parses the fail-closed shape (evidenceSeen false ⇒ block)");
   eq(FRESH_EYES_REVIEW_OUTPUT.shape.recommendation.options, ["approve", "block"], "the review verdict stays two-valued — no 'approve with reservations' escape hatch");
   ok(!FRESH_EYES_REVIEW_OUTPUT.safeParse({ recommendation: "maybe", summary: "", evidenceSeen: true, findings: [] }).success, "an unknown recommendation is rejected");
-
-  const recall = RECALL_VERIFICATION_OUTPUT.parse({
-    verdict: "unverified",
-    claim: "The team decided X.",
-    supportingEvidencePaths: [],
-    contradictingEvidencePaths: [],
-    unsupportedParts: ["The team decided X."],
-    note: "No evidence was supplied.",
-  });
-  eq(recall.verdict, "unverified", "recall_verification parses the fail-closed shape (no evidence ⇒ unverified)");
-  eq(RECALL_VERIFICATION_OUTPUT.shape.verdict.options, ["verified", "unverified"], "the recall verdict stays two-valued — 'partially verified' would be a place to hide an unsupported claim");
 }
 
 console.log(`subagent-session-test: ${n} assertions passed`);

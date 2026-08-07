@@ -105,8 +105,8 @@ export const WORKER_CAPABILITY_GROUPS: readonly WorkerCapabilityGroup[] = [
   },
   {
     id: "second-opinion",
-    headline: "Get a zero-tool second read of reasoning or of a recalled fact",
-    tools: ["fresh_eyes_review", "recall_verification"],
+    headline: "Get a zero-tool second read of a proposed change or a piece of reasoning",
+    tools: ["fresh_eyes_review"],
   },
   {
     id: "own-manual",
