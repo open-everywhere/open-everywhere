@@ -14,6 +14,7 @@ import {
   defaultScopeKey,
   approvalPostDeps,
   planSetSpendLimit,
+  requireCardPathHere,
   type SetSpendLimitInput,
   type CurrentCaps,
 } from "../tools/set_spend_limit.js";
@@ -188,6 +189,7 @@ function requireChannelId(binding: SurfaceBinding): string {
 }
 
 export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps: OeApprovalDeps = {}): Promise<string> {
+  requireCardPathHere('"/oe budget raise"', binding.platform);
   const effectiveCapsFn = deps.effectiveCaps ?? effectiveCaps;
   const requestApprovalFn = deps.requestApproval ?? requestApproval;
   const friendlyScopeLabelFn = deps.friendlyScopeLabel ?? friendlyScopeLabel;
@@ -233,6 +235,7 @@ export async function runBudgetRaise(binding: SurfaceBinding, usd: number, deps:
 }
 
 export async function runBudgetClear(binding: SurfaceBinding, deps: OeApprovalDeps = {}): Promise<string> {
+  requireCardPathHere('"/oe budget clear"', binding.platform);
   const effectiveCapsFn = deps.effectiveCaps ?? effectiveCaps;
   const requestApprovalFn = deps.requestApproval ?? requestApproval;
   const friendlyScopeLabelFn = deps.friendlyScopeLabel ?? friendlyScopeLabel;

@@ -87,10 +87,9 @@ const uncapped = { tokens: null, usd: null } as const;
   const plan = planSetSpendLimit(slackBinding({ platform: "discord", workspace: "G123", surface: "C456" }), { monthlyTokens: 1, reason: "x" }, uncapped, null);
   ok(plan.args.scopeKey === "discord/G123/C456", "planSetSpendLimit accepts a Discord binding (card path exists) and scopes to the guild surface");
 }
-throwsWith(
-  () => planSetSpendLimit(slackBinding({ platform: "teams" }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
-  "approval-card path",
-  "planSetSpendLimit refuses a binding with no approval-card path",
+ok(
+  planSetSpendLimit(slackBinding({ platform: "teams" }), { monthlyTokens: 1, reason: "x" }, uncapped, null).kind === "spend.set",
+  "planSetSpendLimit PLANS on a card-less surface — everything this pure layer can honestly answer (levels, scopes, amounts) is decidable without knowing where the card lands",
 );
 throwsWith(
   () => planSetSpendLimit(slackBinding({ principalId: undefined }), { monthlyTokens: 1, reason: "x" }, uncapped, null),
@@ -125,10 +124,9 @@ throwsWith(
   const plan = planClearSpendLimit(slackBinding({ platform: "discord", workspace: "G123", surface: "C456" }), {}, uncapped, null);
   ok(plan.args.scopeKey === "discord/G123/C456", "planClearSpendLimit accepts a Discord binding (card path exists)");
 }
-throwsWith(
-  () => planClearSpendLimit(slackBinding({ platform: "teams" }), {}, uncapped, null),
-  "approval-card path",
-  "planClearSpendLimit refuses a binding with no approval-card path",
+ok(
+  planClearSpendLimit(slackBinding({ platform: "teams" }), {}, uncapped, null).kind === "spend.clear",
+  "planClearSpendLimit PLANS on a card-less surface too — the pair MUST move together (OPE-312): a room that can raise a cap but never clear the override it set is a one-way door",
 );
 throwsWith(
   () => planClearSpendLimit(slackBinding({ principalId: undefined }), {}, uncapped, null),

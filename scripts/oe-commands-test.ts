@@ -305,6 +305,15 @@ function discordOeInteraction(opts: {
   );
   n++;
 
+  for (const [label, run] of [
+    ["/oe budget raise", () => runBudgetRaise(discordBinding({ platform: "teams" }), 10, deps)],
+    ["/oe budget clear", () => runBudgetClear(discordBinding({ platform: "teams" }), deps)],
+  ] as const) {
+    await assert.rejects(run, /approval-card path/, `${label} still refuses on a card-less surface — the fence moved to the door that promises "posted in this channel", it did not disappear`);
+    n++;
+  }
+  ok((await runBudgetRaise(discordBinding(), 25, deps)).includes("$25.00"), "…and the fence takes NOTHING from a card-capable surface: the same raise still acks");
+
   recorded = undefined;
   const dmRaise = await runBudgetRaise(
     discordBinding({ mode: "dm", workspace: "U_DM_USER", target: { channelId: "U_DM_USER" } }),

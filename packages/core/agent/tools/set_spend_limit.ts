@@ -5,9 +5,11 @@ import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/bi
 import { principalIdOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
+import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
+import { requestApproval, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 
 const LEVELS = ["surface", "workspace", "domain"] as const;
@@ -20,6 +22,13 @@ export function approvalPostDeps(platform: string): RequestApprovalDeps {
 
 export function hasApprovalCardPath(platform: string): boolean {
   return platform === "slack" || cardPosterFor(platform) !== undefined;
+}
+
+export function requireCardPathHere(tool: string, platform: string): void {
+  if (hasApprovalCardPath(platform)) return;
+  throw new Error(
+    `${tool} needs a surface with an approval-card path — Slack or Discord for now (this surface is "${platform}") — the approval card renders as a message with Approve/Reject buttons, and a slash command posts it in this channel or not at all. Ask me in this conversation instead: the set_spend_limit / clear_spend_limit tools route the card to a card-capable channel in this domain.`,
+  );
 }
 
 export interface SetSpendLimitInput {
@@ -80,9 +89,6 @@ export function assertScopableFromHere(tool: string, binding: SurfaceBinding, le
 }
 
 export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, current: CurrentCaps, domain: string | null): SpendSetPlan {
-  if (!hasApprovalCardPath(binding.platform)) {
-    throw new Error(`set_spend_limit needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
-  }
   if (!actingPrincipalId(binding)) {
     throw new Error("set_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose a spend-limit change in that person's name. Ask a person in this conversation to propose it.");
   }
@@ -115,7 +121,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). An over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). An over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can\'t host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
@@ -153,10 +159,11 @@ export default defineTool({
 
     const plan = planSetSpendLimit(binding, input, current, domain);
 
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("set_spend_limit couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
+    const venueResult = await checkApprovalVenue(binding, resolvePartition(ctx), () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "set that spend limit"));
     }
+    const venue = venueResult.venue;
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
@@ -170,11 +177,11 @@ export default defineTool({
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const proposed = [
@@ -186,7 +193,10 @@ export default defineTool({
         requested: false,
         pendingId: posted.id,
         expiresAt: posted.expiresAt,
-        note: `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
+        note:
+          `Already pending — an identical ${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
+          `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
+          (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here."),
       };
     }
     const subject = `${plan.args.level} limit ${proposed} on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
@@ -202,7 +212,7 @@ export default defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${subject} (pending ${posted.id}).`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
     };
   },
 });

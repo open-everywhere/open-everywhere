@@ -72,12 +72,11 @@ async function assertGate(name: string, def: unknown, descNeedle: string, armedK
   }
 }
 
-await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", CARD_PATH_KINDS, NON_CARD_KINDS);
-
 const EVERY_KIND = [...CARD_PATH_KINDS, ...NON_CARD_KINDS];
 await assertGate("clear_connector_override", clearConnectorOverride, "PROPOSE reverting an earlier break-glass connector revoke", EVERY_KIND, []);
 await assertGate("forget", forget, "PROPOSE forgetting one remembered fact", EVERY_KIND, []);
 await assertGate("request_access", requestAccess, "PROPOSE widening access", EVERY_KIND, []);
+await assertGate("clear_spend_limit", clearSpendLimit, "PROPOSE clearing a spend-limit override", EVERY_KIND, []);
 
 await assertGate("react", react, "React to a message with a Slack emoji");
 

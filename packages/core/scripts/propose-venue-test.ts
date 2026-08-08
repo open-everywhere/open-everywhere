@@ -85,6 +85,8 @@ const forgetTool = (await import("../agent/tools/forget.js")).default;
 const requestAccessTool = (await import("../agent/tools/request_access.js")).default;
 const revokeTool = (await import("../agent/tools/revoke_connector.js")).default;
 const clearTool = (await import("../agent/tools/clear_connector_override.js")).default;
+const setSpendTool = (await import("../agent/tools/set_spend_limit.js")).default;
+const clearSpendTool = (await import("../agent/tools/clear_spend_limit.js")).default;
 
 type Entry = { execute: (input: unknown, ctx: unknown) => Promise<Record<string, unknown>> };
 async function armed(def: unknown, ctx: unknown, name: string): Promise<Entry> {
@@ -173,6 +175,43 @@ async function pendingCount(): Promise<number> {
 }
 
 {
+  const set = (await (await armed(setSpendTool, teamsCtx("CONV1"), "set_spend_limit")).execute(
+    { monthlyUsd: 50, reason: "incident headroom" },
+    teamsCtx("CONV1"),
+  )) as { requested: boolean; pendingId: string; note: string };
+  ok(set.requested === true, "spend-pair: 🔴 `set_spend_limit` WORKS from a card-less room — it was MOUNTED there all along and refused at execute(), which is the worse half of the inconsistency: the agent could see a tool it could not use and said so only after being asked");
+  const setRow = await rowOf(set.pendingId);
+  ok(setRow["channelId"] === "C_OPS" && setRow["postedTo"] === "slack/T1/C_OPS", "spend-pair: the card is in the domain's card-capable channel, and `postedTo` is the VENUE's key");
+  ok(setRow["threadTs"] === null, "spend-pair: …top-level, like every other cross-venue card");
+  ok(setRow["scopeKey"] === "teams/W1/CONV1", "spend-pair: …while the cap being proposed is still the ASKING surface's — the card moved, the subject of the decision did not");
+  ok(set.note.includes("card posted in slack/T1/C_OPS") && set.note.includes("approve it"), "spend-pair: …and the tool result names the venue and what the person there must do");
+
+  const clearSpend = (await (await armed(clearSpendTool, teamsCtx("CONV1"), "clear_spend_limit")).execute({}, teamsCtx("CONV1"))) as {
+    pendingId: string;
+    note: string;
+  };
+  const clearSpendRow = await rowOf(clearSpend.pendingId);
+  ok(clearSpendRow["postedTo"] === "slack/T1/C_OPS", "spend-pair: …and its clear moves with it — a room that can RAISE a cap but never clear the override it set is a one-way door");
+
+  const clearOverride = (await (await armed(clearTool, teamsCtx("CONV1"), "clear_connector_override")).execute({ connector: "linear" }, teamsCtx("CONV1"))) as {
+    pendingId: string;
+    note: string;
+  };
+  const overrideRow = await rowOf(clearOverride.pendingId);
+  ok(
+    clearSpendRow["channelId"] === overrideRow["channelId"] &&
+      clearSpendRow["postedTo"] === overrideRow["postedTo"] &&
+      clearSpendRow["threadTs"] === overrideRow["threadTs"],
+    "spend-pair: 🔴 `clear_spend_limit` and `clear_connector_override` now route IDENTICALLY from one Teams room — same venue, same postedTo, same anchor. That divergence was the whole ticket",
+  );
+  ok(
+    clearSpend.note.includes("card posted in slack/T1/C_OPS") === clearOverride.note.includes("card posted in slack/T1/C_OPS") &&
+      clearSpend.note.includes("tell the user where it is, by name") === clearOverride.note.includes("tell the user where it is, by name"),
+    "spend-pair: …and say the same thing about it — a user asking the same room to undo two overrides gets one story, not two",
+  );
+}
+
+{
   const before = await pendingCount();
 
   await refuses(
@@ -192,6 +231,17 @@ async function pendingCount(): Promise<number> {
     "refuse: a channel in NO domain refuses with the other reason — the config change is a different one, and naming the wrong one is how a refusal becomes useless",
   );
 
+  await refuses(
+    () => (armed(setSpendTool, teamsCtx("CONV_LONE"), "set_spend_limit") as Promise<Entry>).then((e) => e.execute({ monthlyUsd: 5, reason: "x" }, teamsCtx("CONV_LONE"))),
+    /I can't set that spend limit from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "refuse: `set_spend_limit` refuses with the venue's copy and its own verb",
+  );
+  await refuses(
+    () => (armed(clearSpendTool, teamsCtx("CONV_ORPHAN"), "clear_spend_limit") as Promise<Entry>).then((e) => e.execute({}, teamsCtx("CONV_ORPHAN"))),
+    /I can't clear that spend override from here.*isn't in an explicit domain.*domains\.ts/s,
+    "refuse: …and `clear_spend_limit` on a channel in NO domain gets the other reason, not a generic one",
+  );
+
   ok(await pendingCount().then((after) => after === before), "refuse: 🔴 NOTHING is minted on any refusal — a card nobody can see is worse than a clear no");
 }
 
@@ -208,7 +258,20 @@ async function pendingCount(): Promise<number> {
     "unchanged: 🔴 …and NO redirect sentence is appended — the relay instruction exists for a card the user cannot see, and telling them to go elsewhere for one that is right there is worse than saying nothing",
   );
   ok(/^card posted — forget [0-9a-f]{12}… \(pending [0-9a-f-]{36}\)\.$/.test(out.note), "unchanged: …byte-for-byte the pre-OPE-303 note shape, digest-only (the fact never enters the durable transcript)");
+
+  const spend = (await (await armed(setSpendTool, slackCtx("C1"), "set_spend_limit")).execute({ monthlyUsd: 12, reason: "headroom" }, slackCtx("C1"))) as {
+    pendingId: string;
+    note: string;
+  };
+  const spendRow = await rowOf(spend.pendingId);
+  ok(spendRow["channelId"] === "C1" && spendRow["postedTo"] === "slack/T1/C1", "unchanged: `set_spend_limit` in a card-capable own room hosts its own card, with the asking room's key frozen");
+  ok(
+    /^card posted — surface limit \$12\.00\/month \(current: uncapped\) on "slack\/T1\/C1" \(pending [0-9a-f-]{36}\)\.$/.test(spend.note),
+    "unchanged: 🔴 …and the note is byte-for-byte the pre-OPE-312 sentence — no venue named, NO redirect instruction appended, because telling someone to go elsewhere for a card that is right there is worse than saying nothing",
+  );
 }
 
 rmSync(tmp, { recursive: true, force: true });
-console.log(`✓ propose-venue: ${n} assertions passed (card-less redirect for all four propose tools, args-vs-card split, fail-closed refusals, own-room unchanged)`);
+console.log(
+  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six propose tools, spend pair matches its sibling, args-vs-card split, fail-closed refusals, own-room unchanged)`,
+);

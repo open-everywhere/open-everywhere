@@ -1,13 +1,15 @@
 import { defineDynamic, defineTool } from "eve/tools";
 import { z } from "zod";
-import { actingPrincipalId, bindFrom, channelPlatform, type SurfaceBinding, type BindableContext } from "../identity/binding.js";
+import { actingPrincipalId, bindFrom, type SurfaceBinding } from "../identity/binding.js";
 import { principalIdOf } from "../access/request.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
+import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
 import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
-import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, hasApprovalCardPath, type CurrentCaps } from "./set_spend_limit.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
+import { defaultScopeKey, assertScopableFromHere, approvalPostDeps, type CurrentCaps } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
 
@@ -33,9 +35,6 @@ export interface SpendClearPlan {
 }
 
 export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLimitInput, current: CurrentCaps, domain: string | null): SpendClearPlan {
-  if (!hasApprovalCardPath(binding.platform)) {
-    throw new Error(`clear_spend_limit needs a surface with an approval-card path — Slack or Discord for now (this surface is "${binding.platform}") — the approval card renders as a message with Approve/Reject buttons.`);
-  }
   if (!actingPrincipalId(binding)) {
     throw new Error("clear_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a spend override in that person's name. Ask a person in this conversation to propose it.");
   }
@@ -52,7 +51,7 @@ export function planClearSpendLimit(binding: SurfaceBinding, input: ClearSpendLi
 
 const clearSpendLimitEntry = defineTool({
   description:
-    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" clears THIS DM\'s own override and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says.',
+    'PROPOSE clearing a spend-limit override so the scope reverts to the config-as-code cap — this does NOT clear anything itself. Posts a confirmation card (current override -> reverts to config). Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but clearing a DOMAIN-LEVEL override needs an ORG ADMIN specifically (domain admins cannot approve changes to their own domain\'s budget). level defaults to "surface" (this channel/DM); pass level:"workspace" to clear a workspace-wide override, or level:"domain" to clear this channel\'s memory-domain override. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" clears THIS DM\'s own override and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can\'t host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.',
   inputSchema: z.object({
     level: z
       .enum(LEVELS)
@@ -86,10 +85,11 @@ const clearSpendLimitEntry = defineTool({
 
     const plan = planClearSpendLimit(binding, input, current, domain);
 
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("clear_spend_limit couldn't resolve this channel's id — try again from a real channel or DM, not a synthetic context.");
+    const venueResult = await checkApprovalVenue(binding, resolvePartition(ctx), () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "clear that spend override"));
     }
+    const venue = venueResult.venue;
 
     const scopeLabel = await friendlyScopeLabel(plan.scopeKey);
 
@@ -103,11 +103,11 @@ const clearSpendLimitEntry = defineTool({
         scopeKey: plan.scopeKey,
         domain: plan.domain,
         requestedBy: principalIdOf(ctx)!,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     if (posted.deduped) {
@@ -115,7 +115,10 @@ const clearSpendLimitEntry = defineTool({
         requested: false,
         pendingId: posted.id,
         expiresAt: posted.expiresAt,
-        note: `Already pending — an identical clear of the ${plan.args.level} override on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). No new card was posted; tell the user the existing card still needs an admin to tap Approve or Reject.`,
+        note:
+          `Already pending — an identical clear of the ${plan.args.level} override on "${plan.args.scopeKey}" is awaiting an admin's Approve/Reject (pending ${posted.id}). ` +
+          `No new card was posted; tell the user the existing card${venue.sameRoom ? "" : ` in ${venue.surfaceKey}`} still needs an admin to tap Approve or Reject.` +
+          (venue.sameRoom ? "" : " Name that channel — the card is not in this conversation, so the user cannot see it from here."),
       };
     }
     const subject = `clear ${plan.args.level} override on "${plan.args.scopeKey}"${tainted ? " ⚠ tainted" : ""}`;
@@ -131,7 +134,7 @@ const clearSpendLimitEntry = defineTool({
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note: `card posted — ${subject} (pending ${posted.id}).`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}).` + describeVenueRedirect(venue, "approve it"),
     };
   },
 });
@@ -139,9 +142,6 @@ preRegisterDynamicEntry("clear_spend_limit", "_single", clearSpendLimitEntry);
 
 export default defineDynamic({
   events: {
-    "session.started": (_event, ctx) => {
-      if (!hasApprovalCardPath(channelPlatform(ctx as BindableContext) ?? "")) return null;
-      return clearSpendLimitEntry;
-    },
+    "session.started": () => clearSpendLimitEntry,
   },
 });
