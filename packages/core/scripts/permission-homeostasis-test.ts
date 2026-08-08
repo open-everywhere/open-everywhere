@@ -61,6 +61,14 @@ function chainDeny(days: number, tool: string, reason: string, unattended = true
   };
 }
 
+function egressDenied(days: number, host: string, count: number, fingerprint = "c".repeat(64)): EvidenceRow {
+  return {
+    ts: ago(days),
+    action: "egress.denied",
+    detail: { host, count, policyFingerprint: fingerprint, windowMs: 60_000, domain: "ops", principalId: "slack/U-ALICE" },
+  };
+}
+
 function connectorOp(days: number, connection: string, op: string): EvidenceRow {
   return { ts: ago(days), action: "connector.op", detail: { connection, op, tier: "open", opTier: "read", principalId: "slack/U-ALICE" } };
 }
@@ -221,6 +229,47 @@ const GRANTS: DeclaredGrants[] = [
   ok(proposals.length >= 3, "privacy fixture: the fixture actually produces proposals in both directions");
   const blob = JSON.stringify(ev) + JSON.stringify(proposals) + renderPermissionProposals(ev, proposals);
   ok(!blob.includes("U-ALICE") && !blob.includes("principalId"), "⭐ privacy: every seeded row carried a principal and NONE of it reaches the evidence, the proposals or the report");
+}
+
+{
+  const rows: EvidenceRow[] = [
+    egressDenied(1, "registry.example.com", 4),
+    egressDenied(2, "registry.example.com", 3),
+    egressDenied(3, "pastebin.test", 1),
+  ];
+  const ev = permissionEvidence(rows, GRANTS, W30);
+  ok(ev.activity.egressDenialRows === 3, "egress: the denial ROWS are counted as their own denominator");
+
+  const denials = ev.refusals.filter((r) => r.kind === "egress-denied");
+  ok(denials.length === 2, "egress: rows cluster by HOST, not per row");
+  const top = denials[0]!;
+  ok(top.kind === "egress-denied" && top.host === "registry.example.com", "egress: the busiest denied host leads");
+  ok(top.kind === "egress-denied" && top.denials === 7 && top.windows === 2, "egress: counts SUM across rows, and the number of observation windows is kept separately — 7 denials across 2 windows is not the same statement as 7 in one");
+  ok(top.kind === "egress-denied" && top.firstSeen === ago(2) && top.lastSeen === ago(1), "egress: first/last seen span the cluster");
+
+  const proposals = proposePermissionChanges(ev, "widen");
+  const egressProposal = proposals.find((p) => p.id === "widen:egress:registry.example.com");
+  ok(egressProposal !== undefined, "🔴 egress: a repeatedly-denied host becomes a WIDENING proposal — the blind spot OPE-314 closed");
+  ok(egressProposal!.diff === undefined, "egress: no mechanical diff — `domains` vs a connection's `allowedWebsites` depends on whether the call needs a credential, which the evidence cannot answer");
+  ok(/allowedWebsites/.test(egressProposal!.remedy ?? "") && /`domains`/.test(egressProposal!.remedy ?? ""), "…so the remedy names BOTH config sites and leaves the choice to the reviewer");
+  ok(/Vercel tier/.test(egressProposal!.remedy ?? ""), "🔴 egress: the proposal states the TIER LIMIT — on Vercel no row is ever written, so an empty egress section means 'not observed', never 'nothing was blocked'");
+  ok(!proposals.some((p) => p.id === "widen:egress:pastebin.test"), `⭐ egress: a single denial is evidence but not yet a proposal (the same ${MIN_WIDEN_REFUSALS}-refusal floor every family uses)`);
+
+  const burst = permissionEvidence([egressDenied(1, "mirror.example.com", 900)], GRANTS, W30);
+  const burstProposal = proposePermissionChanges(burst, "widen").find((p) => p.id === "widen:egress:mirror.example.com");
+  ok(burstProposal !== undefined && /ONE window/.test(burstProposal.summary), "🔴 egress: 900 denials inside a single window is flagged as a possible crash-loop, not sold as a standing need");
+
+  const across = permissionEvidence(
+    [egressDenied(1, "registry.example.com", 2, "a".repeat(64)), egressDenied(5, "registry.example.com", 2, "b".repeat(64))],
+    GRANTS,
+    W30,
+  );
+  const acrossProposal = proposePermissionChanges(across, "widen").find((p) => p.id === "widen:egress:registry.example.com");
+  ok(acrossProposal !== undefined && acrossProposal.evidence.some((e) => /2 distinct policy generations/.test(e)), "egress: staying unreachable ACROSS a config change is reported as such");
+
+  const blob = JSON.stringify(ev) + JSON.stringify(proposals) + renderPermissionProposals(ev, proposals);
+  ok(!blob.includes("U-ALICE") && !blob.includes("principalId"), "🔴 egress: no principal reaches the evidence, the proposals or the report");
+  ok(renderPermissionProposals(ev, proposals).includes("egress-denial row(s)"), "egress: the report's denominator line names this family, so a silent plane is legible as a silent plane");
 }
 
 {

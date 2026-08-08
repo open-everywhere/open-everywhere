@@ -20,13 +20,13 @@ import {
 import { proposePermissionChanges, renderPermissionProposals } from "../access/permission-proposal.js";
 import type { BindableContext } from "../identity/binding.js";
 
-const EVIDENCE_ACTIONS = ["aws.exec", "aws.refused", "connector.op", "approval.chain"] as const;
+const EVIDENCE_ACTIONS = ["aws.exec", "aws.refused", "connector.op", "approval.chain", "egress.denied"] as const;
 
 const ROW_CAP = 4000;
 
 export default defineTool({
   description:
-    "Report whether this domain's PERMISSION GRANTS still fit the work — in both directions, from the audit log. Widening: unattended runs that keep hitting refusals (an AWS allow-list refusal, an approval card nobody could answer). Tightening: grants nothing exercised in the window, and allow-lists far wider than what was actually run. Returns evidence counts plus concrete, reviewable config-change proposals. It proposes only: nothing is granted, revoked, gated or delayed by this — every proposal is a pull request a human merges. Use when asked \"do we still need all this access?\", \"why does this routine keep getting refused?\", or on a schedule as a standing permission review. For \"would tool X be allowed here right now?\" use explain_permission instead.",
+    "Report whether this domain's PERMISSION GRANTS still fit the work — in both directions, from the audit log. Widening: unattended runs that keep hitting refusals (an AWS allow-list refusal, an approval card nobody could answer, a host the egress firewall keeps blocking). Tightening: grants nothing exercised in the window, and allow-lists far wider than what was actually run. Returns evidence counts plus concrete, reviewable config-change proposals. It proposes only: nothing is granted, revoked, gated or delayed by this — every proposal is a pull request a human merges. Use when asked \"do we still need all this access?\", \"why does this routine keep getting refused?\", or on a schedule as a standing permission review. For \"would tool X be allowed here right now?\" use explain_permission instead.",
   inputSchema: z.object({
     days: z.number().int().min(1).max(90).optional().describe(`Window length in days (default 30). Tightening proposals need at least ${MIN_TIGHTEN_WINDOW_DAYS} days; shorter windows report widening evidence only.`),
     direction: z.enum(["both", "widen", "tighten"]).optional().describe("Which loop to report. Default \"both\"."),

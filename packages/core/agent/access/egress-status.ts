@@ -79,8 +79,7 @@ export function renderEgressStatus(input: EgressStatusInput): string {
 export const EGRESS_README = `# Egress from this sandbox
 
 Network access out of this sandbox is **default-deny**. Only the hosts listed in
-\`STATUS.json\` (beside this file) are reachable; everything else fails at the firewall,
-before it reaches the network.
+\`STATUS.json\` (beside this file) are reachable; everything else fails at the firewall.
 
 Read \`STATUS.json\` first. It carries the enforcement state, every allowed host with any
 method/path narrowing on it, and \`policyFingerprint\` — the id of the exact policy in force.
@@ -92,12 +91,13 @@ outage: a retry, a mirror, a proxy, a different port and a different DNS name al
 same way, and the only thing they cost is your turn. Nothing about the block is transient.
 
 **Report it instead**, in your answer, naming the host you needed and what you needed it
-for. That report matters more than it looks: the policy that denied you is on the record —
-an \`egress.policy\` audit row carries the \`policyFingerprint\` above — but **the individual
-blocked request is not**. The firewall denies out of band and Open Everywhere never sees the
-attempt, so no automatic loop will ever notice it. (\`permission_fit_report\`, the loop that
-does propose widenings, reads AWS and approval refusals; egress denials are not among them.)
-Your report is the only signal that exists.
+for. The policy that denied you is on the record — an \`egress.policy\` audit row carries the
+\`policyFingerprint\` above — but whether **the individual blocked request** is depends on the
+tier. Where the proxy is ours (self-host) each denial becomes an \`egress.denied\` row — host,
+that fingerprint, a count, nothing else — which \`permission_fit_report\` reads as widening
+evidence. On the Vercel sandbox host the deny is out of band and no row exists at all. You
+cannot tell which from in here, so report either way: yours is the only signal that always
+exists, and the only one that says what you wanted the host **for**.
 
 Widening is deliberately not something either of us can do at runtime: a reachable host is
 config-as-code, and it changes by reviewed pull request against the bundle that grants it —

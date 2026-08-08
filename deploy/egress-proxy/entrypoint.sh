@@ -35,6 +35,9 @@ fi
 chown -R squid:squid /var/lib/squid 2>/dev/null || true
 chown squid:squid /dev/stdout /dev/stderr 2>/dev/null || true
 
+mkdir -p /var/log/oe-egress
+chown -R squid:squid /var/log/oe-egress 2>/dev/null || true
+
 squid -N -f "$SQUID_CONF" -z 2>/dev/null || true
 
 echo "[oe-egress] launching squid."

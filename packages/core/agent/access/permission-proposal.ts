@@ -78,6 +78,31 @@ function widenProposals(ev: PermissionEvidence): PermissionProposal[] {
       continue;
     }
 
+    if (r.kind === "egress-denied") {
+      if (r.denials < MIN_WIDEN_REFUSALS) continue;
+      const burst = r.windows === 1;
+      out.push({
+        id: `widen:egress:${r.host}`,
+        direction: "widen",
+        subject: `Egress to \`${r.host}\``,
+        summary:
+          `${r.denials} request(s) to \`${r.host}\` were refused by the egress firewall across ${r.windows} observation window(s)` +
+          `${burst ? " — all inside ONE window, so this may be a single crash-loop rather than a standing need" : ""}. ` +
+          `The host is not in this scope's compiled allow-list.`,
+        evidence: [
+          `${r.denials} denied request(s) in ${r.windows} \`egress.denied\` row(s), ${r.firstSeen} → ${r.lastSeen}.`,
+          r.fingerprints.length > 1
+            ? `Denied under ${r.fingerprints.length} distinct policy generations — the host stayed unreachable across a config change.`
+            : `Policy generation: ${r.fingerprints[0] !== undefined ? `\`${r.fingerprints[0].slice(0, 12)}…\`` : "(not recorded)"}.`,
+          `Host only: the firewall's log is reduced to a host and a count before it reaches the audit log, so there is no path, method or query string behind this — and no way to tell WHICH request wanted it. The worker's own report is still the place that detail comes from.`,
+        ],
+        remedy:
+          `Not a mechanical diff, so none is offered. A reachable host is config-as-code in one of two places, and which one is the reviewer's call: add \`${r.host}\` to the bundle's \`domains\` if the call needs no credential, or to the relevant connection's \`allowedWebsites\` if the firewall should inject one. ` +
+          `⚠ This evidence family only exists where the proxy is ours (the self-host egress tier, deploy/egress-proxy). On the Vercel tier the sandbox host denies out of band and NO row is written, so an empty egress section there means "not observed", never "nothing was blocked".`,
+      });
+      continue;
+    }
+
     const unattendedReason = r.reasons.find((x) => x.label === "ask-unattended");
     if (unattendedReason === undefined || unattendedReason.count < MIN_WIDEN_REFUSALS) continue;
     out.push({
@@ -193,7 +218,8 @@ export function renderPermissionProposals(ev: PermissionEvidence, proposals: rea
   lines.push(`Permission fit — ${ev.window.since} → ${ev.window.until} (${ev.window.days}d)`);
   lines.push(
     `evidence: ${ev.rowsConsidered} audit row(s) in window · ${ev.activity.awsExec} aws execution(s) · ` +
-      `${ev.activity.connectorOps} connector op(s) · ${ev.activity.chainResolutions} approval-chain resolution(s)`,
+      `${ev.activity.connectorOps} connector op(s) · ${ev.activity.chainResolutions} approval-chain resolution(s) · ` +
+      `${ev.activity.egressDenialRows} egress-denial row(s)`,
   );
   lines.push(`grants examined: ${ev.usage.length} · refusal clusters: ${ev.refusals.length}`);
   lines.push("");

@@ -17,6 +17,7 @@ import {
   type EgressEnforcementState,
   type EgressStatusInput,
 } from "../access/egress-status.js";
+import { rememberEgressAttribution, type EgressAttribution } from "../access/egress-denial-poller.js";
 
 function log(msg: string): void {
   console.log(`[open-everywhere:egress] ${msg}`);
@@ -105,6 +106,7 @@ export interface EgressEnforcementDeps {
   readonly audit?: (entry: AuditInput) => Promise<void>;
   readonly stamp?: (enforced: boolean) => void;
   readonly publish?: (input: EgressStatusInput) => Promise<void>;
+  readonly rememberScope?: (input: EgressAttribution) => void;
 }
 
 export interface EgressEnforcementResult {
@@ -188,6 +190,21 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     }
   }
 
+  if (publishState !== null && deps.rememberScope) {
+    try {
+      const s = deps.scope();
+      deps.rememberScope({
+        org: s.org,
+        platform: s.platform,
+        workspace: s.workspace,
+        surface: s.surface,
+        policyFingerprint: fingerprint,
+      });
+    } catch (err) {
+      log(`egress denial attribution not updated (the policy itself is unaffected): ${String(err)}`);
+    }
+  }
+
   try {
     const scope = deps.scope();
     await audit({
@@ -204,6 +221,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         summary,
         phase,
         reason,
+        policyFingerprint: fingerprint,
         ...(compileError ? { error: compileError } : {}),
         ...(enforceError ? { enforceError } : {}),
         ...(abortError ? { aborted: true } : {}),
@@ -260,6 +278,7 @@ function liveDeps(ctx: HookContext): EgressEnforcementDeps {
       }
     },
     publish: async (input) => publishEgressStatus(await ctx.getSandbox(), input),
+    rememberScope: rememberEgressAttribution,
     lastApplied: () => egressApplied.get().fingerprint,
     rememberApplied: (fingerprint) => egressApplied.update((s) => ({ ...s, fingerprint })),
     lastConnectors: () => egressApplied.get().connectors,

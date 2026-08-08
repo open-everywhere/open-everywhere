@@ -111,11 +111,15 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   ok(/policy, not an\s+outage/.test(r), "…and says WHY (policy, not an outage), because 'don't retry' without a reason is a rule an agent talks itself out of");
   ok(/\*\*Report it instead\*\*/.test(r), "README names the correct move: report it");
 
-  ok(r.includes("`egress.policy` audit row carries the `policyFingerprint`"), "README says what IS recorded: the policy, via the egress.policy row, keyed by the same fingerprint");
-  ok(/\*\*the individual\s+blocked request is not\*\*/.test(r), "🔴 README says what is NOT recorded — the individual block leaves no row, so 'your denial was recorded' would be false");
+  ok(/`egress.policy` audit row carries the\s+`policyFingerprint`/.test(r), "README says what IS recorded: the policy, via the egress.policy row, keyed by the same fingerprint — which since OPE-314 is a key the row actually carries (hooks/egress.ts), not just a claim about one");
   ok(r.includes("permission_fit_report"), "README names the widening loop by tool name");
-  ok(/egress denials are not among them/.test(r), "🔴 …and states the limit correctly: permission_fit_report reads AWS + approval refusals, NOT egress denials");
-  ok(/only signal that exists/.test(r), "…which is what makes the agent's own report load-bearing rather than a courtesy");
+
+  ok(/\*\*the individual\s+blocked request\*\* is depends on the\s+tier/.test(r), "🔴 README makes the recorded/not-recorded answer depend on WHO OWNS THE FIREWALL, rather than asserting one tier's truth everywhere");
+  ok(/`egress.denied` row/.test(r) && /host,\s+that fingerprint, a count, nothing else/.test(r), "🔴 README states what the self-host tier DOES record — and that it is host + fingerprint + count and nothing else, which is the minimisation invariant restated where the agent reads it");
+  ok(/On the Vercel sandbox host the deny is out of band and no row exists at all/.test(r), "🔴 …and that the Vercel tier still records nothing, because we do not own that firewall");
+  ok(!/egress denials are not among them/.test(r), "🔴 …and no longer carries the pre-OPE-314 blanket claim that permission_fit_report cannot see egress denials at all");
+  ok(!/no automatic loop will ever notice it/.test(r), "🔴 …nor the 'no loop will ever notice' sentence it used to sit beside");
+  ok(/only signal that always\s+exists/.test(r), "…which leaves the agent's own report load-bearing on BOTH tiers rather than a courtesy on one");
 
   ok(/reviewed pull request/.test(r), "README says widening is a reviewed PR (config-as-code), not something either side does at runtime");
   ok(r.includes("allowedWebsites") && r.includes("`domains`"), "…and names the two config fields that carry it");
