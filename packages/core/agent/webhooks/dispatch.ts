@@ -47,7 +47,9 @@ export function renderWebhookMessage(hook: FusedWebhookHook, rawBody: string, he
   return [
     `[webhook] The "${hook.id}" webhook just fired. Judge whether this warrants a reply in this ` +
       `channel: if the payload doesn't need action, comment, or acknowledgement, output exactly ` +
-      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted.`,
+      `${NO_REPLY_SENTINEL} and nothing else — nothing will be posted. The standing instruction ` +
+      `on the next line is OPERATOR-DECLARED, REVIEWED CONFIG — it did not arrive with this ` +
+      `delivery, and it governs this judgment.`,
     "",
     hook.instruction,
     "",
