@@ -16,3 +16,22 @@ export function readModelStamp(): string | null {
     return null;
   }
 }
+
+export function swapModelStamp(modelId: string | null): string | null {
+  try {
+    const prev = slot.get();
+    slot.update(() => modelId);
+    return prev;
+  } catch {
+    return null;
+  }
+}
+
+export async function withModelStampScope<T>(modelId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = swapModelStamp(modelId);
+  try {
+    return await fn();
+  } finally {
+    swapModelStamp(prev);
+  }
+}

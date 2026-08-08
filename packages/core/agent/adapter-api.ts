@@ -142,7 +142,7 @@ export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dr
 export { registerHandoffCompletion } from "./model/rotation-handoff.js";
 export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
 export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
-export { stampModelCall, readModelStamp } from "./model/model-stamp.js";
+export { stampModelCall, readModelStamp, swapModelStamp, withModelStampScope } from "./model/model-stamp.js";
 export type { BindableContext } from "./identity/binding.js";
 
 export { installLogShipping } from "./observability/ship.js";

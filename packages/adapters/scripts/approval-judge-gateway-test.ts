@@ -1,8 +1,8 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { approvalJudgeCallSettings, resolvedApprovalJudgeCallSettings } from "../agent/model/approval-judge.js";
-import { readModelStamp } from "@open-everywhere/core/agent/adapter-api.js";
+import { approvalJudgeCallSettings } from "../agent/model/approval-judge.js";
+import { readModelStamp, stampModelCall, withModelStampScope } from "@open-everywhere/core/agent/adapter-api.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -36,15 +36,30 @@ const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { zeroDataRetention: true
 
 {
   ok(readModelStamp() === null, "stamp: nothing stamped before any call");
-  const outside = resolvedApprovalJudgeCallSettings("scrutiny", DEFAULTS);
-  ok(outside.id === DEFAULTS.id && readModelStamp() === null, "stamp: sessionless call is a no-op, never a throw");
+  await withModelStampScope(DEFAULTS.id, async () => {
+    ok(readModelStamp() === null, "stamp: sessionless scope is a no-op, never a throw");
+  });
 
   const require = createRequire(import.meta.url);
   const eveRoot = dirname(require.resolve("eve/package.json"));
   const { ContextContainer, contextStorage } = await import(pathToFileURL(join(eveRoot, "dist/src/context/container.js")).href);
   await contextStorage.run(new ContextContainer(), async () => {
-    const inside = resolvedApprovalJudgeCallSettings("verdict", DEFAULTS);
-    ok(inside.id === DEFAULTS.id && readModelStamp() === DEFAULTS.id, "stamp: inside a session the resolved id is stamped for hooks/spend.ts");
+    stampModelCall("deepseek/seat-model");
+    await withModelStampScope(DEFAULTS.id, async () => {
+      ok(readModelStamp() === DEFAULTS.id, "stamp: the judge id is stamped DURING the call (its own usage attributes to it)");
+    });
+    ok(readModelStamp() === "deepseek/seat-model", "stamp: the seat's stamp is RESTORED after a completed call — step costing sees the seat model");
+
+    let threw = false;
+    try {
+      await withModelStampScope(DEFAULTS.id, async () => {
+        throw new Error("gateway resolution failed");
+      });
+    } catch {
+      threw = true;
+    }
+    ok(threw, "stamp: the scope rethrows — failure semantics belong to the caller (core's fail-closed defer)");
+    ok(readModelStamp() === "deepseek/seat-model", "stamp: the seat's stamp is RESTORED on the THROW path too — the live leak, pinned");
   });
 }
 
