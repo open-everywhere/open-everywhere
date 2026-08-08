@@ -16,6 +16,7 @@ import {
   resolveSlackUnified,
   resolveSlackUser2,
   resolveSynthetic,
+  resolveSyntheticDiscordDm,
   resolveSyntheticDm,
   resolveTeams,
   resolveWebhook,
@@ -28,6 +29,7 @@ import { LinearDriver } from "./linear-driver.js";
 import { NotionDriver } from "./notion-driver.js";
 import { PrApi } from "./pr-api.js";
 import { SyntheticDm, SyntheticSlack } from "./synthetic.js";
+import { SyntheticDiscordDm } from "./discord-synthetic.js";
 import { WebhookDriver } from "./webhook.js";
 import { judge3, judgeBannerTag, resolveJudge, type Rubric } from "./judge.js";
 import { GateFailure, ScenarioSkip, SCENARIOS, skipReason, type ScenarioContext } from "./scenarios.js";
@@ -82,6 +84,7 @@ async function main(): Promise<void> {
   const slackCapFixture = resolveSlackCapFixture();
   const slackSupervisor = resolveSlackSupervisor();
   const syntheticDm = resolveSyntheticDm();
+  const syntheticDiscordDm = resolveSyntheticDiscordDm();
   const slackUser2 = resolveSlackUser2();
   const slackSecondary = resolveSlackSecondary();
   const webhook = resolveWebhook();
@@ -133,6 +136,7 @@ async function main(): Promise<void> {
   const slackUnifiedBDriver = slackDriver && slackUnified.ok ? slackDriver.withChannel(slackUnified.cfg.channelB) : undefined;
   const syntheticDmForge = syntheticDm.ok ? new SyntheticDm(syntheticDm.cfg) : undefined;
   const dmDriver = slackDriver && syntheticDm.ok ? slackDriver.withChannel(syntheticDm.cfg.dmChannel) : undefined;
+  const syntheticDiscordDmForge = syntheticDiscordDm.ok ? new SyntheticDiscordDm(syntheticDiscordDm.cfg) : undefined;
   const webhookDriver = webhook.ok ? new WebhookDriver(webhook.cfg) : undefined;
   const notionDriver = slackDriver && notion.ok ? slackDriver.withChannel(notion.cfg.channel) : undefined;
   const connectorWriteDriver = slackDriver && connectorWrite.ok ? slackDriver.withChannel(connectorWrite.cfg.channel) : undefined;
@@ -241,6 +245,7 @@ async function main(): Promise<void> {
       slackSupervisor: slackSupervisorDriver,
       syntheticDm: syntheticDmForge,
       dm: dmDriver,
+      syntheticDiscordDm: syntheticDiscordDmForge,
       slackUser2: slackUser2.ok ? slackUser2.cfg : undefined,
       slackSecondary: slackSecondaryDriver,
       slackSecondaryUserId: slackSecondary.ok ? slackSecondary.cfg.userId : undefined,

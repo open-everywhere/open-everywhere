@@ -6,6 +6,9 @@ export const ENV = {
   discordDriverToken: "E2E_DISCORD_DRIVER_TOKEN",
   discordChannel: "E2E_DISCORD_CHANNEL",
   discordBotUserId: "E2E_DISCORD_BOT_USER_ID",
+  discordRelaySecret: "E2E_OE_RELAY_SECRET",
+  discordDmUserId: "E2E_DISCORD_DM_USER_ID",
+  discordDmChannel: "E2E_DISCORD_DM_CHANNEL",
   slackPrivateChannel: "E2E_SLACK_PRIVATE_CHANNEL",
   slackChannelB: "E2E_SLACK_CHANNEL_B",
   slackDmChannel: "E2E_SLACK_DM_CHANNEL",
@@ -80,6 +83,7 @@ export type Capability =
   | "slackChannelB"
   | "slackCapFixture"
   | "syntheticDm"
+  | "syntheticDiscordDm"
   | "slackUser2"
   | "slackSecondary"
   | "webhook"
@@ -151,6 +155,13 @@ export interface SyntheticDmConfig {
   readonly targetUrl: string;
   readonly signingSecret: string;
   readonly dmChannel: string;
+}
+
+export interface SyntheticDiscordDmConfig {
+  readonly targetUrl: string;
+  readonly relaySecret: string;
+  readonly dmChannel: string;
+  readonly dmUserId: string;
 }
 
 export interface GithubDriverConfig {
@@ -301,6 +312,12 @@ export function resolveSyntheticDm(env: Env = process.env): Resolved<SyntheticDm
   return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), signingSecret: values[1], dmChannel: values[2] } };
 }
 
+export function resolveSyntheticDiscordDm(env: Env = process.env): Resolved<SyntheticDiscordDmConfig> {
+  const { values, missing } = need(env, [ENV.targetUrl, ENV.discordRelaySecret, ENV.discordDmChannel, ENV.discordDmUserId]);
+  if (missing.length > 0) return { ok: false, missing };
+  return { ok: true, cfg: { targetUrl: values[0].replace(/\/+$/, ""), relaySecret: values[1], dmChannel: values[2], dmUserId: values[3] } };
+}
+
 export function resolveWebhook(env: Env = process.env): Resolved<WebhookConfig> {
   const { values, missing } = need(env, [ENV.targetUrl, ENV.webhookSecret]);
   if (missing.length > 0) return { ok: false, missing };
@@ -391,6 +408,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   const slackCapFixture = resolveSlackCapFixture(env);
   const slackSupervisor = resolveSlackSupervisor(env);
   const syntheticDm = resolveSyntheticDm(env);
+  const syntheticDiscordDm = resolveSyntheticDiscordDm(env);
   const slackUser2 = resolveSlackUser2(env);
   const slackSecondary = resolveSlackSecondary(env);
   const webhook = resolveWebhook(env);
@@ -411,6 +429,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
   if (slackCapFixture.ok) available.add("slackCapFixture");
   if (slackSupervisor.ok) available.add("slackSupervisor");
   if (syntheticDm.ok) available.add("syntheticDm");
+  if (syntheticDiscordDm.ok) available.add("syntheticDiscordDm");
   if (slackUser2.ok) available.add("slackUser2");
   if (slackSecondary.ok) available.add("slackSecondary");
   if (webhook.ok) available.add("webhook");
@@ -433,6 +452,7 @@ export function resolveCapabilities(env: Env = process.env): CapabilityReport {
       slackCapFixture: slackCapFixture.ok ? [] : slackCapFixture.missing,
       slackSupervisor: slackSupervisor.ok ? [] : slackSupervisor.missing,
       syntheticDm: syntheticDm.ok ? [] : syntheticDm.missing,
+      syntheticDiscordDm: syntheticDiscordDm.ok ? [] : syntheticDiscordDm.missing,
       slackUser2: slackUser2.ok ? [] : slackUser2.missing,
       slackSecondary: slackSecondary.ok ? [] : slackSecondary.missing,
       webhook: webhook.ok ? [] : webhook.missing,

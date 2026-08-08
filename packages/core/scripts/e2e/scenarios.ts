@@ -13,6 +13,7 @@ import { extractMemoryPathReads, siloOfPath } from "./memory-reads.js";
 import { decomposeSession, delegationJoinTargets, joinDelegations, renderDelegationTiming, renderSessionTiming } from "./transcript-timings.js";
 import type { TimingsRecord } from "./timings-record.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
+import { type SyntheticDiscordDm } from "./discord-synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
 import { pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
@@ -57,6 +58,7 @@ export interface ScenarioContext {
   readonly slackSupervisor?: SlackDriver;
   readonly syntheticDm?: SyntheticDm;
   readonly dm?: SlackDriver;
+  readonly syntheticDiscordDm?: SyntheticDiscordDm;
   readonly slackUser2?: SlackUser2Config;
   readonly slackSecondary?: SlackDriver;
   readonly slackSecondaryUserId?: string;
@@ -582,6 +584,63 @@ export const SCENARIOS: readonly Scenario[] = [
       const cardAsk = await discord.post(discord.mention(`raise this channel's spend cap to $${21 + (Math.floor(Date.now() / 1000) % 9_000)}/day`), threadId);
       const cardReply = await discord.awaitReplyMatching(threadId, cardAsk.id, (m) => m.components.length > 0, { timeoutMs: FILE_REPLY_WAIT, what: "an approval card (a reply with components/buttons)" });
       ctx.gate(cardReply.components.length > 0, "approval card: renders with components (buttons) — SHAPE only, decide stays on Slack (bots can't click Discord buttons)");
+    },
+  },
+  {
+    id: "S-DM-DISCORD",
+    title:
+      "Discord DM delegation parity (OPE-329): a forged relay MESSAGE_CREATE wakes a Discord DM seat on a `remember` ask — asserted PURELY from the audit trail (task.spawned on an oe-dm/discord/… pseudo-domain, then the answer landing back in the DM via reply.post), because a third-party bot cannot itself read a DM channel it is not a party to. A soft turn.tool_gated(reason:lean-seat) check adds confirming evidence when the DM seat's session hasn't already logged its once-per-session gate row in an earlier run.",
+    requires: ["syntheticDiscordDm"],
+    surface: "discord",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 420_000,
+    judged: false,
+    run: async (ctx) => {
+      const forge = ctx.syntheticDiscordDm!;
+      const auditRead = ctx.auditRead;
+      if (!auditRead)
+        ctx.skip(
+          "needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — this leg's entire evidence IS the audit trail; a third-party bot cannot read a real DM channel it is not itself a party to",
+        );
+      const canary = factToken("discord-dm");
+      const ask = `remember this for later: the OPE329 discord canary is ${canary}`;
+      const since = new Date().toISOString();
+      const sent = await forge.message({ text: ask });
+      ctx.log(`${sent.label}: POST → ${sent.status}`);
+      ctx.gate(sent.status === 200, "synthetic discord DM relay POST acked 200 by the deployment's gateway (HMAC verified)");
+
+      const spawn = await pollUntil(
+        async () => {
+          const rows = await auditRead!({ sinceIso: since, actions: ["task.spawned"] });
+          return rows.find((r) => r.workspace.startsWith("oe-dm/discord/"));
+        },
+        { timeoutMs: REPLY_WAIT, what: "a task.spawned row on an oe-dm/discord/… pseudo-domain (the DM seat delegating the `remember` write)" },
+      );
+      ctx.log(`delegation: task.spawned workspace=${spawn.workspace} taskId=${String((spawn.detail as { taskId?: unknown } | undefined)?.taskId ?? "?")}`);
+
+      const gatedRows = await auditRead!({ sinceIso: since, actions: ["turn.tool_gated"] });
+      const gated = gatedRows.find((r) => (r.detail as { reason?: unknown } | undefined)?.reason === "lean-seat" && r.workspace.startsWith("oe-dm/discord/"));
+      if (gated) {
+        ctx.log(`lean-seat CONFIRMED this run: turn.tool_gated withheld=${JSON.stringify((gated.detail as { withheld?: unknown } | undefined)?.withheld ?? [])}`);
+      } else {
+        ctx.log(
+          "lean-seat unconfirmed this run (no fresh turn.tool_gated — expected once the DM seat's session already logged it in a prior run, since the row is a once-per-session dedupe); Evidence 1 (task.spawned on the oe-dm/discord/… domain) remains the binding proof the seat was narrowed enough to delegate",
+        );
+      }
+
+      const answered = await pollUntil(
+        async () => {
+          const rows = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
+          return rows.find((r) => r.platform === "discord" && r.workspace.startsWith("oe-dm/discord/"));
+        },
+        { timeoutMs: REPLY_WAIT, what: "a reply.post row (platform:discord) on the oe-dm/discord/… pseudo-domain — the delegated worker's answer landing back in the DM" },
+      );
+      ctx.gate(
+        answered.workspace === spawn.workspace,
+        `answer landed in the SAME DM the task spawned from (spawn workspace=${spawn.workspace}, reply workspace=${answered.workspace})`,
+      );
+      ctx.log(`answer landed: reply.post id=${String((answered.detail as { id?: unknown } | undefined)?.id ?? "?")} chars=${String((answered.detail as { chars?: unknown } | undefined)?.chars ?? "?")}`);
     },
   },
   {
