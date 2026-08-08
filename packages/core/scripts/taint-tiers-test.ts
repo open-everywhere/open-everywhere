@@ -87,12 +87,18 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   );
 }
 
+{
+  const handoff = classifyIngestion({ kind: "handoff" });
+  eq(handoff.tier, "trusted", "handoff: the same governed seat's own distilled prose (previous generation) is TRUSTED — taint, if any, was marked at original ingestion (ratified 2026-08-08, OPE-340)");
+  eq(handoff.assumed, false, "handoff: a POSITIVE ruling — no metadata is needed to decide the seat's own shift note");
+}
+
 for (const kind of INGESTION_KINDS) {
   const v = classifyIngestion({ kind: kind as IngestionKind });
   ok(v.tier === "trusted" || v.tier === "untrusted", `every kind resolves to a tier — "${kind}"`);
   ok(typeof v.reason === "string" && v.reason.length > 0, `every kind carries prose reasoning — "${kind}"`);
 }
-eq(INGESTION_KINDS.length, 12, "the table has exactly the 12 ruled kinds (a 13th means a design decision, not a drive-by add — the 12th, `aws`, was one: OPE-305)");
+eq(INGESTION_KINDS.length, 13, "the table has exactly the 13 ruled kinds (a 14th means a design decision, not a drive-by add — the 12th, `aws`, was one: OPE-305; the 13th, `handoff`, was one too: OPE-340)");
 
 console.log("2. the dry run:");
 
@@ -252,6 +258,21 @@ const wakeFixture = {
   ok(ctxBlock !== null && ctxBlock.includes("what's the status?"), "renderContext still renders + fences the backscroll");
   eq(rows.length, 0, "🔴 a render with NO session context (the ingress shape) writes NO rows — the taint mark does not land, so the site agrees with the trusted chat-message row");
 }
+
+{
+  rows.length = 0;
+  const envelope = renderWakeEnvelope({ ...wakeFixture, handoff: { note: "OPEN: deploy sign-off pending (U3)", fromGeneration: 4 } });
+  ok(envelope.includes("OPEN: deploy sign-off pending (U3)"), "the handoff note renders in the envelope");
+  ok(envelope.includes('<handoff-note from-generation="4">'), "…inside its provenance-labelled element");
+  const noteBlock = envelope.slice(envelope.indexOf("<handoff-note"), envelope.indexOf("</handoff-note>"));
+  ok(!noteBlock.includes(UNTRUSTED_OPEN), "🔴 the note is NOT untrusted-fenced — the seat's own shift note is not a stranger's typing (the pre-OPE-340 wrap is gone)");
+  eq(rows.filter((r) => r.label === "wake-envelope:handoff").length, 0, "no session context: site doesn't taint, row is trusted — agreement, no row");
+}
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  renderWakeEnvelope({ ...wakeFixture, handoff: { note: "OPEN: deploy sign-off pending (U3)", fromGeneration: 4 } });
+  eq(rows.filter((r) => r.label === "wake-envelope:handoff").length, 0, "…and IN a session context the handoff site still writes no row — it genuinely does not taint, unlike the message renders beside it");
+});
 
 await eveContextStorage().run(new FakeSession(), async () => {
   rows.length = 0;

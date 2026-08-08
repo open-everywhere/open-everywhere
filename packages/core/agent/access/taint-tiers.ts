@@ -12,7 +12,8 @@ export type IngestionKind =
   | "delegation-result"
   | "image-description"
   | "file-upload"
-  | "aws";
+  | "aws"
+  | "handoff";
 
 export interface IngestionSource {
   readonly kind: IngestionKind;
@@ -76,6 +77,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
 
     case "aws":
       return untrusted("the `aws` CLI's own output — an AWS account is a SUBSTRATE, not an authoring surface: nothing gates who writes a log line, a table item or an object body, so org ownership of the account says nothing about who wrote the bytes");
+
+    case "handoff":
+      return trusted("a rotation handoff note — the same governed seat's own distilled prose (previous generation); taint, if any, was marked at original ingestion, and a re-render does not re-taint");
   }
 }
 
@@ -92,4 +96,5 @@ export const INGESTION_KINDS: readonly IngestionKind[] = [
   "image-description",
   "file-upload",
   "aws",
+  "handoff",
 ];

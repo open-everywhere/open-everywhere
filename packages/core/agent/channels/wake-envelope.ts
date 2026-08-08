@@ -179,8 +179,8 @@ function renderThreadOpen(t: WakeThreadMeta): string {
 }
 
 function renderHandoff(h: WakeHandoff): string {
-  const body = ingestUntrusted(escapeXml(h.note), { source: "rotation-handoff" });
-  return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(body, 2)}\n</handoff-note>`;
+  noteIngestionDryRun({ kind: "handoff", label: "wake-envelope:handoff" }, false);
+  return `<handoff-note${attr("from-generation", String(h.fromGeneration))}>\n${indent(escapeXml(h.note), 2)}\n</handoff-note>`;
 }
 
 export function renderWakeEnvelope(input: WakeEnvelopeInput): string {
