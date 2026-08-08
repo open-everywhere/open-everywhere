@@ -3,8 +3,9 @@ import { getConfig } from "../access/config.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { deploymentOrg } from "../identity/binding.js";
 import { getOperationalStore } from "../operational/provider.js";
+import type { OperationalStore } from "../operational/store.js";
 import type { Domain } from "../memory/domain.js";
-import { grainUsesUnifiedWindow, supervisorGrainFor } from "../channels/unified-supervisor.js";
+import { grainUsesUnifiedWindow, standingSeatRegistryKey, supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { divertToUnifiedWindow } from "../channels/unified.js";
 import {
   isUnifiedWakeOrigin,
@@ -25,6 +26,14 @@ export function jobFireSeatKey(routineId: string, generation = 1): string {
 }
 export function runFireSeatKey(wakeId: string): string {
   return `run/${wakeId.replace(/:/g, "_")}`;
+}
+
+export function isJobFireSeat(seatKey: string): boolean {
+  return seatKey.startsWith("job/");
+}
+
+export function isRunFireSeatWindowId(windowId: string): boolean {
+  return /(?:^|\/)run\/[^/]+$/.test(windowId);
 }
 
 export function fireReplyMandate(wakeId: string): string {
@@ -87,6 +96,8 @@ export interface FireWindowDeps {
   readonly org?: string;
   readonly armed?: boolean;
   readonly divert?: typeof divertToUnifiedWindow;
+  readonly jobSeatStore?: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession" | "touchChannelSession">;
+  readonly now?: () => string;
 }
 
 function liveDomains(): readonly Domain[] {
@@ -103,6 +114,25 @@ async function liveGeneration(org: string, registryKey: string): Promise<number>
     return row && Number.isInteger(row.generation) && row.generation > 0 ? row.generation : 1;
   } catch {
     return 1;
+  }
+}
+
+export async function adoptJobFireSeat(
+  org: string,
+  registryKey: string,
+  token: string,
+  atIso: string,
+  store: Pick<OperationalStore, "getChannelSession" | "rotateChannelSession" | "touchChannelSession">,
+): Promise<void> {
+  try {
+    const existing = await store.getChannelSession(org, registryKey);
+    if (!existing || existing.token !== token) {
+      await store.rotateChannelSession(org, registryKey, token, atIso);
+    } else {
+      await store.touchChannelSession(org, registryKey, atIso);
+    }
+  } catch (err) {
+    console.warn(`[open-everywhere:fire-window] job-seat registry adoption skipped for ${registryKey}: ${String(err)}`);
   }
 }
 
@@ -134,6 +164,13 @@ export async function divertTriggeredFire(
     armed,
   });
   if (!plan) return false;
+  if (isJobFireSeat(input.seatKey)) {
+    const registryKey = standingSeatRegistryKey(plan.token, grain.registryKey);
+    if (registryKey !== undefined) {
+      const now = deps.now ?? (() => new Date().toISOString());
+      await adoptJobFireSeat(org, registryKey, plan.token, now(), deps.jobSeatStore ?? getOperationalStore());
+    }
+  }
   const attributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}), [OE_GRAIN_ATTR]: TRIGGERED_FIRE_GRAIN };
   const wakeId = input.wakeId ?? mintWakeId();
   await (deps.divert ?? divertToUnifiedWindow)(to, {

@@ -23,6 +23,7 @@ const { registerConfig } = await import("../agent/access/config.js");
 const { defineDomain } = await import("../agent/memory/domain.js");
 const fireWindow = await import("../agent/routines/fire-window.js");
 const { classifySessionId, isThreadSeatWindowToken, parseWindowToken } = await import("../agent/channels/window-key.js");
+const { standingSeatRegistryKey, unifiedWindowFromToken } = await import("../agent/channels/unified-supervisor.js");
 const { windowGrainOf } = await import("../agent/identity/binding.js");
 const { FULL_KIT, WINDOW_GATED_TOOLS, memoryRecallRouteFor } = await import("../agent/access/window-gate-manifest.js");
 const { OE_GRAIN_ATTR, OE_ADDRESSING_ATTR, resolveAnswerableReplyTarget, mintWakeId } = await import("../agent/channels/unified-window.js");
@@ -102,6 +103,83 @@ const store = getOperationalStore();
       fireWindow.planFireWindow({ ...base, seatKey: fireWindow.jobFireSeatKey("r-1") })!.token,
     "seat/job: the same job seat key mints the SAME token ⇒ eve resumes the SAME session",
   );
+
+  ok(fireWindow.isJobFireSeat(fireWindow.jobFireSeatKey("r-1")), "seat/kind: a job seat key classifies as a job seat");
+  ok(!fireWindow.isJobFireSeat(fireWindow.runFireSeatKey("w-1")), "seat/kind: a run seat key does NOT classify as a job seat");
+  const jobToken = fireWindow.planFireWindow({ ...base, seatKey: fireWindow.jobFireSeatKey("r-1") })!.token;
+  const runToken = fireWindow.planFireWindow({ ...base, seatKey: fireWindow.runFireSeatKey("w-1") })!.token;
+  ok(!fireWindow.isRunFireSeatWindowId(unifiedWindowFromToken(jobToken)!), "seat/kind: a job seat's windowId does NOT read as a run-seat windowId");
+  ok(fireWindow.isRunFireSeatWindowId(unifiedWindowFromToken(runToken)!), "seat/kind: a run seat's windowId DOES read as a run-seat windowId — the spend-hook warning's suppression key");
+  ok(!fireWindow.isRunFireSeatWindowId(DOMAIN), "seat/kind: a plain (non-seat) windowId never false-positives as a run seat");
+}
+
+{
+  interface Row {
+    token: string;
+    generation: number;
+    turnCount: number;
+  }
+  function mockStore(initial: Row | undefined) {
+    let row = initial;
+    const calls: string[] = [];
+    return {
+      calls,
+      row: () => row,
+      store: {
+        async getChannelSession() {
+          return row ? { org: "o", surfaceKey: "k", createdAt: "t", lastWakeAt: "t", inputTokensTotal: 0, firstWakeAt: null, handoffNote: null, ...row } : null;
+        },
+        async rotateChannelSession(_org: string, _key: string, newToken: string) {
+          calls.push("rotate");
+          row = { token: newToken, generation: (row?.generation ?? 0) + 1, turnCount: 0 };
+          return { org: "o", surfaceKey: "k", createdAt: "t", lastWakeAt: "t", inputTokensTotal: 0, firstWakeAt: null, handoffNote: null, ...row };
+        },
+        async touchChannelSession() {
+          calls.push("touch");
+          if (row) row = { ...row, turnCount: row.turnCount + 1 };
+        },
+      } as never,
+    };
+  }
+
+  {
+    const m = mockStore(undefined);
+    await fireWindow.adoptJobFireSeat("o", "oe-domain::s/x/job/r-1", "tok-g1", "2026-08-08T00:00:00.000Z", m.store);
+    ok(m.calls.length === 1 && m.calls[0] === "rotate", "adopt/new: no existing row ⇒ ADOPT via rotateChannelSession, not touch");
+    ok(m.row()?.token === "tok-g1" && m.row()?.generation === 1, "adopt/new: the row is minted at generation 1 with the fire's token");
+  }
+
+  {
+    const m = mockStore({ token: "tok-g1", generation: 1, turnCount: 3 });
+    await fireWindow.adoptJobFireSeat("o", "oe-domain::s/x/job/r-1", "tok-g1", "2026-08-08T00:01:00.000Z", m.store);
+    ok(m.calls.length === 1 && m.calls[0] === "touch", "adopt/resume: the SAME token ⇒ RESUME via touchChannelSession, no rotation");
+    ok(m.row()?.turnCount === 4, "adopt/resume: turnCount increments — the backstop counter finally accrues for a job seat");
+    ok(m.row()?.generation === 1, "adopt/resume: generation is unchanged");
+  }
+
+  {
+    const m = mockStore({ token: "tok-g1", generation: 1, turnCount: 40 });
+    await fireWindow.adoptJobFireSeat("o", "oe-domain::s/x/job/r-1", "tok-g2", "2026-08-08T00:02:00.000Z", m.store);
+    ok(m.calls.length === 1 && m.calls[0] === "rotate", "adopt/reheal: a stale stored token (parent window rotated) ⇒ RE-ADOPT via rotateChannelSession, self-healing the row to match reality");
+    ok(m.row()?.token === "tok-g2" && m.row()?.generation === 2, "adopt/reheal: the row now tracks the fire's CURRENT token, and its own generation bookkeeping bumps");
+    ok(m.row()?.turnCount === 0, "adopt/reheal: counters reset — the rotation IS reflected in the registry now, not just in the derived token");
+  }
+
+  {
+    const angryStore = {
+      async getChannelSession() {
+        throw new Error("store down");
+      },
+      async rotateChannelSession() {
+        throw new Error("unreachable");
+      },
+      async touchChannelSession() {
+        throw new Error("unreachable");
+      },
+    } as never;
+    await fireWindow.adoptJobFireSeat("o", "oe-domain::s/x/job/r-1", "tok-g1", "2026-08-08T00:03:00.000Z", angryStore);
+    ok(true, "adopt/fail-safe: a store hiccup is swallowed — the fire must never be lost over registry bookkeeping");
+  }
 }
 
 {
@@ -234,12 +312,51 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   const t1 = a.seen[0].target as unknown as UnifiedReceiveTarget;
   ok(a.seen[0].unified, "job: a durable-job fire joins the window too");
   ok((t1.origin as { threadTs?: string }).threadTs === "1700000000.0001", "job: the wake ORIGIN is the job's own thread anchor — its answers land in the job thread, not the channel root");
+
+  const jobRegistryKey = standingSeatRegistryKey(t1.token, DOMAIN)!;
+  ok(jobRegistryKey.startsWith("oe-domain::s/") && jobRegistryKey.includes("/job/"), "job/registry: the derived key IS the job-seat-shaped synthetic key (not the parent window's own row)");
+  const row1 = await store.getChannelSession(ORG, jobRegistryKey);
+  ok(row1 !== null, "job/registry: a row now EXISTS after the job's first fire — pre-OPE-341 this was permanently null");
+  ok(row1?.token === t1.token, "job/registry: the row's token is the fire's OWN dispatched token, so bumpChannelSessionUsage's token guard matches it");
+  ok(row1?.turnCount === 0, "job/registry: ADOPT mints at turnCount 0 (rotateChannelSession's reset semantics)");
+
+  const bumped = await store.bumpChannelSessionUsage(ORG, jobRegistryKey, t1.token, 12_345);
+  ok(bumped === 1, "job/registry: bumpChannelSessionUsage MATCHES the job seat's row (was a guaranteed 0-row no-op before this ticket)");
+  const row1b = await store.getChannelSession(ORG, jobRegistryKey);
+  ok(row1b?.inputTokensTotal === 12_345, "job/registry: the token-budget counter actually accrues real data for a job seat");
+
   const b = captureReceive();
   await tick(new Date(NOW.getTime() + 10 * 60_000), b.to);
   const t2 = b.seen[0].target as unknown as UnifiedReceiveTarget;
   ok(t2.token === t1.token, "job: the SECOND fire resumes the SAME seat token — the OPE-55 durable-job session join survives the re-grain");
   ok(t2.wakeId !== t1.wakeId, "job: each fire still mints its OWN wakeId (two runs, two answerable wakes, one session)");
+
+  const row2 = await store.getChannelSession(ORG, jobRegistryKey);
+  ok(row2?.turnCount === 1, "job/registry: the turn-count BACKSTOP now accrues too (touchChannelSession finally reaches a job seat)");
+  ok(row2?.token === t1.token, "job/registry: the row's token is unchanged (same generation — the parent window did not rotate between the two fires)");
+  ok(row2?.inputTokensTotal === 12_345, "job/registry: RESUME does not reset counters — only a RE-ADOPT (an actual parent-window rotation) does");
+
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-job");
+}
+
+{
+  process.env.OE_ONESHOT_AGENT = "1";
+  await routineStore.addRoutine({} as never, routine({ id: "r-run-only" }));
+  const a = captureReceive();
+  await tick(NOW, a.to);
+  const t1 = a.seen[0].target as unknown as UnifiedReceiveTarget;
+  ok(a.seen[0].unified, "run: a plain (non-job) fire still joins the window");
+  const runRegistryKey = standingSeatRegistryKey(t1.token, DOMAIN)!;
+  ok(runRegistryKey.startsWith("oe-domain::s/") && runRegistryKey.includes("/run/"), "run/registry: the derived key IS the run-seat-shaped synthetic key");
+  const runRow = await store.getChannelSession(ORG, runRegistryKey);
+  ok(runRow === null, "run/registry: NO row is created for a run seat — by design, unlike a job seat");
+  const runBump = await store.bumpChannelSessionUsage(ORG, runRegistryKey, t1.token, 999);
+  ok(runBump === 0, "run/registry: bumpChannelSessionUsage genuinely misses (0 rows) — the exact case the spend-hook warning suppression exists for");
+  ok(isRunFireSeatWindowIdCheck(unifiedWindowFromToken(t1.token)), "run/registry: and the windowId is recognised as a run seat by the same predicate the spend hook consults");
+  await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-run-only");
+}
+function isRunFireSeatWindowIdCheck(windowId: string | undefined): boolean {
+  return windowId !== undefined && fireWindow.isRunFireSeatWindowId(windowId);
 }
 
 {

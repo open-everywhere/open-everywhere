@@ -7,9 +7,10 @@ import { bindFrom, type BindableContext } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 import { readModelStamp } from "../model/model-stamp.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { isSupervisorToken, standingSeatRegistryKey } from "../channels/unified-supervisor.js";
+import { isSupervisorToken, standingSeatRegistryKey, unifiedWindowFromToken } from "../channels/unified-supervisor.js";
 import { parseDmSeatToken, dmSeatRegistryKey, bareTokenFromEveContext, parseSubagentToken } from "../channels/window-key.js";
 import { stampSubagentRun } from "../spend/subagent-runs.js";
+import { isRunFireSeatWindowId } from "../routines/fire-window.js";
 
 export function routineIdOf(ctx: BindableContext): string | undefined {
   try {
@@ -98,7 +99,10 @@ export default defineHook({
           const registryKey = standingSeatRegistryKey(token, domainKeyOf(p)) ?? domainKeyOf(p);
           if (delta > 0) {
             const matched = await getOperationalStore().bumpChannelSessionUsage(p.org, registryKey, token, delta);
-            if (matched === 0) console.warn(`[open-everywhere:spend] supervisor counter bump matched no row (org=${p.org} key=${registryKey} token=${token})`);
+            const windowId = unifiedWindowFromToken(token);
+            if (matched === 0 && !(windowId !== undefined && isRunFireSeatWindowId(windowId))) {
+              console.warn(`[open-everywhere:spend] supervisor counter bump matched no row (org=${p.org} key=${registryKey} token=${token})`);
+            }
           }
         } catch (err) {
           console.warn(`[open-everywhere:spend] supervisor token counter bump skipped: ${String(err)}`);
