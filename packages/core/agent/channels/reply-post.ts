@@ -3,6 +3,7 @@ import { capabilitiesForPlatform } from "../identity/capabilities.js";
 import { appendAudit } from "../audit/audit.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
+import { outboundKey, postOnce } from "../operational/post-once.js";
 
 export type ReplyTarget =
   | { readonly platform: "slack"; readonly channelId: string; readonly threadTs?: string }
@@ -73,10 +74,39 @@ export async function auditReplyRefused(audit: ReplyAudit | undefined, reason: s
   }).catch(() => undefined);
 }
 
+function replyDedupeLocus(target: ReplyTarget): { channel: string; threadTs?: string } {
+  switch (target.platform) {
+    case "slack":
+      return { channel: target.channelId, threadTs: target.threadTs };
+    case "discord":
+      return { channel: target.channelId };
+    case "notion":
+      return { channel: target.discussionId };
+    case "teams":
+      return { channel: `${target.serviceUrl}::${target.conversationId}`, threadTs: target.replyToActivityId };
+    case "linear":
+      return { channel: target.agentSessionId };
+    default:
+      return { channel: JSON.stringify(target) };
+  }
+}
+
+export const REPLY_DEDUPE_SKIPPED_ID = "deduped:reply";
+
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit): Promise<string> {
-  const id = await dispatchReply(target, text);
-  await auditReplyPost(audit, id, target.platform, text.length);
-  return id;
+  const locus = replyDedupeLocus(target);
+  const key = outboundKey({ surface: target.platform, channel: locus.channel, threadTs: locus.threadTs, action: "reply.dispatch", payload: text });
+  const id = await postOnce({
+    org: audit?.org,
+    key,
+    run: async () => {
+      const realId = await dispatchReply(target, text);
+      await auditReplyPost(audit, realId, target.platform, text.length);
+      return realId;
+    },
+    skipped: () => REPLY_DEDUPE_SKIPPED_ID,
+  });
+  return id ?? REPLY_DEDUPE_SKIPPED_ID;
 }
 
 async function dispatchReply(target: ReplyTarget, text: string): Promise<string> {

@@ -1,7 +1,8 @@
 import type { UnifiedWakeOrigin } from "./unified-window.js";
-import { auditReplyPost, type ReplyAudit } from "./reply-post.js";
+import { auditReplyPost, REPLY_DEDUPE_SKIPPED_ID, type ReplyAudit } from "./reply-post.js";
 import { onVercel } from "../access/platform.js";
 import { postArm } from "./post-arms.js";
+import { outboundKey, postOnce } from "../operational/post-once.js";
 
 type SlackOrigin = Extract<UnifiedWakeOrigin, { platform: "slack" }>;
 type GitHubOrigin = Extract<UnifiedWakeOrigin, { platform: "github" }>;
@@ -20,10 +21,39 @@ export interface UnifiedReplyDeps {
   readonly postTeams?: (origin: TeamsOrigin, text: string) => Promise<string>;
 }
 
+function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threadTs?: string } {
+  switch (origin.platform) {
+    case "slack":
+      return { channel: origin.channelId, threadTs: origin.threadTs };
+    case "github":
+      return { channel: `${origin.owner}/${origin.repo}#${origin.issueNumber}` };
+    case "linear":
+      return { channel: origin.agentSessionId ?? `ambient:${origin.issueId}` };
+    case "notion":
+      return { channel: origin.discussionId };
+    case "discord":
+      return { channel: origin.channelId };
+    case "teams":
+      return { channel: `${origin.serviceUrl}::${origin.conversationId}`, threadTs: origin.replyToActivityId };
+    default:
+      return { channel: JSON.stringify(origin) };
+  }
+}
+
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, audit?: ReplyAudit): Promise<string> {
-  const id = await dispatchUnifiedReply(origin, text, deps);
-  await auditReplyPost(audit, id, origin.platform, text.length);
-  return id;
+  const locus = unifiedDedupeLocus(origin);
+  const key = outboundKey({ surface: origin.platform, channel: locus.channel, threadTs: locus.threadTs, action: "reply.dispatch.unified", payload: text });
+  const id = await postOnce({
+    org: audit?.org,
+    key,
+    run: async () => {
+      const realId = await dispatchUnifiedReply(origin, text, deps);
+      await auditReplyPost(audit, realId, origin.platform, text.length);
+      return realId;
+    },
+    skipped: () => REPLY_DEDUPE_SKIPPED_ID,
+  });
+  return id ?? REPLY_DEDUPE_SKIPPED_ID;
 }
 
 async function dispatchUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}): Promise<string> {
