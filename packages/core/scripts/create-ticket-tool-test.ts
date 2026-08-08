@@ -108,8 +108,8 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
     async () => {
       await execTool(createTicketEntry)({ platform: "tool-create-platform", target: "T-1", title: "x", body: "y" }, ctx("tool-create-platform", {}) as never);
     },
-    /approval-card path/,
-    "refuses on a proposing surface with no approval-card path",
+    /I can't file that ticket from here.*has no approval-card path.*isn't in an explicit domain.*domains\.ts/s,
+    "a card-less proposing surface with no in-domain venue refuses with the VENUE's copy (OPE-326) — its own verb plus the config change, not a flat 'this surface is not Slack'",
   );
   n++;
   ok((await getOperationalStore().listPendingActions("default")).length === before, "…and that refusal fires BEFORE any pending action is written");

@@ -7,8 +7,9 @@ import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveTicketCreate, supportedTicketCreatePlatforms } from "../channels/ticket-create.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketCreateArgs } from "../approvals/ticket-create.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -27,9 +28,11 @@ export const createTicketEntry = defineTool({
     "PROPOSE filing a NEW work item — a GitHub issue or a Linear issue — on a work surface this " +
     "conversation is bound to. Use it to turn a reported defect or a follow-up into tracked work. " +
     "Consequential: posts an approval card showing the exact title and body — nothing is filed until " +
-    "a human on this surface confirms. Needs a surface with an approval-card path (Slack or Discord). " +
+    "a human confirms. " +
     "Write the body like a ticket: what happens, what should happen, and how to reproduce or verify. " +
-    "The posted card IS the reply — do not add narration after this call.",
+    "The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't " +
+    "host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, " +
+    "and you MUST relay that.",
   inputSchema: z.object({
     platform: z
       .string()
@@ -55,28 +58,25 @@ export const createTicketEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "create_ticket");
+    const domains = safeDomains();
     const { platform, target } = await resolveTicketCreate(
       bctx,
       input.platform || input.target ? { ...(input.platform ? { platform: input.platform } : {}), ...(input.target ? { target: input.target } : {}) } : undefined,
-      safeDomains(),
+      domains,
     );
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `create_ticket needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm before anything is filed.`,
-      );
+    const p = resolvePartition(ctx);
+    const venueResult = await checkApprovalVenue(binding, p, () => domains);
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "file that ticket"));
     }
+    const venue = venueResult.venue;
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("create_ticket needs a verified sender to gate the filing — no principal id resolved, so there's no requester to show on the approval card.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("create_ticket couldn't resolve this channel's id for the approval card — try again from a real channel.");
-    }
 
-    const p = resolvePartition(ctx);
     const args: TicketCreateArgs = {
       org: p.org,
       scopeKey: p.surfaceKey,
@@ -96,12 +96,12 @@ export const createTicketEntry = defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
         chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `file "${input.title}" on ${platform} (${target})`;
@@ -120,7 +120,7 @@ export const createTicketEntry = defineTool({
       pendingId: posted.id,
       platform,
       target,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the filing")}`,
     };
   },
 });

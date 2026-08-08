@@ -58,8 +58,21 @@ registerIdentityMapper("teams", (ctx) => {
   };
 });
 
+registerIdentityMapper("venue-ticket", (ctx) => {
+  const a = ((ctx as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+  return {
+    workspace: a["workspace_id"],
+    surface: a["conversation_id"],
+    mode: "channel" as const,
+    visibility: "private" as const,
+    trust: "internal" as const,
+    principalId: a["user_id"],
+    ...(a["conversation_id"] ? { target: { channelId: a["conversation_id"] } } : {}),
+  };
+});
+
 const DOMAINS = [
-  defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "slack/T1/C_OPS"], memory: "eng-brain" }),
+  defineDomain({ name: "eng", channels: ["teams/W1/CONV1", "teams/W1/CONV2", "venue-ticket/W1/VT_ROOM", "slack/T1/C_OPS"], memory: "eng-brain" }),
   defineDomain({ name: "lonely", channels: ["teams/W1/CONV_LONE"], memory: "eng-brain" }),
   defineDomain({ name: "slackside", channels: ["slack/T1/C1"], memory: "eng-brain" }),
 ];
@@ -110,6 +123,33 @@ const createSkillTool = (await import("../agent/tools/create_skill.js")).default
 const deleteSkillTool = (await import("../agent/tools/delete_skill.js")).default;
 const openPullRequestTool = (await import("../agent/tools/open_pull_request.js")).default;
 
+const { registerEntityActionAdapter } = await import("../agent/channels/entity-actions.js");
+const { registerTicketCreateAdapter } = await import("../agent/channels/ticket-create.js");
+const setStateTool = (await import("../agent/tools/set_state.js")).default;
+const assignTool = (await import("../agent/tools/assign.js")).default;
+const createTicketTool = (await import("../agent/tools/create_ticket.js")).default;
+
+registerEntityActionAdapter({
+  platform: "venue-ticket",
+  setState: async (id, v) => `set ${id} → ${v}`,
+  assign: async (id, v) => `assigned ${id} → ${v}`,
+});
+registerEntityActionAdapter({
+  platform: "venue-ticket-b",
+  setState: async (id, v) => `set ${id} → ${v}`,
+  assign: async (id, v) => `assigned ${id} → ${v}`,
+});
+registerTicketCreateAdapter({
+  platform: "venue-ticket",
+  defaultTarget: () => "acme/from-conv1",
+  create: async (target) => ({ ref: { platform: "venue-ticket", id: `${target}#1` }, summary: `filed ${target}#1` }),
+});
+registerTicketCreateAdapter({
+  platform: "venue-ticket-b",
+  defaultTarget: () => "acme/from-conv2",
+  create: async (target) => ({ ref: { platform: "venue-ticket-b", id: `${target}#1` }, summary: `filed ${target}#1` }),
+});
+
 type Entry = { execute: (input: unknown, ctx: unknown) => Promise<Record<string, unknown>> };
 async function armed(def: unknown, ctx: unknown, name: string): Promise<Entry> {
   const handler = (def as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
@@ -139,6 +179,34 @@ const slackCtx = (channelId: string, continuationToken?: string) =>
     channel: { kind: "slack", ...(continuationToken ? { continuationToken } : {}) },
     session: {
       auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK" }, principalId: "U_ASK" } },
+    },
+    getSandbox: async () => sandbox,
+  }) as never;
+
+const teamsTicketCtx = (conversationId: string, sources = "teams,venue-ticket") =>
+  ({
+    channel: { kind: "teams" },
+    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK", oe_sources: sources }, principalId: "U_ASK" } } },
+    getSandbox: async () => sandbox,
+  }) as never;
+
+const ticketSurfaceCtx = (conversationId = "VT_ROOM") =>
+  ({
+    channel: { kind: "venue-ticket" },
+    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK", oe_sources: "venue-ticket" }, principalId: "U_ASK" } } },
+    getSandbox: async () => sandbox,
+  }) as never;
+
+const slackTicketCtx = (channelId: string) =>
+  ({
+    channel: { kind: "slack" },
+    session: {
+      auth: {
+        current: {
+          attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK", oe_sources: "slack,venue-ticket" },
+          principalId: "U_ASK",
+        },
+      },
     },
     getSandbox: async () => sandbox,
   }) as never;
@@ -452,7 +520,136 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(!created.message.includes("card posted in") && !created.message.includes("This surface can't host an approval card"), "325-unchanged: …no venue named, no redirect sentence appended");
 }
 
+{
+  const ss = (await (await armed(setStateTool, teamsTicketCtx("CONV1"), "set_state")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-1" }, state: "Done" },
+    teamsTicketCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  ok(ss.pending === true, "326-redirect: 🔴 `set_state` WORKS from a card-less room — it was MOUNTED there all along (its window carries a ticket source) and refused only at execute(), the same dead-affordance shape the spend pair had");
+  const ssRow = await rowOf(ss.pendingId);
+  ok(ssRow["channelId"] === "C_OPS" && ssRow["postedTo"] === "slack/T1/C_OPS" && ssRow["threadTs"] === null, "326-redirect: set_state's card is in the venue, top-level");
+  ok(
+    ss.message.includes("card posted in slack/T1/C_OPS") && ss.message.includes("tell the user where it is, by name") && ss.message.includes("confirm the state change"),
+    "326-redirect: …and names the venue plus the reader's own verb",
+  );
+
+  const asg = (await (await armed(assignTool, teamsTicketCtx("CONV1"), "assign")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-1" }, assignee: "ada" },
+    teamsTicketCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  const asgRow = await rowOf(asg.pendingId);
+  ok(asgRow["postedTo"] === "slack/T1/C_OPS", "326-redirect: `assign` routes too");
+  ok(asg.message.includes("card posted in slack/T1/C_OPS") && asg.message.includes("confirm the assignment"), "326-redirect: …with its own verb");
+
+  const ct = (await (await armed(createTicketTool, teamsTicketCtx("CONV1"), "create_ticket")).execute(
+    { title: "Login 500s on retry", body: "Steps: …" },
+    teamsTicketCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  const ctRow = await rowOf(ct.pendingId);
+  ok(ctRow["postedTo"] === "slack/T1/C_OPS", "326-redirect: `create_ticket` routes too — the triage → tracked-work loop no longer dead-ends on the surface the work is reported from");
+  ok(ct.message.includes("card posted in slack/T1/C_OPS") && ct.message.includes("confirm the filing"), "326-redirect: …with its own verb");
+
+  const native = (await (await armed(setStateTool, ticketSurfaceCtx(), "set_state")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-1" }, state: "Done" },
+    ticketSurfaceCtx(),
+  )) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  ok(native.pending === true, "326-redirect: 🔴 a turn ON the tracker itself can now propose — the room holding the entity could not act on it before");
+  const nativeRow = await rowOf(native.pendingId);
+  ok(nativeRow["channelId"] === "C_OPS" && nativeRow["postedTo"] === "slack/T1/C_OPS", "326-redirect: …its card goes to the domain's card-capable channel");
+  ok(nativeRow["scopeKey"] === "venue-ticket/W1/VT_ROOM", "326-redirect: …while the audit scope stays the tracker room that asked");
+}
+
+{
+  const fromConv1 = (await (await armed(setStateTool, teamsTicketCtx("CONV1"), "set_state")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-9" }, state: "Done" },
+    teamsTicketCtx("CONV1"),
+  )) as { pendingId: string };
+  const fromNative = (await (await armed(setStateTool, ticketSurfaceCtx(), "set_state")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-9" }, state: "Done" },
+    ticketSurfaceCtx(),
+  )) as { pendingId: string };
+  const rowA = await rowOf(fromConv1.pendingId);
+  const rowB = await rowOf(fromNative.pendingId);
+  ok(rowA["channelId"] === rowB["channelId"] && rowA["postedTo"] === rowB["postedTo"], "args-vs-card(326): two asking rooms in one domain share ONE venue — the card is the thing that moved");
+  ok(
+    rowA["scopeKey"] === "teams/W1/CONV1" && rowB["scopeKey"] === "venue-ticket/W1/VT_ROOM",
+    "args-vs-card(326): 🔴 …and the SCOPE is each asking room's own — the audit row (whereFromScope) names where the decision was asked for, never where the card was rendered",
+  );
+  const frozenA = JSON.parse(rowA["argsJson"] as string) as Record<string, unknown>;
+  ok(frozenA["platform"] === "venue-ticket" && frozenA["entityId"] === "VT-9" && frozenA["state"] === "Done", "args-vs-card(326): the frozen entity is the one the ASKING window resolved — the ActionKind re-looks it up by this frozen platform at click time, with no ctx and no venue in sight");
+
+  const ticketFrom1 = (await (await armed(createTicketTool, teamsTicketCtx("CONV1"), "create_ticket")).execute({ title: "A", body: "" }, teamsTicketCtx("CONV1"))) as {
+    pendingId: string;
+    platform: string;
+    target: string;
+  };
+  const conv2 = teamsTicketCtx("CONV2", "teams,venue-ticket-b");
+  const ticketFrom2 = (await (await armed(createTicketTool, conv2, "create_ticket")).execute({ title: "B", body: "" }, conv2)) as {
+    pendingId: string;
+    platform: string;
+    target: string;
+  };
+  const tRow1 = await rowOf(ticketFrom1.pendingId);
+  const tRow2 = await rowOf(ticketFrom2.pendingId);
+  ok(tRow1["postedTo"] === "slack/T1/C_OPS" && tRow2["postedTo"] === "slack/T1/C_OPS", "args-vs-card(326): both filings' cards land in the same venue");
+  ok(
+    ticketFrom1.platform === "venue-ticket" && ticketFrom1.target === "acme/from-conv1" && ticketFrom2.platform === "venue-ticket-b" && ticketFrom2.target === "acme/from-conv2",
+    "args-vs-card(326): 🔴 …and the DESTINATION differs per asking room — the tracker filed into is the asking window's, not the venue's",
+  );
+
+  await refuses(
+    () => (armed(setStateTool, conv2, "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-9" }, state: "Done" }, conv2)),
+    /"venue-ticket" is not one of this window's sources/,
+    "args-vs-card(326): 🔴 a ref reachable from the VENUE's domain but not from the ASKING window is still refused — the redirect moves the card, never the authorization surface",
+  );
+}
+
+{
+  const before = await pendingCount();
+  await refuses(
+    () => (armed(setStateTool, teamsTicketCtx("CONV_LONE"), "set_state") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-1" }, state: "Done" }, teamsTicketCtx("CONV_LONE"))),
+    /I can't change that ticket's status from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "326-refuse: set_state refuses with the venue's copy and its own verb — no card-capable channel in the domain",
+  );
+  await refuses(
+    () => (armed(assignTool, teamsTicketCtx("CONV_LONE"), "assign") as Promise<Entry>).then((e) => e.execute({ ref: { platform: "venue-ticket", id: "VT-1" }, assignee: "ada" }, teamsTicketCtx("CONV_LONE"))),
+    /I can't assign that ticket from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "326-refuse: assign names ITS verb, not its sibling's",
+  );
+  await refuses(
+    () => (armed(createTicketTool, teamsTicketCtx("CONV_ORPHAN"), "create_ticket") as Promise<Entry>).then((e) => e.execute({ title: "x", body: "" }, teamsTicketCtx("CONV_ORPHAN"))),
+    /I can't file that ticket from here.*isn't in an explicit domain.*domains\.ts/s,
+    "326-refuse: create_ticket in NO domain gets the OTHER reason — the config change is different, and naming the wrong one is how a refusal becomes useless",
+  );
+  ok(await pendingCount().then((after) => after === before), "326-refuse: 🔴 NOTHING is minted on any of the three refusals");
+}
+
+{
+  const ss = (await (await armed(setStateTool, slackTicketCtx("C1"), "set_state")).execute(
+    { ref: { platform: "venue-ticket", id: "VT-2" }, state: "Done" },
+    slackTicketCtx("C1"),
+  )) as { pendingId: string; message: string };
+  const ssRow = await rowOf(ss.pendingId);
+  ok(ssRow["channelId"] === "C1" && ssRow["postedTo"] === "slack/T1/C1", "326-unchanged: set_state in a card-capable own room hosts its own card");
+  ok(
+    /^card posted — set venue-ticket VT-2 state to "Done" awaiting a human to confirm \(pending [0-9a-f-]{36}\)\.$/.test(ss.message),
+    "326-unchanged: 🔴 …byte-for-byte the pre-OPE-326 sentence — no venue named, NO redirect instruction appended",
+  );
+
+  const ct = (await (await armed(createTicketTool, slackTicketCtx("C1"), "create_ticket")).execute({ title: "Own room", body: "" }, slackTicketCtx("C1"))) as {
+    pendingId: string;
+    message: string;
+  };
+  const ctRow = await rowOf(ct.pendingId);
+  ok(ctRow["channelId"] === "C1" && ctRow["postedTo"] === "slack/T1/C1", "326-unchanged: create_ticket in a card-capable own room hosts its own card");
+  ok(!ct.message.includes("card posted in") && !ct.message.includes("This surface can't host an approval card"), "326-unchanged: …no venue named, no redirect sentence appended");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools plus the nine OPE-325 tools, spend pair matches its sibling, args-vs-card split, fail-closed refusals, own-room unchanged)`,
+  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools, the nine OPE-325 tools and the three entity-gated OPE-326 tools; spend pair matches its sibling, args-vs-card split incl. the entity/destination join, fail-closed refusals, own-room unchanged)`,
 );

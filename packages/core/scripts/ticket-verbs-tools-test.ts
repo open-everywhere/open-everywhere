@@ -120,12 +120,12 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
     async () => { await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
-    /approval-card path/,
-    "set_state refuses on a proposing surface with no approval-card path (Linear/GitHub/etc origin)",
+    /I can't change that ticket's status from here.*has no approval-card path.*isn't in an explicit domain.*domains\.ts/s,
+    "set_state on a card-less origin refuses with the VENUE's copy (OPE-326) — its own verb, and the config change that would unblock it, not a flat 'this surface is not Slack'",
   );
   n++;
   const after = (await getOperationalStore().listPendingActions("default")).length;
-  ok(after === before, "the approval-card-path refusal fires BEFORE any pending action is written");
+  ok(after === before, "the venue refusal fires BEFORE any pending action is written");
 }
 {
   process.env.OE_EGRESS_SPOOF = "1";
@@ -144,6 +144,14 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
   delete process.env.OE_EGRESS_SPOOF;
 }
 
+{
+  await assert.rejects(
+    async () => { await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, assignee: "alice" }, ctx("tool-test-platform", {}) as never); },
+    /I can't assign that ticket from here.*has no approval-card path.*isn't in an explicit domain.*domains\.ts/s,
+    "assign refuses with the same venue copy and its own verb",
+  );
+  n++;
+}
 {
   process.env.OE_EGRESS_SPOOF = "1";
   const slackCtx = ctx(

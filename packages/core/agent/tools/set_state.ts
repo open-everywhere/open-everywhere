@@ -7,8 +7,9 @@ import { resolvePartition } from "../memory/partition.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { getConfig } from "../access/config.js";
 import { resolveEntityAction, currentTurnEntityRef, supportedEntityActionPlatforms } from "../channels/entity-actions.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import type { TicketSetStateArgs } from "../approvals/ticket-actions.js";
 import { preRegisterDynamicEntry } from "../access/window-gated.js";
@@ -35,8 +36,9 @@ export const setStateEntry = defineTool({
     "PROPOSE changing a ticket's status — a Linear issue's workflow state (e.g. \"Done\"), or a GitHub " +
     'issue/PR\'s state ("open"/"closed"). Entity-gated: only works on a ticketing surface; refuses ' +
     "cleanly on chat or Notion. Consequential: posts an approval card — nothing changes until a human " +
-    "on this surface confirms. Needs a surface with an approval-card path (Slack or Discord). The posted " +
-    "card IS the reply — do not add narration after this call.",
+    "confirms. The posted card IS the reply — do not add narration after this call. EXCEPT when this " +
+    "surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` " +
+    "field names it, and you MUST relay that.",
   inputSchema: z.object({
     ref: refSchema,
     state: z.string().min(1).describe('The target state — e.g. "Done"/"In Progress" (Linear), or "open"/"closed" (GitHub).'),
@@ -52,24 +54,21 @@ export const setStateEntry = defineTool({
   async execute(input, ctx) {
     const bctx = ctx as BindableContext;
     await requireSessionContinuation(bctx, "set_state");
-    const { ref } = await resolveEntityAction(bctx, "setState", input.ref, safeDomains());
+    const domains = safeDomains();
+    const { ref } = await resolveEntityAction(bctx, "setState", input.ref, domains);
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `set_state needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm the state change.`,
-      );
+    const p = resolvePartition(ctx);
+    const venueResult = await checkApprovalVenue(binding, p, () => domains);
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "change that ticket's status"));
     }
+    const venue = venueResult.venue;
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("set_state needs a verified sender to gate the change — no principal id resolved, so there's no requester to show on the approval card.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("set_state couldn't resolve this channel's id for the approval card — try again from a real channel.");
-    }
 
-    const p = resolvePartition(ctx);
     const args: TicketSetStateArgs = {
       org: p.org,
       scopeKey: p.surfaceKey,
@@ -88,12 +87,12 @@ export const setStateEntry = defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
         chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `set ${ref.platform} ${ref.id} state to "${input.state}"`;
@@ -112,7 +111,7 @@ export const setStateEntry = defineTool({
       pendingId: posted.id,
       platform: ref.platform,
       id: ref.id,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the state change")}`,
     };
   },
 });
