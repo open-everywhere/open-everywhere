@@ -1,5 +1,4 @@
-import { Agent } from "undici";
-import { assertSafeFetchUrl, auditToolAction, type BindableContext } from "@open-everywhere/core/agent/adapter-api.js";
+import { assertSafeFetchUrl, auditToolAction, type BindableContext, type EgressDispatch } from "@open-everywhere/core/agent/adapter-api.js";
 
 const SLACK_FILE_HOSTS: ReadonlySet<string> = new Set(["files.slack.com"]);
 
@@ -26,7 +25,7 @@ export async function fetchSlackAttachment(ctx: BindableContext, ref: TrustedSla
     await auditToolAction(ctx, "slack.attachment.deny", { host: url.hostname, reason: "not-slack-file-host", id: ref.id });
     throw new Error(`describe_image: refusing to send the Slack bot token to non-Slack host "${url.hostname}".`);
   }
-  let safe: { url: URL; dispatcher: Agent };
+  let safe: EgressDispatch;
   try {
     safe = await assertSafeFetchUrl(ref.urlPrivate);
   } catch (err) {
@@ -41,7 +40,7 @@ export async function fetchSlackAttachment(ctx: BindableContext, ref: TrustedSla
   if (!token) {
     throw new Error("describe_image: SLACK_BOT_TOKEN is not set — the bot token is required to download a Slack attachment.");
   }
-  await auditToolAction(ctx, "slack.attachment.allow", { host: safe.url.hostname, id: ref.id });
+  await auditToolAction(ctx, "slack.attachment.allow", { host: safe.url.hostname, id: ref.id, via: safe.via, antiRebind: safe.antiRebind });
   return fetch(safe.url, {
     dispatcher: safe.dispatcher,
     redirect: "error",

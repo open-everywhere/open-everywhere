@@ -1,6 +1,6 @@
 import dnsPromises from "node:dns/promises";
 import net, { type LookupFunction } from "node:net";
-import { Agent } from "undici";
+import { Agent, ProxyAgent, type Dispatcher } from "undici";
 import type { BindableContext } from "../identity/binding.js";
 import type { ReachableHost } from "./resolver.js";
 import { resolveAccessFor } from "./request.js";
@@ -82,6 +82,52 @@ function parseHttpUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): URL {
   return url;
 }
 
+export type EgressRoute = { readonly via: "direct" } | { readonly via: "proxy"; readonly proxyUrl: string };
+
+export interface EgressDispatch {
+  readonly url: URL;
+  readonly dispatcher: Dispatcher;
+  readonly via: "direct" | "proxy";
+  readonly antiRebind: "ip-pin" | "proxy-acl";
+}
+
+function noProxyExempts(url: URL, noProxy: string): boolean {
+  const host = url.hostname.toLowerCase();
+  const port = url.port || (url.protocol === "https:" ? "443" : "80");
+  for (const raw of noProxy.split(/[,\s]+/)) {
+    let entry = raw.trim().toLowerCase();
+    if (entry === "") continue;
+    if (entry === "*") return true;
+    const colon = entry.lastIndexOf(":");
+    if (colon > 0 && /^\d+$/.test(entry.slice(colon + 1))) {
+      if (entry.slice(colon + 1) !== port) continue;
+      entry = entry.slice(0, colon);
+    }
+    if (entry.startsWith(".")) entry = entry.slice(1);
+    if (entry === "") continue;
+    if (host === entry || host.endsWith(`.${entry}`)) return true;
+  }
+  return false;
+}
+
+export function resolveEgressRoute(url: URL, env: NodeJS.ProcessEnv = process.env, tool: string = DEFAULT_TOOL_LABEL): EgressRoute {
+  const names = url.protocol === "https:" ? (["https_proxy", "HTTPS_PROXY"] as const) : (["http_proxy", "HTTP_PROXY"] as const);
+  const key = (env[names[0]] ?? "").trim() !== "" ? names[0] : names[1];
+  const proxyUrl = (env[key] ?? "").trim();
+  if (proxyUrl === "") return { via: "direct" };
+  const noProxy = (env.no_proxy ?? env.NO_PROXY ?? "").trim();
+  if (noProxy !== "" && noProxyExempts(url, noProxy)) return { via: "direct" };
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(proxyUrl);
+  } catch {
+  }
+  if (parsed === undefined || (parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.hostname === "") {
+    throw new Error(`${tool}: ${key}="${proxyUrl}" is not a valid http(s) proxy URL — refusing to fall back to an unproxied request.`);
+  }
+  return { via: "proxy", proxyUrl };
+}
+
 async function pinResolvedIp(url: URL, tool: string = DEFAULT_TOOL_LABEL): Promise<{ url: URL; dispatcher: Agent }> {
   const addrs = await resolveAll(url.hostname);
   if (addrs.length === 0) {
@@ -104,9 +150,23 @@ async function pinResolvedIp(url: URL, tool: string = DEFAULT_TOOL_LABEL): Promi
   return { url, dispatcher };
 }
 
-export async function assertSafeFetchUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): Promise<{ url: URL; dispatcher: Agent }> {
+function proxyDispatch(url: URL, proxyUrl: string): EgressDispatch {
+  return { url, dispatcher: new ProxyAgent({ uri: proxyUrl }), via: "proxy", antiRebind: "proxy-acl" };
+}
+
+async function directDispatch(url: URL, tool: string): Promise<EgressDispatch> {
+  const pinned = await pinResolvedIp(url, tool);
+  return { url: pinned.url, dispatcher: pinned.dispatcher, via: "direct", antiRebind: "ip-pin" };
+}
+
+async function dispatchFor(url: URL, tool: string): Promise<EgressDispatch> {
+  const route = resolveEgressRoute(url, process.env, tool);
+  return route.via === "proxy" ? proxyDispatch(url, route.proxyUrl) : directDispatch(url, tool);
+}
+
+export async function assertSafeFetchUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): Promise<EgressDispatch> {
   const url = parseHttpUrl(raw, tool);
-  return pinResolvedIp(url, tool);
+  return dispatchFor(url, tool);
 }
 
 export function hostReachable(hostname: string, hosts: readonly ReachableHost[]): boolean {
@@ -169,14 +229,19 @@ export interface OeFetchOpts {
 export async function oeFetch(ctx: BindableContext, rawUrl: string, opts: OeFetchOpts = {}): Promise<Response> {
   const tool = opts.tool ?? DEFAULT_TOOL_LABEL;
   const parsed = await assertEgressReach(ctx, rawUrl, { tool });
-  let pinned: { url: URL; dispatcher: Agent };
-  try {
-    pinned = await pinResolvedIp(parsed, tool);
-  } catch (err) {
-    await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "ssrf", tool });
-    throw err;
+  const route = resolveEgressRoute(parsed, process.env, tool);
+  let dispatch: EgressDispatch;
+  if (route.via === "proxy") {
+    dispatch = proxyDispatch(parsed, route.proxyUrl);
+  } else {
+    try {
+      dispatch = await directDispatch(parsed, tool);
+    } catch (err) {
+      await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "ssrf", tool });
+      throw err;
+    }
   }
-  const { url, dispatcher } = pinned;
-  await auditToolAction(ctx, opts.auditAs ?? "egress.hostside.allow", { host: url.hostname, tool });
+  const { url, dispatcher, via, antiRebind } = dispatch;
+  await auditToolAction(ctx, opts.auditAs ?? "egress.hostside.allow", { host: url.hostname, tool, via, antiRebind });
   return fetch(url, { dispatcher, redirect: "error", headers: {} } as unknown as RequestInit);
 }

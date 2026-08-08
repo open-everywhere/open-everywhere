@@ -435,7 +435,7 @@ export { buildRecord, enqueue, flushLogShip } from "./observability/ship.js";
 
 export { parseSlackCommandText } from "./commands/core.js";
 
-export { assertSafeFetchUrl, setHostEgressLookup } from "./access/host-egress.js";
+export { assertSafeFetchUrl, setHostEgressLookup, type EgressDispatch } from "./access/host-egress.js";
 
 export { REACTION_FEEDBACK_ACTION } from "./channels/reaction-ingest.js";
 
