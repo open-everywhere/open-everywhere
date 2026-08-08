@@ -140,6 +140,8 @@ export { judgeFromCompletion, registerDreamJudge, dreamJudge } from "./memory/dr
 export type { DreamCompletion, DreamJudge } from "./memory/dream/judge.js";
 export { facetJudgeFromCompletion, registerFailureFacetJudge } from "./memory/dream/mode3.js";
 export { registerHandoffCompletion } from "./model/rotation-handoff.js";
+export { registerApprovalJudgeCompletion } from "./access/approval-judge.js";
+export type { ApprovalJudgeCompletion, JudgePass } from "./access/approval-judge.js";
 export { stampModelCall, readModelStamp } from "./model/model-stamp.js";
 export type { BindableContext } from "./identity/binding.js";
 

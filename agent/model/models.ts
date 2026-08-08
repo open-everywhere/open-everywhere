@@ -12,12 +12,14 @@ export const MODELS = {
   utility: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
   vision: { id: "alibaba/qwen3.5-flash", tier: "low" },
   supervisor: { id: "deepseek/deepseek-v4-flash-0731", tier: "low" },
+  judge: { id: "openai/gpt-5.6-luna", tier: "low" },
 } as const satisfies Record<string, ModelRoleSpec>;
 
 export const PRIMARY_MODEL = MODELS.primary.id;
 export const UTILITY_MODEL = MODELS.utility.id;
 export const VISION_MODEL = MODELS.vision.id;
 export const SUPERVISOR_MODEL = MODELS.supervisor.id;
+export const JUDGE_MODEL = MODELS.judge.id;
 
 export function modelAllowList(extra: readonly ModelPolicyAllowEntry[] = []): ModelPolicyAllowEntry[] {
   const out: ModelPolicyAllowEntry[] = [];

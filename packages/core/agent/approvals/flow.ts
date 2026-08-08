@@ -21,6 +21,7 @@ import {
   toolForActionKind,
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
+import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
 import { platformOfScopeKey } from "../access/scope-key.js";
 import { principalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
@@ -172,6 +173,16 @@ export async function requestApproval(
       action: "approval.chain",
       detail: chainAuditDetail(chainReq, resolution),
     }).catch(() => undefined);
+
+    const shadowDetail = await shadowJudgeAuditDetail(chainReq, resolution).catch(() => undefined);
+    if (shadowDetail !== undefined) {
+      await appendAudit({
+        ...whereFromScope(input.org, input.scopeKey),
+        principalId: input.requestedBy,
+        action: "approval.judge.shadow",
+        detail: shadowDetail,
+      }).catch(() => undefined);
+    }
 
     if (resolution.verdict === "deny") {
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });

@@ -4,11 +4,12 @@ import "./lib/register-config.js";
 import "./lib/register-adapters.js";
 import { gatewayModelResolver, gatewayRoutedCompactionModel } from "@open-everywhere/adapters/agent/model/gateway.js";
 import { registerGatewayDreamJudge, registerGatewayFailureFacetJudge, registerGatewayHandoffCompletion } from "@open-everywhere/adapters/agent/model/dream-judge.js";
+import { registerGatewayApprovalJudge } from "@open-everywhere/adapters/agent/model/approval-judge.js";
 import { registerGatewayImageDescriber } from "@open-everywhere/adapters/agent/model/gateway-vision.js";
 import { gatewayCatalogPricingSource } from "@open-everywhere/adapters/agent/spend/gateway-pricing.js";
 import { registerPricingSource } from "@open-everywhere/core/agent/spend/pricing.js";
 import { isModelUsable } from "@open-everywhere/core/agent/model/policy.js";
-import { PRIMARY_MODEL, UTILITY_MODEL, VISION_MODEL } from "./model/models.js";
+import { JUDGE_MODEL, PRIMARY_MODEL, UTILITY_MODEL, VISION_MODEL } from "./model/models.js";
 import { loadModelPolicy } from "./model/policy.js";
 import { registerAppInfo } from "@open-everywhere/core/agent/commands/core.js";
 import { readFileSync } from "node:fs";
@@ -33,6 +34,8 @@ registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+
+registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   throw new Error(

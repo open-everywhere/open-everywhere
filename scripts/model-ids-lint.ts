@@ -39,7 +39,7 @@ for (const file of tsFilesUnder(APP_DIR)) {
     const line = code.slice(0, m.index).split("\n").length;
     reds.push(
       `BARE MODEL ID: ${file}:${line} names "${m[1]}" directly. Import the role const from ` +
-        `agent/model/models.ts instead (PRIMARY_MODEL / UTILITY_MODEL / VISION_MODEL / SUPERVISOR_MODEL), ` +
+        `agent/model/models.ts instead (PRIMARY_MODEL / UTILITY_MODEL / VISION_MODEL / SUPERVISOR_MODEL / JUDGE_MODEL), ` +
         `or add the model as a new ROLE there if it is a distinct job.`,
     );
   }
@@ -75,7 +75,7 @@ if (!builtIn) {
   }
 }
 
-for (const role of ["PRIMARY_MODEL", "UTILITY_MODEL", "VISION_MODEL", "SUPERVISOR_MODEL"]) {
+for (const role of ["PRIMARY_MODEL", "UTILITY_MODEL", "VISION_MODEL", "SUPERVISOR_MODEL", "JUDGE_MODEL"]) {
   if (!new RegExp(`export const ${role}\\b`).test(registrySrc)) {
     reds.push(`MISSING ROLE EXPORT: ${REGISTRY} no longer exports ${role}, which app config imports.`);
   }
