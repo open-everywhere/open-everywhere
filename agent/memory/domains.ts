@@ -39,7 +39,7 @@ const E2E_NOTION_SURFACE = "notion/40000000-0000-4000-8000-000000000001/40000000
 
 const rawDomains: Domain[] = [
   defineDomain({ name: "org", match: "org", memory: "org-brain", nameDropWake: true,
-    admins: ["slack/U0EXOWNER", "slack/U0EXUSER002", "discord/300000000000000104"],
+    admins: ["slack/T0EXAMPLE/U0EXOWNER", "slack/T0EXAMPLE/U0EXUSER002", "discord/300000000000000104"],
     models: { supervisor: { id: SUPERVISOR_MODEL, reasoning: "low" } } }),
 
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly",

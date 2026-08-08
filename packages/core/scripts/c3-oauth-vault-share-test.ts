@@ -25,17 +25,23 @@ const ok = (cond: boolean, label: string) => {
 };
 
 {
-  const a = rawVaultSubject("acme", "slack", "U1");
-  ok(a === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/U1`, "raw subject: composes p:<org>/<platform>/<native-id> — the same platform/id grammar principal-key.ts owns, org-qualified like the shared form");
+  const a = rawVaultSubject("acme", "slack", "T1", "U1");
+  ok(a === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/T1/U1`, "raw subject: composes p:<org>/<principal-key> — the SAME grammar principal-key.ts owns, org-qualified like the shared form, and since OPE-309 carrying Slack's workspace rung");
   ok(a !== "U1", "raw subject: 🔴 NOT the bare native id — that spelling is what OPE-286 deleted");
+  ok(rawVaultSubject("acme", "discord", undefined, "U1") === `${RAW_VAULT_SUBJECT_PREFIX}acme/discord/U1`, "raw subject: …and a vendor-global platform's subject is BYTE-IDENTICAL to its pre-OPE-309 form — no gratuitous re-consent");
 
-  ok(rawVaultSubject("acme", "slack", "U1") !== rawVaultSubject("beta", "slack", "U1"), "raw subject: 🔴 the SAME Slack member id in two orgs → two DIFFERENT subjects (two humans can hold one U-id; they must not hold one credential row)");
-  ok(rawVaultSubject("acme", "slack", "U1") !== rawVaultSubject("acme", "discord", "U1"), "raw subject: 🔴 the same native id on two platforms → two DIFFERENT subjects (six id namespaces that never agreed to share one)");
+  ok(rawVaultSubject("acme", "slack", "T1", "U1") !== rawVaultSubject("acme", "slack", "T2", "U1"), "raw subject: 🔴 the SAME Slack member id in two WORKSPACES of one org → two DIFFERENT subjects (OPE-309 — the residual OPE-286 stated and could not close)");
+  ok(rawVaultSubject("acme", "slack", "T1", "U1") !== rawVaultSubject("beta", "slack", "T1", "U1"), "raw subject: 🔴 the SAME Slack member id in two orgs → two DIFFERENT subjects (two humans can hold one U-id; they must not hold one credential row)");
+  ok(rawVaultSubject("acme", "slack", "T1", "U1") !== rawVaultSubject("acme", "discord", "T1", "U1"), "raw subject: 🔴 the same native id on two platforms → two DIFFERENT subjects (six id namespaces that never agreed to share one)");
 
-  ok(rawVaultSubject("acme-x", "slack", "U1") !== rawVaultSubject("acme", "x-slack", "U1"), "raw subject: distinct (org, platform) pairs compose distinct subjects — the segments cannot be re-split into a collision");
+  let subjectThrew = false;
+  try { rawVaultSubject("acme", "slack", undefined, "U1"); } catch { subjectThrew = true; }
+  ok(subjectThrew, "raw subject: 🔴 THROWS when a tenant-scoped platform names no workspace — never a subject that quietly aliases two people");
 
-  ok(!rawVaultSubject("acme", "slack", "ls:evil/x").startsWith(SHARED_VAULT_SUBJECT_PREFIX), "disjoint: a native id crafted as 'ls:evil/x' still composes a RAW subject — it can never be mistaken for a link-set's shared row");
-  ok(rawVaultSubject("acme", "slack", "ls:evil/x") === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/ls:evil/x`, "disjoint: …the crafted id rides VERBATIM in the tail (never interpreted, never stripped) — the qualifier is what makes it inert");
+  ok(rawVaultSubject("acme-x", "slack", "T1", "U1") !== rawVaultSubject("acme", "x-slack", "T1", "U1"), "raw subject: distinct (org, platform) pairs compose distinct subjects — the segments cannot be re-split into a collision");
+
+  ok(!rawVaultSubject("acme", "slack", "T1", "ls:evil/x").startsWith(SHARED_VAULT_SUBJECT_PREFIX), "disjoint: a native id crafted as 'ls:evil/x' still composes a RAW subject — it can never be mistaken for a link-set's shared row");
+  ok(rawVaultSubject("acme", "slack", "T1", "ls:evil/x") === `${RAW_VAULT_SUBJECT_PREFIX}acme/slack/T1/ls:evil/x`, "disjoint: …the crafted id rides VERBATIM in the tail (never interpreted, never stripped) — the qualifier is what makes it inert");
   ok(!sharedVaultSubject("acme", "S1").startsWith(RAW_VAULT_SUBJECT_PREFIX), "disjoint: a shared subject can never take the raw shape either");
   ok(!sharedVaultSubject("ls:evil", "S1").startsWith(RAW_VAULT_SUBJECT_PREFIX), "disjoint: …including when the org itself is crafted");
   const rawPrefix: string = RAW_VAULT_SUBJECT_PREFIX;
@@ -243,10 +249,10 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
       { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU5" },
     ]);
     const shared = sharedVaultSubject(ORG, "P5");
-    const rawSlack = rawVaultSubject(ORG, "slack", "PU5");
-    const rawGithub = rawVaultSubject(ORG, "github", "gh-PU5");
+    const rawSlack = rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU5");
+    const rawGithub = rawVaultSubject(ORG, "github", tenantOf("github"), "gh-PU5");
     await mkSet(store, ORG, "P6", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU6" }]);
-    const strangerRaw = rawVaultSubject(ORG, "slack", "PU6");
+    const strangerRaw = rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU6");
 
     await seed(shared);
     await vault.write(ssoRef(rawSlack), "sso-token-blob", { provider: "aws-sso" });
@@ -267,10 +273,10 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
       },
     });
     await mkSet(store, ORG, "P7", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU7" }]);
-    await vault.write(ssoRef(rawVaultSubject(ORG, "slack", "PU7")), "sso-token-blob", { provider: "aws-sso" });
+    await vault.write(ssoRef(rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU7")), "sso-token-blob", { provider: "aws-sso" });
     const res7 = await revokeLinkSet({ org: ORG, linkSetId: "P7", actor: "admin" });
     ok(res7.ok, "G3: a failing holder still never blocks the offboarding (the one deliberate fail-open, unchanged)");
-    ok((await store.getStoredCredential(ORG, ssoRef(rawVaultSubject(ORG, "slack", "PU7")))) === null, "G3: …and the WORKING holder still destroyed its row (per-holder isolation)");
+    ok((await store.getStoredCredential(ORG, ssoRef(rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU7")))) === null, "G3: …and the WORKING holder still destroyed its row (per-holder isolation)");
     const d7 = await lastRevokeDetail("P7");
     ok(d7.purgeFailed === true && d7.credentialsPurged === 1, "G3: the audit reports BOTH what went and that something did not — never 'everything went' while a row survives");
     registerCredentialPurgeHook("broken", { purgeSubject: async () => 0 });
@@ -279,8 +285,8 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
       { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU8" },
       { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU8" },
     ]);
-    const keptRaw = rawVaultSubject(ORG, "slack", "PU8");
-    const goneRaw = rawVaultSubject(ORG, "github", "gh-PU8");
+    const keptRaw = rawVaultSubject(ORG, "slack", tenantOf("slack"), "PU8");
+    const goneRaw = rawVaultSubject(ORG, "github", tenantOf("github"), "gh-PU8");
     await vault.write(ssoRef(keptRaw), "kept-sso", { provider: "aws-sso" });
     await vault.write(ssoRef(goneRaw), "severed-sso", { provider: "aws-sso" });
     const unlinked = await unlinkOwnId({ org: ORG, actor: { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU8" }, target: { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU8" } });

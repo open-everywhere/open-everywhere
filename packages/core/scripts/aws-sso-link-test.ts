@@ -75,14 +75,14 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
   ok(awsSsoLinkStore() === fake, "port: after register, awsSsoLinkStore() returns the registered store");
   ok(requireAwsSsoLinkStore() === fake, "port: requireAwsSsoLinkStore() returns it too (no throw)");
 
-  const aliceSlack = rawVaultSubject("acme", "slack", "U_ALICE");
+  const aliceSlack = rawVaultSubject("acme", "slack", "T1", "U_ALICE");
   ok((await requireAwsSsoLinkStore().read(aliceSlack)) === null, "store: an unlinked principal reads null");
   await requireAwsSsoLinkStore().write(aliceSlack, "opaque-token-blob-alice");
   ok((await requireAwsSsoLinkStore().read(aliceSlack)) === "opaque-token-blob-alice", "store: a written token round-trips for that principal");
-  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("acme", "slack", "U_BOB"))) === null, "store: a DIFFERENT principal is unaffected (keyed strictly on the subject)");
+  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("acme", "slack", "T1", "U_BOB"))) === null, "store: a DIFFERENT principal is unaffected (keyed strictly on the subject)");
 
-  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("other-org", "slack", "U_ALICE"))) === null, "store: 🔴 the SAME native id in ANOTHER ORG reads null — no cross-org alias onto a linked AWS session");
-  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("acme", "discord", "U_ALICE"))) === null, "store: 🔴 the SAME native id on ANOTHER PLATFORM reads null — no cross-vendor alias (digit-string ids collide across namespaces)");
+  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("other-org", "slack", "T1", "U_ALICE"))) === null, "store: 🔴 the SAME native id in ANOTHER ORG reads null — no cross-org alias onto a linked AWS session");
+  ok((await requireAwsSsoLinkStore().read(rawVaultSubject("acme", "discord", undefined, "U_ALICE"))) === null, "store: 🔴 the SAME native id on ANOTHER PLATFORM reads null — no cross-vendor alias (digit-string ids collide across namespaces)");
   ok((await requireAwsSsoLinkStore().read("U_ALICE")) === null, "store: 🔴 the PRE-OPE-286 bare-id key resolves nothing — old rows ORPHAN (re-consent), and there is no fallback read that would re-open the collision");
 
   await requireAwsSsoLinkStore().clear(aliceSlack);
@@ -132,7 +132,7 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
       ok(rec.last?.kind === "user-sso", "user-sso linked: the mint request carried kind user-sso");
       ok(rec.last?.roleArn === "arn:aws:iam::123456789012:role/oe-ops", "user-sso linked: the mint request carried the granted roleArn");
 
-      const expected = rawVaultSubject(deploymentOrg(), "local", "U_ALICE");
+      const expected = rawVaultSubject(deploymentOrg(), "local", undefined, "U_ALICE");
       ok(rec.last?.principalSubject === expected, "user-sso linked: the mint request carried the QUALIFIED subject composed from the binding's own org + platform");
       ok(rec.last?.principalSubject !== "U_ALICE", "user-sso linked: 🔴 NOT the bare native id — that is the spelling that let two humans share one AWS session row");
       ok(rec.last?.org === deploymentOrg(), "user-sso linked: the request also carries the org outright (the adapter's warm-cache key is org-scoped for both kinds)");

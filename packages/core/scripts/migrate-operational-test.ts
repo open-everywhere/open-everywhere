@@ -75,7 +75,7 @@ function roSqlite(path: string): DatabaseSync {
     await s.setSpendLimit("acme", "slack/T1/C1", "surface", { monthlyTokens: 500 }, { reason: "surface bridge", setBy: "U1" });
     await s.setSpendLimit("acme", "slack/T1", "workspace", { monthlyUsd: 25 }, { reason: "workspace bridge", setBy: "U1" });
     await s.setSpendLimit("acme", "payments", "domain", { monthlyUsd: 10 }, { reason: "domain bridge", setBy: "U1" });
-    await s.setSpendLimit("acme", "user:slack/U0EXOWNER", "user", { monthlyUsd: 7.5, monthlyTokens: 900 }, { reason: "per-person bridge", setBy: "U1", expiresAt: 4_102_444_800_000 });
+    await s.setSpendLimit("acme", "user:slack/T1/U0EXOWNER", "user", { monthlyUsd: 7.5, monthlyTokens: 900 }, { reason: "per-person bridge", setBy: "U1", expiresAt: 4_102_444_800_000 });
     await s.setMeta("telemetry_instance_id", "inst-abc-123");
     await s.putUnifiedWakeTarget("acme", "w-pending", JSON.stringify({ platform: "slack", channelId: "C_MIG" }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
     await s.putUnifiedWakeTarget("acme", "w-answered", JSON.stringify({ platform: "github", owner: "o", repo: "r", issueNumber: 3 }), "2026-07-01T10:00:00Z", 6 * 60 * 60 * 1000, "oe-dom:payments:oe-sup:g1");
@@ -109,7 +109,7 @@ function roSqlite(path: string): DatabaseSync {
   const migratedLimits = await store.spendLimits("acme");
   ok(sortedEq(migratedLimits.map((l) => l.level), ["surface", "workspace", "domain", "user"]), "OPE-274: spend_limit rows migrate at all FOUR CapLevels — `level` is free-text on both engines, so no enum migration exists to forget");
   const userLimit = migratedLimits.find((l) => l.level === "user");
-  ok(userLimit?.scopeKey === "user:slack/U0EXOWNER", "OPE-274: …and a user row's PRINCIPAL scope key survives the copy verbatim (the marker is not a platform, and nothing tries to re-parse it as one)");
+  ok(userLimit?.scopeKey === "user:slack/T1/U0EXOWNER", "OPE-274: …and a user row's PRINCIPAL scope key survives the copy verbatim (the marker is not a platform, and nothing tries to re-parse it as one)");
   ok(userLimit?.monthlyUsd === 7.5 && userLimit?.monthlyTokens === 900 && userLimit?.expiresAt === 4_102_444_800_000, "OPE-274: …with both denominations and its expiry intact — a per-person allowance is not a lossy row");
   ok(userLimit?.reason === "per-person bridge" && userLimit?.setBy === "U1", "OPE-274: …and its reconcile provenance (reason/setBy), which is what makes the drift worklist usable after a migration");
 

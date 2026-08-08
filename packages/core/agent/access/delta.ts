@@ -1,6 +1,7 @@
 import { SURFACE_KEY, type Binding, type Bundle, type Connection, type HttpMethod } from "./bundle.js";
 import { DIRECTORY_GROUP_PREFIX, type Group } from "../identity/groups.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { tenantRungRemedy } from "./tenant-admission.js";
 import { groupWidth } from "./lint.js";
 import type { EffectiveAccess } from "./resolver.js";
 
@@ -38,7 +39,7 @@ export function requestingScopeProblem(scope: RequestingScope): string | undefin
     case "principal":
       return isQualifiedPrincipalKey(scope.principal)
         ? undefined
-        : `principal="${scope.principal}" is not the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC")`;
+        : `principal="${scope.principal}" is not a well-formed principal key — "platform/<principal-id>", or "platform/<tenant-id>/<principal-id>" on a tenant-scoped platform (e.g. "slack/T0AB1CD2E/U0123ABC", "discord/300000000000000104")${tenantRungRemedy(scope.principal ?? "")}`;
     case "group": {
       const name = scope.group ?? "";
       if (name.trim().length === 0) return "group name is empty — a group grant needs the bare name of a declared person-group";

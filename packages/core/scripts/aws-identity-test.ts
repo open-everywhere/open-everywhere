@@ -66,6 +66,7 @@ function plan(over: Partial<Parameters<typeof planAwsIdentity>[0]> = {}) {
     actingPrincipalId: undefined,
     org: "acme",
     platform: "slack",
+    workspace: "T1",
     domains: ["payments"],
     surfaceKey: "slack/T1/C1",
     ...over,
@@ -136,9 +137,9 @@ function validSessionName(name: string): boolean {
   ok(p.roleSessionName === awsRoleSessionName("U_ALICE"), "plan: user-sso RoleSessionName is the acting principal (not the domain)");
   ok(validSessionName(p.roleSessionName), "plan: user-sso RoleSessionName is a valid oe-… name");
 
-  ok(p.principalSubject === rawVaultSubject("acme", "slack", "U_ALICE"), "plan: user-sso carries the ONE composer's qualified subject for the verified sender");
+  ok(p.principalSubject === rawVaultSubject("acme", "slack", "T1", "U_ALICE"), "plan: user-sso carries the ONE composer's qualified subject for the verified sender");
   ok(p.principalSubject !== "U_ALICE", "plan: 🔴 the subject is NOT the bare native id — that spelling is what OPE-286 deleted");
-  ok(p.principalSubject!.startsWith("p:") && p.principalSubject!.includes("/slack/"), "plan: the subject carries its namespace prefix + the platform from the BINDING (never sniffed from the id)");
+  ok(p.principalSubject!.startsWith("p:") && p.principalSubject!.includes("/slack/T1/"), "plan: the subject carries its namespace prefix + the platform from the BINDING (never sniffed from the id)");
   ok(p.org === "acme", "plan: the user-sso plan carries the org too (the adapter's cache key is org-scoped for both kinds)");
 
   ok(p.roleSessionName !== p.principalSubject, "plan: the CloudTrail label and the vault key are DISTINCT derivations — a label never addresses a credential row");

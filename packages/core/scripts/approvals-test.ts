@@ -42,9 +42,9 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG_ADMIN"] }),
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/U_ENG_ADMIN"] }),
-    defineDomain({ name: "win", channels: ["slack/TW/C_WIN"], admins: ["slack/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
+    defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN", "slack/TW/U_ORG_ADMIN"] }),
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
+    defineDomain({ name: "win", channels: ["slack/TW/C_WIN"], admins: ["slack/T1/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
     defineDomain({ name: "dwin", channels: ["discord/GW/C_DWIN"], admins: ["discord/U_ORG_ADMIN"], ambientSupervisor: true, mode: "solo" }),
   ],
   loadSilos: () => [],
@@ -289,10 +289,11 @@ function bodyField(body: string, field: string): string | null {
   return new URLSearchParams(body).get(field);
 }
 
-function payloadFor(actionId: string, opts: { org?: string; user?: string; channel?: string; ts?: string } = {}) {
+function payloadFor(actionId: string, opts: { org?: string; user?: string; channel?: string; ts?: string; team?: string } = {}) {
   return {
     actions: [{ action_id: actionId, value: opts.org ?? "default" }],
     user: { id: opts.user ?? "U_ORG_ADMIN" },
+    team: { id: opts.team ?? "T1" },
     channel: { id: opts.channel ?? "C1" },
     message: { ts: opts.ts ?? "111.222" },
   };
@@ -357,10 +358,10 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   const adminDenied = (await readAudit({ org: "default", action: "approval.denied" })).find((e) => e.detail?.id === "p-admin-denied");
   ok(adminDenied?.detail?.reason === "not-admin" && adminDenied?.principalId === "U_RANDOM_MEMBER", "a refused ADMIN-tier click audits approval.denied (reason \"not-admin\") — it audited nothing at all before OPE-185");
 
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "slack") === true, "clickerMayDecide: org admin covers a domain-less scope");
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER", "slack") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_ENG_ADMIN", "slack") === true, "clickerMayDecide: the FROZEN domain's own admin covers it");
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_RANDOM_MEMBER", "slack") === false, "clickerMayDecide: a non-admin does not cover an explicit domain either");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "slack", "T1") === true, "clickerMayDecide: org admin covers a domain-less scope");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a plain member does not cover a domain-less scope");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_ENG_ADMIN", "slack", "T1") === true, "clickerMayDecide: the FROZEN domain's own admin covers it");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: "eng" }, "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a non-admin does not cover an explicit domain either");
 
   const domainCapRow = (level: "domain" | "surface" | "workspace") =>
     row({
@@ -369,43 +370,43 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
       argsJson: JSON.stringify({ org: "default", scopeKey: "eng", level, monthlyTokens: 5000, currentCap: null }),
       domain: "eng",
     });
-  ok(clickerMayDecide(domainCapRow("domain"), "U_ENG_ADMIN", "slack") === false, "clickerMayDecide: eng's OWN domain admin is REFUSED for a domain-level spend cap on eng, despite row.domain === \"eng\"");
-  ok(clickerMayDecide(domainCapRow("domain"), "U_RANDOM_MEMBER", "slack") === false, "clickerMayDecide: a plain member is (still) refused for a domain-level spend cap");
-  ok(clickerMayDecide(domainCapRow("domain"), "U_ORG_ADMIN", "slack") === true, "clickerMayDecide: the ORG admin CAN decide a domain-level spend cap");
-  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN", "slack") === true, "clickerMayDecide: eng's domain admin STILL covers a surface-level spend cap (the refusal is level-specific, not blanket)");
+  ok(clickerMayDecide(domainCapRow("domain"), "U_ENG_ADMIN", "slack", "T1") === false, "clickerMayDecide: eng's OWN domain admin is REFUSED for a domain-level spend cap on eng, despite row.domain === \"eng\"");
+  ok(clickerMayDecide(domainCapRow("domain"), "U_RANDOM_MEMBER", "slack", "T1") === false, "clickerMayDecide: a plain member is (still) refused for a domain-level spend cap");
+  ok(clickerMayDecide(domainCapRow("domain"), "U_ORG_ADMIN", "slack", "T1") === true, "clickerMayDecide: the ORG admin CAN decide a domain-level spend cap");
+  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN", "slack", "T1") === true, "clickerMayDecide: eng's domain admin STILL covers a surface-level spend cap (the refusal is level-specific, not blanket)");
   const domainClearRow = row({
     id: "p-domain-clear",
     kind: "spend.clear",
     argsJson: JSON.stringify({ org: "default", scopeKey: "eng", level: "domain", currentCap: null }),
     domain: "eng",
   });
-  ok(clickerMayDecide(domainClearRow, "U_ENG_ADMIN", "slack") === false, "clickerMayDecide: eng's domain admin is REFUSED for a domain-level spend.clear too");
-  ok(clickerMayDecide(domainClearRow, "U_ORG_ADMIN", "slack") === true, "clickerMayDecide: org admin can still decide a domain-level spend.clear");
+  ok(clickerMayDecide(domainClearRow, "U_ENG_ADMIN", "slack", "T1") === false, "clickerMayDecide: eng's domain admin is REFUSED for a domain-level spend.clear too");
+  ok(clickerMayDecide(domainClearRow, "U_ORG_ADMIN", "slack", "T1") === true, "clickerMayDecide: org admin can still decide a domain-level spend.clear");
   const nonSpendRow = row({
     id: "p-non-spend",
     kind: "connector.revoke",
     argsJson: JSON.stringify({ org: "default", scopeKey: "slack/T1/C_ENG", connector: "notion", level: "domain" }),
     domain: "eng",
   });
-  ok(clickerMayDecide(nonSpendRow, "U_ENG_ADMIN", "slack") === true, "clickerMayDecide: the domain-level spend carve-out is scoped to spend.set/spend.clear only — a connector.revoke row's domain admin is unaffected even with a same-shaped argsJson");
+  ok(clickerMayDecide(nonSpendRow, "U_ENG_ADMIN", "slack", "T1") === true, "clickerMayDecide: the domain-level spend carve-out is scoped to spend.set/spend.clear only — a connector.revoke row's domain admin is unaffected even with a same-shaped argsJson");
 
   const userCapRow = (kind: "spend.set" | "spend.clear", frozenDomain: string | null) =>
     row({
       id: `p-user-cap-${kind}`,
       kind,
-      argsJson: JSON.stringify({ org: "default", scopeKey: "user:slack/U_ENG_MEMBER", level: "user", monthlyTokens: 5000, currentCap: null }),
+      argsJson: JSON.stringify({ org: "default", scopeKey: "user:slack/T1/U_ENG_MEMBER", level: "user", monthlyTokens: 5000, currentCap: null }),
       domain: frozenDomain,
     });
-  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ENG_ADMIN", "slack") === false, "🔴 OPE-274: a domain admin is REFUSED for a per-user spend cap even with a frozen domain that would otherwise grant them standing");
-  ok(clickerMayDecide(userCapRow("spend.set", null), "U_ENG_ADMIN", "slack") === false, "OPE-274: …and refused on the shape the tools actually freeze (domain: null) — the second, structural fence");
-  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_RANDOM_MEMBER", "slack") === false, "OPE-274: a plain member is refused for a per-user spend cap");
-  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ORG_ADMIN", "slack") === true, "OPE-274: the ORG admin CAN decide a per-user spend cap");
-  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ENG_ADMIN", "slack") === false, "OPE-274: clearing a per-user allowance override carries the same bar as setting one");
-  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ORG_ADMIN", "slack") === true, "OPE-274: …and the org admin can still decide it");
-  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN", "slack") === true && clickerMayDecide(domainCapRow("workspace"), "U_ENG_ADMIN", "slack") === true, "OPE-274: adding the user level did NOT widen the carve-out — surface/workspace caps keep the domain-admin fallback");
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ENG_ADMIN", "slack", "T1") === false, "🔴 OPE-274: a domain admin is REFUSED for a per-user spend cap even with a frozen domain that would otherwise grant them standing");
+  ok(clickerMayDecide(userCapRow("spend.set", null), "U_ENG_ADMIN", "slack", "T1") === false, "OPE-274: …and refused on the shape the tools actually freeze (domain: null) — the second, structural fence");
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_RANDOM_MEMBER", "slack", "T1") === false, "OPE-274: a plain member is refused for a per-user spend cap");
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ORG_ADMIN", "slack", "T1") === true, "OPE-274: the ORG admin CAN decide a per-user spend cap");
+  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ENG_ADMIN", "slack", "T1") === false, "OPE-274: clearing a per-user allowance override carries the same bar as setting one");
+  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ORG_ADMIN", "slack", "T1") === true, "OPE-274: …and the org admin can still decide it");
+  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN", "slack", "T1") === true && clickerMayDecide(domainCapRow("workspace"), "U_ENG_ADMIN", "slack", "T1") === true, "OPE-274: adding the user level did NOT widen the carve-out — surface/workspace caps keep the domain-admin fallback");
 
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "discord") === false, "🔴 clickerMayDecide: the org admin's SLACK id does NOT decide from a discord click — a bare-id roster would have matched across the two namespaces");
-  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", undefined) === false, "clickerMayDecide: FAIL-CLOSED with no clicker platform — the roster arm refuses rather than matching a bare id");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "discord", undefined) === false, "🔴 clickerMayDecide: the org admin's SLACK id does NOT decide from a discord click — a bare-id roster would have matched across the two namespaces");
+  ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", undefined, undefined) === false, "clickerMayDecide: FAIL-CLOSED with no clicker platform — the roster arm refuses rather than matching a bare id");
 }
 
 {

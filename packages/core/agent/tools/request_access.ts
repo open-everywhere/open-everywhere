@@ -8,7 +8,7 @@ import { resolveAccess, surfaceKeyOf } from "../access/resolver.js";
 import { getConfig } from "../access/config.js";
 import { planAccessDelta, grantSentence, HTTP_METHODS, type AccessDelta, type PlanContext, type RequestingScope } from "../access/delta.js";
 import { roleForBinding } from "../access/roles.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetMember, type Group } from "../identity/groups.js";
 import type { Binding, Bundle } from "../access/bundle.js";
 import type { Domain } from "../memory/domain.js";
@@ -63,7 +63,7 @@ export function requestingScopeFor(
     case "channel":
       return { level: "surface", surface: surfaceKey };
     case "personal":
-      return { level: "principal", principal: principalKey(binding.platform, actingPrincipalId(binding) ?? "") };
+      return { level: "principal", principal: tryPrincipalKey(binding.platform, binding.workspace, actingPrincipalId(binding) ?? "") ?? "" };
     case "group":
       return { level: "group", group: (input.group ?? "").trim() };
   }
@@ -133,7 +133,7 @@ export function planRequestAccess(
   }
 
   if (planCtx.scope.level === "principal") {
-    const self = principalKey(binding.platform, requestedBy);
+    const self = tryPrincipalKey(binding.platform, binding.workspace, requestedBy) ?? "";
     if (planCtx.scope.principal !== self) {
       throw new Error(
         `personal access requests are self-service only: I can only ask for YOUR own DM access (\`${self}\`), never anyone else's (\`${planCtx.scope.principal}\`). ` +

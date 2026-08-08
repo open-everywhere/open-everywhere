@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -32,9 +33,9 @@ const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const salesSilo = defineMemorySilo({ name: "sales-silo", provider: "sqlite" });
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["slack/U_ENG_ADMIN"] }),
-  defineDomain({ name: "sales", channels: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["slack/U_SALES_ADMIN"] }),
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U_ORG_ADMIN"] }),
+  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], memory: "eng-silo", admins: ["slack/T1/U_ENG_ADMIN"] }),
+  defineDomain({ name: "sales", channels: ["slack/T1/C_SALES"], memory: "sales-silo", admins: ["slack/T1/U_SALES_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_ADMIN"] }),
 ];
 registerConfig({
   loadBundles: () => [],
@@ -52,6 +53,8 @@ await providerById("sqlite").ensureTier(controlPartition(org), siloTier("sales-s
 await providerById("sqlite").writeTier(controlPartition(org), siloTier("sales-silo"), { "MEMORY.md": "# sales\n\n## Notes\n- a: hello sales\n" }, "seed", salesSilo);
 await providerById("sqlite").ensureTier(controlPartition(org), siloTier("org-brain"), orgSilo);
 await providerById("sqlite").writeTier(controlPartition(org), siloTier("org-brain"), { "MEMORY.md": "# org\n\n## Notes\n- a: hello org\n" }, "seed", orgSilo);
+
+registerSlackFixtureMapper();
 
 function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
   const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, trust_checked: "true" };
@@ -74,12 +77,12 @@ const list = (ctx: BindableContext, silo?: string) => execTool(memoryAdminListTo
 const read = (ctx: BindableContext, silo: string, relPath: string) => execTool(memoryAdminReadTool)({ silo, relPath }, ctx as never);
 
 {
-  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "slack")) === JSON.stringify(["admin"]), "adminControlRoles: org admin -> [\"admin\"]");
-  ok(JSON.stringify(adminControlRoles("U_ENG_ADMIN", domains, "slack")) === JSON.stringify(["domain:eng"]), "adminControlRoles: eng admin -> [\"domain:eng\"] regardless of channel");
-  ok(JSON.stringify(adminControlRoles("U_RANDOM", domains, "slack")) === JSON.stringify([]), "adminControlRoles: a plain member has no roles");
-  ok(JSON.stringify(adminControlRoles(undefined, domains, "slack")) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no principalId -> []");
-  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, undefined)) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no platform to qualify the id with -> [] (never \"admin\")");
-  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "discord")) === JSON.stringify([]), "adminControlRoles: the SAME id on another platform holds no standing — the roster names slack/U_ORG_ADMIN, not the bare id");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "slack", "T1")) === JSON.stringify(["admin"]), "adminControlRoles: org admin -> [\"admin\"]");
+  ok(JSON.stringify(adminControlRoles("U_ENG_ADMIN", domains, "slack", "T1")) === JSON.stringify(["domain:eng"]), "adminControlRoles: eng admin -> [\"domain:eng\"] regardless of channel");
+  ok(JSON.stringify(adminControlRoles("U_RANDOM", domains, "slack", "T1")) === JSON.stringify([]), "adminControlRoles: a plain member has no roles");
+  ok(JSON.stringify(adminControlRoles(undefined, domains, "slack", "T1")) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no principalId -> []");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, undefined, "T1")) === JSON.stringify([]), "adminControlRoles: FAIL-CLOSED, no platform to qualify the id with -> [] (never \"admin\")");
+  ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "discord", "T1")) === JSON.stringify([]), "adminControlRoles: the SAME id on another platform holds no standing — the roster names slack/T1/U_ORG_ADMIN, not the bare id");
 }
 
 {
@@ -138,7 +141,7 @@ const read = (ctx: BindableContext, silo: string, relPath: string) => execTool(m
 
 {
   const bigSilo = defineMemorySilo({ name: "big-silo", provider: "sqlite" });
-  const domainsWithBig = [...domains, defineDomain({ name: "big", channels: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["slack/U_BIG_ADMIN"] })];
+  const domainsWithBig = [...domains, defineDomain({ name: "big", channels: ["slack/T1/C_BIG"], memory: "big-silo", admins: ["slack/T1/U_BIG_ADMIN"] })];
   registerConfig({
     loadBundles: () => [],
     loadBindings: () => [],

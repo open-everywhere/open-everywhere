@@ -129,7 +129,7 @@ console.log("2. card build:");
 
 console.log("3. click handlers:");
 
-const DOMAINS: Domain[] = [{ name: "org", match: "org", admins: ["slack/U_ADMIN"] }];
+const DOMAINS: Domain[] = [{ name: "org", match: "org", admins: ["slack/T1/U_ADMIN"] }];
 const FAKE_URL = "https://connect.example/CAP-TOKEN-DO-NOT-LEAK";
 
 function recorder() {
@@ -171,7 +171,7 @@ ok((await handleConnectClick({ type: "block_actions", actions: [{ action_id: "oe
   const st = starter();
   ok((await handleConnectClick(click("user-oauth", "U_ANYONE", "D999"), deps({ post: rec.post, startAuth: st.startAuth }))) === true, "personal-oauth DM click is ours");
   eq(st.calls.length, 1, "personal-oauth ⇒ exactly one mint");
-  eq(st.calls[0].subject, { type: "user", id: rawVaultSubject(ORG, "slack", "U_ANYONE") }, "personal-oauth mints a {type:user} subject = the CLICKER's QUALIFIED vault subject (the same string the later token read composes)");
+  eq(st.calls[0].subject, { type: "user", id: rawVaultSubject(ORG, "slack", "T1", "U_ANYONE") }, "personal-oauth mints a {type:user} subject = the CLICKER's QUALIFIED vault subject (the same string the later token read composes)");
   ok((st.calls[0].subject as { id?: string }).id !== "U_ANYONE", "🔴 NOT the bare Slack member id — that spelling let two workspaces' humans share one personal-token row");
   eq(st.calls[0].expiresInMs, AUTH_URL_TTL_MS, "the URL is minted with the short capability TTL");
   ok(rec.methods().includes("chat.postEphemeral"), "the URL is delivered EPHEMERALLY (clicker-only)");

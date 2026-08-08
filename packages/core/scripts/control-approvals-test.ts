@@ -162,7 +162,7 @@ await client.connect(clientT);
 }
 
 {
-  await seed("pa-usercap", { scopeKey: "user:slack/U_ENG_MEMBER", domain: "eng", level: "user", tokens: 7777 });
+  await seed("pa-usercap", { scopeKey: "user:slack/T1/U_ENG_MEMBER", domain: "eng", level: "user", tokens: 7777 });
 
   const engServer = buildControlServer({ includeWrites: true, actor: "eng-lead", roles: ["domain:eng"] });
   const [c5, s5] = InMemoryTransport.createLinkedPair();

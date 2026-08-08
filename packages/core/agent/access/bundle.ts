@@ -1,6 +1,7 @@
 import type { ProviderGrant } from "./providers.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { tenantRungRemedy } from "./tenant-admission.js";
 import { isValidLinkSetRef } from "../identity/link-set-ref.js";
 import type { Group } from "../identity/groups.js";
 
@@ -283,7 +284,7 @@ export function assertBindingsValid(bindings: readonly Binding[], bundles: reado
       bad.push(
         principal.startsWith("dm:")
           ? `  ${where} scope.principal "${principal}" still carries the old \`workspace: "dm:<id>"\` sentinel — the DM universe is the first-class \`principal\` level now, so drop the "dm:" prefix and write the PLATFORM-QUALIFIED key "platform/<principal-id>" (e.g. "slack/U0123ABC")`
-          : `  ${where} scope.principal "${principal}" must be the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC", "discord/300000000000000104") or a link-set reference "linkSet:<link-set-id>" (one human across their confirmed accounts) — a BARE member id has no platform namespace and will NEVER match (identity/principal-key.ts, identity/link-set-ref.ts)`,
+          : `  ${where} scope.principal "${principal}" must be the qualified principal key "platform/<principal-id>" — or, on a tenant-scoped platform, "platform/<tenant-id>/<principal-id>" (e.g. "slack/T0AB1CD2E/U0123ABC", "discord/300000000000000104") — or a link-set reference "linkSet:<link-set-id>" (one human across their confirmed accounts). A BARE member id has no platform namespace and will NEVER match, and on Slack a key missing its workspace has no tenant namespace and will never match either (identity/principal-key.ts, identity/link-set-ref.ts).${tenantRungRemedy(principal)}`,
       );
     }
   }

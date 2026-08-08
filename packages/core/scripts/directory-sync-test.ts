@@ -188,7 +188,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
 {
   const bootstrap = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-ROWAN");
-  ok(bootstrap.length === 1 && bootstrap[0]!.principal === "slack/U-ROWAN", "F2(b): a bootstrap caller (own row merely suggested) sees ONLY their own account");
+  ok(bootstrap.length === 1 && bootstrap[0]!.principal === `slack/${T1}/U-ROWAN`, "F2(b): a bootstrap caller (own row merely suggested) sees ONLY their own account");
   ok(bootstrap[0]!.provider === "okta" && bootstrap[0]!.grade === "attested", "read: it carries the proposing provider and its grade");
   ok((await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-STRANGER")).length === 0, "🔴 read: a stranger's query finds NOTHING — somebody else's suggestions are structurally unavailable, not merely refused");
 
@@ -198,12 +198,12 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok((await resolveLinkSet(ORG, "github", "gh-rowan", "")) === null, "🔴 F2(b): …and gh-rowan was not linked");
 
   const denied = await confirmLink.execute({ decision: "deny" }, dmRowan);
-  ok(denied.decided === "denied" && denied.accounts.join() === "slack/U-ROWAN", "deny works on the directory path (the bootstrap's own account)");
+  ok(denied.decided === "denied" && denied.accounts.join() === `slack/${T1}/U-ROWAN`, "deny works on the directory path (the bootstrap's own account)");
   ok((await resolveLinkSet(ORG, "slack", "U-ROWAN", T1)) === null, "🔴 …and a deny writes NOTHING — the account still has no standing");
   ok(denied.note.includes("unlink_identity"), "…and names the verb that actually removes an account, so \"I said no\" and \"make it go away\" stay distinct acts");
 
   const boot = await confirmLink.execute({ decision: "confirm" }, dmRowan);
-  ok(boot.decided === "confirmed" && boot.accounts.join() === "slack/U-ROWAN", "F2(b): the bootstrap one-tap confirms ONLY the caller's own account");
+  ok(boot.decided === "confirmed" && boot.accounts.join() === `slack/${T1}/U-ROWAN`, "F2(b): the bootstrap one-tap confirms ONLY the caller's own account");
   ok((await resolveLinkSet(ORG, "slack", "U-ROWAN", T1))?.id === setId, "…and it now resolves to their link-set");
 
   const standing = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-ROWAN");
@@ -236,7 +236,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const row = (await listLinkSetsWithIds(ORG)).find((r) => r.set.id === setId)!.ids.find((r) => r.platform === "github")!;
   ok(
-    row.establishedBy === "challenge:dm-confirm:slack/U-ROWAN",
+    row.establishedBy === `challenge:dm-confirm:slack/${T1}/U-ROWAN`,
     "🔴 the DM tap is recorded as the degenerate CHALLENGE it is, naming the account that answered — the trust anchor stays uniform",
   );
 
@@ -252,7 +252,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const dmAttacker = ctxFor({ channelId: "D-EVIL", channelType: "im", principalId: "ATTACKER" });
 
   const attackerPending = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "ATTACKER");
-  ok(attackerPending.length === 1 && attackerPending[0]!.principal === "slack/ATTACKER", "🔴 F2: the attacker (bootstrap) sees ONLY their own account — the victim's is invisible");
+  ok(attackerPending.length === 1 && attackerPending[0]!.principal === `slack/${T1}/ATTACKER`, "🔴 F2: the attacker (bootstrap) sees ONLY their own account — the victim's is invisible");
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/VICTIM_GH"] }, dmAttacker), "none of those accounts", "🔴 F2: the attacker cannot confirm the victim's github account");
   ok((await resolveLinkSet(ORG, "github", "VICTIM_GH", "")) === null, "🔴 F2: the victim's account was NOT linked into the attacker's set");
 
@@ -465,7 +465,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     autoConfirm: "attested",
   });
   ok(planIsNoop(twin), "🔴 conflict: one account claimed by TWO directory records links to neither");
-  ok(twin.warnings.filter((w) => w.includes("slack/U-SHARED")).length === 2, "…warned for both records, so the duplicate is visible from either end");
+  ok(twin.warnings.filter((w) => w.includes(`slack/${T1}/U-SHARED`)).length === 2, "…warned for both records, so the duplicate is visible from either end");
   ok(twin.warnings.some((w) => w.includes("Fix the duplicate in the IdP")), "…and the warning says where the fix belongs");
 }
 
@@ -544,8 +544,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   ok(decided.linkSetId !== danSet, "🔴 F3: the challenge builds a FRESH set — it does NOT adopt the set the initiator was only suggested into");
   const freshSet = decided.linkSetId!;
-  const fresh = (await expandLinkSet(ORG, freshSet)).map((a) => `${a.platform}/${a.nativeId}`).sort();
-  assert.deepEqual(fresh, ["github/gh-dan", "slack/U-DAN"], "F3: the initiator and the challenge-proven account are linked TOGETHER in the fresh set");
+  const fresh = (await expandLinkSet(ORG, freshSet)).map((a) => (a.tenant ? `${a.platform}/${a.tenant}/${a.nativeId}` : `${a.platform}/${a.nativeId}`)).sort();
+  assert.deepEqual(fresh, ["github/gh-dan", `slack/${T1}/U-DAN`], "F3: the initiator and the challenge-proven account are linked TOGETHER in the fresh set");
   n++;
   ok((await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-DAN")).length === 0, "F3: from slack/U-DAN (now confirmed in the fresh set) there is nothing left to confirm there");
 

@@ -92,19 +92,22 @@ for (const k of KEYS) {
 }
 
 {
-  eq(parseScopeKey("user:slack/U0EXOWNER"), { kind: "principal", platform: "slack", id: "U0EXOWNER" }, "a `user:`-marked key is a PRINCIPAL — the marker is stripped, both halves recovered");
-  eq(parseScopeKey("slack/U0EXOWNER"), { kind: "tenant", platform: "slack", workspace: "U0EXOWNER" }, "🔴 …and the SAME person unmarked is indistinguishable from a tenant key: that is the reason the marker exists");
+  eq(parseScopeKey("user:discord/300000000000000104"), { kind: "principal", platform: "discord", id: "300000000000000104" }, "a `user:`-marked key is a PRINCIPAL — the marker is stripped, both halves recovered");
+  eq(parseScopeKey("discord/300000000000000104"), { kind: "tenant", platform: "discord", workspace: "300000000000000104" }, "🔴 …and the SAME person unmarked is indistinguishable from a tenant key: that is the reason the marker exists");
+  eq(parseScopeKey("user:slack/T1/U0EXOWNER"), { kind: "principal", platform: "slack", tenant: "T1", id: "U0EXOWNER" }, "a marked TENANT-SCOPED principal key recovers all three parts");
+  eq(parseScopeKey("slack/T1/U0EXOWNER"), { kind: "surface", platform: "slack", workspace: "T1", surface: "U0EXOWNER" }, "🔴 …and the same person unmarked reads as a SURFACE key — the marker, not the segment count, is what decides");
   eq(parseScopeKey("user:slack"), { kind: "malformed", raw: "user:slack", parts: ["slack"] }, "a marked key with no id is malformed, not a domain named 'slack'");
   eq(parseScopeKey("user:/U1"), { kind: "malformed", raw: "user:/U1", parts: ["", "U1"] }, "a marked key with no platform is malformed");
-  eq(parseScopeKey("user:slack/T1/C1"), { kind: "malformed", raw: "user:slack/T1/C1", parts: ["slack", "T1", "C1"] }, "a marked key with a third segment is malformed, never a surface");
-  ok(userScopeKey("slack", "U1") === "user:slack/U1", "userScopeKey is the ONE minter of the marked form");
-  ok(parseScopeKey(userScopeKey("discord", "300000000000000104")).kind === "principal", "mint ⇄ parse round-trips on a snowflake id (the digit-string case the qualification exists for)");
+  eq(parseScopeKey("user:discord/G1/U1"), { kind: "malformed", raw: "user:discord/G1/U1", parts: ["discord", "G1", "U1"] }, "a marked key with a third segment on a VENDOR-GLOBAL platform is malformed, never a surface");
+  eq(parseScopeKey("user:slack/U1"), { kind: "malformed", raw: "user:slack/U1", parts: ["slack", "U1"] }, "🔴 …and a PRE-RUNG two-segment slack key is malformed too — it addresses nobody the composer can mint, so reading it as a person would be worse than reading it as broken");
+  ok(userScopeKey("slack", "T1", "U1") === "user:slack/T1/U1", "userScopeKey is the ONE minter of the marked form");
+  ok(parseScopeKey(userScopeKey("discord", undefined, "300000000000000104")).kind === "principal", "mint ⇄ parse round-trips on a snowflake id (the digit-string case the qualification exists for)");
 
-  eq(whereFromScope("acme", "user:slack/U1"), { org: "acme", platform: "user", workspace: "slack/U1" }, "a principal scope audits as platform:'user' with the qualified principal key as the workspace");
-  ok(platformOfScopeKey("user:slack/U1") === "slack", "platformOfScopeKey answers with the person's real platform — the marker is what makes that a fact rather than a guess");
+  eq(whereFromScope("acme", "user:slack/T1/U1"), { org: "acme", platform: "user", workspace: "slack/T1/U1" }, "a principal scope audits as platform:'user' with the qualified principal key as the workspace");
+  ok(platformOfScopeKey("user:slack/T1/U1") === "slack", "platformOfScopeKey answers with the person's real platform — the marker is what makes that a fact rather than a guess");
   ok(platformOfScopeKey("payments") === undefined, "…while a bare domain name still answers undefined (unchanged)");
 
-  for (const k of ["user:slack/U1", "user:", "user:/", "user:a/b/c"]) {
+  for (const k of ["user:slack/T1/U1", "user:slack/U1", "user:", "user:/", "user:a/b/c"]) {
     ok(typeof parseScopeKey(k).kind === "string", `parseScopeKey(${JSON.stringify(k)}) returns a shape rather than throwing`);
   }
 }

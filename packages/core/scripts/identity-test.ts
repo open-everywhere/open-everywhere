@@ -1,6 +1,15 @@
 import { bindFrom, bindBridged, registerIdentityMapper, type BindableContext, type IdentityMapper } from "../agent/identity/binding.js";
 import { normalizePlatform } from "../agent/identity/platform.js";
-import { principalKey, isQualifiedPrincipalKey, parsePrincipalKey, rosterHasPrincipal, principalIdsOnPlatform } from "../agent/identity/principal-key.js";
+import {
+  principalKey,
+  tryPrincipalKey,
+  isQualifiedPrincipalKey,
+  parsePrincipalKey,
+  principalKeyReplacementHint,
+  rosterHasPrincipal,
+  principalIdsOnPlatform,
+  UNNAMED_TENANT,
+} from "../agent/identity/principal-key.js";
 import { readBindingBridge, stampBindingBridge, bridgedContext } from "../agent/identity/binding-bridge.js";
 import { resolvePartition } from "../agent/memory/partition.js";
 
@@ -111,38 +120,77 @@ ok(
 );
 
 {
-  ok(principalKey("slack", "U0EXOWNER") === "slack/U0EXOWNER", "principalKey composes <platform>/<id>");
-  ok(principalKey("discord", "300000000000000104") === "discord/300000000000000104", "…for a digit-string id too");
-  ok(principalKey("Slack", "U1") === "Slack/U1", "principalKey does NOT normalize — it is a join, and the validator is the gate");
+  ok(principalKey("slack", "T1", "U0EXOWNER") === "slack/T1/U0EXOWNER", "principalKey composes <platform>/<tenant>/<id> on a TENANT-SCOPED platform");
+  ok(principalKey("discord", undefined, "300000000000000104") === "discord/300000000000000104", "…and <platform>/<id> everywhere else");
+  ok(principalKey("Slack", "T1", "U1") === "Slack/U1", "principalKey does NOT normalize — an un-normalized platform token is not in the tenant-scoped set, so it composes the two-segment shape and the validator is the gate");
 
-  ok(isQualifiedPrincipalKey("slack/U1"), "a two-segment key validates");
+  for (const p of ["discord", "teams", "github", "linear", "notion"]) {
+    ok(principalKey(p, "IGNORED", "U1") === `${p}/U1`, `${p} keys are unchanged by the rung — the tenant argument is IGNORED, not defaulted`);
+  }
+
+  ok(principalKey("discord", "GUILD1", "U1") === principalKey("discord", "U1", "U1"), "🔴 a Discord channel binding and its DM binding compose the SAME key (the workspace fallback cannot split one human in two)");
+
+  ok(principalKey("slack", "T_ACME", "U1") !== principalKey("slack", "T_BETA", "U1"), "🔴 the SAME Slack member id in two workspaces composes two DIFFERENT keys (OPE-309: two humans, two keys)");
+
+  let threw = false;
+  try { principalKey("slack", undefined, "U1"); } catch { threw = true; }
+  ok(threw, "🔴 the composer THROWS for a tenant-scoped platform with no tenant — an invented tenant segment is an identity claim");
+  threw = false;
+  try { principalKey("slack", "   ", "U1"); } catch { threw = true; }
+  ok(threw, "…and for a whitespace-only tenant");
+  threw = false;
+  try { principalKey("slack", UNNAMED_TENANT, "U1"); } catch { threw = true; }
+  ok(threw, `🔴 …and for the "${UNNAMED_TENANT}" binding fallback, which is the string for "nobody said" and would be ONE aliasing bucket every unnamed delivery lands in`);
+  ok(tryPrincipalKey("slack", undefined, "U1") === undefined, "tryPrincipalKey is the same decision as a VALUE — for the matchers and label paths that must refuse rather than throw");
+
+  ok(isQualifiedPrincipalKey("discord/300000000000000104"), "a two-segment key validates on a vendor-global platform");
+  ok(isQualifiedPrincipalKey("slack/T1/U1"), "…and the three-segment key validates on a tenant-scoped one");
   ok(isQualifiedPrincipalKey("discord-gateway/1"), "a hyphenated platform token validates");
+  ok(!isQualifiedPrincipalKey("slack/U1"), "🔴 a PRE-RUNG two-segment slack key does NOT validate — the composer can no longer mint it, so the entry is inert and config load must say so");
+  ok(!isQualifiedPrincipalKey("discord/G1/U1"), "…and a three-segment key on a vendor-global platform does not validate either (the rung is per-platform, not optional)");
+  ok(!isQualifiedPrincipalKey(`slack/${UNNAMED_TENANT}/U1`), `…nor a key whose tenant rung is "${UNNAMED_TENANT}" — well-shaped, matches nobody, so it belongs on the loud side of the line`);
   ok(!isQualifiedPrincipalKey("U1"), "a BARE id does not validate (the pre-P0 form)");
   ok(!isQualifiedPrincipalKey("300000000000000104"), "…nor a bare digit string");
   ok(!isQualifiedPrincipalKey("slack/"), "…nor an empty id");
   ok(!isQualifiedPrincipalKey("/U1"), "…nor an empty platform");
-  ok(!isQualifiedPrincipalKey("slack/T1/U1"), "…nor a surface-shaped three-segment key — the id carries no slash");
   ok(!isQualifiedPrincipalKey("Slack/U1"), "…nor an upper-cased platform token (platforms are normalized lowercase everywhere)");
-  ok(!isQualifiedPrincipalKey("slack/U 1"), "…nor an id with whitespace");
+  ok(!isQualifiedPrincipalKey("slack/T1/U 1"), "…nor an id with whitespace");
   ok(!isQualifiedPrincipalKey(undefined), "…nor undefined");
 
   const parsed = parsePrincipalKey("discord/300000000000000104");
-  ok(parsed?.platform === "discord" && parsed.id === "300000000000000104", "parsePrincipalKey splits a valid key");
+  ok(parsed?.platform === "discord" && parsed.id === "300000000000000104" && parsed.tenant === undefined, "parsePrincipalKey splits a valid key, with NO tenant on a vendor-global platform");
+  const parsedTenant = parsePrincipalKey("slack/T1/U1");
+  ok(parsedTenant?.platform === "slack" && parsedTenant.tenant === "T1" && parsedTenant.id === "U1", "…and all three parts on a tenant-scoped one");
   ok(parsePrincipalKey("U1") === undefined, "parsePrincipalKey returns a VALUE (undefined) for a malformed key — display/filter paths skip, they never throw");
 
-  const roster = ["slack/U_ADMIN", "discord/300000000000000104"];
-  ok(rosterHasPrincipal(roster, "slack", "U_ADMIN"), "rosterHasPrincipal matches the qualified entry");
-  ok(rosterHasPrincipal(roster, "discord", "300000000000000104"), "…on either platform in one roster");
-  ok(!rosterHasPrincipal(roster, "teams", "300000000000000104"), "🔴 …and NOT the same digits on another platform — the collision this grammar exists to delete");
-  ok(!rosterHasPrincipal(roster, undefined, "U_ADMIN"), "rosterHasPrincipal FAILS CLOSED with no platform");
-  ok(!rosterHasPrincipal(roster, "slack", undefined), "…and with no id");
-  ok(!rosterHasPrincipal(undefined, "slack", "U_ADMIN"), "…and with no roster at all");
-  ok(!rosterHasPrincipal(["U_ADMIN"], "slack", "U_ADMIN"), "…and a BARE roster entry never matches (which is why config load refuses one)");
+  const roster = ["slack/T1/U_ADMIN", "discord/300000000000000104"];
+  ok(rosterHasPrincipal(roster, "slack", "T1", "U_ADMIN"), "rosterHasPrincipal matches the qualified entry");
+  ok(rosterHasPrincipal(roster, "discord", undefined, "300000000000000104"), "…on either platform in one roster");
+  ok(!rosterHasPrincipal(roster, "teams", undefined, "300000000000000104"), "🔴 …and NOT the same digits on another platform — the collision this grammar exists to delete");
+  ok(!rosterHasPrincipal(roster, "slack", "T_OTHER", "U_ADMIN"), "🔴 …and NOT the same member id from ANOTHER WORKSPACE (OPE-309 — the collision the rung exists to delete)");
+  ok(!rosterHasPrincipal(roster, "slack", undefined, "U_ADMIN"), "…and fails CLOSED, not throws, when the tenant cannot be named on a tenant-scoped platform");
+  ok(!rosterHasPrincipal(roster, undefined, "T1", "U_ADMIN"), "rosterHasPrincipal FAILS CLOSED with no platform");
+  ok(!rosterHasPrincipal(roster, "slack", "T1", undefined), "…and with no id");
+  ok(!rosterHasPrincipal(undefined, "slack", "T1", "U_ADMIN"), "…and with no roster at all");
+  ok(!rosterHasPrincipal(["U_ADMIN"], "slack", "T1", "U_ADMIN"), "…and a BARE roster entry never matches (which is why config load refuses one)");
+  ok(!rosterHasPrincipal(["slack/U_ADMIN"], "slack", "T1", "U_ADMIN"), "🔴 an UNQUALIFIED roster entry does not match a qualified lookup (a missed matcher costs standing…)");
+  ok(!rosterHasPrincipal(["slack/T1/U_ADMIN"], "discord", undefined, "T1"), "🔴 …and no lookup can be shaped to match a qualified entry from the other direction either");
 
-  ok(JSON.stringify(principalIdsOnPlatform(roster, "slack")) === JSON.stringify(["U_ADMIN"]), "principalIdsOnPlatform projects the roster down to one platform's bare ids");
-  ok(principalIdsOnPlatform(roster, "teams").length === 0, "…dropping every other platform's entries");
-  ok(principalIdsOnPlatform([...roster, "junk"], "slack").length === 1, "…and malformed entries");
-  ok(principalIdsOnPlatform(roster, undefined).length === 0, "…and yielding nothing at all with no platform (fail closed)");
+  ok(JSON.stringify(principalIdsOnPlatform(roster, "slack", "T1")) === JSON.stringify(["U_ADMIN"]), "principalIdsOnPlatform projects the roster down to one platform's bare ids");
+  ok(principalIdsOnPlatform(roster, "teams", undefined).length === 0, "…dropping every other platform's entries");
+  ok(principalIdsOnPlatform(roster, "slack", "T_OTHER").length === 0, "🔴 …and every other WORKSPACE's entries — the one function that legitimately UNQUALIFIES must not hand a foreign workspace's bare id to a membership comparison");
+  ok(principalIdsOnPlatform(roster, "slack", undefined).length === 0, "…and yielding nothing at all when the tenant cannot be named (fail closed)");
+  ok(principalIdsOnPlatform([...roster, "junk"], "slack", "T1").length === 1, "…and malformed entries");
+  ok(principalIdsOnPlatform(roster, undefined, "T1").length === 0, "…and yielding nothing at all with no platform (fail closed)");
+
+  ok(
+    principalKeyReplacementHint("slack/U1", "T_ACME").includes(`"slack/T_ACME/U1"`),
+    "🔴 the config-load hint computes the EXACT three-segment replacement when the deployment names one workspace",
+  );
+  ok(
+    principalKeyReplacementHint("slack/U1", undefined).includes(`"slack/<tenant-id>/U1"`),
+    "…and the shape plus where to find the segment when it does not — never a guessed workspace",
+  );
 }
 
 console.log(`✓ identity: ${passed} assertions passed`);

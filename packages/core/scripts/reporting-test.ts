@@ -62,9 +62,9 @@ registerConfig({
   pluginRegistry: {},
   skillContent: {},
   loadDomains: () => [
-    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/U_ENG_ADMIN"] }),
+    defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
     defineDomain({ name: "other", channels: ["slack/T1/C_OTHER"] }),
-    defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG_ADMIN"] }),
+    defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN"] }),
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -352,7 +352,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   ok(orgReport.domain === undefined, "spend_report: org scope carries no domain field");
 
   const { getOperationalStore: getOpStore } = await import("../agent/operational/provider.js");
-  const ALLOWANCE = "user:slack/U_REPORTED";
+  const ALLOWANCE = "user:slack/T1/U_REPORTED";
   await getOpStore().setSpendLimit("default", ALLOWANCE, "user", { monthlyUsd: 9 }, { reason: "onboarding", setBy: "U_ADMIN" });
   const orgWithCaps = await execTool(spendReportTool)({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
   const seen = (orgWithCaps.userCaps ?? []).find((r) => r.principal === ALLOWANCE);

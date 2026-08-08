@@ -24,8 +24,8 @@ function ok(cond: boolean, label: string): void {
 }
 
 const DOMAINS: readonly Domain[] = [
-  defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG_ADMIN"] }),
-  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/U_ENG_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG_ADMIN"] }),
+  defineDomain({ name: "eng", channels: ["slack/T1/C_ENG"], admins: ["slack/T1/U_ENG_ADMIN"] }),
 ];
 
 ok(wakeTrustFor({ authorIsBot: true, authorId: "B1", surfaceInternal: true, authorIsAdmin: true }) === "relay", "bot author → relay, even a rostered one (machine-authored never speaks with standing)");

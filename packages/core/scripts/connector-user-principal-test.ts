@@ -33,7 +33,7 @@ registerConfig({
   ],
   loadBindings: () => [
     defineBinding({ bundle: "svc", scope: { level: "org" } }),
-    defineBinding({ bundle: "personal", scope: { level: "principal", principal: "slack/U_caller" } }),
+    defineBinding({ bundle: "personal", scope: { level: "principal", principal: "slack/T_TEAM/U_caller" } }),
   ],
   pluginRegistry: {},
   skillContent: {},
@@ -76,7 +76,7 @@ function slackAuth(attrs: Record<string, string>) {
 const dmAuth = slackAuth({ channel_id: "D_DM", channel_type: "im", user_id: "U_caller" });
 const channelAuth = slackAuth({ channel_id: "C_CHAN", channel_type: "channel", user_id: "U_caller" });
 
-const RAW = rawVaultSubject(deploymentOrg(), "slack", "U_caller");
+const RAW = rawVaultSubject(deploymentOrg(), "slack", "T_TEAM", "U_caller");
 
 interface MintCall { connector: string; id: string }
 function makeMinter(mode: "ok" | "auth-required") {
@@ -158,11 +158,11 @@ delete process.env[OE_CONNECTOR_USER_PRINCIPAL_ENV];
   ok(r.token === `USER-TOKEN-${RAW}`, "DM → mints a per-user token via the injected minter");
   ok(m.calls.length === 1 && m.calls[0].connector === "oauth/notion-user" && m.calls[0].id === RAW, "mint used the user-oauth vercelConnector + subject id = the caller's QUALIFIED subject");
   ok(m.calls[0].id !== "U_caller", "🔴 the vault subject is NOT the bare native id — the spelling OPE-286 deleted");
-  ok(m.calls[0].id.startsWith("p:") && m.calls[0].id.endsWith("/slack/U_caller"), "the raw subject carries its own prefix + the platform from the BINDING (never sniffed from the id's shape)");
-  ok(rawVaultSubject(deploymentOrg(), "slack", "U_caller") !== rawVaultSubject("other-org", "slack", "U_caller"), "🔴 same native id, different org → different vault subject (no cross-tenant alias)");
-  ok(rawVaultSubject(deploymentOrg(), "slack", "U_caller") !== rawVaultSubject(deploymentOrg(), "discord", "U_caller"), "🔴 same native id, different platform → different vault subject (no cross-vendor alias)");
+  ok(m.calls[0].id.startsWith("p:") && m.calls[0].id.endsWith("/slack/T_TEAM/U_caller"), "the raw subject carries its own prefix + the platform from the BINDING (never sniffed from the id's shape)");
+  ok(rawVaultSubject(deploymentOrg(), "slack", "T_TEAM", "U_caller") !== rawVaultSubject("other-org", "slack", "T_TEAM", "U_caller"), "🔴 same native id, different org → different vault subject (no cross-tenant alias)");
+  ok(rawVaultSubject(deploymentOrg(), "slack", "T_TEAM", "U_caller") !== rawVaultSubject(deploymentOrg(), "discord", undefined, "U_caller"), "🔴 same native id, different platform → different vault subject (no cross-vendor alias)");
   ok(!m.calls[0].id.startsWith("ls:"), "🔴 a raw subject can never take the SHARED (ls:) shape — the two producers use disjoint prefixes");
-  ok(!rawVaultSubject(deploymentOrg(), "slack", "ls:evil/x").startsWith("ls:"), "🔴 a native id CRAFTED as 'ls:evil/x' still composes a raw subject — it cannot be mistaken for a link-set's shared row");
+  ok(!rawVaultSubject(deploymentOrg(), "slack", "T_TEAM", "ls:evil/x").startsWith("ls:"), "🔴 a native id CRAFTED as 'ls:evil/x' still composes a raw subject — it cannot be mistaken for a link-set's shared row");
   ok(!sharedVaultSubject(deploymentOrg(), "S_evil").startsWith("p:"), "🔴 …and a shared subject can never take the raw shape either (disjoint in both directions)");
 }
 

@@ -205,7 +205,7 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
     const config: Caps =
       l.level === "user"
         ? parsedUser?.kind === "principal"
-          ? resolveUserCaps(parsedUser.id, parsedUser.platform)
+          ? resolveUserCaps(parsedUser.id, parsedUser.platform, parsedUser.tenant)
           : {}
         : l.level === "workspace"
           ? resolveCaps(l.scopeKey, "")

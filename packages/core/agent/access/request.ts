@@ -3,7 +3,7 @@ import { actingPrincipalId, bindFrom, type BindableContext, type Visibility, typ
 import { resolveAccess, type EffectiveAccess, type ResolveRequest, type SessionMode } from "./resolver.js";
 import { getConfig } from "./config.js";
 import { groupsForPrincipal } from "../identity/groups.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 
 export type { Visibility, Trust } from "../identity/binding.js";
 
@@ -38,7 +38,7 @@ export function buildResolveRequest(ctx: BindableContext): ResolveRequest {
     channel: b.domainSurface ?? p.surface,
     domains: getConfig().domainsForSurface({ workspaceKey: p.workspaceKey, surface: b.domainSurface ?? p.surface }),
     principalId: acting,
-    groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : principalKey(p.platform, acting)),
+    groups: groupsForPrincipal(getConfig().loadGroups?.() ?? [], acting === undefined ? undefined : tryPrincipalKey(p.platform, p.workspace, acting)),
   };
 }
 

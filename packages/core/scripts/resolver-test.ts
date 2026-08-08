@@ -119,7 +119,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const bindings: Binding[] = [
     { bundle: "org", scope: { level: "org" } },
     { bundle: "ch", scope: { level: "surface", surface: "slack/T1/C1" } },
-    { bundle: "personal", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "personal", scope: { level: "principal", principal: "slack/T1/U1" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "C1", principalId: "U1" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -129,7 +129,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   const none: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "C1", principalId: "U2" };
   ok(resolveAccess(none, bundles, bindings).repos.length === 0, "DM with no personal bundle = empty surface");
   const foreign: ResolveRequest = { mode: "dm", platform: "discord", workspace: "G1", channel: "D1", principalId: "U1" };
-  ok(resolveAccess(foreign, bundles, bindings).repos.length === 0, "🔴 a DM from the same id on ANOTHER platform resolves NOTHING — the binding names slack/U1, not the bare id");
+  ok(resolveAccess(foreign, bundles, bindings).repos.length === 0, "🔴 a DM from the same id on ANOTHER platform resolves NOTHING — the binding names slack/T1/U1, not the bare id");
 }
 
 {
@@ -149,12 +149,12 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
 
   const both: Binding[] = [
     { bundle: "human", scope: { level: "principal", principal: "linkSet:set-rowan" } },
-    { bundle: "exact", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "exact", scope: { level: "principal", principal: "slack/T1/U1" } },
   ];
   const tie = resolveAccess({ ...base, principalId: "U1", principalLinkSets: ["set-rowan"] }, bundles, both);
   ok(tie.connections.length === 1 && tie.connections[0]!.secretRef === "EXACT_KEY", "🔴 narrowest-wins: an EXACT principal binding beats a LINK-SET principal binding for the same connection id");
   ok(tie.repos.includes("acme/human") && tie.repos.includes("acme/exact"), "…while additive fields (repos) UNION across the exact and link-set principal bindings");
-  ok(tie.instructionStack.length === 2 && tie.instructionStack[0]!.source === "principal:linkSet:set-rowan" && tie.instructionStack[1]!.source === "principal:slack/U1", "instructions order link-set → exact (the exact/personal layer outranks)");
+  ok(tie.instructionStack.length === 2 && tie.instructionStack[0]!.source === "principal:linkSet:set-rowan" && tie.instructionStack[1]!.source === "principal:slack/T1/U1", "instructions order link-set → exact (the exact/personal layer outranks)");
 
   const other = resolveAccess({ ...base, principalId: "U2", principalLinkSets: ["set-rowan"] }, bundles, both);
   ok(other.connections.length === 1 && other.connections[0]!.secretRef === "HUMAN_KEY", "a set member with no exact binding gets the shared link-set credential");
@@ -240,7 +240,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   ];
   const bindings: Binding[] = [
     { bundle: "svc", scope: { level: "org" } },
-    { bundle: "mine", scope: { level: "principal", principal: "slack/U_me" } },
+    { bundle: "mine", scope: { level: "principal", principal: "slack/T1/U_me" } },
   ];
   const dm: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U_me" };
   const a = resolveAccess(dm, bundles, bindings);
@@ -395,7 +395,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     { bundle: "basket", scope: { level: "domain", domain: "payments" } },
     { bundle: "basket", scope: { level: "surface", surface: "slack/T1/C1" } },
     { bundle: "basket", scope: { level: "surface", surface: "teams/tid/19-x-thread.tacv2" } },
-    { bundle: "basket", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "basket", scope: { level: "principal", principal: "slack/T1/U1" } },
   ];
   assertBindingsValid(good, bundles);
   ok(true, "well-formed bindings at every level validate (org/tenant/domain/surface/principal)");
@@ -453,17 +453,24 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
   );
   throwsWith(
     () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "U1" } }], bundles),
-    "PLATFORM-QUALIFIED principal key",
+    "qualified principal key",
     "a BARE principal id throws at config load (it names no namespace, so it can never match)",
   );
+  assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "slack/T1/U1" } }], bundles);
+  ok(true, "🔴 a THREE-segment slack principal key is now the valid spelling of a person (OPE-309)");
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "slack/T1/U1" } }], bundles),
-    "PLATFORM-QUALIFIED principal key",
-    "a surface-shaped (three-segment) principal key throws — a principal key is exactly platform + id",
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "slack/U1" } }], bundles),
+    "qualified principal key",
+    "🔴 a PRE-RUNG two-segment slack principal key throws — on a tenant-scoped platform a key without its workspace names nobody the composer can mint",
+  );
+  throwsWith(
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "discord/G1/U1" } }], bundles),
+    "qualified principal key",
+    "…and a three-segment key on a VENDOR-GLOBAL platform still throws — the rung is per-platform, never optional",
   );
   throwsWith(
     () => assertBindingsValid([{ bundle: "basket", scope: { level: "principal", principal: "Slack/U1" } }], bundles),
-    "PLATFORM-QUALIFIED principal key",
+    "qualified principal key",
     "an upper-cased platform token throws — platform strings are normalized lowercase everywhere, so \"Slack/U1\" would never match a live request",
   );
   throwsWith(
@@ -502,7 +509,7 @@ const chan = (workspace: string, channel: string, domains?: string[]): ResolveRe
     "same for a surface binding — the key carries its platform",
   );
 
-  const personal: Binding[] = [{ bundle: "unified", scope: { level: "principal", principal: "slack/U1" } }];
+  const personal: Binding[] = [{ bundle: "unified", scope: { level: "principal", principal: "slack/T1/U1" } }];
   ok(resolveAccess(chan("T1", "C1"), bundles, personal).repos.length === 0, "a principal binding grants nothing in a channel");
   ok(
     resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D1", principalId: "U1" }, bundles, personal).repos.length === 1,

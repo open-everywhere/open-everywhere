@@ -50,19 +50,19 @@ function throwsWith(fn: () => void, fragment: string, label: string): void {
 }
 
 {
-  ok(isLinkSetRef("linkSet:abc") && !isLinkSetRef("slack/U1"), "isLinkSetRef tests the prefix; a principal key is not a ref");
+  ok(isLinkSetRef("linkSet:abc") && !isLinkSetRef("slack/T1/U1"), "isLinkSetRef tests the prefix; a principal key is not a ref");
   ok(parseLinkSetRef("linkSet:9f3c") === "9f3c", "parseLinkSetRef returns the id");
   ok(parseLinkSetRef("linkSet:") === undefined, "an empty id is not a well-formed ref");
   ok(parseLinkSetRef("linkSet:a/b") === undefined, "🔴 a '/' in the id is refused — that is what keeps a ref disjoint from a principal key");
-  ok(parseLinkSetRef("slack/U1") === undefined && parseLinkSetRef("linkset:x") === undefined, "a principal key and a wrong-case prefix are not refs");
+  ok(parseLinkSetRef("slack/T1/U1") === undefined && parseLinkSetRef("linkset:x") === undefined, "a principal key and a wrong-case prefix are not refs");
   ok(isValidLinkSetRef("linkSet:set-a") && !isValidLinkSetRef("nope"), "isValidLinkSetRef is the config-load test");
 }
 
 {
-  assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/U1"] })]);
+  assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/T1/U1"] })]);
   ok(true, "assertDomainsValid accepts an exact `platform/<id>` admin entry");
-  throwsWith(() => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/U1", "linkSet:set-a"] })]), "exact-id", "🔴 a `linkSet:<id>` admin entry throws loud (admin is exact-id only, no runtime link-set read)");
-  throwsWith(() => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["U1"] })]), "PLATFORM-QUALIFIED", "a BARE admin entry throws loud");
+  throwsWith(() => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/T1/U1", "linkSet:set-a"] })]), "exact-id", "🔴 a `linkSet:<id>` admin entry throws loud (admin is exact-id only, no runtime link-set read)");
+  throwsWith(() => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["U1"] })]), "not a well-formed principal key", "a BARE admin entry throws loud");
 
   const bundles: Bundle[] = [{ name: "b", repos: ["acme/x"] }];
   assertBindingsValid([{ bundle: "b", scope: { level: "principal", principal: "linkSet:set-a" } }], bundles);
@@ -74,13 +74,13 @@ function throwsWith(fn: () => void, fragment: string, label: string): void {
 {
   const bindings: Binding[] = [
     { bundle: "b", scope: { level: "principal", principal: "linkSet:set-binding" } },
-    { bundle: "b", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "b", scope: { level: "principal", principal: "slack/T1/U1" } },
   ];
-  const groups: Group[] = [{ name: "g", members: ["slack/U1", { linkSet: "set-group" }] }];
+  const groups: Group[] = [{ name: "g", members: ["slack/T1/U1", { linkSet: "set-group" }] }];
   const refd = accessReferencedLinkSets({ bindings, groups });
   assert.deepEqual([...refd].sort(), ["set-binding", "set-group"]);
   passed++;
-  ok(!refd.has("slack/U1"), "an exact principal binding / principal-key group member is NOT an access-referenced link-set (only link-set ids are the widening vector)");
+  ok(!refd.has("slack/T1/U1"), "an exact principal binding / principal-key group member is NOT an access-referenced link-set (only link-set ids are the widening vector)");
 }
 
 const ORG = "default";
@@ -115,12 +115,12 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
 
 {
   const EXACT_DOMAINS: Domain[] = [
-    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U1"] }),
+    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U1"] }),
     defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["discord/D1"] }),
   ];
   assertDomainsValid(EXACT_DOMAINS);
   ok(roleForBinding(bind({ principalId: "U1" }), EXACT_DOMAINS).isOrgAdmin, "an exact `platform/<id>` org admin is an admin (roleForBinding)");
-  ok(adminControlRoles("U1", EXACT_DOMAINS, "slack").join(",") === "admin", "…and the cross-domain scan (adminControlRoles) agrees");
+  ok(adminControlRoles("U1", EXACT_DOMAINS, "slack", "T1").join(",") === "admin", "…and the cross-domain scan (adminControlRoles) agrees");
   ok(wakeAuthorIsAdmin("U1", "slack/T1/C_ANY", EXACT_DOMAINS), "…and the wake pipeline matcher agrees");
   ok(!roleForBinding(bind({ principalId: "U_stranger" }), EXACT_DOMAINS).isOrgAdmin, "a non-listed id is not an admin");
   ok(!roleForBinding(bind({ platform: "discord", principalId: "D1", surface: "C_TXN" }), EXACT_DOMAINS).isOrgAdmin, "🔴 admin is per-ACCOUNT: the human's OTHER confirmed account does not inherit the org-admin entry (no link-set widening)");
@@ -156,7 +156,7 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
   const bindings: Binding[] = [{ bundle: "team", scope: { level: "group", group: "payments" } }];
   const dmGroups = async (platform: string, id: string): Promise<ResolveRequest> => {
     const sets = await callerLinkSets(ORG, platform, id, tenantOf(platform));
-    return { mode: "dm", platform, workspace: "W", channel: "D", principalId: id, groups: groupsForPrincipal(groups, principalKey(platform, id), sets) };
+    return { mode: "dm", platform, workspace: "W", channel: "D", principalId: id, groups: groupsForPrincipal(groups, principalKey(platform, tenantOf(platform), id), sets) };
   };
   ok(resolveAccess(await dmGroups("slack", "U1"), bundles, bindings).repos.includes("acme/team"), "a { linkSet } group member RECEIVES the group bundle in their DM (F4 live)");
   ok(resolveAccess(await dmGroups("teams", "T1"), bundles, bindings).repos.length === 0, "a suggested member gets nothing from the group (confirmed-only)");

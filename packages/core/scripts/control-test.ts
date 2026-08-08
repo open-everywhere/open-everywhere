@@ -177,7 +177,7 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   ok("OPE-274: spendView carries a userCaps section keyed by org", typeof spendCleared.userCaps === "object" && spendCleared.userCaps !== null);
   ok("OPE-274: an org with nothing declared reports an empty list, not an absent key (a readable 'no', not an absence to interpret)", Array.isArray(spendCleared.userCaps[CTL_ORG]) && spendCleared.userCaps[CTL_ORG].length === 0);
 
-  const ALLOWANCE_SCOPE = "user:slack/U_CTL_PERSON";
+  const ALLOWANCE_SCOPE = "user:slack/T1/U_CTL_PERSON";
   await opStore.setSpendLimit(CTL_ORG, ALLOWANCE_SCOPE, "user", { monthlyUsd: 12.5 }, { reason: "sprint headroom", setBy: "tester" });
   const withUser = await spendView(period);
   const allowance = (withUser.userCaps[CTL_ORG] ?? []).find((r) => r.principal === ALLOWANCE_SCOPE);

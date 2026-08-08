@@ -4,7 +4,7 @@ import type { UnifiedWakeOrigin } from "./unified-window.js";
 import type { UnifiedReplyDeps } from "./unified-reply.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { expandLinkSet } from "../identity/link-store.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import type { LinkedAccount } from "../identity/link-store.js";
 
 export interface TargetResolveBag {
@@ -81,16 +81,17 @@ export async function notifyLinkSetMembers(
 ): Promise<number> {
   let delivered = 0;
   try {
-    const skip = new Set((opts?.except ?? []).map((a) => principalKey(a.platform, a.nativeId)));
+    const skip = new Set((opts?.except ?? []).map((a) => tryPrincipalKey(a.platform, a.tenant, a.nativeId)).filter((k): k is string => k !== undefined));
     const members = await expandLinkSet(org, linkSetId);
     for (const m of members) {
-      if (skip.has(principalKey(m.platform, m.nativeId))) continue;
+      const key = tryPrincipalKey(m.platform, m.tenant, m.nativeId);
+      if (key !== undefined && skip.has(key)) continue;
       if (!canDeliverDirectMessage(m.platform)) continue;
       try {
         await dispatchDirectMessage(m.platform, { principalId: m.nativeId, text });
         delivered++;
       } catch (err) {
-        console.log(`[open-everywhere:identity] link-set ${linkSetId}: could not notify ${principalKey(m.platform, m.nativeId)}: ${String(err)}`);
+        console.log(`[open-everywhere:identity] link-set ${linkSetId}: could not notify ${key ?? `${m.platform} account \"${m.nativeId}\"`}: ${String(err)}`);
       }
     }
   } catch (err) {

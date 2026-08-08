@@ -3,6 +3,7 @@ import { readBindingBridge, bridgedContext, type BridgedIdentity } from "./bindi
 import { normalizePlatform, platformFromKind } from "./platform.js";
 import { admitProviderRegistration } from "../access/provider-selection.js";
 import { isVouchedInternal } from "./trust.js";
+import { UNNAMED_TENANT } from "./principal-key.js";
 import { bareTokenFromEveContext, classifySessionId, parseWindowToken, sessionGrantKeyFromToken } from "../channels/window-key.js";
 import { sourcesForWindow, decodeSources } from "../channels/window-sources.js";
 import { routineGrantKeyStamped } from "../routines/routine.js";
@@ -278,7 +279,7 @@ export function bindFrom(ctx: BindableContext): SurfaceBinding {
   }
   const local = bindLocal(ctx);
   const mode = raw.mode ?? local.mode ?? "channel";
-  const workspace = seg(raw.workspace ?? local.workspace, "dev");
+  const workspace = seg(raw.workspace ?? local.workspace, UNNAMED_TENANT);
   const surface = seg(raw.surface ?? local.surface, "default");
   const vouched = isVouchedInternal(`${platform}/${workspace}`, `${platform}/${workspace}/${surface}`)
     ? ("internal" as const)

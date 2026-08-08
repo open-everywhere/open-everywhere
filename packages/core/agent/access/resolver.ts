@@ -1,6 +1,6 @@
 import type { AwsRoleGrant, Binding, Bundle, Connection, HttpMethod, Scope } from "./bundle.js";
 import type { OperatorApprover } from "./approver-chain.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
 import type { PluginRegistry } from "../plugins/types.js";
 import { expandProviderGrant, type Provider, type ResolvedConnectorCredential } from "./providers.js";
@@ -111,7 +111,7 @@ export function resolveAccess(
   const byName = new Map(bundles.map((b) => [b.name, b]));
 
   const callerKey =
-    req.principalId !== undefined ? principalKey(req.platform, req.principalId) : undefined;
+    req.principalId !== undefined ? tryPrincipalKey(req.platform, req.workspace, req.principalId) : undefined;
 
   const callerGroups = new Set(req.groups ?? []);
 

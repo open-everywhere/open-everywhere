@@ -65,7 +65,7 @@ const codeBindings: Binding[] = [
 ];
 
 const scope = { level: "surface", surface: "slack/T1/C1" } as const;
-const principalScope = { level: "principal", principal: "slack/U_ME" } as const;
+const principalScope = { level: "principal", principal: "slack/T1/U_ME" } as const;
 const groupScope = { level: "group", group: "payments-team" } as const;
 
 function ctxFor(workspace: string, channel: string): PlanContext {
@@ -385,10 +385,10 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
 {
   const delta: AccessDelta = { kind: "grant-connector", scope: principalScope, connector: "linear" };
   const r1 = applyDelta(emptyGrantsFile(), delta);
-  ok(r1.changed && r1.bundleName === "grants:principal:slack/U_ME", "apply(principal): lands in the level-namespaced overlay bundle");
-  ok(overlayBundleName(principalScope) === "grants:principal:slack/U_ME", "apply(principal): overlayBundleName tags the level");
+  ok(r1.changed && r1.bundleName === "grants:principal:slack/T1/U_ME", "apply(principal): lands in the level-namespaced overlay bundle");
+  ok(overlayBundleName(principalScope) === "grants:principal:slack/T1/U_ME", "apply(principal): overlayBundleName tags the level");
   const binding = r1.grants.bindings[0];
-  ok(binding.scope.level === "principal" && binding.scope.principal === "slack/U_ME" && binding.scope.surface === undefined, "apply(principal): writes a principal-level binding and no other address field");
+  ok(binding.scope.level === "principal" && binding.scope.principal === "slack/T1/U_ME" && binding.scope.surface === undefined, "apply(principal): writes a principal-level binding and no other address field");
   ok(stringifyGrants(applyDelta(emptyGrantsFile(), delta).grants) === stringifyGrants(r1.grants), "apply(principal): deterministic bytes");
   const r2 = applyDelta(r1.grants, delta);
   ok(!r2.changed && stringifyGrants(r2.grants) === stringifyGrants(r1.grants), "apply(principal): re-apply is a byte-identical no-op");
@@ -412,8 +412,8 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
 }
 
 {
-  const small: Group = { name: "payments-team", members: ["slack/U_ME", "slack/U_TWO"] };
-  const broad: Group = { name: "eng", members: [{ linkSet: "ls-1" }, "slack/U_ME"] };
+  const small: Group = { name: "payments-team", members: ["slack/T1/U_ME", "slack/T1/U_TWO"] };
+  const broad: Group = { name: "eng", members: [{ linkSet: "ls-1" }, "slack/T1/U_ME"] };
 
   const delta: AccessDelta = { kind: "grant-connector", scope: groupScope, connector: "linear" };
   const r1 = applyDelta(emptyGrantsFile(), delta);
@@ -429,19 +429,19 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   assertBindingsValid(bindings, bundles, [small]);
   const groupsOf = (key: string): readonly string[] => groupsForPrincipal([small], key);
   ok(
-    resolveAccess({ ...meDm, groups: groupsOf("slack/U_ME") }, bundles, bindings).connectors.includes("linear"),
+    resolveAccess({ ...meDm, groups: groupsOf("slack/T1/U_ME") }, bundles, bindings).connectors.includes("linear"),
     "apply(group): merged config resolves the connector in a MEMBER's DM",
   );
   ok(
-    !resolveAccess({ ...otherDm, groups: groupsOf("slack/U_YOU") }, bundles, bindings).connectors.includes("linear"),
+    !resolveAccess({ ...otherDm, groups: groupsOf("slack/T1/U_YOU") }, bundles, bindings).connectors.includes("linear"),
     "apply(group): a non-member's DM is unchanged",
   );
   ok(
-    !resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1", groups: groupsOf("slack/U_ME") }, bundles, bindings).connectors.includes("linear"),
+    !resolveAccess({ mode: "channel", platform: "slack", workspace: "T1", channel: "C1", groups: groupsOf("slack/T1/U_ME") }, bundles, bindings).connectors.includes("linear"),
     "apply(group): a group grants PEOPLE, not rooms — no channel resolves it",
   );
   throwsWith(
-    () => assertBindingsValid(bindings, bundles, [{ name: "someone-else", members: ["slack/U_ME"] }]),
+    () => assertBindingsValid(bindings, bundles, [{ name: "someone-else", members: ["slack/T1/U_ME"] }]),
     "is not a declared person-group",
     "apply(group): merged re-validation refuses a binding onto an undeclared group (the 3-arg call site)",
   );
@@ -476,28 +476,28 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   ok(after.grants.bindings.filter((b) => b.scope.level === "principal").length === 1, "invariant(levels): exactly one new binding, at the delta's level");
 
   const multi: GrantsFile = {
-    bundles: [{ name: "grants:principal:slack/U_ME", connectors: ["linear"] }],
+    bundles: [{ name: "grants:principal:slack/T1/U_ME", connectors: ["linear"] }],
     bindings: [
-      { bundle: "grants:principal:slack/U_ME", scope: { level: "principal", principal: "slack/U_ME" } },
-      { bundle: "grants:principal:slack/U_ME", scope: { level: "principal", principal: "slack/U_OTHER" } },
+      { bundle: "grants:principal:slack/T1/U_ME", scope: { level: "principal", principal: "slack/T1/U_ME" } },
+      { bundle: "grants:principal:slack/T1/U_ME", scope: { level: "principal", principal: "slack/T1/U_OTHER" } },
     ],
   };
   const cloned = applyDelta(multi, { kind: "grant-connector", scope: principalScope, connector: "asana" });
-  ok(cloned.bundleName === "grants:principal:slack/U_ME#2", "invariant(levels): a multi-bound principal bundle is cloned, never edited");
+  ok(cloned.bundleName === "grants:principal:slack/T1/U_ME#2", "invariant(levels): a multi-bound principal bundle is cloned, never edited");
   ok(JSON.stringify(cloned.grants.bundles[0]) === JSON.stringify(multi.bundles[0]), "invariant(levels): …and the multi-bound bundle comes back byte-identical");
 
   const crossLevel: GrantsFile = {
     bundles: [{ name: "grants:group:eng", connectors: ["linear"] }],
     bindings: [{ bundle: "grants:group:eng", scope: { level: "group", group: "eng" } }],
   };
-  const r = applyDelta(crossLevel, { kind: "grant-connector", scope: { level: "principal", principal: "slack/eng" }, connector: "linear" });
-  ok(r.changed && r.bundleName === "grants:principal:slack/eng", "invariant(levels): a same-ish address at another level gets its OWN bundle (level+address equality)");
+  const r = applyDelta(crossLevel, { kind: "grant-connector", scope: { level: "principal", principal: "slack/T1/eng" }, connector: "linear" });
+  ok(r.changed && r.bundleName === "grants:principal:slack/T1/eng", "invariant(levels): a same-ish address at another level gets its OWN bundle (level+address equality)");
 }
 
 {
   const names = [
     overlayBundleName({ level: "surface", surface: "slack/T1/C1" }),
-    overlayBundleName({ level: "principal", principal: "slack/U1" }),
+    overlayBundleName({ level: "principal", principal: "slack/T1/U1" }),
     overlayBundleName({ level: "group", group: "eng" }),
     overlayBundleName({ level: "group", group: "principal:slack" }),
     overlayBundleName({ level: "principal", principal: "group/eng" }),
@@ -505,7 +505,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   ok(new Set(names).size === names.length, "namespace: the level-tagged overlay bundle names are pairwise distinct, including the adversarial spellings");
   throwsWith(
     () => applyDelta(emptyGrantsFile(), { kind: "grant-connector", scope: { level: "principal", principal: "principal:a/b/c" }, connector: "x" }),
-    "PLATFORM-QUALIFIED principal key",
+    "well-formed principal key",
     "namespace: a two-slash 'principal' address is refused, so it can never spell a surface-key name",
   );
   throwsWith(
@@ -518,7 +518,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
 {
   throwsWith(
     () => applyDelta(emptyGrantsFile(), { kind: "grant-connector", scope: { level: "principal", principal: "U_ME" }, connector: "x" }),
-    "PLATFORM-QUALIFIED principal key",
+    "well-formed principal key",
     "address(principal): a BARE member id is refused (it could never match the resolver's DM branch)",
   );
   throwsWith(
@@ -538,8 +538,8 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   );
 
   throwsWith(
-    () => parseGrantsFile({ bundles: [], bindings: [{ bundle: "grants:principal:slack/U1", scope: { level: "principal", principal: "U1" } }] }),
-    "PLATFORM-QUALIFIED principal key",
+    () => parseGrantsFile({ bundles: [], bindings: [{ bundle: "grants:principal:slack/T1/U1", scope: { level: "principal", principal: "U1" } }] }),
+    "well-formed principal key",
     "parse: a bare principal address in the overlay refuses",
   );
   throwsWith(
@@ -568,12 +568,12 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
   const all: GrantsFile = {
     bundles: [
       { name: "grants:group:eng", connectors: ["linear"] },
-      { name: "grants:principal:slack/U_ME", connectors: ["asana", "linear"] },
+      { name: "grants:principal:slack/T1/U_ME", connectors: ["asana", "linear"] },
       { name: "grants:slack/T1/C1", connectors: ["notion"] },
     ],
     bindings: [
       { bundle: "grants:group:eng", scope: { level: "group", group: "eng" }, allowBroad: "eng shares the read-only key" },
-      { bundle: "grants:principal:slack/U_ME", scope: { level: "principal", principal: "slack/U_ME" } },
+      { bundle: "grants:principal:slack/T1/U_ME", scope: { level: "principal", principal: "slack/T1/U_ME" } },
       { bundle: "grants:slack/T1/C1", scope: { level: "surface", surface: "slack/T1/C1" } },
     ],
   };
@@ -587,7 +587,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
 }
 
 {
-  const small: Group = { name: "payments-team", members: ["slack/U_ME", "slack/U_TWO"] };
+  const small: Group = { name: "payments-team", members: ["slack/T1/U_ME", "slack/T1/U_TWO"] };
   const broad: Group = { name: "eng", members: [{ linkSet: "ls-1" }] };
   const groupCtx = (name: string, groups: readonly Group[]): PlanContext => ({
     scope: { level: "group", group: name },
@@ -629,12 +629,12 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
     bundles: codeBundles,
   };
   const d = planAccessDelta({ kind: "grant-connector", connector: "linear" }, dmCtx);
-  ok(d.scope.level === "principal" && d.scope.principal === "slack/U_ME", "plan(principal): the delta targets the caller's own principal key");
-  ok(grantSentence(d) === 'Grant connector "linear" to the personal DM universe of slack/U_ME', "plan(principal): the grant sentence names the personal universe");
-  ok(renderDelta(d).join("\n").includes("grant-connector: linear → principal:slack/U_ME"), "plan(principal): the machine delta is level-tagged");
+  ok(d.scope.level === "principal" && d.scope.principal === "slack/T1/U_ME", "plan(principal): the delta targets the caller's own principal key");
+  ok(grantSentence(d) === 'Grant connector "linear" to the personal DM universe of slack/T1/U_ME', "plan(principal): the grant sentence names the personal universe");
+  ok(renderDelta(d).join("\n").includes("grant-connector: linear → principal:slack/T1/U_ME"), "plan(principal): the machine delta is level-tagged");
   throwsWith(
     () => planAccessDelta({ kind: "grant-connector", connector: "linear" }, { ...dmCtx, scope: { level: "principal", principal: "U_ME" } }),
-    "PLATFORM-QUALIFIED principal key",
+    "well-formed principal key",
     "plan(principal): a bare principal address is refused defensively at plan time too",
   );
 }

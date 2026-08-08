@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
-import { principalKey } from "./principal-key.js";
+import { tryPrincipalKey } from "./principal-key.js";
 import { linkTenantOf } from "./link-tenant.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
@@ -41,6 +41,16 @@ export interface LinkedAccount {
   readonly platform: string;
   readonly tenant: string;
   readonly nativeId: string;
+}
+
+function accountLabel(platform: string, tenant: string | undefined, nativeId: string): string {
+  const key = tryPrincipalKey(platform, tenant, nativeId);
+  return key ?? `the ${platform} account "${nativeId}" (workspace unnamed — pre-OPE-309 row)`;
+}
+
+function accountVaultSubject(org: string, account: { readonly platform: string; readonly tenant: string; readonly nativeId: string }): string | undefined {
+  if (tryPrincipalKey(account.platform, account.tenant, account.nativeId) === undefined) return undefined;
+  return rawVaultSubject(org, account.platform, account.tenant, account.nativeId);
 }
 
 export async function resolveLinkSet(org: string, platform: string, nativeId: string, tenant?: string | null): Promise<LinkSetRow | null> {
@@ -116,7 +126,7 @@ export async function issueLinkChallenge(input: {
     expiresAt: new Date(now.getTime() + LINK_CHALLENGE_TTL_MS).toISOString(),
   };
   await store.addLinkChallenge(input.org, challenge);
-  await auditLink(input.org, input.platform, input.surfaceKey, principalKey(input.platform, input.nativeId), "identity.link.challenge_issued", {
+  await auditLink(input.org, input.platform, input.surfaceKey, accountLabel(input.platform, challenge.initiatingTenant, input.nativeId), "identity.link.challenge_issued", {
     challengeId: challenge.id,
     expiresAt: challenge.expiresAt,
   });
@@ -133,9 +143,9 @@ export async function claimLinkChallenge(input: {
   const nowIso = (input.now ?? new Date()).toISOString();
   const claimed = await store.claimLinkChallenge(input.org, hashLinkCode(input.code), input.claimant.platform, input.claimant.tenant, input.claimant.nativeId, nowIso);
   if (!claimed) return null;
-  await auditLink(input.org, input.claimant.platform, claimed.initiatingSurfaceKey, principalKey(input.claimant.platform, input.claimant.nativeId), "identity.link.challenge_claimed", {
+  await auditLink(input.org, input.claimant.platform, claimed.initiatingSurfaceKey, accountLabel(input.claimant.platform, input.claimant.tenant, input.claimant.nativeId), "identity.link.challenge_claimed", {
     challengeId: claimed.id,
-    initiator: principalKey(claimed.initiatingPlatform, claimed.initiatingNativeId),
+    initiator: accountLabel(claimed.initiatingPlatform, claimed.initiatingTenant, claimed.initiatingNativeId),
   });
   return claimed;
 }
@@ -147,9 +157,9 @@ export async function denyLinkChallenge(input: { readonly org: string; readonly 
   if (!challenge) return false;
   const decided = await store.decideLinkChallenge(input.org, input.challengeId, ["claimed"], "denied", nowIso);
   if (!decided) return false;
-  await auditLink(input.org, challenge.initiatingPlatform, challenge.initiatingSurfaceKey, principalKey(challenge.initiatingPlatform, challenge.initiatingNativeId), "identity.link.denied", {
+  await auditLink(input.org, challenge.initiatingPlatform, challenge.initiatingSurfaceKey, accountLabel(challenge.initiatingPlatform, challenge.initiatingTenant, challenge.initiatingNativeId), "identity.link.denied", {
     challengeId: challenge.id,
-    claimed: challenge.claimedPlatform && challenge.claimedNativeId ? principalKey(challenge.claimedPlatform, challenge.claimedNativeId) : undefined,
+    claimed: challenge.claimedPlatform && challenge.claimedNativeId ? accountLabel(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId) : undefined,
   });
   return true;
 }
@@ -183,10 +193,10 @@ export async function ratifyLinkChallenge(input: {
   const initiatorConfirmed = existingInitiator?.status === "confirmed";
   const targetSetId = initiatorConfirmed ? existingInitiator!.linkSetId : undefined;
   if (existingClaim && existingClaim.linkSetId !== targetSetId) {
-    return { ok: false, reason: `${principalKey(claimed.platform, claimed.nativeId)} already belongs to another person — an account is exactly one person. An admin must revoke that link-set first.` };
+    return { ok: false, reason: `${accountLabel(claimed.platform, claimed.tenant, claimed.nativeId)} already belongs to another person — an account is exactly one person. An admin must revoke that link-set first.` };
   }
   if (existingClaim && existingClaim.status === "revoked") {
-    return { ok: false, reason: `${principalKey(claimed.platform, claimed.nativeId)} was revoked — that is terminal. An admin has to sort this out.` };
+    return { ok: false, reason: `${accountLabel(claimed.platform, claimed.tenant, claimed.nativeId)} was revoked — that is terminal. An admin has to sort this out.` };
   }
   if (existingInitiator && existingInitiator.status === "revoked") {
     return { ok: false, reason: "your own account is on a revoked link — that is terminal. An admin has to sort this out." };
@@ -211,14 +221,14 @@ export async function ratifyLinkChallenge(input: {
   await joinConfirmed(input.org, linkSetId, initiator, evidence, nowIso);
   await joinConfirmed(input.org, linkSetId, claimed, evidence, nowIso);
 
-  await auditLink(input.org, challenge.initiatingPlatform, challenge.initiatingSurfaceKey, principalKey(initiator.platform, initiator.nativeId), "identity.link.confirmed", {
+  await auditLink(input.org, challenge.initiatingPlatform, challenge.initiatingSurfaceKey, accountLabel(initiator.platform, initiator.tenant, initiator.nativeId), "identity.link.confirmed", {
     challengeId: challenge.id,
     linkSetId,
-    linked: [principalKey(initiator.platform, initiator.nativeId), principalKey(claimed.platform, claimed.nativeId)],
+    linked: [accountLabel(initiator.platform, initiator.tenant, initiator.nativeId), accountLabel(claimed.platform, claimed.tenant, claimed.nativeId)],
     evidence: evidenceLabel(evidence),
     ...(await linkSetBlastRadius(input.org, linkSetId)),
   });
-  return { ok: true, linkSetId, note: `linked ${principalKey(claimed.platform, claimed.nativeId)} to ${principalKey(initiator.platform, initiator.nativeId)}.` };
+  return { ok: true, linkSetId, note: `linked ${accountLabel(claimed.platform, claimed.tenant, claimed.nativeId)} to ${accountLabel(initiator.platform, initiator.tenant, initiator.nativeId)}.` };
 }
 
 async function joinConfirmed(org: string, linkSetId: string, account: LinkedAccount, evidence: LinkEvidence, at: string): Promise<void> {
@@ -279,12 +289,12 @@ export async function suggestLinkedId(input: {
     createdAt: at,
     updatedAt: at,
   });
-  if (!inserted) return { ok: false, reason: `${principalKey(input.account.platform, input.account.nativeId)} already belongs to a link-set.` };
-  await auditLink(input.org, input.account.platform, undefined, principalKey(input.account.platform, input.account.nativeId), "identity.link.suggested", {
+  if (!inserted) return { ok: false, reason: `${accountLabel(input.account.platform, input.account.tenant, input.account.nativeId)} already belongs to a link-set.` };
+  await auditLink(input.org, input.account.platform, undefined, accountLabel(input.account.platform, input.account.tenant, input.account.nativeId), "identity.link.suggested", {
     linkSetId: input.linkSetId,
     evidence: evidenceLabel(input.evidence),
   });
-  return { ok: true, linkSetId: input.linkSetId, note: `suggested ${principalKey(input.account.platform, input.account.nativeId)}.` };
+  return { ok: true, linkSetId: input.linkSetId, note: `suggested ${accountLabel(input.account.platform, input.account.tenant, input.account.nativeId)}.` };
 }
 
 export async function confirmLinkedId(input: {
@@ -296,7 +306,7 @@ export async function confirmLinkedId(input: {
   const store = getOperationalStore();
   const at = (input.now ?? new Date()).toISOString();
   const row = await store.getLinkedId(input.org, input.account.platform, input.account.tenant, input.account.nativeId);
-  if (!row) return { ok: false, reason: `${principalKey(input.account.platform, input.account.nativeId)} is not on any link-set.` };
+  if (!row) return { ok: false, reason: `${accountLabel(input.account.platform, input.account.tenant, input.account.nativeId)} is not on any link-set.` };
   if (row.status === "revoked") return { ok: false, reason: "that link was revoked — revocation is terminal." };
   const set = await store.getLinkSet(input.org, row.linkSetId);
   if (!set || set.status !== "active") return { ok: false, reason: `that link-set is ${set?.status ?? "missing"}.` };
@@ -304,13 +314,13 @@ export async function confirmLinkedId(input: {
   if (!(await store.updateLinkedIdStatus(input.org, input.account.platform, input.account.tenant, input.account.nativeId, ["suggested", "confirmed"], "confirmed", label, JSON.stringify(input.evidence), at))) {
     return { ok: false, reason: "that link could not be confirmed (it changed underneath this call)." };
   }
-  await auditLink(input.org, input.account.platform, undefined, principalKey(input.account.platform, input.account.nativeId), "identity.link.confirmed", {
+  await auditLink(input.org, input.account.platform, undefined, accountLabel(input.account.platform, input.account.tenant, input.account.nativeId), "identity.link.confirmed", {
     linkSetId: row.linkSetId,
-    linked: [principalKey(input.account.platform, input.account.nativeId)],
+    linked: [accountLabel(input.account.platform, input.account.tenant, input.account.nativeId)],
     evidence: label,
     ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
-  return { ok: true, linkSetId: row.linkSetId, note: `confirmed ${principalKey(input.account.platform, input.account.nativeId)}.` };
+  return { ok: true, linkSetId: row.linkSetId, note: `confirmed ${accountLabel(input.account.platform, input.account.tenant, input.account.nativeId)}.` };
 }
 
 export async function unlinkOwnId(input: {
@@ -327,22 +337,23 @@ export async function unlinkOwnId(input: {
   if (mine.status === "revoked") return { ok: false, reason: "your link was revoked — revocation is terminal, and an admin has to sort it out." };
   const row = input.target ? await store.getLinkedId(input.org, target.platform, target.tenant, target.nativeId) : mine;
   if (!row || row.linkSetId !== mine.linkSetId) {
-    return { ok: false, reason: `${principalKey(target.platform, target.nativeId)} is not on your link-set — you can only unlink your own accounts.` };
+    return { ok: false, reason: `${accountLabel(target.platform, target.tenant, target.nativeId)} is not on your link-set — you can only unlink your own accounts.` };
   }
   if (row.status === "revoked") return { ok: false, reason: "that link was revoked — revocation is terminal." };
   if (!(await store.deleteLinkedId(input.org, target.platform, target.tenant, target.nativeId))) {
     return { ok: false, reason: "that link had already gone." };
   }
-  const purge = await purgeSubjectCredentials(rawVaultSubject(input.org, target.platform, target.nativeId));
-  await auditLink(input.org, input.actor.platform, undefined, principalKey(input.actor.platform, input.actor.nativeId), "identity.link.unlinked", {
+  const targetSubject = accountVaultSubject(input.org, target);
+  const purge = targetSubject ? await purgeSubjectCredentials(targetSubject) : { purged: 0, failed: false };
+  await auditLink(input.org, input.actor.platform, undefined, accountLabel(input.actor.platform, input.actor.tenant, input.actor.nativeId), "identity.link.unlinked", {
     linkSetId: row.linkSetId,
-    unlinked: principalKey(target.platform, target.nativeId),
+    unlinked: accountLabel(target.platform, target.tenant, target.nativeId),
     at,
     credentialsPurged: purge.purged,
     ...(purge.failed ? { purgeFailed: true } : {}),
     ...(await linkSetBlastRadius(input.org, row.linkSetId)),
   });
-  return { ok: true, linkSetId: row.linkSetId, note: `unlinked ${principalKey(target.platform, target.nativeId)}.` };
+  return { ok: true, linkSetId: row.linkSetId, note: `unlinked ${accountLabel(target.platform, target.tenant, target.nativeId)}.` };
 }
 
 export async function setLinkSetHold(input: {
@@ -393,7 +404,7 @@ async function purgeLinkSetCredentialsBestEffort(org: string, linkSetId: string)
     .catch(() => [] as readonly LinkedIdRow[]);
   return purgeSubjectsCredentials([
     sharedVaultSubject(org, linkSetId),
-    ...rows.map((r) => rawVaultSubject(org, r.platform, r.nativeId)),
+    ...rows.map((r) => accountVaultSubject(org, r)).filter((sub): sub is string => sub !== undefined),
   ]);
 }
 

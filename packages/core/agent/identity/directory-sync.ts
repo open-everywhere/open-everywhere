@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { directoryProvider, type DirectoryGrade, type DirectoryPerson, type DirectoryProvider } from "./directory.js";
 import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, suggestLinkedId, type LinkEvidence } from "./link-store.js";
-import { isTenantScopedPlatform, principalKey } from "./principal-key.js";
+import { isTenantScopedPlatform, tryPrincipalKey } from "./principal-key.js";
 import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from "./link-tenant.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
@@ -106,7 +106,8 @@ function accountKey(platform: string, tenant: string, nativeId: string): string 
 }
 
 function describeAccount(acct: { readonly platform: string; readonly tenant: string; readonly nativeId: string }): string {
-  const key = principalKey(acct.platform, acct.nativeId);
+  const key = tryPrincipalKey(acct.platform, acct.tenant, acct.nativeId);
+  if (key === undefined) return `the ${acct.platform} account "${acct.nativeId}" (workspace unresolved)`;
   return acct.tenant === LINK_TENANT_NONE ? key : `${key} (workspace ${acct.tenant})`;
 }
 
@@ -389,7 +390,7 @@ export async function syncDirectoryOrg(input: {
         ...(now ? { now } : {}),
       });
       if (!res.ok) {
-        refusals.push(`suggest ${principalKey(step.platform, step.nativeId)}: ${res.reason}`);
+        refusals.push(`suggest ${describeAccount(step)}: ${res.reason}`);
         continue;
       }
       suggested++;
@@ -397,7 +398,7 @@ export async function syncDirectoryOrg(input: {
     }
     const res = await confirmLinkedId({ org: input.org, account: { platform: step.platform, tenant: step.tenant, nativeId: step.nativeId }, evidence, ...(now ? { now } : {}) });
     if (res.ok) confirmed++;
-    else refusals.push(`confirm ${principalKey(step.platform, step.nativeId)}: ${res.reason}`);
+    else refusals.push(`confirm ${describeAccount(step)}: ${res.reason}`);
   }
 
   const finishedAt = new Date(input.now ?? Date.now()).toISOString();
@@ -503,12 +504,14 @@ export async function pendingDirectorySuggestionsFor(org: string, platform: stri
       } catch {
       }
       if (grade !== "attested" && !isOwn) continue;
+      const principal = tryPrincipalKey(row.platform, row.tenant, row.nativeId);
+      if (principal === undefined) continue;
       out.push({
         linkSetId: set.id,
         platform: row.platform,
         tenant: row.tenant,
         nativeId: row.nativeId,
-        principal: principalKey(row.platform, row.nativeId),
+        principal,
         grade,
         provider: row.establishedBy.slice("directory-sync:".length),
       });

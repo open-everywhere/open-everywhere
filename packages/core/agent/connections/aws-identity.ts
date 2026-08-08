@@ -93,11 +93,12 @@ export function planAwsIdentity(input: {
   readonly actingPrincipalId: string | undefined;
   readonly org: string;
   readonly platform: string;
+  readonly workspace: string | undefined;
   readonly domains: readonly string[];
   readonly surfaceKey: string;
   readonly opts?: AwsIdentityOptions;
 }): AwsIdentityPlan {
-  const { grants, mode, actingPrincipalId, org, platform, domains, surfaceKey, opts = {} } = input;
+  const { grants, mode, actingPrincipalId, org, platform, workspace, domains, surfaceKey, opts = {} } = input;
   if (grants.length === 0) {
     throw new Error(
       "no AWS role is granted to this scope — an admin binds an `awsRoles` grant to this channel's " +
@@ -146,7 +147,7 @@ export function planAwsIdentity(input: {
       grant,
       roleSessionName: awsRoleSessionName(actingPrincipalId),
       org,
-      principalSubject: rawVaultSubject(org, platform, actingPrincipalId),
+      principalSubject: rawVaultSubject(org, platform, workspace, actingPrincipalId),
       ...(domain !== undefined ? { domain } : {}),
     };
   }
@@ -163,6 +164,7 @@ export function planAwsIdentityFor(ctx: BindableContext, opts?: AwsIdentityOptio
     actingPrincipalId: actingPrincipalIdOf(ctx),
     org: binding.org,
     platform: binding.platform,
+    workspace: binding.workspace,
     domains: access.domains,
     surfaceKey: surfaceKeyOf(buildResolveRequest(ctx)),
     opts,

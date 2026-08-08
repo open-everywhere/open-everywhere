@@ -24,7 +24,7 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
   const scopeKey = domainKeyOf(p);
   const domainName = domainNameForScope(scopeKey, mode, trust);
   const caps = await effectiveCaps(p.org, p.workspaceKey, scopeKey, domainName);
-  const userCaps = mode === "dm" && principalId ? await effectiveUserCaps(p.org, p.platform, principalId) : {};
+  const userCaps = mode === "dm" && principalId ? await effectiveUserCaps(p.org, p.platform, p.workspace, principalId) : {};
   const tokenCapped = caps.surfaceMonthlyTokens != null || caps.workspaceMonthlyTokens != null;
   const usdCapped = caps.surfaceMonthlyUsd != null || caps.workspaceMonthlyUsd != null;
   const userCapped = userCaps.surfaceMonthlyTokens != null || userCaps.surfaceMonthlyUsd != null;
@@ -46,7 +46,7 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
     caps,
     userCaps,
     scopes: {
-      ...(principalId ? { user: userScopeKey(p.platform, principalId) } : {}),
+      ...(principalId ? { user: userScopeKey(p.platform, p.workspace, principalId) } : {}),
       surface: scopeKey,
       workspace: p.workspaceKey,
     },

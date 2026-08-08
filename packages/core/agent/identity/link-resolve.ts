@@ -1,5 +1,4 @@
 import type { Principal, PrincipalSurfaceIds } from "./principals.js";
-import { principalKey } from "./principal-key.js";
 
 export interface LinkSetPrincipal {
   readonly linkSetId: string;
@@ -106,7 +105,7 @@ export function unionPrincipals(config: readonly Principal[], linkSets: readonly
 
 function conflictWarning(pair: string): UnionWarning {
   const [platform, id] = pair.split("\u0000") as [string, string];
-  const key = principalKey(platform, id);
+  const key = `${platform} account "${id}"`;
   return {
     key,
     message:

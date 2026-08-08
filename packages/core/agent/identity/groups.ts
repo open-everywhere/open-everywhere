@@ -1,4 +1,5 @@
 import { isQualifiedPrincipalKey } from "./principal-key.js";
+import { tenantRungRemedy } from "../access/tenant-admission.js";
 
 export interface GroupLinkSetMember {
   readonly linkSet: string;
@@ -59,7 +60,7 @@ export function assertGroupsValid(groups: readonly Group[]): void {
       if (typeof m === "string") {
         if (!isQualifiedPrincipalKey(m)) {
           bad.push(
-            `  ${where} member "${m}" must be the PLATFORM-QUALIFIED principal key "platform/<principal-id>" (e.g. "slack/U0123ABC", "discord/300000000000000104") — a BARE member id has no platform namespace and will NEVER match (identity/principal-key.ts). To name a whole HUMAN across their platforms, use { linkSet: "<id>" } instead.`,
+            `  ${where} member "${m}" must be the qualified principal key "platform/<principal-id>" — or, on a tenant-scoped platform, "platform/<tenant-id>/<principal-id>" (e.g. "slack/T0AB1CD2E/U0123ABC", "discord/300000000000000104"). A BARE member id has no platform namespace and will NEVER match; on Slack a key without its workspace has no tenant namespace and will never match either (identity/principal-key.ts).${tenantRungRemedy(m)} To name a whole HUMAN across their platforms, use { linkSet: "<id>" } instead.`,
           );
         }
         if (seenMembers.has(`key\u0000${m}`)) bad.push(`  ${where} lists member "${m}" more than once — remove the duplicate`);

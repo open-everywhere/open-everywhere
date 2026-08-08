@@ -1,7 +1,7 @@
 import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalId, bindFrom, type BindableContext } from "../identity/binding.js";
 import { groupsForPrincipal, type Group } from "../identity/groups.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { resolveLinkSet } from "../identity/link-store.js";
 import { sharedVaultSubject } from "../identity/oauth-vault-share.js";
 import { getConfig } from "./config.js";
@@ -45,7 +45,7 @@ export async function withLinkSetGroups(
   if (sets.length === 0) return req;
   let out: ResolveRequest = { ...req, principalLinkSets: [...new Set([...(req.principalLinkSets ?? []), ...sets])].sort() };
   if (groups.length > 0) {
-    const viaSets = groupsForPrincipal(groups, principalKey(req.platform, req.principalId), sets);
+    const viaSets = groupsForPrincipal(groups, tryPrincipalKey(req.platform, req.workspace, req.principalId), sets);
     if (viaSets.length > 0) out = { ...out, groups: [...new Set([...(req.groups ?? []), ...viaSets])].sort() };
   }
   return out;

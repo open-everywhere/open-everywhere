@@ -67,11 +67,11 @@ const codeBindings: Binding[] = [
 ];
 
 const groups: Group[] = [
-  { name: "payments-team", members: ["slack/U_ASK", "slack/U_TWO"] },
-  { name: "eng", members: [{ linkSet: "ls-1" }, "slack/U_ASK"] },
+  { name: "payments-team", members: ["slack/T1/U_ASK", "slack/T1/U_TWO"] },
+  { name: "eng", members: [{ linkSet: "ls-1" }, "slack/T1/U_ASK"] },
 ];
 
-const domains: Domain[] = [{ name: "org", match: "org", admins: ["slack/U_ADMIN"] }];
+const domains: Domain[] = [{ name: "org", match: "org", admins: ["slack/T1/U_ADMIN"] }];
 
 function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {
   return {
@@ -173,7 +173,7 @@ ok(
 const dmBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding =>
   slackBinding({ mode: "dm", surface: "D_ASK", target: { channelId: "D_ASK" }, threadTs: undefined, visibility: "private", ...over });
 
-function personalCtx(principal = "slack/U_ASK"): PlanContext {
+function personalCtx(principal = "slack/T1/U_ASK"): PlanContext {
   return {
     scope: { level: "principal", principal },
     access: resolveAccess({ mode: "dm", platform: "slack", workspace: "T1", channel: "D_ASK", principalId: "U_ASK" }, codeBundles, codeBindings),
@@ -187,13 +187,13 @@ const dmExtras = { ...extras, scopeKey: "slack/T1/D_ASK", channelId: "D_ASK" } a
 {
   const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras);
   ok(
-    personalArgs.delta.scope.level === "principal" && personalArgs.delta.scope.principal === "slack/U_ASK",
+    personalArgs.delta.scope.level === "principal" && personalArgs.delta.scope.principal === "slack/T1/U_ASK",
     "personal: the delta targets the asker's OWN platform-qualified key, composed from the binding",
   );
-  ok(personalArgs.universe?.includes("Personal DM grant for `slack/U_ASK`") === true, "personal: a frozen universe note names whose DM this lands in");
+  ok(personalArgs.universe?.includes("Personal DM grant for `slack/T1/U_ASK`") === true, "personal: a frozen universe note names whose DM this lands in");
 
   await rejectsWith(
-    () => planRequestAccess(dmBinding(), personalCtx("slack/U_SOMEONE_ELSE"), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras),
+    () => planRequestAccess(dmBinding(), personalCtx("slack/T1/U_SOMEONE_ELSE"), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras),
     "self-service only",
     "personal: a scope naming SOMEONE ELSE's key refuses (self-only, whatever produced the scope)",
   );
@@ -300,7 +300,7 @@ const adminBinding = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => sla
 
 {
   const personalBundles: Bundle[] = [...codeBundles, { name: "mine", connectors: ["asana"] }];
-  const personalBindings: Binding[] = [...codeBindings, { bundle: "mine", scope: { level: "principal", principal: "slack/U_ADMIN" } }];
+  const personalBindings: Binding[] = [...codeBindings, { bundle: "mine", scope: { level: "principal", principal: "slack/T1/U_ADMIN" } }];
   const access = groupEffectiveAccess("payments-team", "slack", "T1", personalBundles, personalBindings);
   ok(!access.connectors.includes("asana"), "group access: the asker's OWN personal grant does not read as the group's");
   const withGroupGrant = groupEffectiveAccess("payments-team", "slack", "T1", personalBundles, [
@@ -425,8 +425,8 @@ function fakeDeps(state: FakeState) {
   const personalArgs = planRequestAccess(dmBinding(), personalCtx(), { kind: "grant-connector", target: "personal", connector: "linear" }, dmExtras);
   const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
   await executeAccessRequest(personalArgs, "U_ASK", { config: arConfig(), ...fakeDeps(state) });
-  ok(state.prs[0].title === 'Access request: Grant connector "linear" to the personal DM universe of slack/U_ASK', "execute(personal): the PR title names the universe, not a channel");
-  ok(state.prs[0].body.includes("Personal DM grant for `slack/U_ASK`"), "execute(personal): the PR body says which universe the grant lands in");
+  ok(state.prs[0].title === 'Access request: Grant connector "linear" to the personal DM universe of slack/T1/U_ASK', "execute(personal): the PR title names the universe, not a channel");
+  ok(state.prs[0].body.includes("Personal DM grant for `slack/T1/U_ASK`"), "execute(personal): the PR body says which universe the grant lands in");
   ok(parseGrantsModule(state.puts[0]!).bindings[0].scope.level === "principal", "execute(personal): the committed overlay carries a principal-level binding");
 
   const groupArgs = planRequestAccess(
@@ -458,7 +458,7 @@ function fakeDeps(state: FakeState) {
         "U_ASK",
         { config: arConfig(), ...fakeDeps(bad) },
       ),
-    "PLATFORM-QUALIFIED principal key",
+    "well-formed principal key",
     "execute(personal): a malformed principal key refuses before any commit (the codemod re-validates its own input)",
   );
   ok(bad.puts.length === 0 && bad.prs.length === 0, "execute(personal): nothing committed on a malformed key");

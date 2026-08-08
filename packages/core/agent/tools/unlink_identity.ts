@@ -43,7 +43,9 @@ export default defineTool({
       ...(target ? { target } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
-    const removed = target ? principalKey(target.platform, target.nativeId) : principalKey(binding.platform, actor);
+    const removed = target
+      ? principalKey(target.platform, target.tenant, target.nativeId)
+      : principalKey(binding.platform, binding.workspace, actor);
     const caller = { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
     const notice =
       `**${removed}** was just removed from your linked identity. It no longer speaks as you, and ` +

@@ -34,8 +34,8 @@ const bind = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => ({
 });
 
 const domains: Domain[] = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U_ORG_ADMIN"] }),
-  defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/U_TXN_ADMIN"] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_ORG_ADMIN"] }),
+  defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_TXN_ADMIN"] }),
   defineDomain({ name: "no-admins", channels: ["slack/T1/C_PLAIN"] }),
 ];
 
@@ -157,16 +157,16 @@ function ctxFor(principalId: string | undefined, channelId: string): BindableCon
     "a `linkSet:<id>` admin entry throws loud at config load (admin is exact-id only)",
   );
   const exactDomains: Domain[] = [
-    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/U_EXACT_ORG"] }),
-    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/U_EXACT_TXN"] }),
+    defineDomain({ name: "org", match: "org", memory: "org-brain", admins: ["slack/T1/U_EXACT_ORG"] }),
+    defineDomain({ name: "txn", channels: ["slack/T1/C_TXN"], admins: ["slack/T1/U_EXACT_TXN"] }),
   ];
   assertDomainsValid(exactDomains);
   const exOrg = roleForBinding(bind({ principalId: "U_EXACT_ORG", surface: "C_TXN" }), exactDomains);
   ok(exOrg.isOrgAdmin && exOrg.isDomainAdmin, "an exact `platform/<id>` ORG admin is org + domain admin everywhere");
   const exDom = roleForBinding(bind({ principalId: "U_EXACT_TXN", surface: "C_TXN" }), exactDomains);
   ok(!exDom.isOrgAdmin && exDom.isDomainAdmin, "an exact `platform/<id>` DOMAIN admin holds on the domain's channel, not org-wide");
-  ok(adminControlRoles("U_EXACT_ORG", exactDomains, "slack").join(",") === "admin", "adminControlRoles: an exact org admin → [\"admin\"]");
-  ok(adminControlRoles("U_EXACT_TXN", exactDomains, "slack").join(",") === "domain:txn", "adminControlRoles: an exact domain admin → [\"domain:txn\"], regardless of channel");
+  ok(adminControlRoles("U_EXACT_ORG", exactDomains, "slack", "T1").join(",") === "admin", "adminControlRoles: an exact org admin → [\"admin\"]");
+  ok(adminControlRoles("U_EXACT_TXN", exactDomains, "slack", "T1").join(",") === "domain:txn", "adminControlRoles: an exact domain admin → [\"domain:txn\"], regardless of channel");
 }
 
 console.log(`\n✓ roles: ${n} assertions passed (config-as-code RBAC: org/domain admin matrix + exact-id-only admin rosters + throw-message wording)\n`);

@@ -1,5 +1,5 @@
 import { getConfig } from "./config.js";
-import { isTenantScopedPlatform } from "../identity/principal-key.js";
+import { isTenantScopedPlatform, principalKeyReplacementHint } from "../identity/principal-key.js";
 import type { Domain } from "../memory/domain.js";
 
 export const MULTI_TENANT_ENV = "OE_ALLOW_MULTI_TENANT_PRINCIPALS";
@@ -72,6 +72,14 @@ export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Doma
   if (bad.length > 0) {
     throw new Error("open-everywhere: multi-tenant principal exposure:\n" + bad.join("\n") + "\n(access/tenant-admission.ts / identity/principal-key.ts)");
   }
+}
+
+export function tenantRungRemedy(entry: string, domains?: readonly Domain[]): string {
+  const slash = entry.indexOf("/");
+  const platform = slash > 0 ? entry.slice(0, slash) : "";
+  if (!isTenantScopedPlatform(platform)) return "";
+  const tenant = domains ? soleAdmittedTenant(platform, domains) : soleAdmittedTenantFromConfig(platform);
+  return ` ${principalKeyReplacementHint(entry, tenant)}`;
 }
 
 export type TenantAdmissionDecision = "proceed" | "unadmitted";

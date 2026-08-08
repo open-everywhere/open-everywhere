@@ -1,7 +1,7 @@
 import { appendAudit } from "../audit/audit.js";
 import { criteriaDomain, domainForChannel, type Domain } from "../memory/domain.js";
 import { principalIdsOnPlatform } from "../identity/principal-key.js";
-import { platformOfScopeKey } from "./scope-key.js";
+import { parseScopeKey } from "./scope-key.js";
 
 export type AudienceFloor = "guest" | "member" | "admin";
 
@@ -48,10 +48,12 @@ export function attestGovernanceFloor(roster: RoomRoster, admins: ReadonlySet<st
 }
 
 export function governanceAdminSet(channelKey: string, domains: readonly Domain[]): ReadonlySet<string> {
-  const platform = platformOfScopeKey(channelKey);
+  const parsed = parseScopeKey(channelKey);
+  const platform = parsed.kind === "tenant" || parsed.kind === "surface" || parsed.kind === "principal" ? parsed.platform : undefined;
+  const tenant = parsed.kind === "tenant" || parsed.kind === "surface" ? parsed.workspace : undefined;
   const keys = new Set<string>(criteriaDomain("org", domains)?.admins ?? []);
   for (const a of domainForChannel(channelKey, domains)?.admins ?? []) keys.add(a);
-  return new Set(principalIdsOnPlatform(keys, platform));
+  return new Set(principalIdsOnPlatform(keys, platform, tenant));
 }
 
 export type GovernanceMemberSupplier = (channelKey: string) => Promise<RoomRoster | undefined>;

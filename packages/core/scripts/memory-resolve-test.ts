@@ -180,7 +180,7 @@ throws(
   "validation: includeOrg on the org pseudo-domain (self-ref) → throws",
 );
 
-assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/U_ADMIN", "discord/300000000000000104"] })]);
+assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["slack/T/U_ADMIN", "discord/300000000000000104"] })]);
 ok(true, "validation: qualified admin keys on one roster (two platforms, one human) pass");
 throws(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["U_ADMIN"] })]),
@@ -190,9 +190,11 @@ throws(
   () => assertDomainsValid([defineDomain({ name: "org", match: "org", admins: ["300000000000000104"] })]),
   "validation: a bare DIGIT-STRING admin id → throws (the exact shape a cross-platform digit-id collision needs)",
 );
+assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]);
+ok(true, "validation: a three-segment admin key on a TENANT-SCOPED platform validates (OPE-309 — it is the person, not a surface)");
 throws(
-  () => assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/T/U_ADMIN"] })]),
-  "validation: a surface-shaped admin key → throws (a principal key is exactly platform + id)",
+  () => assertDomainsValid([defineDomain({ name: "eng", channels: ["slack/T/C"], admins: ["slack/U_ADMIN"] })]),
+  "validation: a PRE-RUNG two-segment slack admin key → throws (it names no workspace, so it can never match)",
 );
 
 const multiIndex = renderMemoryIndex(multi.reads);

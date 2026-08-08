@@ -8,7 +8,7 @@ import { linkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import type { WakeTrust } from "../channels/wake-envelope.js";
 
 function isEnvelopeShaped(text: string): boolean {
@@ -85,7 +85,9 @@ export async function observeLinkClaim(input: {
     return undefined;
   }
 
-  const claimant = principalKey(input.platform, input.authorId);
+  const claimant =
+    tryPrincipalKey(input.platform, claimed.claimedTenant ?? input.tenant, input.authorId) ??
+    `the ${input.platform} account "${input.authorId}"`;
   if (canDeliverDirectMessage(claimed.initiatingPlatform)) {
     try {
       await dispatchDirectMessage(claimed.initiatingPlatform, {

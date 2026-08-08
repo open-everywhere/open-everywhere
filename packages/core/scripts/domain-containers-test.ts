@@ -134,7 +134,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
   throws(
     () =>
       assertGovernanceDomains(
-        [defineDomain({ name: "gov", governance: true, channels: ["slack/T1/C_ADMIN"], containers: ["slack/T1"], admins: ["slack/U_A"] })],
+        [defineDomain({ name: "gov", governance: true, channels: ["slack/T1/C_ADMIN"], containers: ["slack/T1"], admins: ["slack/T1/U_A"] })],
         ["slack/T1"],
       ),
     "claims tenant container(s)",
@@ -147,7 +147,7 @@ const throws = (fn: () => void, needle: string, label: string) => {
   const org = defineDomain({ name: "org", match: "org", memory: "org-brain" });
   ok(siloCoveringDomains("platform-silo", [claimOnly, org]).join(",") === "platform", "a claim-only domain covers its own silo");
   ok(siloCoveringDomains("org-brain", [claimOnly, org]).length === 0, "a criteria pseudo-domain still covers nothing");
-  ok(adminControlRoles("U_P", [claimOnly, org], "github").join(",") === "domain:platform", "a claim-only domain's admins still get its domain role");
+  ok(adminControlRoles("U_P", [claimOnly, org], "github", undefined).join(",") === "domain:platform", "a claim-only domain's admins still get its domain role");
 }
 
 {

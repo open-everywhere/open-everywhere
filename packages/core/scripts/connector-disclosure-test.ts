@@ -93,7 +93,7 @@ const REPO = resolve(HERE, "../../..");
     return roster;
   });
   const domains: Domain[] = [
-    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/U_A", "slack/U_B"] }),
+    defineDomain({ name: "governance", governance: true, channels: ["slack/T1/C_ADMIN"], admins: ["slack/T1/U_A", "slack/T1/U_B"] }),
     defineDomain({ name: "org", match: "org", admins: [] }),
   ];
   const admins = new Set(["U_A", "U_B"]);
@@ -180,9 +180,9 @@ function ctxFor(principalId: string, channelId: string, channelType: "channel" |
   } as unknown as BindableContext;
 }
 
-const plainDomains: Domain[] = [defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG"] })];
+const plainDomains: Domain[] = [defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"] })];
 const complianceDomains: Domain[] = [
-  defineDomain({ name: "org", match: "org", admins: ["slack/U_ORG"], requestorEntitlementChecks: true }),
+  defineDomain({ name: "org", match: "org", admins: ["slack/T1/U_ORG"], requestorEntitlementChecks: true }),
 ];
 
 const rowsFor = async (action: string) => (await readAudit({ action })).length;

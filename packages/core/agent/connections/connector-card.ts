@@ -67,7 +67,7 @@ async function mintOAuthUrl(
 export async function renderNonSlackConnect(
   providerName: string,
   options: readonly ConnectorOption[],
-  ctx: { readonly mode: ConnectMode; readonly principalId?: string; readonly org: string; readonly platform: string },
+  ctx: { readonly mode: ConnectMode; readonly principalId?: string; readonly org: string; readonly platform: string; readonly workspace?: string },
   startAuth: ConnectorAuthorizationStarter = defaultConnectorAuthStarter,
   issuePageLink?: (o: ConnectorOption) => Promise<string | undefined>,
 ): Promise<{ text: string; issued: ConnectorOption[] }> {
@@ -96,7 +96,7 @@ export async function renderNonSlackConnect(
       try {
         const url = await mintOAuthUrl(startAuth, o.vercelConnector, {
           type: "user",
-          id: rawVaultSubject(ctx.org, ctx.platform, ctx.principalId),
+          id: rawVaultSubject(ctx.org, ctx.platform, ctx.workspace, ctx.principalId),
         });
         lines.push(`• *${optionLabel(o)}* — connect your personal account (expires soon): ${url}`);
         issued.push(o);
@@ -202,7 +202,7 @@ export async function handleConnectClick(payload: unknown, deps: ConnectorCardDe
       }
       return await mintAndDeliverOAuth(post, startAuth, {
         org, teamId, channelId, clickerId, providerName, vercelConnector: userConnector,
-        subject: { type: "user", id: rawVaultSubject(deploymentOrg(), "slack", clickerId) }, subjectLabel: "user",
+        subject: { type: "user", id: rawVaultSubject(deploymentOrg(), "slack", teamId, clickerId) }, subjectLabel: "user",
       });
     }
 

@@ -56,7 +56,7 @@ export async function currentCapsFor(
 ): Promise<CurrentCaps> {
   if (level === "user") {
     const parsed = parseScopeKey(scopeKey);
-    const userCaps = parsed.kind === "principal" ? await effectiveUserCaps(org, parsed.platform, parsed.id) : {};
+    const userCaps = parsed.kind === "principal" ? await effectiveUserCaps(org, parsed.platform, parsed.tenant, parsed.id) : {};
     return { tokens: userCaps.surfaceMonthlyTokens ?? null, usd: userCaps.surfaceMonthlyUsd ?? null };
   }
   const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
@@ -94,7 +94,7 @@ export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
         `defaultScopeKey: level:"user" has no default here — there is no acting sender on this turn to mean "my own allowance" (a triggered routine fire has only the creator it is attributed to). Pass scopeKey explicitly (\`user:<platform>/<id>\`).`,
       );
     }
-    return userScopeKey(binding.platform, me);
+    return userScopeKey(binding.platform, binding.workspace, me);
   }
   const surfaceKey = `${workspaceKey}/${binding.domainSurface ?? binding.surface}`;
   if (level === "surface") return surfaceKey;

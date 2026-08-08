@@ -4,7 +4,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel, domainMatchFor, criteriaDomain, type Domain } from "../memory/domain.js";
 import { userScopeKey } from "../access/scope-key.js";
-import { principalKey } from "../identity/principal-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
@@ -52,15 +52,15 @@ export interface ResolvedUserCaps {
   readonly configKey?: string;
 }
 
-export function resolveUserCaps(principalId: string | undefined, platform: string | undefined): UserCaps {
-  return resolveUserCapsWithLayer(principalId, platform).caps;
+export function resolveUserCaps(principalId: string | undefined, platform: string | undefined, tenant: string | undefined): UserCaps {
+  return resolveUserCapsWithLayer(principalId, platform, tenant).caps;
 }
 
-export function resolveUserCapsWithLayer(principalId: string | undefined, platform: string | undefined): ResolvedUserCaps {
+export function resolveUserCapsWithLayer(principalId: string | undefined, platform: string | undefined, tenant: string | undefined): ResolvedUserCaps {
   if (!principalId) return { caps: {}, layer: "none" };
   const perUser = loadBudgets().perUser;
-  if (platform) {
-    const key = principalKey(platform, principalId);
+  const key = platform ? tryPrincipalKey(platform, tenant, principalId) : undefined;
+  if (key !== undefined) {
     const hit = perUser?.overrides?.[key];
     if (hit) return { caps: hit, layer: "config:overrides", configKey: key };
   }
@@ -109,12 +109,14 @@ export function applyUserCapOverrides(config: UserCaps, limits: readonly SpendLi
   return { surfaceMonthlyTokens, surfaceMonthlyUsd };
 }
 
-export async function effectiveUserCaps(org: string, platform: string, principalId: string | undefined): Promise<UserCaps> {
-  const config = resolveUserCaps(principalId, platform);
+export async function effectiveUserCaps(org: string, platform: string, tenant: string | undefined, principalId: string | undefined): Promise<UserCaps> {
+  const config = resolveUserCaps(principalId, platform, tenant);
   if (!principalId) return config;
+  const scope = tryPrincipalKey(platform, tenant, principalId);
+  if (scope === undefined) return config;
   try {
     const limits = activeSpendLimits(await getOperationalStore().spendLimits(org), Date.now());
-    return limits.length ? applyUserCapOverrides(config, limits, userScopeKey(platform, principalId)) : config;
+    return limits.length ? applyUserCapOverrides(config, limits, userScopeKey(platform, tenant, principalId)) : config;
   } catch {
     return config;
   }

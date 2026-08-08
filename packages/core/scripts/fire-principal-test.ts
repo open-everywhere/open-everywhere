@@ -55,14 +55,14 @@ const TEAM = "T1";
 const orgSilo = defineMemorySilo({ name: "org-brain", provider: "sqlite" });
 const engSilo = defineMemorySilo({ name: "eng-silo", provider: "sqlite" });
 const domains = [
-  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: [principalKey("slack", CREATOR)] }),
+  defineDomain({ name: "org", match: "org", memory: "org-brain", admins: [principalKey("slack", TEAM, CREATOR)] }),
   defineDomain({ name: "dm", match: "dm", includeOrg: "readonly" }),
   defineDomain({ name: "eng", channels: [`slack/${TEAM}/C_ENG`], memory: "eng-silo" }),
 ];
 const silos = [orgSilo, engSilo];
 const memCfg = { domains, silos };
 const bundles = [{ name: "personal", connectors: ["personal-notion"] }] as never;
-const bindings = [{ scope: { level: "principal" as const, principal: principalKey("slack", CREATOR) }, bundle: "personal" }] as never;
+const bindings = [{ scope: { level: "principal" as const, principal: principalKey("slack", TEAM, CREATOR) }, bundle: "personal" }] as never;
 let spendBudgets: import("../agent/spend/spend.js").SpendBudgets = {};
 registerConfig({
   loadBundles: () => bundles,
@@ -204,11 +204,11 @@ const staleBag = delivered[1]!.attributes;
 
   ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", "U_SOMEONE_ELSE")).over, "budget: …and NOT against anyone else's — a different principal on the same DM surface sees none of this spend");
 
-  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 }, overrides: { [`slack/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } } };
+  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 }, overrides: { [`slack/${TEAM}/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } } };
   ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: an override on the creator raises what their own routines may spend (the coherent consequence of charging them)");
 
   spendBudgets = {
-    perUser: { overrides: { [`slack/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } },
+    perUser: { overrides: { [`slack/${TEAM}/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } },
     perSurface: { [`slack/${TEAM}/D_CREATOR`]: { surfaceMonthlyTokens: 100 } },
   };
   ok((await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: …but never widens the SURFACE cap — a per-user allowance is an extra constraint, never a substitute");
@@ -242,8 +242,8 @@ const staleBag = delivered[1]!.attributes;
   ok(actingPrincipalId(fire) === undefined, "fence: the fence itself — there is no ACTING principal on a fire, whoever it is attributable to");
   ok(actingPrincipalId(live) === CREATOR, "fence: …and a live turn is untouched by it");
 
-  ok(adminControlRoles(actingPrincipalId(live), domains, "slack").join(",") === "admin", "fence: the cross-domain role scan (memory_admin_*, the governance DM arm) sees a live admin");
-  ok(adminControlRoles(actingPrincipalId(fire), domains, "slack").length === 0, "fence: 🔴 …and sees nothing for a fire — no unattended read of every silo the creator administers");
+  ok(adminControlRoles(actingPrincipalId(live), domains, "slack", TEAM).join(",") === "admin", "fence: the cross-domain role scan (memory_admin_*, the governance DM arm) sees a live admin");
+  ok(adminControlRoles(actingPrincipalId(fire), domains, "slack", TEAM).length === 0, "fence: 🔴 …and sees nothing for a fire — no unattended read of every silo the creator administers");
 
   const liveAccess = resolveAccess(buildResolveRequest(liveCtx()), bundles, bindings, {});
   const fireAccess = resolveAccess(buildResolveRequest(fireCtx(vouchedBag)), bundles, bindings, {});

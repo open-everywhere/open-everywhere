@@ -6,7 +6,12 @@ import { linkTenantOf } from "../identity/link-tenant.js";
 import type { LinkedAccount } from "../identity/link-store.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { principalKey } from "../identity/principal-key.js";
+import { principalKey, tryPrincipalKey } from "../identity/principal-key.js";
+
+function claimantLabel(platform: string | undefined, tenant: string | undefined, nativeId: string | undefined): string {
+  if (!platform || !nativeId) return "an account this request never recorded";
+  return tryPrincipalKey(platform, tenant, nativeId) ?? `the ${platform} account "${nativeId}" (workspace unrecorded)`;
+}
 import { confirmLinkedId, denyLinkChallenge, ratifyLinkChallenge } from "../identity/link-store.js";
 import { linkInitiatorRefusal } from "../identity/link-initiator.js";
 import { notifyLinkSetMembers } from "../channels/post-arms.js";
@@ -67,14 +72,14 @@ export default defineTool({
       if (!picked) throw new Error(`link request "${input.challengeId}" is not one of yours awaiting a decision.`);
       challenge = picked;
     } else if (waiting.length > 1) {
-      const list = waiting.map((c) => `  • ${c.id} — claimed by ${principalKey(c.claimedPlatform ?? "?", c.claimedNativeId ?? "?")}`).join("\n");
+      const list = waiting.map((c) => `  • ${c.id} — claimed by ${claimantLabel(c.claimedPlatform, c.claimedTenant, c.claimedNativeId)}`).join("\n");
       throw new Error(`you have ${waiting.length} link requests awaiting a decision — say which one (challengeId):\n${list}`);
     }
 
     if (challenge.initiatingPlatform !== binding.platform || challenge.initiatingTenant !== tenant || challenge.initiatingNativeId !== actor) {
       throw new Error("that link request was not started by you — only its initiator can decide it.");
     }
-    const claimant = principalKey(challenge.claimedPlatform ?? "?", challenge.claimedNativeId ?? "?");
+    const claimant = claimantLabel(challenge.claimedPlatform, challenge.claimedTenant, challenge.claimedNativeId);
 
     if (input.decision === "deny") {
       const denied = await denyLinkChallenge({ org: binding.org, challengeId: challenge.id });
@@ -85,7 +90,7 @@ export default defineTool({
     const result = await ratifyLinkChallenge({
       org: binding.org,
       challengeId: challenge.id,
-      handle: principalKey(binding.platform, actor),
+      handle: principalKey(binding.platform, tenant, actor),
     });
     if (!result.ok) throw new Error(result.reason);
     await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, tenant, nativeId: actor });
@@ -150,7 +155,7 @@ async function decideDirectorySuggestions(input: {
     const res = await confirmLinkedId({
       org: input.org,
       account: { platform: p.platform, tenant: p.tenant, nativeId: p.nativeId },
-      evidence: { kind: "challenge", challengeId: `dm-confirm:${principalKey(input.platform, input.actor)}` },
+      evidence: { kind: "challenge", challengeId: `dm-confirm:${principalKey(input.platform, input.tenant, input.actor)}` },
     });
     if (res.ok) confirmed.push(p.principal);
     else failed.push(`${p.principal} (${res.reason})`);

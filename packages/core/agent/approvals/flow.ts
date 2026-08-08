@@ -22,8 +22,8 @@ import {
   type ApprovalChainRequest,
 } from "../access/approver-chain.js";
 import { shadowJudgeAuditDetail } from "../access/approval-judge.js";
-import { platformOfScopeKey } from "../access/scope-key.js";
-import { principalKey } from "../identity/principal-key.js";
+import { parseScopeKey } from "../access/scope-key.js";
+import { tryPrincipalKey } from "../identity/principal-key.js";
 import { checkClickerFloor, clickRoomMatches, clickerFloorRefusalNotice, type ClickerFloorRefusal } from "./clicker-floor.js";
 import { checkCardDisclosure, cardDisclosureRefusalNotice } from "./card-disclosure.js";
 import { pendingCardBlocks, decidedCardBlocks, type RenderedCard } from "./card.js";
@@ -344,10 +344,22 @@ export function isOrgAdminOnlySpendCap(row: PendingActionRow): boolean {
   }
 }
 
-export function clickerMayDecide(row: PendingActionRow, clickerId: string, clickerPlatform: string | undefined): boolean {
+function roomNamespace(scopeKey: string | undefined | null): { readonly platform: string; readonly tenant: string } | undefined {
+  if (!scopeKey) return undefined;
+  const parsed = parseScopeKey(scopeKey);
+  return parsed.kind === "tenant" || parsed.kind === "surface" ? { platform: parsed.platform, tenant: parsed.workspace } : undefined;
+}
+
+export function clickerMayDecide(
+  row: PendingActionRow,
+  clickerId: string,
+  clickerPlatform: string | undefined,
+  clickerTenant: string | undefined,
+): boolean {
   if (!clickerPlatform) return false;
   const domains = getConfig().loadDomains();
-  const key = principalKey(clickerPlatform, clickerId);
+  const key = tryPrincipalKey(clickerPlatform, clickerTenant, clickerId);
+  if (key === undefined) return false;
   if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return true;
   if (isOrgAdminOnlySpendCap(row)) return false;
   if (!row.domain) return false;
@@ -433,6 +445,7 @@ export interface ResolveApprovalClickInput {
   readonly platformAdmin?: (row: PendingActionRow) => boolean | Promise<boolean>;
   readonly clickContext?: { readonly surfaceKey: string };
   readonly clickerPlatform?: string;
+  readonly clickerTenant?: string;
 }
 
 async function auditClickerDenial(org: string, row: PendingActionRow, clickerId: string, reason: ClickerFloorRefusal | "not-admin"): Promise<void> {
@@ -487,9 +500,10 @@ export async function resolveApprovalClick(input: ResolveApprovalClickInput): Pr
     }
   }
 
-  const clickerPlatform =
-    input.clickerPlatform ?? platformOfScopeKey(input.clickContext?.surfaceKey) ?? platformOfScopeKey(row.postedTo);
-  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform) && (await input.platformAdmin?.(row)) !== true) {
+  const clickerRoom = roomNamespace(input.clickContext?.surfaceKey) ?? roomNamespace(row.postedTo);
+  const clickerPlatform = input.clickerPlatform ?? clickerRoom?.platform;
+  const clickerTenant = input.clickerTenant ?? clickerRoom?.tenant;
+  if (kindDef.policy === "admin" && !clickerMayDecide(row, input.clickerId, clickerPlatform, clickerTenant) && (await input.platformAdmin?.(row)) !== true) {
     await auditClickerDenial(input.org, row, input.clickerId, "not-admin");
     return { outcome: "denied", row };
   }

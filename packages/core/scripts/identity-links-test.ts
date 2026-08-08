@@ -141,12 +141,12 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await claimLinkChallenge({ org: ORG, code: issued.code, claimant: { platform: "linear", tenant: "", nativeId: "lin-9" } })) === null, "claim: SINGLE-USE — a second claimer of a spent nonce is refused");
   ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.claimedNativeId === "example-owner", "claim: the second claimer did not overwrite the first");
 
-  const ratified = await ratifyLinkChallenge({ org: ORG, challengeId: issued.challenge.id, handle: "slack/U1" });
+  const ratified = await ratifyLinkChallenge({ org: ORG, challengeId: issued.challenge.id, handle: "slack/T1/U1" });
   ok(ratified.ok, "ratify: a claimed challenge commits");
   ok((await pg.getLinkChallenge(ORG, issued.challenge.id))?.status === "ratified", "ratify: the challenge is terminal (ratified)");
   const set = ratified.ok ? await expandLinkSet(ORG, ratified.linkSetId) : [];
-  const pairs = set.map((a) => `${a.platform}/${a.nativeId}`).sort();
-  assert.deepEqual(pairs, ["github/example-owner", "slack/U1"], "ratify: EXACTLY the initiator + the claimed pair are linked, nothing else");
+  const pairs = set.map((a) => (a.tenant ? `${a.platform}/${a.tenant}/${a.nativeId}` : `${a.platform}/${a.nativeId}`)).sort();
+  assert.deepEqual(pairs, ["github/example-owner", "slack/T1/U1"], "ratify: EXACTLY the initiator + the claimed pair are linked, nothing else");
   n++;
   ok((await ratifyLinkChallenge({ org: ORG, challengeId: issued.challenge.id, handle: "x" })).ok === false, "ratify: a second ratification of the same challenge is refused");
 
@@ -189,15 +189,15 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const ch = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_INIT3", surfaceKey: "slack/T1/DZ" });
   await claimLinkChallenge({ org: ORG, code: ch.code, claimant: { platform: "github", tenant: "", nativeId: "u-init3-gh" } });
-  const rat = await ratifyLinkChallenge({ org: ORG, challengeId: ch.challenge.id, handle: "slack/U_INIT3" });
+  const rat = await ratifyLinkChallenge({ org: ORG, challengeId: ch.challenge.id, handle: "slack/T1/U_INIT3" });
   ok(rat.ok, "F3: the legitimate challenge ratifies");
   ok(rat.ok && rat.linkSetId !== foreignSet, "F3: ratify used the initiator's OWN set, NOT the set it was only suggested into");
 
-  const xMembers = (await expandLinkSet(ORG, foreignSet)).map((a) => `${a.platform}/${a.nativeId}`).sort();
-  assert.deepEqual(xMembers, ["slack/PERSON_X"], "F3: person X's set did NOT absorb the initiator or the claimed account");
+  const xMembers = (await expandLinkSet(ORG, foreignSet)).map((a) => (a.tenant ? `${a.platform}/${a.tenant}/${a.nativeId}` : `${a.platform}/${a.nativeId}`)).sort();
+  assert.deepEqual(xMembers, ["slack/T1/PERSON_X"], "F3: person X's set did NOT absorb the initiator or the claimed account");
   n++;
-  const ownMembers = rat.ok ? (await expandLinkSet(ORG, rat.linkSetId)).map((a) => `${a.platform}/${a.nativeId}`).sort() : [];
-  assert.deepEqual(ownMembers, ["github/u-init3-gh", "slack/U_INIT3"], "F3: the initiator and the claimed account ARE linked, in the initiator's own set");
+  const ownMembers = rat.ok ? (await expandLinkSet(ORG, rat.linkSetId)).map((a) => (a.tenant ? `${a.platform}/${a.tenant}/${a.nativeId}` : `${a.platform}/${a.nativeId}`)).sort() : [];
+  assert.deepEqual(ownMembers, ["github/u-init3-gh", "slack/T1/U_INIT3"], "F3: the initiator and the claimed account ARE linked, in the initiator's own set");
   n++;
   ok((await pg.getLinkedId(ORG, "slack", T1, "U_INIT3"))?.linkSetId === (rat.ok ? rat.linkSetId : ""), "F3: the stale suggestion was dropped — the initiator's account now lives in its own set");
 }
@@ -205,7 +205,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 {
   const other = await issueLinkChallenge({ org: ORG, platform: "slack", tenant: T1, nativeId: "U_OTHER", surfaceKey: "slack/T1/D3" });
   await claimLinkChallenge({ org: ORG, code: other.code, claimant: { platform: "github", tenant: "", nativeId: "example-owner" } });
-  const dup = await ratifyLinkChallenge({ org: ORG, challengeId: other.challenge.id, handle: "slack/U_OTHER" });
+  const dup = await ratifyLinkChallenge({ org: ORG, challengeId: other.challenge.id, handle: "slack/T1/U_OTHER" });
   ok(dup.ok === false && !dup.ok && dup.reason.includes("exactly one person"), "invariant 1 (API): a second person cannot ratify an account another link-set already holds");
   const stillRowan = await resolveLinkSet(ORG, "github", "example-owner", "");
   ok(stillRowan !== null, "invariant 1 (API): the original owner keeps the account");
@@ -220,7 +220,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await resolveLinkSet(ORG, "github", "example-owner", ""))?.id === owner.linkSetId, "org isolation: the other org's row does not leak into this one");
 
   const sugSet = "set-suggest";
-  await pg.putLinkSet(ORG, { org: ORG, id: sugSet, handle: "slack/U_SUG", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
+  await pg.putLinkSet(ORG, { org: ORG, id: sugSet, handle: "slack/T1/U_SUG", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
   const suggested = await suggestLinkedId({ org: ORG, linkSetId: sugSet, account: { platform: "linear", tenant: "", nativeId: "lin-77" }, evidence: { kind: "directory-sync", provider: "okta", grade: "scim" } });
   ok(suggested.ok, "evidence: a directory sync may record a SUGGESTED account");
   ok((await pg.getLinkedId(ORG, "linear", "", "lin-77"))?.status === "suggested", "evidence: it lands as `suggested`, not `confirmed`");
@@ -257,7 +257,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 {
   const sq: OperationalStore = sqliteOperationalStore;
   const now = "2026-01-14T12:20:00Z";
-  await sq.putLinkSet(ORG, { org: ORG, id: "s1", handle: "slack/U1", status: "active", createdAt: now, updatedAt: now });
+  await sq.putLinkSet(ORG, { org: ORG, id: "s1", handle: "slack/T1/U1", status: "active", createdAt: now, updatedAt: now });
   const row: LinkedIdRow = { org: ORG, linkSetId: "s1", platform: "github", tenant: "", nativeId: "gh1", status: "confirmed", establishedBy: "challenge:c1", createdAt: now, updatedAt: now };
   ok((await sq.insertLinkedId(ORG, row)) === true, "sqlite: first insert of an account wins");
   ok((await sq.insertLinkedId(ORG, { ...row, linkSetId: "s2" })) === false, "sqlite: the (org, platform, native_id) PRIMARY KEY refuses a second person's claim on that account");
@@ -396,11 +396,11 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   assert.deepEqual(configOnly.principals[0]!.ids, rowan.ids, "union: a config entry with no DB counterpart is byte-identical");
   n++;
 
-  const dbOnly = unionPrincipals([], [{ linkSetId: "ls1", handle: "slack/U9", ids: { slack: "U9", github: "ninelives" } }]);
+  const dbOnly = unionPrincipals([], [{ linkSetId: "ls1", handle: "slack/T1/U9", ids: { slack: "U9", github: "ninelives" } }]);
   ok(dbOnly.principals.length === 1 && dbOnly.warnings.length === 0, "union: DB-only produces one entry");
-  ok(dbOnly.principals[0]!.name === "slack/U9" && dbOnly.principals[0]!.ids.github === "ninelives", "union: a DB-only entry is named by its (display-only) handle and carries its confirmed ids");
+  ok(dbOnly.principals[0]!.name === "slack/T1/U9" && dbOnly.principals[0]!.ids.github === "ninelives", "union: a DB-only entry is named by its (display-only) handle and carries its confirmed ids");
 
-  const disjoint = unionPrincipals([rowan], [{ linkSetId: "ls2", handle: "slack/U9", ids: { slack: "U9" } }]);
+  const disjoint = unionPrincipals([rowan], [{ linkSetId: "ls2", handle: "slack/T1/U9", ids: { slack: "U9" } }]);
   ok(disjoint.principals.length === 2 && disjoint.warnings.length === 0, "union: disjoint sources produce both people, no warning");
 
   const merged = unionPrincipals([rowan], [{ linkSetId: "ls3", handle: "rowan", ids: { slack: "U0EXOWNER", linear: "lin-rowan" } }]);
@@ -410,7 +410,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const conflict = unionPrincipals([rowan, sarah], [{ linkSetId: "ls4", handle: "someone-else", ids: { github: "example-owner", linear: "lin-uuid-1" } }]);
   ok(conflict.warnings.length > 0, "union: a (platform, id) claimed by two different people produces a LOUD warning");
-  ok(conflict.warnings.some((w) => w.key === "github/example-owner"), "union: the warning names the disputed account in principal-key form");
+  ok(conflict.warnings.some((w) => w.key === `github account "example-owner"`), "union: the warning names the disputed account in PROSE — PrincipalSurfaceIds carries no tenant, so a principal key cannot be composed here (OPE-309, flagged out of scope)");
   ok(conflict.warnings.every((w) => w.message.includes("NO merge")), "union: the warning says plainly that no merge was applied");
   const rowanOut = conflict.principals.find((p) => p.name === "Rowan Hale")!;
   ok(rowanOut.ids.github === undefined, "union: the disputed account is DROPPED from the config entry (fail-closed on merge)");
@@ -457,7 +457,7 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
   ok((await pg.insertLinkedId(ORG, { org: ORG, linkSetId: "fresh", platform: "github", tenant: "", nativeId: "u1-github", status: "confirmed", establishedBy: "challenge:z", createdAt: "z", updatedAt: "z" })) === true, "unlink_identity: unlink-then-relink works — the asymmetry with admin REVOKE is real");
 
   const self = (await unlinkIdentity.execute({}, dmU1)) as { unlinked: string };
-  ok(self.unlinked === "slack/U1", "unlink_identity: with no target it removes the account the caller is speaking from");
+  ok(self.unlinked === "slack/T1/U1", "unlink_identity: with no target it removes the account the caller is speaking from");
   await refuses(() => unlinkIdentity.execute({}, dmU2), "no linked accounts", "unlink_identity refuses a caller with no link-set at all");
 }
 
@@ -540,8 +540,8 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const grown = await link(dmDc, { platform: "github", tenant: "", nativeId: "gh-n2" });
   ok(grown === setId, "OPE-288 setup: the discord member grew the SAME set (not a new one)");
-  const members = (await expandLinkSet(ORG, setId)).map((a) => `${a.platform}/${a.nativeId}`).sort();
-  assert.deepEqual(members, ["discord/dc-n1", "github/gh-n1", "github/gh-n2", "slack/U_N1"], "OPE-288 setup: the set now holds four accounts, two of them DM-incapable");
+  const members = (await expandLinkSet(ORG, setId)).map((a) => (a.tenant ? `${a.platform}/${a.tenant}/${a.nativeId}` : `${a.platform}/${a.nativeId}`)).sort();
+  assert.deepEqual(members, ["discord/dc-n1", "github/gh-n1", "github/gh-n2", "slack/T1/U_N1"], "OPE-288 setup: the set now holds four accounts, two of them DM-incapable");
   n++;
   ok(notices.length === 1 && notices[0]!.platform === "slack" && notices[0]!.to === "U_N1", "🔴 OPE-288: EVERY other DM-capable member is told when a member grows the set — the compromised-member case cannot be silent");
   ok(!notices.some((x) => x.platform === "discord"), "OPE-288: the member who DID the growing is excluded — no double-notify (they hold the tool's own answer)");

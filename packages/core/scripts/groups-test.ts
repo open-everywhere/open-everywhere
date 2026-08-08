@@ -77,29 +77,29 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
 
 {
   const good: Group[] = [
-    defineGroup({ name: "payments", title: "Payments", members: ["slack/U1", { linkSet: "set-a" }] }),
-    defineGroup({ name: "platform", members: ["slack/U1", "discord/2222"] }),
+    defineGroup({ name: "payments", title: "Payments", members: ["slack/T1/U1", { linkSet: "set-a" }] }),
+    defineGroup({ name: "platform", members: ["slack/T1/U1", "discord/2222"] }),
   ];
   assertGroupsValid(good);
   ok(true, "a valid group registry passes assertGroupsValid");
   ok(groupLinkSets(good[0]!).length === 1 && groupPrincipalKeys(good[0]!).length === 1, "the two member kinds are separable");
-  ok(isLinkSetMember({ linkSet: "x" }) && !isLinkSetMember("slack/U1"), "isLinkSetMember discriminates on shape");
+  ok(isLinkSetMember({ linkSet: "x" }) && !isLinkSetMember("slack/T1/U1"), "isLinkSetMember discriminates on shape");
   ok(true, "the SAME principal may be in two groups — overlapping membership is not an error");
 
   throwsWith(
     () => assertGroupsValid([{ name: "g", members: ["U0EXOWNER"] }]),
-    "PLATFORM-QUALIFIED",
+    "qualified principal key",
     "a BARE, unqualified string member throws",
   );
   throwsWith(() => assertGroupsValid([{ name: "g", members: [] }]), "no members", "an empty group throws");
-  throwsWith(() => assertGroupsValid([{ name: "", members: ["slack/U1"] }]), "empty name", "an empty group name throws");
+  throwsWith(() => assertGroupsValid([{ name: "", members: ["slack/T1/U1"] }]), "empty name", "an empty group name throws");
   throwsWith(
-    () => assertGroupsValid([{ name: "g", members: ["slack/U1"] }, { name: "g", members: ["slack/U2"] }]),
+    () => assertGroupsValid([{ name: "g", members: ["slack/T1/U1"] }, { name: "g", members: ["slack/T1/U2"] }]),
     "more than once",
     "a duplicate group name throws",
   );
   throwsWith(
-    () => assertGroupsValid([{ name: "g", members: ["slack/U1", "slack/U1"] }]),
+    () => assertGroupsValid([{ name: "g", members: ["slack/T1/U1", "slack/T1/U1"] }]),
     "more than once",
     "a duplicate principal-key member is flagged",
   );
@@ -124,10 +124,10 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
 {
   ok(directoryGroupName("Engineering Team") === `${DIRECTORY_GROUP_PREFIX}Engineering Team`, "the IdP group name rides through verbatim (spaces included)");
   ok(isDirectoryGroupName("directory:x") && !isDirectoryGroupName("payments"), "isDirectoryGroupName tests the reserved prefix");
-  assertReservedGroupNamespace([{ name: "payments", members: ["slack/U1"] }]);
+  assertReservedGroupNamespace([{ name: "payments", members: ["slack/T1/U1"] }]);
   ok(true, "a hand-written group outside the namespace is fine");
   throwsWith(
-    () => assertReservedGroupNamespace([{ name: "directory:Engineering", members: ["slack/U1"] }]),
+    () => assertReservedGroupNamespace([{ name: "directory:Engineering", members: ["slack/T1/U1"] }]),
     "reserved",
     "a HAND-WRITTEN group in the directory: namespace throws — synced names can never collide with hand-written ones",
   );
@@ -135,12 +135,12 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
 
 {
   const groups: Group[] = [
-    { name: "a", members: ["slack/U1"] },
+    { name: "a", members: ["slack/T1/U1"] },
     { name: "b", members: [{ linkSet: "set-1" }] },
     { name: "c", members: ["discord/9"] },
   ];
-  assert.deepEqual(groupsForPrincipal(groups, "slack/U1"), ["a"]);
-  assert.deepEqual(groupsForPrincipal(groups, "slack/U1", ["set-1"]), ["a", "b"]);
+  assert.deepEqual(groupsForPrincipal(groups, "slack/T1/U1"), ["a"]);
+  assert.deepEqual(groupsForPrincipal(groups, "slack/T1/U1", ["set-1"]), ["a", "b"]);
   assert.deepEqual(groupsForPrincipal(groups, undefined, ["set-1"]), []);
   passed += 3;
   ok(true, "no caller key ⇒ NO groups (fail-closed), never every group");
@@ -148,7 +148,7 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
 
 {
   const bundles: Bundle[] = [{ name: "basket", repos: ["acme/web"] }];
-  const groups: Group[] = [{ name: "payments", members: ["slack/U1"] }];
+  const groups: Group[] = [{ name: "payments", members: ["slack/T1/U1"] }];
   assertBindingsValid([{ bundle: "basket", scope: { level: "group", group: "payments" } }], bundles, groups);
   ok(true, "a group binding naming a declared group passes merged validation");
   throwsWith(
@@ -164,7 +164,7 @@ async function rejectsWith(fn: () => Promise<unknown>, fragment: string, label: 
     "a group binding with no scope.group throws (the level's one address field)",
   );
   throwsWith(
-    () => assertBindingsValid([{ bundle: "basket", scope: { level: "group", group: "payments", principal: "slack/U1" } }], bundles, groups),
+    () => assertBindingsValid([{ bundle: "basket", scope: { level: "group", group: "payments", principal: "slack/T1/U1" } }], bundles, groups),
     "also sets scope.principal",
     "a group binding carrying a second address field throws",
   );
@@ -215,7 +215,7 @@ const dm = (principalId: string | undefined, groups?: readonly string[]): Resolv
 
   const both: Binding[] = [
     { bundle: "team", scope: { level: "group", group: "payments" } },
-    { bundle: "mine", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "mine", scope: { level: "principal", principal: "slack/T1/U1" } },
   ];
   const a = resolveAccess(dm("U1", ["payments"]), bundles, both);
   ok(a.connections.length === 1 && a.connections[0]!.secretRef === "MY_OWN_KEY", "narrowest-wins: a PRINCIPAL binding beats a GROUP one for the same connection id");
@@ -226,11 +226,11 @@ const dm = (principalId: string | undefined, groups?: readonly string[]): Resolv
     { name: "pi", instructions: "my rule" },
   ];
   const stack = resolveAccess(dm("U1", ["payments"]), instr, [
-    { bundle: "pi", scope: { level: "principal", principal: "slack/U1" } },
+    { bundle: "pi", scope: { level: "principal", principal: "slack/T1/U1" } },
     { bundle: "gi", scope: { level: "group", group: "payments" } },
   ]).instructionStack;
   ok(
-    stack.length === 2 && stack[0]!.source === "group:payments" && stack[1]!.source === "principal:slack/U1",
+    stack.length === 2 && stack[0]!.source === "group:payments" && stack[1]!.source === "principal:slack/T1/U1",
     "instructions concatenate group → principal (later layers outrank earlier)",
   );
 }
@@ -238,9 +238,9 @@ const dm = (principalId: string | undefined, groups?: readonly string[]): Resolv
 {
   const credentialed: Bundle[] = [{ name: "creds", connections: [{ id: "c", credentialType: "bearer", secretRef: "K", allowedWebsites: ["api.example.com"], methods: ["GET"] }] }];
   const credentialless: Bundle[] = [{ name: "plain", domains: ["raw.githubusercontent.com"], instructions: "hi" }];
-  const small: Group = { name: "duo", members: ["slack/U1", "slack/U2"] };
-  const withSet: Group = { name: "team", members: ["slack/U1", { linkSet: "set-a" }] };
-  const big: Group = { name: "dept", members: Array.from({ length: GROUP_BROAD_MEMBERS }, (_, i) => `slack/U${i}`) };
+  const small: Group = { name: "duo", members: ["slack/T1/U1", "slack/T1/U2"] };
+  const withSet: Group = { name: "team", members: ["slack/T1/U1", { linkSet: "set-a" }] };
+  const big: Group = { name: "dept", members: Array.from({ length: GROUP_BROAD_MEMBERS }, (_, i) => `slack/T1/U${i}`) };
   const bind = (group: string, allowBroad?: string): Binding[] => [{ bundle: "creds", scope: { level: "group", group }, ...(allowBroad === undefined ? {} : { allowBroad }) }];
 
   ok(lintBroadGrants(credentialed, bind("duo"), [], [small]).length === 0, "a SMALL, fully-enumerated group is the curated case — no acknowledgement needed");
@@ -281,12 +281,12 @@ const dm = (principalId: string | undefined, groups?: readonly string[]): Resolv
   throwsWith(() => parseGroupsModule(text + "\nconsole.log(1);\n"), "does not end with", "an overlay with an added statement refuses the strict read");
 
   throwsWith(() => parseGroupsFile({ groups: [{ name: "payments", members: [{ linkSet: "a" }] }] }), "prefixed name", "an UN-namespaced overlay group is refused");
-  throwsWith(() => parseGroupsFile({ groups: [{ name: "directory:x", members: ["slack/U1"] }] }), "linkSet", "a bare principal key in the overlay is refused (the overlay never writes accounts)");
+  throwsWith(() => parseGroupsFile({ groups: [{ name: "directory:x", members: ["slack/T1/U1"] }] }), "linkSet", "a bare principal key in the overlay is refused (the overlay never writes accounts)");
   throwsWith(() => parseGroupsFile({ groups: [{ name: "directory:x", members: [], extra: 1 }] }), 'field "extra"', "an unknown Group field in the overlay is refused");
   throwsWith(() => parseGroupsFile({ groups: [], bindings: [] }), "unknown top-level key", "an unknown top-level key is refused");
   ok(parseGroupsFile({ groups: [] }).groups.length === 0, "an empty overlay parses");
 
-  const merged: Group[] = [{ name: "payments", members: ["slack/U1"] }, ...file.groups];
+  const merged: Group[] = [{ name: "payments", members: ["slack/T1/U1"] }, ...file.groups];
   ok(directoryGroupsOf(merged).groups.length === 2, "directoryGroupsOf recovers exactly the overlay's groups from a merged registry");
 }
 
@@ -322,7 +322,7 @@ const setOf = (externalId: string): string => directoryLinkSetId(PROVIDER, exter
 
   const content = planOverlayContent(p3);
   const reparsed = parseGroupsModule(content);
-  assertGroupsValid([{ name: "payments", members: ["slack/U1"] }, ...reparsed.groups]);
+  assertGroupsValid([{ name: "payments", members: ["slack/T1/U1"] }, ...reparsed.groups]);
   ok(true, "the planned overlay parses AND passes assertGroupsValid merged with a hand-written group");
   ok(renderGroupPlan(p4).some((l) => l.startsWith("- ")), "renderGroupPlan renders a removal as a minus line");
 
@@ -466,7 +466,7 @@ registerOperationalStore(makeOperationalPostgresStore(client));
 {
   const evidence = { kind: "directory-sync", provider: "okta", grade: "attested" } as const;
   await ensureLinkSet({ org: ORG, linkSetId: "set-rowan", handle: "rowan" });
-  const tenantOf = (platform: string): string => (platform === "slack" ? "W" : "");
+  const tenantOf = (platform: string): string => (platform === "slack" ? "T1" : "");
   for (const acct of [
     { platform: "slack", tenant: tenantOf("slack"), nativeId: "U1" },
     { platform: "discord", tenant: tenantOf("discord"), nativeId: "D1" },
@@ -484,15 +484,15 @@ registerOperationalStore(makeOperationalPostgresStore(client));
   const bindings: Binding[] = [{ bundle: "team", scope: { level: "group", group: "payments" } }];
 
   for (const acct of expanded) {
-    const req = await withLinkSetGroups({ mode: "dm", platform: acct.platform, workspace: "W", channel: "D", principalId: acct.nativeId }, ORG, groups);
+    const req = await withLinkSetGroups({ mode: "dm", platform: acct.platform, workspace: "T1", channel: "D", principalId: acct.nativeId }, ORG, groups);
     ok(resolveAccess(req, bundles, bindings).repos.includes("acme/team"), `a link-set member's ${acct.platform} DM gets the group's bundle`);
   }
   {
-    const req = await withLinkSetGroups({ mode: "dm", platform: "teams", workspace: "W", channel: "D", principalId: "T1" }, ORG, groups);
+    const req = await withLinkSetGroups({ mode: "dm", platform: "teams", workspace: "T1", channel: "D", principalId: "T1" }, ORG, groups);
     ok((req.groups ?? []).length === 0 && resolveAccess(req, bundles, bindings).repos.length === 0, "a SUGGESTED-only account gets NOTHING — a directory proposal never widens access");
   }
   {
-    const req = await withLinkSetGroups({ mode: "dm", platform: "slack", workspace: "W", channel: "D", principalId: "U-stranger" }, ORG, groups);
+    const req = await withLinkSetGroups({ mode: "dm", platform: "slack", workspace: "T1", channel: "D", principalId: "U-stranger" }, ORG, groups);
     ok(resolveAccess(req, bundles, bindings).repos.length === 0, "an account on no link-set gets nothing");
   }
 
@@ -501,10 +501,10 @@ registerOperationalStore(makeOperationalPostgresStore(client));
     for (const g of groups) {
       for (const ls of groupLinkSets(g)) {
         const members = await expandLinkSet(ORG, ls);
-        if (members.some((m) => principalKey(m.platform, m.nativeId) === "slack/U1")) viaExpand.push(g.name);
+        if (members.some((m) => principalKey(m.platform, m.tenant, m.nativeId) === `slack/${tenantOf("slack")}/U1`)) viaExpand.push(g.name);
       }
     }
-    const viaResolve = groupsForPrincipal(groups, "slack/U1", await callerLinkSets(ORG, "slack", "U1", tenantOf("slack")));
+    const viaResolve = groupsForPrincipal(groups, "slack/T1/U1", await callerLinkSets(ORG, "slack", "U1", tenantOf("slack")));
     assert.deepEqual([...new Set(viaExpand)].sort(), [...viaResolve]);
     passed++;
     ok(true, "resolveLinkSet-at-the-edge is EQUIVALENT to expandLinkSet-per-group (the account→set map is a function, by the store's PK)");
@@ -512,19 +512,19 @@ registerOperationalStore(makeOperationalPostgresStore(client));
 
   await setLinkSetHold({ org: ORG, linkSetId: "set-rowan", hold: "suspended", actor: "test" });
   {
-    const req = await withLinkSetGroups({ mode: "dm", platform: "slack", workspace: "W", channel: "D", principalId: "U1" }, ORG, groups);
+    const req = await withLinkSetGroups({ mode: "dm", platform: "slack", workspace: "T1", channel: "D", principalId: "U1" }, ORG, groups);
     ok(resolveAccess(req, bundles, bindings).repos.length === 0, "a SUSPENDED link-set contributes no group membership — narrowing lands without waiting for a config merge");
   }
   await setLinkSetHold({ org: ORG, linkSetId: "set-rowan", hold: "active", actor: "test" });
 
   {
-    const direct: Group[] = [{ name: "floor", members: ["slack/U9"] }];
-    const req: ResolveRequest = { mode: "dm", platform: "slack", workspace: "W", channel: "D", principalId: "U9", groups: groupsForPrincipal(direct, "slack/U9") };
+    const direct: Group[] = [{ name: "floor", members: ["slack/T1/U9"] }];
+    const req: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D", principalId: "U9", groups: groupsForPrincipal(direct, "slack/T1/U9") };
     ok(resolveAccess(req, bundles, [{ bundle: "team", scope: { level: "group", group: "floor" } }]).repos.includes("acme/team"), "the NO-DB floor: a principal-key member resolves with no store read at all");
   }
 
   {
-    const bare: ResolveRequest = { mode: "dm", platform: "slack", workspace: "W", channel: "D" };
+    const bare: ResolveRequest = { mode: "dm", platform: "slack", workspace: "T1", channel: "D" };
     ok((await withLinkSetGroups(bare, ORG, groups)) === bare, "a request with no principalId is returned unchanged — an unattested turn inherits no group");
   }
 }

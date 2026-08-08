@@ -417,7 +417,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   ok(JSON.stringify([...LEVELS]) === JSON.stringify([...CAP_LEVELS]), "OPE-274: set_spend_limit's LEVELS is operational/store.ts's CAP_LEVELS, not a second list");
   ok((CAP_LEVELS as readonly string[]).includes("user"), 'OPE-274: "user" is a level the spend_limit row can persist');
 
-  ok(defaultScopeKey(slackBinding(), "user") === "user:slack/U999", "OPE-274: level:\"user\" defaults to the ACTING sender's own qualified scope key");
+  ok(defaultScopeKey(slackBinding(), "user") === "user:slack/T123/U999", "OPE-274: level:\"user\" defaults to the ACTING sender's own qualified scope key");
   ok(defaultScopeKey(slackBinding({ platform: "discord", workspace: "G1", principalId: "3575545974" }), "user") === "user:discord/3575545974", "OPE-274: …qualified by the SURFACE's platform, so two vendors' id namespaces never collide");
   throwsWith(
     () => defaultScopeKey(slackBinding({ principalAttested: true } as Partial<SurfaceBinding>), "user"),
@@ -427,14 +427,14 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
 
   const dm = slackBinding({ mode: "dm", surface: "D1", target: { channelId: "D1" } });
   const dmPlan = planSetSpendLimit(dm, { monthlyUsd: 20, reason: "my own headroom", level: "user" }, uncapped, null);
-  ok(dmPlan.args.level === "user" && dmPlan.args.scopeKey === "user:slack/U999", 'OPE-274: level:"user" from a DM defaults to the asker and is accepted (nothing about a person is ambiguous in a DM)');
+  ok(dmPlan.args.level === "user" && dmPlan.args.scopeKey === "user:slack/T123/U999", 'OPE-274: level:"user" from a DM defaults to the asker and is accepted (nothing about a person is ambiguous in a DM)');
 
-  const other = planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "trim", level: "user", scopeKey: "user:slack/U_OTHER" }, uncapped, null);
-  ok(other.args.scopeKey === "user:slack/U_OTHER" && other.scopeKey === other.args.scopeKey, "OPE-274: an explicit principal scope key is frozen verbatim — the proposed scope is one the proposer NAMED, never re-derived at click time");
+  const other = planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "trim", level: "user", scopeKey: "user:slack/T123/U_OTHER" }, uncapped, null);
+  ok(other.args.scopeKey === "user:slack/T123/U_OTHER" && other.scopeKey === other.args.scopeKey, "OPE-274: an explicit principal scope key is frozen verbatim — the proposed scope is one the proposer NAMED, never re-derived at click time");
 
   throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "user", scopeKey: "slack/T123" }, uncapped, null), "addresses a place, not a person", '🔴 OPE-274: level:"user" with a TENANT key is refused — it would store an allowance nobody can present');
-  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "user", scopeKey: "slack/U1" }, uncapped, null), "addresses a place, not a person", "🔴 OPE-274: …and an UNMARKED principal key is refused for the same reason — it parses as a tenant");
-  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "surface", scopeKey: "user:slack/U1" }, uncapped, null), "only works with level:\"user\"", "OPE-274: and the converse — a PERSON's key under level:\"surface\" would gate nothing, so it is refused");
+  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "user", scopeKey: "slack/T123/U1" }, uncapped, null), "addresses a place, not a person", "🔴 OPE-274: …and an UNMARKED principal key is refused for the same reason — it parses as a tenant");
+  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "surface", scopeKey: "user:slack/T123/U1" }, uncapped, null), "only works with level:\"user\"", "OPE-274: and the converse — a PERSON's key under level:\"surface\" would gate nothing, so it is refused");
   throwsWith(() => planClearSpendLimit(slackBinding(), { level: "user", scopeKey: "eng" }, uncapped, null), "addresses a place, not a person", "OPE-274: the CLEAR half carries the same fence — the pair moves together (OPE-303's rule)");
   assertScopeKeyShapeForLevel("t", "domain", "payments");
   assertScopeKeyShapeForLevel("t", "surface", "not-really-a-surface-key");

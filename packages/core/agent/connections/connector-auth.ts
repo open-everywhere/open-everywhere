@@ -190,7 +190,7 @@ async function effectiveUserVaultSubject(
         `${!org ? "org" : "platform"}, and a vault subject must be qualified by both. Fail closed.`,
     );
   }
-  const raw = rawVaultSubject(org, platform, principalId);
+  const raw = rawVaultSubject(org, platform, workspace, principalId);
   if (!connectorLinkSetVaultEnabled()) return raw;
   return (await sharedVaultSubjectFor(org, connector, platform, principalId, workspace)) ?? raw;
 }

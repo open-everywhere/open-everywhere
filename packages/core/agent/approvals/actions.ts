@@ -37,7 +37,7 @@ export function whereFromScope(org: string, scopeKey: string): { org: string; pl
     case "domain":
       return { org, platform: "domain", workspace: parsed.name || "unknown" };
     case "principal":
-      return { org, platform: "user", workspace: principalKey(parsed.platform, parsed.id) };
+      return { org, platform: "user", workspace: principalKey(parsed.platform, parsed.tenant, parsed.id) };
     case "tenant":
       return { org, platform: parsed.platform, workspace: parsed.workspace };
     case "surface":

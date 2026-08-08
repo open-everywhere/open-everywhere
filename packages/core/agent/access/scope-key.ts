@@ -1,24 +1,24 @@
-import { principalKey } from "../identity/principal-key.js";
+import { parsePrincipalKey, principalKey } from "../identity/principal-key.js";
 
 export type ScopeKeyShape =
   | { readonly kind: "domain"; readonly name: string }
   | { readonly kind: "tenant"; readonly platform: string; readonly workspace: string }
   | { readonly kind: "surface"; readonly platform: string; readonly workspace: string; readonly surface: string }
-  | { readonly kind: "principal"; readonly platform: string; readonly id: string }
+  | { readonly kind: "principal"; readonly platform: string; readonly tenant?: string; readonly id: string }
   | { readonly kind: "malformed"; readonly raw: string; readonly parts: readonly string[] };
 
 export const USER_SCOPE_PREFIX = "user:";
 
-export function userScopeKey(platform: string, id: string): string {
-  return `${USER_SCOPE_PREFIX}${principalKey(platform, id)}`;
+export function userScopeKey(platform: string, tenant: string | undefined | null, id: string): string {
+  return `${USER_SCOPE_PREFIX}${principalKey(platform, tenant, id)}`;
 }
 
 export function parseScopeKey(scopeKey: string): ScopeKeyShape {
   if (scopeKey.startsWith(USER_SCOPE_PREFIX)) {
     const rest = scopeKey.slice(USER_SCOPE_PREFIX.length);
-    const parts = rest.split("/");
-    if (parts.length === 2 && parts[0] && parts[1]) return { kind: "principal", platform: parts[0], id: parts[1] };
-    return { kind: "malformed", raw: scopeKey, parts };
+    const principal = parsePrincipalKey(rest);
+    if (principal) return { kind: "principal", ...principal };
+    return { kind: "malformed", raw: scopeKey, parts: rest.split("/") };
   }
   const parts = scopeKey.split("/");
   if (parts.length === 1) return { kind: "domain", name: parts[0] };

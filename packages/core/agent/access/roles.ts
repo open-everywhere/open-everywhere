@@ -1,5 +1,5 @@
 import { actingPrincipalId, bindFrom, type BindableContext, type SurfaceBinding } from "../identity/binding.js";
-import { principalKey, rosterHasPrincipal } from "../identity/principal-key.js";
+import { rosterHasPrincipal, tryPrincipalKey } from "../identity/principal-key.js";
 import { domainForChannel, criteriaDomain, type Domain } from "../memory/domain.js";
 import { getConfig } from "./config.js";
 
@@ -17,7 +17,7 @@ export function roleForBinding(binding: SurfaceBinding, domains: readonly Domain
   if (!principalId) return NO_ROLE;
 
   const rosterAdmits = (roster: readonly string[] | undefined): boolean =>
-    rosterHasPrincipal(roster, binding.platform, principalId);
+    rosterHasPrincipal(roster, binding.platform, binding.workspace, principalId);
 
   const org = criteriaDomain("org", domains);
   const isOrgAdmin = rosterAdmits(org?.admins);
@@ -63,9 +63,11 @@ export function adminControlRoles(
   principalId: string | undefined,
   domains: readonly Domain[],
   platform: string | undefined,
+  tenant: string | undefined,
 ): string[] {
   if (!principalId || !platform) return [];
-  const key = principalKey(platform, principalId);
+  const key = tryPrincipalKey(platform, tenant, principalId);
+  if (key === undefined) return [];
   const admits = (roster: readonly string[] | undefined): boolean =>
     roster?.includes(key) === true;
   if (admits(criteriaDomain("org", domains)?.admins)) return ["admin"];

@@ -1,6 +1,7 @@
 import type { SessionMode } from "../access/resolver.js";
 import { USER_SCOPE_PREFIX } from "../access/scope-key.js";
 import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
+import { tenantRungRemedy } from "../access/tenant-admission.js";
 
 export interface Usage {
   readonly inputTokens?: number;
@@ -167,8 +168,8 @@ export function assertSpendBudgetsValid(budgets: SpendBudgets): void {
       if (!isQualifiedPrincipalKey(principalId)) {
         throw new Error(
           principalId.includes("/")
-            ? `spend budget perUser.overrides key ${JSON.stringify(principalId)} is not a well-formed qualified principal key \`platform/<id>\` (e.g. "slack/U0123ABCD"). A surface or tenant key names a PLACE, and this registry is keyed on a PERSON — an entry like that would gate nothing. (identity/principal-key.ts)`
-            : `spend budget perUser.overrides key ${JSON.stringify(principalId)} must be a PLATFORM-QUALIFIED principal key \`platform/<id>\` (e.g. "slack/U0123ABCD", "discord/300000000000000104"). ` +
+            ? `spend budget perUser.overrides key ${JSON.stringify(principalId)} is not a well-formed principal key — \`platform/<id>\`, or \`platform/<tenant-id>/<id>\` on a tenant-scoped platform (e.g. "slack/T0AB1CD2E/U0123ABCD"). A surface or tenant key names a PLACE, and this registry is keyed on a PERSON — an entry like that would gate nothing.${tenantRungRemedy(principalId)} (identity/principal-key.ts)`
+            : `spend budget perUser.overrides key ${JSON.stringify(principalId)} must be a PLATFORM-QUALIFIED principal key \`platform/<id>\` (e.g. "discord/300000000000000104") — and on a tenant-scoped platform the workspace rung too, \`platform/<tenant-id>/<id>\` (e.g. "slack/T0AB1CD2E/U0123ABCD"). ` +
               `Replace it with "<platform>/${principalId}", naming the platform this id lives on. ` +
               `A bare id names no namespace, so one entry would match that id on EVERY connected platform at once — a per-user budget for somebody else. (identity/principal-key.ts, OPE-309)`,
         );

@@ -40,7 +40,7 @@ ok(lintBroadGrants([credentialed], [at("creds", "domain")]).length === 0, "the s
 ok(lintBroadGrants([credentialed], [at("creds", "surface")]).length === 0, "…and at SURFACE scope");
 ok(lintBroadGrants([credentialless], [at("safe", "org")]).length === 0, "a credential-LESS bundle at org scope stays warn-only (not a CI failure)");
 ok(
-  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "principal", principal: "slack/U123" } })]).length === 0,
+  lintBroadGrants([credentialed], [defineBinding({ bundle: "creds", scope: { level: "principal", principal: "slack/T1/U123" } })]).length === 0,
   "a principal scope is one person's own — not broad (OPE-219: a level now, not a dm: sentinel the lint had to sniff for)",
 );
 
@@ -135,8 +135,8 @@ ok(lintMethodNarrowing([credentialless]).length === 0, "a bundle with no connect
 
 {
   const bind: Binding = defineBinding({ bundle: "creds", scope: { level: "group", group: "team" } });
-  const wide: Group = { name: "team", members: ["slack/U1", { linkSet: "set-a" }] };
-  const narrow: Group = { name: "team", members: ["slack/U1", "slack/U2"] };
+  const wide: Group = { name: "team", members: ["slack/T1/U1", { linkSet: "set-a" }] };
+  const narrow: Group = { name: "team", members: ["slack/T1/U1", "slack/T1/U2"] };
   ok(lintBroadGrants([credentialed], [bind], [], [wide]).length === 1, "a credentialed GROUP binding onto a link-set-bearing group needs allowBroad");
   ok(lintAccessConfig([credentialed], [bind], [], [narrow]).length === 0, "…and a small, fully-enumerated group is clean through lintAccessConfig");
 }
