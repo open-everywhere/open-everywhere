@@ -2819,4 +2819,136 @@ export const SCENARIOS: readonly Scenario[] = [
       }
     },
   },
+  {
+    id: "S-TAINT-DRYRUN",
+    title: "Taint source-tier DRY RUN: drive the divergent read shapes and assert `taint.dryrun` rows land (opt-in — volume, not doubt)",
+    requires: ["slack"],
+    surface: "slack",
+    suite: "extended",
+    optional: true,
+    timeoutMs: 1_500_000,
+    judged: false,
+    run: async (ctx) => {
+      if (process.env.E2E_TAINT_DRYRUN !== "1") {
+        ctx.skip("E2E_TAINT_DRYRUN not set — the dry-run volume leg is opt-in (it drives read tools across up to four surfaces purely to populate the §C log). Set E2E_TAINT_DRYRUN=1 to run it.");
+      }
+      if (!ctx.auditRead) {
+        ctx.skip(
+          "taint.dryrun rows are ONLY assertable over the audit trail — set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN. Without it a run cannot tell a missing row " +
+            "from a deployment whose sink was never registered, which is precisely the failure this scenario exists to catch.",
+        );
+      }
+      const auditRead = ctx.auditRead!;
+      const slack = ctx.slack!;
+      const runStart = new Date(Date.now() - 60_000).toISOString();
+      const kindsOf = (rows: readonly AuditWireEntry[]): string[] => [
+        ...new Set(rows.map((e) => String((e.detail as { kind?: unknown } | undefined)?.kind ?? "?"))),
+      ];
+      const awaitRows = async (kind: string, what: string, timeoutMs = REPLY_WAIT) =>
+        await pollUntil(
+          async () => {
+            const r = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
+            const mine = r.filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === kind);
+            return mine.length > 0 ? mine : undefined;
+          },
+          { timeoutMs, what },
+        ).catch(() => undefined);
+
+      const marker = factToken("taintdr");
+      const { ts: askTs } = await slack.post(`(e2e S-TAINT-DRYRUN) anchor ${marker} — a message for the agent to read back`);
+      await slack.post(
+        slack.mention("read this channel's recent messages and tell me, in one line, what the last few were about. Read them properly — don't answer from what's already in front of you."),
+      );
+      const chatRows = await awaitRows("chat-message", 'a taint.dryrun row with kind "chat-message" (read_channel over-tainting a source the table calls trusted)');
+      ctx.gate(
+        chatRows !== undefined,
+        "ARM A (hard): reading the channel produced a `taint.dryrun` audit row for kind `chat-message` — the §C sink is live in prod and the ingestion site's descriptor reaches it",
+      );
+      const chat = chatRows![0].detail as { divergence?: unknown; taintsToday?: unknown; tableTier?: unknown; assumed?: unknown; label?: unknown };
+      ctx.gate(
+        chat.divergence === "over-taint" && chat.taintsToday === true && chat.tableTier === "trusted",
+        "ARM A: the row is an OVER-taint — the site taints, the table says trusted (enforcement would RELAX here). This is the exact shape §A's volume complaint is about.",
+      );
+      ctx.gate(chat.assumed === false, "ARM A: the chat-message verdict is NOT `assumed` — it needs no metadata, so a row here is a real divergence rather than a fail-closed guess");
+      const allDryRun = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
+      ctx.gate(
+        !JSON.stringify(allDryRun).includes(marker),
+        "🔴 CONTENT INVARIANT (hard): the run's channel-content token appears in NO taint.dryrun row — the log carries names, tiers and reasons only, never a byte of what was ingested",
+      );
+      ctx.log(`arm A: ${allDryRun.length} taint.dryrun row(s) so far; kinds = [${kindsOf(allDryRun).join(", ")}]`);
+      await slack.awaitAnyReply(askTs, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+
+      if (ctx.notionAmbient) {
+        const not = ctx.notionAmbient;
+        const blocks = await not.pageBlocks();
+        if (blocks.length === 0) {
+          ctx.log("arm B: the Notion fixture page has no blocks to comment on — skipped (fixture shape, not a product finding)");
+        } else {
+          const since = new Date().toISOString();
+          const { discussionId } = await not.createBlockDiscussion(blocks[0], "Open Everywhere — please READ this page's content and summarise it in one line right here.");
+          const notionRows = await awaitRows("notion", 'a taint.dryrun row with kind "notion" (read_notion_page declaring the bound workspace tier)');
+          ctx.gate(notionRows !== undefined, "ARM B: a Notion page read produced a `taint.dryrun` row for kind `notion`");
+          const nd = notionRows![0].detail as { assumed?: unknown; divergence?: unknown };
+          ctx.log(
+            `arm B: notion row divergence=${String(nd.divergence)} assumed=${String(nd.assumed)} — ` +
+              (nd.assumed === true
+                ? "ASSUMED, which since OPE-331 means this deployment has never VOUCHED the workspace (agent/identity/surfaces.ts), not that the metadata could not reach the seam"
+                : "a REAL verdict off the vouched workspace tier"),
+          );
+          await not.awaitBotReplyIn(discussionId, since, { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        }
+      } else {
+        ctx.log("arm B (notion) SKIPPED — no notionAmbient fixture on this deployment. The `notion` row shape is unpopulated in this run's sample; provision E2E_NOTION_* to cover it.");
+      }
+
+      if (ctx.linear) {
+        const lin = ctx.linear;
+        const issue = await lin.createIssue(`(e2e) S-TAINT-DRYRUN read fixture ${factToken("taintlin")}`);
+        try {
+          const before = new Set((await lin.comments(issue.id)).map((c) => c.id));
+          const askId = await lin.comment(issue.id, lin.mention("read this issue — its description and comments — and summarise it in one line."));
+          const linearRows = await awaitRows("linear", 'a taint.dryrun row with kind "linear" (read_linear_issue declaring the bound workspace tier)');
+          ctx.gate(linearRows !== undefined, "ARM C: a Linear issue read produced a `taint.dryrun` row for kind `linear`");
+          ctx.log(`arm C: linear row assumed=${String((linearRows![0].detail as { assumed?: unknown }).assumed)}`);
+          await lin.awaitAppReply(issue.id, before.add(askId), { timeoutMs: REPLY_WAIT }).catch(() => undefined);
+        } finally {
+          await lin.archive(issue.id).catch(() => undefined);
+        }
+      } else {
+        ctx.log("arm C (linear) SKIPPED — no linear fixture. The `linear` row shape is unpopulated in this run's sample; provision E2E_LINEAR_* to cover it.");
+      }
+
+      const prNumber = Number(process.env.E2E_TAINT_PR_NUMBER ?? "");
+      if (ctx.prRepo && Number.isInteger(prNumber) && prNumber > 0) {
+        await slack.post(
+          slack.mention(
+            `look at pull request #${prNumber} in ${ctx.prRepo}: read the feedback on it (reviews, comments, checks) AND walk the change itself, then give me one line on where it stands.`,
+          ),
+        );
+        const ghRows = await awaitRows("github", 'a taint.dryrun row with kind "github" (get_pr_feedback over-tainting a private repo, or walk_pr under-tainting a public one)', 900_000);
+        ctx.gate(
+          ghRows !== undefined,
+          "ARM D: reading a PR produced a `taint.dryrun` row for kind `github` — get_pr_feedback and walk_pr disagree with the table in OPPOSITE directions, so exactly one of them logs whichever way the repo's visibility falls",
+        );
+        const gd = ghRows![0].detail as { divergence?: unknown; assumed?: unknown; label?: unknown };
+        ctx.log(`arm D: github row divergence=${String(gd.divergence)} assumed=${String(gd.assumed)} label=${String(gd.label)}`);
+        ctx.gate(
+          gd.assumed === false,
+          "ARM D: the github verdict is NOT `assumed` — OPE-331 plumbed `base.repo.private` off the PR object both seams already fetch, so an assumed row here means that plumbing regressed (or GitHub omitted the field)",
+        );
+      } else {
+        ctx.log(
+          "arm D (github) SKIPPED — needs E2E_PR_REPO plus E2E_TAINT_PR_NUMBER naming an EXISTING pull request to read (deliberately not a PR this run opens: the scenario reads, it must not write). " +
+            "The `github` row shape is unpopulated in this run's sample.",
+        );
+      }
+
+      const finalRows = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
+      ctx.log(`S-TAINT-DRYRUN sample: ${finalRows.length} taint.dryrun row(s) across kinds [${kindsOf(finalRows).join(", ")}] since ${runStart}`);
+      ctx.gate(
+        finalRows.every((e) => typeof (e.detail as { reason?: unknown } | undefined)?.reason === "string"),
+        "every taint.dryrun row carries the table row's own prose reasoning — a divergence a reviewer cannot read the argument for is not reviewable",
+      );
+    },
+  },
 ];
