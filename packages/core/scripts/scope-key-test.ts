@@ -75,13 +75,20 @@ for (const k of KEYS) {
 }
 
 {
+  const stripComments = (s: string) =>
+    s
+      .split("\n")
+      .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*") && !l.trimStart().startsWith("/*"))
+      .join("\n");
   const src = readFileSync(new URL("../agent/access/scope-key.ts", import.meta.url), "utf-8");
-  const code = src
-    .split("\n")
-    .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*") && !l.trimStart().startsWith("/*"))
-    .join("\n");
-  ok(!/^\s*import\s/m.test(code), "access/scope-key.ts imports nothing — it cannot pull the resolver, the bundle types, or the event plane in behind it");
-  ok(!/ScopeStep|ScopeKind|event-model/.test(code), "access/scope-key.ts names nothing from the EVENT scope vocabulary (that fence is a security property, not tidiness)");
+  const code = stripComments(src);
+  const imports = [...code.matchAll(/^\s*import\s[^;]*?from\s+"([^"]+)"/gm)].map((m) => m[1]!);
+  ok(imports.length === 1 && imports[0] === "../identity/principal-key.js", `access/scope-key.ts imports EXACTLY the principal-key composer and nothing else (got: ${JSON.stringify(imports)}) — it cannot pull the resolver, the bundle types, or the event plane in behind it`);
+
+  const leafSrc = readFileSync(new URL("../agent/identity/principal-key.ts", import.meta.url), "utf-8");
+  ok(!/^\s*import\s/m.test(stripComments(leafSrc)), "…and the one module it admits is itself import-free, so the transitive closure is exactly those two files — the property the old `imports nothing` line was a proxy for");
+
+  ok(!/ScopeStep|ScopeKind|event-model/.test(code + stripComments(leafSrc)), "neither file names anything from the EVENT scope vocabulary (that fence is a security property, not tidiness)");
 }
 
 {

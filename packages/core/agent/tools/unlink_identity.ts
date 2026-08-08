@@ -4,6 +4,7 @@ import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { normalizePlatform } from "../identity/platform.js";
+import { principalKey } from "../identity/principal-key.js";
 import { unlinkOwnId } from "../identity/link-store.js";
 import { canDeliverDirectMessage, dispatchDirectMessage, notifyLinkSetMembers } from "../channels/post-arms.js";
 
@@ -39,7 +40,7 @@ export default defineTool({
       ...(target ? { target } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
-    const removed = target ? `${target.platform}/${target.nativeId}` : `${binding.platform}/${actor}`;
+    const removed = target ? principalKey(target.platform, target.nativeId) : principalKey(binding.platform, actor);
     const caller = { platform: binding.platform, nativeId: actor };
     const notice =
       `**${removed}** was just removed from your linked identity. It no longer speaks as you, and ` +

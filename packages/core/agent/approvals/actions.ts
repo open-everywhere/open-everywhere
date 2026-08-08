@@ -1,6 +1,7 @@
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { parseScopeKey } from "../access/scope-key.js";
+import { principalKey } from "../identity/principal-key.js";
 import type { CapLevel } from "../operational/store.js";
 import type { ActionKind, PendingActionRow } from "./types.js";
 import { withTaintDisclosure } from "./taint-disclosure.js";
@@ -36,7 +37,7 @@ export function whereFromScope(org: string, scopeKey: string): { org: string; pl
     case "domain":
       return { org, platform: "domain", workspace: parsed.name || "unknown" };
     case "principal":
-      return { org, platform: "user", workspace: `${parsed.platform}/${parsed.id}` };
+      return { org, platform: "user", workspace: principalKey(parsed.platform, parsed.id) };
     case "tenant":
       return { org, platform: parsed.platform, workspace: parsed.workspace };
     case "surface":

@@ -1,3 +1,5 @@
+import { principalKey } from "../identity/principal-key.js";
+
 export type ScopeKeyShape =
   | { readonly kind: "domain"; readonly name: string }
   | { readonly kind: "tenant"; readonly platform: string; readonly workspace: string }
@@ -8,7 +10,7 @@ export type ScopeKeyShape =
 export const USER_SCOPE_PREFIX = "user:";
 
 export function userScopeKey(platform: string, id: string): string {
-  return `${USER_SCOPE_PREFIX}${platform}/${id}`;
+  return `${USER_SCOPE_PREFIX}${principalKey(platform, id)}`;
 }
 
 export function parseScopeKey(scopeKey: string): ScopeKeyShape {
