@@ -226,7 +226,7 @@ throwsWith(
     "module: an edited header is REFUSED",
   );
 
-  const reordered = mod.replace('"alpha"', '" "').replace('"zeta"', '"alpha"').replace('" "', '"zeta"');
+  const reordered = mod.replace('"alpha"', '"\u0000"').replace('"zeta"', '"alpha"').replace('"\u0000"', '"zeta"');
   ok(reordered !== mod, "module: (fixture) the reordering edit actually changed the bytes");
   throwsWith(() => parseGrantsModule(reordered), "not in canonical form", "module: a hand-reordered array is REFUSED (round-trip check), not silently rewritten");
   const reindented = mod.replace('  "bundles"', '    "bundles"');

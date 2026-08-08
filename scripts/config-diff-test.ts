@@ -207,7 +207,7 @@ ok(digestValue(longStr, hash) !== digestValue(longStr + "y", hash), "the digest 
 
   ok(JSON.stringify(live) === JSON.stringify(buildConfigSnapshot()), "two builds of the same tree are byte-identical (no clock, no random, no key-order drift)");
 
-  const keys = live.rows.map((r) => `${r.section} ${r.key}`);
+  const keys = live.rows.map((r) => `${r.section}\u0000${r.key}`);
   ok(new Set(keys).size === keys.length, "every (section,key) is unique — no row shadows another");
   ok(JSON.stringify(keys) === JSON.stringify([...keys].sort((a, b) => a.localeCompare(b))), "rows are emitted in sorted order");
 
