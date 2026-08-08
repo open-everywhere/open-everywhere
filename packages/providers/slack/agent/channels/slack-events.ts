@@ -54,6 +54,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { slackMode, buildSlackAuth, channelFactsFromInfo, type ChannelFacts, type OpenEverywhereSlackAuth } from "./slack-identity.js";
 import { slackSpendGate, type SpendGateDecision, type SpendGateDoor } from "./slack-spend-gate.js";
+import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { fetchWakeBackscrollLines, fetchWakeEnvelopeBackscroll, type WakeBackscrollLines } from "./slack-wake-backscroll.js";
 export { PREFER_NO_REPLY_TOOL };
 import { registerSlackAttachment } from "./slack-attachments.js";
@@ -64,6 +65,9 @@ import {
   ingestReaction,
   liveReactionSink,
   isAllowedSlackDriver,
+  admittedTenantsFromConfig,
+  unadmittedTenantLog,
+  UNADMITTED_TENANT_DROP_REASON,
   type FinalMessageAction,
   type ReactionSinkDeps,
   type ReactionIngestOutcome,
@@ -378,6 +382,8 @@ export async function routeMessageEvent(ev: ParsedMessageEvent, deps: MessageRou
   });
   if (!decision.deliver) return { ...decision, woke: false };
 
+  if (tenantFenceDeclined(ev, "routeMessageEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
+
   if ((await slackWakeSpendGate(ev, p, ev.threadTs!)) === "declined") {
     auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeMessageEvent" });
     return { deliver: false, reason: SPEND_DECLINED_DROP_REASON, woke: false };
@@ -489,6 +495,13 @@ function auditEngagementWakeDropped(ev: ParsedMessageEvent, reason: string, deta
     } catch {
     }
   })();
+}
+
+function tenantFenceDeclined(ev: ParsedMessageEvent, route: string): boolean {
+  if (slackTenantAdmission(ev.teamId) !== "unadmitted") return false;
+  console.log(unadmittedTenantLog("slack", ev.teamId!, admittedTenantsFromConfig("slack")));
+  auditEngagementWakeDropped(ev, UNADMITTED_TENANT_DROP_REASON, { door: "engagement", route, team: ev.teamId ?? null });
+  return true;
 }
 
 function unvouchedBotAuthor(ev: ParsedMessageEvent): boolean {
@@ -695,6 +708,8 @@ export async function routeNameDropEvent(ev: ParsedMessageEvent, deps: NameDropR
   if (!decision.deliver) return { ...decision, woke: false };
 
   const rootTs = ev.threadTs ?? ev.ts;
+
+  if (tenantFenceDeclined(ev, "routeNameDropEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
 
   if ((await slackWakeSpendGate(ev, p, rootTs)) === "declined") {
     auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeNameDropEvent" });
@@ -1057,6 +1072,8 @@ export async function routeSupervisorEvent(
   if (ev.threadTs && !directMention && engRow?.stopped) {
     return { deliver: false, reason: "thread stopped — deterministic silence until an explicit @-mention re-invites", woke: false };
   }
+
+  if (tenantFenceDeclined(ev, "routeSupervisorEvent")) return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
 
   if ((await slackWakeSpendGate(ev, p, ev.threadTs ?? ev.ts)) === "declined") {
     auditEngagementWakeDropped(ev, SPEND_DECLINED_DROP_REASON, { door: "engagement", route: "routeSupervisorEvent" });
@@ -1443,6 +1460,12 @@ export async function routeChannelJoinEvent(ev: ParsedChannelJoinEvent, deps: Ch
   }
 
   const m = meta ?? { channelId: ev.channelId };
+
+  if (slackTenantAdmission(ev.teamId) === "unadmitted") {
+    console.log(unadmittedTenantLog("slack", ev.teamId!, admittedTenantsFromConfig("slack")));
+    auditJoinWakeDropped(ev, p, UNADMITTED_TENANT_DROP_REASON);
+    return { deliver: false, reason: UNADMITTED_TENANT_DROP_REASON, woke: false };
+  }
 
   if ((await slackJoinSpendGate(ev, p, m.channelType ?? joinChannelType(ev.channelKind))) === "declined") {
     auditJoinWakeDropped(ev, p, SPEND_DECLINED_DROP_REASON);

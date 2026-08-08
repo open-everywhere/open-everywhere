@@ -55,12 +55,16 @@ import {
   classifyWakeMapping,
   unmappedWakeCopy,
   UNMAPPED_WAKE_DROP_REASON,
+  admittedTenantsFromConfig,
+  unadmittedTenantLog,
+  UNADMITTED_TENANT_DROP_REASON,
   type Partition,
   type BindableContext,
   type ReactionState,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { loadConversationContext } from "./slack-context.js";
 import { slackSpendGate } from "./slack-spend-gate.js";
+import { slackTenantAdmission } from "./slack-tenant-fence.js";
 import { frontSlackChannel, INTERNAL_SLACK_ROUTE } from "./slack-front.js";
 import { turnEffectsFor, botDisplayName, slackForm, isSupervisorReplyTurn, deliverSupervisorReply, dmWakeThreadOverride, replyThreadTsForState, type SupervisorReplyTarget } from "./slack-events.js";
 
@@ -358,6 +362,12 @@ async function onInbound(
   }
   const facts = await resolveFacts(ctx, message, isDm);
   const mode = slackMode(facts.channelType, message.channelId);
+
+  if (slackTenantAdmission(message.teamId) === "unadmitted") {
+    console.log(unadmittedTenantLog("slack", message.teamId!, admittedTenantsFromConfig("slack")));
+    auditWakeDropped(message, UNADMITTED_TENANT_DROP_REASON, { door: "mention", team: message.teamId ?? null });
+    return DROP;
+  }
 
   if (classifyWakeMapping({ platform: "slack", mode, workspaceId: message.teamId }) === "unmapped") {
     console.log(

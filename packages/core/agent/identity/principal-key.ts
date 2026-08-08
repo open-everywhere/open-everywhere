@@ -23,6 +23,12 @@ export function rosterHasPrincipal(
   return roster.includes(principalKey(platform, id));
 }
 
+const TENANT_SCOPED_PLATFORMS: ReadonlySet<string> = new Set(["slack"]);
+
+export function isTenantScopedPlatform(platform: string | undefined): boolean {
+  return platform !== undefined && TENANT_SCOPED_PLATFORMS.has(platform);
+}
+
 export function principalIdsOnPlatform(roster: Iterable<string>, platform: string | undefined): string[] {
   if (!platform) return [];
   const ids: string[] = [];

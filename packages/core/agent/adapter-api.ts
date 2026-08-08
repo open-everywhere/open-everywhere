@@ -355,6 +355,9 @@ export type { IngressSpendGateInput, SpendGateBadges, SpendGateDecision, SpendGa
 export { classifyWakeMapping, unmappedWakeCopy, UNMAPPED_WAKE_DROP_REASON } from "./access/wake-mapping.js";
 export type { WakeMappingDecision, WakeMappingInput } from "./access/wake-mapping.js";
 
+export { classifyTenantAdmission, admittedTenants, admittedTenantsFromConfig, unadmittedTenantLog, multiTenantPrincipalsAllowed, UNADMITTED_TENANT_DROP_REASON, MULTI_TENANT_ENV } from "./access/tenant-admission.js";
+export type { TenantAdmissionDecision, TenantAdmissionInput } from "./access/tenant-admission.js";
+
 export { consumeCardPostedThisTurn, peekCardPostedThisTurn } from "./approvals/card-signal.js";
 
 export { sessionGrantKind, connectorSessionKind, grantButtonLabel } from "./approvals/session-grant.js";

@@ -333,6 +333,7 @@ registerConfig({
       parseMessageEvent({ type: "event_callback", team_id: "TENG123", event: { type: "message", channel: "C_TXN", ts: "9.9", thread_ts: "1.1", user: "U1", text: "more please", ...over } })!;
     const prevEnv = process.env.OE_TEST_DRIVER_IDS;
     process.env.OE_TEST_DRIVER_IDS = "TENG123:B9";
+    process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS = "1";
     woke.length = 0;
     out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
     ok(out.woke && woke.length === 1, "allowlisted driver bot in its pinned team wakes the engaged thread");
@@ -345,6 +346,7 @@ registerConfig({
     else process.env.OE_TEST_DRIVER_IDS = prevEnv;
     out = await routeMessageEvent(evT({ bot_id: "B9" }), deps(true));
     ok(!out.woke, "seam disarmed (env cleared) → the driver bot drops again (default off)");
+    delete process.env.OE_ALLOW_MULTI_TENANT_PRINCIPALS;
   }
 
   out = await routeMessageEvent(ev({ thread_ts: undefined }), deps(true));
