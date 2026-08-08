@@ -3,7 +3,6 @@ import {
   type ApprovalJudgeCompletion,
   type JudgePass,
   registerApprovalJudgeCompletion,
-  withModelStampScope,
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 
@@ -24,17 +23,15 @@ export function approvalJudgeCallSettings(
 export function gatewayApprovalJudgeCompletion(defaults: GatewayRoutedDefaults): ApprovalJudgeCompletion {
   return async (prompt, pass) => {
     const s = approvalJudgeCallSettings(pass, defaults);
-    return withModelStampScope(s.id, async () => {
-      const { text } = await generateText({
-        model: gateway(s.id),
-        prompt,
-        ...(s.maxOutputTokens !== undefined ? { maxOutputTokens: s.maxOutputTokens } : {}),
-        ...(s.providerOptions !== undefined
-          ? { providerOptions: s.providerOptions as Parameters<typeof generateText>[0]["providerOptions"] }
-          : {}),
-      });
-      return text;
+    const { text } = await generateText({
+      model: gateway(s.id),
+      prompt,
+      ...(s.maxOutputTokens !== undefined ? { maxOutputTokens: s.maxOutputTokens } : {}),
+      ...(s.providerOptions !== undefined
+        ? { providerOptions: s.providerOptions as Parameters<typeof generateText>[0]["providerOptions"] }
+        : {}),
     });
+    return text;
   };
 }
 
