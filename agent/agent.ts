@@ -35,7 +35,7 @@ registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_D
 
 registerGatewayHandoffCompletion({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
-registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
+registerGatewayApprovalJudge({ id: JUDGE_MODEL, gateway: { caching: "auto" } });
 
 if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
   throw new Error(
