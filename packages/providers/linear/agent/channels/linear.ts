@@ -11,7 +11,7 @@ import {
   type LinearSessionContext,
   type LinearInboundResult,
 } from "eve/channels/linear";
-import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
+import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { buildLinearAuth, teamFactsFromTeam, userGuestFromUser } from "./linear-identity.js";
 import { linearAppActorCredentials } from "./linear-credentials.js";
 import { LINEAR_EVENT_SOURCE, LINEAR_DELIVERY_ID_HEADER } from "./linear-event-normalizer.js";
@@ -272,11 +272,25 @@ function linearTeamVouched(organizationId: string, teamId: string): boolean {
   return isVouchedInternal(`linear/${organizationId}`, `linear/${organizationId}/${teamId}`) || process.env.OE_TRUST === "internal";
 }
 
+type LinearSend = (
+  payload: { readonly message: string; readonly context?: readonly string[] },
+  options: { readonly auth: unknown; readonly continuationToken: string; readonly state?: LinearChannelState },
+) => Promise<unknown>;
+
+function linearSendFrom(from: RouteHandlerArgs<LinearChannelState>["from"]): LinearSend {
+  return (payload, options) =>
+    from(options.continuationToken).send(payload.message, {
+      auth: options.auth,
+      state: options.state,
+      ...(payload.context && payload.context.length > 0 ? { context: payload.context } : {}),
+    } as never);
+}
+
 function liveLinearSupervisorDeps(
-  send: SendFn<LinearChannelState>,
+  send: LinearSend,
   teamId: string,
   organizationId: string,
-  receive?: RouteHandlerArgs["receive"],
+  to?: RouteHandlerArgs["to"],
 ): LinearSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
@@ -300,8 +314,8 @@ function liveLinearSupervisorDeps(
     memoryDelta: liveMemoryDeltaDep(org, `linear/${organizationId}/${teamId}`),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
-      if (window && receive) {
-        await divertToUnifiedWindow(receive, {
+      if (window && to) {
+        await divertToUnifiedWindow(to, {
           message,
           context: [...context],
           token,
@@ -314,13 +328,13 @@ function liveLinearSupervisorDeps(
       const unified = linearGrainFor(`linear/${organizationId}/${teamId}`).unified;
       await send(
         { message, context: [...context] },
-        { auth: auth as unknown as Parameters<SendFn<LinearChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
+        { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(teamId, organizationId, unified) },
       );
     },
   };
 }
 
-async function ambientDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
+async function ambientDelivery(body: string, headers: Headers, send: LinearSend, to?: RouteHandlerArgs["to"]): Promise<void> {
   let event: ReturnType<typeof parseLinearWebhookEvent>;
   try {
     event = parseLinearWebhookEvent({ body, headers });
@@ -364,7 +378,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
     { principalFallback: true },
   );
   const singleWindow = grainUsesUnifiedWindow(linearGrainFor(surfaceKey));
-  const ambientVouched = singleWindow && !!receive && linearTeamVouched(signal.organizationId, c.teamId);
+  const ambientVouched = singleWindow && !!to && linearTeamVouched(signal.organizationId, c.teamId);
   const ambientWindow: UnifiedWindowWake | undefined = ambientVouched
     ? {
         wakeId: mintWakeId(),
@@ -391,7 +405,7 @@ async function ambientDelivery(body: string, headers: Headers, send: SendFn<Line
       unified: linearGrainFor(surfaceKey).unified,
       window: ambientWindow,
     },
-    liveLinearSupervisorDeps(send, c.teamId, signal.organizationId, receive),
+    liveLinearSupervisorDeps(send, c.teamId, signal.organizationId, to),
   );
   await appendAudit({
     org: deploymentOrg(),
@@ -475,7 +489,7 @@ function mentionRoutingFor(event: LinearAgentSessionEvent, teamId: string | unde
   return p;
 }
 
-async function mentionSessionDelivery(body: string, headers: Headers, send: SendFn<LinearChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
+async function mentionSessionDelivery(body: string, headers: Headers, send: LinearSend, to?: RouteHandlerArgs["to"]): Promise<void> {
   let event: ReturnType<typeof parseLinearWebhookEvent>;
   try {
     event = parseLinearWebhookEvent({ body, headers });
@@ -492,7 +506,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
   const surfaceKey = `linear/${organizationId}/${sig.teamId}`;
   const triggerCommentId = sig.action === "prompted" ? sig.promptSourceCommentId : sig.sourceCommentId;
   try {
-    if (!receive) throw new Error("no cross-channel receive on this route (cannot reach the unified window)");
+    if (!to) throw new Error("no cross-channel dispatch on this route (cannot reach the unified window)");
     if (!triggerCommentId) throw new Error("suppress-and-divert with no trigger comment id (unreachable — the router requires one)");
     const c = await enrichComment(triggerCommentId);
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
@@ -542,7 +556,7 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Send
           addressing: "direct-mention",
         } satisfies UnifiedWindowWake,
       },
-      liveLinearSupervisorDeps(send, c.teamId, organizationId, receive),
+      liveLinearSupervisorDeps(send, c.teamId, organizationId, to),
     );
     await appendAudit({
       org: deploymentOrg(),
@@ -734,8 +748,8 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     const res = await inner(cloned, args);
     if (res.ok) {
-      args.waitUntil(ambientDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
-      args.waitUntil(mentionSessionDelivery(body, req.headers, args.send, args.receive).catch((err) => slog(`mention leg failed: ${String(err)}`)));
+      args.waitUntil(ambientDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+      args.waitUntil(mentionSessionDelivery(body, req.headers, linearSendFrom(args.from), args.to).catch((err) => slog(`mention leg failed: ${String(err)}`)));
       const deliveryId = req.headers.get(LINEAR_DELIVERY_ID_HEADER) ?? undefined;
       args.waitUntil(
         admitTrigger(
@@ -746,7 +760,7 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
             receivedAt: new Date().toISOString(),
             ...(deliveryId ? { deliveryId } : {}),
           },
-          { receive: args.receive },
+          { to: args.to },
         ).then(
           (report) => {
             if (report.matched > 0) slog(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);

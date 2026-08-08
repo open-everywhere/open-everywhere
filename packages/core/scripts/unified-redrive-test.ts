@@ -179,10 +179,12 @@ function makeAudit(sink: Record<string, unknown>[]): (e: Record<string, unknown>
 
   interface Landed { message: string; token: string; wakeId: string; origin: UnifiedWakeOrigin }
   const landed: Landed[] = [];
-  const captureReceive = (async (_ch: unknown, o: { message: string; target: { token: string; wakeId: string; origin: UnifiedWakeOrigin } }) => {
-    landed.push({ message: o.message, token: o.target.token, wakeId: o.target.wakeId, origin: o.target.origin });
-    return {} as never;
-  }) as unknown as Parameters<typeof divertToUnifiedWindow>[0];
+  const captureReceive = ((_ch: unknown, target: { token: string; wakeId: string; origin: UnifiedWakeOrigin }) => ({
+    async send(message: string) {
+      landed.push({ message, token: target.token, wakeId: target.wakeId, origin: target.origin });
+      return {} as never;
+    },
+  })) as unknown as Parameters<typeof divertToUnifiedWindow>[0];
   await divertToUnifiedWindow(captureReceive, { message: "prime", token: rawToken, window: { wakeId: mintWakeId(), origin: SLACK_ORIGIN }, surfaceKey: PAY_SLACK, auth: { attributes: {} } });
   landed.length = 0;
 

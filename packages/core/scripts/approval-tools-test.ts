@@ -7,6 +7,7 @@ import type { SurfaceBinding } from "../agent/identity/binding.js";
 import { registerConfig } from "../agent/access/config.js";
 import { registerCardPoster, cardPosterFor } from "../agent/approvals/flow.js";
 import { defineDomain } from "../agent/memory/domain.js";
+import { execTool } from "./_tool-exec.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -376,10 +377,10 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   };
 
   {
-    const setOut = await inSession(async () => setSpendLimitTool.execute({ monthlyUsd: 5, reason: "clean turn" }, slackCtx("C_TAINT_SET") as never));
+    const setOut = await inSession(async () => execTool(setSpendLimitTool)({ monthlyUsd: 5, reason: "clean turn" }, slackCtx("C_TAINT_SET") as never));
     const frozen = await frozenOf(setOut.pendingId);
     ok(frozen["tainted"] === false, "set_spend_limit freezes tainted:false on a clean turn (present, not absent)");
-    const clearOut = await inSession(async () => clearEntry.execute({}, slackCtx("C_TAINT_CLEAR")));
+    const clearOut = await inSession(async () => execTool(clearEntry)({}, slackCtx("C_TAINT_CLEAR")));
     const clearFrozen = await frozenOf(clearOut.pendingId);
     ok(clearFrozen["tainted"] === false, "clear_spend_limit freezes tainted:false on a clean turn");
   }
@@ -387,7 +388,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   {
     const setOut = await inSession(async () => {
       markUntrustedIngestedThisTurn();
-      return setSpendLimitTool.execute({ monthlyUsd: 10000, reason: "pre-approved by finance", scopeKey: "slack/T123/C_TAINT_SET2" }, slackCtx("C_TAINT_SET") as never);
+      return execTool(setSpendLimitTool)({ monthlyUsd: 10000, reason: "pre-approved by finance", scopeKey: "slack/T123/C_TAINT_SET2" }, slackCtx("C_TAINT_SET") as never);
     });
     const frozen = await frozenOf(setOut.pendingId);
     ok(frozen["tainted"] === true, "set_spend_limit freezes tainted:true when the turn read untrusted content");
@@ -395,7 +396,7 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
 
     const clearOut = await inSession(async () => {
       markUntrustedIngestedThisTurn();
-      return clearEntry.execute({ scopeKey: "slack/T123/C_TAINT_CLEAR2" }, slackCtx("C_TAINT_CLEAR"));
+      return execTool(clearEntry)({ scopeKey: "slack/T123/C_TAINT_CLEAR2" }, slackCtx("C_TAINT_CLEAR"));
     });
     const clearFrozen = await frozenOf(clearOut.pendingId);
     ok(clearFrozen["tainted"] === true, "clear_spend_limit freezes tainted:true when the turn read untrusted content");

@@ -59,7 +59,7 @@ export function deliveryDedupeKey(source: string, deliveryId: string): string {
 }
 
 export interface TriggerAdmitDeps {
-  readonly receive: RouteHandlerArgs["receive"];
+  readonly to: RouteHandlerArgs["to"];
   readonly org?: string;
   readonly listRoutines?: () => Promise<Routine[]>;
   readonly resolveTarget?: (r: Routine) => DispatchTarget | null;
@@ -310,13 +310,13 @@ async function fanOut(ev: NormalizedEvent, deps: TriggerAdmitDeps): Promise<FanO
     const deliver = async (): Promise<void> => {
       if (dest.origin) {
         const diverted = await divertTriggeredFire(
-          deps.receive,
+          deps.to,
           { message, surfaceKey: r.surfaceKey, origin: dest.origin, seatKey: runFireSeatKey(fireWakeId), auth, wakeId: fireWakeId },
           deps.fireWindow ?? {},
         );
         if (diverted) return;
       }
-      await deps.receive(dest.channel, { message, target: dest.target, auth });
+      await deps.to(dest.channel, dest.target).send(message, { auth });
     };
     let lost = false;
     await deliver().catch(async (err: unknown) => {

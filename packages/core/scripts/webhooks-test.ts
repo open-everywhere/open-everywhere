@@ -406,18 +406,20 @@ interface Captured {
   target: { channelId?: string };
   auth: { authenticator?: string; principalId?: string; attributes?: Record<string, string> };
 }
-function captureReceive(): { calls: Captured[]; receive: (channel: unknown, opts: unknown) => Promise<void> } {
+function captureReceive(): { calls: Captured[]; to: never } {
   const calls: Captured[] = [];
-  const receive = (channel: unknown, opts: unknown) => {
-    calls.push({ channel, ...(opts as Omit<Captured, "channel">) });
-    return Promise.resolve();
-  };
-  return { calls, receive: receive as never };
+  const to = (channel: unknown, target: unknown) => ({
+    send: (message: unknown, opts: unknown) => {
+      calls.push({ channel, target, message, ...(opts as object) } as Captured);
+      return Promise.resolve();
+    },
+  });
+  return { calls, to: to as never };
 }
 
 {
-  const { calls, receive } = captureReceive();
-  const result = await fireWebhook(goodHook, payload, { receive: receive as never, confirmInternal: async () => true });
+  const { calls, to } = captureReceive();
+  const result = await fireWebhook(goodHook, payload, { to, confirmInternal: async () => true });
   ok(result.fired === true, "a healthy fire reports fired=true");
   ok(calls.length === 1, "receive() is called exactly once");
   const call = calls[0]!;
@@ -433,27 +435,27 @@ function captureReceive(): { calls: Captured[]; receive: (channel: unknown, opts
 }
 
 {
-  const { calls, receive } = captureReceive();
-  await fireWebhook({ ...goodHook, posture: "trigger-only" }, payload, { receive: receive as never, confirmInternal: async () => true });
+  const { calls, to } = captureReceive();
+  await fireWebhook({ ...goodHook, posture: "trigger-only" }, payload, { to, confirmInternal: async () => true });
   ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === undefined, "🔴 a trigger-only config fire is NOT tainted — nothing an outside party authored is in its prompt");
   ok(!calls[0]!.message.includes(payload), "…and the delivered message really does carry none of the body (the fact the untainted stamp rests on)");
 }
 {
-  const { calls, receive } = captureReceive();
-  await fireWebhook({ ...goodHook, posture: "projection", project: ["note"] }, payload, { receive: receive as never, confirmInternal: async () => true });
+  const { calls, to } = captureReceive();
+  await fireWebhook({ ...goodHook, posture: "projection", project: ["note"] }, payload, { to, confirmInternal: async () => true });
   ok(calls[0]!.auth.attributes?.[OE_TAINTED_FIRE_ATTR] === "true", "🔴 a PROJECTION fire IS tainted — a projection bounds the VOLUME of an outside party's bytes, never their trust");
 }
 
 {
-  const { calls, receive } = captureReceive();
-  const result = await fireWebhook(goodHook, payload, { receive: receive as never, confirmInternal: async () => false });
+  const { calls, to } = captureReceive();
+  const result = await fireWebhook(goodHook, payload, { to, confirmInternal: async () => false });
   ok(result.fired === true, "an unconfirmed-trust fire still fires (trust only gates shared memory/domain skills, not delivery)");
   ok(calls[0]!.auth.attributes?.["is_ext_shared"] === undefined, "an UNCONFIRMED fire stamps no trust (fail-closed default keeps shared memory/domain-skills off)");
 }
 {
-  const { calls, receive } = captureReceive();
+  const { calls, to } = captureReceive();
   const result = await fireWebhook(goodHook, payload, {
-    receive: receive as never,
+    to,
     confirmInternal: async () => {
       throw new Error("conversations.info boom");
     },
@@ -470,8 +472,8 @@ await opStore.setSpendLimit("acme", "slack/T1/C1", "surface", { monthlyTokens: 1
 await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07", inputTokens: 90, outputTokens: 20 });
 
 {
-  const { calls, receive } = captureReceive();
-  const result = await fireWebhook(goodHook, payload, { receive: receive as never, now, confirmInternal: async () => true });
+  const { calls, to } = captureReceive();
+  const result = await fireWebhook(goodHook, payload, { to, now, confirmInternal: async () => true });
   ok(result.fired === false, "an over-budget hook target declines the fire");
   ok(typeof result.reason === "string" && result.reason.length > 0, "a decline carries a human-readable reason");
   ok(calls.length === 0, "receive() is never called for a declined fire — no session starts");
@@ -495,13 +497,13 @@ await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C1", period: "2026-07"
   const extHook = { ...goodHook, id: "deploy-status-ext", target: "slack/T1/C_EXT" };
   await opStore.recordSpend("acme", { surfaceKey: "slack/T1/C_EXT", period: "2026-07", inputTokens: 60, outputTokens: 0 });
   {
-    const { calls, receive } = captureReceive();
-    const result = await fireWebhook(extHook, payload, { receive: receive as never, now, confirmInternal: async () => false });
+    const { calls, to } = captureReceive();
+    const result = await fireWebhook(extHook, payload, { to, now, confirmInternal: async () => false });
     ok(result.fired === false && calls.length === 0, 'OPE-275: an UNCONFIRMED target classifies `external` → the perDomain["public"] criteria budget declines the fire — fail-closed cuts toward the tighter cap');
   }
   {
-    const { calls, receive } = captureReceive();
-    const result = await fireWebhook(extHook, payload, { receive: receive as never, now, confirmInternal: async () => true });
+    const { calls, to } = captureReceive();
+    const result = await fireWebhook(extHook, payload, { to, now, confirmInternal: async () => true });
     ok(result.fired === true && calls.length === 1, "OPE-275: the SAME target confirmed internal classifies into no criteria domain — with only the public budget configured, the fire proceeds (trust gates classification, never grants an escape)");
   }
   budgets = {};

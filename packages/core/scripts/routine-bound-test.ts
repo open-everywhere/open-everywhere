@@ -180,15 +180,17 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
 }
 
 let receives = 0;
-const okReceive = (async () => {
-  receives++;
-}) as never;
+const okReceive = (() => ({
+  send: async () => {
+    receives++;
+  },
+})) as never;
 
 async function tick(now: Date): Promise<void> {
   const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
-    receive: okReceive,
+    to: okReceive,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} },
     postJobKickoff: async () => "1700000000.0001",
@@ -277,7 +279,7 @@ async function tick(now: Date): Promise<void> {
   postDelayMs = 5;
   await dispatch.dispatchTick({
     now: new Date("2026-07-04T12:00:00.000Z"),
-    receive: okReceive,
+    to: okReceive,
     waitUntil: () => undefined,
     appAuth: { attributes: {} },
     postJobKickoff: async () => "1700000000.0001",

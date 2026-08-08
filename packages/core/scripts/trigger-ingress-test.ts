@@ -111,10 +111,12 @@ function harness(routines: Routine[], grantedServices: string[] = ["checkout"]) 
     audited,
     skips: (reason: string) => audited.filter((a) => a.action === "routine.skip" && (a.detail as { reason?: string })?.reason === reason),
     deps: {
-      receive: ((channel: unknown, opts: { message: string; target?: unknown }) => {
-        fired.push({ channel, message: opts.message, target: opts.target });
-        return Promise.resolve();
-      }) as never,
+      to: ((channel: unknown, target: unknown) => ({
+        send: (message: string) => {
+          fired.push({ channel, message, target });
+          return Promise.resolve();
+        },
+      })) as never,
       org: "acme",
       listRoutines: async () => routines,
       audit: async (e: AuditInput) => {
@@ -276,7 +278,7 @@ async function consumeQueueBatch(messages: readonly QueueMessage[], deps: unknow
   const h = harness([routine({ id: "r-lost" })]);
   const deps = {
     ...h.deps,
-    receive: (() => Promise.reject(new Error("channel_not_found"))) as never,
+    to: (() => ({ send: () => Promise.reject(new Error("channel_not_found")) })) as never,
   };
   const report = await admitTrigger(
     {

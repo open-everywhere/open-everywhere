@@ -83,10 +83,12 @@ function harness(routines: Routine[], rosters: Record<string, RoomRoster>, hydra
     rows: (action: string) => audited.filter((a) => a.action === action),
     skips: (reason: string) => audited.filter((a) => a.action === "routine.skip" && (a.detail as { reason?: string })?.reason === reason),
     deps: {
-      receive: ((channel: unknown, opts: { message: string }) => {
-        fired.push({ channel, message: opts.message });
-        return Promise.resolve();
-      }) as never,
+      to: ((channel: unknown) => ({
+        send: (message: string) => {
+          fired.push({ channel, message });
+          return Promise.resolve();
+        },
+      })) as never,
       listRoutines: async () => routines,
       audit: async (e: AuditInput) => {
         audited.push(e);

@@ -540,7 +540,7 @@ export function takeTurnStatus(state: DiscordGatewayState): {
   return { original };
 }
 
-export type UnifiedReceive = RouteHandlerArgs["receive"];
+export type UnifiedReceive = RouteHandlerArgs["to"];
 
 function discordGrainFor(domainKey: string): SupervisorGrain {
   try {
@@ -1035,7 +1035,15 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
     state,
   }),
   routes: [
-    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { send, waitUntil, receive }) => {
+    POST<DiscordGatewayState>("/eve/v1/discord-gateway", async (req, { from, waitUntil, to }) => {
+      const gatewaySend: DiscordGatewaySend = (message, options) => {
+        const payload = typeof message === "string" ? { message, context: undefined } : message;
+        return from(options.continuationToken).send(payload.message, {
+          auth: options.auth,
+          state: options.state,
+          ...(payload.context && payload.context.length > 0 ? { context: payload.context } : {}),
+        } as never);
+      };
       const rawBody = await req.text();
 
       const rejection = relayGate(req.headers.get("x-oe-relay-signature"), rawBody);
@@ -1068,7 +1076,7 @@ export default defineChannel<DiscordGatewayState, DiscordGatewayContext>({
       if (msg.content.trim().length === 0) return new Response("ignored (empty content)", { status: 200 });
 
       waitUntil(
-        dispatchTurn(msg, auth, send as unknown as DiscordGatewaySend, undefined, undefined, receive).catch((err) =>
+        dispatchTurn(msg, auth, gatewaySend, undefined, undefined, to).catch((err) =>
           log(`dispatch failed: ${String(err)}`),
         ),
       );

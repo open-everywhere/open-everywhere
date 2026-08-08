@@ -90,7 +90,7 @@ export function liveTeamsFrontPlan(a: TeamsMessageActivity): TeamsFrontPlan | nu
   }
 }
 
-function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, receive: RouteHandlerArgs["receive"]): TeamsSupervisorDeps {
+function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]): TeamsSupervisorDeps {
   const org = plan.partition.org;
   const store = getOperationalStore();
   const grain = plan.grain;
@@ -111,7 +111,7 @@ function liveTeamsSupervisorDeps(plan: TeamsFrontPlan, receive: RouteHandlerArgs
     touchSession: (_surfaceKey, atIso) => store.touchChannelSession(org, grain.registryKey, atIso),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
-      await divertToUnifiedWindow(receive, {
+      await divertToUnifiedWindow(to, {
         message,
         ...(context.length > 0 ? { context } : {}),
         token,
@@ -130,7 +130,7 @@ export interface TeamsFrontOptions {
   readonly now?: () => number;
   readonly markEventSeen?: (org: string, key: string, atIso: string) => Promise<boolean>;
   readonly planFor?: (a: TeamsMessageActivity) => TeamsFrontPlan | null;
-  readonly dispatch?: (a: TeamsMessageActivity, plan: TeamsFrontPlan, receive: RouteHandlerArgs["receive"]) => Promise<void>;
+  readonly dispatch?: (a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]) => Promise<void>;
 }
 
 const OK = () => new Response("ok");
@@ -160,7 +160,7 @@ function recordTeamsWakeFailure(key: string, err: unknown): void {
   }).catch(() => undefined);
 }
 
-async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, receive: RouteHandlerArgs["receive"]): Promise<void> {
+async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, to: RouteHandlerArgs["to"]): Promise<void> {
   const wakeCtx: BindableContext = { channel: { kind: "teams" }, session: { auth: { current: plan.auth as unknown as { attributes?: Readonly<Record<string, string>> } } } };
   const trust = resolveWakeTrustFromContext(wakeCtx, { id: a.from.id, isBot: false }, { principalFallback: true });
   let engagementTier: ReturnType<typeof engagementTierFor> | undefined;
@@ -186,7 +186,7 @@ async function liveTeamsDispatch(a: TeamsMessageActivity, plan: TeamsFrontPlan, 
       engagementTier,
       window: plan.window,
     },
-    liveTeamsSupervisorDeps(plan, receive),
+    liveTeamsSupervisorDeps(plan, to),
   );
   await appendAudit({
     org: plan.partition.org,
@@ -248,7 +248,7 @@ export function buildTeamsFrontHandler(innerHandler: RouteHandler, opts: TeamsFr
       `activity ${activity.id} on ${plan.surfaceKey}: single-window — diverting to the unified supervisor ` +
         `(${plan.window.addressing === "direct-mention" ? "addressed @mention; native forward suppressed" : "ambient channel-watch"})`,
     );
-    args.waitUntil(fifo.enqueue(plan.surfaceKey, () => dispatch(activity, plan, args.receive)));
+    args.waitUntil(fifo.enqueue(plan.surfaceKey, () => dispatch(activity, plan, args.to)));
     return OK();
   };
 }

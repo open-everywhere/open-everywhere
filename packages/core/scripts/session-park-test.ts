@@ -80,15 +80,21 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
 }
 
 {
-  const send = read("channel/send.js");
-  const modeVar = /(\w+)=(\w+)\.mode\?\?`conversation`/.exec(send)?.[1];
-  ok(modeVar !== undefined, "createSendFn still defaults an unspecified `mode` to `conversation`");
+  const send = read("channel/channel-address.js");
+  const modeVar = /mode:(\w+)\.mode\?\?`conversation`/.exec(send)?.[1];
+  ok(modeVar !== undefined, "channel-address.js still defaults an unspecified `mode` to `conversation`");
   ok(
-    new RegExp(`capabilities:${modeVar as string}===\`conversation\`\\?\\{requestInput:!0\\}:void 0`).test(send),
-    "createSendFn still declares `capabilities: { requestInput: true }` for a conversation-mode run",
+    new RegExp(`capabilities:${modeVar as string}\\.mode===\`task\`\\?void 0:\\{requestInput:!0\\}`).test(send),
+    "channel-address.js still declares `capabilities: { requestInput: true }` for every non-task run (⊇ conversation — OE's seats)",
   );
-  ok(/=await \w+\.deliver\(\w+\)/.test(send), "send() still awaits only runtime.deliver on the continuation path");
-  ok(/createSession\(\(await \w+\.run\(\w+\)\)\.sessionId,/.test(send), "…and only runtime.run on the fresh-session path (the turn runs elsewhere)");
+  ok(
+    /=await \w+\.runtime\.dispatchContinuation\(\{command:\w+,continuationToken:\w+\}\)/.test(send),
+    "the send still awaits only runtime.dispatchContinuation on the continuation path (0.31's rename of runtime.deliver)",
+  );
+  ok(
+    /createSession\(\(await \w+\.runtime\.createSession\(\w+\)\)\.sessionId,/.test(send),
+    "…and only runtime.createSession on the fresh-session path (0.31's rename of runtime.run — the turn still runs elsewhere)",
+  );
 }
 
 {

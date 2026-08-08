@@ -73,10 +73,12 @@ interface Received {
   auth: { attributes?: Record<string, unknown> };
 }
 const received: Received[] = [];
-const captureReceive = (async (_ch: unknown, options: { message: string; target: unknown; auth: unknown }) => {
-  received.push({ message: options.message, target: options.target as UnifiedReceiveTarget, auth: options.auth as Received["auth"] });
-  return {} as never;
-}) as unknown as RouteHandlerArgs["receive"];
+const captureReceive = ((_ch: unknown, target: unknown) => ({
+  async send(message: string, options: { auth: unknown }) {
+    received.push({ message, target: target as UnifiedReceiveTarget, auth: options.auth as Received["auth"] });
+    return {} as never;
+  },
+})) as unknown as RouteHandlerArgs["to"];
 
 const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_SPNA", threadTs: "1720000000.001" };
 

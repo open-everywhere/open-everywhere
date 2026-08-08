@@ -81,17 +81,19 @@ ok((await store.listAllRoutines()).length === N, "seeded all N due routines");
 const firedMessages: Record<string, string> = {};
 async function tick(): Promise<string[]> {
   const started: string[] = [];
-  const receive = ((_channel: unknown, opts: { message?: string; auth?: { attributes?: Record<string, unknown> } }) => {
-    const mk = routineMarker(opts.auth?.attributes as never);
-    if (mk) {
-      started.push(mk.id);
-      firedMessages[mk.id] = opts.message ?? "";
-    }
-    return Promise.resolve();
-  }) as never;
+  const receive = (() => ({
+    send: (message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+      const mk = routineMarker(opts.auth?.attributes as never);
+      if (mk) {
+        started.push(mk.id);
+        firedMessages[mk.id] = message ?? "";
+      }
+      return Promise.resolve();
+    },
+  })) as never;
   const args = {
     now,
-    receive,
+    to: receive,
     waitUntil: (_p: Promise<unknown>) => {},
     appAuth: { attributes: {} } as never,
   };
@@ -288,14 +290,16 @@ const surfaceRoutine: Routine = {
 await store.addRoutine({} as never, surfaceRoutine);
 
 let capturedAuth: { attributes?: Record<string, unknown> } | null = null;
-const captureReceive = ((_channel: unknown, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
-  const mk = routineMarker(opts.auth?.attributes as never);
-  if (mk?.id === "r-surface") capturedAuth = (opts.auth ?? null) as never;
-  return Promise.resolve();
-}) as never;
+const captureReceive = (() => ({
+  send: (_message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+    const mk = routineMarker(opts.auth?.attributes as never);
+    if (mk?.id === "r-surface") capturedAuth = (opts.auth ?? null) as never;
+    return Promise.resolve();
+  },
+})) as never;
 await dispatch.dispatchTick({
   now,
-  receive: captureReceive,
+  to: captureReceive,
   waitUntil: (_p: Promise<unknown>) => {},
   appAuth: { attributes: {} } as never,
   confirmInternal: async () => true,
@@ -334,7 +338,7 @@ await store.updateRoutine(surfaceRoutine.org, surfaceRoutine.surfaceKey, surface
 capturedAuth = null;
 await dispatch.dispatchTick({
   now,
-  receive: captureReceive,
+  to: captureReceive,
   waitUntil: (_p: Promise<unknown>) => {},
   appAuth: { attributes: {} } as never,
   confirmInternal: async () => false,
@@ -363,22 +367,21 @@ interface CapturedFire {
 const fires: Record<string, CapturedFire> = {};
 async function tickCapture(): Promise<string[]> {
   const started: string[] = [];
-  const receive = ((
-    channel: unknown,
-    opts: { target?: Record<string, unknown>; auth?: { attributes?: Record<string, unknown> } },
-  ) => {
-    const mk = routineMarker(opts.auth?.attributes as never);
-    if (mk) {
-      started.push(mk.id);
-      fires[mk.id] = { channel, target: opts.target ?? {}, attributes: opts.auth?.attributes ?? {} };
-    }
-    return Promise.resolve();
-  }) as never;
+  const receive = ((channel: unknown, target: Record<string, unknown> | undefined) => ({
+    send: (_message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+      const mk = routineMarker(opts.auth?.attributes as never);
+      if (mk) {
+        started.push(mk.id);
+        fires[mk.id] = { channel, target: target ?? {}, attributes: opts.auth?.attributes ?? {} };
+      }
+      return Promise.resolve();
+    },
+  })) as never;
   for (let i = 0; i < 10; i++) {
     const before = started.length;
     await dispatch.dispatchTick({
       now,
-      receive,
+      to: receive,
       waitUntil: (_p: Promise<unknown>) => {},
       appAuth: { attributes: {} } as never,
       confirmInternal: async () => true,
@@ -470,14 +473,16 @@ await seed({ id: "r-linear", surfaceKey: "linear/W1/T1", target: { agentSessionI
   await store.addRoutine({} as never, mkDm("r-dm-under", "D_OTHER", "U_OTHER"));
   {
     const started: string[] = [];
-    const receive = ((_c: unknown, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
-      const mk = routineMarker(opts.auth?.attributes as never);
-      if (mk) started.push(mk.id);
-      return Promise.resolve();
-    }) as never;
+    const receive = (() => ({
+      send: (_message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+        const mk = routineMarker(opts.auth?.attributes as never);
+        if (mk) started.push(mk.id);
+        return Promise.resolve();
+      },
+    })) as never;
     await dispatch.dispatchTick({
       now,
-      receive,
+      to: receive,
       waitUntil: (_p: Promise<unknown>) => {},
       appAuth: { attributes: {} } as never,
       confirmCreatorInternal: async () => true,

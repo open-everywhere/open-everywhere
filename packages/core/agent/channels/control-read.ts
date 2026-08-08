@@ -15,6 +15,6 @@ export default defineChannel({
     GET(CONTROL_READ_USAGE_PATH, async (req) => handleUsageWindowRead(req)),
     GET(CONTROL_READ_AUDIT_PATH, async (req) => handleAuditWindowRead(req)),
     GET(CONTROL_READ_UNIFIED_AUDIT_PATH, async (req) => handleUnifiedAuditRead(req)),
-    GET(CONTROL_READ_TRANSCRIPT_PATH, async (req, { getSession, params }) => handleSessionTranscriptRead(req, getSession, params)),
+    GET(CONTROL_READ_TRANSCRIPT_PATH, async (req, { attachSession, params }) => handleSessionTranscriptRead(req, attachSession, params)),
   ],
 });

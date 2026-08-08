@@ -102,7 +102,7 @@ export function parseSelfDispatchPayload(v: unknown): { payload: UnifiedDispatch
   };
 }
 
-export type SelfDispatchDivert = (receive: RouteHandlerArgs["receive"], input: UnifiedDispatchPayload) => Promise<void>;
+export type SelfDispatchDivert = (to: RouteHandlerArgs["to"], input: UnifiedDispatchPayload) => Promise<void>;
 
 export async function readCappedBody(req: Request, maxBytes: number): Promise<{ body: string } | { tooLarge: true }> {
   const declared = req.headers.get("content-length");
@@ -141,7 +141,7 @@ export async function readCappedBody(req: Request, maxBytes: number): Promise<{ 
 
 export async function handleSelfDispatch(
   req: Request,
-  receive: RouteHandlerArgs["receive"],
+  to: RouteHandlerArgs["to"],
   divert: SelfDispatchDivert,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Response> {
@@ -215,7 +215,7 @@ export async function handleSelfDispatch(
       key: hopKey,
       ttlMs: SELF_DISPATCH_MAX_SKEW_MS,
       run: async () => {
-        await divert(receive, payload);
+        await divert(to, payload);
         return "dispatched";
       },
       skipped: () => "deduped",

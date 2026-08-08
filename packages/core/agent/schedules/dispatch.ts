@@ -59,7 +59,7 @@ export async function dispatchTick(
     readonly confirmCreatorInternal?: CreatorStandingCheck;
   },
 ): Promise<void> {
-  const { receive, waitUntil, appAuth } = args;
+  const { to, waitUntil, appAuth } = args;
   const now = args.now ?? new Date();
   const confirmInternal = args.confirmInternal ?? bridgeConfirmChannelInternal;
   const postJobKickoff = args.postJobKickoff ?? liveJobKickoff;
@@ -187,12 +187,12 @@ export async function dispatchTick(
       const deliver = async (): Promise<void> => {
         if (fireOrigin) {
           const diverted = await divertTriggeredFire(
-            receive,
+            to,
             { message, surfaceKey: fireSurfaceKey, origin: fireOrigin, seatKey, auth: markedAuth, wakeId: fireWakeId },
           );
           if (diverted) return;
         }
-        await receive(dest.channel, { message, target: fireTarget, auth: markedAuth });
+        await to(dest.channel, fireTarget).send(message, { auth: markedAuth });
       };
       waitUntil(
         deliver().catch(async (err: unknown) => {

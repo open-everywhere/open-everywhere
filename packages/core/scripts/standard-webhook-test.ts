@@ -399,10 +399,12 @@ async function post(
       ...configHookDisclosure(hook),
     },
     {
-      receive: ((_channel: unknown, opts: { message: string; target?: unknown }) => {
-        sink.push({ message: opts.message, target: opts.target });
-        return Promise.resolve();
-      }) as never,
+      to: ((_channel: unknown, target: unknown) => ({
+        send: (message: string) => {
+          sink.push({ message, target });
+          return Promise.resolve();
+        },
+      })) as never,
       org: ORG,
       listRoutines: async () => [...routines],
       audit: async (e: AuditInput) => {

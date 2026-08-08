@@ -156,8 +156,8 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 }
 
 {
-  const receive = (() => Promise.resolve()) as never;
-  const tickArgs = (now: Date) => ({ now, receive, waitUntil: (_p: Promise<unknown>) => {}, appAuth: { attributes: {} } as never });
+  const receive = (() => ({ send: () => Promise.resolve() })) as never;
+  const tickArgs = (now: Date) => ({ now, to: receive, waitUntil: (_p: Promise<unknown>) => {}, appAuth: { attributes: {} } as never });
 
   await store.addRoutine({ org: ORG, surfaceKey: "linear/W1/S1" } as never, routine({ id: "r-unwired", surfaceKey: "linear/W1/S1", nextRunAt: "2026-07-20T00:00:00.000Z" }));
   await dispatch.dispatchTick(tickArgs(new Date("2026-07-20T01:00:00.000Z")) as never);
@@ -177,7 +177,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const ids = ["r-burst1", "r-burst2", "r-burst3"];
   for (const id of ids) await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, routine({ id, nextRunAt: "2026-07-21T00:00:00.000Z" }));
   const before = (await rowsFor(ROUTINE_AUDIT.skip)).length;
-  await dispatch.dispatchTick({ now: new Date("2026-07-21T00:05:00.000Z"), receive: (() => Promise.resolve()) as never, waitUntil: () => {}, appAuth: { attributes: {} } as never } as never);
+  await dispatch.dispatchTick({ now: new Date("2026-07-21T00:05:00.000Z"), to: (() => ({ send: () => Promise.resolve() })) as never, waitUntil: () => {}, appAuth: { attributes: {} } as never } as never);
   const after = (await rowsFor(ROUTINE_AUDIT.skip)).filter((e) => ids.includes(String(detailOf(e, "routineId"))));
   ok(after.length === 0, "deferred: an over-cap routine writes NO skip row (it is going to fire, just on a later tick)");
   ok((await rowsFor(ROUTINE_AUDIT.skip)).length === before, "deferred: nothing else was written either");
@@ -187,12 +187,12 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
 {
   const r = routine({ id: "r-lost", nextRunAt: "2026-07-22T00:00:00.000Z" });
   await store.addRoutine({ org: ORG, surfaceKey: SURFACE } as never, r);
-  const rejecting = (() => Promise.reject(new Error("channel_not_found"))) as never;
+  const rejecting = (() => ({ send: () => Promise.reject(new Error("channel_not_found")) })) as never;
   const pending: Promise<unknown>[] = [];
   process.env.OE_ROUTINE_MAX_CONCURRENCY = "20";
   await dispatch.dispatchTick({
     now: new Date("2026-07-22T00:05:00.000Z"),
-    receive: rejecting,
+    to: rejecting,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} } as never,
   } as never);
@@ -214,7 +214,7 @@ const detailOf = (row: AuditInput | undefined, key: string): unknown => row?.det
   const seenKeys: string[] = [];
   const closed = new Set<string>();
   const deps = {
-    receive: (() => Promise.resolve()) as never,
+    to: (() => ({ send: () => Promise.resolve() })) as never,
     listRoutines: async () => [routine({ id: "r-ev1", trigger: { kind: "event", source: "github" } }), capped],
     audit: async (e: AuditInput) => void audited.push(e),
     markSeen: async (_o: string, k: string) => {

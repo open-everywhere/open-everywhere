@@ -1,4 +1,4 @@
-import type { GetSessionFn } from "eve/channels";
+import type { AttachSessionFn } from "eve/channels";
 import { createHmac } from "node:crypto";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { readCappedBody, selfDispatchBaseUrl } from "../channels/self-dispatch.js";
@@ -91,7 +91,7 @@ export interface TranscriptRelayDeps {
 
 export async function handleTranscriptRelay(
   req: Request,
-  getSession: GetSessionFn,
+  attachSession: AttachSessionFn,
   deps: TranscriptRelayDeps = {},
 ): Promise<Response> {
   const env = deps.env ?? process.env;
@@ -145,7 +145,7 @@ export async function handleTranscriptRelay(
 
   let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await getSession(fire.sessionId).getEventStream({ startIndex: 0 })) as unknown as ReadableStream<SourceStreamEvent>;
+    stream = (await attachSession(fire.sessionId).getEventStream({ startIndex: 0 })) as unknown as ReadableStream<SourceStreamEvent>;
   } catch {
     return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
   }

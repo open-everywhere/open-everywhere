@@ -113,7 +113,7 @@ function captureSink(): { deps: ReactionSinkDeps; recorded: IngestedReaction[]; 
     });
 
   const waits: Array<Promise<unknown>> = [];
-  const fakeArgs = { send: async () => ({}), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
+  const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
   const frontOpts = { signingSecret: secret, now: () => nowMs, getBotIdentity: async () => ({ userId: "UBOT" }) };
 
   const handler = buildFrontHandler(async () => new Response("inner"), frontOpts);

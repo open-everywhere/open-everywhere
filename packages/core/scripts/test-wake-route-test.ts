@@ -76,10 +76,12 @@ function goodBody(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 interface Captured { message: string; target: Record<string, unknown>; auth: { attributes?: Record<string, unknown> } }
 const captured: Captured[] = [];
-const captureReceive: any = async (_channel: unknown, input: Captured) => {
-  captured.push(input);
-  return { id: "sess-test-xyz" };
-};
+const captureReceive: any = (_channel: unknown, target: Record<string, unknown>) => ({
+  send: async (message: string, options: { auth?: { attributes?: Record<string, unknown> } }) => {
+    captured.push({ message, target, auth: options.auth ?? {} });
+    return { id: "sess-test-xyz" };
+  },
+});
 
 function post(body: unknown, token?: string, receive = captureReceive): Promise<Response> {
   return handleTestWakeInjection(

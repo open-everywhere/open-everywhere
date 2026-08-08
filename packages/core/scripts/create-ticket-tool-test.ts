@@ -5,6 +5,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { execTool } from "./_tool-exec.js";
 registerSlackFixtureMapper();
 
 const dir = join(tmpdir(), `open-everywhere-create-ticket-tool-${process.pid}`);
@@ -105,7 +106,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
     async () => {
-      await createTicketEntry.execute({ platform: "tool-create-platform", target: "T-1", title: "x", body: "y" }, ctx("tool-create-platform", {}) as never);
+      await execTool(createTicketEntry)({ platform: "tool-create-platform", target: "T-1", title: "x", body: "y" }, ctx("tool-create-platform", {}) as never);
     },
     /approval-card path/,
     "refuses on a proposing surface with no approval-card path",
@@ -117,7 +118,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   let msg = "";
   try {
-    await createTicketEntry.execute({ platform: "notion", target: "db-1", title: "x", body: "y" }, ctx("notion", {}) as never);
+    await execTool(createTicketEntry)({ platform: "notion", target: "db-1", title: "x", body: "y" }, ctx("notion", {}) as never);
     assert.fail("expected a throw");
   } catch (err) {
     msg = String((err as Error).message);
@@ -129,7 +130,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
 {
   await assert.rejects(
     async () => {
-      await createTicketEntry.execute({ platform: "github", target: "acme/web", title: "x", body: "y" }, slackCtx() as never);
+      await execTool(createTicketEntry)({ platform: "github", target: "acme/web", title: "x", body: "y" }, slackCtx() as never);
     },
     /not one of this window's sources/,
     "a destination outside this window's sources refuses (topology gate reaches the tool)",
@@ -140,7 +141,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
 {
   process.env.OE_EGRESS_SPOOF = "1";
   calls.length = 0;
-  const out = await createTicketEntry.execute(
+  const out = await execTool(createTicketEntry)(
     { platform: "tool-create-platform", target: "T-9", title: "Login 500s on retry", body: "Steps: …" },
     slackCtx() as never,
   );
@@ -160,7 +161,7 @@ async function inFakeSession<T>(fn: () => T | Promise<T>): Promise<T> {
   process.env.OE_EGRESS_SPOOF = "1";
   const out = await inFakeSession(async () => {
     markUntrustedIngestedThisTurn();
-    return createTicketEntry.execute(
+    return execTool(createTicketEntry)(
       { platform: "tool-create-platform", target: "T-10", title: "From a web page", body: "…" },
       slackCtx() as never,
     );

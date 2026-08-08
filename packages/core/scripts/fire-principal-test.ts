@@ -109,15 +109,17 @@ const planShape = (p: MemoryPlan): string =>
 
 const delivered: { attributes: Attrs }[] = [];
 {
-  const receive = ((_channel: unknown, args: { auth: { attributes: Attrs } }) => {
-    delivered.push({ attributes: args.auth.attributes });
-    return Promise.resolve();
-  }) as never;
+  const receive = (() => ({
+    send: (_message: string, args: { auth: { attributes: Attrs } }) => {
+      delivered.push({ attributes: args.auth.attributes });
+      return Promise.resolve();
+    },
+  })) as never;
   const pending: Promise<unknown>[] = [];
   const tick = (now: Date, creatorInternal: boolean) =>
     dispatch.dispatchTick({
       now,
-      receive,
+      to: receive,
       waitUntil: (p: Promise<unknown>) => void pending.push(p),
       appAuth: { attributes: {} } as never,
       confirmInternal: () => Promise.resolve(false),

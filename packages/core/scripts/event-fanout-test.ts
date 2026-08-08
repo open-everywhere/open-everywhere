@@ -83,10 +83,12 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     fired,
     audited,
     deps: {
-      receive: ((channel: unknown, opts: unknown) => {
-        fired.push({ channel, ...(opts as Omit<Fired, "channel">) });
-        return Promise.resolve();
-      }) as never,
+      to: ((channel: unknown, target: unknown) => ({
+        send: (message: unknown, opts: unknown) => {
+          fired.push({ channel, target, message, ...(opts as { auth: Fired["auth"] }) } as Fired);
+          return Promise.resolve();
+        },
+      })) as never,
       listRoutines: async () => routines,
       audit: async (e: AuditInput) => {
         audited.push(e);
@@ -365,10 +367,12 @@ function harness(routines: Routine[], repos: readonly string[] = ["me/proj"]) {
     audited: [] as AuditInput[],
   };
   const deps = {
-    receive: ((channel: unknown, opts: unknown) => {
-      h.fired.push({ channel, ...(opts as Omit<Fired, "channel">) });
-      return Promise.resolve();
-    }) as never,
+    to: ((channel: unknown, target: unknown) => ({
+      send: (message: unknown, opts: unknown) => {
+        h.fired.push({ channel, target, message, ...(opts as { auth: Fired["auth"] }) } as Fired);
+        return Promise.resolve();
+      },
+    })) as never,
     listRoutines: async () => rs,
     audit: async (e: AuditInput) => {
       h.audited.push(e);

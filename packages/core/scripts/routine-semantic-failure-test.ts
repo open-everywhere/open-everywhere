@@ -214,15 +214,17 @@ interface Fire {
 }
 let fires: Fire[] = [];
 
-const capturingReceive = (async (_channel: unknown, opts: { message?: string; auth?: { attributes?: Record<string, unknown> } }) => {
-  fires.push({ message: opts.message ?? "", attrs: opts.auth?.attributes ?? {} });
-}) as never;
+const capturingReceive = (() => ({
+  send: async (message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+    fires.push({ message: message ?? "", attrs: opts.auth?.attributes ?? {} });
+  },
+})) as never;
 
 async function tick(now: Date): Promise<void> {
   const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
-    receive: capturingReceive,
+    to: capturingReceive,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} },
     postJobKickoff: async () => "1700000000.0001",

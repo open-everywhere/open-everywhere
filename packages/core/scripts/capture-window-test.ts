@@ -238,7 +238,7 @@ async function admit(over: Record<string, unknown>): Promise<{ readonly calls: u
       ...over,
     } as never,
     {
-      receive: (async () => undefined) as never,
+      to: (() => ({ send: async () => undefined })) as never,
       org: "acme",
       listRoutines: async () => [],
       now: () => new Date(T0),
@@ -280,7 +280,7 @@ async function admit(over: Record<string, unknown>): Promise<{ readonly calls: u
       readableBy: [{ level: "org" }],
     } as never,
     {
-      receive: (async () => undefined) as never,
+      to: (() => ({ send: async () => undefined })) as never,
       org: "acme",
       listRoutines: async () => {
         routed = true;

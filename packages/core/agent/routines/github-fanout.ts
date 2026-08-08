@@ -13,10 +13,10 @@ export { DELIVERY_DEDUPE_TTL_MS, deliveryDedupeKey } from "./ingress.js";
 export function fanOutGitHubDelivery(
   body: string,
   eventType: string,
-  receive: RouteHandlerArgs["receive"],
+  to: RouteHandlerArgs["to"],
   deliveryId?: string | null,
 ): Promise<void> {
-  return fanOutDelivery(body, eventType, deliveryId ?? undefined, { receive }).then(() => undefined);
+  return fanOutDelivery(body, eventType, deliveryId ?? undefined, { to }).then(() => undefined);
 }
 
 export async function fanOutDelivery(

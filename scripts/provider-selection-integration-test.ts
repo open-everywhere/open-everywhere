@@ -56,9 +56,11 @@ ok(
 );
 
 const received: string[] = [];
-const captureReceive = (async (channel: unknown, payload: unknown) => {
-  received.push(JSON.stringify({ payload }));
-}) as never;
+const captureReceive = ((channel: unknown, target: unknown) => ({
+  send: async (message: unknown, options: unknown) => {
+    received.push(JSON.stringify({ payload: { target, message, options } }));
+  },
+})) as never;
 
 const slackOrigin: UnifiedWakeOrigin = { platform: "slack", channelId: "C_GONE" };
 const notionOrigin: UnifiedWakeOrigin = { platform: "notion", pageId: "page-1", discussionId: "disc-1" } as UnifiedWakeOrigin;

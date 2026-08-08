@@ -181,7 +181,12 @@ await inSession(async () => {
   }) as typeof fetch;
 
   let sendCalled = false;
-  const args = () => ({ send: async () => { sendCalled = true; return { id: "sess-1" }; }, waitUntil: (_p: Promise<unknown>) => {}, receive: async () => ({ id: "sess-1" }) });
+  const args = () => ({
+    from: () => ({ send: async () => { sendCalled = true; return { id: "sess-1" }; } }),
+    resolveSession: async () => undefined,
+    waitUntil: (_p: Promise<unknown>) => {},
+    to: () => ({ send: async () => ({ id: "sess-1" }) }),
+  });
   const drive = async (ws: string, page: string) => {
     posts = []; sendCalled = false; currentPage = page;
     let threw: unknown;

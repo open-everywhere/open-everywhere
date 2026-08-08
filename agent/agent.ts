@@ -70,7 +70,7 @@ export default defineAgent({
   }),
   modelContextWindowTokens: 1_000_000,
   reasoning: "medium",
-  limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET },
+  limits: { maxInputTokensPerSession: SESSION_INPUT_TOKEN_BUDGET, sessionTimeoutMs: false },
   compaction: {
     model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,

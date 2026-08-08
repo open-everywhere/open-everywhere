@@ -128,7 +128,7 @@ async function tick(now: Date, receive: unknown): Promise<void> {
   const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
-    receive,
+    to: receive,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} },
     postJobKickoff: async () => "1700000000.0001",
@@ -136,11 +136,13 @@ async function tick(now: Date, receive: unknown): Promise<void> {
   await Promise.all(pending);
 }
 
-const rejectingReceive = (async () => {
-  throw new Error("channel_not_found");
-}) as never;
+const rejectingReceive = (() => ({
+  send: async () => {
+    throw new Error("channel_not_found");
+  },
+})) as never;
 
-const okReceive = (async () => undefined) as never;
+const okReceive = (() => ({ send: async () => undefined })) as never;
 
 {
   resetRoutineSkipThrottle();

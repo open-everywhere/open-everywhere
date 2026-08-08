@@ -84,11 +84,13 @@ function harness(opts: HarnessOpts = {}) {
     audited,
     rows: (action: string) => audited.filter((a) => a.action === action),
     deps: {
-      receive: ((_channel: unknown, o: unknown) => {
-        if (opts.reject !== undefined) return Promise.reject(new Error(opts.reject));
-        fired.push(o as { message: string });
-        return Promise.resolve();
-      }) as never,
+      to: (() => ({
+        send: (message: string) => {
+          if (opts.reject !== undefined) return Promise.reject(new Error(opts.reject));
+          fired.push({ message });
+          return Promise.resolve();
+        },
+      })) as never,
       audit: async (e: AuditInput) => {
         audited.push(e);
       },

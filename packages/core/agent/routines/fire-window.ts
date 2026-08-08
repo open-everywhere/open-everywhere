@@ -107,7 +107,7 @@ async function liveGeneration(org: string, registryKey: string): Promise<number>
 }
 
 export async function divertTriggeredFire(
-  receive: RouteHandlerArgs["receive"],
+  to: RouteHandlerArgs["to"],
   input: {
     readonly message: string;
     readonly surfaceKey: string;
@@ -136,7 +136,7 @@ export async function divertTriggeredFire(
   if (!plan) return false;
   const attributes: Record<string, unknown> = { ...(input.auth.attributes ?? {}), [OE_GRAIN_ATTR]: TRIGGERED_FIRE_GRAIN };
   const wakeId = input.wakeId ?? mintWakeId();
-  await (deps.divert ?? divertToUnifiedWindow)(receive, {
+  await (deps.divert ?? divertToUnifiedWindow)(to, {
     message: renderFireWindowMessage(input.message, wakeId, input.auth.attributes ?? {}),
     token: plan.token,
     window: { wakeId, origin: input.origin, addressing: "direct-mention" },

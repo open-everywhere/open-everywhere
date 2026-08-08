@@ -89,7 +89,7 @@ function notionGrainFor(surfaceKey: string): SupervisorGrain {
 
 type NotionState = NotionSessionState;
 
-function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: RouteHandlerArgs["receive"]): NotionSupervisorDeps {
+function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, to?: RouteHandlerArgs["to"]): NotionSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -113,8 +113,8 @@ function liveNotionSupervisorDeps(send: SendFn, surfaceKey: string, receive?: Ro
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, state, window }) {
       if (window) {
-        if (!receive) throw new Error("notion single-window wake has no cross-channel receive — refusing (would post an unregistered wake-id)");
-        await divertToUnifiedWindow(receive, {
+        if (!to) throw new Error("notion single-window wake has no cross-channel dispatch — refusing (would post an unregistered wake-id)");
+        await divertToUnifiedWindow(to, {
           message,
           context: [...context],
           token,
@@ -134,6 +134,16 @@ type SendFn = (
   opts: { auth: unknown; continuationToken: string; state: NotionState },
 ) => Promise<void>;
 
+function notionSendFrom(from: RouteHandlerArgs<NotionState>["from"]): SendFn {
+  return async (payload, opts) => {
+    await from(opts.continuationToken).send(payload.message, {
+      auth: opts.auth,
+      state: opts.state,
+      ...(payload.context && payload.context.length > 0 ? { context: payload.context } : {}),
+    } as never);
+  };
+}
+
 export default defineChannel<NotionState, { state: NotionState }>({
   kindHint: "notion",
   state: { discussionId: null, pageId: null, workspaceId: null },
@@ -141,7 +151,8 @@ export default defineChannel<NotionState, { state: NotionState }>({
     return { state };
   },
   routes: [
-    POST(ROUTE, async (req, { send, waitUntil, receive }) => {
+    POST(ROUTE, async (req, { from, waitUntil, to }) => {
+      const send = notionSendFrom(from);
       const rawBody = await req.text();
       const signature = req.headers.get("x-notion-signature");
       const apiKey = await resolveNotionApiKey();
@@ -182,7 +193,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
             trigger: { ...d.trigger, trust: trustOf(d.trigger) },
             threadComments: d.threadComments.map((m) => ({ ...m, trust: trustOf(m) })),
           },
-          liveNotionSupervisorDeps(send as unknown as SendFn, d.surfaceKey, receive),
+          liveNotionSupervisorDeps(send, d.surfaceKey, to),
         );
         await appendAudit({
           org: deploymentOrg(),
@@ -217,7 +228,7 @@ export default defineChannel<NotionState, { state: NotionState }>({
               receivedAt: new Date().toISOString(),
               ...(deliveryId ? { deliveryId } : {}),
             },
-            { receive },
+            { to },
           ).then(
             (report) => {
               if (report.matched > 0) log(`event plane: ${report.matched} matched -> ${report.fired} fired, ${report.skipped} skipped`);

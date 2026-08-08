@@ -328,14 +328,14 @@ export function recordWakeFailure(key: string, err: unknown): void {
 
 export function withSingleWindowDiversion(
   deps: ReturnType<typeof liveSupervisorDeps>,
-  receive: RouteHandlerArgs["receive"],
+  to: RouteHandlerArgs["to"],
   surfaceKey: string,
 ): ReturnType<typeof liveSupervisorDeps> {
   return {
     ...deps,
     async wake(input) {
       if (!input.window) return deps.wake(input);
-      await divertInboundToUnifiedWindow(receive, {
+      await divertInboundToUnifiedWindow(to, {
         message: input.message,
         token: input.token,
         window: input.window,
@@ -356,37 +356,41 @@ async function liveDmSeatHandoff(dmChannelId: string, outgoing: ChannelSessionRo
   }
 }
 
-function wrapDmSeatSend(
-  send: RouteHandlerArgs["send"],
+export function wrapDmSeatFrom(
+  from: RouteHandlerArgs["from"],
   waitUntil: RouteHandlerArgs["waitUntil"],
   org: string,
   dmChannelId: string,
   resolveDmSeat: (org: string, dmChannelId: string, atIso: string) => Promise<DmSeat>,
   touchDmSeatFn: (org: string, dmChannelId: string, atIso: string) => Promise<void>,
-): RouteHandlerArgs["send"] {
-  return (async (payload: unknown, sendOpts: unknown) => {
-    const o = (sendOpts ?? {}) as { continuationToken?: unknown };
-    const token = typeof o.continuationToken === "string" ? o.continuationToken : undefined;
-    if (token && token.startsWith(`${dmChannelId}:`) && !token.includes(":oe-dm:g")) {
-      try {
-        const atIso = new Date().toISOString();
-        const seat = await resolveDmSeat(org, dmChannelId, atIso);
-        const newOpts = { ...(sendOpts as Record<string, unknown>), continuationToken: seat.token };
-        let newPayload = payload;
-        if (seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0) {
-          const p = (payload ?? {}) as { context?: readonly string[] };
-          const handoff = `<handoff-from-previous-session>\n${seat.handoffNote}\n</handoff-from-previous-session>`;
-          newPayload = { ...(payload as Record<string, unknown>), context: [handoff, ...(p.context ?? [])] };
-        }
-        const res = await (send as (p: unknown, opts: unknown) => Promise<unknown>)(newPayload, newOpts);
-        waitUntil(touchDmSeatFn(org, dmChannelId, atIso).catch(() => {}));
-        return res;
-      } catch (err) {
-        console.warn(`[open-everywhere:slack-front] dm-seat remap failed (${dmChannelId}) — native send: ${String(err)}`);
-      }
+): RouteHandlerArgs["from"] {
+  return ((address: string) => {
+    const native = from(address);
+    if (!(typeof address === "string" && address.startsWith(`${dmChannelId}:`) && !address.includes(":oe-dm:g"))) {
+      return native;
     }
-    return (send as (p: unknown, opts: unknown) => Promise<unknown>)(payload, sendOpts);
-  }) as RouteHandlerArgs["send"];
+    return {
+      ...native,
+      async send(message: unknown, sendOpts: unknown) {
+        try {
+          const atIso = new Date().toISOString();
+          const seat = await resolveDmSeat(org, dmChannelId, atIso);
+          let newOpts = sendOpts;
+          if (seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0) {
+            const o = (sendOpts ?? {}) as { context?: readonly string[] };
+            const handoff = `<handoff-from-previous-session>\n${seat.handoffNote}\n</handoff-from-previous-session>`;
+            newOpts = { ...(sendOpts as Record<string, unknown>), context: [handoff, ...(o.context ?? [])] };
+          }
+          const res = await (from(seat.token) as unknown as { send: (m: unknown, o: unknown) => Promise<unknown> }).send(message, newOpts);
+          waitUntil(touchDmSeatFn(org, dmChannelId, atIso).catch(() => {}));
+          return res;
+        } catch (err) {
+          console.warn(`[open-everywhere:slack-front] dm-seat remap failed (${dmChannelId}) — native send: ${String(err)}`);
+        }
+        return (native as unknown as { send: (m: unknown, o: unknown) => Promise<unknown> }).send(message, sendOpts);
+      },
+    };
+  }) as unknown as RouteHandlerArgs["from"];
 }
 
 export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions = {}): RouteHandler {
@@ -418,7 +422,12 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     }
     const decision = classifyEnvelope(rawBody, req.headers.get("content-type") ?? "");
 
-    const send = args.send as unknown as Parameters<typeof liveDeps>[0];
+    const send = ((input: { message: string; context?: readonly string[] }, opts: { auth: unknown; continuationToken: string; state?: unknown }) =>
+      args.from(opts.continuationToken).send(input.message, {
+        auth: opts.auth,
+        ...(opts.state === undefined ? {} : { state: opts.state }),
+        ...(input.context && input.context.length > 0 ? { context: input.context } : {}),
+      } as never)) as unknown as Parameters<typeof liveDeps>[0];
 
     const notYetSeen = async (env: SlackEventEnvelope, ev: ParsedMessageEvent): Promise<boolean> => {
       const key = wakeKey(env, ev.channelId, ev.ts);
@@ -451,7 +460,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
           fifo.enqueue(supKey, () =>
             routeSupervisorEvent(
               ev,
-              withSingleWindowDiversion(liveSupervisorDeps(send), args.receive, surfaceKey!),
+              withSingleWindowDiversion(liveSupervisorDeps(send), args.to, surfaceKey!),
               directMention ? { directMention: true } : undefined,
             ).then(logOutcome(`${label}-supervisor`, ev.channelId, ev.ts)),
           ),
@@ -489,7 +498,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
             org = undefined;
           }
           if (org) {
-            fwdArgs = { ...args, send: wrapDmSeatSend(args.send, args.waitUntil, org, dmEv.channelId, resolveDmSeat, touchDmSeatFn) };
+            fwdArgs = { ...args, from: wrapDmSeatFrom(args.from, args.waitUntil, org, dmEv.channelId, resolveDmSeat, touchDmSeatFn) };
           }
         }
       }
@@ -570,7 +579,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       } catch {
       }
 
-      const joinSend = args.send as unknown as Parameters<typeof liveDeps>[0];
+      const joinSend = send;
       args.waitUntil(
         routeChannelJoinEvent(jev, liveChannelJoinDeps(joinSend)).then(logOutcome("channel-join", jev.channelId, jev.ts)),
       );

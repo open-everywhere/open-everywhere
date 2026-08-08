@@ -167,7 +167,7 @@ console.log("3. parseSelfDispatchPayload (fail-closed structural validation):");
 console.log("4. handleSelfDispatch (fail-closed route):");
 const diverted: { payload: UnifiedDispatchPayload }[] = [];
 const fakeReceive: any = async () => ({ id: "sess-fake" });
-const captureDivert = async (_r: RouteHandlerArgs["receive"], input: UnifiedDispatchPayload): Promise<void> => {
+const captureDivert = async (_r: RouteHandlerArgs["to"], input: UnifiedDispatchPayload): Promise<void> => {
   diverted.push({ payload: input });
 };
 function mkReq(body: string, sig?: string): Request {
@@ -381,10 +381,12 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
 
   console.log("7. loop-back (captured self-call → real handler → real divert → capture receive):");
   const received: { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }[] = [];
-  const captureReceive: any = async (_ch: unknown, options: { message: string; target: unknown; auth: unknown }) => {
-    received.push(options as (typeof received)[number]);
-    return { id: "sess-loop" };
-  };
+  const captureReceive: any = (_ch: unknown, target: unknown) => ({
+    send: async (message: string, options: { auth: unknown }) => {
+      received.push({ message, target, auth: options.auth } as (typeof received)[number]);
+      return { id: "sess-loop" };
+    },
+  });
   const looped = new Request(fetchCalls[0].url, {
     method: "POST",
     headers: fetchCalls[0].init.headers as Record<string, string>,
@@ -423,7 +425,7 @@ globalThis.fetch = realFetch;
 console.log("9. hop idempotency: identical re-delivery deduped, wakeId-reusing redrive NOT suppressed:");
 {
   const hopDiverts: UnifiedDispatchPayload[] = [];
-  const countDivert = async (_r: RouteHandlerArgs["receive"], input: UnifiedDispatchPayload): Promise<void> => {
+  const countDivert = async (_r: RouteHandlerArgs["to"], input: UnifiedDispatchPayload): Promise<void> => {
     hopDiverts.push(input);
   };
   const mk = (b: string) => mkReq(b, signSelfDispatchBody(SECRET, b));
@@ -460,7 +462,7 @@ console.log("10. bounded body read: oversized rejected before parse, normal body
     "oversized body → 413 BEFORE parse (size short-circuits, not a 400)",
   );
   const okDivert: UnifiedDispatchPayload[] = [];
-  const capDivert = async (_r: RouteHandlerArgs["receive"], i: UnifiedDispatchPayload): Promise<void> => {
+  const capDivert = async (_r: RouteHandlerArgs["to"], i: UnifiedDispatchPayload): Promise<void> => {
     okDivert.push(i);
   };
   const normalBody = JSON.stringify(goodPayload({ message: "normal-size body", window: { wakeId: "sz-w", origin: slackOrigin }, issuedAt: Date.now() }));

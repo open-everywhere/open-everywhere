@@ -73,13 +73,15 @@ interface Captured {
   readonly message: string;
   readonly target?: { readonly channelId?: string };
 }
-function captureReceive(): { calls: Captured[]; receive: never } {
+function captureReceive(): { calls: Captured[]; to: never } {
   const calls: Captured[] = [];
-  const receive = (_channel: unknown, opts: unknown) => {
-    calls.push(opts as Captured);
-    return Promise.resolve();
-  };
-  return { calls, receive: receive as never };
+  const to = (_channel: unknown, target: unknown) => ({
+    send: (message: unknown, opts: unknown) => {
+      calls.push({ target, message, ...(opts as object) } as Captured);
+      return Promise.resolve();
+    },
+  });
+  return { calls, to: to as never };
 }
 
 const hook: FusedWebhookHook = defineWebhook({
@@ -94,9 +96,9 @@ const hook: FusedWebhookHook = defineWebhook({
 
 async function fire(h: FusedWebhookHook, facts: SlackFacts | "no-supplier" | "throws"): Promise<{ fired: boolean; reason?: string; calls: Captured[] }> {
   arm(facts);
-  const { calls, receive } = captureReceive();
+  const { calls, to } = captureReceive();
   const internal = typeof facts === "string" ? false : internalFrom(facts);
-  const result = await fireWebhook(h, PAYLOAD, { receive, confirmInternal: async () => internal });
+  const result = await fireWebhook(h, PAYLOAD, { to, confirmInternal: async () => internal });
   return { ...result, calls };
 }
 

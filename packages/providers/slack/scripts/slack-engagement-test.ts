@@ -556,7 +556,7 @@ registerConfig({
       body,
     });
   };
-  const fakeArgs = { send: async () => ({}), waitUntil: (p: Promise<unknown>) => void p };
+  const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (p: Promise<unknown>) => void p };
 
   let innerCalled = false;
   let handledPayload: unknown;
@@ -1438,7 +1438,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const fifo = new SpyFifo();
     let sends = 0;
     const waits: Array<Promise<unknown>> = [];
-    const fakeArgs = { send: async () => { sends++; return {}; }, waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const fakeArgs = { from: () => ({ send: async () => { sends++; return {}; } }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
     const handler = buildFrontHandler(async () => new Response("inner"), {
       signingSecret: secret,
       now: () => nowMs,
@@ -1470,7 +1470,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   const r2 = await (async () => {
     const fifo = new SpyFifo();
     const waits: Array<Promise<unknown>> = [];
-    const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
     const handler = buildFrontHandler(async () => new Response("inner"), {
       signingSecret: secret, now: () => nowMs, markEventSeen: async () => true,
       getBotIdentity: async () => ({ userId: "UBOT" }), ambientEnabledFor: () => true, fifo, dedupe,
@@ -1527,7 +1527,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const fifo = new SpyFifo();
     let innerCalled = false;
     const waits: Array<Promise<unknown>> = [];
-    const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+    const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
     const handler = buildFrontHandler(
       async () => {
         innerCalled = true;
@@ -1563,7 +1563,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     const runDedup = async (body: string) => {
       const fifo = new SpyFifo();
       const waits: Array<Promise<unknown>> = [];
-      const fakeArgs = { send: async () => ({}), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+      const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
       const handler = buildFrontHandler(async () => new Response("inner"), {
         signingSecret: secret, now: () => nowMs, markEventSeen: async () => true,
         getBotIdentity: async () => ({ userId: "UBOT" }), ambientEnabledFor: () => true, mentionPolicyFor: policy(true), fifo, dedupe,
@@ -1699,7 +1699,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
     });
   };
   const waits: Array<Promise<unknown>> = [];
-  const fakeArgs = { send: async () => ({}), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
+  const fakeArgs = { from: () => ({ send: async () => ({}) }), waitUntil: (p: Promise<unknown>) => void waits.push(p) };
   const frontOpts = { signingSecret: secret, now: () => nowMs, markEventSeen: async () => true };
   const handler = buildFrontHandler(async () => new Response("inner"), { ...frontOpts, getBotIdentity: async () => ({ userId: "UBOT" }) });
   let res = await handler(mkReq(joinEnv({ user: "UHUMAN" })), fakeArgs as unknown as Parameters<typeof handler>[1]);
@@ -1843,7 +1843,7 @@ const mintedAt = (actual: string, bare: string): boolean => actual === bare || (
   };
   let sends = 0;
   const waits: Array<Promise<unknown>> = [];
-  const fakeArgs = { send: async () => { sends++; return {}; }, waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
+  const fakeArgs = { from: () => ({ send: async () => { sends++; return {}; } }), waitUntil: (pr: Promise<unknown>) => void waits.push(pr) };
   const handler = buildFrontHandler(async () => new Response("inner"), {
     signingSecret: secret,
     now: () => nowMs,

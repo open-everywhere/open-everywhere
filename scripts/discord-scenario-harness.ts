@@ -272,23 +272,26 @@ export class ScenarioDriver {
 
   private async post(rawBody: string, signature: string | null): Promise<void> {
     const background: Promise<unknown>[] = [];
-    const send = async (message: string, options: { auth: unknown; continuationToken: string; state: Record<string, unknown> }) => {
-      const existing = this.sessions.get(options.continuationToken);
+    const sendTo = async (continuationToken: string, message: string, options: { auth: unknown; state: Record<string, unknown> }) => {
+      const existing = this.sessions.get(continuationToken);
       const auth = options.auth as { principalId?: string; attributes?: Record<string, string> };
       const attrs = auth.attributes ?? {};
       const parent = attrs.parent_channel_id ? ` parent=${attrs.parent_channel_id}` : "";
       const authLabel = `${auth.principalId ?? "?"} @ ${attrs.guild_id ?? "(no guild)"}/${attrs.channel_id ?? "?"} type=${attrs.channel_type ?? "?"}${parent}`;
       if (existing) {
-        this.timeline.addBlock(`  ⇢ DISPATCH resume ${options.continuationToken} · auth ${authLabel} (state option dropped — resume keeps session state)`, message);
+        this.timeline.addBlock(`  ⇢ DISPATCH resume ${continuationToken} · auth ${authLabel} (state option dropped — resume keeps session state)`, message);
       } else {
-        this.sessions.set(options.continuationToken, {
+        this.sessions.set(continuationToken, {
           state: options.state,
           ctx: new FakeEveContext(`session-${this.sessions.size + 1}`),
         });
-        this.timeline.addBlock(`  ⇢ DISPATCH start ${options.continuationToken} · auth ${authLabel} · state ${JSON.stringify(options.state)}`, message);
+        this.timeline.addBlock(`  ⇢ DISPATCH start ${continuationToken} · auth ${authLabel} · state ${JSON.stringify(options.state)}`, message);
       }
       return {};
     };
+    const from = (continuationToken: string) => ({
+      send: (message: string, options: { auth: unknown; state: Record<string, unknown> }) => sendTo(continuationToken, message, options),
+    });
 
     const route = this.channel.routes.find((r) => r.method === "POST");
     if (!route) throw new Error("discord-gateway channel has no POST route");
@@ -299,15 +302,18 @@ export class ScenarioDriver {
         body: rawBody,
       }),
       {
-        send,
+        from,
+        resolveSession: () => {
+          throw new Error("scenario driver: resolveSession is not modeled");
+        },
         waitUntil: (p: Promise<unknown>) => {
           background.push(p);
         },
-        getSession: () => {
-          throw new Error("scenario driver: getSession is not modeled");
+        attachSession: () => {
+          throw new Error("scenario driver: attachSession is not modeled");
         },
-        receive: () => {
-          throw new Error("scenario driver: cross-channel receive is not modeled");
+        to: () => {
+          throw new Error("scenario driver: cross-channel dispatch is not modeled");
         },
         params: {},
         requestIp: null,
@@ -325,7 +331,7 @@ export class ScenarioDriver {
     if (!wrapped) throw new Error(`channel has no handler for event "${name}"`);
     const adapterCtx = this.channel.adapter.createAdapterContext({
       state: session.state,
-      session: { continuationToken, setContinuationToken: () => undefined },
+      session: { continuation: { token: continuationToken, rekey: () => undefined } },
       ctx: undefined,
     });
     await eveContextStorage().run(session.ctx, async () => {

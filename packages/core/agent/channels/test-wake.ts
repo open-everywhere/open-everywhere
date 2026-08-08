@@ -3,6 +3,6 @@ import { CONTROL_TEST_WAKE_PATH, handleTestWakeInjection } from "../control/test
 
 export default defineChannel({
   routes: [
-    POST(CONTROL_TEST_WAKE_PATH, async (req, { receive }) => handleTestWakeInjection(req, receive)),
+    POST(CONTROL_TEST_WAKE_PATH, async (req, { to }) => handleTestWakeInjection(req, to)),
   ],
 });

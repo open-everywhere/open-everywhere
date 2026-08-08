@@ -19,10 +19,10 @@ async function auditRejection(id: string, hook: WebhookHook | { readonly id: str
   await auditWebhookRejection(id, hook, rejection);
 }
 
-async function deliver(hook: WebhookHook, body: string, headers: Headers, receive: RouteHandlerArgs["receive"], keyIndex: number | null): Promise<void> {
+async function deliver(hook: WebhookHook, body: string, headers: Headers, to: RouteHandlerArgs["to"], keyIndex: number | null): Promise<void> {
   const flat = lowercaseHeaders(headers);
-  const result = isFusedHook(hook) ? await fireWebhook(hook, body, { receive, headers: flat }) : undefined;
-  const emitted = await emitConfigHookEvent(hook, body, flat, receive);
+  const result = isFusedHook(hook) ? await fireWebhook(hook, body, { to, headers: flat }) : undefined;
+  const emitted = await emitConfigHookEvent(hook, body, flat, to);
   const [, teamId, channelId] = hook.target?.split("/") ?? [];
   const previousKey = keyIndex !== null && keyIndex > 0;
   const unverified = acceptedUnverified({ ok: true, keyIndex });
@@ -68,7 +68,7 @@ async function emitConfigHookEvent(
   hook: WebhookHook,
   body: string,
   flat: Readonly<Record<string, string>>,
-  receive: RouteHandlerArgs["receive"],
+  to: RouteHandlerArgs["to"],
 ): Promise<{ matched: number; fired: number; skipped: number; accepted: boolean; reason?: string; deliveryId?: string } | undefined> {
   const deliveryId = declaredDeliveryId(hook.source, flat);
   try {
@@ -83,7 +83,7 @@ async function emitConfigHookEvent(
         readableBy: hook.readableBy,
         ...configHookDisclosure(hook),
       },
-      { receive, org: webhookOrg() },
+      { to, org: webhookOrg() },
     );
     return {
       matched: report.matched,
@@ -101,7 +101,7 @@ async function emitConfigHookEvent(
 
 export default defineChannel({
   routes: [
-    POST("/webhooks/:id", async (req, { receive, waitUntil, params }) => {
+    POST("/webhooks/:id", async (req, { to, waitUntil, params }) => {
       const id = params["id"] ?? "";
       const hooks = getConfig().loadWebhooks?.() ?? [];
       const hook = findWebhook(hooks, id);
@@ -148,7 +148,7 @@ export default defineChannel({
       }
 
       log(`webhook "${id}" accepted (${bodyBytes} bytes) — firing`);
-      waitUntil(deliver(hook!, body, req.headers, receive, outcome.keyIndex));
+      waitUntil(deliver(hook!, body, req.headers, to, outcome.keyIndex));
       return new Response("ok", { status: 200 });
     }),
   ],

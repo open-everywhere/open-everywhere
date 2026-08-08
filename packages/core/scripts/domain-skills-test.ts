@@ -27,6 +27,7 @@ import deleteSkillGated from "../agent/tools/delete_skill.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 
 import { registerSlackFixtureMapper, registerSlackTestBridge } from "./_slack-test-stubs.js";
+import { execTool } from "./_tool-exec.js";
 registerSlackFixtureMapper();
 registerSlackTestBridge();
 
@@ -233,32 +234,32 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const { actionKind } = await import("../agent/approvals/actions.js");
   await import("../agent/approvals/flow.js");
 
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "bad:name", content: "x" }, ctxEng as never); }, /valid skill name/, "create_skill: rejects an unsafe name");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "bad:name", content: "x" }, ctxEng as never); }, /valid skill name/, "create_skill: rejects an unsafe name");
   n++;
 
   const oversized = "x".repeat(MAX_DOMAIN_SKILL_BYTES + 1);
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "too-big", content: oversized }, ctxEng as never); }, /32KB|cap is/, "create_skill: rejects content over the byte cap");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "too-big", content: oversized }, ctxEng as never); }, /32KB|cap is/, "create_skill: rejects content over the byte cap");
   n++;
 
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxDm as never); }, /DM/, "create_skill: refuses from a DM with an explanatory message");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "x", content: "y" }, ctxDm as never); }, /DM/, "create_skill: refuses from a DM with an explanatory message");
   n++;
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxMpim as never); }, /group chat/, "create_skill: refuses from a group chat");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "x", content: "y" }, ctxMpim as never); }, /group chat/, "create_skill: refuses from a group chat");
   n++;
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "x", content: "y" }, ctxExternal as never); }, /externally-shared|unconfirmed/, "create_skill: refuses from an externally-shared/unconfirmed channel");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "x", content: "y" }, ctxExternal as never); }, /externally-shared|unconfirmed/, "create_skill: refuses from an externally-shared/unconfirmed channel");
   n++;
 
-  await assert.rejects(async () => { await createSkillTool.execute({ name: "granted-one", content: "y" }, ctxEng as never); }, /already a bundle-granted skill/, "create_skill: refuses a name that collides with a bundle-granted skill");
+  await assert.rejects(async () => { await execTool(createSkillTool)({ name: "granted-one", content: "y" }, ctxEng as never); }, /already a bundle-granted skill/, "create_skill: refuses a name that collides with a bundle-granted skill");
   n++;
 
   process.env.SLACK_BOT_TOKEN = "xoxb-test";
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0001" }) })) as unknown as typeof fetch;
   try {
-    const created = await createSkillTool.execute({ name: "new-skill", content: "# Body", description: "A new one." }, ctxEng as never);
+    const created = await execTool(createSkillTool)({ name: "new-skill", content: "# Body", description: "A new one." }, ctxEng as never);
     ok(created.ok && created.pending === true && created.action === "created" && created.domain === "eng", "create_skill: proposes (card posted, pending), action \"created\"");
     ok((await getOperationalStore().listDomainSkills("default", "eng")).every((r) => r.name !== "new-skill"), "create_skill: NOTHING is written until a human arms it (the PERSIST gate)");
 
-    const updated = await createSkillTool.execute({ name: "new-skill", content: "# Body v2" }, ctxEng as never);
+    const updated = await execTool(createSkillTool)({ name: "new-skill", content: "# Body v2" }, ctxEng as never);
     ok(updated.pending === true && updated.action === "created", "create_skill: re-propose before arming is still \"created\" (no row exists yet)");
 
     const kind = actionKind("skill.create")!;
@@ -270,9 +271,9 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
     ok(rows.filter((r) => r.name === "new-skill").length === 1, "skill.create execute: the click writes exactly one row");
 
     process.env.OE_DOMAIN_SKILL_CAP = String((await getOperationalStore().listDomainSkills("default", "eng")).length);
-    await assert.rejects(async () => { await createSkillTool.execute({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
+    await assert.rejects(async () => { await execTool(createSkillTool)({ name: "one-too-many", content: "x" }, ctxEng as never); }, /cap/, "create_skill: refuses a NEW skill once the domain is at its cap");
     n++;
-    const stillWorks = await createSkillTool.execute({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
+    const stillWorks = await execTool(createSkillTool)({ name: "new-skill", content: "# Body v3" }, ctxEng as never);
     ok(stillWorks.pending === true && stillWorks.action === "updated", "create_skill: an EXISTING name still proposes at the cap, as \"updated\" (cap only blocks growth)");
     delete process.env.OE_DOMAIN_SKILL_CAP;
   } finally {
@@ -330,16 +331,16 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const { actionKind } = await import("../agent/approvals/actions.js");
   await import("../agent/approvals/flow.js");
 
-  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "no-such-skill" }, ctxEng as never); }, /No skill named/, "delete_skill: refuses a nonexistent skill up front (no card wasted)");
+  await assert.rejects(async () => { await execTool(deleteSkillTool)({ name: "no-such-skill" }, ctxEng as never); }, /No skill named/, "delete_skill: refuses a nonexistent skill up front (no card wasted)");
   n++;
-  await assert.rejects(async () => { await deleteSkillTool.execute({ name: "x" }, ctxDm as never); }, /DM/, "delete_skill: refuses from a DM too");
+  await assert.rejects(async () => { await execTool(deleteSkillTool)({ name: "x" }, ctxDm as never); }, /DM/, "delete_skill: refuses from a DM too");
   n++;
 
   process.env.SLACK_BOT_TOKEN = "xoxb-test";
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, ts: "1700000000.0002" }) })) as unknown as typeof fetch;
   try {
-    const proposed = await deleteSkillTool.execute({ name: "new-skill" }, ctxEng as never);
+    const proposed = await execTool(deleteSkillTool)({ name: "new-skill" }, ctxEng as never);
     ok(proposed.pending === true && proposed.domain === "eng" && proposed.name === "new-skill", "delete_skill: proposes (card posted, pending) instead of deleting on the spot");
     ok((await getOperationalStore().listDomainSkills("default", "eng")).some((r) => r.name === "new-skill"), "delete_skill: NOTHING is removed until a human confirms (skill still present)");
 
@@ -360,7 +361,7 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
 }
 
 {
-  const { skills } = await listSkillsTool.execute({}, ctxEng as never);
+  const { skills } = await execTool(listSkillsTool)({}, ctxEng as never);
   const entries = await resolveSkillEntries(ctxEng);
   ok(skills.length === entries.length, "list_skills: returns exactly what resolveSkillEntries resolves — no separate source of truth");
   ok(skills.every((s) => ["granted", "domain", "repo"].includes(s.tier)), "list_skills: every entry carries a recognizable tier");

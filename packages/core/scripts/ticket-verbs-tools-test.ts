@@ -4,6 +4,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { execTool } from "./_tool-exec.js";
 registerSlackFixtureMapper();
 
 
@@ -91,7 +92,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 
 {
   calls.length = 0;
-  const out = await addLabelEntry.execute(
+  const out = await execTool(addLabelEntry)(
     { ref: { platform: "tool-test-platform", id: "TT-1" }, label: "bug" },
     ctx("tool-test-platform", {}) as never,
   );
@@ -100,7 +101,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 }
 {
   await assert.rejects(
-    async () => { await addLabelEntry.execute({ label: "bug" }, ctx("slack", {}) as never); },
+    async () => { await execTool(addLabelEntry)({ label: "bug" }, ctx("slack", {}) as never); },
     /no ticket entity for this turn/,
     "add_label refuses cleanly when there's no ref and no default entity (chat surface)",
   );
@@ -108,7 +109,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 }
 {
   await assert.rejects(
-    async () => { await addLabelEntry.execute({ ref: { platform: "notion", id: "page-1" }, label: "x" }, ctx("notion", {}) as never); },
+    async () => { await execTool(addLabelEntry)({ ref: { platform: "notion", id: "page-1" }, label: "x" }, ctx("notion", {}) as never); },
     /not supported on "notion"/,
     "add_label refuses cleanly on an unsupported platform (Notion — no status/label mapping)",
   );
@@ -118,7 +119,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
 {
   const before = (await getOperationalStore().listPendingActions("default")).length;
   await assert.rejects(
-    async () => { await setStateEntry.execute({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
+    async () => { await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-1" }, state: "Done" }, ctx("tool-test-platform", {}) as never); },
     /approval-card path/,
     "set_state refuses on a proposing surface with no approval-card path (Linear/GitHub/etc origin)",
   );
@@ -133,7 +134,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
     { team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
     ["slack", "tool-test-platform"],
   );
-  const out = await setStateEntry.execute({ ref: { platform: "tool-test-platform", id: "TT-2" }, state: "Done" }, slackCtx as never);
+  const out = await execTool(setStateEntry)({ ref: { platform: "tool-test-platform", id: "TT-2" }, state: "Done" }, slackCtx as never);
   ok(out.pending === true && typeof out.pendingId === "string", "a Slack-origin proposal (with the entity's platform in sources) posts a card and returns pending");
   const row = await getOperationalStore().getPendingAction("default", out.pendingId!);
   ok(row !== null && row!.kind === "ticket.set_state", "the pending row is kind ticket.set_state");
@@ -150,7 +151,7 @@ async function armed<T>(tool: unknown, c: BindableContext): Promise<T | null> {
     { team_id: "T1", channel_id: "C1", channel_type: "channel", user_id: "U_PROPOSER" },
     ["slack", "tool-test-platform"],
   );
-  const out = await assignEntry.execute({ ref: { platform: "tool-test-platform", id: "TT-3" }, assignee: "alice" }, slackCtx as never);
+  const out = await execTool(assignEntry)({ ref: { platform: "tool-test-platform", id: "TT-3" }, assignee: "alice" }, slackCtx as never);
   ok(out.pending === true && typeof out.pendingId === "string", "assign posts a card and returns pending");
   const row = await getOperationalStore().getPendingAction("default", out.pendingId!);
   const frozen = JSON.parse(row!.argsJson) as { platform: string; entityId: string; assignee: string };

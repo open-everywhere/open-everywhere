@@ -123,26 +123,32 @@ interface Delivered {
 }
 function captureReceive() {
   const seen: Delivered[] = [];
-  const receive = (async (channel: unknown, input: { message?: string; target?: unknown; auth?: { attributes?: Record<string, unknown> } }) => {
-    const unified = channel === (unifiedChannel as unknown);
-    let continuationToken: string | undefined;
-    if (unified) {
-      await unifiedChannel.receive!({ message: input.message ?? "", target: input.target as never, auth: input.auth as never }, {
-        send: (async (_payload: unknown, opts: { continuationToken?: string }) => {
-          continuationToken = opts.continuationToken;
-          return {} as never;
-        }) as never,
+  const to = ((channel: unknown, target: unknown) => ({
+    send: async (message: string, options: { auth?: { attributes?: Record<string, unknown> } }) => {
+      const unified = channel === (unifiedChannel as unknown);
+      let continuationToken: string | undefined;
+      if (unified) {
+        await unifiedChannel.receive!({ message, target: target as never, auth: options.auth as never }, {
+          from: ((address: string) => ({
+            send: async () => {
+              continuationToken = address;
+              return {} as never;
+            },
+          })) as never,
+          resolveSession: (async () => undefined) as never,
+        });
+      }
+      seen.push({
+        unified,
+        target: (target ?? {}) as Record<string, unknown>,
+        message,
+        attrs: options.auth?.attributes ?? {},
+        ...(continuationToken !== undefined ? { continuationToken } : {}),
       });
-    }
-    seen.push({
-      unified,
-      target: (input.target ?? {}) as Record<string, unknown>,
-      message: input.message ?? "",
-      attrs: input.auth?.attributes ?? {},
-      ...(continuationToken !== undefined ? { continuationToken } : {}),
-    });
-  }) as never;
-  return { seen, receive };
+      return {} as never;
+    },
+  })) as never;
+  return { seen, to };
 }
 
 const dispatch = await import("../agent/schedules/dispatch.js");
@@ -163,11 +169,11 @@ function routine(over: Partial<Routine> & Pick<Routine, "id">): Routine {
   };
 }
 
-async function tick(now: Date, receive: unknown): Promise<void> {
+async function tick(now: Date, to: unknown): Promise<void> {
   const pending: Promise<unknown>[] = [];
   await dispatch.dispatchTick({
     now,
-    receive,
+    to,
     waitUntil: (p: Promise<unknown>) => void pending.push(p),
     appAuth: { attributes: {} },
     postJobKickoff: async () => "1700000000.0001",
@@ -180,8 +186,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-clock" }));
-  const { seen, receive } = captureReceive();
-  await tick(NOW, receive);
+  const { seen, to } = captureReceive();
+  await tick(NOW, to);
   ok(seen.length === 1, "clock: exactly one delivery");
   const d = seen[0];
   ok(d.unified, "clock: the fire is delivered into the UNIFIED channel — it JOINS the window (pre-fix it went to the native provider channel)");
@@ -205,8 +211,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   delete process.env.OE_ONESHOT_AGENT;
   await routineStore.addRoutine({} as never, routine({ id: "r-off" }));
-  const { seen, receive } = captureReceive();
-  await tick(NOW, receive);
+  const { seen, to } = captureReceive();
+  await tick(NOW, to);
   ok(seen.length === 1 && !seen[0].unified, "flag-off: the fire lands NATIVE — delegation disarmed means a thread seat would have no delegator, so the divert must not apply");
   ok(seen[0].target["channelId"] === CHAN && seen[0].target["threadTs"] === undefined, "flag-off: the native target is unchanged");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === undefined, "flag-off: no window stamps are added — byte-identical to the pre-OPE-144 fire");
@@ -215,7 +221,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-lonely", surfaceKey: LONELY_SURFACE, target: { channelId: "C_LONELY" } }));
   const l = captureReceive();
-  await tick(NOW, l.receive);
+  await tick(NOW, l.to);
   ok(l.seen.length === 1 && !l.seen[0].unified, "no-window: a surface outside every windowed domain keeps the native fire (fail-closed to today's behaviour)");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: LONELY_SURFACE } as never, "r-lonely");
 }
@@ -224,12 +230,12 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-job", sessionMode: "job", trigger: { kind: "interval", everyMinutes: 1 } }));
   const a = captureReceive();
-  await tick(NOW, a.receive);
+  await tick(NOW, a.to);
   const t1 = a.seen[0].target as unknown as UnifiedReceiveTarget;
   ok(a.seen[0].unified, "job: a durable-job fire joins the window too");
   ok((t1.origin as { threadTs?: string }).threadTs === "1700000000.0001", "job: the wake ORIGIN is the job's own thread anchor — its answers land in the job thread, not the channel root");
   const b = captureReceive();
-  await tick(new Date(NOW.getTime() + 10 * 60_000), b.receive);
+  await tick(new Date(NOW.getTime() + 10 * 60_000), b.to);
   const t2 = b.seen[0].target as unknown as UnifiedReceiveTarget;
   ok(t2.token === t1.token, "job: the SECOND fire resumes the SAME seat token — the OPE-55 durable-job session join survives the re-grain");
   ok(t2.wakeId !== t1.wakeId, "job: each fire still mints its OWN wakeId (two runs, two answerable wakes, one session)");
@@ -240,9 +246,11 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-lost" }));
   const before = (await readAudit({ org: ORG, limit: 200 })).length;
-  const boom = (async () => {
-    throw new Error("divert exploded");
-  }) as never;
+  const boom = (() => ({
+    send: async () => {
+      throw new Error("divert exploded");
+    },
+  })) as never;
   await tick(NOW, boom);
   const rows = await readAudit({ org: ORG, limit: 200 });
   const lost = rows.filter((r) => r.action === "routine.fire_lost" && (r.detail as { routineId?: string } | undefined)?.routineId === "r-lost");
@@ -264,8 +272,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
     repository: { full_name: "me/proj" },
     sender: { login: "alice" },
   });
-  const { seen, receive } = captureReceive();
-  await fanOutDelivery(body, "pull_request", "delivery-1", { receive, org: ORG, listRoutines: async () => [ev], grant: GRANT });
+  const { seen, to } = captureReceive();
+  await fanOutDelivery(body, "pull_request", "delivery-1", { to, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(seen.length === 1 && seen[0].unified, "event: an event-routine fire joins the window on the SAME decision as a clock fire");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === "thread", "event: thread grain");
   ok(routineMarker(seen[0].attrs as never)?.id === "r-event", "event: the routine marker still rides");
@@ -274,7 +282,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 
   delete process.env.OE_ONESHOT_AGENT;
   const off = captureReceive();
-  await fanOutDelivery(body, "pull_request", "delivery-2", { receive: off.receive, org: ORG, listRoutines: async () => [ev], grant: GRANT });
+  await fanOutDelivery(body, "pull_request", "delivery-2", { to: off.to, org: ORG, listRoutines: async () => [ev], grant: GRANT });
   ok(off.seen.length === 1 && !off.seen[0].unified, "event/flag-off: byte-identical native fire");
 }
 
@@ -298,8 +306,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   ok(webhookFireAttributes("h", TEAM, "D_X", true, false)[OE_GRAIN_ATTR] === "standing", "webhook/bag: a DM-family target would stamp the standing grain — the shared builder can no longer omit a deliberate stamp");
 
   process.env.OE_ONESHOT_AGENT = "1";
-  const { seen, receive } = captureReceive();
-  const res = await fireWebhook(hook, JSON.stringify({ status: "failed" }), { receive, confirmInternal: async () => true });
+  const { seen, to } = captureReceive();
+  const res = await fireWebhook(hook, JSON.stringify({ status: "failed" }), { to, confirmInternal: async () => true });
   ok(res.fired, "webhook: the fire reports fired");
   ok(seen.length === 1 && seen[0].unified, "webhook: an unattended, PUBLICLY-triggered fire joins the window at thread grain — not the `native` posture a live human channel turn carries");
   ok(seen[0].attrs[OE_GRAIN_ATTR] === "thread", "webhook: thread grain (pre-fix this leg stamped NO grain attribute at all)");
@@ -312,7 +320,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 
   delete process.env.OE_ONESHOT_AGENT;
   const off = captureReceive();
-  await fireWebhook(hook, JSON.stringify({ status: "ok" }), { receive: off.receive, confirmInternal: async () => true });
+  await fireWebhook(hook, JSON.stringify({ status: "ok" }), { to: off.to, confirmInternal: async () => true });
   ok(off.seen.length === 1 && !off.seen[0].unified, "webhook/flag-off: byte-identical native fire");
   ok(off.seen[0].target["channelId"] === CHAN, "webhook/flag-off: the native target is unchanged");
 
@@ -327,7 +335,7 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
   });
   assertWebhooksValid([dmHook]);
   const dm = captureReceive();
-  await fireWebhook(dmHook, JSON.stringify({ ping: 1 }), { receive: dm.receive, confirmInternal: async () => false });
+  await fireWebhook(dmHook, JSON.stringify({ ping: 1 }), { to: dm.to, confirmInternal: async () => false });
   ok(dm.seen.length === 1 && !dm.seen[0].unified, "webhook/dm: the DM hook fires (no window on that surface ⇒ the native path)");
   ok(dm.seen[0].attrs["channel_type"] === "im", "webhook/dm: the fire binds as a DM — it used to hardcode `channel` on a 1:1, mis-binding the session's mode");
   ok(dm.seen[0].attrs[OE_GRAIN_ATTR] === "standing", "webhook/dm: an autonomous fire into someone's DM gets the DM-family STANDING grain, NOT a live human turn's hands (the fourth site's real hole)");
@@ -365,8 +373,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-speak", prompt: "Post the deploy digest." }));
-  const { seen, receive } = captureReceive();
-  await tick(NOW, receive);
+  const { seen, to } = captureReceive();
+  await tick(NOW, to);
   ok(seen.length === 1 && seen[0].unified, "speak: the fire diverted (the precondition for everything below)");
   const d = seen[0];
   const target = d.target as unknown as UnifiedReceiveTarget;
@@ -406,8 +414,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   process.env.OE_ONESHOT_AGENT = "1";
   await routineStore.addRoutine({} as never, routine({ id: "r-silent", report: { kind: "silent" }, prompt: "Archive yesterday's rows." }));
-  const { seen, receive } = captureReceive();
-  await tick(NOW, receive);
+  const { seen, to } = captureReceive();
+  await tick(NOW, to);
   ok(seen.length === 1 && seen[0].unified, "silent: a silent routine still joins the window (it has work to do, it just says nothing)");
   ok(seen[0].attrs[ROUTINE_MARKER.silent] === "true", "silent: the host-set silent stamp rides the divert — the gate's unforgeable input");
   ok(!seen[0].message.includes("wake-id"), "silent/OPE-149 PRESERVED: a silent routine is NOT told a wake-id — the disclosure must not become the way a silent routine starts talking");
@@ -422,8 +430,8 @@ const NOW = new Date("2026-07-02T12:00:00.000Z");
 {
   delete process.env.OE_ONESHOT_AGENT;
   await routineStore.addRoutine({} as never, routine({ id: "r-native", prompt: "Post the deploy digest." }));
-  const { seen, receive } = captureReceive();
-  await tick(NOW, receive);
+  const { seen, to } = captureReceive();
+  await tick(NOW, to);
   ok(seen.length === 1 && !seen[0].unified, "native: flag-off still fires natively");
   ok(!seen[0].message.includes("wake-id"), "native: a non-diverted fire is told NO wake-id — there is no unified window to reply into, so the mandate would be a lie");
   await routineStore.removeRoutine({ org: ORG, surfaceKey: SURFACE } as never, "r-native");

@@ -125,21 +125,23 @@ const postJobKickoff = async (_channelId: string, _text: string): Promise<string
   return KICKOFF_TS;
 };
 const fires: { target: Record<string, unknown>; message: string; markerId?: string; jobFire: boolean }[] = [];
-const receive = ((_channel: unknown, opts: { message?: string; target?: Record<string, unknown>; auth?: { attributes?: Record<string, unknown> } }) => {
-  const mk = routineMarker(opts.auth?.attributes as never);
-  fires.push({
-    target: opts.target ?? {},
-    message: opts.message ?? "",
-    markerId: mk?.id,
-    jobFire: jobFireStamped(opts.auth?.attributes as never),
-  });
-  return Promise.resolve();
-}) as never;
+const receive = ((_channel: unknown, target: Record<string, unknown> | undefined) => ({
+  send: (message: string, opts: { auth?: { attributes?: Record<string, unknown> } }) => {
+    const mk = routineMarker(opts.auth?.attributes as never);
+    fires.push({
+      target: target ?? {},
+      message: message ?? "",
+      markerId: mk?.id,
+      jobFire: jobFireStamped(opts.auth?.attributes as never),
+    });
+    return Promise.resolve();
+  },
+})) as never;
 
 async function tick(now: Date): Promise<void> {
   await dispatch.dispatchTick({
     now,
-    receive,
+    to: receive,
     waitUntil: (_p: Promise<unknown>) => {},
     appAuth: { attributes: {} } as never,
     confirmInternal: async () => false,

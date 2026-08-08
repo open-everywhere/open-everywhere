@@ -277,10 +277,12 @@ interface ReceivedWake {
   auth: { attributes?: Record<string, unknown> };
 }
 const received: ReceivedWake[] = [];
-const captureReceive = (async (ch: unknown, options: { message: string; target: unknown; auth: unknown }) => {
-  received.push({ channel: ch, message: options.message, target: options.target as UnifiedReceiveTarget, auth: options.auth as ReceivedWake["auth"] });
-  return {} as never;
-}) as unknown as RouteHandlerArgs["receive"];
+const captureReceive = ((ch: unknown, target: unknown) => ({
+  async send(message: string, options: { auth: unknown }) {
+    received.push({ channel: ch, message, target: target as UnifiedReceiveTarget, auth: options.auth as ReceivedWake["auth"] });
+    return {} as never;
+  },
+})) as unknown as RouteHandlerArgs["to"];
 
 const RAW_TOKEN = unifiedSupervisorToken("payments", 1);
 
@@ -711,13 +713,15 @@ const store = getOperationalStore();
 {
   const sent: Array<{ payload: { message?: string; context?: readonly string[] }; opts: { continuationToken: string; auth: unknown } }> = [];
   let mapVisibleAtSend = false;
-  const fakeSend = (async (payload: unknown, opts: unknown) => {
-    mapVisibleAtSend = (await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId)) !== null;
-    sent.push({ payload: payload as { message?: string }, opts: opts as { continuationToken: string; auth: unknown } });
-    return {} as never;
-  }) as never;
+  const fakeFrom = ((continuationToken: string) => ({
+    async send(message: string, opts: { auth: unknown; context?: readonly string[] }) {
+      mapVisibleAtSend = (await resolveUnifiedWakeTarget(store, "default", received[0].target.wakeId)) !== null;
+      sent.push({ payload: { message, ...(opts.context ? { context: opts.context } : {}) }, opts: { continuationToken, auth: opts.auth } });
+      return {} as never;
+    },
+  })) as never;
   await withGate(true, async () => {
-    await unifiedChannel.receive!({ message: received[0].message, target: received[0].target, auth: received[0].auth as never }, { send: fakeSend });
+    await unifiedChannel.receive!({ message: received[0].message, target: received[0].target, auth: received[0].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
   ok(sent.length === 1 && sent[0].opts.continuationToken === RAW_TOKEN, "receive: delivers under the RAW domain token (eve prefixes `unified:` — the shared window)");
   ok(mapVisibleAtSend, "receive: the wakeId→origin map entry is durably registered BEFORE the send");
@@ -725,27 +729,27 @@ const store = getOperationalStore();
   ok(origin !== null && origin.platform === "slack", "receive: the registered origin round-trips from the real store");
 
   await withGate(true, async () => {
-    await unifiedChannel.receive!({ message: received[1].message, target: received[1].target, auth: received[1].auth as never }, { send: fakeSend });
+    await unifiedChannel.receive!({ message: received[1].message, target: received[1].target, auth: received[1].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
   ok(sent.length === 2 && sent[1].opts.continuationToken === RAW_TOKEN, "receive: the GitHub wake delivers under the SAME raw token (same session)");
   ok(sent[1].payload.context !== undefined, "receive: side-channel context passes through to the delivery");
 
   await withGate(true, async () => {
-    await unifiedChannel.receive!({ message: received[2].message, target: received[2].target, auth: received[2].auth as never }, { send: fakeSend });
+    await unifiedChannel.receive!({ message: received[2].message, target: received[2].target, auth: received[2].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
   ok(sent.length === 3 && sent[2].opts.continuationToken === RAW_TOKEN, "receive: the Linear wake delivers under the SAME raw token (same session)");
   const linRegistered = await resolveUnifiedWakeTarget(store, "default", received[2].target.wakeId);
   ok(linRegistered !== null && linRegistered.platform === "linear", "receive: the Linear origin round-trips from the real store");
 
   await withGate(true, async () => {
-    await unifiedChannel.receive!({ message: received[3].message, target: received[3].target, auth: received[3].auth as never }, { send: fakeSend });
+    await unifiedChannel.receive!({ message: received[3].message, target: received[3].target, auth: received[3].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
   ok(sent.length === 4 && sent[3].opts.continuationToken === RAW_TOKEN, "receive: the Notion wake delivers under the SAME raw token (same session)");
   const notRegistered = await resolveUnifiedWakeTarget(store, "default", received[3].target.wakeId);
   ok(notRegistered !== null && notRegistered.platform === "notion", "receive: the Notion origin round-trips from the real store");
 
   await withGate(true, async () => {
-    await unifiedChannel.receive!({ message: received[4].message, target: received[4].target, auth: received[4].auth as never }, { send: fakeSend });
+    await unifiedChannel.receive!({ message: received[4].message, target: received[4].target, auth: received[4].auth as never }, { from: fakeFrom, resolveSession: (async () => undefined) as never });
   });
   ok(sent.length === 5 && sent[4].opts.continuationToken === RAW_TOKEN, "receive: the Discord wake delivers under the SAME raw token (same session)");
   const disRegistered = await resolveUnifiedWakeTarget(store, "default", received[4].target.wakeId);
@@ -754,20 +758,20 @@ const store = getOperationalStore();
   await assert.rejects(
     unifiedChannel.receive!(
       { message: "m", target: { ...received[0].target, surfaceKey: "slack/T_OTHER/C_NOPE" }, auth: received[0].auth as never },
-      { send: fakeSend },
+      { from: fakeFrom, resolveSession: (async () => undefined) as never },
     ),
     /no standing window is enabled/,
     "receive: an un-flagged surface is REFUSED (fail-closed re-check, defense-in-depth)",
   );
   n++;
   await assert.rejects(
-    unifiedChannel.receive!({ message: "m", target: { token: "not-a-supervisor-token", wakeId: "w", surfaceKey: SLACK_KEY, origin: { platform: "slack", channelId: "C" } } as never, auth: null }, { send: fakeSend }),
+    unifiedChannel.receive!({ message: "m", target: { token: "not-a-supervisor-token", wakeId: "w", surfaceKey: SLACK_KEY, origin: { platform: "slack", channelId: "C" } } as never, auth: null }, { from: fakeFrom, resolveSession: (async () => undefined) as never }),
     /malformed target/,
     "receive: a non-supervisor token is refused (never a mis-keyed session)",
   );
   n++;
   await assert.rejects(
-    unifiedChannel.receive!({ message: "m", target: { token: RAW_TOKEN, wakeId: "w", surfaceKey: SLACK_KEY, origin: { platform: "smoke-signal", id: "x" } } as never, auth: null }, { send: fakeSend }),
+    unifiedChannel.receive!({ message: "m", target: { token: RAW_TOKEN, wakeId: "w", surfaceKey: SLACK_KEY, origin: { platform: "smoke-signal", id: "x" } } as never, auth: null }, { from: fakeFrom, resolveSession: (async () => undefined) as never }),
     /malformed target/,
     "receive: an unknown origin variant is refused",
   );

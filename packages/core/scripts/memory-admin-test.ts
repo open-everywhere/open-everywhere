@@ -19,6 +19,7 @@ import { adminControlRoles } from "../agent/access/roles.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 import memoryAdminListTool from "../agent/tools/memory_admin_list.js";
 import memoryAdminReadTool from "../agent/tools/memory_admin_read.js";
+import { execTool } from "./_tool-exec.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -69,8 +70,8 @@ const ctxEngAdminFromDm = ctxFor({ channelId: "D1", channelType: "im", principal
 const ctxPlainMember = ctxFor({ channelId: "C_ENG", principalId: "U_RANDOM" });
 const ctxNoSender = ctxFor({ channelId: "C_ENG" });
 
-const list = (ctx: BindableContext, silo?: string) => memoryAdminListTool.execute({ silo }, ctx as never);
-const read = (ctx: BindableContext, silo: string, relPath: string) => memoryAdminReadTool.execute({ silo, relPath }, ctx as never);
+const list = (ctx: BindableContext, silo?: string) => execTool(memoryAdminListTool)({ silo }, ctx as never);
+const read = (ctx: BindableContext, silo: string, relPath: string) => execTool(memoryAdminReadTool)({ silo, relPath }, ctx as never);
 
 {
   ok(JSON.stringify(adminControlRoles("U_ORG_ADMIN", domains, "slack")) === JSON.stringify(["admin"]), "adminControlRoles: org admin -> [\"admin\"]");

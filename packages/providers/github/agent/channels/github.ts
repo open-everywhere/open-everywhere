@@ -1,4 +1,4 @@
-import type { HttpRouteDefinition, RouteHandlerArgs, SendFn } from "eve/channels";
+import type { HttpRouteDefinition, RouteHandlerArgs } from "eve/channels";
 import { githubChannel, type GitHubChannel, type GitHubChannelState, type GitHubInboundContext, type GitHubComment, type GitHubInboundResult } from "eve/channels/github";
 import { buildGitHubAuth, githubBotMentioned } from "./github-identity.js";
 import {
@@ -129,7 +129,21 @@ function githubRepoVouched(owner: string, repo: string): boolean {
   return isVouchedInternal(`github/${owner}`, `github/${owner}/${repo}`) || process.env.OE_TRUST === "internal";
 }
 
-function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAmbientEvent, receive?: RouteHandlerArgs["receive"]): GitHubSupervisorDeps {
+type GitHubSend = (
+  payload: { readonly message: string; readonly context?: readonly string[] },
+  options: { readonly auth: unknown; readonly continuationToken: string; readonly state?: GitHubChannelState },
+) => Promise<unknown>;
+
+function githubSendFrom(from: RouteHandlerArgs<GitHubChannelState>["from"]): GitHubSend {
+  return (payload, options) =>
+    from(options.continuationToken).send(payload.message, {
+      auth: options.auth,
+      state: options.state,
+      ...(payload.context && payload.context.length > 0 ? { context: payload.context } : {}),
+    } as never);
+}
+
+function liveGitHubSupervisorDeps(send: GitHubSend, ev: GitHubAmbientEvent, to?: RouteHandlerArgs["to"]): GitHubSupervisorDeps {
   const org = deploymentOrg();
   const store = getOperationalStore();
   return {
@@ -150,8 +164,8 @@ function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAm
     touchSession: (surfaceKey, atIso) => store.touchChannelSession(org, githubGrainFor(surfaceKey).registryKey, atIso),
     now: () => new Date().toISOString(),
     async wake({ token, auth, message, context, window }) {
-      if (window && receive) {
-        await divertToUnifiedWindow(receive, {
+      if (window && to) {
+        await divertToUnifiedWindow(to, {
           message,
           context: [...context],
           token,
@@ -164,13 +178,13 @@ function liveGitHubSupervisorDeps(send: SendFn<GitHubChannelState>, ev: GitHubAm
       const unified = githubGrainFor(`github/${ev.owner}/${ev.repo}`).unified;
       await send(
         { message, context: [...context] },
-        { auth: auth as unknown as Parameters<SendFn<GitHubChannelState>>[1]["auth"], continuationToken: token, state: supervisorSeedState(ev, unified) },
+        { auth: auth as unknown, continuationToken: token, state: supervisorSeedState(ev, unified) },
       );
     },
   };
 }
 
-async function ambientDelivery(body: string, eventType: string, send: SendFn<GitHubChannelState>, receive?: RouteHandlerArgs["receive"]): Promise<void> {
+async function ambientDelivery(body: string, eventType: string, send: GitHubSend, to?: RouteHandlerArgs["to"]): Promise<void> {
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(body) as Record<string, unknown>;
@@ -245,7 +259,7 @@ async function ambientDelivery(body: string, eventType: string, send: SendFn<Git
           } satisfies UnifiedWindowWake)
         : undefined,
     },
-    liveGitHubSupervisorDeps(send, ev, receive),
+    liveGitHubSupervisorDeps(send, ev, to),
   );
   await appendAudit({
     org: deploymentOrg(),
@@ -431,8 +445,8 @@ function wrapRoute(inner: HttpHandler): HttpHandler {
       return new Response(rejection, { status: 401 });
     }
     const eventType = req.headers.get("x-github-event") ?? "";
-    args.waitUntil(fanOutGitHubDelivery(body, eventType, args.receive, req.headers.get("x-github-delivery")));
-    args.waitUntil(ambientDelivery(body, eventType, args.send, args.receive).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
+    args.waitUntil(fanOutGitHubDelivery(body, eventType, args.to, req.headers.get("x-github-delivery")));
+    args.waitUntil(ambientDelivery(body, eventType, githubSendFrom(args.from), args.to).catch((err) => slog(`ambient leg failed: ${String(err)}`)));
     args.waitUntil(installationDelivery(body, eventType).catch((err) => ilog(`installation leg failed: ${String(err)}`)));
     const cloned = new Request(req.url, { method: "POST", headers: req.headers, body });
     return inner(cloned, args);

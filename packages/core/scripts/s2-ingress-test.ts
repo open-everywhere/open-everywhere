@@ -40,12 +40,14 @@ const SURFACE_KEY = "slack/T1/C1";
 interface ReceivedWake { message: string; target: UnifiedReceiveTarget; auth: { attributes?: Record<string, unknown> } }
 const received: ReceivedWake[] = [];
 let failOnToken: string | undefined;
-const captureReceive = (async (_ch: unknown, options: { message: string; target: unknown; auth: unknown }) => {
-  const target = options.target as UnifiedReceiveTarget;
-  if (failOnToken !== undefined && target.token === failOnToken) throw new Error("injected owner-delivery failure");
-  received.push({ message: options.message, target, auth: options.auth as ReceivedWake["auth"] });
-  return undefined;
-}) as unknown as RouteHandlerArgs["receive"];
+const captureReceive = ((_ch: unknown, rawTarget: unknown) => ({
+  async send(message: string, options: { auth: unknown }) {
+    const target = rawTarget as UnifiedReceiveTarget;
+    if (failOnToken !== undefined && target.token === failOnToken) throw new Error("injected owner-delivery failure");
+    received.push({ message, target, auth: options.auth as ReceivedWake["auth"] });
+    return undefined as never;
+  },
+})) as unknown as RouteHandlerArgs["to"];
 
 const inbound = (wakeId: string, token = STANDING, origin: UnifiedWakeOrigin = ORIGIN) => ({
   message: "<wake>hello</wake>",

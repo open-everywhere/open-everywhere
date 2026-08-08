@@ -85,7 +85,7 @@ function defaultContainerNoun(platform: string): string | undefined {
   }
 }
 
-export async function handleTestWakeInjection(req: Request, receive: RouteHandlerArgs["receive"]): Promise<Response> {
+export async function handleTestWakeInjection(req: Request, to: RouteHandlerArgs["to"]): Promise<Response> {
   const entries = injectTokenEntries();
   if (!testWakeEnabled() || entries.length === 0) return new Response("not found", { status: 404 });
 
@@ -273,7 +273,7 @@ export async function handleTestWakeInjection(req: Request, receive: RouteHandle
   }).catch(() => undefined);
 
   try {
-    await divertToUnifiedWindow(receive, {
+    await divertToUnifiedWindow(to, {
       message: rendered.message,
       ...(rendered.context && rendered.context.length > 0 ? { context: rendered.context } : {}),
       token,

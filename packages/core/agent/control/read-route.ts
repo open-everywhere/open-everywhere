@@ -1,4 +1,4 @@
-import type { GetSessionFn } from "eve/channels";
+import type { AttachSessionFn } from "eve/channels";
 import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
 import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
@@ -219,7 +219,7 @@ export async function drainSessionStream(
 
 export async function handleSessionTranscriptRead(
   req: Request,
-  getSession: GetSessionFn,
+  attachSession: AttachSessionFn,
   params: Readonly<Record<string, string>>,
 ): Promise<Response> {
   const entries = parseServiceTokenEntries(process.env.OE_CONTROL_READ_TOKENS);
@@ -251,7 +251,7 @@ export async function handleSessionTranscriptRead(
 
   let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await getSession(sessionId).getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
+    stream = (await attachSession(sessionId).getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
   } catch {
     return new Response("not found", { status: 404 });
   }

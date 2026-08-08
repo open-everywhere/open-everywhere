@@ -25,9 +25,11 @@ function ulog(msg: string): void {
   console.log(`[open-everywhere:unified] ${msg}`);
 }
 
-let rememberedReceive: RouteHandlerArgs["receive"] | undefined;
-function rememberUnifiedReceive(receive: RouteHandlerArgs["receive"]): void {
-  rememberedReceive = receive;
+type UnifiedSendAuth = Parameters<ReturnType<RouteHandlerArgs["to"]>["send"]>[1]["auth"];
+
+let rememberedReceive: RouteHandlerArgs["to"] | undefined;
+function rememberUnifiedReceive(to: RouteHandlerArgs["to"]): void {
+  rememberedReceive = to;
 }
 
 async function deliverUnifiedDispatch(input: UnifiedDispatchPayload): Promise<void> {
@@ -71,7 +73,7 @@ function windowEnabledFor(surfaceKey: string, token: string): boolean {
   }
 }
 
-function auditLabels(rawToken: string): { workspace: string; surface: string | undefined } {
+function auditLabels(rawToken: string | undefined): { workspace: string; surface: string | undefined } {
   const key = parseWindowToken(rawToken);
   return { workspace: key?.domain ?? "unknown", surface: key ? unifiedDomainSessionKey(key.windowId) : undefined };
 }
@@ -122,10 +124,10 @@ async function windowSpendGate(input: {
 const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
   routes: [
     GET("/eve/v1/unified", async () => new Response("not found", { status: 404 })),
-    POST(SELF_DISPATCH_PATH, async (req, { receive }) => handleSelfDispatch(req, receive, (r, i) => divertToUnifiedWindow(r, { ...i, internalDispatch: true }))),
+    POST(SELF_DISPATCH_PATH, async (req, { to }) => handleSelfDispatch(req, to, (r, i) => divertToUnifiedWindow(r, { ...i, internalDispatch: true }))),
   ],
   kindHint: "unified",
-  async receive(input, { send }): Promise<Session> {
+  async receive(input, { from }): Promise<Session> {
     const t = input.target as Partial<UnifiedReceiveTarget> | undefined;
     if (
       !t ||
@@ -144,10 +146,10 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
     const org = deploymentOrg();
     await registerUnifiedWakeTarget(getOperationalStore(), org, t.wakeId, t.origin, new Date().toISOString(), t.token);
     ulog(`wake ${t.wakeId} from ${t.surfaceKey} → ${t.token} (origin ${t.origin.platform})`);
-    return send(
-      { message: input.message, ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}) },
-      { auth: input.auth, continuationToken: t.token },
-    );
+    return from(t.token).send(input.message, {
+      auth: input.auth,
+      ...(t.context && t.context.length > 0 ? { context: [...t.context] } : {}),
+    });
   },
   events: {
     async "message.completed"(data, channel, ctx) {
@@ -156,7 +158,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       if (action.kind === "buffer-tool-status") return;
       const replied = consumeRepliedThisTurn();
       const org = deploymentOrg();
-      const { workspace, surface } = auditLabels(channel.continuationToken);
+      const { workspace, surface } = auditLabels(channel.continuation?.token);
       if (action.kind === "silent") {
         const bind = { session: ctx.session } as unknown as BindableContext;
         const wakeId = currentWakeId(bind);
@@ -242,9 +244,9 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         detail: { chars: action.text.length, replied, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
       }).catch(() => undefined);
 
-      if (redriveEnabled() && !replied) {
+      if (redriveEnabled() && !replied && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
-        const rawToken = channel.continuationToken;
+        const rawToken = channel.continuation.token;
         const domain = unifiedDomainFromToken(rawToken);
         const baseAttrs: Record<string, unknown> = { ...(bind.session?.auth?.current?.attributes ?? {}) };
         delete baseAttrs[OE_ADDRESSING_ATTR];
@@ -261,7 +263,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       }
     },
     async "turn.failed"(data, channel) {
-      const { workspace, surface } = auditLabels(channel.continuationToken);
+      const { workspace, surface } = auditLabels(channel.continuation?.token);
       ulog(`supervisor turn failed on domain ${workspace} (audited, nothing posted): ${data.message}`);
       await appendAudit({
         org: deploymentOrg(),
@@ -273,7 +275,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       }).catch(() => undefined);
     },
     async "session.failed"(data, channel) {
-      const { workspace, surface } = auditLabels(channel.continuationToken);
+      const { workspace, surface } = auditLabels(channel.continuation?.token);
       ulog(`supervisor session failed on domain ${workspace} (audited, nothing posted; next wake force-rotates): ${data.message}`);
       await appendAudit({
         org: deploymentOrg(),
@@ -290,7 +292,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
 export default channel;
 
 export async function divertToUnifiedWindow(
-  receive: RouteHandlerArgs["receive"],
+  receive: RouteHandlerArgs["to"],
   input: {
     readonly message: string;
     readonly context?: readonly string[];
@@ -351,7 +353,7 @@ export async function divertToUnifiedWindow(
   const deliveredAuth = recoveredTainted
     ? { ...auth, attributes: { ...auth.attributes, ...resultTaintedAttrs(true) } }
     : auth;
-  await receive(channel, { message, target, auth: deliveredAuth as Parameters<RouteHandlerArgs["receive"]>[1]["auth"] });
+  await receive(channel, target).send(message, { auth: deliveredAuth as UnifiedSendAuth });
   if (recovered) {
     const org = deploymentOrg();
     await markRecoveredDelivered(getOperationalStore(), org, recovered.taskIds, new Date().toISOString());
@@ -366,7 +368,7 @@ export async function divertToUnifiedWindow(
 }
 
 export async function divertInboundToUnifiedWindow(
-  receive: RouteHandlerArgs["receive"],
+  receive: RouteHandlerArgs["to"],
   input: {
     readonly message: string;
     readonly context?: readonly string[];
@@ -444,7 +446,7 @@ export async function dispatchTaskWindow(input: {
 }): Promise<void> {
   if (!crossProcessDispatchAvailable()) {
     throw new Error(
-      "spawn_task: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured receive) and the self-dispatch route is not configured (set OE_SPAWN_DISPATCH_SECRET; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
+      "spawn_task: no live cross-surface dispatch is available on this instance — this process has handled no surface webhook (no captured cross-channel dispatch) and the self-dispatch route is not configured (set OE_SPAWN_DISPATCH_SECRET; plus OE_PUBLIC_BASE_URL when the deployment's own URL isn't discoverable). Retry from a message-driven turn.",
     );
   }
   const surfaceKey = pickRedriveSurfaceKey(input.domain, input.origin.platform);

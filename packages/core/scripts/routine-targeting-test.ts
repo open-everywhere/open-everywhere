@@ -216,12 +216,14 @@ const ORG = "default";
 
 {
   const delivered: { channel: unknown; target: unknown; message: string; attributes: Record<string, string> }[] = [];
-  const receive = ((channel: unknown, args: { message: string; target: unknown; auth: { attributes: Record<string, string> } }) => {
-    delivered.push({ channel, target: args.target, message: args.message, attributes: args.auth.attributes });
-    return Promise.resolve();
-  }) as never;
+  const receive = ((channel: unknown, target: unknown) => ({
+    send: (message: string, args: { auth: { attributes: Record<string, string> } }) => {
+      delivered.push({ channel, target, message, attributes: args.auth.attributes });
+      return Promise.resolve();
+    },
+  })) as never;
   const pending: Promise<unknown>[] = [];
-  const tick = (now: Date) => dispatch.dispatchTick({ now, receive, waitUntil: (p: Promise<unknown>) => void pending.push(p), appAuth: { attributes: {} } as never, confirmInternal: () => Promise.resolve(false) } as never);
+  const tick = (now: Date) => dispatch.dispatchTick({ now, to: receive, waitUntil: (p: Promise<unknown>) => void pending.push(p), appAuth: { attributes: {} } as never, confirmInternal: () => Promise.resolve(false) } as never);
   const settle = async () => {
     await Promise.allSettled(pending.splice(0));
   };

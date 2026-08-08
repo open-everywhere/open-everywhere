@@ -69,7 +69,7 @@ export async function fireWebhook(
   hook: FusedWebhookHook,
   rawBody: string,
   args: {
-    readonly receive: RouteHandlerArgs["receive"];
+    readonly to: RouteHandlerArgs["to"];
     readonly now?: Date;
     readonly confirmInternal?: (channelId: string) => Promise<boolean>;
     readonly fireWindow?: FireWindowDeps;
@@ -118,7 +118,7 @@ export async function fireWebhook(
   const message = renderWebhookMessage(hook, rawBody, args.headers ?? {});
   const fireWakeId = mintWakeId();
   const diverted = await divertTriggeredFire(
-    args.receive,
+    args.to,
     {
       message,
       surfaceKey,
@@ -129,7 +129,7 @@ export async function fireWebhook(
     },
     args.fireWindow ?? {},
   );
-  if (!diverted) await args.receive(slackChannel, { message, target: { channelId }, auth });
+  if (!diverted) await args.to(slackChannel, { channelId }).send(message, { auth });
   emitTelemetry("oe.feature.used", { "oe.feature": "webhook_received", "oe.outcome": "ok" });
   return { fired: true };
 }
