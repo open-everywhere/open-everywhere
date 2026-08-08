@@ -1,4 +1,5 @@
-import { auditSilencesExpected, type Capability, type SlackUser2Config } from "./env.js";
+import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
@@ -983,6 +984,25 @@ export const SCENARIOS: readonly Scenario[] = [
       const dm = ctx.dm!;
       const forge = ctx.syntheticDm!;
       const { userId, teamId } = await slack.identity();
+
+      const rotateDbUrl = process.env.DATABASE_URL;
+      if (rotateDbUrl) {
+        try {
+          const store = await wireNeonOperationalStore(rotateDbUrl);
+          const org = process.env[ENV.org]?.trim() || "default";
+          const domain = process.env[ENV.unifiedDomain]?.trim() || "e2e-unified";
+          const rot = await rotateUnifiedWindow(store, org, domain);
+          ctx.log(
+            `J4: rotated the ${domain} window → fresh generation ${rot.mintedGeneration} (OPE-344 — this run starts with no widen-ask/reject footprint from prior runs)`,
+          );
+        } catch (e) {
+          ctx.log(
+            `J4: could not rotate the e2e-unified window (${String(e instanceof Error ? e.message : e)}) — proceeding on whatever generation the standing window is already on, which risks OPE-344's harness-footprint misread`,
+          );
+        }
+      } else {
+        ctx.log("J4: no DATABASE_URL — skipping the OPE-344 rotate-at-start; this run rides the standing e2e-unified window's current generation as-is");
+      }
 
       const pendingCleanup: Array<{ pendingId: string; org: string; messageTs: string; channelId: string }> = [];
       try {
