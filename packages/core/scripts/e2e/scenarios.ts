@@ -1518,9 +1518,41 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.gate(replyA.userId === lin.appUserId, "assertion (a): the app's reply comment comes back attributed to comment.user.id === viewer.id (self-loop guard evidence)");
         await ctx.judgePass(closedQA(`Does the reply quote ${markerA}?`, { mustMatch: [markerA] }), replyA.body, "mention: reply quotes the run token");
 
+        const afterReplyFrom = new Date(new Date(replyA.createdAt).getTime() - 5_000).toISOString();
         await sleep(SILENCE_WINDOW);
-        const afterReply = (await lin.comments(issueA.id)).filter((c) => lin.isAppComment(c) && c.id !== replyA.id && c.createdAt > replyA.createdAt);
-        ctx.gate(afterReply.length === 0, "self-loop: the app's own reply comment did NOT re-dispatch a second reply (the guard held)");
+        if (!ctx.auditRead) {
+          ctx.log(
+            "self-loop leg SKIPPED — it needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN). Since OPE-316's " +
+              "completion-relay carve-out, counting app comments in a silence window cannot tell a legitimate multi-post " +
+              "wake from a re-dispatch, so the old post-window proxy was retired rather than left to false-red (OPE-342).",
+          );
+        } else {
+          const dispatched = await ctx.auditRead({ sinceIso: afterReplyFrom, platform: "linear", actions: ["linear.dispatched"] });
+          const onIssueA = dispatched.filter((r) => (r.detail as { issueId?: unknown } | undefined)?.issueId === issueA.id);
+          const selfDirect = onIssueA.filter((r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "direct");
+          const selfChannelWatch = onIssueA.filter(
+            (r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "channel-watch" && r.principalId === lin.appUserId,
+          );
+          const otherChannelWatch = onIssueA.filter(
+            (r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "channel-watch" && r.principalId !== lin.appUserId,
+          );
+          ctx.gate(
+            selfDirect.length === 0,
+            `self-loop: the app's own reply did NOT re-trigger a second direct/@mention dispatch on issue A (the agent-session ` +
+              `path has no code-level author check, so this is the live proof Linear's own semantics don't loop it) — saw ${selfDirect.length}`,
+          );
+          ctx.gate(
+            selfChannelWatch.length === 0,
+            `self-loop: no channel-watch dispatch on issue A is attributed to the app's OWN principal (the ambient classify ` +
+              `self-author drop held) — saw ${selfChannelWatch.length}`,
+          );
+          if (otherChannelWatch.length > 0) {
+            ctx.log(
+              `self-loop: ${otherChannelWatch.length} channel-watch dispatch row(s) on issue A from a NON-app principal in this ` +
+                "window — the designed re-admission path (a genuine comment can re-dispatch the same issue), not gated.",
+            );
+          }
+        }
 
         const issueB = await lin.createIssue(`(e2e) J-LIN discussion B ${factToken("lin")}`);
         try {
