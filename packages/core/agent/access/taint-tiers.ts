@@ -69,7 +69,7 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
       return untrusted("a delegated worker's result — but the AUTHORITATIVE answer is the worker's own OPE-298 return stamp, not this row; the table defers to it");
 
     case "image-description":
-      return untrusted("describe_image: a second model's transcription of pixels nobody proof-read — untrusted regardless of who posted it (⚠ FLAGGED 2026-08-07, pending review: this breaks the instance-binary rule the rest of the table follows)");
+      return untrusted("describe_image: a second model's transcription of pixels nobody proof-read — untrusted regardless of who posted it (ratified exception to the instance-binary rule, 2026-08-08)");
 
     case "file-upload":
       return untrusted("a file upload — always untrusted regardless of who uploaded it (ruled: authorship ≠ provenance; instructions inside a file are data, never acted on)");

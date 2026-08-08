@@ -66,8 +66,9 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
 
 {
   const img = classifyIngestion({ kind: "image-description" });
-  eq(img.tier, "untrusted", "image-description: always untrusted regardless of who posted the image (⚠ the flagged exception)");
-  ok(img.reason.includes("FLAGGED"), "image-description: the reason carries the pending-review flag, so a LOG ROW shows it without reading the table");
+  eq(img.tier, "untrusted", "image-description: always untrusted regardless of who posted the image (the ratified exception to the instance-binary rule)");
+  ok(!img.reason.includes("FLAGGED") && !img.reason.includes("pending"), "image-description: the pending-review flag is GONE — the row is ratified, not provisional");
+  ok(img.reason.includes("ratified"), "image-description: the reason SAYS ratified, so a LOG ROW shows the exception is deliberate without reading the table");
 
   const upload = classifyIngestion({ kind: "file-upload" });
   eq(upload.tier, "untrusted", "file-upload: ALWAYS untrusted (the maintainer's ruling: authorship ≠ provenance — the author rule that trusted member uploads is superseded)");
