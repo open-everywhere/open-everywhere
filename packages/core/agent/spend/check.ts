@@ -1,6 +1,7 @@
-import { effectiveCaps, domainNameForScope, resolveUserCaps } from "./caps.js";
+import { effectiveCaps, domainNameForScope, effectiveUserCaps } from "./caps.js";
 import { checkCap, periodOf, type CapVerdict } from "./spend.js";
 import { surfaceTokens, workspaceTokens, surfaceUsd, workspaceUsd, principalSurfaceSpend } from "./store.js";
+import { userScopeKey } from "../access/scope-key.js";
 import { domainKeyOf, type Partition } from "../memory/partition.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
@@ -23,7 +24,7 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
   const scopeKey = domainKeyOf(p);
   const domainName = domainNameForScope(scopeKey, mode, trust);
   const caps = await effectiveCaps(p.org, p.workspaceKey, scopeKey, domainName);
-  const userCaps = mode === "dm" && principalId ? resolveUserCaps(principalId) : {};
+  const userCaps = mode === "dm" && principalId ? await effectiveUserCaps(p.org, p.platform, principalId) : {};
   const tokenCapped = caps.surfaceMonthlyTokens != null || caps.workspaceMonthlyTokens != null;
   const usdCapped = caps.surfaceMonthlyUsd != null || caps.workspaceMonthlyUsd != null;
   const userCapped = userCaps.surfaceMonthlyTokens != null || userCaps.surfaceMonthlyUsd != null;
@@ -44,6 +45,11 @@ export async function scopeOverBudget(p: Partition, mode: SessionMode, nowISO: s
     userUsd: user.usd,
     caps,
     userCaps,
+    scopes: {
+      ...(principalId ? { user: userScopeKey(p.platform, principalId) } : {}),
+      surface: scopeKey,
+      workspace: p.workspaceKey,
+    },
   });
   if (verdict.over) emitTelemetry("oe.feature.used", { "oe.feature": "spend_cap_hit", "oe.outcome": "ok" });
   return verdict;

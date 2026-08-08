@@ -349,6 +349,19 @@ const ctxExternal = ctxFor({ channelId: "C_EXT" });
   const orgReport = await spendReportTool.execute({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
   ok(orgReport.bySurfaceAndKind.some((r) => r.surfaceKey === "slack/T1/C_OTHER"), "spend_report: org scope for an org admin sees every surface, including other domains'");
   ok(orgReport.domain === undefined, "spend_report: org scope carries no domain field");
+
+  const { getOperationalStore: getOpStore } = await import("../agent/operational/provider.js");
+  const ALLOWANCE = "user:slack/U_REPORTED";
+  await getOpStore().setSpendLimit("default", ALLOWANCE, "user", { monthlyUsd: 9 }, { reason: "onboarding", setBy: "U_ADMIN" });
+  const orgWithCaps = await spendReportTool.execute({ sinceDays: 365, scope: "org" }, ctxOrgAdmin as never);
+  const seen = (orgWithCaps.userCaps ?? []).find((r) => r.principal === ALLOWANCE);
+  ok(seen?.source === "override" && seen?.monthlyUsd === 9 && seen?.setBy === "U_ADMIN", "OPE-274: spend_report at ORG scope lists a live per-user allowance with its amount and provenance");
+  ok(/userCaps lists PER-PERSON monthly allowances/.test(orgWithCaps.note), "OPE-274: …and the note says it is allowances, not spend, and that the axis is independent of the room's cap");
+
+  const domainWithCaps = await spendReportTool.execute({ sinceDays: 365, scope: "domain" }, ctxEng() as never);
+  ok(domainWithCaps.userCaps === undefined, "🔴 OPE-274: spend_report at DOMAIN scope omits the per-person roster entirely — 'anyone in the domain' is the wrong audience for who the org has decided what about");
+  ok(/userCaps .*is omitted at domain scope on purpose/.test(domainWithCaps.note), "OPE-274: …and says so, naming the ask that does work (scope=\"org\"), rather than leaving a silent absence");
+  await getOpStore().clearSpendLimit("default", ALLOWANCE, "user");
 }
 
 {

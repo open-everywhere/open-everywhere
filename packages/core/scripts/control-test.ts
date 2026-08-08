@@ -1,6 +1,6 @@
 import "./_register-test-config.js";
 import assert from "node:assert/strict";
-import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView } from "../agent/control/views.js";
+import { spendView, routinesView, auditView, accessView, usageSummaryView, usageWindowView, skillsListView, skillRevisionsView, overridesView } from "../agent/control/views.js";
 import { buildControlServer, CONTROL_TOOL_NAMES } from "../agent/control/server.js";
 import { appendUsageEvent } from "../agent/spend/usage-events.js";
 import { getOperationalStore } from "../agent/operational/provider.js";
@@ -173,6 +173,23 @@ const CTL_ORG = `ctl-test-${process.pid}-${Date.now()}`;
   const spendCleared = await spendView(period);
   const rowCleared = spendCleared.surfaces.find((s) => s.org === CTL_ORG && s.surfaceKey === surfaceKey);
   ok("spendView: clearing the override reverts to the (uncapped) config baseline", rowCleared?.usdCap === null && rowCleared?.usdOver === false);
+
+  ok("OPE-274: spendView carries a userCaps section keyed by org", typeof spendCleared.userCaps === "object" && spendCleared.userCaps !== null);
+  ok("OPE-274: an org with nothing declared reports an empty list, not an absent key (a readable 'no', not an absence to interpret)", Array.isArray(spendCleared.userCaps[CTL_ORG]) && spendCleared.userCaps[CTL_ORG].length === 0);
+
+  const ALLOWANCE_SCOPE = "user:slack/U_CTL_PERSON";
+  await opStore.setSpendLimit(CTL_ORG, ALLOWANCE_SCOPE, "user", { monthlyUsd: 12.5 }, { reason: "sprint headroom", setBy: "tester" });
+  const withUser = await spendView(period);
+  const allowance = (withUser.userCaps[CTL_ORG] ?? []).find((r) => r.principal === ALLOWANCE_SCOPE);
+  ok("OPE-274: a live per-user override appears in spendView with its amount, source and provenance", allowance?.source === "override" && allowance?.monthlyUsd === 12.5 && allowance?.setBy === "tester" && allowance?.reason === "sprint headroom");
+  ok("OPE-274: …and it is NOT folded into a surface row — a person's allowance never poses as a place's cap", !withUser.surfaces.some((s) => s.surfaceKey === ALLOWANCE_SCOPE));
+
+  const drift = await overridesView(CTL_ORG);
+  const driftRow = drift.spend.find((r) => r.scopeKey === ALLOWANCE_SCOPE);
+  ok("OPE-274: overridesView carries the user-level row with its level", driftRow?.level === "user");
+  ok("OPE-274: …and its reconcile instruction names the perUser registry", /perUser\.overrides/.test(drift.note));
+
+  await opStore.clearSpendLimit(CTL_ORG, ALLOWANCE_SCOPE, "user");
 }
 
 {

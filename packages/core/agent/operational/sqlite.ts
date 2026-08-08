@@ -89,7 +89,7 @@ function getDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS spend_limit (
       org_id        TEXT NOT NULL,
       scope_key     TEXT NOT NULL,
-      level         TEXT NOT NULL,            -- "surface" | "workspace" | "domain" (free-text, no CHECK)
+      level         TEXT NOT NULL,            -- "surface" | "workspace" | "domain" | "user" (free-text, no CHECK — see store.ts CapLevel)
       monthly_tokens INTEGER NOT NULL,        -- -1 = no token component (legacy NOT NULL; see setSpendLimit)
       monthly_usd   REAL,                     -- NULL = no USD component
       expires_at    INTEGER,                  -- epoch ms; NULL = no auto-expiry

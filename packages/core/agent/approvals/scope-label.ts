@@ -20,6 +20,9 @@ export async function friendlyScopeLabel(scopeKey: string): Promise<string | und
       const domain = getConfig().loadDomains().find((d) => d.name === parsed.name);
       return domain?.title?.trim() ? displayTitle(domain) : undefined;
     }
+    if (parsed.kind === "principal") {
+      return parsed.platform === "slack" || parsed.platform === "discord" ? `<@${parsed.id}>` : undefined;
+    }
     if (parsed.kind === "malformed") return undefined;
     if (parsed.platform === "slack" && parsed.kind === "surface") {
       const name = await bridgeFetchChannelDisplayName(parsed.surface);

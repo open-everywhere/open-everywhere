@@ -7,13 +7,15 @@ import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { domainForChannel } from "../memory/domain.js";
 import { resolvePartition } from "../memory/partition.js";
 import { getConfig } from "../access/config.js";
-import { effectiveCaps, domainNameForScope } from "../spend/caps.js";
+import { effectiveCaps, effectiveUserCaps, domainNameForScope } from "../spend/caps.js";
+import { userScopeKey, parseScopeKey } from "../access/scope-key.js";
+import { CAP_LEVELS, type CapLevel } from "../operational/store.js";
 import { requestApproval, autoApprovedNote, cardPosterFor, type RequestApprovalDeps } from "../approvals/flow.js";
 import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { friendlyScopeLabel } from "../approvals/scope-label.js";
 
-const LEVELS = ["surface", "workspace", "domain"] as const;
-type Level = (typeof LEVELS)[number];
+export const LEVELS = CAP_LEVELS;
+export type Level = CapLevel;
 
 export function approvalPostDeps(platform: string): RequestApprovalDeps {
   const poster = cardPosterFor(platform);
@@ -44,6 +46,28 @@ export interface CurrentCaps {
   readonly usd: number | null;
 }
 
+export async function currentCapsFor(
+  org: string,
+  workspaceKey: string,
+  level: Level,
+  scopeKey: string,
+  mode: SurfaceBinding["mode"],
+  trust: SurfaceBinding["trust"],
+): Promise<CurrentCaps> {
+  if (level === "user") {
+    const parsed = parseScopeKey(scopeKey);
+    const userCaps = parsed.kind === "principal" ? await effectiveUserCaps(org, parsed.platform, parsed.id) : {};
+    return { tokens: userCaps.surfaceMonthlyTokens ?? null, usd: userCaps.surfaceMonthlyUsd ?? null };
+  }
+  const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
+  const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, mode, trust);
+  const caps = await effectiveCaps(org, workspaceKey, capsSurfaceArg, capsDomainArg);
+  return {
+    tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
+    usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
+  };
+}
+
 export interface SpendSetPlan {
   readonly kind: "spend.set";
   readonly args: {
@@ -63,6 +87,15 @@ export interface SpendSetPlan {
 export function defaultScopeKey(binding: SurfaceBinding, level: Level): string {
   const workspaceKey = `${binding.platform}/${binding.workspace}`;
   if (level === "workspace") return workspaceKey;
+  if (level === "user") {
+    const me = actingPrincipalId(binding);
+    if (!me) {
+      throw new Error(
+        `defaultScopeKey: level:"user" has no default here — there is no acting sender on this turn to mean "my own allowance" (a triggered routine fire has only the creator it is attributed to). Pass scopeKey explicitly (\`user:<platform>/<id>\`).`,
+      );
+    }
+    return userScopeKey(binding.platform, me);
+  }
   const surfaceKey = `${workspaceKey}/${binding.domainSurface ?? binding.surface}`;
   if (level === "surface") return surfaceKey;
   const domainName = domainNameForScope(surfaceKey, binding.mode, binding.trust);
@@ -88,6 +121,20 @@ export function assertScopableFromHere(tool: string, binding: SurfaceBinding, le
   }
 }
 
+export function assertScopeKeyShapeForLevel(tool: string, level: Level, scopeKey: string): void {
+  const isUserKey = parseScopeKey(scopeKey).kind === "principal";
+  if (level === "user" && !isUserKey) {
+    throw new Error(
+      `${tool}: level:"user" needs a principal scope key of the form \`user:<platform>/<id>\` (e.g. "user:slack/U0123ABCD") — got "${scopeKey}", which addresses a place, not a person, and would store an allowance nobody can ever present. The over-budget decline message names the exact key.`,
+    );
+  }
+  if (level !== "user" && isUserKey) {
+    throw new Error(
+      `${tool}: "${scopeKey}" is a PERSON's scope key, so it only works with level:"user" — a ${level}-level cap on it would gate nothing. Pass level:"user", or a ${level} scope key.`,
+    );
+  }
+}
+
 export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitInput, current: CurrentCaps, domain: string | null): SpendSetPlan {
   if (!actingPrincipalId(binding)) {
     throw new Error("set_spend_limit needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose a spend-limit change in that person's name. Ask a person in this conversation to propose it.");
@@ -98,6 +145,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
   const level = input.level ?? "surface";
   assertScopableFromHere("set_spend_limit", binding, level, input.scopeKey);
   const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
+  assertScopeKeyShapeForLevel("set_spend_limit", level, scopeKey);
   const reason = input.reason.trim();
   if (!reason) {
     throw new Error("set_spend_limit needs a non-empty reason — it's shown on the approval card.");
@@ -121,7 +169,7 @@ export function planSetSpendLimit(binding: SurfaceBinding, input: SetSpendLimitI
 
 export default defineTool({
   description:
-    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; or, with level:"domain", every surface in this channel\'s memory domain) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). An over-budget channel\'s decline message shows the exact keys. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can\'t host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.',
+    'PROPOSE a monthly spend limit — token count and/or USD — for this surface (or, with level:"workspace", the whole workspace: the Slack workspace / Discord server; with level:"domain", every surface in this channel\'s memory domain; or with level:"user", ONE PERSON\'s own allowance) — this does NOT change the cap. It posts a confirmation card in this channel showing the current cap and the proposed one. Approval standing: an org admin can always decide; a domain admin whose domain covers this scope can too for "surface"/"workspace" — but a DOMAIN-LEVEL or USER-LEVEL cap needs an ORG ADMIN specifically (domain admins cannot approve or raise their own domain\'s budget, and a per-person allowance is a change about somebody who is not in the room the card lands in). At least one of monthlyTokens/monthlyUsd is required. DM turns are spend-capped like any other surface, so from a DM the default level:"surface" caps THIS DM and is accepted; level:"domain" needs an explicit scopeKey there (a DM\'s default domain spans every DM), and so does level:"workspace" on Discord (a Discord DM belongs to no server). level:"user" defaults to the person who just spoke ("my own allowance"); to change somebody ELSE\'s, pass their key explicitly as "user:<platform>/<id>". A person\'s allowance is checked INDEPENDENTLY of the room\'s cap — raising it never switches off the cap on the channel they are in. An over-budget decline message names the exact cap that stopped the turn and its key. Config-as-code (the spend budgets registry, reviewed by PR) is still the permanent way to set budgets — this is the fast runtime bridge for a one-off change an admin can approve on the spot. The posted card IS the reply to the user — do not add any narration, summary, or confirmation text after this call; the channel already sees everything the card says. EXCEPT when this surface can\'t host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.',
   inputSchema: z.object({
     monthlyTokens: z.number().int().positive().optional().describe("Proposed monthly token budget. At least one of monthlyTokens/monthlyUsd is required."),
     monthlyUsd: z.number().positive().optional().describe("Proposed monthly USD budget (estimated $, enforced against per-row priced usage). At least one of monthlyTokens/monthlyUsd is required."),
@@ -129,11 +177,15 @@ export default defineTool({
     level: z
       .enum(LEVELS)
       .optional()
-      .describe('"surface" (default — this channel/DM only), "workspace" (the whole Slack workspace / Discord server), or "domain" (this channel\'s memory domain — ORG ADMIN approval only).'),
+      .describe(
+        '"surface" (default — this channel/DM only), "workspace" (the whole Slack workspace / Discord server), "domain" (this channel\'s memory domain — ORG ADMIN approval only), or "user" (ONE PERSON\'s own monthly allowance, checked independently of the room\'s cap — ORG ADMIN approval only).',
+      ),
     scopeKey: z
       .string()
       .optional()
-      .describe('Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace, or a domain\'s own name for level:"domain". Defaults to this surface\'s own scope.'),
+      .describe(
+        'Override the scope key, e.g. "slack/T123/C456" or "discord/G123/C456" for a surface, "slack/T123" for a workspace, a domain\'s own name for level:"domain", or "user:slack/U123" for level:"user". Defaults to this surface\'s own scope — or, for level:"user", to the person who just spoke.',
+      ),
   }),
   outputSchema: z.object({
     requested: z.boolean(),
@@ -147,15 +199,9 @@ export default defineTool({
     const binding = bindFrom(ctx);
     const level = input.level ?? "surface";
     const scopeKey = input.scopeKey?.trim() || defaultScopeKey(binding, level);
-    const domain = level === "domain" ? scopeKey : (domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null);
+    const domain = level === "user" ? null : level === "domain" ? scopeKey : (domainForChannel(scopeKey, getConfig().loadDomains())?.name ?? null);
     const workspaceKey = `${binding.platform}/${binding.workspace}`;
-    const capsSurfaceArg = level === "workspace" ? workspaceKey : scopeKey;
-    const capsDomainArg = level === "domain" ? scopeKey : domainNameForScope(scopeKey, binding.mode, binding.trust);
-    const caps = await effectiveCaps(binding.org, workspaceKey, capsSurfaceArg, capsDomainArg);
-    const current: CurrentCaps = {
-      tokens: (level === "workspace" ? caps.workspaceMonthlyTokens : caps.surfaceMonthlyTokens) ?? null,
-      usd: (level === "workspace" ? caps.workspaceMonthlyUsd : caps.surfaceMonthlyUsd) ?? null,
-    };
+    const current = await currentCapsFor(binding.org, workspaceKey, level, scopeKey, binding.mode, binding.trust);
 
     const plan = planSetSpendLimit(binding, input, current, domain);
 

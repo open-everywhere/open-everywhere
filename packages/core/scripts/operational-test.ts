@@ -229,6 +229,18 @@ const store = makeOperationalPostgresStore(client);
   ok((await store.clearSpendLimit("default", "eng", "domain")) === true, "clearSpendLimit removes a domain-level override");
   ok((await store.spendLimits("default")).every((l) => !(l.scopeKey === "eng" && l.level === "domain")), "the cleared domain-level override is gone");
 
+  const USER_SCOPE = "user:slack/U0EXOWNER";
+  await store.setSpendLimit("default", USER_SCOPE, "user", { monthlyTokens: 4000, monthlyUsd: 12 }, { reason: "sprint", setBy: "admin#1" });
+  const userRow = (await store.spendLimits("default")).find((l) => l.scopeKey === USER_SCOPE && l.level === "user");
+  ok(userRow?.monthlyTokens === 4000 && userRow?.monthlyUsd === 12, "setSpendLimit round-trips a user-level override in BOTH denominations, scoped by principal key");
+  ok(userRow?.reason === "sprint" && userRow?.setBy === "admin#1", "…with the same bridge metadata every other level carries (a per-person allowance is reconcilable like any other override)");
+  await store.setSpendLimit("default", "slack/U0EXOWNER", "workspace", { monthlyTokens: 1 });
+  const bothLevels = await store.spendLimits("default");
+  ok(bothLevels.some((l) => l.scopeKey === USER_SCOPE && l.level === "user") && bothLevels.some((l) => l.scopeKey === "slack/U0EXOWNER" && l.level === "workspace"), "a person's allowance and a workspace override for the same underlying id coexist as distinct rows");
+  ok((await store.clearSpendLimit("default", USER_SCOPE, "user")) === true, "clearSpendLimit removes a user-level override");
+  ok((await store.spendLimits("default")).every((l) => l.level !== "user"), "the cleared user-level override is gone");
+  await store.clearSpendLimit("default", "slack/U0EXOWNER", "workspace");
+
   await store.setConnectorOverride("default", "slack/T1/C1", "notion", true);
   await store.setConnectorOverride("default", "slack/T1/C1", "linear", false);
   const ov = await store.connectorOverrides("default", "slack/T1/C1");

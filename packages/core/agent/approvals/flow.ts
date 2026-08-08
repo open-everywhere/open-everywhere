@@ -334,11 +334,11 @@ export async function requestApproval(
   return { id: row.id, expiresAt };
 }
 
-export function isDomainLevelSpendCap(row: PendingActionRow): boolean {
+export function isOrgAdminOnlySpendCap(row: PendingActionRow): boolean {
   if (row.kind !== "spend.set" && row.kind !== "spend.clear") return false;
   try {
     const args = JSON.parse(row.argsJson) as { level?: unknown };
-    return args.level === "domain";
+    return args.level === "domain" || args.level === "user";
   } catch {
     return false;
   }
@@ -349,7 +349,7 @@ export function clickerMayDecide(row: PendingActionRow, clickerId: string, click
   const domains = getConfig().loadDomains();
   const key = principalKey(clickerPlatform, clickerId);
   if (criteriaDomain("org", domains)?.admins?.includes(key) === true) return true;
-  if (isDomainLevelSpendCap(row)) return false;
+  if (isOrgAdminOnlySpendCap(row)) return false;
   if (!row.domain) return false;
   const explicit = domains.find((d) => d.name === row.domain);
   return explicit?.admins?.includes(key) === true;

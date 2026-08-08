@@ -73,7 +73,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS spend_limit (
      org_id         text   NOT NULL,
      scope_key      text   NOT NULL,
-     level          text   NOT NULL,          -- "surface" | "workspace" | "domain" (free-text, no CHECK)
+     level          text   NOT NULL,          -- "surface" | "workspace" | "domain" | "user" (free-text, no CHECK — see store.ts CapLevel)
      monthly_tokens bigint NOT NULL,          -- -1 = no token component (matches the SQLite encoding)
      monthly_usd    double precision,         -- NULL = no USD component
      expires_at     bigint,                  -- epoch ms; NULL = no auto-expiry

@@ -172,7 +172,8 @@ export interface OverrideMeta {
   readonly setBy?: string;
 }
 
-export type CapLevel = "surface" | "workspace" | "domain";
+export const CAP_LEVELS = ["surface", "workspace", "domain", "user"] as const;
+export type CapLevel = (typeof CAP_LEVELS)[number];
 export interface SpendLimitRow extends OverrideMeta {
   readonly org: string;
   readonly scopeKey: string;

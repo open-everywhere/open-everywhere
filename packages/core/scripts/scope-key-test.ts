@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseScopeKey } from "../agent/access/scope-key.js";
+import { parseScopeKey, platformOfScopeKey, userScopeKey } from "../agent/access/scope-key.js";
 import { whereFromScope } from "../agent/approvals/actions.js";
 
 let n = 0;
@@ -35,7 +35,7 @@ function legacyLabelParse(scopeKey: string): { platform: string; workspace: stri
 
 function labelParseViaLeaf(scopeKey: string): { platform: string; workspace: string; surface?: string } | null {
   const p = parseScopeKey(scopeKey);
-  if (p.kind === "domain" || p.kind === "malformed") return null;
+  if (p.kind === "domain" || p.kind === "principal" || p.kind === "malformed") return null;
   return { platform: p.platform, workspace: p.workspace, surface: p.kind === "surface" ? p.surface : undefined };
 }
 
@@ -82,6 +82,24 @@ for (const k of KEYS) {
     .join("\n");
   ok(!/^\s*import\s/m.test(code), "access/scope-key.ts imports nothing — it cannot pull the resolver, the bundle types, or the event plane in behind it");
   ok(!/ScopeStep|ScopeKind|event-model/.test(code), "access/scope-key.ts names nothing from the EVENT scope vocabulary (that fence is a security property, not tidiness)");
+}
+
+{
+  eq(parseScopeKey("user:slack/U0EXOWNER"), { kind: "principal", platform: "slack", id: "U0EXOWNER" }, "a `user:`-marked key is a PRINCIPAL — the marker is stripped, both halves recovered");
+  eq(parseScopeKey("slack/U0EXOWNER"), { kind: "tenant", platform: "slack", workspace: "U0EXOWNER" }, "🔴 …and the SAME person unmarked is indistinguishable from a tenant key: that is the reason the marker exists");
+  eq(parseScopeKey("user:slack"), { kind: "malformed", raw: "user:slack", parts: ["slack"] }, "a marked key with no id is malformed, not a domain named 'slack'");
+  eq(parseScopeKey("user:/U1"), { kind: "malformed", raw: "user:/U1", parts: ["", "U1"] }, "a marked key with no platform is malformed");
+  eq(parseScopeKey("user:slack/T1/C1"), { kind: "malformed", raw: "user:slack/T1/C1", parts: ["slack", "T1", "C1"] }, "a marked key with a third segment is malformed, never a surface");
+  ok(userScopeKey("slack", "U1") === "user:slack/U1", "userScopeKey is the ONE minter of the marked form");
+  ok(parseScopeKey(userScopeKey("discord", "300000000000000104")).kind === "principal", "mint ⇄ parse round-trips on a snowflake id (the digit-string case the qualification exists for)");
+
+  eq(whereFromScope("acme", "user:slack/U1"), { org: "acme", platform: "user", workspace: "slack/U1" }, "a principal scope audits as platform:'user' with the qualified principal key as the workspace");
+  ok(platformOfScopeKey("user:slack/U1") === "slack", "platformOfScopeKey answers with the person's real platform — the marker is what makes that a fact rather than a guess");
+  ok(platformOfScopeKey("payments") === undefined, "…while a bare domain name still answers undefined (unchanged)");
+
+  for (const k of ["user:slack/U1", "user:", "user:/", "user:a/b/c"]) {
+    ok(typeof parseScopeKey(k).kind === "string", `parseScopeKey(${JSON.stringify(k)}) returns a shape rather than throwing`);
+  }
 }
 
 console.log(`\n✓ scopeKey grammar: ${n} assertions passed (one parser; the pre-OPE-240 copies reproduced and differenced)\n`);

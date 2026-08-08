@@ -330,6 +330,9 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
     ok(/level:"surface"/.test(desc) && /THIS DM/.test(desc), `${name}: …and that the default level:"surface" targets THIS DM (the ask an over-budget admin actually makes)`);
     ok(/level:"domain" needs an explicit scopeKey/.test(desc), `${name}: the description keeps the DM domain-default refusal`);
     ok(/level:"workspace" on Discord/.test(desc), `${name}: …and the Discord-DM workspace-default refusal, which is platform-specific (a Slack DM keeps a real team id)`);
+    ok(/level:"user"/.test(desc), `${name}: the description tells the model the per-user level exists`);
+    ok(/user:<platform>\/<id>/.test(desc), `${name}: …and shows the principal scope key's SHAPE, which nothing else in the grammar would suggest`);
+    ok(/USER-LEVEL[\s\S]{0,200}ORG ADMIN/.test(desc), `${name}: …and states the org-admin-only approval bar for it, so the model does not promise the asker a domain admin can approve`);
   }
 }
 
@@ -404,6 +407,42 @@ async function resolveClearSpendLimit(ctx: unknown): Promise<ResolvedEntry | nul
   }
 
   delete process.env.OE_EGRESS_SPOOF;
+}
+
+{
+  const { assertScopeKeyShapeForLevel, LEVELS } = await import("../agent/tools/set_spend_limit.js");
+  const { CAP_LEVELS } = await import("../agent/operational/store.js");
+
+  ok(JSON.stringify([...LEVELS]) === JSON.stringify([...CAP_LEVELS]), "OPE-274: set_spend_limit's LEVELS is operational/store.ts's CAP_LEVELS, not a second list");
+  ok((CAP_LEVELS as readonly string[]).includes("user"), 'OPE-274: "user" is a level the spend_limit row can persist');
+
+  ok(defaultScopeKey(slackBinding(), "user") === "user:slack/U999", "OPE-274: level:\"user\" defaults to the ACTING sender's own qualified scope key");
+  ok(defaultScopeKey(slackBinding({ platform: "discord", workspace: "G1", principalId: "3575545974" }), "user") === "user:discord/3575545974", "OPE-274: …qualified by the SURFACE's platform, so two vendors' id namespaces never collide");
+  throwsWith(
+    () => defaultScopeKey(slackBinding({ principalAttested: true } as Partial<SurfaceBinding>), "user"),
+    'level:"user" has no default here',
+    "🔴 OPE-274: a triggered fire cannot default a per-user proposal onto the person it is attributed to",
+  );
+
+  const dm = slackBinding({ mode: "dm", surface: "D1", target: { channelId: "D1" } });
+  const dmPlan = planSetSpendLimit(dm, { monthlyUsd: 20, reason: "my own headroom", level: "user" }, uncapped, null);
+  ok(dmPlan.args.level === "user" && dmPlan.args.scopeKey === "user:slack/U999", 'OPE-274: level:"user" from a DM defaults to the asker and is accepted (nothing about a person is ambiguous in a DM)');
+
+  const other = planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "trim", level: "user", scopeKey: "user:slack/U_OTHER" }, uncapped, null);
+  ok(other.args.scopeKey === "user:slack/U_OTHER" && other.scopeKey === other.args.scopeKey, "OPE-274: an explicit principal scope key is frozen verbatim — the proposed scope is one the proposer NAMED, never re-derived at click time");
+
+  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "user", scopeKey: "slack/T123" }, uncapped, null), "addresses a place, not a person", '🔴 OPE-274: level:"user" with a TENANT key is refused — it would store an allowance nobody can present');
+  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "user", scopeKey: "slack/U1" }, uncapped, null), "addresses a place, not a person", "🔴 OPE-274: …and an UNMARKED principal key is refused for the same reason — it parses as a tenant");
+  throwsWith(() => planSetSpendLimit(slackBinding(), { monthlyTokens: 5, reason: "x", level: "surface", scopeKey: "user:slack/U1" }, uncapped, null), "only works with level:\"user\"", "OPE-274: and the converse — a PERSON's key under level:\"surface\" would gate nothing, so it is refused");
+  throwsWith(() => planClearSpendLimit(slackBinding(), { level: "user", scopeKey: "eng" }, uncapped, null), "addresses a place, not a person", "OPE-274: the CLEAR half carries the same fence — the pair moves together (OPE-303's rule)");
+  assertScopeKeyShapeForLevel("t", "domain", "payments");
+  assertScopeKeyShapeForLevel("t", "surface", "not-really-a-surface-key");
+  ok(true, "OPE-274: the shape fence checks the USER level in both directions and leaves the other three's latitude untouched");
+
+  const { readFileSync } = await import("node:fs");
+  const setSrc = readFileSync(new URL("../agent/tools/set_spend_limit.ts", import.meta.url), "utf8");
+  const clearSrc = readFileSync(new URL("../agent/tools/clear_spend_limit.ts", import.meta.url), "utf8");
+  ok(/level === "user" \? null :/.test(setSrc) && /level === "user" \? null :/.test(clearSrc), "🔴 OPE-274: both propose tools freeze `domain: null` for a user-level proposal — a person's allowance is never a domain's business");
 }
 
 console.log(`✓ ${passed} approval-tools assertions passed`);

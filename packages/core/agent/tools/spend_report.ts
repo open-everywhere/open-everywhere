@@ -4,7 +4,7 @@ import { z } from "zod";
 import { usageSummary } from "../spend/usage-events.js";
 import { spendRollup } from "../spend/store.js";
 import { periodOf, type Caps } from "../spend/spend.js";
-import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope } from "../spend/caps.js";
+import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope, userCapInventory } from "../spend/caps.js";
 import { getConfig } from "../access/config.js";
 import {
   resolveReportScope,
@@ -33,9 +33,14 @@ function renderSpendReportForDm(r: {
   totals: { inputTokens: number; outputTokens: number; costUsd?: number };
   bySurfaceAndKind: readonly { surfaceKey: string; channel?: string; kind: string; inputTokens: number; outputTokens: number; costUsd?: number }[];
   ledger: { period: string; totalTokens: number; totalUsd: number; surfaces: readonly { surfaceKey: string; channel?: string; over: boolean }[] };
+  userCaps?: readonly { principal: string; source: string; monthlyTokens: number | null; monthlyUsd: number | null }[];
 }): string {
   const usd = (n: number | undefined) => (n === undefined ? "—" : `$${n.toFixed(2)}`);
   const over = r.ledger.surfaces.filter((s) => s.over);
+  const userCapLine =
+    r.userCaps === undefined || r.userCaps.length === 0
+      ? "No per-person allowances declared."
+      : `Per-person allowances: ${r.userCaps.length} declared (${r.userCaps.filter((c) => c.source === "override").length} live override(s)) — see the full report for who.`;
   return [
     `Spend — org "${r.org}", last ${r.sinceDays} days`,
     `tokens in ${r.totals.inputTokens} / out ${r.totals.outputTokens} · estimated ${usd(r.totals.costUsd)}`,
@@ -47,6 +52,7 @@ function renderSpendReportForDm(r: {
       : ["  (none in window)"]),
     "",
     over.length ? `Over cap: ${over.map((s) => s.channel ?? s.surfaceKey).join(", ")}` : "Nothing over its cap.",
+    userCapLine,
     "",
     "Top rows only, $ figures are estimates. Ask again in a governance channel (or use the control plane) for the full breakdown.",
   ].join("\n");
@@ -54,7 +60,7 @@ function renderSpendReportForDm(r: {
 
 export default defineTool({
   description:
-    "Token spend rollup for your memory domain, or (org admins only) the whole org: tokens + estimated $ by surface and turn-origin kind, the existing monthly ledger totals (tokens AND $) against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same numbers the spend gate enforces), per surface and per workspace, and a routine-fired cost PROJECTION (7d/30d) where a surface has enough history. scope=\"domain\" works for anyone in a memory domain (reports that domain only); scope=\"org\" requires an org admin. $ figures are estimates, always labelled with the assumption behind them.",
+    "Token spend rollup for your memory domain, or (org admins only) the whole org: tokens + estimated $ by surface and turn-origin kind, the existing monthly ledger totals (tokens AND $) against EFFECTIVE caps (config-as-code overlaid with any active admin override — the same numbers the spend gate enforces), per surface and per workspace, and a routine-fired cost PROJECTION (7d/30d) where a surface has enough history. At org scope it also lists PER-PERSON monthly allowances (`userCaps` — the perUser budget axis, config-declared and live-override alike, with which layer each came from); that roster is org-admin business and is omitted at domain scope. scope=\"domain\" works for anyone in a memory domain (reports that domain only); scope=\"org\" requires an org admin. $ figures are estimates, always labelled with the assumption behind them.",
   inputSchema: z.object({
     scope: z.enum(["domain", "org"]).describe('"domain" = your own resolved memory domain (anyone in it); "org" = the whole org (org-admin only).'),
     sinceDays: z.number().int().positive().max(365).optional().describe("Usage window in days, default 30."),
@@ -123,6 +129,20 @@ export default defineTool({
         }),
       ),
     }),
+    userCaps: z
+      .array(
+        z.object({
+          principal: z.string().describe('Who: "user:<platform>/<id>" for an override, the config key for a perUser.overrides entry, "*" for the blanket perUser.default.'),
+          source: z.enum(["config:default", "config:overrides", "override"]),
+          monthlyTokens: z.number().nullable(),
+          monthlyUsd: z.number().nullable(),
+          expiresAt: z.number().optional().describe("Overrides only — epoch ms when the temporary bridge reverts to config."),
+          reason: z.string().optional(),
+          setBy: z.string().optional(),
+        }),
+      )
+      .optional()
+      .describe('scope="org" only — every PER-PERSON monthly allowance, config-declared and runtime-override alike. Omitted for scope="domain" (see note).'),
     routinePredictions: z.array(
       z.object({
         surfaceKey: z.string(),
@@ -265,6 +285,8 @@ export default defineTool({
         ...(labels.channels.has(row.surfaceKey) ? { channel: labels.channels.get(row.surfaceKey)! } : {}),
       });
 
+      const userCaps = resolved.domain ? undefined : userCapInventory(overrideLimits);
+
       const notes = [
         pricingNote(mix, assumed),
         "the bySurfaceAndKind usage-window figures exclude sandbox runtime (see session_cost for a conversation's sandbox seconds/$); the monthly ledger.*.usd figures DO include sandbox runtime (OPE-266) — an estimate priced at stop time from the platform rate, assuming the configured/default sandbox memory size.",
@@ -275,9 +297,15 @@ export default defineTool({
         "channel labels are best-effort Slack lookups — prefer them when presenting; the surfaceKey stays the ground truth.",
         'DM spend is aggregated into a single "(dms)" bucket per workspace — individual DM surfaces are deliberately never listed in reports (the stored rows keep full resolution); tokenCap/usdCap are hidden as null for that bucket (a shared bucket has no single cap) but over/tokenOver/usdOver are never masked.',
       ];
+      if (userCaps) {
+        notes.push(
+          'userCaps lists PER-PERSON monthly allowances (the perUser budget axis), not spend: source "config:default"/"config:overrides" come from the spend-budgets registry and change by PR; source "override" is a temporary runtime bridge set through set_spend_limit level:"user" and expires back to config (expiresAt). A person\'s allowance is checked INDEPENDENTLY of the surface and workspace caps above — it never replaces them, so somebody can be within their own allowance and still declined by the room\'s cap. It applies to their DM usage.',
+        );
+      }
       if (resolved.domain) {
         notes.push(
           "domain scoping is approximate for the ledger continuity figures above (they aren't kind-tagged, so a DM surface with no explicit domain can appear under the org-domain bucket) — the bySurfaceAndKind/totals figures above don't have this issue (dm-kind rows are excluded from domain buckets).",
+          'userCaps (the per-person allowance roster) is omitted at domain scope on purpose: scope="domain" is "anyone in the domain", and a roster of named individuals and what the org decided about each is org-admin business. Ask with scope="org" (it renders in a governance channel or your DM).',
         );
       }
 
@@ -297,6 +325,7 @@ export default defineTool({
           surfaces: ledgerSurfaces.map(labelled),
           workspaces: ledgerWorkspaces,
         },
+        ...(userCaps ? { userCaps } : {}),
         routinePredictions: routinePredictions.map(labelled),
         note: notes.join(" "),
       };

@@ -3,6 +3,8 @@ import type { SpendLimitRow } from "../operational/store.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { getConfig } from "../access/config.js";
 import { domainForChannel, domainMatchFor, criteriaDomain, type Domain } from "../memory/domain.js";
+import { userScopeKey } from "../access/scope-key.js";
+import { principalKey } from "../identity/principal-key.js";
 import type { SessionMode } from "../access/resolver.js";
 import type { Trust } from "../identity/binding.js";
 
@@ -42,10 +44,27 @@ export function resolveCaps(workspaceKey: string, surfaceKey: string, domainName
   );
 }
 
-export function resolveUserCaps(principalId: string | undefined): UserCaps {
-  if (!principalId) return {};
+export type UserCapLayer = "override" | "config:overrides" | "config:default" | "none";
+
+export interface ResolvedUserCaps {
+  readonly caps: UserCaps;
+  readonly layer: UserCapLayer;
+  readonly configKey?: string;
+}
+
+export function resolveUserCaps(principalId: string | undefined, platform?: string): UserCaps {
+  return resolveUserCapsWithLayer(principalId, platform).caps;
+}
+
+export function resolveUserCapsWithLayer(principalId: string | undefined, platform?: string): ResolvedUserCaps {
+  if (!principalId) return { caps: {}, layer: "none" };
   const perUser = loadBudgets().perUser;
-  return perUser?.overrides?.[principalId] ?? perUser?.default ?? {};
+  const qualified = platform ? principalKey(platform, principalId) : undefined;
+  for (const key of [qualified, principalId]) {
+    const hit = key !== undefined ? perUser?.overrides?.[key] : undefined;
+    if (hit) return { caps: hit, layer: "config:overrides", configKey: key! };
+  }
+  return perUser?.default ? { caps: perUser.default, layer: "config:default" } : { caps: {}, layer: "none" };
 }
 
 export function isSpendLimitActive(row: SpendLimitRow, now: number): boolean {
@@ -77,6 +96,62 @@ export function applyCapOverrides(config: Caps, limits: readonly SpendLimitRow[]
     }
   }
   return { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd };
+}
+
+export function applyUserCapOverrides(config: UserCaps, limits: readonly SpendLimitRow[], principalScopeKey: string): UserCaps {
+  let { surfaceMonthlyTokens, surfaceMonthlyUsd } = config;
+  for (const l of limits) {
+    if (l.level === "user" && l.scopeKey === principalScopeKey) {
+      if (l.monthlyTokens != null) surfaceMonthlyTokens = l.monthlyTokens;
+      if (l.monthlyUsd != null) surfaceMonthlyUsd = l.monthlyUsd;
+    }
+  }
+  return { surfaceMonthlyTokens, surfaceMonthlyUsd };
+}
+
+export async function effectiveUserCaps(org: string, platform: string, principalId: string | undefined): Promise<UserCaps> {
+  const config = resolveUserCaps(principalId, platform);
+  if (!principalId) return config;
+  try {
+    const limits = activeSpendLimits(await getOperationalStore().spendLimits(org), Date.now());
+    return limits.length ? applyUserCapOverrides(config, limits, userScopeKey(platform, principalId)) : config;
+  } catch {
+    return config;
+  }
+}
+
+export interface UserCapRow {
+  readonly principal: string;
+  readonly source: "config:default" | "config:overrides" | "override";
+  readonly monthlyTokens: number | null;
+  readonly monthlyUsd: number | null;
+  readonly expiresAt?: number;
+  readonly reason?: string;
+  readonly setBy?: string;
+}
+
+export function userCapInventory(limits: readonly SpendLimitRow[]): UserCapRow[] {
+  const perUser = loadBudgets().perUser;
+  const rows: UserCapRow[] = [];
+  if (perUser?.default) {
+    rows.push({ principal: "*", source: "config:default", monthlyTokens: perUser.default.surfaceMonthlyTokens ?? null, monthlyUsd: perUser.default.surfaceMonthlyUsd ?? null });
+  }
+  for (const [key, caps] of Object.entries(perUser?.overrides ?? {})) {
+    rows.push({ principal: key, source: "config:overrides", monthlyTokens: caps.surfaceMonthlyTokens ?? null, monthlyUsd: caps.surfaceMonthlyUsd ?? null });
+  }
+  for (const l of limits) {
+    if (l.level !== "user") continue;
+    rows.push({
+      principal: l.scopeKey,
+      source: "override",
+      monthlyTokens: l.monthlyTokens ?? null,
+      monthlyUsd: l.monthlyUsd ?? null,
+      ...(l.expiresAt != null ? { expiresAt: l.expiresAt } : {}),
+      ...(l.reason ? { reason: l.reason } : {}),
+      ...(l.setBy ? { setBy: l.setBy } : {}),
+    });
+  }
+  return rows;
 }
 
 export async function effectiveCaps(org: string, workspaceKey: string, surfaceKey: string, domainName?: string): Promise<Caps> {

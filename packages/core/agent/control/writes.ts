@@ -12,7 +12,7 @@ import { deleteDomainSkill } from "../skills/domain-skills.js";
 import { isModelUsable, reasoningRank } from "../model/policy.js";
 import { reasoningCeilingForDomain } from "../memory/domain.js";
 import { stampHumanEdit } from "../memory/provenance.js";
-import { resolveApprovalClick, isDomainLevelSpendCap } from "../approvals/flow.js";
+import { resolveApprovalClick, isOrgAdminOnlySpendCap } from "../approvals/flow.js";
 import { whereFromScope } from "../approvals/actions.js";
 import { supervisorGrainFor } from "../channels/unified-supervisor.js";
 import { listLinkSetsWithIds, purgeLinkSetCredentials, revokeLinkSet, setLinkSetHold } from "../identity/link-store.js";
@@ -241,7 +241,7 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
     {
       title: "Decide a pending approval (approve / deny)",
       description:
-        "Out-of-band twin of the Slack/Discord approval-card click: approve or deny a pending action by id (pending_actions_list for the ids + summaries) without a chat button — for a headless consumer or an admin driving the MCP. Approve EXECUTES the frozen args; deny rejects them. Reuses the ONE cross-surface decide core (approvals/flow.ts) — same CAS-decide, so a double-decide is safe (returns outcome:\"already-decided\", not an error) and approve semantics can never drift from the click path. RBAC: a control role must cover the pending's frozen scope (org \"admin\", or a covering \"domain:<name>\"); a DOMAIN-LEVEL spend cap is org-admin-only (a domain admin must never raise their own budget). The control identity is recorded as the decider.",
+        "Out-of-band twin of the Slack/Discord approval-card click: approve or deny a pending action by id (pending_actions_list for the ids + summaries) without a chat button — for a headless consumer or an admin driving the MCP. Approve EXECUTES the frozen args; deny rejects them. Reuses the ONE cross-surface decide core (approvals/flow.ts) — same CAS-decide, so a double-decide is safe (returns outcome:\"already-decided\", not an error) and approve semantics can never drift from the click path. RBAC: a control role must cover the pending's frozen scope (org \"admin\", or a covering \"domain:<name>\"); a DOMAIN-LEVEL or PER-USER spend cap is org-admin-only (a domain admin must never raise their own budget, nor one named person's allowance). The control identity is recorded as the decider.",
       inputSchema: { org: z.string().min(1), id: z.string().min(1), decision: z.enum(["approve", "deny"]) },
     },
     async (a) => {
@@ -250,10 +250,10 @@ export function registerControlWriteTools(server: McpServer, actor: string, role
         if (!row) {
           return errorResult(`decide_pending_action: no pending action "${a.id}" in org "${a.org}" (already decided and aged out, wrong org, or never existed).`);
         }
-        const denial = isDomainLevelSpendCap(row)
+        const denial = isOrgAdminOnlySpendCap(row)
           ? roles.includes("admin")
             ? null
-            : `forbidden: a domain-level spend cap is org-admin-only (have: ${roles.length ? roles.join(", ") : "none"}; need "admin").`
+            : `forbidden: a domain-level or per-user spend cap is org-admin-only (have: ${roles.length ? roles.join(", ") : "none"}; need "admin").`
           : scopeDenial(roles, { org: a.org, surfaceKey: row.scopeKey, domain: row.domain ?? undefined });
         if (denial) return errorResult(denial);
 

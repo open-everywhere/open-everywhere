@@ -12,6 +12,8 @@ export type SpendGateDecision = "proceed" | "declined";
 interface Verdict {
   readonly over: boolean;
   readonly reason?: string;
+  readonly layer?: "user" | "surface" | "workspace";
+  readonly scopeKey?: string;
 }
 
 export interface SpendGateAuditRow {
@@ -57,9 +59,13 @@ export function spendRefusalCopy(
   workspaceKey: string,
   isDm = false,
   badge: string = UNICODE_SPEND_BADGES.refusal,
+  userScopeKey?: string,
 ): string {
   if (isDm) {
-    return `${badge} I'm holding off — ${reason}. This is a cap on your own usage, and I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card. The scope key for this conversation is \`${surfaceKey}\`.`;
+    const keys = userScopeKey
+      ? `The keys an admin needs: this conversation = \`${surfaceKey}\`, your own allowance = \`${userScopeKey}\`.`
+      : `The scope key for this conversation is \`${surfaceKey}\`.`;
+    return `${badge} I'm holding off — ${reason}. This is a cap on your own usage, and I can't raise it from in here. Ask an org admin to raise it: permanently in the spend-budgets config, or temporarily by asking me from a channel to propose an override — an admin approves that on a card. ${keys}`;
   }
   return `${badge} I'm holding off here — ${reason}. An admin can raise this permanently in the spend-budgets config, or DM me to propose a temporary override — an admin approves it on a card. Scope keys for the override: this channel = \`${surfaceKey}\`, whole workspace = \`${workspaceKey}\`.`;
 }
@@ -116,7 +122,14 @@ export async function ingressSpendGate(input: IngressSpendGateInput): Promise<Sp
     }
     try {
       await input.post(
-        spendRefusalCopy(verdict.reason, domainKeyOf(partition), `${binding.platform}/${binding.workspace}`, mode === "dm" || mode === "mpim", badges.refusal),
+        spendRefusalCopy(
+          verdict.reason,
+          domainKeyOf(partition),
+          `${binding.platform}/${binding.workspace}`,
+          mode === "dm" || mode === "mpim",
+          badges.refusal,
+          verdict.layer === "user" ? verdict.scopeKey : undefined,
+        ),
       );
     } catch {
     }

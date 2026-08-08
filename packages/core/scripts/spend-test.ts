@@ -119,6 +119,11 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
   throws({ perUser: { default: {} } }, "no cap at all", "OPE-268: a perUser entry that caps nothing is rejected");
   throws({ perUser: { default: { surfaceMonthlyUsd: 0 } } }, "> 0", "OPE-268: a non-positive per-user amount is rejected");
   throws({ perUser: { defaults: { surfaceMonthlyUsd: 5 } } as never }, "unknown field", "OPE-268: a typo on the WRAPPER (`defaults`) fails loud — an allowance nobody receives is invisible in every report");
+
+  valid({ perUser: { overrides: { "slack/U0123ABCD": { surfaceMonthlyUsd: 50 } } } }, "OPE-274: a QUALIFIED principal key is a valid perUser.overrides key (the spelling a runtime override reconciles into)");
+  valid({ perUser: { overrides: { U0123ABCD: { surfaceMonthlyUsd: 50 } } } }, "OPE-274: …and the historical BARE id stays valid forever");
+  throws({ perUser: { overrides: { "user:slack/U1": { surfaceMonthlyUsd: 1 } } } }, "scope-key marker", "OPE-274: a `user:`-marked SCOPE KEY pasted into the config registry is REFUSED, and the message says what to write instead");
+  throws({ perUser: { overrides: { "slack/T1/C1": { surfaceMonthlyUsd: 1 } } } }, "qualified principal key", "OPE-274: a SURFACE key under perUser.overrides is refused — it is a place, and it would gate nothing here");
 }
 
 const NOW = 1_000_000;
@@ -750,6 +755,108 @@ rmSync(dir, { recursive: true, force: true });
   ok(/\?\?\s*capBypassFor\b/.test(gate) && /from\s+"\.\/bypass\.js"/.test(gate), "OPE-267: the ATTENDED ingress gate does consult capBypassFor (its live default) — the escape exists, it is just unreachable from a fire");
   const fireWindow = readFileSync(new URL("../agent/routines/fire-window.ts", import.meta.url), "utf8");
   ok(/internalDispatch:\s*true/.test(fireWindow), "OPE-267: fire-window.ts marks its divert `internalDispatch` — a fire never reaches the attended gate, so it never reaches the admin escape");
+}
+
+{
+  const { registerConfig } = await import("../agent/access/config.js");
+  const { defineDomain } = await import("../agent/memory/domain.js");
+  const { scopeOverBudget } = await import("../agent/spend/check.js");
+  const { resolveUserCaps, resolveUserCapsWithLayer, applyUserCapOverrides, effectiveUserCaps, userCapInventory } = await import("../agent/spend/caps.js");
+  const { userScopeKey, parseScopeKey } = await import("../agent/access/scope-key.js");
+  const { spendRefusalCopy } = await import("../agent/spend/ingress-gate.js");
+  const store4 = await import("../agent/spend/store.js");
+  const { getOperationalStore } = await import("../agent/operational/provider.js");
+
+  let budgets4: SpendBudgets = {};
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadDomains: () => [defineDomain({ name: "org", match: "org", admins: [] })],
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadSpendBudgets: () => budgets4,
+  });
+
+  const org = "peruser-org";
+  const wsKey = "slack/T274";
+  const mk = (surface: string) => ({ org, platform: "slack", workspace: "T274", surface, workspaceKey: wsKey, surfaceKey: `${wsKey}/${surface}`, key: `${wsKey}/${surface}` });
+  const DM = "D_ALICE";
+  const ALICE = "U_ALICE";
+  const ALICE_SCOPE = userScopeKey("slack", ALICE);
+  await store4.recordSpend(mk(DM) as never, { period: "2026-07", usage: { inputTokens: 100 }, principalId: ALICE });
+  const AT = "2026-07-15T00:00:00.000Z";
+
+  budgets4 = { perUser: { default: { surfaceMonthlyTokens: 50 } } };
+  const userV = await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE);
+  ok(userV.over === true && userV.layer === "user", 'OPE-274: a per-user breach reports layer:"user" structurally, not only in prose');
+  ok(userV.scopeKey === ALICE_SCOPE, `OPE-274: …and carries the person's OWN scope key (got: "${userV.scopeKey}")`);
+  ok(userV.reason?.includes("per-user cap") === true && userV.reason?.includes(ALICE_SCOPE) === true, `OPE-274: the per-user refusal NAMES the layer and the key (got: "${userV.reason}")`);
+  ok(userV.reason?.includes("your own monthly budget") === true, "OPE-274: …while keeping OPE-268's person-not-place wording (the reader is still being told it is about them)");
+
+  budgets4 = { perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 5 } } };
+  const surfV = await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE);
+  ok(surfV.layer === "surface" && surfV.scopeKey === `${wsKey}/${DM}`, "OPE-274: a surface breach names the SURFACE key, never the person's");
+  ok(surfV.reason?.includes("per-surface cap") === true && surfV.reason?.includes(`${wsKey}/${DM}`) === true, `OPE-274: the surface refusal names its layer + key (got: "${surfV.reason}")`);
+
+  budgets4 = { default: { workspaceMonthlyTokens: 5 } };
+  const wsV = await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE);
+  ok(wsV.layer === "workspace" && wsV.scopeKey === wsKey, "OPE-274: a workspace breach names the WORKSPACE key");
+  ok(wsV.reason?.includes("per-workspace cap") === true && wsV.reason?.includes(wsKey) === true, `OPE-274: the workspace refusal names its layer + key (got: "${wsV.reason}")`);
+
+  ok(new Set([userV.scopeKey, surfV.scopeKey, wsV.scopeKey]).size === 3, "OPE-274: the three layers' verdicts carry three DIFFERENT scope keys — a refusal identifies exactly one cap");
+
+  const bare = checkCap({ mode: "channel", surfaceTokens: 10, workspaceTokens: 0, caps: { surfaceMonthlyTokens: 1 } });
+  ok(bare.reason?.includes("per-surface cap (") === true && bare.reason?.includes("`") === false, `OPE-274: with no scope labels the sentence names the layer but invents no key (got: "${bare.reason}")`);
+
+  const dmCopy = spendRefusalCopy("you've reached your own monthly budget", `${wsKey}/${DM}`, wsKey, true, "⛔", ALICE_SCOPE);
+  ok(dmCopy.includes(ALICE_SCOPE) && dmCopy.includes(`${wsKey}/${DM}`), "OPE-274: the DM refusal copy names BOTH this conversation's key and the person's own allowance key");
+  const dmCopyNoUser = spendRefusalCopy("this DM reached its monthly budget", `${wsKey}/${DM}`, wsKey, true, "⛔");
+  ok(!dmCopyNoUser.includes("your own allowance"), "OPE-274: a SURFACE breach in a DM does NOT offer to raise the person's allowance — that remedy would change nothing");
+  ok(dmCopy.startsWith("⛔ I'm holding off —") && dmCopyNoUser.startsWith("⛔ I'm holding off —"), "OPE-274: the e2e-pinned 'holding off' opening is unchanged in both DM variants");
+
+  budgets4 = { perUser: { default: { surfaceMonthlyUsd: 1 }, overrides: { [ALICE]: { surfaceMonthlyTokens: 10 }, [`slack/${ALICE}`]: { surfaceMonthlyTokens: 20 } } } };
+  ok(resolveUserCaps(ALICE, "slack").surfaceMonthlyTokens === 20, "OPE-274: a QUALIFIED perUser.overrides key beats the bare one for the same person");
+  ok(resolveUserCaps(ALICE).surfaceMonthlyTokens === 10, "OPE-274: …and with no platform the lookup is bare-id only — byte-identical to the pre-OPE-274 behaviour");
+  ok(resolveUserCapsWithLayer(ALICE, "slack").layer === "config:overrides" && resolveUserCapsWithLayer(ALICE, "slack").configKey === `slack/${ALICE}`, "OPE-274: resolveUserCapsWithLayer names WHICH config key matched");
+  ok(resolveUserCapsWithLayer("U_NOBODY", "slack").layer === "config:default", "OPE-274: an unnamed person falls to perUser.default, and the layer says so");
+  budgets4 = {};
+  ok(resolveUserCapsWithLayer(ALICE, "slack").layer === "none", 'OPE-274: an empty registry resolves layer "none" — never an invented allowance');
+
+  const userRow = (over: Partial<SpendLimitRow>): SpendLimitRow => ({ org, scopeKey: ALICE_SCOPE, level: "user", ...over });
+  ok(applyUserCapOverrides({ surfaceMonthlyTokens: 7, surfaceMonthlyUsd: 3 }, [userRow({ monthlyUsd: 99 })], ALICE_SCOPE).surfaceMonthlyTokens === 7, "OPE-274: a USD-only user override leaves the config TOKEN allowance in force (an override never drops a cap it didn't name)");
+  ok(applyUserCapOverrides({ surfaceMonthlyTokens: 7 }, [userRow({ monthlyTokens: 99 })], userScopeKey("slack", "U_SOMEBODY_ELSE")).surfaceMonthlyTokens === 7, "OPE-274: another person's user override does not touch this person's allowance");
+  ok(applyUserCapOverrides({}, [{ org, scopeKey: `${wsKey}/${DM}`, level: "surface", monthlyTokens: 99 }], ALICE_SCOPE).surfaceMonthlyTokens === undefined, 'OPE-274: applyUserCapOverrides ignores every non-user level — the two overlays never meet');
+  ok(applyCapOverrides({}, [userRow({ monthlyTokens: 99 })], wsKey, `${wsKey}/${DM}`, "org").surfaceMonthlyTokens === undefined, "🔴 OPE-274: …and the PLACE overlay ignores a user row — an allowance can never replace the cap on the room");
+
+  budgets4 = { perUser: { default: { surfaceMonthlyTokens: 50 } } };
+  ok((await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE)).over, "OPE-274 precondition: the config allowance declines Alice");
+  await getOperationalStore().setSpendLimit(org, ALICE_SCOPE, "user", { monthlyTokens: 1_000_000 }, { reason: "sprint", setBy: "U_ADMIN" });
+  ok((await effectiveUserCaps(org, "slack", ALICE)).surfaceMonthlyTokens === 1_000_000, "OPE-274: effectiveUserCaps overlays the live user-level override on the config allowance");
+  ok(!(await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE)).over, "🔴 OPE-274: …and the GATE honours it — a per-user allowance is raisable without a config PR, which is the ticket's whole point");
+  await getOperationalStore().setSpendLimit(org, ALICE_SCOPE, "user", { monthlyTokens: 1_000_000 }, { expiresAt: Date.now() - 1000 });
+  ok((await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE)).over, "OPE-274: an EXPIRED user override reverts to the config allowance (expiry narrows, so auto-expiry stays safe)");
+  await getOperationalStore().setSpendLimit(org, ALICE_SCOPE, "user", { monthlyTokens: 1_000_000 }, {});
+  budgets4 = { perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 5 } } };
+  const stillSurface = await scopeOverBudget(mk(DM) as never, "dm", AT, "internal", ALICE);
+  ok(stillSurface.over === true && stillSurface.layer === "surface", "🔴 OPE-274: a live user-level override does NOT disable the room's cap — the person axis stays independent on the runtime plane too");
+
+  budgets4 = { perUser: { default: { surfaceMonthlyUsd: 5 }, overrides: { [`slack/${ALICE}`]: { surfaceMonthlyTokens: 20 } } } };
+  const limits = await getOperationalStore().spendLimits(org);
+  const inventory = userCapInventory(limits);
+  ok(inventory.some((r) => r.principal === "*" && r.source === "config:default" && r.monthlyUsd === 5), "OPE-274: the inventory shows the blanket perUser.default as a row an admin can read");
+  ok(inventory.some((r) => r.principal === `slack/${ALICE}` && r.source === "config:overrides" && r.monthlyTokens === 20), "OPE-274: …a named config entry, with its own key");
+  const ovRow = inventory.find((r) => r.source === "override");
+  ok(ovRow?.principal === ALICE_SCOPE && ovRow?.monthlyTokens === 1_000_000, "OPE-274: …and the live runtime override, keyed on the person's scope key — config-sourced AND override-sourced both visible");
+  ok(userCapInventory(limits.filter((l) => l.level !== "user")).every((r) => r.source !== "override"), 'OPE-274: the inventory reads only level:"user" rows — a surface override never appears as somebody\'s allowance');
+  budgets4 = {};
+  ok(userCapInventory([]).length === 0, "OPE-274: nothing declared anywhere → an empty inventory, never an invented row");
+
+  ok(parseScopeKey(ALICE_SCOPE).kind === "principal", "OPE-274: the `user:` marker makes a principal scope key self-describing to the ONE grammar reader");
+  ok(parseScopeKey(`slack/${ALICE}`).kind === "tenant", "🔴 OPE-274: …which is exactly why the marker exists — an UNMARKED qualified principal key is indistinguishable from a tenant key");
+
+  await getOperationalStore().clearSpendLimit(org, ALICE_SCOPE, "user");
 }
 
 console.log(`✓ spend: ${passed} assertions passed`);

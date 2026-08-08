@@ -1,6 +1,7 @@
 import { spendRollup, spendRoot } from "../spend/store.js";
 import { type Caps } from "../spend/spend.js";
-import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope } from "../spend/caps.js";
+import { resolveCaps, applyCapOverrides, activeSpendLimitsForOrg, domainNameForScope, resolveUserCaps, userCapInventory, type UserCapRow } from "../spend/caps.js";
+import { parseScopeKey } from "../access/scope-key.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { listAllRoutines, routinesRoot } from "../routines/store.js";
 import { isDue } from "../routines/schedule.js";
@@ -58,13 +59,15 @@ export interface SpendView {
   readonly period: string;
   readonly surfaces: readonly SpendSurfaceRow[];
   readonly workspaces: readonly SpendWorkspaceRow[];
+  readonly userCaps: Readonly<Record<string, readonly UserCapRow[]>>;
 }
 
 export async function spendView(period: string = currentPeriod()): Promise<SpendView> {
   const rollup = (await spendRollup()).filter((r) => r.period === period);
 
   const orgs = [...new Set(rollup.map((l) => l.org))];
-  const limitsByOrg = new Map(await Promise.all(orgs.map(async (org) => [org, await activeSpendLimitsForOrg(org)] as const)));
+  const limitOrgs = [...new Set([...orgs, deploymentOrg()])];
+  const limitsByOrg = new Map(await Promise.all(limitOrgs.map(async (org) => [org, await activeSpendLimitsForOrg(org)] as const)));
   const effCapsFor = (org: string, workspaceKey: string, surfaceKey: string): Caps => {
     const config = resolveCaps(workspaceKey, surfaceKey, domainNameForScope(surfaceKey));
     const limits = limitsByOrg.get(org) ?? [];
@@ -95,7 +98,8 @@ export async function spendView(period: string = currentPeriod()): Promise<Spend
     const usdOver = usdCap != null && usd >= usdCap;
     return { key, tokens, tokenCap, tokenOver, usd, usdCap, usdOver, over: tokenOver || usdOver };
   });
-  return { root: spendRoot(), period, surfaces, workspaces };
+  const userCaps = Object.fromEntries(limitOrgs.map((org) => [org, userCapInventory(limitsByOrg.get(org) ?? [])] as const));
+  return { root: spendRoot(), period, surfaces, workspaces, userCaps };
 }
 
 export interface RoutineRow {
@@ -197,12 +201,17 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
   const store = getOperationalStore();
   const [limits, connectors] = await Promise.all([store.spendLimits(org), store.allConnectorOverrides(org)]);
   const spend: SpendOverrideDriftRow[] = limits.map((l) => {
-    const config =
-      l.level === "workspace"
-        ? resolveCaps(l.scopeKey, "")
-        : l.level === "domain"
-          ? resolveCaps("", "", l.scopeKey)
-          : resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey, domainNameForScope(l.scopeKey));
+    const parsedUser = l.level === "user" ? parseScopeKey(l.scopeKey) : undefined;
+    const config: Caps =
+      l.level === "user"
+        ? parsedUser?.kind === "principal"
+          ? resolveUserCaps(parsedUser.id, parsedUser.platform)
+          : {}
+        : l.level === "workspace"
+          ? resolveCaps(l.scopeKey, "")
+          : l.level === "domain"
+            ? resolveCaps("", "", l.scopeKey)
+            : resolveCaps(l.scopeKey.split("/").slice(0, 2).join("/"), l.scopeKey, domainNameForScope(l.scopeKey));
     const configCap = (l.level === "workspace" ? config.workspaceMonthlyTokens : config.surfaceMonthlyTokens) ?? null;
     const configCapUsd = (l.level === "workspace" ? config.workspaceMonthlyUsd : config.surfaceMonthlyUsd) ?? null;
     return {
@@ -232,7 +241,7 @@ export async function overridesView(org: string, now: number = Date.now()): Prom
     now,
     spend,
     connectors: connectorRows,
-    note: "Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a spend-budgets PR (agent/spend/budgets.ts, or clear_spend_limit); expired=true rows are no longer applied and should be cleared. Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.",
+    note: 'Overrides are temporary bridges — reconcile each into config (PR) or clear it. Spend rows with divergesFromConfig=true need a spend-budgets PR (agent/spend/budgets.ts, or clear_spend_limit); expired=true rows are no longer applied and should be cleared. A level:"user" row reconciles into perUser.overrides keyed on the same person — drop the "user:" marker ("user:slack/U1" -> "slack/U1"). Connector revokes are sticky (no auto-expiry — clearing re-opens access); clear deliberately or remove the grant from bundles.ts.',
   };
 }
 

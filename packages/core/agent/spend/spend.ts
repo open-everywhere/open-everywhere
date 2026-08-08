@@ -1,4 +1,6 @@
 import type { SessionMode } from "../access/resolver.js";
+import { USER_SCOPE_PREFIX } from "../access/scope-key.js";
+import { isQualifiedPrincipalKey } from "../identity/principal-key.js";
 
 export interface Usage {
   readonly inputTokens?: number;
@@ -24,13 +26,27 @@ export interface Caps {
 
 export type UserCaps = Pick<Caps, "surfaceMonthlyTokens" | "surfaceMonthlyUsd">;
 
+export type CapLayer = "user" | "surface" | "workspace";
+
 export interface CapVerdict {
   readonly over: boolean;
   readonly reason?: string;
+  readonly layer?: CapLayer;
+  readonly scopeKey?: string;
 }
 
 function fmtUsd(n: number): string {
   return `$${n.toFixed(2)}`;
+}
+
+export interface CapScopeLabels {
+  readonly user?: string;
+  readonly surface?: string;
+  readonly workspace?: string;
+}
+
+function onScope(scopeKey: string | undefined): string {
+  return scopeKey ? ` on \`${scopeKey}\`` : "";
 }
 
 export function checkCap(opts: {
@@ -43,27 +59,30 @@ export function checkCap(opts: {
   userUsd?: number;
   caps: Caps;
   userCaps?: UserCaps;
+  scopes?: CapScopeLabels;
 }): CapVerdict {
   const here = opts.mode === "dm" ? "this DM" : opts.mode === "mpim" ? "this group DM" : "this channel";
+  const s = opts.scopes ?? {};
   const { surfaceMonthlyTokens: userTokenCap, surfaceMonthlyUsd: userUsdCap } = opts.userCaps ?? {};
+  const at = (layer: CapLayer, scopeKey: string | undefined, reason: string): CapVerdict => ({ over: true, reason, layer, ...(scopeKey ? { scopeKey } : {}) });
   if (userTokenCap != null && (opts.userTokens ?? 0) >= userTokenCap) {
-    return { over: true, reason: `you've reached your own monthly budget (${(opts.userTokens ?? 0).toLocaleString()} / ${userTokenCap.toLocaleString()} tokens)` };
+    return at("user", s.user, `you've reached your own monthly budget — the per-user cap${onScope(s.user)} (${(opts.userTokens ?? 0).toLocaleString()} / ${userTokenCap.toLocaleString()} tokens)`);
   }
   if (userUsdCap != null && (opts.userUsd ?? 0) >= userUsdCap) {
-    return { over: true, reason: `you've reached your own monthly budget (~${fmtUsd(opts.userUsd ?? 0)} of ${fmtUsd(userUsdCap)})` };
+    return at("user", s.user, `you've reached your own monthly budget — the per-user cap${onScope(s.user)} (~${fmtUsd(opts.userUsd ?? 0)} of ${fmtUsd(userUsdCap)})`);
   }
   const { surfaceMonthlyTokens, workspaceMonthlyTokens, surfaceMonthlyUsd, workspaceMonthlyUsd } = opts.caps;
   if (surfaceMonthlyTokens != null && opts.surfaceTokens >= surfaceMonthlyTokens) {
-    return { over: true, reason: `${here} reached its monthly budget (${opts.surfaceTokens.toLocaleString()} / ${surfaceMonthlyTokens.toLocaleString()} tokens)` };
+    return at("surface", s.surface, `${here} reached its monthly budget — the per-surface cap${onScope(s.surface)} (${opts.surfaceTokens.toLocaleString()} / ${surfaceMonthlyTokens.toLocaleString()} tokens)`);
   }
   if (surfaceMonthlyUsd != null && (opts.surfaceUsd ?? 0) >= surfaceMonthlyUsd) {
-    return { over: true, reason: `${here} reached its monthly budget (~${fmtUsd(opts.surfaceUsd ?? 0)} of ${fmtUsd(surfaceMonthlyUsd)})` };
+    return at("surface", s.surface, `${here} reached its monthly budget — the per-surface cap${onScope(s.surface)} (~${fmtUsd(opts.surfaceUsd ?? 0)} of ${fmtUsd(surfaceMonthlyUsd)})`);
   }
   if (workspaceMonthlyTokens != null && opts.workspaceTokens >= workspaceMonthlyTokens) {
-    return { over: true, reason: `this workspace reached its monthly budget (${opts.workspaceTokens.toLocaleString()} / ${workspaceMonthlyTokens.toLocaleString()} tokens)` };
+    return at("workspace", s.workspace, `this workspace reached its monthly budget — the per-workspace cap${onScope(s.workspace)} (${opts.workspaceTokens.toLocaleString()} / ${workspaceMonthlyTokens.toLocaleString()} tokens)`);
   }
   if (workspaceMonthlyUsd != null && (opts.workspaceUsd ?? 0) >= workspaceMonthlyUsd) {
-    return { over: true, reason: `this workspace reached its monthly budget (~${fmtUsd(opts.workspaceUsd ?? 0)} of ${fmtUsd(workspaceMonthlyUsd)})` };
+    return at("workspace", s.workspace, `this workspace reached its monthly budget — the per-workspace cap${onScope(s.workspace)} (~${fmtUsd(opts.workspaceUsd ?? 0)} of ${fmtUsd(workspaceMonthlyUsd)})`);
   }
   return { over: false };
 }
@@ -139,6 +158,14 @@ export function assertSpendBudgetsValid(budgets: SpendBudgets): void {
     for (const [principalId, caps] of Object.entries(budgets.perUser.overrides ?? {})) {
       if (!principalId.trim()) {
         throw new Error(`spend budget perUser.overrides key must be a non-empty principal id, got ${JSON.stringify(principalId)}`);
+      }
+      if (principalId.startsWith(USER_SCOPE_PREFIX)) {
+        throw new Error(
+          `spend budget perUser.overrides key ${JSON.stringify(principalId)} carries the "${USER_SCOPE_PREFIX}" scope-key marker — that prefix belongs to a runtime override's scope key (set_spend_limit level:"user"), not to this registry. Drop it: use "${principalId.slice(USER_SCOPE_PREFIX.length)}".`,
+        );
+      }
+      if (principalId.includes("/") && !isQualifiedPrincipalKey(principalId)) {
+        throw new Error(`spend budget perUser.overrides key ${JSON.stringify(principalId)} must be a bare principal id ("U0123ABCD") or a well-formed qualified principal key ("slack/U0123ABCD")`);
       }
       assertCapsShape(caps, `perUser.overrides["${principalId}"]`, USER_CAP_FIELDS);
     }

@@ -389,6 +389,21 @@ function payloadFor(actionId: string, opts: { org?: string; user?: string; chann
   });
   ok(clickerMayDecide(nonSpendRow, "U_ENG_ADMIN", "slack") === true, "clickerMayDecide: the domain-level spend carve-out is scoped to spend.set/spend.clear only — a connector.revoke row's domain admin is unaffected even with a same-shaped argsJson");
 
+  const userCapRow = (kind: "spend.set" | "spend.clear", frozenDomain: string | null) =>
+    row({
+      id: `p-user-cap-${kind}`,
+      kind,
+      argsJson: JSON.stringify({ org: "default", scopeKey: "user:slack/U_ENG_MEMBER", level: "user", monthlyTokens: 5000, currentCap: null }),
+      domain: frozenDomain,
+    });
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ENG_ADMIN", "slack") === false, "🔴 OPE-274: a domain admin is REFUSED for a per-user spend cap even with a frozen domain that would otherwise grant them standing");
+  ok(clickerMayDecide(userCapRow("spend.set", null), "U_ENG_ADMIN", "slack") === false, "OPE-274: …and refused on the shape the tools actually freeze (domain: null) — the second, structural fence");
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_RANDOM_MEMBER", "slack") === false, "OPE-274: a plain member is refused for a per-user spend cap");
+  ok(clickerMayDecide(userCapRow("spend.set", "eng"), "U_ORG_ADMIN", "slack") === true, "OPE-274: the ORG admin CAN decide a per-user spend cap");
+  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ENG_ADMIN", "slack") === false, "OPE-274: clearing a per-user allowance override carries the same bar as setting one");
+  ok(clickerMayDecide(userCapRow("spend.clear", "eng"), "U_ORG_ADMIN", "slack") === true, "OPE-274: …and the org admin can still decide it");
+  ok(clickerMayDecide(domainCapRow("surface"), "U_ENG_ADMIN", "slack") === true && clickerMayDecide(domainCapRow("workspace"), "U_ENG_ADMIN", "slack") === true, "OPE-274: adding the user level did NOT widen the carve-out — surface/workspace caps keep the domain-admin fallback");
+
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", "discord") === false, "🔴 clickerMayDecide: the org admin's SLACK id does NOT decide from a discord click — a bare-id roster would have matched across the two namespaces");
   ok(clickerMayDecide({ ...row({ id: "p-admin-denied" }), domain: null }, "U_ORG_ADMIN", undefined) === false, "clickerMayDecide: FAIL-CLOSED with no clicker platform — the roster arm refuses rather than matching a bare id");
 }

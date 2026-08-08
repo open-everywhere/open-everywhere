@@ -161,6 +161,23 @@ await client.connect(clientT);
   ok("an org admin CAN decide a domain-level spend cap", orgOk.ok === true && orgOk.outcome === "decided");
 }
 
+{
+  await seed("pa-usercap", { scopeKey: "user:slack/U_ENG_MEMBER", domain: "eng", level: "user", tokens: 7777 });
+
+  const engServer = buildControlServer({ includeWrites: true, actor: "eng-lead", roles: ["domain:eng"] });
+  const [c5, s5] = InMemoryTransport.createLinkedPair();
+  await engServer.connect(s5);
+  const engClient = new Client({ name: "usercap", version: "0" });
+  await engClient.connect(c5);
+  const denied = await engClient.callTool({ name: "decide_pending_action", arguments: { org: "default", id: "pa-usercap", decision: "approve" } });
+  ok("🔴 a domain admin CANNOT decide a PER-USER spend cap over the control plane either (org-admin only)", denied.isError === true);
+  ok("the denied per-user row is still pending — the refusal happened before the decide CAS", (await store.getPendingAction("default", "pa-usercap"))?.status === "pending");
+  await engClient.close();
+
+  const orgOk = await callJson(client, "decide_pending_action", { org: "default", id: "pa-usercap", decision: "deny" });
+  ok("an org admin CAN decide a per-user spend cap", orgOk.ok === true && orgOk.outcome === "decided");
+}
+
 await client.close();
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n✓ control approvals tools: ${n} assertions passed (decide reuses the CAS core + executes; list is redacted + role-filtered; RBAC + domain-cap carve-out hold)\n`);
