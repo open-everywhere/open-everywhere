@@ -382,6 +382,78 @@ export function checkActionKindRegistry(
   return problems;
 }
 
+export interface ActionKindRegistration {
+  readonly file: string;
+  readonly line: number;
+  readonly ident: string;
+  readonly kind?: string;
+}
+
+const REGISTER_CALL = /^\s*registerActionKind\(([A-Za-z_$][\w$]*)\)/;
+const KIND_DECL = /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*:\s*ActionKind</;
+const KIND_PROPERTY = /^\s*kind:\s*(?:"([^"]+)"|([A-Za-z_$][\w$]*))\s*,/;
+const STRING_CONST = /^\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*"([^"]+)"\s*;/;
+
+export function findActionKindRegistrations(file: string, source: string): ActionKindRegistration[] {
+  const lines = source.split("\n");
+  const strings = new Map<string, string>();
+  for (const line of lines) {
+    const c = STRING_CONST.exec(line);
+    if (c) strings.set(c[1]!, c[2]!);
+  }
+  const declared = new Map<string, string>();
+  lines.forEach((line, i) => {
+    const decl = KIND_DECL.exec(line);
+    if (!decl) return;
+    for (let j = i + 1; j < lines.length; j++) {
+      const text = lines[j] ?? "";
+      const prop = KIND_PROPERTY.exec(text);
+      if (prop) {
+        const value = prop[1] ?? strings.get(prop[2]!);
+        if (value !== undefined) declared.set(decl[1]!, value);
+        return;
+      }
+      if (/^\};?\s*$/.test(text)) return;
+    }
+  });
+  const found: ActionKindRegistration[] = [];
+  lines.forEach((line, i) => {
+    const call = REGISTER_CALL.exec(line);
+    if (!call) return;
+    const ident = call[1]!;
+    const kind = declared.get(ident);
+    found.push({ file, line: i + 1, ident, ...(kind !== undefined ? { kind } : {}) });
+  });
+  return found;
+}
+
+export function checkActionKindCoverage(
+  registrations: readonly ActionKindRegistration[],
+  registeredKinds: readonly string[],
+): string[] {
+  if (registrations.length === 0) {
+    return [
+      "no `registerActionKind(...)` statement was found anywhere in the scanned tree — the scan is broken or its roots are wrong, and an empty enumeration would make this check pass by looking at nothing",
+    ];
+  }
+  const problems: string[] = [];
+  const live = new Set(registeredKinds);
+  for (const r of registrations) {
+    if (r.kind === undefined) {
+      problems.push(
+        `${r.file}:${r.line} registers ActionKind \`${r.ident}\`, but no \`const ${r.ident}: ActionKind<...>\` opening with a literal \`kind:\` was found in that file — so this check cannot confirm the kind reaches the registry. Declare it in the same file as the registration, or every check keyed off the live registry quietly stops covering it`,
+      );
+      continue;
+    }
+    if (!live.has(r.kind)) {
+      problems.push(
+        `${r.file}:${r.line} registers ActionKind "${r.kind}", but it is ABSENT from the live registry enumerated here — registration is a module side effect, so that module was never loaded. checkActionKindRegistry is total only over what it can see, so this kind's approval bar is currently cross-checked by nothing. Add a side-effect import for "${r.file}" to scripts/consequence-lint.ts`,
+      );
+    }
+  }
+  return problems;
+}
+
 export const NON_TOOL_APPROVAL_SITES: Readonly<Record<string, string>> = {
   "packages/core/agent/connections/notion.ts":
     "REAL, and deliberate: `connectorApprovalPolicy()` on an eve CONNECTION, not a tool. The connector-op plane is explicitly NOT rows in TOOL_CONSEQUENCE (see the scope note at the top of this file) — an op's name is injected at runtime and cannot be enumerated statically — and the eve-native `approval:` callback is the ONLY pre-execution seam eve exposes for an injected connection tool. It is defence in depth over the hard credential gates (grant + DM-only wall), never the gate itself",

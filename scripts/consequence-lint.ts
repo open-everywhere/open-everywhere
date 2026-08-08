@@ -2,11 +2,14 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  checkActionKindCoverage,
   checkActionKindRegistry,
   checkApprovalSites,
   checkConsequenceRegistry,
+  findActionKindRegistrations,
   findEveApprovalSites,
   TOOL_CONSEQUENCE,
+  type ActionKindRegistration,
   type ApprovalSite,
 } from "@open-everywhere/core/agent/access/consequence.js";
 import { readAuthoredTools, readFrameworkToolNames, readSubagentToolNames } from "./read-mounted-tools.js";
@@ -75,14 +78,20 @@ try {
 } catch {
 }
 
+const agentFiles = approvalRoots.flatMap((r) => tsFilesUnder(r));
 const TOOLS_DIR = `${sep}${join("agent", "tools")}${sep}`;
-const approvalFiles = approvalRoots.flatMap((r) => tsFilesUnder(r)).filter((f) => !f.includes(TOOLS_DIR));
+const approvalFiles = agentFiles.filter((f) => !f.includes(TOOLS_DIR));
 if (approvalFiles.length === 0) {
   console.error("✗ consequence-lint: found no non-tool sources to scan for eve-native approvals — refusing to report clean against an unread tree");
   process.exit(1);
 }
 const approvalSites: ApprovalSite[] = approvalFiles.flatMap((f) => findEveApprovalSites(relative(root, f), readFileSync(f, "utf8")));
 problems.push(...checkApprovalSites(approvalSites));
+
+const registrations: ActionKindRegistration[] = agentFiles.flatMap((f) =>
+  findActionKindRegistrations(relative(root, f), readFileSync(f, "utf8")),
+);
+problems.push(...checkActionKindCoverage(registrations, kinds));
 
 if (problems.length > 0) {
   console.error(`✗ consequence-lint: ${problems.length} problem(s):\n` + problems.map((p) => `  - ${p}`).join("\n"));
@@ -91,7 +100,7 @@ if (problems.length > 0) {
 const frameworkOnly = frameworkToolNames.filter((n) => !tools.has(n)).length;
 console.log(
   `✓ consequence-lint: total over all mounted agent tools (${tools.size} OE-authored + ${frameworkOnly} eve-framework + ${subagentNames.length} declared subagent), every declaration matching its runtime gate; ` +
-    `total over the ActionKind plane too (${kinds.length} registered kinds, each either proposed by a tiered tool or pinned in NON_TOOL_ACTION_KINDS with its bar cross-checked); ` +
+    `total over the ActionKind plane too (${kinds.length} registered kinds, each either proposed by a tiered tool or pinned in NON_TOOL_ACTION_KINDS with its bar cross-checked, and all ${registrations.length} \`registerActionKind\` site(s) on disk confirmed present in that enumeration); ` +
     `and ${approvalSites.length} eve-native \`approval:\` site(s) outside agent/tools/, every one accounted for. ` +
     `Connector/MCP operations are a separate plane (§3 grain 2 — the verb classifier plus bundles' raise-only \`connectorOps\`), not rows in this table: their names are injected at runtime.`,
 );

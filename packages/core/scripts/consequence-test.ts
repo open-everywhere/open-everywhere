@@ -4,9 +4,11 @@ import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  checkActionKindCoverage,
   checkActionKindRegistry,
   checkApprovalSites,
   checkConsequenceRegistry,
+  findActionKindRegistrations,
   findEveApprovalSites,
   NON_TOOL_ACTION_KINDS,
   TOOL_CONSEQUENCE,
@@ -275,6 +277,53 @@ firesWith(
 }
 
 {
+  const src = [
+    'import { registerActionKind } from "./actions.js";',
+    "",
+    "const inlineKind: ActionKind<Args> = {",
+    '  kind: "test.inline",',
+    '  policy: "member",',
+    "};",
+    "",
+    'const INDIRECT = "test.indirect";',
+    "const indirectKind: ActionKind<Args> = {",
+    "  kind: INDIRECT,",
+    '  policy: "member",',
+    "};",
+    "",
+    "registerActionKind(inlineKind);",
+    "registerActionKind(indirectKind);",
+  ].join("\n");
+  const found = findActionKindRegistrations("agent/approvals/x.ts", src);
+  ok(found.length === 2, "kind-coverage: both `registerActionKind(...)` statements are found");
+  ok(found[0]!.kind === "test.inline" && found[0]!.line === 14, "kind-coverage: an inline `kind:` literal resolves, at the REGISTRATION's line");
+  ok(found[1]!.kind === "test.indirect", "kind-coverage: a `kind:` naming a module-scope string const resolves through it");
+
+  ok(checkActionKindCoverage(found, ["test.inline", "test.indirect"]).length === 0, "kind-coverage: every on-disk registration present in the live enumeration is clean");
+  firesWith(
+    checkActionKindCoverage(found, ["test.inline"]),
+    "ABSENT from the live registry enumerated here",
+    "kind-coverage: 🔴 a kind registered ON DISK but missing from the enumeration FAILS — this is the one check that catches it; with no pin and no tool row, checks 1-3 are entirely silent",
+  );
+  firesWith(
+    checkActionKindCoverage([], ["test.inline"]),
+    "the scan is broken",
+    "kind-coverage: an EMPTY scan refuses rather than reporting clean — nothing found must never look the same as nothing wrong",
+  );
+  const unresolved = findActionKindRegistrations("agent/approvals/y.ts", "registerActionKind(fromElsewhere);");
+  ok(unresolved.length === 1 && unresolved[0]!.kind === undefined, "kind-coverage: an unresolvable identifier is still REPORTED as a site");
+  firesWith(
+    checkActionKindCoverage(unresolved, ["test.inline"]),
+    "cannot confirm the kind reaches the registry",
+    "kind-coverage: …and an unresolved registration FAILS rather than passing as covered",
+  );
+  ok(
+    findActionKindRegistrations("agent/approvals/actions.ts", "export function registerActionKind(k: ActionKind<any>): void {").length === 0,
+    "kind-coverage: the `registerActionKind` DEFINITION is not read as a registration",
+  );
+}
+
+{
   const src = 'export default defineMcpClientConnection({\n  auth: a,\n  approval: connectorApprovalPolicy(),\n});';
   const sites = findEveApprovalSites("agent/connections/x.ts", src);
   ok(sites.length === 1 && sites[0]!.line === 3, "approval-sites: an eve-native `approval:` outside a tool file is FOUND, at its line");
@@ -346,6 +395,22 @@ firesWith(
     Object.keys(NON_TOOL_ACTION_KINDS).every((k) => TOOL_CONSEQUENCE[k] === undefined),
     "no non-tool ActionKind name collides with a TOOL_CONSEQUENCE tool slug — the two tables address different things and must not overlap",
   );
+
+  const registeringFiles = [
+    "packages/core/agent/approvals/actions.ts",
+    "packages/core/agent/approvals/session-checkpoint.ts",
+    "packages/core/agent/approvals/memory-float.ts",
+    "packages/core/agent/connections/executor-approval-bridge.ts",
+  ];
+  const realRegistrations = registeringFiles.flatMap((f) => findActionKindRegistrations(f, readFileSync(join(repoRoot, f), "utf8")));
+  ok(realRegistrations.length >= 7, `the real-tree registration scan is populated (saw ${realRegistrations.length})`);
+  ok(
+    realRegistrations.every((r) => r.kind !== undefined),
+    "every real-tree `registerActionKind` site RESOLVES to a kind — an unresolvable one would report as a problem forever, and a check nobody can satisfy gets deleted",
+  );
+  for (const kind of ["session.checkpoint", "memory.float-undo", "executor.op"]) {
+    ok(realRegistrations.some((r) => r.kind === kind), `the coverage scan resolves "${kind}" off disk — it is spelled via a module const, the shape a literal-only scan would miss`);
+  }
 
   for (const [tool, kind] of [["delete_skill", "skill.delete"], ["cancel_routine", "routine.cancel"]] as const) {
     const entry = TOOL_CONSEQUENCE[tool];
