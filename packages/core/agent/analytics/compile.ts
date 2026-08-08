@@ -101,6 +101,18 @@ function channelScopeConjunct(spec: DatasetSpec, channels: readonly string[], pa
   return `(${ors.join(" OR ")})`;
 }
 
+function selfPlatformConjunct(spec: DatasetSpec, platform: string, params: unknown[]): string {
+  if (spec.platformColumn) {
+    params.push(platform);
+    return `${spec.platformColumn} = ?`;
+  }
+  if (spec.surfaceColumn) {
+    params.push(`${platform}/`);
+    return `${spec.surfaceColumn} LIKE (? || '%')`;
+  }
+  return "1 = 0";
+}
+
 export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsScope, domains: readonly Domain[]): CompiledAnalytics {
   const dataset = input.dataset;
   const spec = DATASETS[dataset];
@@ -121,8 +133,12 @@ export function compileAnalyticsQuery(input: AnalyticsQuery, scope: AnalyticsSco
   if (scope.grain === "domain") {
     where.push(channelScopeConjunct(spec, domainChannels(scope.domain!, domains), params));
   } else if (scope.grain === "self") {
+    if (!scope.platform) {
+      throw new Error('analytics scope "self" carries no platform — a bare principal id names no namespace, so the read cannot be compiled (access/analytics-scope.ts).');
+    }
     where.push(`${spec.principalColumn} = ?`);
     params.push(scope.principalId);
+    where.push(selfPlatformConjunct(spec, scope.platform, params));
   }
 
   const tsCol = Object.values(spec.dims).find((d) => d.kind === "ts")?.kind === "ts" ? (spec.dims.ts as { column: string } | undefined)?.column : undefined;

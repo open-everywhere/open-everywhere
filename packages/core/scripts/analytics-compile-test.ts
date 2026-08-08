@@ -15,10 +15,10 @@ const domains: Domain[] = [
   defineDomain({ name: "fin", channels: ["slack/T1/CB"], admins: ["slack/U_FIN"] }),
 ];
 
-const orgScope: AnalyticsScope = { org: "acme", grain: "org", rowMode: true, auditDetail: true, dmUnmasked: false };
-const engDomainScope: AnalyticsScope = { org: "acme", grain: "domain", domain: "eng", rowMode: true, auditDetail: false, dmUnmasked: false };
-const memberDomainScope: AnalyticsScope = { org: "acme", grain: "domain", domain: "eng", rowMode: false, auditDetail: false, dmUnmasked: false };
-const selfScope: AnalyticsScope = { org: "acme", grain: "self", principalId: "slack:T1:U9", rowMode: true, auditDetail: false, dmUnmasked: false };
+const orgScope: AnalyticsScope = { org: "acme", platform: "slack", grain: "org", rowMode: true, auditDetail: true, dmUnmasked: false };
+const engDomainScope: AnalyticsScope = { org: "acme", platform: "slack", grain: "domain", domain: "eng", rowMode: true, auditDetail: false, dmUnmasked: false };
+const memberDomainScope: AnalyticsScope = { org: "acme", platform: "slack", grain: "domain", domain: "eng", rowMode: false, auditDetail: false, dmUnmasked: false };
+const selfScope: AnalyticsScope = { org: "acme", platform: "slack", grain: "self", principalId: "slack:T1:U9", rowMode: true, auditDetail: false, dmUnmasked: false };
 
 const parse = (q: unknown) => analyticsQuerySchema.parse(q);
 
@@ -44,6 +44,17 @@ const parse = (q: unknown) => analyticsQuerySchema.parse(q);
   const c = compileAnalyticsQuery(parse({ dataset: "usage", scope: "self", groupBy: ["kind"], select: ["events"] }), selfScope, domains);
   ok(c.sql.where.some((w) => w === "principal_id = ?"), "self scope → principal_id = ?");
   ok(c.sql.params.includes("slack:T1:U9"), "the principal bind param is the verified caller, never a model input");
+  ok(c.sql.where.some((w) => /surface_key LIKE \(\? \|\| '%'\)/.test(w)), "🔴 OPE-309: usage self scope ALSO carries the platform conjunct — a surface_key prefix, since usage has no platform column");
+  ok(c.sql.params.includes("slack/"), "OPE-309: …and the platform prefix is a BIND PARAM, never SQL text (the '%' wildcard is the only literal)");
+
+  const a = compileAnalyticsQuery(parse({ dataset: "audit", scope: "self", groupBy: ["action"], select: ["rows"] }), selfScope, domains);
+  ok(a.sql.where.some((w) => w === "platform = ?") && a.sql.params.includes("slack"), "🔴 OPE-309: audit self scope pairs principal_id with its own `platform` column");
+
+  const sp = compileAnalyticsQuery(parse({ dataset: "spend", scope: "self", groupBy: ["model"], select: ["calls"] }), selfScope, domains);
+  ok(sp.sql.where.some((w) => /surface_key LIKE \(\? \|\| '%'\)/.test(w)) && sp.sql.params.includes("slack/"), "OPE-309: spend self scope is namespaced too — every dataset with a per-person dimension, not just the one that was easy");
+
+  const noPlatform = { ...selfScope, platform: "" } as AnalyticsScope;
+  assert.throws(() => compileAnalyticsQuery(parse({ dataset: "usage", scope: "self", select: ["events"] }), noPlatform, domains), /no platform/i, "OPE-309: a self scope carrying no platform THROWS — never compiles a query that reads across platforms");
 }
 
 {

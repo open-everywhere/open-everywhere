@@ -54,11 +54,11 @@ for (const a of [
   await pgStore.appendAudit({ org: ORG, ts: `2026-07-01T10:00:00Z`, ...a });
 }
 
-const orgScope: AnalyticsScope = { org: ORG, grain: "org", rowMode: true, auditDetail: true, dmUnmasked: false };
-const orgScopeDmUnmasked: AnalyticsScope = { org: ORG, grain: "org", rowMode: true, auditDetail: true, dmUnmasked: true };
-const engScope: AnalyticsScope = { org: ORG, grain: "domain", domain: "eng", rowMode: true, auditDetail: false, dmUnmasked: false };
-const engMemberScope: AnalyticsScope = { org: ORG, grain: "domain", domain: "eng", rowMode: false, auditDetail: false, dmUnmasked: false };
-const selfAScope: AnalyticsScope = { org: ORG, grain: "self", principalId: "U_A", rowMode: true, auditDetail: false, dmUnmasked: false };
+const orgScope: AnalyticsScope = { org: ORG, platform: "slack", grain: "org", rowMode: true, auditDetail: true, dmUnmasked: false };
+const orgScopeDmUnmasked: AnalyticsScope = { org: ORG, platform: "slack", grain: "org", rowMode: true, auditDetail: true, dmUnmasked: true };
+const engScope: AnalyticsScope = { org: ORG, platform: "slack", grain: "domain", domain: "eng", rowMode: true, auditDetail: false, dmUnmasked: false };
+const engMemberScope: AnalyticsScope = { org: ORG, platform: "slack", grain: "domain", domain: "eng", rowMode: false, auditDetail: false, dmUnmasked: false };
+const selfAScope: AnalyticsScope = { org: ORG, platform: "slack", grain: "self", principalId: "U_A", rowMode: true, auditDetail: false, dmUnmasked: false };
 
 async function runBoth(input: unknown, scope: AnalyticsScope) {
   const compiled = compileAnalyticsQuery(parse(input), scope, domains);
@@ -98,6 +98,30 @@ const canon = (rows: readonly Record<string, unknown>[]) =>
   const { s, p } = await runBoth({ dataset: "usage", scope: "self", groupBy: ["principal"], select: ["events"] }, selfAScope);
   ok(canon(s.rows) === canon(p.rows), "usage self-scope: dual-engine parity");
   ok(s.rows.length === 1 && s.rows[0].principal === "U_A", "self scope returns ONLY the caller (U_A) — never U_B");
+}
+
+{
+  const discordRow = { org: ORG, surfaceKey: "discord/G9/C_DEV", sessionId: "s9", principalId: "U_A", ts: "2026-07-04T10:00:00Z", kind: "channel", inputTokens: 4242, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  await sqlStore.appendUsageEvent(discordRow);
+  await pgStore.appendUsageEvent(discordRow);
+  const discordAudit = { org: ORG, ts: "2026-07-04T10:00:00Z", platform: "discord", workspace: "G9", surface: "C_DEV", principalId: "U_A", action: "reply.post", detail: { note: "discord row" } };
+  await sqlStore.appendAudit(discordAudit);
+  await pgStore.appendAudit(discordAudit);
+
+  const discordSelf: AnalyticsScope = { org: ORG, platform: "discord", grain: "self", principalId: "U_A", rowMode: true, auditDetail: false, dmUnmasked: false };
+
+  const slackUsage = await runBoth({ dataset: "usage", scope: "self", groupBy: ["surface"], select: ["input_tokens"] }, selfAScope);
+  ok(canon(slackUsage.s.rows) === canon(slackUsage.p.rows), "OPE-309: cross-platform self scope keeps dual-engine parity (usage)");
+  ok(!slackUsage.s.rows.some((r) => String(r.surface).startsWith("discord/")), "🔴 OPE-309: the SLACK U_A's self scope does not read the DISCORD U_A's usage rows — a bare-id predicate would have returned both");
+  ok(slackUsage.s.rows.reduce((t, r) => t + Number(r.input_tokens), 0) === 100 + 50 + 7, "OPE-309: …and still returns every one of the caller's OWN rows (the fix narrows the namespace, not the person)");
+
+  const discordUsage = await runBoth({ dataset: "usage", scope: "self", groupBy: ["surface"], select: ["input_tokens"] }, discordSelf);
+  ok(discordUsage.s.rows.length === 1 && discordUsage.s.rows[0].input_tokens === 4242, "OPE-309: …and the DISCORD U_A sees exactly their own row — the fence cuts both ways, and neither caller is left blind");
+
+  const slackAudit = await runBoth({ dataset: "audit", scope: "self", groupBy: ["platform"], select: ["rows"] }, selfAScope);
+  ok(slackAudit.s.rows.length === 1 && slackAudit.s.rows[0].platform === "slack", "🔴 OPE-309: the audit dataset is namespaced by its own `platform` column — the Slack caller never sees the Discord row");
+  const discordAuditRead = await runBoth({ dataset: "audit", scope: "self", groupBy: ["platform"], select: ["rows"] }, discordSelf);
+  ok(discordAuditRead.s.rows.length === 1 && discordAuditRead.s.rows[0].platform === "discord", "OPE-309: …and the Discord caller sees only theirs");
 }
 
 {

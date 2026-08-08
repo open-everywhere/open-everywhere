@@ -19,6 +19,7 @@ export interface DatasetSpec {
   readonly surfaceColumn: string | null;
   readonly surfaceParts: readonly string[] | null;
   readonly principalColumn: string;
+  readonly platformColumn: string | null;
   readonly rowOrderColumn: string;
 }
 
@@ -40,6 +41,7 @@ const AUDIT: DatasetSpec = {
   surfaceColumn: null,
   surfaceParts: ["platform", "workspace", "surface"],
   principalColumn: "principal_id",
+  platformColumn: "platform",
   rowOrderColumn: "ts",
 };
 
@@ -68,6 +70,7 @@ const USAGE: DatasetSpec = {
   surfaceColumn: "surface_key",
   surfaceParts: null,
   principalColumn: "principal_id",
+  platformColumn: null,
   rowOrderColumn: "ts",
 };
 
@@ -93,6 +96,7 @@ const SPEND: DatasetSpec = {
   surfaceColumn: "surface_key",
   surfaceParts: null,
   principalColumn: "principal_id",
+  platformColumn: null,
   rowOrderColumn: "period",
 };
 

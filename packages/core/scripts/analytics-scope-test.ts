@@ -85,6 +85,8 @@ function ctxFor(principalId: string | undefined, channelId: string, opts: CtxOpt
   const self = resolveAnalyticsScope(ctxFor("U_RANDOM", "CA"), "self");
   ok(self.grain === "self" && self.principalId === "U_RANDOM" && self.rowMode, "any member @ self grain: their own rows");
   ok(!self.dmUnmasked, "self grain never unmasks DMs for the room");
+  ok(self.platform === "slack", "🔴 OPE-309: the self scope carries the BINDING's platform, which is what namespaces the bare principal id in the compiled predicate");
+  ok(resolveAnalyticsScope(ctxFor("U_ORG", "CA"), "org").platform === "slack" && resolveAnalyticsScope(ctxFor("U_ENG", "CA"), "domain").platform === "slack", "OPE-309: …and every grain carries it — it is a fact about the turn, not a self-grain special case");
 }
 
 {
