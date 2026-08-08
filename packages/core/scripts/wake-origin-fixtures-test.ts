@@ -169,6 +169,22 @@ const FIXTURES: readonly Fixture[] = [
     containerId: "CH_WIN",
   },
   {
+    name: "discord DM (dm:true, no guild)",
+    origin: { platform: "discord", channelId: "D_DM", dm: true },
+    json: '{"platform":"discord","channelId":"D_DM","dm":true}',
+    threadRef: { channelKey: "discord/dm/D_DM", threadKey: "D_DM" },
+    threadScoped: false,
+    containerId: "D_DM",
+  },
+  {
+    name: "discord DM with messageId (cosmetic anchor — no guild-keyed effect)",
+    origin: { platform: "discord", channelId: "D_DM", dm: true, messageId: "7003" },
+    json: '{"platform":"discord","channelId":"D_DM","dm":true,"messageId":"7003"}',
+    threadRef: { channelKey: "discord/dm/D_DM", threadKey: "D_DM" },
+    threadScoped: false,
+    containerId: "D_DM",
+  },
+  {
     name: "teams minimal (plain conversation send)",
     origin: { platform: "teams", serviceUrl: "https://smba.trafficmanager.net/amer/", conversationId: "19:winchan@thread.tacv2;messageid=1712" },
     json: '{"platform":"teams","serviceUrl":"https://smba.trafficmanager.net/amer/","conversationId":"19:winchan@thread.tacv2;messageid=1712"}',
@@ -271,6 +287,15 @@ const REJECTS: ReadonlyArray<readonly [string, unknown]> = [
   ["discord: empty channelId", { platform: "discord", channelId: "", guildId: "G1" }],
   ["discord: non-string messageId", { platform: "discord", channelId: "CH1", guildId: "G1", messageId: 5 }],
   ["discord: non-string autoThreadName", { platform: "discord", channelId: "CH1", guildId: "G1", autoThreadName: 5 }],
+  ["discord DM: dm:true WITH a guildId (the XOR, impersonation direction)", { platform: "discord", channelId: "D1", dm: true, guildId: "G1" }],
+  ["discord DM: dm:true with an EMPTY guildId (present is present — still both shapes)", { platform: "discord", channelId: "D1", dm: true, guildId: "" }],
+  ["discord DM: dm:true WITH autoThreadName (guild-keyed engagement write)", { platform: "discord", channelId: "D1", dm: true, autoThreadName: "x" }],
+  ["discord DM: dm:false is not a shape", { platform: "discord", channelId: "D1", dm: false }],
+  ["discord DM: dm as the STRING 'true'", { platform: "discord", channelId: "D1", dm: "true" }],
+  ["discord DM: dm as 1", { platform: "discord", channelId: "D1", dm: 1 }],
+  ["discord DM: dm:true, missing channelId", { platform: "discord", dm: true }],
+  ["discord DM: dm:true, empty channelId", { platform: "discord", channelId: "", dm: true }],
+  ["discord DM: dm:true, non-string messageId", { platform: "discord", channelId: "D1", dm: true, messageId: 5 }],
   ["teams: missing serviceUrl", { platform: "teams", conversationId: "c" }],
   ["teams: non-string serviceUrl", { platform: "teams", serviceUrl: 5, conversationId: "c" }],
   ["teams: unparseable serviceUrl", { platform: "teams", serviceUrl: "not a url", conversationId: "c" }],
@@ -297,6 +322,8 @@ console.log("(b2) load-bearing tolerances (validator wider than the type):");
   ok(isUnifiedWakeOrigin({ platform: "linear", agentSessionId: "as", issueId: "i", parentId: "" }), "tolerated: linear parentId ''");
   ok(isUnifiedWakeOrigin({ platform: "notion", discussionId: "d", pageId: "" }), "tolerated: notion pageId ''");
   ok(isUnifiedWakeOrigin({ platform: "discord", channelId: "CH1", guildId: "G1", messageId: "" }), "tolerated: discord messageId ''");
+  ok(isUnifiedWakeOrigin({ platform: "discord", channelId: "D1", dm: true, messageId: "" }), "tolerated: discord DM messageId '' (the SAME typeof-only optional check as the guild shape)");
+  ok(isUnifiedWakeOrigin({ platform: "discord", channelId: "D1", dm: true, futureField: "x" }), "tolerated: an extra unknown field (discord DM) — forward-compat is the same on the new variant");
   ok(isUnifiedWakeOrigin({ platform: "teams", serviceUrl: OK_TEAMS_URL, conversationId: "c", replyToActivityId: "" }), "tolerated: teams replyToActivityId ''");
   eq(
     unifiedThreadRef({ platform: "slack", channelId: "C1", threadTs: "" } as UnifiedWakeOrigin),
@@ -345,6 +372,18 @@ for (const f of FIXTURES) {
   eq(wake.locus.channel?.platform, f.origin.platform, `${f.name}: completion-wake locus platform is the origin's`);
 }
 
+console.log("(c2) the DM threadRef namespace never collides with a guild one:");
+{
+  const dmRef = unifiedThreadRef({ platform: "discord", channelId: "C_SAME", dm: true } as UnifiedWakeOrigin);
+  const guildRef = unifiedThreadRef({ platform: "discord", channelId: "C_SAME", guildId: "dm" } as UnifiedWakeOrigin);
+  eq(dmRef, { channelKey: "discord/dm/C_SAME", threadKey: "C_SAME" }, "the DM channelKey is namespaced on a literal `dm` segment");
+  eq(guildRef.channelKey, dmRef.channelKey, "…and the one theoretically-colliding guild id IS the literal string \"dm\" — which a decimal snowflake can never be");
+  ok(
+    unifiedThreadRef({ platform: "discord", channelId: "C_SAME", guildId: "G_WIN" } as UnifiedWakeOrigin).channelKey !== dmRef.channelKey,
+    "a REAL (snowflake) guild id never collides with the DM namespace, even on the same channel id",
+  );
+}
+
 {
   rows.set("default:wk-corrupt", "{not json");
   eq(await resolveUnifiedWakeTarget(store, "default", "wk-corrupt"), null, "a malformed-JSON row resolves null (fail closed)");
@@ -354,4 +393,4 @@ for (const f of FIXTURES) {
   eq(await resolveUnifiedWakeTarget(store, "default", "wk-unknown-arm"), null, "an unknown-platform row resolves null (unregistered arm ⇒ fail closed)");
 }
 
-console.log(`\nwake-origin fixtures: ${n} assertions passed (${FIXTURES.length} fixtures across 6 arms).`);
+console.log(`\nwake-origin fixtures: ${n} assertions passed (${FIXTURES.length} fixtures across 6 platforms / 7 union arms).`);

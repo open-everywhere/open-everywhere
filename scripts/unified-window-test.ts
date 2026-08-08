@@ -779,9 +779,9 @@ const store = getOperationalStore();
   const ghPosts: Array<{ owner: string; repo: string; issueNumber: number; text: string }> = [];
   const linPosts: Array<{ agentSessionId?: string; ambient?: true; issueId: string; parentId?: string; text: string }> = [];
   const notPosts: Array<{ discussionId: string; pageId?: string; text: string }> = [];
-  const disPosts: Array<{ channelId: string; guildId: string; messageId?: string; text: string }> = [];
+  const disPosts: Array<{ channelId: string; guildId?: string; messageId?: string; text: string }> = [];
   const deps = {
-    postDiscord: async (o: { channelId: string; guildId: string; messageId?: string }, text: string) => {
+    postDiscord: async (o: { channelId: string; guildId?: string; messageId?: string }, text: string) => {
       disPosts.push({ channelId: o.channelId, guildId: o.guildId, messageId: o.messageId, text });
       return "dmsg-1";
     },

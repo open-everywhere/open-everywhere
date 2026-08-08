@@ -15,7 +15,7 @@ type DiscordOrigin = Extract<UnifiedWakeOrigin, { platform: "discord" }>;
 async function liveDiscordPost(origin: DiscordOrigin, text: string): Promise<string> {
   let targetChannelId = origin.channelId;
   let anchorToMessage = origin.messageId;
-  if (origin.autoThreadName && origin.messageId) {
+  if (!("dm" in origin) && origin.autoThreadName && origin.messageId) {
     const threadId = await discordThreadForMessage(origin.channelId, origin.messageId, origin.autoThreadName);
     if (threadId) {
       targetChannelId = threadId;

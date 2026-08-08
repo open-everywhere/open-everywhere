@@ -9,6 +9,7 @@ import {
 } from "@open-everywhere/provider-discord/agent/channels/discord-identity.js";
 import { bindFrom, type BindableContext } from "@open-everywhere/core/agent/identity/binding.js";
 import { resolvePartition } from "@open-everywhere/core/agent/memory/partition.js";
+import { discordWakeOriginCodec } from "@open-everywhere/provider-discord/agent/channels/discord-origin-codec.js";
 import { registerDiscordProvider as __regDiscord } from "@open-everywhere/provider-discord/agent/register.js";
 __regDiscord();
 
@@ -161,4 +162,40 @@ function dispatch(input: {
   delete process.env.OE_TRUST;
 }
 
-console.log(`✓ discord: ${passed} assertions passed (interaction fields → identity + memory; fail-closed + DM isolation + thread→parent grain)`);
+{
+  const arm = discordWakeOriginCodec.dmOrigin;
+  ok(typeof arm === "function", "I: the discord codec REGISTERS a dmOrigin arm");
+
+  const { binding: dmBinding } = dispatch({ userId: "U_bob", channelId: "D_bob", channelType: "1" });
+  const minted = arm?.({ surface: dmBinding.surface, mode: "dm", target: dmBinding.target });
+  ok(JSON.stringify(minted) === JSON.stringify({ platform: "discord", channelId: "D_bob", dm: true }), "I: mints the DM VARIANT from target.channelId — a positive dm:true, never a guildless guild-shape");
+  ok(discordWakeOriginCodec.validate(minted as unknown as Record<string, unknown>), "I: …and the minted origin is exactly what the validator's DM branch admits");
+  const { binding: groupBinding } = dispatch({ userId: "U_bob", channelId: "G_grp", channelType: "3" });
+  ok(groupBinding.mode === "mpim" && arm?.({ surface: groupBinding.surface, mode: "mpim", target: groupBinding.target })?.channelId === "G_grp", "I: a GROUP DM (type 3 ⇒ mpim) resolves an anchor too");
+
+  const { binding: chanBinding } = dispatch({ userId: "U_alice", guildId: "G_ACME", channelId: "C_ENG", channelType: "0" });
+  ok(chanBinding.mode === "channel", "I: the guild fixture really is channel-mode");
+  ok(arm?.({ surface: chanBinding.surface, mode: "channel" as unknown as "dm", target: chanBinding.target }) === undefined, "I: a CHANNEL binding yields NO anchor");
+  ok(arm?.({ surface: "D_x", mode: "dm" }) === undefined, "I: no target ⇒ no anchor (sourced from `target`, never from `surface`)");
+  ok(arm?.({ surface: "D_x", mode: "dm", target: {} }) === undefined, "I: a target with no channelId ⇒ no anchor");
+  ok(arm?.({ surface: "D_x", mode: "dm", target: { channelId: "" } }) === undefined, "I: a BLANK channelId ⇒ no anchor");
+  ok(arm?.({ surface: "D_x", mode: "dm", target: { channelId: 5 } }) === undefined, "I: a non-string channelId ⇒ no anchor");
+
+  const v = (o: Record<string, unknown>): boolean => discordWakeOriginCodec.validate(o);
+  ok(v({ channelId: "C1", guildId: "G1" }), "I/XOR: the GUILD shape is unchanged — non-empty guildId, no dm");
+  ok(v({ channelId: "D1", dm: true }), "I/XOR: the DM shape needs a positive dm:true");
+  ok(!v({ channelId: "D1", dm: true, guildId: "G1" }), "I/XOR: BOTH is invalid — a DM row may never acquire guild authority (guild-keyed threadRef/engagement/vouch keys)");
+  ok(!v({ channelId: "D1" }), "I/XOR: NEITHER is invalid — a guildless origin is still never admitted BY OMISSION (D1, unchanged)");
+  ok(!v({ channelId: "D1", dm: false }), "I/XOR: dm:false is not a shape");
+  ok(!v({ channelId: "D1", dm: true, autoThreadName: "x" }), "I/D4: autoThreadName is forbidden on a DM origin — its reply-leg branch writes guild-keyed engagement rows");
+  ok(v({ channelId: "C1", guildId: "G1", autoThreadName: "x" }), "I/D4: …and still allowed on the guild shape (nothing was taken away)");
+
+  const dmRef = discordWakeOriginCodec.threadRef({ platform: "discord", channelId: "C_SAME", dm: true });
+  const guildRef = discordWakeOriginCodec.threadRef({ platform: "discord", channelId: "C_SAME", guildId: "123456789012345678" });
+  ok(dmRef.channelKey === "discord/dm/C_SAME", "I: the DM threadRef is namespaced on a literal `dm` segment");
+  ok(dmRef.channelKey !== guildRef.channelKey, "I: …which a snowflake guild id can never produce — the two namespaces are disjoint on the same channel id");
+  ok(discordWakeOriginCodec.isThreadScoped({ platform: "discord", channelId: "C_SAME", dm: true }) === false, "I: a DM origin is never thread-scoped (no threads in a DM)");
+  ok(discordWakeOriginCodec.containerId({ platform: "discord", channelId: "C_SAME", dm: true }) === "C_SAME", "I: containerId is the channel id on both shapes");
+}
+
+console.log(`✓ discord: ${passed} assertions passed (interaction fields → identity + memory; fail-closed + DM isolation + thread→parent grain + the DM origin variant)`);

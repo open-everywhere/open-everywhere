@@ -72,6 +72,7 @@ const DM_SURFACE_KEY = "slack/T1/D_ASKER";
 const DM_TOKEN = "slack:D_ASKER:oe-dm:g2";
 
 const TARGETY_PLATFORM = "oe-test-targety";
+const DM_FLAGGED_PLATFORM = "oe-test-dmflag";
 const ARMLESS_PLATFORM = "oe-test-armless";
 const NOCODEC_PLATFORM = "oe-test-nocodec";
 
@@ -93,7 +94,7 @@ function stubCtx(platform: string, raw: StubRaw, token = ""): BindableContext {
   } as unknown as BindableContext;
 }
 
-for (const platform of [TARGETY_PLATFORM, ARMLESS_PLATFORM, NOCODEC_PLATFORM]) {
+for (const platform of [TARGETY_PLATFORM, DM_FLAGGED_PLATFORM, ARMLESS_PLATFORM, NOCODEC_PLATFORM]) {
   registerIdentityMapper(platform, (c) => {
     const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
     const raw = JSON.parse(a["stub_raw"] ?? "{}") as StubRaw;
@@ -129,6 +130,14 @@ registerStubCodec(TARGETY_PLATFORM, {
     return typeof serviceUrl === "string" && serviceUrl.length > 0 && typeof conversationId === "string" && conversationId.length > 0
       ? { platform: TARGETY_PLATFORM, serviceUrl, conversationId }
       : undefined;
+  },
+});
+
+registerStubCodec(DM_FLAGGED_PLATFORM, {
+  ...stubDerivations,
+  dmOrigin: (b: { target?: Record<string, unknown> }) => {
+    const channelId = b.target?.["channelId"];
+    return typeof channelId === "string" && channelId.length > 0 ? { platform: DM_FLAGGED_PLATFORM, channelId, dm: true } : undefined;
   },
 });
 
@@ -237,6 +246,16 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
     eq(resolveDmDelegationAnchor(stubCtx(TARGETY_PLATFORM, { surface: RAW_CONV, mode: "dm" })), undefined, "…and WITHOUT a target the same DM resolves nothing — the plumbing is load-bearing, not decorative");
   }
 
+  {
+    const dmCtx = stubCtx(DM_FLAGGED_PLATFORM, { surface: "D_DM", mode: "dm", target: { channelId: "D_DM" } });
+    const anchor = resolveDmDelegationAnchor(dmCtx);
+    eq(anchor?.origin, { platform: DM_FLAGGED_PLATFORM, channelId: "D_DM", dm: true }, "a discriminated DM-variant origin rides through the resolver with its discriminant intact");
+    eq(anchor?.surfaceKey, `${DM_FLAGGED_PLATFORM}/W1/D_DM`, "…anchored on the DM's OWN surface key (the pseudo-domain is surface-derived on every platform alike)");
+    ok(canDelegateFromSeat(dmCtx), "…so a DM root on a variant platform can delegate, exactly like a Slack one");
+    ok(resolveDmDelegationAnchor(stubCtx(DM_FLAGGED_PLATFORM, { surface: "G_GRP", mode: "mpim", target: { channelId: "G_GRP" } })) !== undefined, "…and so does a group DM (mpim)");
+    eq(resolveDmDelegationAnchor(stubCtx(DM_FLAGGED_PLATFORM, { surface: "C_ENG", mode: "channel", target: { channelId: "C_ENG" } })), undefined, "…while a CHANNEL binding on that same platform resolves nothing");
+  }
+
   eq(memoryRecallRouteFor("standing", ["task"], true, canDelegateFromSeat(dm)), "agent", "the memory index now names a REAL route on a DM seat (it said \"none\" before — the honest dead end OPE-299 wrote)");
   eq(memoryRecallRouteFor("standing", ["task"], true, false), "none", "…and still says \"none\" for a seat with no route at all");
 });
@@ -258,6 +277,14 @@ console.log("4. inherit-never-escalate:");
   eq(domainForChannel(anchorDomain, domains), undefined, "and the anchor domain matches no roster either — the channel→domain hop can never turn it into a real domain");
   eq(domains.find((d) => d.name === anchorDomain), undefined, "…nor is it a domain by name (assertDomainsValid refuses the namespace, §2)");
   eq(domainForChannel("slack/T1/C1", domains), domains[0], "…while a real channel still resolves its real domain (no over-reach in the other direction)");
+
+  const discordDmKey = "discord/U_bob/D_bob";
+  const discordGuildDomains = [defineDomain({ name: "eng", channels: ["discord/G_ACME/C_ENG"], mode: "unified" })];
+  const discordAnchorDomain = dmAnchorDomain(discordDmKey);
+  eq(domainForChannel(discordDmKey, discordGuildDomains), undefined, "a DISCORD DM surface (workspace = the caller's user id, not a guild) is in no domain's roster either");
+  eq(domainForChannel(discordAnchorDomain, discordGuildDomains), undefined, "…and its anchor domain matches no roster — the channel→domain hop cannot turn a per-user DM key into a guild domain");
+  eq(domainForChannel("discord/G_ACME/C_ENG", discordGuildDomains), discordGuildDomains[0], "…while the real GUILD channel still resolves its domain (the DM key did not shadow it)");
+  ok(discordAnchorDomain !== dmAnchorDomain(DM_SURFACE_KEY), "…and two platforms' DM anchors are distinct domains — the pseudo-domain carries the platform, so a Slack DM and a Discord DM never share a partition");
 }
 
 console.log("5. lean-seat interplay:");

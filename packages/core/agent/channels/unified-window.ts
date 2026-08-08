@@ -37,6 +37,12 @@ export type UnifiedWakeOrigin =
       readonly autoThreadName?: string;
     }
   | {
+      readonly platform: "discord";
+      readonly channelId: string;
+      readonly dm: true;
+      readonly messageId?: string;
+    }
+  | {
       readonly platform: "teams";
       readonly serviceUrl: string;
       readonly conversationId: string;
