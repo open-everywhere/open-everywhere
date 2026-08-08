@@ -20,6 +20,8 @@ import { isSafeBranchName } from "../scm/git.js";
 import { appendAudit } from "../audit/audit.js";
 import { emitTelemetry } from "../observability/telemetry.js";
 import { bridgeSlackForm } from "../channels/slack-bridge.js";
+import { postSurfaceText } from "../channels/surface-message-ops.js";
+import { platformOfScopeKey } from "../access/scope-key.js";
 import { inlineForReview } from "./review-surface.js";
 import { registerActionKind, whereFromScope } from "./actions.js";
 import type { ActionKind } from "./types.js";
@@ -44,6 +46,7 @@ export interface AgentCreateExecuteDeps {
   readonly createBranch?: typeof createBranch;
   readonly createPr?: typeof createOrUpdatePullRequest;
   readonly post?: (method: string, body: string) => Promise<Record<string, unknown> | undefined>;
+  readonly postThreadNote?: (platform: string, target: { channelId: string; text: string; threadTs?: string | null }) => Promise<string | undefined>;
   readonly resolveToken?: (repo: string) => Promise<string>;
   readonly committer?: CommitId;
 }
@@ -214,11 +217,15 @@ export async function executeAgentCreate(args: AgentCreateArgs, decidedBy: strin
   const adminRes = await post("chat.postMessage", adminBody.toString());
   const adminOk = adminRes?.ok === true;
 
-  const threadBody = new URLSearchParams();
-  threadBody.set("channel", args.channelId);
-  if (args.threadTs) threadBody.set("thread_ts", args.threadTs);
-  threadBody.set("text", `Agent request sent — PR ${pr.url} is with the admins. Merging it provisions agent "${args.spec.name}" for this channel.`);
-  await post("chat.postMessage", threadBody.toString());
+  const askingPlatform = platformOfScopeKey(args.scopeKey);
+  if (askingPlatform) {
+    const threadNote = deps.postThreadNote ?? postSurfaceText;
+    await threadNote(askingPlatform, {
+      channelId: args.channelId,
+      threadTs: args.threadTs,
+      text: `Agent request sent — PR ${pr.url} is with the admins. Merging it provisions agent "${args.spec.name}" for this channel.`,
+    });
+  }
 
   return (
     `${pr.updated ? `updated PR #${pr.number}` : `opened PR #${pr.number}`} — ${pr.url}; an admin merges it in GitHub to provision the agent` +

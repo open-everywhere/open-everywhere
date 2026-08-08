@@ -198,6 +198,7 @@ interface FakeState {
   puts: string[];
   prs: { title: string; body: string; head: string; base: string }[];
   posts: { method: string; body: URLSearchParams }[];
+  threadNotes?: { platform: string; channelId: string; text: string; threadTs?: string | null }[];
   prExisting?: boolean;
   adminPostFails?: boolean;
 }
@@ -227,6 +228,10 @@ function fakeDeps(state: FakeState) {
       if (state.adminPostFails && params.get("channel") === "C_ADMIN") return { ok: false };
       return { ok: true, ts: "1.2" };
     },
+    postThreadNote: async (platform: string, target: { channelId: string; text: string; threadTs?: string | null }) => {
+      (state.threadNotes ??= []).push({ platform, ...target });
+      return "note-ts";
+    },
   };
 }
 
@@ -250,8 +255,13 @@ function fakeDeps(state: FakeState) {
   );
   const admin = state.posts.find((p) => p.body.get("channel") === "C_ADMIN");
   ok(admin !== undefined && admin.body.get("text")!.includes("pull/9") && admin.body.get("text")!.includes("U_ASK"), "execute: plain admin-channel notification with PR link (no decide card)");
-  const thread = state.posts.find((p) => p.body.get("channel") === "C_AGENT");
-  ok(thread !== undefined && thread.body.get("thread_ts") === args.threadTs && thread.body.get("text")!.includes("pull/9"), "execute: requesting thread told where its PR went");
+  const thread = (state.threadNotes ?? [])[0];
+  ok(thread !== undefined && thread.threadTs === args.threadTs && thread.text.includes("pull/9"), "execute: requesting thread told where its PR went");
+  ok(thread?.platform === "slack" && thread.channelId === "C_AGENT", "execute: …on the ASKING surface's own platform, derived from the frozen scopeKey — never assumed Slack");
+  ok(
+    !state.posts.some((p) => p.body.get("channel") === "C_AGENT"),
+    "execute: …and the requester note does NOT ride the admin channel's Slack form any more (the bug: a Discord channel id sent to Slack's Web API)",
+  );
   ok(outcome.includes("opened PR #9") && outcome.includes("merges it in GitHub"), "execute: outcome line for the decided card");
   const audit = await readAudit({ org: "default", limit: 8 });
   const entry = audit.find((a) => a.action === "agent.create.pr_opened" && (a.detail as { pr?: number }).pr === 9);
@@ -261,6 +271,26 @@ function fakeDeps(state: FakeState) {
   const again = await executeAgentCreate(args, "U_TAP2", { config: arConfig(), ...fakeDeps(state) });
   ok(state.puts.length === 1, "execute(re-run): idempotent — no second agents-overlay commit");
   ok(again.includes("updated PR #9"), "execute(re-run): outcome reports the update, not a fresh PR");
+}
+
+{
+  const discordSpec: AgentSpec = { name: "discord-desk", channels: ["discord/G1/C_DISCORD"], memory: newReadonly };
+  const args = argsFor(discordSpec, { scopeKey: "discord/G1/C_DISCORD", channelId: "C_DISCORD" });
+  const state: FakeState = { branches: { main: "base-sha" }, files: {}, puts: [], prs: [], posts: [] };
+  const outcome = await executeAgentCreate(args, "U_TAP", { config: arConfig(), ...fakeDeps(state) });
+
+  const thread = (state.threadNotes ?? [])[0];
+  ok(
+    thread !== undefined && thread.platform === "discord" && thread.channelId === "C_DISCORD" && thread.text.includes("pull/9"),
+    "execute(discord-origin): the requesting thread's note dispatches via the platform-aware poster with platform 'discord', not the Slack client",
+  );
+  ok(
+    !state.posts.some((p) => p.body.get("channel") === "C_DISCORD"),
+    "execute(discord-origin): 🔴 …and NO Slack chat.postMessage call carries the Discord channel id (the OPE-303-class bug, now closed for agent.create)",
+  );
+  const admin = state.posts.find((p) => p.body.get("channel") === "C_ADMIN");
+  ok(admin !== undefined, "execute(discord-origin): the admin-channel note still rides the Slack `post` (adminChannel is Slack by construction)");
+  ok(outcome.includes("opened PR #9") && outcome.includes("merges it in GitHub"), "execute(discord-origin): outcome line unaffected by the transport split");
 }
 
 {
