@@ -15,13 +15,15 @@ import {
   policyTextProblem,
 } from "../routines/policy.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
-    "PROPOSE a standing rule for ONE routine — a short instruction every future run of that routine must follow, e.g. 'never post before 09:00 UTC' or 'ignore pull requests opened by bots'. Use when someone corrects a routine after a bad run ('don't do that again', 'it should have skipped that one'), or wants to tune how one behaves, WITHOUT rewriting its whole instruction. Get the id from list_routines. Every rule needs a `why` — the incident or reasoning behind it — because the rule is re-read on every run for as long as it exists and nobody can retire it safely without knowing what it was for. This does NOT arm on the spot: a card posts showing the rule and its reason, and it takes effect only when a human confirms. If the thing to record is a FACT ABOUT THE ORG rather than an instruction for this one routine, use `remember` instead; to replace the routine's whole instruction, use `edit_routine`. Needs a surface with an approval-card path (Slack/Discord). The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE a standing rule for ONE routine — a short instruction every future run of that routine must follow, e.g. 'never post before 09:00 UTC' or 'ignore pull requests opened by bots'. Use when someone corrects a routine after a bad run ('don't do that again', 'it should have skipped that one'), or wants to tune how one behaves, WITHOUT rewriting its whole instruction. Get the id from list_routines. Every rule needs a `why` — the incident or reasoning behind it — because the rule is re-read on every run for as long as it exists and nobody can retire it safely without knowing what it was for. This does NOT arm on the spot: a card posts showing the rule and its reason, and it takes effect only when a human confirms. If the thing to record is a FACT ABOUT THE ORG rather than an instruction for this one routine, use `remember` instead; to replace the routine's whole instruction, use `edit_routine`. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     routineId: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines)."),
     rule: z
@@ -109,21 +111,18 @@ export default defineTool({
 
     const description = describeTrigger(routine.trigger, routine.report);
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `add_routine_rule needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read a standing rule before it starts steering unattended runs.`,
-      );
-    }
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
         "add_routine_rule needs a verified sender to gate the rule — no principal id resolved, so there's no requester to show on the approval card.",
       );
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("add_routine_rule couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "add that rule"));
     }
+    const venue = venueResult.venue;
 
     const ruleId = newPolicyRuleId();
     const posted = await requestApproval(
@@ -147,12 +146,12 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
         chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `standing rule ${ruleId} for routine ${routineId} (${description})`;
@@ -171,7 +170,7 @@ export default defineTool({
       pendingId: posted.id,
       routineId,
       ruleId,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). It takes effect on the next fire after someone clicks, and shows up in every fire after that.${describeVenueRedirect(venue, "confirm the rule")}`,
     };
   },
 });

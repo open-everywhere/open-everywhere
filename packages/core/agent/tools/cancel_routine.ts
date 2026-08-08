@@ -7,13 +7,15 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
-    "PROPOSE cancelling (deleting) a routine on this surface by its id. Get the id from list_routines. Use when asked to stop a scheduled job, watch, or subscription. This does NOT cancel on the spot: an approval card posts naming the exact routine, and it's removed only when a human confirms (cancelling removes a guardrail, so it's gated). Needs a surface with an approval-card path (Slack/Discord). The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE cancelling (deleting) a routine on this surface by its id. Get the id from list_routines. Use when asked to stop a scheduled job, watch, or subscription. This does NOT cancel on the spot: an approval card posts naming the exact routine, and it's removed only when a human confirms (cancelling removes a guardrail, so it's gated). The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     id: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines)."),
   }),
@@ -37,17 +39,16 @@ export default defineTool({
     const description = describeTrigger(routine.trigger, routine.report);
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(`cancel_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm the cancellation.`);
-    }
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("cancel_routine needs a verified sender to gate the removal — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose removing a standing behaviour. Ask a person in this conversation to cancel it.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("cancel_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "cancel that routine"));
     }
+    const venue = venueResult.venue;
 
     const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
@@ -58,11 +59,11 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `cancel of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
@@ -79,7 +80,7 @@ export default defineTool({
       pending: true,
       pendingId: posted.id,
       id,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}).`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}).${describeVenueRedirect(venue, "confirm the cancellation")}`,
     };
   },
 });

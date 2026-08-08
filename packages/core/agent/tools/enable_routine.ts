@@ -7,13 +7,15 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger } from "../routines/routine.js";
 import { computeNextRun } from "../routines/schedule.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
-    "PROPOSE re-arming a routine that stopped itself after repeated failures, keeping its id, its history and everything it had learned (a watch's baseline, a durable job's progress and thread). Get the id from list_routines with includeDisabled. Use when someone says to start a stopped routine again, or after fixing whatever it was failing on — always prefer this over creating a new one, which loses all of that. This does NOT re-arm on the spot: a card posts naming why it stopped, and it starts again only when a human confirms. Fix the underlying problem first, or it will just fail three more times and stop again.",
+    "PROPOSE re-arming a routine that stopped itself after repeated failures, keeping its id, its history and everything it had learned (a watch's baseline, a durable job's progress and thread). Get the id from list_routines with includeDisabled. Use when someone says to start a stopped routine again, or after fixing whatever it was failing on — always prefer this over creating a new one, which loses all of that. This does NOT re-arm on the spot: a card posts naming why it stopped, and it starts again only when a human confirms. Fix the underlying problem first, or it will just fail three more times and stop again. If this surface can't host a card, it goes to a card-capable channel in the same domain — the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     id: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines with includeDisabled: true)."),
   }),
@@ -53,19 +55,16 @@ export default defineTool({
     }
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `enable_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm before it fires unattended again.`,
-      );
-    }
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("enable_routine needs a verified sender to gate the re-arm — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose restarting a routine the three-strike guard stopped. Ask a person in this conversation to re-arm it.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("enable_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "re-arm that routine"));
     }
+    const venue = venueResult.venue;
 
     const description = describeTrigger(routine.trigger, routine.report);
     const posted = await requestApproval(
@@ -89,11 +88,11 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `re-arm of routine ${id} (${description})`;
@@ -112,7 +111,7 @@ export default defineTool({
       pendingId: posted.id,
       id,
       trigger: description,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). Its id, history and run state are kept.`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Its id, history and run state are kept.${describeVenueRedirect(venue, "confirm the re-arm")}`,
     };
   },
 });

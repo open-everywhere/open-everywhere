@@ -220,10 +220,10 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
     /verified sender/,
   );
   await refuses(
-    "no resolvable channel id (no channel_id attr → target undefined)",
+    "no resolvable channel id (no channel_id attr → target undefined) — subsumed into the venue walk",
     ctx("slack", { team_id: "T1", channel_type: "channel" }, "U1"),
     goodInput,
-    /channel's id/,
+    /approval-card path/,
   );
 
   ok(sandboxCalls === 0, "across ALL fail-closed cases the sandbox was never reached (nothing staged, no card posted)");
@@ -234,7 +234,7 @@ ok(kind!.policy === "member", "pr.open is MEMBER policy — the card is the inje
   ok(!/^\s*approval:(?!\s*never\()/m.test(src), "open_pull_request rides NO eve HITL (no non-never approval:)");
   ok(src.includes('kind: "pr.open"') && /\brequestApproval\s*\(/.test(src), "open_pull_request proposes via requestApproval(pr.open)");
   ok(src.includes("stagePushCommand"), "the propose half stage-pushes (hidden ref) rather than publishing");
-  ok(src.includes("hasApprovalCardPath"), "fail-closed off surfaces with no approval-card path");
+  ok(src.includes("checkApprovalVenue"), "fail-closed off surfaces with no approval-card path AND no in-domain redirect, via the venue walk");
 }
 
 console.log(`✓ ${n} pr-open assertions passed`);

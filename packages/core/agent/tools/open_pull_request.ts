@@ -14,9 +14,11 @@ import { isEnforced } from "../access/enforcement.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { executePrOpen, type PrOpenArgs } from "../approvals/pr-open.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { proposingSessionId } from "../identity/binding.js";
@@ -52,7 +54,7 @@ async function postSessionNote(platform: string, channelId: string, threadTs: st
 
 export default windowGated("open_pull_request", defineTool({
   description:
-    "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first. This does NOT open the PR: your commits are parked on a hidden staging ref and an approval card posts with the exact repo, branches, commit and description — the branch and PR publish only when a human in the channel approves. Write a clear body: what changed, why, how you verified it, and link the request that prompted it. If a PR is already open for that branch, approval updates it with your new commits instead. The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE pushing your committed branch and opening a GitHub pull request for it (this is the ONLY way changes leave the workspace — plain `git push` is not authorized). Commit on the head branch in the checkout first. This does NOT open the PR: your commits are parked on a hidden staging ref and an approval card posts with the exact repo, branches, commit and description — the branch and PR publish only when a human approves. Write a clear body: what changed, why, how you verified it, and link the request that prompted it. If a PR is already open for that branch, approval updates it with your new commits instead. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     repo: z.string().describe("Target repository as 'owner/repo'."),
     head: z.string().describe("The branch containing the changes (must exist in the checkout)."),
@@ -89,19 +91,18 @@ export default windowGated("open_pull_request", defineTool({
     }
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `open_pull_request needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and approve the PR before it publishes.`,
-      );
-    }
+    const p = resolvePartition(ctx);
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("open_pull_request needs a verified sender to gate the publish — no principal id resolved, so there's no proposer to show on the approval card.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("open_pull_request couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "publish that PR"));
     }
+    const venue = venueResult.venue;
+    const originChannelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
 
     const token = await resolvePrToken(input.repo);
 
@@ -151,7 +152,6 @@ export default windowGated("open_pull_request", defineTool({
       );
     }
 
-    const p = resolvePartition(ctx);
     const tainted = untrustedIngestedThisTurn();
     const sessionId = proposingSessionId(ctx);
     const args: PrOpenArgs = {
@@ -173,7 +173,9 @@ export default windowGated("open_pull_request", defineTool({
       sessionId && !tainted ? await store.getSessionApproval(p.org, sessionId, "pr.open", new Date().toISOString()).catch(() => null) : null;
     if (memo) {
       const outcome = await executePrOpen(args, memo.grantedBy, {}, { sessionApproved: true });
-      await postSessionNote(binding.platform, channelId, binding.threadTs ?? null, `${outcome}\n-# session-approved by <@${memo.grantedBy}>`);
+      if (originChannelId) {
+        await postSessionNote(binding.platform, originChannelId, binding.threadTs ?? null, `${outcome}\n-# session-approved by <@${memo.grantedBy}>`);
+      }
       markCardPostedThisTurn();
       return {
         ok: true,
@@ -192,12 +194,12 @@ export default windowGated("open_pull_request", defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
         chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `PR "${input.title}" (${input.repo}: ${input.head} → ${input.base}, commit ${headSha.slice(0, 12)})${tainted ? " ⚠ tainted" : ""}`;
@@ -218,7 +220,7 @@ export default windowGated("open_pull_request", defineTool({
       head: input.head,
       pending: true,
       pendingId: posted.id,
-      message: `card posted — ${subject} awaiting a human to approve the publish (pending ${posted.id}).`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to approve the publish (pending ${posted.id}).${describeVenueRedirect(venue, "approve the publish")}`,
     };
   },
 }));

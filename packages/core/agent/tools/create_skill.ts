@@ -6,8 +6,10 @@ import { resolvePartition } from "../memory/partition.js";
 import { actingPrincipalIdOf, resolveAccessFor } from "../access/request.js";
 import { isSafeSkillName } from "../scm/repo-skills.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import {
   MAX_DOMAIN_SKILL_BYTES,
@@ -20,7 +22,7 @@ import {
 
 export default windowGated("create_skill", defineTool({
   description:
-    "PROPOSE creating or updating a SKILL for this channel's memory domain — a reusable markdown instruction package any future turn in the domain can invoke by its bare name. This does NOT arm the skill: a skill is a procedure the agent loads and FOLLOWS, so a human in the domain must read and approve it first — an approval card posts with the full body, and the skill arms only when someone clicks. Any domain member can propose one, and it becomes invocable once armed. Can't be authored from a DM, a group chat, or an externally-shared/unconfirmed channel, or a surface with no approval-card path (Slack/Discord only) — author from a channel that's actually in the target domain. Write one worth keeping: a trigger-rich description in the words a teammate would use, the intent behind the ask (not just the commands you ran), the edge cases you hit, and one coherent job per skill. The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE creating or updating a SKILL for this channel's memory domain — a reusable markdown instruction package any future turn in the domain can invoke by its bare name. This does NOT arm the skill: a skill is a procedure the agent loads and FOLLOWS, so a human in the domain must read and approve it first — an approval card posts with the full body, and the skill arms only when someone clicks. Any domain member can propose one, and it becomes invocable once armed. Can't be authored from a DM, a group chat, or an externally-shared/unconfirmed channel — author from a channel that's actually in the target domain. Write one worth keeping: a trigger-rich description in the words a teammate would use, the intent behind the ask (not just the commands you ran), the edge cases you hit, and one coherent job per skill. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     name: z.string().min(1).max(80).describe('Bare invocation name, e.g. "deploy-runbook". Letters, digits, ".", "_", "-" only (no ":", no "..").'),
     content: z.string().min(1).describe("The skill's markdown body — the instructions the model reads once it invokes this skill."),
@@ -72,17 +74,16 @@ export default windowGated("create_skill", defineTool({
     }
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(`create_skill needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read and arm the skill body before it can be followed.`);
-    }
     const authoredBy = actingPrincipalIdOf(ctx);
     if (!authoredBy) {
       throw new Error("create_skill needs a verified sender on this turn — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not author standing instructions every later turn of the domain will follow. Ask a person in this conversation to propose it.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("create_skill couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "create that skill"));
     }
+    const venue = venueResult.venue;
 
     const action: "created" | "updated" = already ? "updated" : "created";
     const tainted = untrustedIngestedThisTurn();
@@ -94,11 +95,11 @@ export default windowGated("create_skill", defineTool({
         scopeKey: p.surfaceKey,
         domain,
         requestedBy: authoredBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `skill "${name}" (${action})${tainted ? " ⚠ tainted" : ""}`;
@@ -121,7 +122,7 @@ export default windowGated("create_skill", defineTool({
       action,
       pending: true,
       pendingId: posted.id,
-      message: `card posted — ${subject} awaiting a human to arm it (pending ${posted.id}).`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to arm it (pending ${posted.id}).${describeVenueRedirect(venue, "arm it")}`,
     };
   },
 }));

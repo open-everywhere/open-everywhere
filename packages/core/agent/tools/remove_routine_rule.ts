@@ -8,13 +8,15 @@ import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineMarker } from "../routines/routine.js";
 import { policyAuthorRefusal, policyRules } from "../routines/policy.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
-    "PROPOSE removing ONE standing rule from a routine — the rule stops being applied to every future run. Use when a rule is stale, wrong, or is being replaced (to change a rule, remove it and add the new one: two confirmations, so each wording is read on its own). Get the routine id and its rule ids from list_routines. This does NOT remove it on the spot: a card posts naming the rule, who armed it and why they did, and it goes only when a human confirms. Needs a surface with an approval-card path (Slack/Discord). The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE removing ONE standing rule from a routine — the rule stops being applied to every future run. Use when a rule is stale, wrong, or is being replaced (to change a rule, remove it and add the new one: two confirmations, so each wording is read on its own). Get the routine id and its rule ids from list_routines. This does NOT remove it on the spot: a card posts naming the rule, who armed it and why they did, and it goes only when a human confirms. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     routineId: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines)."),
     ruleId: z.string().min(1).describe("The rule id, e.g. 'p-1a2b3c4d' (from list_routines's `rules`, or the rule block in a run's message)."),
@@ -58,21 +60,18 @@ export default defineTool({
 
     const description = describeTrigger(routine.trigger, routine.report);
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `remove_routine_rule needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must confirm taking a guardrail away.`,
-      );
-    }
     const requestedBy = principalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
         "remove_routine_rule needs a verified sender to gate the removal — no principal id resolved, so there's no requester to show on the approval card.",
       );
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("remove_routine_rule couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "remove that rule"));
     }
+    const venue = venueResult.venue;
 
     const posted = await requestApproval(
       {
@@ -95,12 +94,12 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
         chain: { unattended: actingPrincipalIdOf(ctx) === undefined },
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `removal of standing rule ${target.id} from routine ${routineId} (${description})`;
@@ -119,7 +118,7 @@ export default defineTool({
       pendingId: posted.id,
       routineId,
       ruleId: target.id,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Until someone clicks, the rule still applies.${describeVenueRedirect(venue, "confirm the removal")}`,
     };
   },
 });

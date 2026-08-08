@@ -7,13 +7,15 @@ import { resolvePartition } from "../memory/partition.js";
 import { getRoutine } from "../routines/store.js";
 import { describeTrigger, routineGrantGeneration } from "../routines/routine.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
+import { getConfig } from "../access/config.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 export default defineTool({
   description:
-    "PROPOSE rewriting what an existing routine DOES, keeping its schedule, its id, its history and everything it has learned (a watch's baseline, a durable job's progress and thread). Get the id from list_routines. Use when someone wants to change, correct or refine a routine's instruction — always prefer this over cancelling and re-creating, which loses all of that. This does NOT edit on the spot: a card posts showing the old and new text side by side, and it changes only when a human confirms. Note for the user: confirming also revokes any standing approvals the routine had built up, so it goes back to asking. To change the SCHEDULE or the post policy instead, cancel it and create a new one. Needs a surface with an approval-card path (Slack/Discord). The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE rewriting what an existing routine DOES, keeping its schedule, its id, its history and everything it has learned (a watch's baseline, a durable job's progress and thread). Get the id from list_routines. Use when someone wants to change, correct or refine a routine's instruction — always prefer this over cancelling and re-creating, which loses all of that. This does NOT edit on the spot: a card posts showing the old and new text side by side, and it changes only when a human confirms. Note for the user: confirming also revokes any standing approvals the routine had built up, so it goes back to asking. To change the SCHEDULE or the post policy instead, cancel it and create a new one. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     id: z.string().min(1).describe("The routine id, e.g. 'r-1a2b3c4d' (from list_routines)."),
     prompt: z
@@ -56,19 +58,16 @@ export default defineTool({
     const description = describeTrigger(routine.trigger, routine.report);
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `edit_routine needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human must read the new instruction before it can fire unattended.`,
-      );
-    }
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("edit_routine needs a verified sender to gate the change — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not propose rewriting the instruction it or another routine runs under. Ask a person in this conversation to change it.");
     }
-    const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) {
-      throw new Error("edit_routine couldn't resolve this channel's id for the approval card — try again from a real channel.");
+
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "rewrite that routine"));
     }
+    const venue = venueResult.venue;
 
     const tainted = untrustedIngestedThisTurn();
     const posted = await requestApproval(
@@ -92,11 +91,11 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const subject = `rewrite of routine ${id} (${description})${tainted ? " ⚠ tainted" : ""}`;
@@ -115,7 +114,7 @@ export default defineTool({
       pendingId: posted.id,
       id,
       trigger: description,
-      message: `card posted — ${subject} awaiting a human to confirm (pending ${posted.id}). Its schedule, history and run state are kept; its standing approvals are revoked on confirm.`,
+      message: `${cardPostedPrefix(venue)} — ${subject} awaiting a human to confirm (pending ${posted.id}). Its schedule, history and run state are kept; its standing approvals are revoked on confirm.${describeVenueRedirect(venue, "confirm the rewrite")}`,
     };
   },
 });

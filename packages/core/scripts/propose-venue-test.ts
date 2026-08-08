@@ -37,6 +37,13 @@ const { getOperationalStore } = await import("../agent/operational/provider.js")
 await import("../agent/approvals/flow.js");
 await import("../agent/approvals/memory-forget.js");
 await import("../agent/approvals/access-request.js");
+await import("../agent/approvals/routine-cancel.js");
+await import("../agent/approvals/routine-lifecycle.js");
+await import("../agent/approvals/routine-policy.js");
+await import("../agent/approvals/memory-remember.js");
+await import("../agent/approvals/skill-create.js");
+await import("../agent/approvals/skill-delete.js");
+await import("../agent/approvals/pr-open.js");
 
 registerIdentityMapper("teams", (ctx) => {
   const a = ((ctx as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {}) as Record<string, string>;
@@ -61,8 +68,13 @@ const CONNECTIONS = [{ id: "notion-rest", credentialType: "bearer" as const, sec
 const BUNDLES = [
   { name: "notion", connections: CONNECTIONS },
   { name: "linear-basket", connectors: ["linear"] },
+  { name: "coding", repos: ["acme/web"] },
 ];
-const BINDINGS = [{ bundle: "linear-basket", scope: { level: "surface" as const, surface: "slack/T1/C9" } }];
+const BINDINGS = [
+  { bundle: "linear-basket", scope: { level: "surface" as const, surface: "slack/T1/C9" } },
+  { bundle: "coding", scope: { level: "org" as const } },
+];
+process.env.GITHUB_TOKEN = "test-pat";
 
 registerConfig({
   loadBundles: () => BUNDLES,
@@ -88,6 +100,16 @@ const clearTool = (await import("../agent/tools/clear_connector_override.js")).d
 const setSpendTool = (await import("../agent/tools/set_spend_limit.js")).default;
 const clearSpendTool = (await import("../agent/tools/clear_spend_limit.js")).default;
 
+const cancelRoutineTool = (await import("../agent/tools/cancel_routine.js")).default;
+const editRoutineTool = (await import("../agent/tools/edit_routine.js")).default;
+const enableRoutineTool = (await import("../agent/tools/enable_routine.js")).default;
+const addRoutineRuleTool = (await import("../agent/tools/add_routine_rule.js")).default;
+const removeRoutineRuleTool = (await import("../agent/tools/remove_routine_rule.js")).default;
+const rememberTool = (await import("../agent/tools/remember.js")).default;
+const createSkillTool = (await import("../agent/tools/create_skill.js")).default;
+const deleteSkillTool = (await import("../agent/tools/delete_skill.js")).default;
+const openPullRequestTool = (await import("../agent/tools/open_pull_request.js")).default;
+
 type Entry = { execute: (input: unknown, ctx: unknown) => Promise<Record<string, unknown>> };
 async function armed(def: unknown, ctx: unknown, name: string): Promise<Entry> {
   const handler = (def as { events?: Record<string, (e: unknown, c: unknown) => unknown> }).events?.["session.started"];
@@ -98,20 +120,23 @@ async function armed(def: unknown, ctx: unknown, name: string): Promise<Entry> {
 
 const BULLET = "- 2026-07-01: Ada owns billing";
 const MEMORY_MD = `# Memory\n\n## People / ownership\n${BULLET}\n`;
+const STAGED_SHA = "1".repeat(40);
 const sandbox = {
   readTextFile: async ({ path }: { path: string }) => (path.endsWith("/MEMORY.md") ? MEMORY_MD : null),
+  run: async () => ({ exitCode: 0, stdout: `__OE_STAGED_SHA__ ${STAGED_SHA}`, stderr: "" }),
+  setNetworkPolicy: async () => {},
 };
 
-const teamsCtx = (conversationId: string) =>
+const teamsCtx = (conversationId: string, continuationToken?: string) =>
   ({
-    channel: { kind: "teams" },
+    channel: { kind: "teams", ...(continuationToken ? { continuationToken } : {}) },
     session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK" }, principalId: "U_ASK" } } },
     getSandbox: async () => sandbox,
   }) as never;
 
-const slackCtx = (channelId: string) =>
+const slackCtx = (channelId: string, continuationToken?: string) =>
   ({
-    channel: { kind: "slack" },
+    channel: { kind: "slack", ...(continuationToken ? { continuationToken } : {}) },
     session: {
       auth: { current: { attributes: { team_id: "T1", channel_id: channelId, channel_type: "channel", trust_checked: "true", user_id: "U_ASK" }, principalId: "U_ASK" } },
     },
@@ -126,6 +151,37 @@ async function rowOf(pendingId: string): Promise<Record<string, unknown>> {
 async function pendingCount(): Promise<number> {
   return (await getOperationalStore().listPendingActions("default")).length;
 }
+
+const { addRoutine } = await import("../agent/routines/store.js");
+const { putDomainSkill } = await import("../agent/skills/domain-skills.js");
+type Routine = import("../agent/routines/routine.js").Routine;
+function routineFixture(over: Partial<Routine> & Pick<Routine, "id" | "surfaceKey">): Routine {
+  return {
+    org: "default",
+    target: { channelId: over.surfaceKey.split("/").pop()! },
+    trigger: { kind: "interval", everyMinutes: 30 },
+    prompt: "Post the morning digest.",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    status: "active",
+    consecutiveFailures: 0,
+    ...over,
+  };
+}
+await addRoutine(undefined as never, routineFixture({
+  id: "r-active-1",
+  surfaceKey: "teams/W1/CONV1",
+  policy: [{ id: "p-existing1", rule: "never post before 09:00 UTC", why: "a 03:12 run woke the channel", addedAt: "2026-07-01T00:00:00.000Z", addedBy: "U_ADMIN", source: "human" }],
+}));
+await addRoutine(undefined as never, routineFixture({
+  id: "r-disabled-1",
+  surfaceKey: "teams/W1/CONV1",
+  status: "disabled",
+  disabledReason: "auto-disabled after 3 consecutive failures",
+  consecutiveFailures: 3,
+}));
+await addRoutine(undefined as never, routineFixture({ id: "r-lonely-1", surfaceKey: "teams/W1/CONV_LONE" }));
+await addRoutine(undefined as never, routineFixture({ id: "r-slack-1", surfaceKey: "slack/T1/C1" }));
+await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADMIN", "2026-07-01T00:00:00.000Z", { armedBy: "U_ADMIN" });
 
 {
   const out = (await (await armed(forgetTool, teamsCtx("CONV1"), "forget")).execute({ match: "Ada owns billing" }, teamsCtx("CONV1"))) as {
@@ -271,7 +327,132 @@ async function pendingCount(): Promise<number> {
   );
 }
 
+{
+  const cancel = (await (await armed(cancelRoutineTool, teamsCtx("CONV1"), "cancel_routine")).execute({ id: "r-active-1" }, teamsCtx("CONV1"))) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  ok(cancel.pending === true, "325-redirect: 🔴 `cancel_routine` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
+  const cancelRow = await rowOf(cancel.pendingId);
+  ok(cancelRow["channelId"] === "C_OPS" && cancelRow["postedTo"] === "slack/T1/C_OPS" && cancelRow["threadTs"] === null, "325-redirect: cancel_routine's card is in the venue, top-level");
+  ok(cancel.message.includes("card posted in slack/T1/C_OPS") && cancel.message.includes("tell the user where it is, by name") && cancel.message.includes("confirm the cancellation"), "325-redirect: …names the venue and the reader's own verb");
+
+  const edit = (await (await armed(editRoutineTool, teamsCtx("CONV1"), "edit_routine")).execute({ id: "r-active-1", prompt: "New instruction." }, teamsCtx("CONV1"))) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  const editRow = await rowOf(edit.pendingId);
+  ok(editRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: edit_routine routes too");
+  ok(edit.message.includes("card posted in slack/T1/C_OPS") && edit.message.includes("confirm the rewrite"), "325-redirect: …with its own verb");
+
+  const enable = (await (await armed(enableRoutineTool, teamsCtx("CONV1"), "enable_routine")).execute({ id: "r-disabled-1" }, teamsCtx("CONV1"))) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  const enableRow = await rowOf(enable.pendingId);
+  ok(enableRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: enable_routine routes too");
+  ok(enable.message.includes("card posted in slack/T1/C_OPS") && enable.message.includes("confirm the re-arm"), "325-redirect: …with its own verb");
+
+  const addRule = (await (await armed(addRoutineRuleTool, teamsCtx("CONV1"), "add_routine_rule")).execute(
+    { routineId: "r-active-1", rule: "ignore drafts", why: "flaky pipeline", source: "human" },
+    teamsCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  const addRuleRow = await rowOf(addRule.pendingId);
+  ok(addRuleRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: add_routine_rule routes too");
+  ok(addRule.message.includes("card posted in slack/T1/C_OPS") && addRule.message.includes("confirm the rule"), "325-redirect: …with its own verb");
+
+  const removeRule = (await (await armed(removeRoutineRuleTool, teamsCtx("CONV1"), "remove_routine_rule")).execute(
+    { routineId: "r-active-1", ruleId: "p-existing1" },
+    teamsCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  const removeRuleRow = await rowOf(removeRule.pendingId);
+  ok(removeRuleRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: remove_routine_rule routes too — the sibling that TAKES a guardrail away, same venue as the one that adds it");
+  ok(removeRule.message.includes("card posted in slack/T1/C_OPS") && removeRule.message.includes("confirm the removal"), "325-redirect: …with its own verb");
+
+  const remembered = (await (await armed(rememberTool, teamsCtx("CONV1"), "remember")).execute({ category: "standing", fact: "Never post before 09:00 UTC." }, teamsCtx("CONV1"))) as {
+    pending: boolean;
+    pendingId: string;
+    note: string;
+  };
+  ok(remembered.pending === true, "325-redirect: 🔴 `remember`'s gated `standing` category WORKS from a card-less room too");
+  const rememberedRow = await rowOf(remembered.pendingId);
+  ok(rememberedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: …its card is in the venue");
+  ok(remembered.note.includes("card posted in slack/T1/C_OPS") && remembered.note.includes("confirm it"), "325-redirect: …and the note names the venue and the verb");
+  ok(JSON.parse(rememberedRow["argsJson"] as string).float === undefined, "325-redirect: …and with the float posture off, no float target is frozen at all (float, when armed, would stay the ORIGIN room — see remember.ts)");
+
+  const skillCtx = teamsCtx("CONV1", "cse_test_native");
+  const created = (await (await armed(createSkillTool, skillCtx, "create_skill")).execute({ name: "venue-skill", content: "Do the thing, carefully." }, skillCtx)) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  ok(created.pending === true, "325-redirect: 🔴 `create_skill` WORKS from a card-less room — it used to refuse outright");
+  const createdRow = await rowOf(created.pendingId);
+  ok(createdRow["postedTo"] === "slack/T1/C_OPS" && createdRow["domain"] === "eng", "325-redirect: …its card is in the venue, and the DOMAIN frozen on the row is the skill's own (unlike the routine verbs, which freeze domain:null)");
+  ok(created.message.includes("card posted in slack/T1/C_OPS") && created.message.includes("arm it"), "325-redirect: …and the message names the venue and the verb");
+
+  const deleted = (await (await armed(deleteSkillTool, skillCtx, "delete_skill")).execute({ name: "existing-skill" }, skillCtx)) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  const deletedRow = await rowOf(deleted.pendingId);
+  ok(deletedRow["postedTo"] === "slack/T1/C_OPS", "325-redirect: delete_skill routes too — the sibling that TAKES a guardrail (a skill) away");
+  ok(deleted.message.includes("card posted in slack/T1/C_OPS") && deleted.message.includes("confirm the removal"), "325-redirect: …with its own verb");
+
+  const prCtx = teamsCtx("CONV1", "cse_test_native");
+  const pr = (await (await armed(openPullRequestTool, prCtx, "open_pull_request")).execute({ repo: "acme/web", head: "fix/1", base: "main", title: "Fix the widget", body: "What changed." }, prCtx)) as {
+    pending: boolean;
+    pendingId: string;
+    message: string;
+  };
+  ok(pr.pending === true, "325-redirect: 🔴 `open_pull_request` WORKS from a card-less room — it used to refuse outright, with nothing staged");
+  const prRow = await rowOf(pr.pendingId);
+  ok(prRow["channelId"] === "C_OPS" && prRow["postedTo"] === "slack/T1/C_OPS" && prRow["threadTs"] === null, "325-redirect: open_pull_request's card is in the venue, top-level");
+  ok(pr.message.includes("card posted in slack/T1/C_OPS") && pr.message.includes("approve the publish"), "325-redirect: …names the venue and the verb");
+  ok(JSON.parse(prRow["argsJson"] as string).headSha === STAGED_SHA, "325-redirect: …and the staged sha reached the frozen card args — the venue redirect did not skip the staging push");
+}
+
+{
+  const before = await pendingCount();
+  await refuses(
+    () => cancelRoutineTool.execute({ id: "r-lonely-1" } as never, teamsCtx("CONV_LONE")),
+    /I can't cancel that routine from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "325-refuse: cancel_routine refuses with the venue's copy and its own verb — no card-capable channel in the domain",
+  );
+  const skillLoneCtx = teamsCtx("CONV_LONE", "cse_test_native");
+  await refuses(
+    () => (armed(createSkillTool, skillLoneCtx, "create_skill") as Promise<Entry>).then((e) => e.execute({ name: "x", content: "y" }, skillLoneCtx)),
+    /I can't create that skill from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "325-refuse: create_skill refuses with the same shape — a different verb, the same config fix",
+  );
+  ok(await pendingCount().then((after) => after === before), "325-refuse: 🔴 NOTHING is minted on either refusal");
+}
+
+{
+  const cancel = (await (await armed(cancelRoutineTool, slackCtx("C1"), "cancel_routine")).execute({ id: "r-slack-1" }, slackCtx("C1"))) as {
+    pendingId: string;
+    message: string;
+  };
+  const cancelRow = await rowOf(cancel.pendingId);
+  ok(cancelRow["channelId"] === "C1" && cancelRow["postedTo"] === "slack/T1/C1", "325-unchanged: cancel_routine in a card-capable own room hosts its own card");
+  ok(!cancel.message.includes("card posted in") && !cancel.message.includes("This surface can't host an approval card"), "325-unchanged: …no venue named, no redirect sentence appended");
+
+  const skillOwnCtx = slackCtx("C1", "cse_test_native");
+  const created = (await (await armed(createSkillTool, skillOwnCtx, "create_skill")).execute({ name: "own-room-skill", content: "Do it here." }, skillOwnCtx)) as {
+    pendingId: string;
+    message: string;
+    domain: string;
+  };
+  const createdRow = await rowOf(created.pendingId);
+  ok(created.domain === "slackside" && createdRow["channelId"] === "C1" && createdRow["postedTo"] === "slack/T1/C1", "325-unchanged: create_skill in a card-capable own room hosts its own card, in its own domain");
+  ok(!created.message.includes("card posted in") && !created.message.includes("This surface can't host an approval card"), "325-unchanged: …no venue named, no redirect sentence appended");
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six propose tools, spend pair matches its sibling, args-vs-card split, fail-closed refusals, own-room unchanged)`,
+  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools plus the nine OPE-325 tools, spend pair matches its sibling, args-vs-card split, fail-closed refusals, own-room unchanged)`,
 );
