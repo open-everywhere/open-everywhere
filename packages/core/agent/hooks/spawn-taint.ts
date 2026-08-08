@@ -2,7 +2,7 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { OE_SPAWN_TAINTED_ATTR } from "../channels/unified.js";
 import { beginTaintTurn, markUntrustedIngestedThisTurn, OE_TAINTED_FIRE_ATTR, OE_RESULT_TAINTED_ATTR } from "../access/taint-signal.js";
 import { JOB_TAINT_ATTR } from "../access/job-posture.js";
-import { registerTaintDryRunSink, type TaintDryRunRow } from "../access/taint-dryrun.js";
+import { beginTaintDryRunTurn, registerTaintDryRunSink, type TaintDryRunRow } from "../access/taint-dryrun.js";
 import { appendAudit } from "../audit/audit.js";
 import { currentTurnId, deploymentOrg, type BindableContext } from "../identity/binding.js";
 
@@ -50,6 +50,7 @@ export function openTaintTurn(ctx: HookContext): void {
     turnId = undefined;
   }
   beginTaintTurn(turnId);
+  beginTaintDryRunTurn(turnId);
   seedIfTainted(ctx);
 }
 

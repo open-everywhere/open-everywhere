@@ -8,6 +8,7 @@ import {
   type IngestionSource,
 } from "../agent/access/taint-tiers.js";
 import {
+  beginTaintDryRunTurn,
   noteIngestionDryRun,
   registerTaintDryRunSink,
   currentTaintDryRunSink,
@@ -15,6 +16,7 @@ import {
 } from "../agent/access/taint-dryrun.js";
 import { ingestUntrusted } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
+import { openTaintTurn } from "../agent/hooks/spawn-taint.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -175,6 +177,49 @@ await eveContextStorage().run(new FakeSession(), async () => {
   ok(out.includes("content"), "a THROWING sink never propagates — the ingestion returns normally");
   ok(untrustedIngestedThisTurn() === true, "…and the taint still landed");
 });
+
+console.log("3. per-TURN, not per-session:");
+
+registerTaintDryRunSink((r) => rows.push(r));
+
+const boundary = (turnId: string | undefined) =>
+  openTaintTurn({ session: { turn: { id: turnId }, auth: { current: { attributes: {} } } } } as unknown as Parameters<typeof openTaintTurn>[0]);
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+
+  boundary("turn-1");
+  ingestUntrusted("a colleague's message", { ingestion: { kind: "chat-message", label: "read_channel:slack" } });
+  ingestUntrusted("another one", { ingestion: { kind: "chat-message", label: "read_channel:slack" } });
+  eq(rows.length, 1, "turn 1: two reads of the same kind write ONE row (the dedupe still dedupes)");
+
+  boundary("turn-2");
+  ingestUntrusted("a message in the next turn", { ingestion: { kind: "chat-message", label: "read_channel:slack" } });
+  eq(rows.length, 2, "🔴 THE HEADLINE: the SAME (kind, divergence) in the NEXT turn of the SAME session logs AGAIN — the memo is per turn, not per session (OPE-331)");
+  eq(rows[1].divergence, "over-taint", "…and it is the same divergence, not a different row shape");
+
+  boundary("turn-2");
+  ingestUntrusted("yet another", { ingestion: { kind: "chat-message" } });
+  eq(rows.length, 2, "the SAME turn id seen twice does NOT re-open the memo — the reset is keyed, not unconditional");
+
+  boundary(undefined);
+  ingestUntrusted("after an unreadable boundary", { ingestion: { kind: "chat-message" } });
+  eq(rows.length, 3, "an UNREADABLE turn id CLEARS the memo — the observer's safe failure is to write the row, the opposite arm from the taint signal's");
+});
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  beginTaintDryRunTurn("t1");
+  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  eq(rows.length, 1, "under-taint rows dedupe within a turn too");
+  beginTaintDryRunTurn("t2");
+  noteIngestionDryRun({ kind: "github", repoPrivate: false, label: "walk_pr" }, false);
+  eq(rows.length, 2, "…and a new turn re-opens them (beginTaintDryRunTurn is the whole boundary)");
+});
+
+beginTaintDryRunTurn("no-context");
+ok(true, "beginTaintDryRunTurn outside a session context is a silent no-op, never a throw");
 
 registerTaintDryRunSink(restore);
 ok(currentTaintDryRunSink() === restore, "the sink is restorable (test seam behaves)");
