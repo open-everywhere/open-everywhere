@@ -1261,7 +1261,7 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "J-TEAMS",
-    title: "Teams reply chain: @mention wake + relevant reply, non-mention silence (mention-gate pin), re-mention continuity (absorbs ST1)",
+    title: "Teams reply chain: @mention wake + relevant reply, non-mention admission asserted on the dispatch rows (mention gate OR single-window Leg A), token-anchored re-mention continuity (absorbs ST1)",
     requires: ["teams"],
     surface: "teams",
     suite: "core",
@@ -1281,16 +1281,62 @@ export const SCENARIOS: readonly Scenario[] = [
         "mention: relevance",
       );
 
-      const nonMention = await teams.postReply(driven.id, "(just a note for the humans in this thread — no bot needed)");
-      const silent = await teams.collectBotRepliesDuring(driven.id, nonMention.createdDateTime ?? reply1.createdDateTime ?? "", SILENCE_WINDOW);
-      ctx.gate(silent.length === 0, "non-mention: a non-mention reply in the chain produces NO bot reply (mention-gate pin)");
-      const teamsSilence = await classifySilence(ctx.auditRead, runStart, { platform: "teams" });
-      const teamsVerdict = silenceCauseGate(teamsSilence);
-      if (teamsSilence.kind === "unwired") ctx.log(`non-mention: ${teamsVerdict.label}`);
-      else ctx.gate(teamsVerdict.ok, `non-mention: ${teamsVerdict.label}`);
+      const nonMentionFrom = new Date(Date.now() - 15_000).toISOString();
+      await teams.postReply(driven.id, "(just a note for the humans in this thread — no bot needed)");
+      await sleep(SILENCE_WINDOW);
+      if (!ctx.auditRead) {
+        ctx.log(
+          "non-mention leg SKIPPED — it needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN). Since the OPE-316 " +
+            "completion-relay carve-out, counting bot posts in a silence window cannot tell leg 1's late relay from a leg-2 " +
+            "wake, so the old post-window proxy was retired rather than left to false-red (OPE-335).",
+        );
+      } else {
+        let teamsWindowMode: "single-window" | "native" | "unknown" = "unknown";
+        if (ctx.unifiedAuditCall) {
+          try {
+            const probe = await ctx.unifiedAuditCall(buildUnifiedAuditQuery({ domain: ctx.unifiedDomain ?? "e2e-unified" }));
+            if (probe.status === 200) {
+              const wire = probe.body as UnifiedAuditWire;
+              teamsWindowMode = wire.singleWindow === true && wire.containers.some((c) => c.platform === "teams") ? "single-window" : "native";
+            }
+          } catch (err) {
+            ctx.log(`non-mention: window-mode probe failed (mode stays unknown): ${String(err instanceof Error ? err.message : err)}`);
+          }
+        }
+        const dispatched = await ctx.auditRead({ sinceIso: nonMentionFrom, platform: "teams", actions: ["teams.dispatched"] });
+        const inChain = dispatched.filter((r) => String((r.detail as { conversationId?: unknown } | undefined)?.conversationId ?? "").includes(driven.id));
+        const ambient = inChain.filter((r) => (r.detail as { addressing?: unknown } | undefined)?.addressing === "channel-watch");
+        if (teamsWindowMode === "single-window") {
+          ctx.gate(
+            ambient.length > 0,
+            `non-mention: the fixture channel is a vouched single-window surface, so the non-mention is admitted as an ambient ` +
+              `channel-watch wake (teams-front Leg A, live) — ${ambient.length} teams.dispatched(channel-watch) row(s) on this chain`,
+          );
+        } else if (teamsWindowMode === "native") {
+          ctx.gate(
+            ambient.length === 0,
+            `non-mention: on the native path the mention gate admits NOTHING — no teams.dispatched row for the non-mention ` +
+              `(mention-gate pin); saw ${ambient.length}`,
+          );
+          const teamsSilence = await classifySilence(ctx.auditRead, runStart, { platform: "teams" });
+          const teamsVerdict = silenceCauseGate(teamsSilence);
+          if (teamsSilence.kind === "unwired") ctx.log(`non-mention: ${teamsVerdict.label}`);
+          else ctx.gate(teamsVerdict.ok, `non-mention: ${teamsVerdict.label}`);
+        } else {
+          ctx.log(
+            `non-mention: window mode UNKNOWN (no unified-audit probe) — ${ambient.length} ambient teams.dispatched row(s) seen ` +
+              `on this chain; expectation not asserted because a single-window surface SHOULD have one and a native surface should not`,
+          );
+        }
+      }
 
-      const remention = await teams.postMentionReply(driven.id, "what's the name of the project I mentioned earlier? one word.");
-      const reply3 = await teams.awaitReply(driven.id, { timeoutMs: REPLY_WAIT, afterIso: remention.createdDateTime ?? reply1.createdDateTime });
+      const markerT = factToken("teams");
+      const remention = await teams.postMentionReply(driven.id, `what's the name of the project I mentioned earlier? Answer with the project name and include the token ${markerT}.`);
+      const reply3 = await teams.awaitReply(driven.id, {
+        timeoutMs: REPLY_WAIT,
+        afterIso: remention.createdDateTime ?? reply1.createdDateTime,
+        contains: markerT,
+      });
       await ctx.judgePass(
         closedQA("Does the reply recall the project name Northwind (proving the reply-chain session kept context)?", { mustMatch: [/northwind/i] }),
         reply3.text,
@@ -1602,8 +1648,23 @@ export const SCENARIOS: readonly Scenario[] = [
       else ctx.gate(notVerdict.ok, `audited silence: ${notVerdict.label}`);
 
       await sleep(SILENCE_WINDOW);
-      const disc1BotReplies = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === c1.discussionId);
-      ctx.gate(disc1BotReplies.length === 1, "self-loop: discussion 1 has exactly ONE bot reply — the bot's own comment did not re-dispatch (loop guard held)");
+      if (ctx.auditRead) {
+        const notDispatched = await ctx.auditRead({ sinceIso: runStart, platform: "notion", actions: ["notion.dispatched"] });
+        const disc1Wakes = notDispatched.filter((r) => (r.detail as { discussionId?: unknown } | undefined)?.discussionId === c1.discussionId);
+        const disc1BotComments = (await not.allComments()).filter((c) => not.isBotComment(c) && c.discussionId === c1.discussionId).length;
+        ctx.gate(
+          disc1Wakes.length === 1,
+          `self-loop: discussion 1 was dispatched EXACTLY once — the bot's own comment did not re-dispatch (loop guard held); ` +
+            `saw ${disc1Wakes.length} notion.dispatched row(s) against ${disc1BotComments} bot comment(s), which is the point: ` +
+            `post count is seat chattiness, dispatch count is the guard`,
+        );
+      } else {
+        ctx.log(
+          "self-loop leg SKIPPED — it needs the audit read (E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN). Since the OPE-316 " +
+            "completion-relay carve-out one wake may post several comments into a discussion, so counting bot comments no " +
+            "longer discriminates a re-dispatch from a chatty turn (OPE-335).",
+        );
+      }
 
       if (!(not.webhookSecret && ctx.targetUrl)) {
         ctx.log("webhook-gate leg skipped — set E2E_NOTION_WEBHOOK_SECRET + E2E_TARGET_URL to exercise the route contract");

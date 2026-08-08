@@ -203,15 +203,21 @@ export class TeamsDriver {
     return m.fromApplicationId === this.cfg.botAppId && m.text.trim().length > 0;
   }
 
-  async awaitReply(rootMessageId: string, opts: { timeoutMs: number; afterIso?: string }): Promise<TeamsMessage> {
+  async awaitReply(rootMessageId: string, opts: { timeoutMs: number; afterIso?: string; contains?: string }): Promise<TeamsMessage> {
     return pollUntil(
-      async () => (await this.replies(rootMessageId)).find((m) => this.isBotReply(m) && (opts.afterIso === undefined || (m.createdDateTime ?? "") > opts.afterIso!)),
-      { timeoutMs: opts.timeoutMs, what: `a bot reply in the reply chain of message ${rootMessageId}${opts.afterIso ? ` after ${opts.afterIso}` : ""}` },
+      async () =>
+        (await this.replies(rootMessageId)).find(
+          (m) =>
+            this.isBotReply(m) &&
+            (opts.afterIso === undefined || (m.createdDateTime ?? "") > opts.afterIso!) &&
+            (opts.contains === undefined || m.text.includes(opts.contains)),
+        ),
+      {
+        timeoutMs: opts.timeoutMs,
+        what:
+          `a bot reply in the reply chain of message ${rootMessageId}` +
+          `${opts.afterIso ? ` after ${opts.afterIso}` : ""}${opts.contains ? ` containing "${opts.contains}"` : ""}`,
+      },
     );
-  }
-
-  async collectBotRepliesDuring(rootMessageId: string, afterIso: string, windowMs: number): Promise<readonly TeamsMessage[]> {
-    await sleep(windowMs);
-    return (await this.replies(rootMessageId)).filter((m) => this.isBotReply(m) && (m.createdDateTime ?? "") > afterIso);
   }
 }
