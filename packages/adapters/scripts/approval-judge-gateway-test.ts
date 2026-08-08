@@ -13,13 +13,17 @@ function ok(cond: boolean, label: string): void {
   passed++;
 }
 
-const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { zeroDataRetention: true, caching: "auto" } };
+const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { caching: "auto" } };
 
 {
   const s = approvalJudgeCallSettings("verdict", DEFAULTS);
   ok(s.id === DEFAULTS.id, "verdict: the fixed judge-role id, never a routed one — there is no scope parameter to route by");
   ok(s.maxOutputTokens === undefined, "verdict: the full-reasoning pass carries no output cap");
-  ok((s.providerOptions?.gateway as Record<string, unknown>)?.zeroDataRetention === true, "verdict: gateway defaults (ZDR) ride the call");
+  ok((s.providerOptions?.gateway as Record<string, unknown>)?.caching === "auto", "verdict: the registered gateway defaults ride the call");
+  ok(
+    (s.providerOptions?.gateway as Record<string, unknown>)?.zeroDataRetention === undefined,
+    "verdict: no ZDR pin is fabricated — the app passes what it registered and nothing else (OPE-323: ZDR is gateway org policy)",
+  );
 }
 
 {

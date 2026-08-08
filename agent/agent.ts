@@ -16,14 +16,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const GATEWAY_DEFAULTS = {
-  zeroDataRetention: true,
   caching: "auto",
 } as const;
 const DEFAULT_MODEL = PRIMARY_MODEL;
 
 const UTILITY_MODEL_CONTEXT_WINDOW_TOKENS = 1_000_000;
 const UTILITY_GATEWAY_DEFAULTS = {
-  zeroDataRetention: true,
   caching: "auto",
 } as const;
 
@@ -43,7 +41,7 @@ if (!isModelUsable(VISION_MODEL, loadModelPolicy())) {
       "check providerDeny in agent/model/policy.ts, or re-point the `vision` role in agent/model/models.ts.",
   );
 }
-registerGatewayImageDescriber({ id: VISION_MODEL, gateway: { zeroDataRetention: true } });
+registerGatewayImageDescriber({ id: VISION_MODEL });
 
 registerPricingSource(gatewayCatalogPricingSource());
 

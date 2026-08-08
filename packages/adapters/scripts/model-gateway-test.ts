@@ -29,7 +29,7 @@ const gw = (o: RoutedCallOptions): AnyOpts => (o.providerOptions as AnyOpts).gat
 {
   const o = applyGatewayOptions({ id: IDS_CHANGED.id }, turnCall, IDS_CHANGED);
   ok(gw(o).only === undefined && gw(o).order === undefined, "id change strips the pin keys (only/order)");
-  ok(gw(o).zeroDataRetention === true && gw(o).caching === "auto", "posture keys (zdr/caching) survive an id change");
+  ok(gw(o).zeroDataRetention === true && gw(o).caching === "auto", "every non-pin key survives an id change (no key allow-list)");
 }
 
 {

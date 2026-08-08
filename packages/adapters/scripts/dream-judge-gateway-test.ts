@@ -49,7 +49,7 @@ registerConfig({
   const routed = dreamCallSettings({ id: "zai/glm-5.2-air", reasoning: "low" }, DEFAULTS);
   ok(routed.id === "zai/glm-5.2-air" && routed.reasoning === "low", "settings: routed id + reasoning applied");
   const gw = routed.providerOptions?.gateway as Record<string, unknown>;
-  ok(gw.only === undefined && gw.zeroDataRetention === true, "settings: id change strips the pin, posture keys survive");
+  ok(gw.only === undefined && gw.zeroDataRetention === true && gw.caching === "auto", "settings: id change strips the pin, every non-pin key survives");
 
   const pinned = dreamCallSettings({ providers: ["zai"] }, DEFAULTS);
   eq((pinned.providerOptions?.gateway as Record<string, unknown>).order, ["zai"], "settings: route providers → gateway `order` preference");

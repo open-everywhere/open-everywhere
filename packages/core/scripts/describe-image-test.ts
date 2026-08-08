@@ -89,7 +89,7 @@ ok(inferImageMime("noext") === undefined, "inferImageMime: no extension → unde
   const throwing: ImageDescriber = { describe: async () => { throw new Error("no ZDR-compliant upstream for this model (400)"); } };
   registerImageDescriber(throwing);
   const out = await tool.execute({ source: { path: "real.png" } }, ctxWithSandbox(async () => PNG_BYTES));
-  ok(out.ok === false && /could not be described/.test(out.message ?? "") && /ZDR/.test(out.message ?? ""), "vision-call error (ZDR hard-fail) → ok:false, fail-closed message carries the reason, NO description");
+  ok(out.ok === false && /could not be described/.test(out.message ?? "") && /ZDR/.test(out.message ?? ""), "vision-call error (ZDR refusal) → ok:false, fail-closed message carries the reason, NO description");
   ok(out.description === undefined, "ZDR fail-closed: no fabricated description field on failure");
   await eveContextStorage().run(new FakeSession(), async () => {
     ok(untrustedIngestedThisTurn() === false, "fresh turn starts untainted");
