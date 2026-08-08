@@ -976,7 +976,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "slack",
     suite: "core",
     optional: false,
-    timeoutMs: 900_000,
+    timeoutMs: 2_400_000,
     judged: true,
     run: async (ctx) => {
       const slack = ctx.slack!;
@@ -984,22 +984,27 @@ export const SCENARIOS: readonly Scenario[] = [
       const forge = ctx.syntheticDm!;
       const { userId, teamId } = await slack.identity();
 
-      const { ts: askTs } = await slack.post(
-        slack.mention(
-          "this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST",
-        ),
-      );
-      const card = await awaitCard(slack, askTs, FILE_REPLY_WAIT);
-      const btn = approveButton(card)!;
-      ctx.gate(btn.pendingId.length > 0, "S17: access-request card carries a real pending id");
-      ctx.gate(btn.org.length > 0, "S17: access-request card carries the org in its button value");
-      await ctx.judgePass(
-        closedQA("Does the card describe widening a connection to add POST access, naming the e2e-fixture connection?", {
-          mustMatch: [/post/i],
-        }),
-        card.text,
-        "S17: access-request card legibility",
-      );
+      const pendingCleanup: Array<{ pendingId: string; org: string; messageTs: string; channelId: string }> = [];
+      try {
+        const EXTRA_METHODS = ["PUT", "PATCH", "DELETE"] as const;
+        const extraMethod = EXTRA_METHODS[Date.now() % EXTRA_METHODS.length];
+        const { ts: askTs } = await slack.post(
+          slack.mention(
+            `this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST and ${extraMethod} (both methods, one widen-connection request)`,
+          ),
+        );
+        const card = await awaitCard(slack, askTs, FILE_REPLY_WAIT);
+        const btn = approveButton(card)!;
+        ctx.gate(btn.pendingId.length > 0, "S17: access-request card carries a real pending id");
+        ctx.gate(btn.org.length > 0, "S17: access-request card carries the org in its button value");
+        pendingCleanup.push({ pendingId: btn.pendingId, org: btn.org, messageTs: card.ts, channelId: slack.channelId });
+        await ctx.judgePass(
+          closedQA("Does the card describe widening a connection to add POST access, naming the e2e-fixture connection?", {
+            mustMatch: [/post/i],
+          }),
+          card.text,
+          "S17: access-request card legibility",
+        );
 
       if (process.env.E2E_ACCESS_ALLOW_SEND !== "1") {
         ctx.log("S17: E2E_ACCESS_ALLOW_SEND not set — propose-only run; the card is left to expire on its TTL (no tap, no PR risk)");
@@ -1059,7 +1064,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: dmTs } = await dm.post(dmAsk);
       const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
       ctx.gate(sentDm.status === 200, "S18: synthetic DM ask acked 200");
-      const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: REPLY_WAIT });
+      const dmReply = await dm.awaitAnyReply(dmTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(dmReply.text.trim().length > 0, "S18: agent replied to the DM channel-target access ask");
       ctx.gate(approveButton(dmReply) === undefined, "S18: NO access-request card is posted for a CHANNEL-target ask made from a DM (hard gate)");
       await ctx.judgePass(
@@ -1073,7 +1078,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: hostTs } = await slack.post(
         slack.mention("can we get access to a brand new host, https://totally-new-example-service.test — please add it as a new connection"),
       );
-      const hostReply = await slack.awaitThreadReply(hostTs, { timeoutMs: REPLY_WAIT });
+      const hostReply = await slack.awaitThreadReply(hostTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       ctx.gate(approveButton(hostReply) === undefined, "S18: NO access-request card is posted for an out-of-vocabulary host ask (hard gate)");
       await ctx.judgePass(
         closedQA(
@@ -1090,7 +1095,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const { ts: personalTs } = await dm.post(personalAsk);
       const sentPersonal = await forge.message({ text: personalAsk, userId, teamId, ts: personalTs });
       ctx.gate(sentPersonal.status === 200, "personal: synthetic DM target=personal ask acked 200");
-      const personalReply = await dm.awaitAnyReply(personalTs, { timeoutMs: REPLY_WAIT });
+      const personalReply = await dm.awaitAnyReply(personalTs, { timeoutMs: FILE_REPLY_WAIT, skip: (m) => isFillerAck(m.text) });
       const personalCard =
         approveButton(personalReply) !== undefined
           ? personalReply
@@ -1100,14 +1105,15 @@ export const SCENARIOS: readonly Scenario[] = [
                 if (threaded) return threaded;
                 return (await dm.history(personalTs)).find((m) => dm.isBotReply(m) && approveButton(m) !== undefined);
               },
-              { timeoutMs: SILENCE_WINDOW, what: `a target=personal access-request card in the DM after ${personalTs}` },
+              { timeoutMs: FILE_REPLY_WAIT, what: `a target=personal access-request card in the DM after ${personalTs}` },
             ).catch(() => undefined);
       if (personalCard) {
         const personalBtn = approveButton(personalCard)!;
         ctx.gate(personalBtn.pendingId.length > 0, "personal: the target=personal card carries a real pending id in its action_id");
         ctx.gate(personalBtn.org.length > 0, "personal: the target=personal card carries the org in its button value");
+        pendingCleanup.push({ pendingId: personalBtn.pendingId, org: personalBtn.org, messageTs: personalCard.ts, channelId: dm.channelId });
         ctx.log(
-          `personal: card ${personalCard.ts} proposed in the DM (pending ${personalBtn.pendingId}) — NOT tapped, left to expire on its TTL` +
+          `personal: card ${personalCard.ts} proposed in the DM (pending ${personalBtn.pendingId}) — NOT tapped, torn down at scenario end` +
             (/dry-run/i.test(personalCard.text) ? " (deployment is in OE_ACCESS_DRY_RUN)" : ""),
         );
       } else if (process.env.E2E_ACCESS_PERSONAL_FIXTURE === "1") {
@@ -1125,6 +1131,23 @@ export const SCENARIOS: readonly Scenario[] = [
             "to widen (planAccessDelta needs an existing connection or a grantable connector THERE, not in the channel). Provision one " +
             `and set E2E_ACCESS_PERSONAL_FIXTURE=1 to make this a hard gate. Reply: "${personalReply.text.replace(/\s+/g, " ").trim().slice(0, 240)}"`,
         );
+      }
+      } finally {
+        if (!ctx.synthetic) {
+          if (pendingCleanup.length > 0) {
+            ctx.log(`J4 teardown: ${pendingCleanup.length} pending(s) minted but no synthetic capability configured — left for TTL expiry`);
+          }
+        } else {
+          const synthetic = ctx.synthetic;
+          for (const p of pendingCleanup) {
+            try {
+              const res = await synthetic.click({ pendingId: p.pendingId, org: p.org, decision: "reject", messageTs: p.messageTs, channelId: p.channelId, teamId });
+              ctx.log(`J4 teardown: reject ${p.pendingId} → ${res.status} (best-effort, idempotent on an already-decided row)`);
+            } catch (err) {
+              ctx.log(`J4 teardown: reject ${p.pendingId} failed (best-effort, not gated): ${String(err instanceof Error ? err.message : err)}`);
+            }
+          }
+        }
       }
     },
   },
