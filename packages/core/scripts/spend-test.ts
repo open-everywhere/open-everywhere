@@ -110,18 +110,19 @@ ok(typeof reason === "string" && reason.includes("channel"), "over-cap verdict c
 
   valid({ perUser: { default: { surfaceMonthlyUsd: 5 } } }, "perUser.default with a surface-shaped USD cap validates");
   valid(
-    { perUser: { default: { surfaceMonthlyTokens: 100_000 }, overrides: { U_BIG: { surfaceMonthlyUsd: 50, surfaceMonthlyTokens: 5_000_000 } } } },
+    { perUser: { default: { surfaceMonthlyTokens: 100_000 }, overrides: { "slack/U_BIG": { surfaceMonthlyUsd: 50, surfaceMonthlyTokens: 5_000_000 } } } },
     "perUser with a default AND a named override validates in both denominations",
   );
   throws({ perUser: { default: { workspaceMonthlyUsd: 5 } as never } }, "unknown field", "OPE-268: a WORKSPACE-shaped field under perUser.default is REFUSED, not silently ignored");
-  throws({ perUser: { overrides: { U1: { workspaceMonthlyTokens: 5 } as never } } }, "unknown field", "OPE-268: …and refused under an override too");
-  throws({ perUser: { overrides: { "": { surfaceMonthlyUsd: 1 } } } }, "non-empty principal id", "OPE-268: a blank principal id key is rejected");
+  throws({ perUser: { overrides: { "slack/U1": { workspaceMonthlyTokens: 5 } as never } } }, "unknown field", "OPE-268: …and refused under an override too");
+  throws({ perUser: { overrides: { "": { surfaceMonthlyUsd: 1 } } } }, "non-empty qualified principal key", "OPE-268: a blank principal id key is rejected");
   throws({ perUser: { default: {} } }, "no cap at all", "OPE-268: a perUser entry that caps nothing is rejected");
   throws({ perUser: { default: { surfaceMonthlyUsd: 0 } } }, "> 0", "OPE-268: a non-positive per-user amount is rejected");
   throws({ perUser: { defaults: { surfaceMonthlyUsd: 5 } } as never }, "unknown field", "OPE-268: a typo on the WRAPPER (`defaults`) fails loud — an allowance nobody receives is invisible in every report");
 
-  valid({ perUser: { overrides: { "slack/U0123ABCD": { surfaceMonthlyUsd: 50 } } } }, "OPE-274: a QUALIFIED principal key is a valid perUser.overrides key (the spelling a runtime override reconciles into)");
-  valid({ perUser: { overrides: { U0123ABCD: { surfaceMonthlyUsd: 50 } } } }, "OPE-274: …and the historical BARE id stays valid forever");
+  valid({ perUser: { overrides: { "slack/U0123ABCD": { surfaceMonthlyUsd: 50 } } } }, "OPE-274: a QUALIFIED principal key is THE perUser.overrides key (the spelling a runtime override reconciles into)");
+  throws({ perUser: { overrides: { U0123ABCD: { surfaceMonthlyUsd: 50 } } } }, "PLATFORM-QUALIFIED", "🔴 OPE-309: a BARE principal id under perUser.overrides is refused at load — it aliases the same id on every platform");
+  throws({ perUser: { overrides: { U0123ABCD: { surfaceMonthlyUsd: 50 } } } }, '"<platform>/U0123ABCD"', "OPE-309: …and the error hands the deployer the exact replacement string, needing only the platform name");
   throws({ perUser: { overrides: { "user:slack/U1": { surfaceMonthlyUsd: 1 } } } }, "scope-key marker", "OPE-274: a `user:`-marked SCOPE KEY pasted into the config registry is REFUSED, and the message says what to write instead");
   throws({ perUser: { overrides: { "slack/T1/C1": { surfaceMonthlyUsd: 1 } } } }, "qualified principal key", "OPE-274: a SURFACE key under perUser.overrides is refused — it is a place, and it would gate nothing here");
 }
@@ -613,15 +614,15 @@ ok((await store.workspaceTokens("default", "slack/T1", "2026-06")) === 450, "sto
   ok(heavy.reason?.includes("your own monthly budget") === true, `OPE-268: the refusal is about the PERSON, not the place (got: "${heavy.reason}")`);
   ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT")).over, "OPE-268: …while a second person on the SAME surface key stays under it — two users never share a pool, and the gate is reading principal_id, not the surface total");
 
-  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 }, overrides: { U_HEAVY: { surfaceMonthlyTokens: 1_000_000 } } } };
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 }, overrides: { "slack/U_HEAVY": { surfaceMonthlyTokens: 1_000_000 } } } };
   ok(!(await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_HEAVY")).over, "OPE-268: perUser.overrides[principal] beats the default for that person");
-  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 1 }, overrides: { U_OTHER: { surfaceMonthlyTokens: 1_000_000 } } } };
+  budgets3 = { perUser: { default: { surfaceMonthlyTokens: 1 }, overrides: { "slack/U_OTHER": { surfaceMonthlyTokens: 1_000_000 } } } };
   ok((await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT")).over, "OPE-268: …and ONLY for that person — someone else's override doesn't raise everyone's default");
 
-  budgets3 = { perUser: { overrides: { U_LIGHT: { surfaceMonthlyTokens: 1_000_000 } } }, perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 5 } } };
+  budgets3 = { perUser: { overrides: { "slack/U_LIGHT": { surfaceMonthlyTokens: 1_000_000 } } }, perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 5 } } };
   const vsSurface = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT");
   ok(vsSurface.over === true && vsSurface.reason?.includes("this DM") === true, "OPE-268: a huge per-user allowance does NOT disable the SURFACE cap — both are checked, and the surface's breach is what is reported");
-  budgets3 = { perUser: { overrides: { U_LIGHT: { surfaceMonthlyTokens: 1_000_000 } } }, default: { workspaceMonthlyTokens: 5 } };
+  budgets3 = { perUser: { overrides: { "slack/U_LIGHT": { surfaceMonthlyTokens: 1_000_000 } } }, default: { workspaceMonthlyTokens: 5 } };
   const vsWorkspace = await scopeOverBudget(mk(DM) as never, "dm", "2026-07-15T00:00:00.000Z", "internal", "U_LIGHT");
   ok(vsWorkspace.over === true && vsWorkspace.reason?.includes("workspace") === true, "OPE-268: …nor the WORKSPACE cap — person and place are different axes, ORed, never substituted");
   budgets3 = { perUser: { default: { surfaceMonthlyTokens: 50 } }, perSurface: { [`${wsKey}/${DM}`]: { surfaceMonthlyTokens: 1_000_000 } }, default: { workspaceMonthlyTokens: 1_000_000 } };
@@ -816,11 +817,14 @@ rmSync(dir, { recursive: true, force: true });
   ok(!dmCopyNoUser.includes("your own allowance"), "OPE-274: a SURFACE breach in a DM does NOT offer to raise the person's allowance — that remedy would change nothing");
   ok(dmCopy.startsWith("⛔ I'm holding off —") && dmCopyNoUser.startsWith("⛔ I'm holding off —"), "OPE-274: the e2e-pinned 'holding off' opening is unchanged in both DM variants");
 
-  budgets4 = { perUser: { default: { surfaceMonthlyUsd: 1 }, overrides: { [ALICE]: { surfaceMonthlyTokens: 10 }, [`slack/${ALICE}`]: { surfaceMonthlyTokens: 20 } } } };
-  ok(resolveUserCaps(ALICE, "slack").surfaceMonthlyTokens === 20, "OPE-274: a QUALIFIED perUser.overrides key beats the bare one for the same person");
-  ok(resolveUserCaps(ALICE).surfaceMonthlyTokens === 10, "OPE-274: …and with no platform the lookup is bare-id only — byte-identical to the pre-OPE-274 behaviour");
+  budgets4 = { perUser: { default: { surfaceMonthlyUsd: 1 }, overrides: { [`slack/${ALICE}`]: { surfaceMonthlyTokens: 20 } } } };
+  ok(resolveUserCaps(ALICE, "slack").surfaceMonthlyTokens === 20, "OPE-274: a QUALIFIED perUser.overrides key resolves the named person's allowance");
   ok(resolveUserCapsWithLayer(ALICE, "slack").layer === "config:overrides" && resolveUserCapsWithLayer(ALICE, "slack").configKey === `slack/${ALICE}`, "OPE-274: resolveUserCapsWithLayer names WHICH config key matched");
   ok(resolveUserCapsWithLayer("U_NOBODY", "slack").layer === "config:default", "OPE-274: an unnamed person falls to perUser.default, and the layer says so");
+
+  ok(resolveUserCaps(ALICE, "discord").surfaceMonthlyTokens === undefined, "🔴 OPE-309: a slack/<id> override does NOT cap the same id on Discord — a bare-id fallback would have handed one person another's budget");
+  ok(resolveUserCapsWithLayer(ALICE, "discord").layer === "config:default" && resolveUserCapsWithLayer(ALICE, "discord").caps.surfaceMonthlyUsd === 1, "OPE-309: …that person falls to the blanket perUser.default, which names no namespace to get wrong");
+  ok(resolveUserCapsWithLayer(ALICE, undefined).layer === "config:default", "OPE-309: a caller that cannot name the platform matches NO named entry (fail-closed) but still gets the blanket default (skipping it is the only direction that widens)");
   budgets4 = {};
   ok(resolveUserCapsWithLayer(ALICE, "slack").layer === "none", 'OPE-274: an empty registry resolves layer "none" — never an invented allowance');
 

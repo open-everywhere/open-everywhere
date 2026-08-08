@@ -157,15 +157,21 @@ export function assertSpendBudgetsValid(budgets: SpendBudgets): void {
     if (budgets.perUser.default) assertCapsShape(budgets.perUser.default, "perUser.default", USER_CAP_FIELDS);
     for (const [principalId, caps] of Object.entries(budgets.perUser.overrides ?? {})) {
       if (!principalId.trim()) {
-        throw new Error(`spend budget perUser.overrides key must be a non-empty principal id, got ${JSON.stringify(principalId)}`);
+        throw new Error(`spend budget perUser.overrides key must be a non-empty qualified principal key ("slack/U0123ABCD"), got ${JSON.stringify(principalId)}`);
       }
       if (principalId.startsWith(USER_SCOPE_PREFIX)) {
         throw new Error(
           `spend budget perUser.overrides key ${JSON.stringify(principalId)} carries the "${USER_SCOPE_PREFIX}" scope-key marker — that prefix belongs to a runtime override's scope key (set_spend_limit level:"user"), not to this registry. Drop it: use "${principalId.slice(USER_SCOPE_PREFIX.length)}".`,
         );
       }
-      if (principalId.includes("/") && !isQualifiedPrincipalKey(principalId)) {
-        throw new Error(`spend budget perUser.overrides key ${JSON.stringify(principalId)} must be a bare principal id ("U0123ABCD") or a well-formed qualified principal key ("slack/U0123ABCD")`);
+      if (!isQualifiedPrincipalKey(principalId)) {
+        throw new Error(
+          principalId.includes("/")
+            ? `spend budget perUser.overrides key ${JSON.stringify(principalId)} is not a well-formed qualified principal key \`platform/<id>\` (e.g. "slack/U0123ABCD"). A surface or tenant key names a PLACE, and this registry is keyed on a PERSON — an entry like that would gate nothing. (identity/principal-key.ts)`
+            : `spend budget perUser.overrides key ${JSON.stringify(principalId)} must be a PLATFORM-QUALIFIED principal key \`platform/<id>\` (e.g. "slack/U0123ABCD", "discord/300000000000000104"). ` +
+              `Replace it with "<platform>/${principalId}", naming the platform this id lives on. ` +
+              `A bare id names no namespace, so one entry would match that id on EVERY connected platform at once — a per-user budget for somebody else. (identity/principal-key.ts, OPE-309)`,
+        );
       }
       assertCapsShape(caps, `perUser.overrides["${principalId}"]`, USER_CAP_FIELDS);
     }

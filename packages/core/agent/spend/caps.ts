@@ -52,17 +52,17 @@ export interface ResolvedUserCaps {
   readonly configKey?: string;
 }
 
-export function resolveUserCaps(principalId: string | undefined, platform?: string): UserCaps {
+export function resolveUserCaps(principalId: string | undefined, platform: string | undefined): UserCaps {
   return resolveUserCapsWithLayer(principalId, platform).caps;
 }
 
-export function resolveUserCapsWithLayer(principalId: string | undefined, platform?: string): ResolvedUserCaps {
+export function resolveUserCapsWithLayer(principalId: string | undefined, platform: string | undefined): ResolvedUserCaps {
   if (!principalId) return { caps: {}, layer: "none" };
   const perUser = loadBudgets().perUser;
-  const qualified = platform ? principalKey(platform, principalId) : undefined;
-  for (const key of [qualified, principalId]) {
-    const hit = key !== undefined ? perUser?.overrides?.[key] : undefined;
-    if (hit) return { caps: hit, layer: "config:overrides", configKey: key! };
+  if (platform) {
+    const key = principalKey(platform, principalId);
+    const hit = perUser?.overrides?.[key];
+    if (hit) return { caps: hit, layer: "config:overrides", configKey: key };
   }
   return perUser?.default ? { caps: perUser.default, layer: "config:default" } : { caps: {}, layer: "none" };
 }

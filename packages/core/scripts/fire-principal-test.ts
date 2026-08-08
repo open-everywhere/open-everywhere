@@ -204,11 +204,11 @@ const staleBag = delivered[1]!.attributes;
 
   ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", "U_SOMEONE_ELSE")).over, "budget: …and NOT against anyone else's — a different principal on the same DM surface sees none of this spend");
 
-  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 }, overrides: { [CREATOR]: { surfaceMonthlyTokens: 1_000_000 } } } };
+  spendBudgets = { perUser: { default: { surfaceMonthlyTokens: 500 }, overrides: { [`slack/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } } };
   ok(!(await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: an override on the creator raises what their own routines may spend (the coherent consequence of charging them)");
 
   spendBudgets = {
-    perUser: { overrides: { [CREATOR]: { surfaceMonthlyTokens: 1_000_000 } } },
+    perUser: { overrides: { [`slack/${CREATOR}`]: { surfaceMonthlyTokens: 1_000_000 } } },
     perSurface: { [`slack/${TEAM}/D_CREATOR`]: { surfaceMonthlyTokens: 100 } },
   };
   ok((await scopeOverBudget(dmPartition, "dm", NOW, "internal", CREATOR)).over, "budget: …but never widens the SURFACE cap — a per-user allowance is an extra constraint, never a substitute");
