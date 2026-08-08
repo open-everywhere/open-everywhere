@@ -175,15 +175,18 @@ export async function requestApproval(
       detail: chainAuditDetail(chainReq, resolution),
     }).catch(() => undefined);
 
-    const shadowDetail = await shadowJudgeAuditDetail(chainReq, resolution).catch(() => undefined);
-    if (shadowDetail !== undefined) {
-      await appendAudit({
-        ...whereFromScope(input.org, input.scopeKey),
-        principalId: input.requestedBy,
-        action: "approval.judge.shadow",
-        detail: shadowDetail,
-      }).catch(() => undefined);
-    }
+    void shadowJudgeAuditDetail(chainReq, resolution)
+      .then((shadowDetail) =>
+        shadowDetail === undefined
+          ? undefined
+          : appendAudit({
+              ...whereFromScope(input.org, input.scopeKey),
+              principalId: input.requestedBy,
+              action: "approval.judge.shadow",
+              detail: shadowDetail,
+            }),
+      )
+      .catch(() => undefined);
 
     if (resolution.verdict === "deny") {
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });

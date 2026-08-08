@@ -199,7 +199,14 @@ const baseInput = {
   domain: "plain",
   args: { org: "test-org", domain: "plain", name: "ghost-skill", requestedBy: "U_HUMAN" },
 };
-async function shadowRows(): Promise<{ detail?: Record<string, unknown> }[]> {
+async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, unknown> }[]> {
+  for (let i = 0; i < 50; i++) {
+    const rows = (await readAudit({})).filter((r) => r.action === "approval.judge.shadow") as {
+      detail?: Record<string, unknown>;
+    }[];
+    if (rows.length >= expectAtLeast) return rows;
+    await new Promise((r) => setTimeout(r, 20));
+  }
   return (await readAudit({})).filter((r) => r.action === "approval.judge.shadow") as { detail?: Record<string, unknown> }[];
 }
 
@@ -220,7 +227,7 @@ async function shadowRows(): Promise<{ detail?: Record<string, unknown> }[]> {
   ok(d.cacheKey === chainTool && d.cacheHit === false && d.passes === 2, "shadow: the (op, connection) cache key + pass count are on the row");
 
   await requestApproval(baseInput, { postCard });
-  const rows2 = await shadowRows();
+  const rows2 = await shadowRows(2);
   ok(rows2.length === 2 && rows2[0]!.detail?.cacheHit === true && rows2[0]!.detail?.passes === 0, "shadow: a repeat propose logs a CACHE HIT (machinery proven for phase 2)");
 
   delete process.env.OE_APPROVAL_JUDGE;
