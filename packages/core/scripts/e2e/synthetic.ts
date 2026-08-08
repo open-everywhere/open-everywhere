@@ -283,6 +283,10 @@ export class SyntheticSlack {
 export class SyntheticDm {
   constructor(private readonly cfg: SyntheticDmConfig) {}
 
+  get dmChannel(): string {
+    return this.cfg.dmChannel;
+  }
+
   async message(input: { text: string; userId: string; teamId: string; ts: string }): Promise<SyntheticResult> {
     const rawBody = JSON.stringify(buildDmEventEnvelope({ ...input, channelId: this.cfg.dmChannel }));
     const { timestamp, signature } = signSlackRequest(rawBody, this.cfg.signingSecret);

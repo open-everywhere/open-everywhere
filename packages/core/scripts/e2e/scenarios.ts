@@ -1,5 +1,5 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
-import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow, rotateDmSeat } from "./rotate-window-lib.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
@@ -1054,6 +1054,11 @@ export const SCENARIOS: readonly Scenario[] = [
           ctx.log(
             `J4: rotated the ${domain} window → fresh generation ${rot.mintedGeneration} (OPE-344 — this run starts with no widen-ask/reject footprint from prior runs)`,
           );
+          const dmChannelId = ctx.syntheticDm?.dmChannel;
+          if (dmChannelId) {
+            const dmRot = await rotateDmSeat(store, org, dmChannelId);
+            ctx.log(`J4: rotated the DM seat for ${dmChannelId} → generation ${dmRot.mintedGeneration} (fresh seat for leg 2's DM ask)`);
+          }
         } catch (e) {
           ctx.log(
             `J4: could not rotate the e2e-unified window (${String(e instanceof Error ? e.message : e)}) — proceeding on whatever generation the standing window is already on, which risks OPE-344's harness-footprint misread`,
@@ -1136,9 +1141,11 @@ export const SCENARIOS: readonly Scenario[] = [
         }
       }
 
+      const DM_METHODS = ["POST", "PUT", "PATCH"] as const;
+      const dmMethod = DM_METHODS[Date.now() % DM_METHODS.length];
       const dmAsk =
         "request access for THIS CHANNEL — a channel-scope access request (target=channel) to widen the e2e-fixture " +
-        "connection so it also allows POST. I do not mean my own personal DM access and I do not mean a group grant: " +
+        `connection so it also allows ${dmMethod}. I do not mean my own personal DM access and I do not mean a group grant: ` +
         "I mean the channel's own access.";
       const { ts: dmTs } = await dm.post(dmAsk);
       const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
