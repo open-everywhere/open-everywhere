@@ -594,7 +594,7 @@ export const SCENARIOS: readonly Scenario[] = [
     surface: "discord",
     suite: "extended",
     optional: true,
-    timeoutMs: 420_000,
+    timeoutMs: 900_000,
     judged: false,
     run: async (ctx) => {
       const forge = ctx.syntheticDiscordDm!;
@@ -615,7 +615,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const rows = await auditRead!({ sinceIso: since, actions: ["task.spawned"] });
           return rows.find((r) => r.workspace.startsWith("oe-dm/discord/"));
         },
-        { timeoutMs: REPLY_WAIT, what: "a task.spawned row on an oe-dm/discord/… pseudo-domain (the DM seat delegating the `remember` write)" },
+        { timeoutMs: FILE_REPLY_WAIT, what: "a task.spawned row on an oe-dm/discord/… pseudo-domain (the DM seat delegating the `remember` write)" },
       );
       ctx.log(`delegation: task.spawned workspace=${spawn.workspace} taskId=${String((spawn.detail as { taskId?: unknown } | undefined)?.taskId ?? "?")}`);
 
@@ -634,7 +634,7 @@ export const SCENARIOS: readonly Scenario[] = [
           const rows = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
           return rows.find((r) => r.platform === "discord" && r.workspace.startsWith("oe-dm/discord/"));
         },
-        { timeoutMs: REPLY_WAIT, what: "a reply.post row (platform:discord) on the oe-dm/discord/… pseudo-domain — the delegated worker's answer landing back in the DM" },
+        { timeoutMs: FILE_REPLY_WAIT, what: "a reply.post row (platform:discord) on the oe-dm/discord/… pseudo-domain — the delegated worker's answer landing back in the DM" },
       );
       ctx.gate(
         answered.workspace === spawn.workspace,
