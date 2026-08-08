@@ -2,7 +2,7 @@ import type { AttachSessionFn } from "eve/channels";
 import { createHmac } from "node:crypto";
 import { verifyWebhookSignature } from "../webhooks/gate.js";
 import { readCappedBody, selfDispatchBaseUrl } from "../channels/self-dispatch.js";
-import { drainSessionStream, type SourceStreamEvent } from "./read-route.js";
+import { drainSessionStream, probeSessionExists, type ProbeableSession, type SourceStreamEvent } from "./read-route.js";
 import { renderTranscript } from "./transcript-render.js";
 import { listRoutineFires } from "../routines/fire-audit.js";
 import { appendAudit } from "../audit/audit.js";
@@ -20,6 +20,8 @@ export const TRANSCRIPT_RELAY_TIMEOUT_MS = 20_000;
 export const TRANSCRIPT_RELAY_MAX_EVENTS = 600;
 
 export const TRANSCRIPT_RELAY_IDLE_MS = 1500;
+
+export const TRANSCRIPT_RELAY_PROBE_MS = 3000;
 
 export const TRANSCRIPT_RELAY_MAX_FIRE_DEPTH = 10;
 
@@ -143,9 +145,15 @@ export async function handleTranscriptRelay(
     detail: { routineId: request.routineId, sessionId: fire.sessionId, fireDepth: request.fireDepth, firedAt: fire.at },
   }).catch(() => undefined);
 
+  const session = attachSession(fire.sessionId);
+
+  if ((await probeSessionExists(session as ProbeableSession, TRANSCRIPT_RELAY_PROBE_MS)) === "missing") {
+    return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
+  }
+
   let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await attachSession(fire.sessionId).getEventStream({ startIndex: 0 })) as unknown as ReadableStream<SourceStreamEvent>;
+    stream = (await session.getEventStream({ startIndex: 0 })) as unknown as ReadableStream<SourceStreamEvent>;
   } catch {
     return json(410, { error: "that run's transcript is no longer available (expired or unreadable)" });
   }

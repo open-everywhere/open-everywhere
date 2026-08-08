@@ -1,4 +1,5 @@
 import type { AttachSessionFn } from "eve/channels";
+import { classifySessionId } from "../channels/window-key.js";
 import { parseServiceTokenEntries, verifyServiceToken } from "./auth.js";
 import { auditView, usageWindowView, unifiedDomainAudit } from "./views.js";
 import { appendAudit } from "../audit/audit.js";
@@ -16,6 +17,7 @@ const TRANSCRIPT_MAX_LIMIT = 10000;
 const TRANSCRIPT_DEFAULT_IDLE_MS = 1500;
 const TRANSCRIPT_MAX_IDLE_MS = 10000;
 const TRANSCRIPT_WALL_MS = 30000;
+const TRANSCRIPT_PROBE_MS = 3000;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -217,6 +219,42 @@ export async function drainSessionStream(
   return { events, complete };
 }
 
+export type SessionExistence = "found" | "missing" | "unknown";
+
+export interface ProbeableSession {
+  getStreamTailIndex?: () => Promise<number>;
+}
+
+export async function probeSessionExists(session: ProbeableSession, budgetMs: number): Promise<SessionExistence> {
+  const probe = session.getStreamTailIndex;
+  if (typeof probe !== "function") return "unknown";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const answered: Promise<SessionExistence> = Promise.resolve()
+      .then(async () => await probe.call(session))
+      .then(
+        (tail) => (typeof tail === "number" && tail >= 0 ? "found" : "missing"),
+        () => "missing",
+      );
+    const timedOut = new Promise<SessionExistence>((resolve) => {
+      timer = setTimeout(() => resolve("unknown"), budgetMs);
+    });
+    return await Promise.race([answered, timedOut]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export function transcriptNotFound(sessionId: string): Response {
+  const classified = classifySessionId(sessionId);
+  const hint =
+    classified.kind === "native"
+      ? undefined
+      : `that looks like an OE channel continuation token (kind: ${classified.kind}), not a durable eve session id — ` +
+        `this route takes the id stamped on audit rows as detail.sessionId (GET /control/v1/audit), e.g. "wrun_…"`;
+  return json(404, { error: "no such session", found: false, sessionId, ...(hint ? { hint } : {}) });
+}
+
 export async function handleSessionTranscriptRead(
   req: Request,
   attachSession: AttachSessionFn,
@@ -249,16 +287,22 @@ export async function handleSessionTranscriptRead(
     detail: { service: identity.subject, view: "transcript", sessionId, startIndex, limit },
   });
 
+  const session = attachSession(sessionId);
+
+  const existence = await probeSessionExists(session as ProbeableSession, TRANSCRIPT_PROBE_MS);
+  if (existence === "missing") return transcriptNotFound(sessionId);
+
   let stream: ReadableStream<SourceStreamEvent>;
   try {
-    stream = (await attachSession(sessionId).getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
+    stream = (await session.getEventStream({ startIndex })) as unknown as ReadableStream<SourceStreamEvent>;
   } catch {
-    return new Response("not found", { status: 404 });
+    return transcriptNotFound(sessionId);
   }
 
   try {
     const { events, complete } = await drainSessionStream(stream, startIndex, limit, idleMs);
-    return json(200, { sessionId, startIndex, nextIndex: startIndex + events.length, complete, count: events.length, events });
+    if (existence === "unknown" && events.length === 0 && startIndex === 0) return transcriptNotFound(sessionId);
+    return json(200, { sessionId, found: true, startIndex, nextIndex: startIndex + events.length, complete, count: events.length, events });
   } catch (err) {
     return json(400, { error: err instanceof Error ? err.message : String(err) });
   }

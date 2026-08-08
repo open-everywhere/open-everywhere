@@ -7,6 +7,7 @@ export interface TranscriptWireEvent {
 
 export interface TranscriptResult {
   readonly sessionId: string;
+  readonly found?: boolean;
   readonly startIndex: number;
   readonly nextIndex: number;
   readonly complete: boolean;

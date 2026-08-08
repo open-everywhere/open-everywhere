@@ -1,4 +1,5 @@
 
+import type { AttachSessionFn } from "eve/channels";
 import { createHash } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +28,18 @@ const { appendUsageEvent } = await import("../agent/spend/usage-events.js");
 const { readAudit, appendAudit } = await import("../agent/audit/audit.js");
 const { _resetPricingCacheForTest } = await import("../agent/spend/pricing.js");
 _resetPricingCacheForTest();
+
+type _EveSession = ReturnType<AttachSessionFn>;
+const _eveLookupShapePin: (attach: AttachSessionFn) => {
+  byDurableId: (id: string) => _EveSession;
+  replay: (s: _EveSession) => Promise<ReadableStream<unknown>>;
+  probe: (s: _EveSession) => Promise<number>;
+} = (attach) => ({
+  byDurableId: (id: string) => attach(id),
+  replay: async (s) => await s.getEventStream({ startIndex: 0 }),
+  probe: async (s) => await s.getStreamTailIndex(),
+});
+void _eveLookupShapePin;
 
 const SECRET = "control-read-test-token";
 const SHA = createHash("sha256").update(SECRET, "utf-8").digest("hex");
@@ -204,21 +217,42 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ];
   const parkedEvents = [ev("session.started", {}), ev("turn.started", { turnId: "t1" }), ev("message.received", { message: "parked" })];
   let lastStartIndex = -1;
+  let probeCalls = 0;
+  const tailFor = (id: string): number => (id === "wrun_parked" ? parkedEvents.length - 1 : completedEvents.length - 1);
   const getSession = ((id: string) => ({
+    getStreamTailIndex: async () => {
+      probeCalls += 1;
+      if (id === "wrun_missing") throw new Error("no such session");
+      if (id === "wrun_gone" || id.includes("oe-sup:g")) return -1;
+      return tailFor(id);
+    },
     getEventStream: async (o?: { startIndex?: number }) => {
       lastStartIndex = o?.startIndex ?? 0;
       if (id === "wrun_missing") throw new Error("no such session");
+      if (id === "wrun_gone" || id.includes("oe-sup:g")) return makeStream([], true);
       if (id === "wrun_parked") return makeStream(parkedEvents, true);
       return makeStream(completedEvents, false);
     },
   })) as unknown as Parameters<typeof handleSessionTranscriptRead>[1];
+  const getSessionNoProbe = ((id: string) => ({
+    getEventStream: async (o?: { startIndex?: number }) => {
+      lastStartIndex = o?.startIndex ?? 0;
+      if (id === "wrun_gone") return makeStream([], true);
+      return makeStream(completedEvents, false);
+    },
+  })) as unknown as Parameters<typeof handleSessionTranscriptRead>[1];
 
-  function getTranscript(sessionId: string, query = "", token: string | null = SECRET): Promise<Response> {
+  function getTranscript(
+    sessionId: string,
+    query = "",
+    token: string | null = SECRET,
+    attach: Parameters<typeof handleSessionTranscriptRead>[1] = getSession,
+  ): Promise<Response> {
     return handleSessionTranscriptRead(
-      new Request(`https://oe.example/control/v1/session/${sessionId}/transcript${query}`, {
+      new Request(`https://oe.example/control/v1/session/${encodeURIComponent(sessionId)}/transcript${query}`, {
         headers: token ? { authorization: `Bearer ${token}` } : {},
       }),
-      getSession,
+      attach,
       { sessionId },
     );
   }
@@ -267,6 +301,66 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok((await getTranscript("wrun_done", "?startIndex=-1", SECRET)).status === 400, "transcript: negative startIndex → 400");
   ok((await getTranscript("wrun_done", "?limit=0", SECRET)).status === 400, "transcript: limit=0 → 400");
   ok((await getTranscript("wrun_missing", "", SECRET)).status === 404, "transcript: unknown/unreadable session → 404 (non-enumeration)");
+
+  {
+    const goneRes = await getTranscript("wrun_gone", "?idleMs=50", SECRET);
+    ok(goneRes.status === 404, "transcript OPE-333: an id whose stream never yields is 404, NOT an empty 200");
+    const goneBody = (await goneRes.json()) as { found?: boolean; error?: string; hint?: string; sessionId?: string };
+    ok(goneBody.found === false, "transcript OPE-333: the 404 body carries found:false (the caller can tell, not guess)");
+    ok(goneBody.sessionId === "wrun_gone", "transcript OPE-333: the 404 echoes the id that was asked for");
+    ok(goneBody.hint === undefined, "transcript OPE-333: a durable-shaped id gets NO token hint (the hint is not noise)");
+
+    const foundBody = (await (await getTranscript("wrun_done", "", SECRET)).json()) as { found?: boolean };
+    ok(foundBody.found === true, "transcript OPE-333: a real read answers found:true on the 200");
+
+    for (const [label, token] of [
+      ["eve-namespaced", "unified:oe-dom:e2e-unified:oe-sup:g106"],
+      ["bare", "oe-dom:e2e-unified:win:s/slack/C0EXCHAN003/run/2f307aa6:oe-sup:g106"],
+    ] as const) {
+      const res = await getTranscript(token, "?idleMs=50", SECRET);
+      ok(res.status === 404, `transcript OPE-333: a ${label} window token → 404, not an empty 200`);
+      const body = (await res.json()) as { found?: boolean; hint?: string };
+      ok(body.found === false, `transcript OPE-333: the ${label} window-token 404 carries found:false`);
+      ok(
+        (body.hint ?? "").includes("continuation token") && (body.hint ?? "").includes("detail.sessionId"),
+        `transcript OPE-333: the ${label} window-token 404 NAMES the right lookup (detail.sessionId on an audit row)`,
+      );
+    }
+
+    ok(probeCalls > 0, "transcript OPE-333: the existence probe is actually called (not dead code)");
+  }
+
+  {
+    const okDrift = await getTranscript("wrun_done", "", SECRET, getSessionNoProbe);
+    ok(okDrift.status === 200, "transcript OPE-333: no probe method on the session ⇒ a real read still 200s (drift-safe)");
+    const goneDrift = await getTranscript("wrun_gone", "?idleMs=50", SECRET, getSessionNoProbe);
+    ok(goneDrift.status === 404, "transcript OPE-333: no probe method ⇒ zero events at startIndex 0 is still 404 (drain backstop)");
+    const pagedDrift = await getTranscript("wrun_gone", "?startIndex=7&idleMs=50", SECRET, getSessionNoProbe);
+    ok(pagedDrift.status === 200, "transcript OPE-333: the drain backstop never fires at a non-zero startIndex (paging stays 200)");
+  }
+
+  {
+    const { probeSessionExists } = await import("../agent/control/read-route.js");
+    ok((await probeSessionExists({ getStreamTailIndex: async () => 4 }, 200)) === "found", "probe: a tail index ≥ 0 ⇒ found");
+    ok((await probeSessionExists({ getStreamTailIndex: async () => 0 }, 200)) === "found", "probe: tail index 0 (one chunk) ⇒ found");
+    ok(
+      (await probeSessionExists({ getStreamTailIndex: async () => -1 }, 200)) === "missing",
+      "probe: eve's documented -1 (no chunks ever written) ⇒ missing",
+    );
+    ok(
+      (await probeSessionExists({
+        getStreamTailIndex: async () => {
+          throw new Error("no such run");
+        },
+      }, 200)) === "missing",
+      "probe: a rejecting probe ⇒ missing",
+    );
+    ok((await probeSessionExists({}, 200)) === "unknown", "probe: no probe method at all ⇒ unknown (never missing — eve-drift safety)");
+    ok(
+      (await probeSessionExists({ getStreamTailIndex: () => new Promise<number>(() => {}) }, 30)) === "unknown",
+      "probe: a probe that never answers ⇒ unknown after the budget (a slow world is not a missing session)",
+    );
+  }
 
   const svc = await readAudit({ org: "acme", action: "control.service_call", principalId: "svc:e2e-harness" });
   const transcriptRows = svc.filter((e) => (e.detail as { view?: string }).view === "transcript");

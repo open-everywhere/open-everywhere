@@ -55,10 +55,18 @@ function signedRequest(body: Record<string, unknown>, secret = SECRET): Request 
   });
 }
 
-function fakeGetSession(events: readonly unknown[] | "throw"): (id: string) => { getEventStream(): Promise<ReadableStream<unknown>> } {
+function fakeGetSession(
+  events: readonly unknown[] | "throw" | "vanished",
+): (id: string) => { getEventStream(): Promise<ReadableStream<unknown>>; getStreamTailIndex(): Promise<number> } {
   return (_id: string) => ({
+    async getStreamTailIndex() {
+      if (events === "vanished") return -1;
+      if (events === "throw") throw new Error("stream gone");
+      return Math.max(0, events.length - 1);
+    },
     async getEventStream() {
       if (events === "throw") throw new Error("stream gone");
+      if (events === "vanished") return new ReadableStream<unknown>({ pull() {} });
       return new ReadableStream<unknown>({
         start(controller) {
           for (const e of events) controller.enqueue(e);
@@ -284,6 +292,11 @@ const FIRE = {
     "route: an unreadable/expired durable stream is 410 — a different answer from 'no such run'",
   );
 
+  {
+    const vanished = await handleTranscriptRelay(signedRequest(body), fakeGetSession("vanished") as never, { fires });
+    ok(vanished.status === 410, "route OPE-333: a VANISHED run (open, never-yielding stream) is 410, not a 200 with an empty transcript");
+  }
+
   const res = await handleTranscriptRelay(signedRequest(body), fakeGetSession(events) as never, { fires });
   ok(res.status === 200, "route: 200 on a fire that belongs to this partition");
   const result = (await res.json()) as TranscriptRelayResult;
@@ -292,7 +305,7 @@ const FIRE = {
   ok(result.firesAvailable === 1 && result.eventCount === 1, "route: run counts come back with it");
 
   const rows = await readAudit({ org: "acme", action: "routine.transcript_read" });
-  ok(rows.length === 2, "route: every read that RESOLVED a fire is audited — including the one whose stream turned out to be expired");
+  ok(rows.length === 3, "route: every read that RESOLVED a fire is audited — including both whose stream turned out to be expired");
   ok(
     rows.every((r) => r.detail?.sessionId === FIRE.sessionId && r.detail?.routineId === FIRE.routineId),
     "route: each row names the run it disclosed…",
