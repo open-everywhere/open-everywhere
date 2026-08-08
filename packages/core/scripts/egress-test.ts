@@ -30,6 +30,8 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   } as unknown as EffectiveAccess;
 }
 
+const noOverride = async (ids: readonly string[]) => ids;
+
 type TestRule = { match?: { method?: string[]; path?: { startsWith?: string } }; transform?: unknown[] };
 const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: string): TestRule[] =>
   typeof p === "string" ? [] : (((p as { allow?: Record<string, unknown[]> }).allow?.[host] ?? []) as TestRule[]);
@@ -43,6 +45,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
       [conn("acme")],
     ),
     headers,
+    noOverride,
   );
   const twoRules = rulesFor(two, "api.acme.test");
   ok(twoRules.length === 2, "two pathPrefixes → two allow rules (not silently unrestricted)");
@@ -54,6 +57,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   const one = await compileNetworkPolicy(
     access([{ host: "api.acme.test", viaConnection: "acme", pathPrefixes: ["/only/"] }], [conn("acme")]),
     headers,
+    noOverride,
   );
   const oneRules = rulesFor(one, "api.acme.test");
   ok(oneRules.length === 1 && oneRules[0].match?.path?.startsWith === "/only/", "one prefix → one narrowed rule");
@@ -61,6 +65,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   const zero = await compileNetworkPolicy(
     access([{ host: "api.acme.test", viaConnection: "acme", methods: ["POST"] }], [conn("acme")]),
     headers,
+    noOverride,
   );
   const zeroRules = rulesFor(zero, "api.acme.test");
   ok(zeroRules.length === 1 && zeroRules[0].match?.path === undefined, "no prefixes → one rule, no path narrowing");
@@ -124,11 +129,11 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   const headers = async () => ({ authorization: "Bearer x" });
 
   resetExtraEgressHostsForTest();
-  const denied = await compileNetworkPolicy(access([]), headers);
+  const denied = await compileNetworkPolicy(access([]), headers, noOverride);
   ok(denied === "deny-all", "empty extra-hosts registry: nothing reachable still compiles deny-all (byte-identical flag-off)");
 
   registerExtraEgressHosts("agent-browser", ["qa.example.com", "Preview.Example.com "]);
-  const withExtras = await compileNetworkPolicy(access([]), headers);
+  const withExtras = await compileNetworkPolicy(access([]), headers, noOverride);
   ok(typeof withExtras === "object", "extra hosts lift an otherwise-empty policy off deny-all (an armed browser session can reach its targets)");
   ok(rulesFor(withExtras, "qa.example.com").length === 0, "extra host compiles to a bare allow (empty rule array — the credential-less shape)");
   const allowKeys = typeof withExtras === "object" ? Object.keys((withExtras as { allow: Record<string, unknown> }).allow) : [];
@@ -137,6 +142,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   const credentialed = await compileNetworkPolicy(
     access([{ host: "qa.example.com", viaConnection: "acme", methods: ["GET"] }], [conn("acme")]),
     headers,
+    noOverride,
   );
   const credRules = rulesFor(credentialed, "qa.example.com");
   ok(credRules.length === 1 && credRules[0].match?.method?.[0] === "GET", "a bundle-declared host keeps its narrowed/credentialed rules (extras never replace an existing entry)");
@@ -145,7 +151,7 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   ok(extraEgressHosts().length === 1 && extraEgressHosts()[0] === "qa.example.com", "re-registration replaces the source's host set (boot idempotence)");
   resetExtraEgressHostsForTest();
   ok(extraEgressHosts().length === 0, "reset empties the registry");
-  ok((await compileNetworkPolicy(access([]), headers)) === "deny-all", "after reset the empty-access policy is deny-all again");
+  ok((await compileNetworkPolicy(access([]), headers, noOverride)) === "deny-all", "after reset the empty-access policy is deny-all again");
 }
 
 {
@@ -308,4 +314,134 @@ const rulesFor = (p: Awaited<ReturnType<typeof compileNetworkPolicy>>, host: str
   }
 }
 
-console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge + OPE-300 per-turn re-apply)\n`);
+{
+  const headers = async () => ({ authorization: "Bearer SECRET" });
+  const allowOf = (p: unknown): Record<string, unknown> =>
+    typeof p === "object" && p !== null ? ((p as { allow?: Record<string, unknown> }).allow ?? {}) : {};
+
+  const withNarrow = await compileNetworkPolicy(
+    access(
+      [
+        { host: "api.acme.test", viaConnection: "acme", methods: ["GET"] },
+        { host: "still.acme.test", viaConnection: "kept", methods: ["GET"] },
+      ],
+      [conn("acme"), conn("kept")],
+    ),
+    headers,
+    async (ids) => ids.filter((id) => id !== "acme"),
+  );
+  ok(
+    !("api.acme.test" in allowOf(withNarrow)),
+    "OPE-311(a): a narrowed connection's host is DROPPED from the compiled allow-list (its credential goes with it — there is no entry left to carry one)",
+  );
+  ok("still.acme.test" in allowOf(withNarrow), "OPE-311(b): an UN-narrowed connection's host is untouched");
+  ok(
+    rulesFor(withNarrow, "still.acme.test").some((r) => JSON.stringify(r.transform ?? []).includes("SECRET")),
+    "OPE-311(b): …and keeps its credential transform (the narrowed host's removal did not take the un-narrowed one's credential with it)",
+  );
+
+  const withCredentialless = await compileNetworkPolicy(
+    access(
+      [
+        { host: "docs.acme.test", viaConnection: null },
+        { host: "api.acme.test", viaConnection: "acme" },
+      ],
+      [conn("acme")],
+    ),
+    headers,
+    async () => [],
+  );
+  ok(
+    "docs.acme.test" in allowOf(withCredentialless),
+    "OPE-311(c): a credential-less host (bundle.domains) is UNAFFECTED by connector narrowing",
+  );
+  ok(!("api.acme.test" in allowOf(withCredentialless)), "OPE-311(c): …while the credentialed host compiled alongside it IS narrowed");
+
+  const onStoreFailure = await compileNetworkPolicy(
+    access(
+      [
+        { host: "docs.acme.test", viaConnection: null },
+        { host: "api.acme.test", viaConnection: "acme" },
+        { host: "still.acme.test", viaConnection: "kept" },
+      ],
+      [conn("acme"), conn("kept")],
+    ),
+    headers,
+    async () => null,
+  );
+  ok(typeof onStoreFailure === "object", "OPE-311(d): a store-read failure does not collapse the WHOLE policy to deny-all…");
+  ok(
+    "docs.acme.test" in allowOf(onStoreFailure),
+    "OPE-311(d): …a credential-less host stays reachable even when the override store can't be read",
+  );
+  ok(
+    !("api.acme.test" in allowOf(onStoreFailure)) && !("still.acme.test" in allowOf(onStoreFailure)),
+    "🔴 OPE-311(d): EVERY credentialed host is denied on a store-read failure — not just the ones actually revoked (same posture as connector-scope.ts's grantedForCtx null)",
+  );
+
+  {
+    let calls = 0;
+    await compileNetworkPolicy(access([{ host: "docs.acme.test", viaConnection: null }]), headers, async (ids) => {
+      calls++;
+      return ids;
+    });
+    ok(calls === 0, "OPE-311(e): the override lookup is skipped entirely when nothing credentialed is in the policy");
+  }
+
+  {
+    const { narrowByConnectorOverride } = await import("../agent/access/connector-scope.js");
+    const { getOperationalStore, registerOperationalStore, resetOperationalStore } = await import("../agent/operational/provider.js");
+    type OperationalStore = import("../agent/operational/store.js").OperationalStore;
+
+    const live = getOperationalStore();
+    const rows = [{ org: "acme-org", scopeKey: "local/ws1/c1", connector: "acme-conn", granted: false }];
+    const seen: { org: string; scopeKey: string }[] = [];
+    const fake = {
+      ...live,
+      connectorOverrides: async (org: string, scopeKey: string) => {
+        seen.push({ org, scopeKey });
+        return rows.filter((r) => r.org === org && r.scopeKey === scopeKey).map(({ connector, granted }) => ({ connector, granted }));
+      },
+    } as OperationalStore;
+    registerOperationalStore(fake);
+    resetOperationalStore();
+    process.env.OE_ORG = "acme-org";
+    process.env.OE_WORKSPACE = "ws1";
+    process.env.OE_SURFACE = "c1";
+    try {
+      const narrowed = await narrowByConnectorOverride({}, ["acme-conn", "other-conn"]);
+      ok(
+        JSON.stringify(narrowed) === JSON.stringify(["other-conn"]),
+        "OPE-311(f): narrowByConnectorOverride reads the LIVE store and narrows out the revoked connection id",
+      );
+      ok(
+        seen.length === 1 && seen[0].org === "acme-org" && seen[0].scopeKey === "local/ws1/c1",
+        "OPE-311(f): …keyed by the SAME (org, surfaceKey) the credential gate reads — the SAME row a `revoke_connector` approval would have written narrows egress too",
+      );
+
+      const compiled = await compileNetworkPolicy(
+        access(
+          [
+            { host: "api.acme.test", viaConnection: "acme-conn" },
+            { host: "still.acme.test", viaConnection: "other-conn" },
+          ],
+          [conn("acme-conn"), conn("other-conn")],
+        ),
+        headers,
+        (ids) => narrowByConnectorOverride({}, ids),
+      );
+      ok(
+        !("api.acme.test" in allowOf(compiled)) && "still.acme.test" in allowOf(compiled),
+        "🔴 OPE-311(f) END TO END: a connector_override row shaped exactly like revoke_connector's write removes the revoked host from the compiled sandbox policy — the gap this ticket closes",
+      );
+    } finally {
+      delete process.env.OE_ORG;
+      delete process.env.OE_WORKSPACE;
+      delete process.env.OE_SURFACE;
+      registerOperationalStore(live);
+      resetOperationalStore();
+    }
+  }
+}
+
+console.log(`\n✓ egress: ${n} assertions passed (pathPrefixes multi-rule + fail-closed policy resolver + abort-on-enforce-failure + capability extra-hosts merge + OPE-300 per-turn re-apply + OPE-311 connector-override reaches egress)\n`);

@@ -11,6 +11,7 @@ import type { SandboxNetworkPolicy } from "eve/sandbox";
 import { compileNetworkPolicy } from "../access/egress.js";
 import { resolveHeaders } from "../access/credentials.js";
 import { isEnforced } from "../access/enforcement.js";
+import { narrowByConnectorOverride } from "../access/connector-scope.js";
 import { mintGitReadBroker, mergeGitReadBroker, withBareAllowHost } from "../scm/broker.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
 import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
@@ -116,7 +117,7 @@ export default windowGated("open_pull_request", defineTool({
     const brokerApp = getGitHubApp();
     let brokered: SandboxNetworkPolicy | null = null;
     if (isEnforced() && brokerApp) {
-      const basePolicy = await compileNetworkPolicy(access, resolveHeaders);
+      const basePolicy = await compileNetworkPolicy(access, resolveHeaders, (ids) => narrowByConnectorOverride(ctx, ids));
       const { rulesByOwner } = await mintGitReadBroker(brokerApp, access.repos);
       brokered = mergeGitReadBroker(basePolicy, rulesByOwner);
     }

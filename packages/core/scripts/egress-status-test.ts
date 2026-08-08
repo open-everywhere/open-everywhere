@@ -79,6 +79,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   const policy = await compileNetworkPolicy(
     access([{ host: "api.acme.test", viaConnection: "acme", methods: ["GET"] }], [conn("acme")]),
     async () => ({ authorization: `Bearer ${SECRET}`, "x-acme-key": SECRET }),
+    async (ids) => ids,
   );
   ok(JSON.stringify(policy).includes(SECRET), "PRECONDITION: the compiled policy really does carry the credential (otherwise this test proves nothing)");
 
@@ -268,7 +269,7 @@ function access(hosts: ReachableHost[], connections: Connection[] = []): Effecti
   ok(!PACKAGE_REGISTRY_HOSTS.some((h) => h === "*" || /^\*\.[^.]+$/u.test(h)), "no entry is a wildcard the bundle validator would reject as overly broad");
   ok(new Set(PACKAGE_REGISTRY_HOSTS).size === PACKAGE_REGISTRY_HOSTS.length, "no duplicates");
 
-  const nothing = await compileNetworkPolicy(access([]), async () => ({}));
+  const nothing = await compileNetworkPolicy(access([]), async () => ({}), async (ids) => ids);
   ok(nothing === "deny-all", "🔴 a scope granting nothing STILL compiles to deny-all — the registry set is opt-in, not a built-in widening");
 }
 

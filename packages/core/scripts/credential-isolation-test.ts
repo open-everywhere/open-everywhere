@@ -356,6 +356,7 @@ function pathsContaining(value: unknown, needle: string, at = "$"): string[] {
   const policy = await compileNetworkPolicy(
     access([{ host: "api.acme.test", viaConnection: "acme" } as unknown as ReachableHost], [conn("acme")]),
     resolveHeaders,
+    async (ids) => ids,
   );
 
   const hits = pathsContaining(policy, SENTINEL);

@@ -90,9 +90,13 @@ for (const b of bundles) {
 }
 ok(grantedConnectorNames.has("notion"), "connections-lint invariant: 'notion' is granted somewhere (providers.ts + bundles.ts agree)");
 
-const withHeaders = await compileNetworkPolicy(bound, async (c) => {
-  return { authorization: `Bearer test-token-for-${c.id}` };
-});
+const withHeaders = await compileNetworkPolicy(
+  bound,
+  async (c) => {
+    return { authorization: `Bearer test-token-for-${c.id}` };
+  },
+  async (ids) => ids,
+);
 ok(typeof withHeaders !== "string", "compiled policy is a real allow-map, not 'deny-all' (something IS reachable)");
 type TestRule = { match?: { method?: string[] }; transform?: { headers?: Record<string, string> }[] };
 function rulesFor(policy: typeof withHeaders, host: string): TestRule[] {
@@ -115,7 +119,7 @@ if (typeof withHeaders !== "string") {
 
 delete process.env.NOTION_API_KEY;
 try {
-  await compileNetworkPolicy(bound, resolveHeaders);
+  await compileNetworkPolicy(bound, resolveHeaders, async (ids) => ids);
   ok(false, "compileNetworkPolicy with the REAL resolveHeaders + no NOTION_API_KEY should throw");
 } catch (err) {
   ok(String(err).includes("NOTION_API_KEY"), `throws naming the missing secret (got: ${String(err)})`);

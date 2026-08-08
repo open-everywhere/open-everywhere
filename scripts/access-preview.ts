@@ -71,15 +71,19 @@ if (access.warnings.length) {
   for (const w of access.warnings) console.log(`  • ${w}`);
 }
 
-const redacted = await compileNetworkPolicy(access, async (c) => {
-  try {
-    await resolveHeaders(c);
-    return { authorization: "<redacted>" };
-  } catch (err) {
-    console.log(`\n  note: connection "${c.id}" — ${String(err)}`);
-    return { authorization: "<unavailable>" };
-  }
-});
+const redacted = await compileNetworkPolicy(
+  access,
+  async (c) => {
+    try {
+      await resolveHeaders(c);
+      return { authorization: "<redacted>" };
+    } catch (err) {
+      console.log(`\n  note: connection "${c.id}" — ${String(err)}`);
+      return { authorization: "<unavailable>" };
+    }
+  },
+  async (ids) => ids,
+);
 console.log("\nCompiled NetworkPolicy (firewall):");
 console.log(typeof redacted === "string" ? `  ${redacted}` : JSON.stringify(redacted.allow, null, 2).split("\n").map((l) => "  " + l).join("\n"));
 console.log();

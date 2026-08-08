@@ -28,7 +28,7 @@ for (const scope of boundScopes()) {
   };
   const access = resolveAccess(req, loadBundles(), loadBindings(), PLUGIN_REGISTRY, loadProviders());
   try {
-    const policy = await compileNetworkPolicy(access, async () => ({ authorization: "<redacted>" }));
+    const policy = await compileNetworkPolicy(access, async () => ({ authorization: "<redacted>" }), async (ids) => ids);
     if (access.reachableHosts.length === 0 && policy !== "deny-all") {
       fail(`${scope.via}: no reachable hosts but policy is not "deny-all" (${JSON.stringify(policy)}) — fail-closed broken`);
     }
@@ -62,7 +62,7 @@ for (const scope of boundScopes()) {
     unbound.reachableHosts.length > orgOnly.reachableHosts.length;
   if (widened) fail("an UNBOUND probe channel resolves to more than the org baseline — default-deny broken");
   else checked++;
-  const policy = await compileNetworkPolicy(unbound, async () => ({ authorization: "<redacted>" }));
+  const policy = await compileNetworkPolicy(unbound, async () => ({ authorization: "<redacted>" }), async (ids) => ids);
   if (unbound.reachableHosts.length === 0 && policy !== "deny-all") fail("unbound probe with no hosts did not compile to deny-all");
   else checked++;
 }

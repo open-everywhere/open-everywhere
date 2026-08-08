@@ -149,17 +149,24 @@ export async function grantedConnectors(auth: SessionAuth): Promise<readonly str
   return grantedForCtx(ctx);
 }
 
+export async function narrowByConnectorOverride(
+  ctx: BindableContext,
+  base: readonly string[],
+): Promise<readonly string[] | null> {
+  try {
+    const p = resolvePartition(ctx);
+    const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);
+    return overrides.length ? applyConnectorOverrides(base, overrides) : base;
+  } catch (err) {
+    console.warn(`[open-everywhere:connector-scope] override lookup failed; refusing (fail closed): ${String(err)}`);
+    return null;
+  }
+}
+
 async function grantedForCtx(ctx: BindableContext): Promise<readonly string[] | null> {
   try {
     const base = (await resolveAccessForWithGroups(ctx)).connectors;
-    try {
-      const p = resolvePartition(ctx);
-      const overrides = await getOperationalStore().connectorOverrides(p.org, p.surfaceKey);
-      return overrides.length ? applyConnectorOverrides(base, overrides) : base;
-    } catch (err) {
-      console.warn(`[open-everywhere:connector-scope] override lookup failed; refusing (fail closed): ${String(err)}`);
-      return null;
-    }
+    return await narrowByConnectorOverride(ctx, base);
   } catch {
     return null;
   }

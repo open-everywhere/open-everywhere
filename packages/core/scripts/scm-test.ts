@@ -447,11 +447,11 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   const base = (repos: string[]): EffectiveAccess => ({
     mode: "channel", scopeKey: "x", tenantKey: "slack/T1", surfaceKey: "slack/T1/C1", domains: [], connections: [], connectorCredentials: {}, reachableHosts: [], repos, awsRoles: [], approvers: [], plugins: [], skills: [], subagents: [], connectors: [], instructionStack: [], warnings: [],
   });
-  const withRepos = await compileNetworkPolicy(base(["acme/web"]), async () => ({}));
+  const withRepos = await compileNetworkPolicy(base(["acme/web"]), async () => ({}), async (ids) => ids);
   const allow = (typeof withRepos === "object" ? withRepos.allow : undefined) as Record<string, unknown[]> | undefined;
   ok(!!allow && "github.com" in allow, "granted repos add a github.com egress allow");
   ok(!!allow && allow["github.com"].length === 0, "github.com is a BARE allow (option-1: no firewall header)");
-  ok((await compileNetworkPolicy(base([]), async () => ({}))) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
+  ok((await compileNetworkPolicy(base([]), async () => ({}), async (ids) => ids)) === "deny-all", "no hosts + no repos → deny-all (fail closed)");
 }
 
 {
