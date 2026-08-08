@@ -61,11 +61,10 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   eq(img.tier, "untrusted", "image-description: always untrusted regardless of who posted the image (⚠ the flagged exception)");
   ok(img.reason.includes("FLAGGED"), "image-description: the reason carries the pending-review flag, so a LOG ROW shows it without reading the table");
 
-  const mine = classifyIngestion({ kind: "file-upload", uploader: "member" });
-  eq(mine.tier, "trusted", "file-upload: a MEMBER upload is trusted (⚠ the flagged author rule)");
-  ok(mine.reason.includes("FLAGGED"), "file-upload: the member branch's reason carries the pending-review flag too — it is the weakest row in the table");
-  eq(tier({ kind: "file-upload", uploader: "external" }), "untrusted", "file-upload: a non-member upload is untrusted");
-  ok(classifyIngestion({ kind: "file-upload" }).assumed, "file-upload: an unknown uploader is fail-closed AND marked assumed");
+  const upload = classifyIngestion({ kind: "file-upload" });
+  eq(upload.tier, "untrusted", "file-upload: ALWAYS untrusted (the maintainer's ruling: authorship ≠ provenance — the author rule that trusted member uploads is superseded)");
+  eq(upload.assumed, false, "file-upload: a POSITIVE metadata-free ruling, never `assumed` — no uploader identity is needed, so the read_file_upload seam's verdicts are exact");
+  ok(!upload.reason.includes("FLAGGED"), "file-upload: the pending-review flag is GONE — the row is ruled, not provisional");
 }
 
 {
@@ -73,7 +72,7 @@ eq(tier({ kind: "delegation-result" }), "untrusted", "delegation-result: the tab
   eq(aws.tier, "untrusted", "aws: the `aws` CLI's own output is untrusted — an AWS account is a SUBSTRATE, not an authoring surface, so org ownership says nothing about who wrote the log line");
   eq(aws.assumed, false, "🔴 aws: …and that is a POSITIVE ruling, not the fail-closed default wearing a row's clothes — nothing absent could have decided it otherwise");
   eq(
-    classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantTrust: "internal", uploader: "member" }).tier,
+    classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantTrust: "internal" }).tier,
     "untrusted",
     "aws: NO metadata branch — no field declared for another row can flip it (a per-service or per-account branch OE cannot decide correctly would be false precision)",
   );
