@@ -257,7 +257,7 @@ export { silentRoutineThisTurn, markSilentRoutineTurn, SILENT_ROUTINE_DROP_REASO
 export { consumeRepliedThisTurn } from "./channels/reply-signal.js";
 
 export { resolveWakeTrustFromContext } from "./identity/wake-trust.js";
-export { isVouchedInternal, isVouchedSurface } from "./identity/trust.js";
+export { isVouchedInternal, isVouchedSurface, declaredWorkspaceTrust } from "./identity/trust.js";
 
 export { ambientSupervisorEnabled, engagementTierFor, domainForChannel, resolveDomainForChannel, ambientSkipFor } from "./memory/domain.js";
 export type { EngagementTier, Domain, DomainVia, DomainRouting, AmbientSkip } from "./memory/domain.js";

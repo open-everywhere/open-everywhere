@@ -9,6 +9,8 @@ import {
   sourceScopedMount,
   getConfig,
   preRegisterDynamicEntry,
+  resolvePartition,
+  declaredWorkspaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -33,6 +35,7 @@ export const readNotionPageEntry = defineTool({
           blocks: z.number(),
           truncated: z.boolean(),
           text: z.string(),
+          workspaceTrust: z.literal("internal").optional(),
         }),
         async execute(input, ctx2) {
           assertTurnSurface(ctx2 as BindableContext, "notion");
@@ -42,7 +45,13 @@ export const readNotionPageEntry = defineTool({
           const apiKey = await resolveNotionApiKey();
           if (!apiKey) throw new Error("NOTION_CHANNEL_API_KEY is not set — cannot read the page.");
           const res = await readNotionPage(page, { apiKey, maxChars: MAX_CHARS, maxBlocks: MAX_BLOCKS });
-          return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text };
+          let workspaceTrust: "internal" | undefined;
+          try {
+            workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
+          } catch {
+            workspaceTrust = undefined;
+          }
+          return { page, blocks: res.blockCount, truncated: res.truncated, text: res.text, ...(workspaceTrust !== undefined ? { workspaceTrust } : {}) };
         },
         toModelOutput(output) {
           const header = output.text.length === 0 ? `Notion page ${output.page} has no readable text.` : `Notion page ${output.page}:`;
@@ -50,7 +59,11 @@ export const readNotionPageEntry = defineTool({
           const body = output.text.length === 0 ? header : `${header}\n${output.text}${suffix}`;
           return ingestUntrustedModelOutput(body, {
             source: `notion page ${output.page}`,
-            ingestion: { kind: "notion", label: "read_notion_page" },
+            ingestion: {
+              kind: "notion",
+              label: "read_notion_page",
+              ...(output.workspaceTrust !== undefined ? { workspaceTrust: output.workspaceTrust } : {}),
+            },
           });
         },
 });

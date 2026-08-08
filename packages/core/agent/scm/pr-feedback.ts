@@ -52,6 +52,7 @@ export interface PrFeedbackDigest {
   readonly checks: readonly PrFeedbackCheck[];
   readonly checksSummary: PrChecksSummary;
   readonly truncation: PrFeedbackTruncation;
+  readonly repoPrivate?: boolean;
 }
 
 interface RawUser {
@@ -101,7 +102,11 @@ export async function fetchPrFeedback(opts: {
   const { repo, number, token } = opts;
   const bodies = { n: 0 };
 
-  const pr = await getJson<{ head?: { sha?: string } }>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}`, token);
+  const pr = await getJson<{ head?: { sha?: string }; base?: { repo?: { private?: boolean } } }>(
+    fetchFn,
+    `${apiBase}/repos/${repo}/pulls/${number}`,
+    token,
+  );
   const [rawReviews, rawReviewComments, rawIssueComments] = await Promise.all([
     getJson<RawReview[]>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}/reviews?per_page=100`, token),
     getJson<RawReviewComment[]>(fetchFn, `${apiBase}/repos/${repo}/pulls/${number}/comments?per_page=100`, token),
@@ -165,7 +170,18 @@ export async function fetchPrFeedback(opts: {
     maxBodyChars: MAX_BODY_CHARS,
   };
 
-  return { repo, number, reviews, reviewComments, issueComments, checks, checksSummary, truncation };
+  const repoPrivate = pr.base?.repo?.private;
+  return {
+    repo,
+    number,
+    reviews,
+    reviewComments,
+    issueComments,
+    checks,
+    checksSummary,
+    truncation,
+    ...(typeof repoPrivate === "boolean" ? { repoPrivate } : {}),
+  };
 }
 
 function mostRecent<T>(items: readonly T[], max: number): T[] {
@@ -177,7 +193,11 @@ function truncNote(n: number, unit: string): string {
 }
 
 export function renderPrFeedbackForModel(d: PrFeedbackDigest): string {
-  const ingestion = { kind: "github", label: `get_pr_feedback:${d.repo}` } as const;
+  const ingestion = {
+    kind: "github",
+    label: `get_pr_feedback:${d.repo}`,
+    ...(d.repoPrivate !== undefined ? { repoPrivate: d.repoPrivate } : {}),
+  } as const;
   const out: string[] = [`PR feedback for ${d.repo}#${d.number}`];
 
   out.push("", `Reviews (${d.reviews.length}${truncNote(d.truncation.reviewsDropped, "reviews")}):`);

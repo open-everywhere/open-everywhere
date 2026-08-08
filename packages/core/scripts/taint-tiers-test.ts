@@ -21,6 +21,8 @@ import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
 import { renderContext } from "../agent/channels/context-render.js";
 import { formatTaskResultDelta } from "../agent/access/task-result-delta.js";
 import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
+import { renderPrFeedbackForModel } from "../agent/scm/pr-feedback.js";
+import { declaredWorkspaceTrust, defineSurface, registerSurfaces, _resetSurfacesForTest } from "../agent/identity/trust.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -296,6 +298,60 @@ await eveContextStorage().run(new FakeSession(), async () => {
   eq(tier({ kind: "routine-event", label: "read_routine_transcript" }), "untrusted", "read_routine_transcript declares `routine-event` — the loosest fit in the sweep, and every candidate kind agrees on the verdict");
   eq(tier({ kind: "delegation-result", label: "task_result" }), "untrusted", "task_result declares `delegation-result` — the row that was dead code before this");
   eq(tier({ kind: "chat-message", label: "wake-envelope:slack" }), "trusted", "the render-time chat sites declare `chat-message` — TRUSTED, which is why `taintsToday: false` is silence and not a divergence");
+}
+
+console.log("5. the plumbed metadata:");
+
+{
+  const digest = (repoPrivate?: boolean) => ({
+    repo: "org/repo",
+    number: 7,
+    reviews: [{ author: "ada", state: "CHANGES_REQUESTED", body: "please fix the fence" }],
+    reviewComments: [],
+    issueComments: [],
+    checks: [],
+    checksSummary: { total: 0, byConclusion: {}, failing: [], failingTruncated: false, pending: 0 },
+    truncation: { truncated: false, reviewsDropped: 0, reviewCommentsDropped: 0, issueCommentsDropped: 0, checksDropped: 0, bodiesClipped: 0, maxBodyChars: 4000 },
+    ...(repoPrivate !== undefined ? { repoPrivate } : {}),
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    rows.length = 0;
+    const text = renderPrFeedbackForModel(digest(true));
+    ok(text.includes("please fix the fence"), "the digest still renders + fences every third-party body");
+    eq(rows.length, 1, "a private repo logs one row");
+    eq(rows[0].divergence, "over-taint", "…OVER-taint: the table calls a private org repo trusted while get_pr_feedback taints");
+    eq(rows[0].assumed, false, "🔴 …and it is NOT `assumed` any more — `base.repo.private` rides the PR object fetchPrFeedback already GETs, so the old 'that would need an extra API call' premise was simply wrong");
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    rows.length = 0;
+    renderPrFeedbackForModel(digest(false));
+    eq(rows.length, 0, "a PUBLIC repo agrees with the site (both untrusted) on REAL metadata ⇒ silent — before the plumbing this same read logged an `assumed` row");
+  });
+
+  await eveContextStorage().run(new FakeSession(), async () => {
+    rows.length = 0;
+    renderPrFeedbackForModel(digest(undefined));
+    eq(rows.length, 1, "an ABSENT visibility still logs");
+    ok(rows[0].assumed, "…and is still marked `assumed` — the fail-closed default is untouched, it is just no longer the ONLY answer this seam can give");
+  });
+}
+
+{
+  _resetSurfacesForTest();
+  eq(declaredWorkspaceTrust("notion/ws1"), undefined, "unvouched ⇒ undefined, so the table stays fail-closed AND marked `assumed`");
+  registerSurfaces([defineSurface({ key: "notion/ws1", trust: "internal" })]);
+  eq(declaredWorkspaceTrust("notion/ws1"), "internal", "a WORKSPACE vouch declares the bound workspace internal");
+  _resetSurfacesForTest();
+  registerSurfaces([defineSurface({ key: "notion/ws1/page-a", trust: "internal" })]);
+  eq(
+    declaredWorkspaceTrust("notion/ws1"),
+    undefined,
+    "🔴 a SURFACE-level vouch does NOT make the workspace internal — the table asks about the bound WORKSPACE, and a read tool routinely reads a different page from the one the session sits on, so borrowing a surface vouch would answer about the wrong instance",
+  );
+  _resetSurfacesForTest();
+  eq(tier({ kind: "notion", workspaceTrust: declaredWorkspaceTrust("notion/ws1") }), "untrusted", "…and an undefined tier flows into the table as the fail-closed answer, unchanged");
 }
 
 registerTaintDryRunSink(restore);

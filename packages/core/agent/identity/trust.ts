@@ -57,6 +57,10 @@ export function isVouchedSurface(surfaceKey: string): boolean {
   return isInternalAt(surfaceKey);
 }
 
+export function declaredWorkspaceTrust(workspaceKey: string): "internal" | undefined {
+  return isVouchedInternal(workspaceKey, workspaceKey) ? "internal" : undefined;
+}
+
 export function vouchedSurfaces(): string[] {
   return [...surfaces.values()].filter((s) => s.trust === "internal").map((s) => s.key);
 }

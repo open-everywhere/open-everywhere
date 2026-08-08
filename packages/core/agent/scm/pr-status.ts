@@ -21,6 +21,7 @@ export interface PrStatusSnapshot {
   readonly updatedAt: string;
   readonly checks?: PrChecksSummary;
   readonly activity?: PrActivitySummary;
+  readonly repoPrivate?: boolean;
 }
 
 export interface CheckRun {
@@ -118,6 +119,7 @@ export async function fetchPullRequestStatus(opts: {
     draft: boolean;
     updated_at: string;
     head?: { sha?: string };
+    base?: { repo?: { private?: boolean } };
     comments?: number;
     review_comments?: number;
     commits?: number;
@@ -137,6 +139,7 @@ export async function fetchPullRequestStatus(opts: {
     draft: Boolean(pr.draft),
     updatedAt: pr.updated_at,
     activity: { reviews: 0, approvals: 0, changesRequested: 0, ...counts },
+    ...(typeof pr.base?.repo?.private === "boolean" ? { repoPrivate: pr.base.repo.private } : {}),
   };
   const headSha = pr.head?.sha;
   if (!headSha) return base;

@@ -9,6 +9,8 @@ import {
   sourceScopedMount,
   getConfig,
   preRegisterDynamicEntry,
+  resolvePartition,
+  declaredWorkspaceTrust,
   type BindableContext,
 } from "@open-everywhere/core/agent/adapter-api.js";
 
@@ -66,6 +68,7 @@ export const readNotionCommentsEntry = defineTool({
     blocksScanned: z.number(),
     truncated: z.boolean(),
     text: z.string(),
+    workspaceTrust: z.literal("internal").optional(),
   }),
   async execute(input, ctx2) {
     assertTurnSurface(ctx2 as BindableContext, "notion");
@@ -84,6 +87,12 @@ export const readNotionCommentsEntry = defineTool({
       maxComments: MAX_COMMENTS,
       maxBlockScans: MAX_BLOCK_SCANS,
     });
+    let workspaceTrust: "internal" | undefined;
+    try {
+      workspaceTrust = declaredWorkspaceTrust(resolvePartition(ctx2 as BindableContext).workspaceKey);
+    } catch {
+      workspaceTrust = undefined;
+    }
     return {
       page,
       discussions: res.discussionCount,
@@ -91,6 +100,7 @@ export const readNotionCommentsEntry = defineTool({
       blocksScanned: res.blocksScanned,
       truncated: res.truncated,
       text: renderComments(res.comments),
+      ...(workspaceTrust !== undefined ? { workspaceTrust } : {}),
     };
   },
   toModelOutput(output) {
@@ -102,7 +112,11 @@ export const readNotionCommentsEntry = defineTool({
     const body = output.comments === 0 ? header : `${header}\n${output.text}${suffix}`;
     return ingestUntrustedModelOutput(body, {
       source: `notion comments ${output.page}`,
-      ingestion: { kind: "notion", label: "read_notion_comments" },
+      ingestion: {
+        kind: "notion",
+        label: "read_notion_comments",
+        ...(output.workspaceTrust !== undefined ? { workspaceTrust: output.workspaceTrust } : {}),
+      },
     });
   },
 });

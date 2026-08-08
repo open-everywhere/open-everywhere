@@ -29,6 +29,7 @@ const prFeedbackOutputSchema = z.object({
     bodiesClipped: z.number(),
     maxBodyChars: z.number(),
   }),
+  repoPrivate: z.boolean().optional(),
 });
 
 export default defineTool({
