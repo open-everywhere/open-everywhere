@@ -36,6 +36,11 @@ registerConfig({
           approve: (req: { readonly domain?: string; readonly action?: string }) =>
             req.action === "skill.delete" && req.domain === "fastlane" ? "allow" : undefined,
         },
+        {
+          name: "hookfast-lower",
+          approve: (req: { readonly domain?: string; readonly action?: string }) =>
+            req.action === "webhook.rotate" && req.domain === "hookfast" ? "allow" : undefined,
+        },
       ],
     },
   ],
@@ -48,6 +53,7 @@ registerConfig({
     { name: "frozen", channels: ["slack/T1/C_FROZEN"] },
     { name: "fastlane", channels: ["slack/T1/C_FAST"] },
     { name: "plain", channels: ["slack/T1/C_PLAIN"] },
+    { name: "hookfast", channels: ["slack/T1/C_HOOK"] },
   ],
   loadSilos: () => [],
   domainsForSurface: () => [],
@@ -107,6 +113,31 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(decided!.decidedBy === "chain:custom:fastlane-lower", "allow: decidedBy is the chain element, never a human's id");
   const auto = await rowsFor("approval.autoapproved");
   ok(auto.length === 1 && (auto[0]!.detail ?? {}).resolvedBy === "custom:fastlane-lower", "allow: the approval.autoapproved row records the lowering");
+}
+
+{
+  const res = await requestApproval(
+    {
+      org: "test-org",
+      kind: "webhook.rotate",
+      args: { org: "test-org", hookId: "ci-status", posture: "read-only", surfaceKey: "slack/T1/C_HOOK", requestedBy: "U_HUMAN", platform: "slack", channelId: "C_HOOK" },
+      scopeKey: "slack/T1/C_HOOK",
+      domain: "hookfast",
+      channelId: "C_HOOK",
+      requestedBy: "U_HUMAN",
+      threadTs: null,
+    },
+    { postCard },
+  );
+  ok(res.autoApproved === undefined && typeof res.id === "string", "floor: webhook.rotate under the SAME lowering that auto-approves skill.delete instead CARDS");
+  const row = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === res.id);
+  ok(row !== undefined && row.status === "pending", "floor: a pending row awaits a human's click — the mint has NOT happened");
+  const auto = await rowsFor("approval.autoapproved");
+  ok(!auto.some((r) => (r.detail ?? {}).kind === "webhook.rotate"), "floor: no approval.autoapproved row was ever written for webhook.rotate — execute() did not run");
+  const chainRows = await rowsFor("approval.chain");
+  const d = (chainRows.find((r) => (r.detail ?? {}).action === "webhook.rotate")?.detail ?? {}) as { verdict?: string; registryVerdict?: string; transforms?: { name: string }[] };
+  ok(d.verdict === "ask" && d.registryVerdict === "ask", "floor: the chain row shows ask despite the operator's lowering element existing");
+  ok((d.transforms ?? []).some((t) => t.name === "beneficiary-clicker-floor"), "floor: the row names the arrow that refused the lowering — queryable, like every other transform");
 }
 
 {
@@ -172,5 +203,5 @@ async function rowsFor(action: string): Promise<Row[]> {
   ok(res.autoApproved === undefined && typeof res.id === "string", "non-tool kind: session.checkpoint still cards even under DENY_ALL — the chain governs tool-proposed kinds only");
 }
 
-console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, and the non-tool-kind carve-out`);
+console.log(`✓ approver-chain-flow: ${passed} assertions — ask parity (card + chain row), operator deny (nothing minted), config lowering (frozen args executed, wedge row decided by the chain), unattended fail-fast, BYPASS-as-transform, deny-survives-bypass, DENY_ALL, the non-tool-kind carve-out, and the OPE-310 beneficiary-clicker floor`);
 rmSync(tmp, { recursive: true, force: true });

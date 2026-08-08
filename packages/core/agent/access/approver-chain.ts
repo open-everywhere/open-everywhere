@@ -30,6 +30,7 @@ export interface ApprovalChainRequest {
   readonly aws?: AwsScreenInput;
   readonly connectorOpRaise?: "write" | "destructive";
   readonly grant?: { readonly kind: string; readonly grantedBy: string };
+  readonly beneficiaryClicker?: boolean;
 }
 
 export function chainTaintSignal(): boolean {
@@ -129,9 +130,9 @@ export function autoJudgeEligible(tool: string): boolean {
   return autoJudge !== undefined && AUTO_JUDGE_ELIGIBILITY[tool] !== undefined;
 }
 
-export type TransformStage = "mode" | "judge" | "unattended" | "taint";
+export type TransformStage = "mode" | "judge" | "unattended" | "taint" | "floor";
 
-export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "judge", "unattended", "taint"];
+export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "judge", "unattended", "taint", "floor"];
 
 export interface TransformRow {
   readonly name: string;
@@ -187,6 +188,14 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     reason: "taint-refused",
     fires: (req) => taintedOf(req) && taintToleranceOf(req.tool) === "refuse",
     to: () => "deny",
+  },
+  {
+    name: "beneficiary-clicker-floor",
+    stage: "floor",
+    from: ["allow"],
+    reason: "beneficiary-clicker",
+    fires: (req) => req.beneficiaryClicker === true,
+    to: (_req, registryVerdict) => registryVerdict,
   },
 ];
 

@@ -165,6 +165,7 @@ export async function requestApproval(
       unattended: input.chain?.unattended ?? false,
       ...(input.chain?.tainted !== undefined ? { tainted: input.chain.tainted } : {}),
       ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
+      ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
     const resolution = await resolveApproverChain(chainReq, { approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined) });
     await appendAudit({

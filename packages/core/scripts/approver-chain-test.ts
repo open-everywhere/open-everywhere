@@ -119,12 +119,20 @@ for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
   console.log(`  pin1: deny-invariant held over 3000 fuzzed resolutions (${denyIns} deny-in cases)`);
 }
 
-ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "unattended", "taint"]), "pin3: transform stage order is mode → judge → unattended → taint");
+ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "unattended", "taint", "floor"]), "pin3: transform stage order is mode → judge → unattended → taint → floor (OPE-310 added floor)");
 {
   const names = TRANSFORM_TABLE.map((t) => t.name);
   ok(
-    JSON.stringify(names) === JSON.stringify(["mode:DANGEROUSLY_BYPASS", "mode:APPROVE_ALL", "mode:DENY_ALL", "judge:AUTO", "unattended", "taint:refuse"]),
-    "pin3: the transform table declares exactly the six known arrows",
+    JSON.stringify(names) === JSON.stringify([
+      "mode:DANGEROUSLY_BYPASS",
+      "mode:APPROVE_ALL",
+      "mode:DENY_ALL",
+      "judge:AUTO",
+      "unattended",
+      "taint:refuse",
+      "beneficiary-clicker-floor",
+    ]),
+    "pin3: the transform table declares exactly the seven known arrows (OPE-310 added the floor)",
   );
   ok(!names.includes("taint:card"), "pin3: there is NO taint:card arrow — a taint marking does not move a verdict (OPE-307)");
   ok(TRANSFORM_TABLE.filter((t) => t.stage === "taint").length === 1, "pin3: exactly ONE taint arrow survives, and it is the four-sink refusal");
@@ -149,6 +157,31 @@ ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "u
   ok(dAllow.verdict === "deny" && dAsk.verdict === "deny", "pin3: DENY_ALL tightens every verdict to deny ([OPEN] arrow implemented as * → deny)");
   ok(dAsk.transforms[0]!.reason === "mode-deny-all", "pin3: DENY_ALL denies carry their reason");
 
+}
+
+{
+  const ordinaryLowered = await resolveApproverChain(req("create_ticket"), { approvers: [approver("lower", "allow")] });
+  ok(ordinaryLowered.verdict === "allow" && ordinaryLowered.transforms.length === 0, "floor: an ordinary (non-beneficiary) verb's config lowering is untouched");
+
+  const beneficiaryLowered = await resolveApproverChain(req("rotate_webhook", { action: "webhook.rotate", beneficiaryClicker: true }), {
+    approvers: [approver("lower", "allow")],
+  });
+  ok(beneficiaryLowered.verdict === "ask", "floor: a config-lowered beneficiary-clicker kind is floored BACK to ask");
+  ok(
+    beneficiaryLowered.transforms.length === 1 && beneficiaryLowered.transforms[0]!.name === "beneficiary-clicker-floor" && beneficiaryLowered.transforms[0]!.to === "ask",
+    "floor: the floor is recorded as a TRANSFORM (allow → ask), so the audit row shows the lowering AND its refusal",
+  );
+  ok(beneficiaryLowered.resolvedBy === "custom:lower", "floor: resolvedBy still names the element that tried to lower it — the floor doesn't hide who attempted it");
+
+  const beneficiaryBypassed = await resolveApproverChain(req("rotate_webhook", { action: "webhook.rotate", beneficiaryClicker: true, mode: { mode: "DANGEROUSLY_BYPASS" } }));
+  ok(beneficiaryBypassed.verdict === "ask", "floor: DANGEROUSLY_BYPASS cannot lift a beneficiary-clicker kind's floor either");
+  ok(
+    beneficiaryBypassed.transforms.map((t) => t.name).join(",") === "mode:DANGEROUSLY_BYPASS,beneficiary-clicker-floor",
+    "floor: BYPASS's ask→allow is recorded, then the floor tightens it straight back — both transforms visible on the row",
+  );
+
+  const beneficiaryUnlowered = await resolveApproverChain(req("rotate_webhook", { action: "webhook.rotate", beneficiaryClicker: true }));
+  ok(beneficiaryUnlowered.verdict === "ask" && beneficiaryUnlowered.transforms.length === 0, "floor: an unlowered beneficiary-clicker kind cards exactly as before — no transform fires");
 }
 
 ok(ELEMENT_CLAMPS.connector.includes("deny") && !ELEMENT_CLAMPS.connector.includes("allow"), "pin4: connector clamp is raise-only by default");
@@ -238,10 +271,21 @@ const EXAMPLES: readonly ApprovalScenario[] = [
     request: req("add_routine_rule", { tainted: true, mode: { mode: "DANGEROUSLY_BYPASS" } }),
     expect: { verdict: "deny", transforms: ["mode:DANGEROUSLY_BYPASS", "taint:refuse"] },
   },
+  {
+    name: "example 7: beneficiary-clicker floor refuses a config lowering",
+    request: req("rotate_webhook", { action: "webhook.rotate", beneficiaryClicker: true }),
+    approvers: [approver("support-lower", "allow")],
+    expect: { verdict: "ask", resolvedBy: "custom:support-lower", registryVerdict: "ask", transforms: ["beneficiary-clicker-floor"] },
+  },
+  {
+    name: "example 8: beneficiary-clicker floor survives BYPASS",
+    request: req("rotate_webhook", { action: "webhook.rotate", beneficiaryClicker: true, mode: { mode: "DANGEROUSLY_BYPASS" } }),
+    expect: { verdict: "ask", transforms: ["mode:DANGEROUSLY_BYPASS", "beneficiary-clicker-floor"] },
+  },
 ];
 {
   const failures = await runApprovalScenarios(EXAMPLES);
-  ok(failures.length === 0, `worked examples: all six pass through the scenario runner${failures.length > 0 ? ` — ${failures.join(" | ")}` : ""}`);
+  ok(failures.length === 0, `worked examples: all eight pass through the scenario runner${failures.length > 0 ? ` — ${failures.join(" | ")}` : ""}`);
 }
 
 ok(taintToleranceOf("add_routine_rule") === "refuse", "taint: add_routine_rule is a refuse-sink");
@@ -314,4 +358,4 @@ ok(registryVerdictOf("session.checkpoint") === "ask", "kind map: the fallback na
   console.log(`  P0 latency: evaluate-all over a ${2 + 5}-element chain ≈ ${(perResolution * 1000).toFixed(1)}µs/resolution`);
 }
 
-console.log(`✓ approver-chain: ${passed} assertions — six pins held (deny-invariant fuzzed, level order pinned, transform table honoured, clamps fail closed, judge table empty, audit rows complete), registry parity exact, all six worked examples green`);
+console.log(`✓ approver-chain: ${passed} assertions — six pins held (deny-invariant fuzzed, level order pinned, transform table honoured, clamps fail closed, judge table empty, audit rows complete), registry parity exact, all eight worked examples green (incl. the OPE-310 beneficiary-clicker floor)`);
