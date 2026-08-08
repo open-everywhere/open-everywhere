@@ -20,6 +20,25 @@ const { registerSlackFixtureMapper, registerSlackTestBridge } = await import("./
 registerSlackFixtureMapper();
 registerSlackTestBridge({ confirmChannelInternal: async () => true });
 
+const { registerIdentityMapper } = await import("../agent/identity/binding.js");
+registerIdentityMapper("teams", (ctx) => {
+  const a = ((ctx as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+  return {
+    workspace: a["workspace_id"],
+    surface: a["conversation_id"],
+    mode: "channel" as const,
+    visibility: "private" as const,
+    trust: "internal" as const,
+    principalId: a["user_id"],
+    ...(a["conversation_id"] ? { target: { channelId: a["conversation_id"] } } : {}),
+  };
+});
+const teamsCtx = (conversationId: string) =>
+  ({
+    channel: { kind: "teams" },
+    session: { auth: { current: { attributes: { workspace_id: "W1", conversation_id: conversationId, user_id: "U_ASK" }, principalId: "U_ASK" } } },
+  }) as never;
+
 const { registerConfig } = await import("../agent/access/config.js");
 const { readAudit } = await import("../agent/audit/audit.js");
 const { requestApproval, handleApprovalPayload } = await import("../agent/approvals/flow.js");
@@ -64,7 +83,7 @@ const codeSilos: MemorySilo[] = [
 ];
 const codeDomains: Domain[] = [
   { name: "org", match: "org", memory: "org-brain" },
-  { name: "eng", channels: ["slack/T1/C_ENG"], memory: "org-brain" },
+  { name: "eng", channels: ["slack/T1/C_ENG", "teams/W1/CONV_ENG"], memory: "org-brain" },
 ];
 const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: ["notion"] }];
 const codeBindings: Binding[] = [];
@@ -122,7 +141,12 @@ const existing = (silo: string) => ({ kind: "existing-silo" as const, silo });
 await rejectsWith(
   () => createAgentTool.execute({ name: "helper", memory: newReadonly }, noCardCtx),
   "approval-card path",
-  "tool: refuses off a surface with no approval-card path",
+  "tool: refuses off a surface with no domain to route a card through (OPE-338: the venue walk's no-domain shape)",
+);
+await rejectsWith(
+  () => createAgentTool.execute({ name: "helper", memory: newReadonly }, teamsCtx("CONV_ENG")),
+  "already belongs to the",
+  "tool: 🔴 a card-less room the venue COULD route through gets the domain-collision refusal, not a redirected card — the two preconditions are mutually exclusive by construction",
 );
 await rejectsWith(
   () => createAgentTool.execute({ name: "helper", memory: newReadonly }, fireCtx("C_NEW")),

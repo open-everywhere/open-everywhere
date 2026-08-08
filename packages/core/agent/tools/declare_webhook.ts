@@ -8,8 +8,9 @@ import { bindFrom } from "../identity/binding.js";
 import { getConfig } from "../access/config.js";
 import { untrustedIngestedThisTurn } from "../access/taint-signal.js";
 import { describeReadableBy, readableByDefects, type ReadableBy } from "../access/read-grant.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 import { requireWebhookDeclareConfig } from "../approvals/webhook-declare.js";
 import {
@@ -53,7 +54,7 @@ export function sourceVocabularyRefusal(source: string, secretHome: "env" | "db"
 
 export default defineTool({
   description:
-    "Propose an inbound webhook: an endpoint an outside system can POST to. It comes in two shapes and you pick by whether you pass `target` + `instruction` together. WITH them, every accepted delivery runs that ONE standing instruction in that ONE channel — right when the consequence is a single fixed thing (\"when CI finishes, post the result in #deploys\"). WITHOUT them the hook is EMIT-ONLY: it just becomes a door, and what happens is decided afterwards by `event` routines someone creates separately — right when the consequences aren't settled yet, are likely to change, or are several different reactions to one system. Pass both fields or neither; one alone is refused. This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events. `posture` is required too: it decides how much of the sender's payload ever reaches the prompt — none of it, only named fields, or all of it.",
+    "Propose an inbound webhook: an endpoint an outside system can POST to. It comes in two shapes and you pick by whether you pass `target` + `instruction` together. WITH them, every accepted delivery runs that ONE standing instruction in that ONE channel — right when the consequence is a single fixed thing (\"when CI finishes, post the result in #deploys\"). WITHOUT them the hook is EMIT-ONLY: it just becomes a door, and what happens is decided afterwards by `event` routines someone creates separately — right when the consequences aren't settled yet, are likely to change, or are several different reactions to one system. Pass both fields or neither; one alone is refused. This does NOT create anything — it opens a pull request adding the declaration to this deployment's config, for a human to review and merge; an operator then sets the signing secret separately, so no secret ever appears in the PR or in chat. `readableBy` is required: name the memory domain(s) whose routines may subscribe to this hook's events. `posture` is required too: it decides how much of the sender's payload ever reaches the prompt — none of it, only named fields, or all of it. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `message` field names it, and you MUST relay that.",
   inputSchema: z.object({
     id: z
       .string()
@@ -121,11 +122,12 @@ export default defineTool({
     if (mode === "mpim") throw new Error("Group DMs are execution-only — propose webhooks from a channel or a DM instead.");
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `Proposing a webhook needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human has to read the exact declaration before a PR is opened in their name.`,
-      );
+    const p = resolvePartition(ctx);
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that webhook"));
     }
+    const venue = venueResult.venue;
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error("declare_webhook needs a verified sender — a triggered routine fire has no acting sender (only the creator it is attributed to), and a fire may not open a config PR declaring a standing inbound door in that person's name. Ask a person in this conversation to propose it.");
@@ -200,9 +202,8 @@ export default defineTool({
       }
     }
 
-    const p = resolvePartition(ctx);
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
-    if (!channelId) throw new Error("declare_webhook couldn't resolve this channel's id for the approval card — try again from a real channel.");
+    if (!channelId) throw new Error("declare_webhook couldn't resolve this channel's id — try again from a real channel.");
 
     const declaration: HookDeclaration = {
       id,
@@ -234,11 +235,11 @@ export default defineTool({
         scopeKey: p.surfaceKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const tail =
@@ -266,8 +267,9 @@ export default defineTool({
       id,
       readableBy: describeReadableBy(readableBy),
       message:
-        `card posted — approving it opens a PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}" (pending ${posted.id}). ` +
-        tail,
+        `${cardPostedPrefix(venue)} — approving it opens a PR against ${cfg.configRepo} declaring ${target === undefined ? "an emit-only " : ""}webhook "${id}" (pending ${posted.id}). ` +
+        tail +
+        describeVenueRedirect(venue, "approve it"),
     };
   },
 });

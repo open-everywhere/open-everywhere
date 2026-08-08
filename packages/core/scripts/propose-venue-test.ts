@@ -44,6 +44,7 @@ await import("../agent/approvals/memory-remember.js");
 await import("../agent/approvals/skill-create.js");
 await import("../agent/approvals/skill-delete.js");
 await import("../agent/approvals/pr-open.js");
+await import("../agent/webhooks/oe-standard-webhook.js");
 
 registerIdentityMapper("teams", (ctx) => {
   const a = ((ctx as { session?: { auth?: { current?: { attributes?: Record<string, string> } } } }).session?.auth?.current?.attributes ?? {}) as Record<string, string>;
@@ -102,6 +103,7 @@ registerConfig({
     configRepo: "acme/agent-config",
     baseBundles: () => BUNDLES,
     baseBindings: () => BINDINGS,
+    baseWebhooks: () => [],
     dryRun: true,
   }),
 });
@@ -112,6 +114,8 @@ const revokeTool = (await import("../agent/tools/revoke_connector.js")).default;
 const clearTool = (await import("../agent/tools/clear_connector_override.js")).default;
 const setSpendTool = (await import("../agent/tools/set_spend_limit.js")).default;
 const clearSpendTool = (await import("../agent/tools/clear_spend_limit.js")).default;
+const createAgentTool = (await import("../agent/tools/create_agent.js")).default;
+const declareWebhookTool = (await import("../agent/tools/declare_webhook.js")).default;
 
 const cancelRoutineTool = (await import("../agent/tools/cancel_routine.js")).default;
 const editRoutineTool = (await import("../agent/tools/edit_routine.js")).default;
@@ -649,7 +653,123 @@ await putDomainSkill("default", "eng", "existing-skill", "Do the thing.", "U_ADM
   ok(!ct.message.includes("card posted in") && !ct.message.includes("This surface can't host an approval card"), "326-unchanged: …no venue named, no redirect sentence appended");
 }
 
+const newReadonlyMemory = { kind: "new-readonly" as const, provider: "notion" as const, container: "root-page" };
+const agentInput = (name: string) => ({ name, memory: newReadonlyMemory, exposed: false as const });
+
+{
+  const dw = (await declareWebhookTool.execute(
+    { id: "venue-hook-1", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] },
+    teamsCtx("CONV1"),
+  )) as { pending: boolean; pendingId: string; message: string };
+  ok(dw.pending === true, "338-redirect: 🔴 `declare_webhook` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
+  const dwRow = await rowOf(dw.pendingId);
+  ok(dwRow["channelId"] === "C_OPS" && dwRow["postedTo"] === "slack/T1/C_OPS" && dwRow["threadTs"] === null, "338-redirect: declare_webhook's card is in the venue, top-level");
+  ok(dw.message.includes("card posted in slack/T1/C_OPS") && dw.message.includes("approve it"), "338-redirect: …and names the venue and the verb");
+
+  const ca = (await createAgentTool.execute(agentInput("venue-desk"), teamsCtx("CONV1"))) as {
+    requested: boolean;
+    pendingId: string;
+    note: string;
+  };
+  ok(ca.requested === true, "338-redirect: 🔴 `create_agent` WORKS from a card-less room — it used to refuse outright on `hasApprovalCardPath`");
+  const caRow = await rowOf(ca.pendingId);
+  ok(caRow["channelId"] === "C_OPS" && caRow["postedTo"] === "slack/T1/C_OPS" && caRow["threadTs"] === null, "338-redirect: create_agent's card is in the venue, top-level");
+  ok(ca.note.includes("card posted in slack/T1/C_OPS") && ca.note.includes("approve it"), "338-redirect: …and names the venue and the verb");
+}
+
+{
+  const dw = (await declareWebhookTool.execute(
+    { id: "venue-hook-2", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] },
+    teamsCtx("CONV1"),
+  )) as { pendingId: string };
+  const dwRow = await rowOf(dw.pendingId);
+  const dwArgs = JSON.parse(dwRow["argsJson"] as string) as Record<string, unknown>;
+  ok(
+    dwArgs["channelId"] === "CONV1" && dwArgs["threadTs"] === null,
+    "args-vs-card(338): 🔴 declare_webhook's frozen args keep the ASKING channel — the requester's own outcome note goes back there, so conflating it with the venue would send it to the wrong room",
+  );
+  ok(dwArgs["scopeKey"] === "teams/W1/CONV1", "args-vs-card(338): …and the scope stays the asking surface's");
+
+  const ca = (await createAgentTool.execute(agentInput("venue-desk-2"), teamsCtx("CONV1"))) as { pendingId: string };
+  const caRow = await rowOf(ca.pendingId);
+  const caArgs = JSON.parse(caRow["argsJson"] as string) as Record<string, unknown>;
+  ok(
+    caArgs["channelId"] === "CONV1" && caArgs["threadTs"] === null,
+    "args-vs-card(338): 🔴 create_agent's frozen args keep the ASKING channel too — the agent binds to it and the requester's own outcome note lands there",
+  );
+  ok(
+    (caArgs["spec"] as { channels: string[] }).channels[0] === "teams/W1/CONV1",
+    "args-vs-card(338): …and the agent's OWN channel binding is the asking surface's, never the venue's",
+  );
+
+  const dwFrom2 = (await declareWebhookTool.execute(
+    { id: "venue-hook-3", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] },
+    teamsCtx("CONV2"),
+  )) as { pendingId: string };
+  const dwRow2 = await rowOf(dwFrom2.pendingId);
+  ok(dwRow2["channelId"] === dwRow["channelId"] && dwRow2["postedTo"] === dwRow["postedTo"], "args-vs-card(338): two asking rooms in one domain share ONE venue for declare_webhook");
+  ok(
+    dwRow2["scopeKey"] === "teams/W1/CONV2" && dwRow["scopeKey"] === "teams/W1/CONV1",
+    "args-vs-card(338): 🔴 …and the SCOPE is each asking room's own — same venue, distinct scopeKeys",
+  );
+
+  const caFrom2 = (await createAgentTool.execute(agentInput("venue-desk-3"), teamsCtx("CONV2"))) as { pendingId: string };
+  const caRow2 = await rowOf(caFrom2.pendingId);
+  ok(caRow2["channelId"] === caRow["channelId"] && caRow2["postedTo"] === caRow["postedTo"], "args-vs-card(338): …and for create_agent too, same venue from a second asking room");
+  ok(
+    caRow2["scopeKey"] === "teams/W1/CONV2" && caRow["scopeKey"] === "teams/W1/CONV1",
+    "args-vs-card(338): 🔴 …with each row's own scope, and each agent's OWN channel binding (not shown here) following the SAME split",
+  );
+}
+
+{
+  const before = await pendingCount();
+  await refuses(
+    () => declareWebhookTool.execute({ id: "venue-hook-lone", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] } as never, teamsCtx("CONV_LONE")),
+    /I can't propose that webhook from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "338-refuse: declare_webhook refuses with the venue's copy and its own verb — no card-capable channel in the domain",
+  );
+  await refuses(
+    () => createAgentTool.execute({ name: "lone-desk", memory: newReadonlyMemory } as never, teamsCtx("CONV_LONE")),
+    /I can't propose that agent from here.*domain "lonely" has no Slack or Discord channel.*domains\.ts/s,
+    "338-refuse: create_agent names ITS OWN verb, not its sibling's",
+  );
+
+  await refuses(
+    () => declareWebhookTool.execute({ id: "venue-hook-orphan", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] } as never, teamsCtx("CONV_ORPHAN")),
+    /I can't propose that webhook from here.*isn't in an explicit domain.*domains\.ts/s,
+    "338-refuse: a channel in NO domain refuses with the OTHER reason — the config change is different",
+  );
+  await refuses(
+    () => createAgentTool.execute({ name: "orphan-desk", memory: newReadonlyMemory } as never, teamsCtx("CONV_ORPHAN")),
+    /I can't propose that agent from here.*isn't in an explicit domain.*domains\.ts/s,
+    "338-refuse: …and create_agent gets the same OTHER reason, with its own verb",
+  );
+  ok(await pendingCount().then((after) => after === before), "338-refuse: 🔴 NOTHING is minted on any of the four refusals");
+}
+
+{
+  const dw = (await declareWebhookTool.execute(
+    { id: "own-room-hook", source: "oe-standard-webhook", posture: "trigger-only", readableBy: ["eng"] },
+    slackCtx("C1"),
+  )) as { pendingId: string; message: string };
+  const dwRow = await rowOf(dw.pendingId);
+  ok(dwRow["channelId"] === "C1" && dwRow["postedTo"] === "slack/T1/C1", "338-unchanged: declare_webhook in a card-capable own room hosts its own card");
+  ok(
+    !dw.message.includes("card posted in") && !dw.message.includes("This surface can't host an approval card"),
+    "338-unchanged: …no venue named, no redirect sentence appended",
+  );
+
+  const ca = (await createAgentTool.execute(agentInput("own-room-desk"), slackCtx("C1"))) as { pendingId: string; note: string };
+  const caRow = await rowOf(ca.pendingId);
+  ok(caRow["channelId"] === "C1" && caRow["postedTo"] === "slack/T1/C1", "338-unchanged: create_agent in a card-capable own room hosts its own card");
+  ok(
+    !ca.note.includes("card posted in") && !ca.note.includes("This surface can't host an approval card"),
+    "338-unchanged: …no venue named, no redirect sentence appended",
+  );
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log(
-  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools, the nine OPE-325 tools and the three entity-gated OPE-326 tools; spend pair matches its sibling, args-vs-card split incl. the entity/destination join, fail-closed refusals, own-room unchanged)`,
+  `✓ propose-venue: ${n} assertions passed (card-less redirect for all six OPE-303/312 propose tools, the nine OPE-325 tools, the three entity-gated OPE-326 tools and the two OPE-338 tools; spend pair matches its sibling, args-vs-card split incl. the entity/destination join and distinct scopeKeys under a shared venue, fail-closed refusals, own-room unchanged)`,
 );

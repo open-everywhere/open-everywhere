@@ -16,8 +16,9 @@ import {
 } from "../memory/agents-codemod.js";
 import type { MemorySilo } from "../memory/silo.js";
 import type { AgentCreateArgs } from "../approvals/agent-create.js";
-import { requestApproval, postedToSurfaceKey, autoApprovedNote } from "../approvals/flow.js";
-import { approvalPostDeps, hasApprovalCardPath } from "./set_spend_limit.js";
+import { requestApproval, autoApprovedNote } from "../approvals/flow.js";
+import { approvalPostDeps } from "./set_spend_limit.js";
+import { checkApprovalVenue, describeVenueRefusal, cardPostedPrefix, describeVenueRedirect } from "../approvals/card-venue.js";
 import { requireSessionContinuation } from "../spend/checkpoint.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -36,7 +37,7 @@ const selectionSchema = z.object({
 
 export default defineTool({
   description:
-    "PROPOSE a new AGENT for THIS channel — a self-contained teammate with its OWN memory brain and its own capabilities. This grants nothing itself: it opens a pull request adding the agent to this deployment's config, for a human to review and merge; nothing is provisioned until an admin merges it. An agent is three things derived from what you pass: a memory DOMAIN whose roster is this channel, a memory SILO (where its brain lives — either reuse an existing silo by name, or materialise a NEW read-only silo over notion/github/postgres), and a capability BUNDLE (its standing instructions + any connectors) bound to that channel. Use it when someone wants to stand up a dedicated assistant in a channel (\"make this channel a support agent backed by our Notion handbook\"). Refused from a DM, a group chat, an externally-shared channel, a channel that ALREADY belongs to a domain, or a surface with no approval-card path (Slack/Discord). Set `exposed: true` ONLY for an agent a wider, less-trusted audience will reach — it is then forced curated READ-ONLY. The posted card IS the reply — do not add narration after this call.",
+    "PROPOSE a new AGENT for THIS channel — a self-contained teammate with its OWN memory brain and its own capabilities. This grants nothing itself: it opens a pull request adding the agent to this deployment's config, for a human to review and merge; nothing is provisioned until an admin merges it. An agent is three things derived from what you pass: a memory DOMAIN whose roster is this channel, a memory SILO (where its brain lives — either reuse an existing silo by name, or materialise a NEW read-only silo over notion/github/postgres), and a capability BUNDLE (its standing instructions + any connectors) bound to that channel. Use it when someone wants to stand up a dedicated assistant in a channel (\"make this channel a support agent backed by our Notion handbook\"). Refused from a DM, a group chat, an externally-shared channel, or a channel that ALREADY belongs to a domain. Set `exposed: true` ONLY for an agent a wider, less-trusted audience will reach — it is then forced curated READ-ONLY. The posted card IS the reply — do not add narration after this call. EXCEPT when this surface can't host a card: it then goes to a card-capable channel in the same domain, the `note` field names it, and you MUST relay that.",
   inputSchema: z.object({
     name: z
       .string()
@@ -77,11 +78,12 @@ export default defineTool({
     await requireSessionContinuation(ctx, "create_agent");
 
     const binding = bindFrom(ctx);
-    if (!hasApprovalCardPath(binding.platform)) {
-      throw new Error(
-        `create_agent needs a surface with an approval-card path (Slack or Discord) — this is "${binding.platform}". A human has to read the exact agent spec before a PR is opened in their name.`,
-      );
+    const p = resolvePartition(ctx);
+    const venueResult = await checkApprovalVenue(binding, p, () => getConfig().loadDomains());
+    if ("refusal" in venueResult) {
+      throw new Error(describeVenueRefusal(venueResult.refusal, binding.platform, "propose that agent"));
     }
+    const venue = venueResult.venue;
     const requestedBy = actingPrincipalIdOf(ctx);
     if (!requestedBy) {
       throw new Error(
@@ -111,7 +113,7 @@ export default defineTool({
 
     const channelId = typeof binding.target?.channelId === "string" ? binding.target.channelId : undefined;
     if (!channelId) {
-      throw new Error("create_agent couldn't resolve this channel's id for the approval card — try again from a real channel, not a synthetic context.");
+      throw new Error("create_agent couldn't resolve this channel's id — try again from a real channel, not a synthetic context.");
     }
 
     const req = buildResolveRequest(ctx);
@@ -164,7 +166,6 @@ export default defineTool({
     const resolveSilo = (n: string): MemorySilo | undefined => silos.find((s) => s.name === n);
     assertExposedAgentSpec(spec, resolveSilo);
 
-    const p = resolvePartition(ctx);
     const args: AgentCreateArgs = {
       org: p.org,
       scopeKey: p.surfaceKey,
@@ -186,30 +187,28 @@ export default defineTool({
         scopeKey: args.scopeKey,
         domain: null,
         requestedBy,
-        channelId,
-        threadTs: binding.threadTs ?? null,
-        postedTo: postedToSurfaceKey(binding, channelId),
+        channelId: venue.channelId,
+        threadTs: venue.sameRoom ? binding.threadTs ?? null : null,
+        postedTo: venue.surfaceKey,
       },
-      approvalPostDeps(binding.platform),
+      approvalPostDeps(venue.platform),
     );
 
     const memoryClause = spec.memory.kind === "new-readonly" ? `a new read-only ${spec.memory.provider} silo` : `existing silo "${spec.memory.silo}"`;
+    const subject = `PR against ${ar.configRepo} provisioning agent "${name}" (reading ${memoryClause}) for this channel`;
     if (posted.autoApproved) {
       return {
         requested: false,
         autoApproved: true,
         pendingId: posted.id,
-        note: autoApprovedNote(`PR against ${ar.configRepo} provisioning agent "${name}" (reading ${memoryClause}) for this channel`, posted.autoApproved),
+        note: autoApprovedNote(subject, posted.autoApproved),
       };
     }
     return {
       requested: true,
       pendingId: posted.id,
       expiresAt: posted.expiresAt,
-      note:
-        `card posted — approving it opens a PR against ${ar.configRepo} provisioning agent "${name}" ` +
-        `(reading ${memoryClause}) for this channel (pending ${posted.id}). ` +
-        `Nothing is provisioned until an admin merges the PR.`,
+      note: `${cardPostedPrefix(venue)} — ${subject} (pending ${posted.id}). Nothing is provisioned until an admin merges the PR.${describeVenueRedirect(venue, "approve it")}`,
     };
   },
 });
