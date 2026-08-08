@@ -4,6 +4,7 @@ import { Agent } from "undici";
 import type { BindableContext } from "../identity/binding.js";
 import type { ReachableHost } from "./resolver.js";
 import { resolveAccessFor } from "./request.js";
+import { narrowByConnectorOverride } from "./connector-scope.js";
 import { auditToolAction } from "../audit/tool-action.js";
 
 export type HostLookup = (hostname: string) => Promise<readonly string[]>;
@@ -63,31 +64,33 @@ function isLiteralPrivateHost(host: string): boolean {
   return false;
 }
 
-function parseHttpUrl(raw: string): URL {
+const DEFAULT_TOOL_LABEL = "post_file";
+
+function parseHttpUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): URL {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`post_file: "${raw}" is not a valid URL.`);
+    throw new Error(`${tool}: "${raw}" is not a valid URL.`);
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`post_file: only http(s) URLs may be fetched — got "${url.protocol}".`);
+    throw new Error(`${tool}: only http(s) URLs may be fetched — got "${url.protocol}".`);
   }
   if (isLiteralPrivateHost(url.hostname)) {
-    throw new Error(`post_file: refusing to fetch an internal/loopback/link-local host ("${url.hostname}").`);
+    throw new Error(`${tool}: refusing to fetch an internal/loopback/link-local host ("${url.hostname}").`);
   }
   return url;
 }
 
-async function pinResolvedIp(url: URL): Promise<{ url: URL; dispatcher: Agent }> {
+async function pinResolvedIp(url: URL, tool: string = DEFAULT_TOOL_LABEL): Promise<{ url: URL; dispatcher: Agent }> {
   const addrs = await resolveAll(url.hostname);
   if (addrs.length === 0) {
-    throw new Error(`post_file: "${url.hostname}" did not resolve to any address.`);
+    throw new Error(`${tool}: "${url.hostname}" did not resolve to any address.`);
   }
   for (const ip of addrs) {
     if (isDeniedIp(ip)) {
       throw new Error(
-        `post_file: "${url.hostname}" resolves to a blocked internal/loopback/link-local address (${ip}) — refusing (DNS-rebinding guard).`,
+        `${tool}: "${url.hostname}" resolves to a blocked internal/loopback/link-local address (${ip}) — refusing (DNS-rebinding guard).`,
       );
     }
   }
@@ -101,9 +104,9 @@ async function pinResolvedIp(url: URL): Promise<{ url: URL; dispatcher: Agent }>
   return { url, dispatcher };
 }
 
-export async function assertSafeFetchUrl(raw: string): Promise<{ url: URL; dispatcher: Agent }> {
-  const url = parseHttpUrl(raw);
-  return pinResolvedIp(url);
+export async function assertSafeFetchUrl(raw: string, tool: string = DEFAULT_TOOL_LABEL): Promise<{ url: URL; dispatcher: Agent }> {
+  const url = parseHttpUrl(raw, tool);
+  return pinResolvedIp(url, tool);
 }
 
 export function hostReachable(hostname: string, hosts: readonly ReachableHost[]): boolean {
@@ -111,25 +114,69 @@ export function hostReachable(hostname: string, hosts: readonly ReachableHost[])
   return hosts.some((rh) => rh.host.toLowerCase() === h);
 }
 
+function reachableEntry(hostname: string, hosts: readonly ReachableHost[]): ReachableHost | undefined {
+  const h = hostname.toLowerCase();
+  return hosts.find((rh) => rh.host.toLowerCase() === h);
+}
+
+export const EGRESS_REPORT_PROTOCOL =
+  "This is policy, not an outage: a retry, a mirror, a proxy, a different port and a different DNS " +
+  "name all fail the same way. Report it in your answer instead, naming the host you needed and " +
+  "what you needed it for. Widening is not something either of us can do at runtime — a reachable " +
+  "host is config-as-code, and it changes by reviewed pull request against the bundle that grants " +
+  "it (a `domains` entry for an uncredentialed host, or a connection's `allowedWebsites` for a " +
+  "credentialed one). It then lands on the session's next turn.";
+
+export type ReachDenyReason = "not-allowlisted" | "connector-revoked";
+
+export function egressReachDenial(tool: string, host: string, reason: ReachDenyReason): string {
+  const cause =
+    reason === "not-allowlisted"
+      ? `host "${host}" is not on this session's egress allow-list`
+      : `host "${host}" is reachable only through a connection that has been revoked (break-glass \`revoke_connector\`)`;
+  return `${tool}: ${cause}, so the request was refused before it was made. ${EGRESS_REPORT_PROTOCOL}`;
+}
+
+export interface ReachDeps {
+  readonly tool?: string;
+  readonly hosts?: (ctx: BindableContext) => readonly ReachableHost[];
+  readonly narrow?: (ctx: BindableContext, ids: readonly string[]) => Promise<readonly string[] | null>;
+}
+
+export async function assertEgressReach(ctx: BindableContext, rawUrl: string, deps: ReachDeps = {}): Promise<URL> {
+  const tool = deps.tool ?? DEFAULT_TOOL_LABEL;
+  const url = parseHttpUrl(rawUrl, tool);
+  const hosts = (deps.hosts ?? ((c: BindableContext) => resolveAccessFor(c).reachableHosts))(ctx);
+  const entry = reachableEntry(url.hostname, hosts);
+  const deny = async (reason: ReachDenyReason): Promise<never> => {
+    await auditToolAction(ctx, "egress.hostside.deny", { host: url.hostname, reason, tool });
+    throw new Error(egressReachDenial(tool, url.hostname, reason));
+  };
+  if (!entry) return deny("not-allowlisted");
+  if (entry.viaConnection !== null) {
+    const narrow = deps.narrow ?? narrowByConnectorOverride;
+    const granted = await narrow(ctx, [entry.viaConnection]);
+    if (granted === null || !granted.includes(entry.viaConnection)) return deny("connector-revoked");
+  }
+  return url;
+}
+
 export interface OeFetchOpts {
   readonly auditAs?: string;
+  readonly tool?: string;
 }
 
 export async function oeFetch(ctx: BindableContext, rawUrl: string, opts: OeFetchOpts = {}): Promise<Response> {
-  const parsed = parseHttpUrl(rawUrl);
-  const access = resolveAccessFor(ctx);
-  if (!hostReachable(parsed.hostname, access.reachableHosts)) {
-    await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "not-allowlisted" });
-    throw new Error(`post_file: host "${parsed.hostname}" is not reachable from this session's egress allowlist.`);
-  }
+  const tool = opts.tool ?? DEFAULT_TOOL_LABEL;
+  const parsed = await assertEgressReach(ctx, rawUrl, { tool });
   let pinned: { url: URL; dispatcher: Agent };
   try {
-    pinned = await pinResolvedIp(parsed);
+    pinned = await pinResolvedIp(parsed, tool);
   } catch (err) {
-    await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "ssrf" });
+    await auditToolAction(ctx, "egress.hostside.deny", { host: parsed.hostname, reason: "ssrf", tool });
     throw err;
   }
   const { url, dispatcher } = pinned;
-  await auditToolAction(ctx, opts.auditAs ?? "egress.hostside.allow", { host: url.hostname });
+  await auditToolAction(ctx, opts.auditAs ?? "egress.hostside.allow", { host: url.hostname, tool });
   return fetch(url, { dispatcher, redirect: "error", headers: {} } as unknown as RequestInit);
 }

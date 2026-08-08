@@ -169,7 +169,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "constrained analytics read (OPE-66): the model forms a structured query object (never SQL) over a fixed schema; org scope + rows mode are gated inside via access/analytics-scope.ts's resolveAnalyticsScope, and tainted/ambient turns degrade to aggregates — same in-tool-gating shape as spend_report, and declared for the same reason. Every call + refusal is audited (analytics.query / analytics.refused)",
   ),
   web_fetch: open(
-    "read of the public web, executed HOST-SIDE (not in the sandbox, so the egress allow-list does not bound it); eve fences it to https + public destinations and it escapes nothing",
+    "read of the public web, executed HOST-SIDE — reach is bounded NOT by this table but by the egress plane, applied host-side by the web_fetch fence (access/web-fetch-fence.ts) against the same allow-list the sandbox firewall compiles from; eve additionally fences it to https + public destinations, and the read escapes nothing",
   ),
 
   no_reply: open("ends the turn silently; posts nothing"),

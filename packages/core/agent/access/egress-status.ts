@@ -112,8 +112,10 @@ hold that secret and cannot read it — that is the design, not a gap. A 401 fro
 means the credential is wrong or expired upstream, so report it; do not go looking for a key.
 
 **\`web_fetch\` and \`web_search\` do not run in here.** They execute host-side, outside this
-sandbox, so \`STATUS.json\` says nothing about what they can reach — and a host being absent
-from it does not mean \`web_fetch\` will fail. This file describes commands **you** run in
+sandbox. That changes WHO enforces, not WHAT is allowed: \`web_fetch\` is fenced against this
+same allow-list before it dispatches, so a host absent from \`STATUS.json\` is refused there
+too — audibly, naming the host, unlike the silent failure you get in here. \`web_search\` runs
+inside the model call and is bounded by neither. This file describes commands **you** run in
 this sandbox: \`curl\`, \`git\`, \`npm\`, and anything else you shell out to.
 
 ## If \`enforcement\` is not "enforced"
