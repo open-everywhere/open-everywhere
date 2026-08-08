@@ -25,7 +25,10 @@ const DEFAULTS = { id: "openai/gpt-5.6-luna", gateway: { zeroDataRetention: true
 {
   const s = approvalJudgeCallSettings("scrutiny", DEFAULTS);
   ok(s.id === DEFAULTS.id, "scrutiny: same fixed id — the cost split is call settings, not a second model");
-  ok(typeof s.maxOutputTokens === "number" && s.maxOutputTokens <= 16, "scrutiny: a one-word output budget makes pass 1 the cheap gate");
+  ok(
+    typeof s.maxOutputTokens === "number" && s.maxOutputTokens >= 16 && s.maxOutputTokens <= 2048,
+    "scrutiny: a bounded output budget makes pass 1 the cheap gate (>=16: provider floor; the answer is one word but a reasoning model spends thinking tokens inside the cap)",
+  );
   ok((s.providerOptions?.gateway as Record<string, unknown>)?.caching === "auto", "scrutiny: the SHARED prompt prefix rides gateway caching (the CC cost trick)");
 }
 

@@ -177,9 +177,11 @@ export async function runApprovalJudge(ctx: ApprovalJudgeContext): Promise<Appro
     return { verdict: "defer", source: "unavailable", reasoning: "no judge transport registered", cacheKey, cacheHit: false, passes: 0 };
   }
   try {
-    const scrutiny = parseScrutiny(await completion(judgeScrutinyPrompt(ctx), "scrutiny"));
+    const rawScrutiny = await completion(judgeScrutinyPrompt(ctx), "scrutiny");
+    const scrutiny = parseScrutiny(rawScrutiny);
     if (scrutiny === undefined) {
-      return { verdict: "defer", source: "pass1", reasoning: "pass-1 answer unparseable", cacheKey, cacheHit: false, passes: 1 };
+      const snippet = rawScrutiny.length === 0 ? "<empty text>" : JSON.stringify(rawScrutiny.slice(0, 80));
+      return { verdict: "defer", source: "pass1", reasoning: `pass-1 answer unparseable: ${snippet}`, cacheKey, cacheHit: false, passes: 1 };
     }
     if (!scrutiny) {
       const reasoning = "pass-1: routine — no scrutiny flagged";
