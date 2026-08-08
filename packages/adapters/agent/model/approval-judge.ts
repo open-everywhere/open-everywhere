@@ -7,7 +7,7 @@ import {
 } from "@open-everywhere/core/agent/adapter-api.js";
 import { applyGatewayOptions, type GatewayRoutedDefaults } from "./gateway.js";
 
-const SCRUTINY_MAX_OUTPUT_TOKENS = 8;
+const SCRUTINY_MAX_OUTPUT_TOKENS = 16;
 
 export function approvalJudgeCallSettings(
   pass: JudgePass,
