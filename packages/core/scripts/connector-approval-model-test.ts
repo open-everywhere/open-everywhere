@@ -44,6 +44,12 @@ for (const op of ["notion__delete_page", "linear__remove_label", "gh__destroy_re
 ok(classifyConnectorOpTier("notion__frobnicate_widget") === "destructive", "unknown verb → destructive (fail-closed, never session-skippable)");
 ok(classifyConnectorOpTier("notion__") === "destructive", "empty op → destructive (fail-closed)");
 ok(classifyConnectorOpTier("notion__unarchive_page") === "write", "unarchive is reversible → write, not destructive");
+ok(classifyConnectorOpTier("notion__get_or_create_entity") === "write", "compound get_or_create → write (any write token escalates past a read head)");
+ok(classifyConnectorOpTier("slack__check_and_post_message") === "write", "compound check_and_post → write");
+ok(classifyConnectorOpTier("linear__list_or_create_labels") === "write", "compound list_or_create → write");
+ok(classifyConnectorOpTier("x__get_or_delete_row") === "destructive", "compound with a destructive token → destructive outright");
+ok(classifyConnectorOpTier("x__get_delete_marker") === "destructive", "noun-collision over-gates in the SAFE direction (delete token wins even as a noun)");
+ok(classifyConnectorOpTier("notion__get_page") === "read", "plain read with noun tokens stays read (unrecognised tokens don't drag to destructive when a read verb is present)");
 
 ok(restMethodTier("GET") === "read", "GET → read");
 ok(restMethodTier("head") === "read", "HEAD (case-insensitive) → read");

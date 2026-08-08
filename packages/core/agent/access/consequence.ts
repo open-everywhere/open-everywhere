@@ -29,22 +29,24 @@ const CONNECTOR_WRITE_VERBS: readonly string[] = [
   "replace", "attach", "link", "unlink", "restore", "archive", "unarchive", "unpublish", "revoke", "cancel",
 ];
 
-function connectorOpVerb(toolName: string): string {
+function connectorOpVerbTokens(toolName: string): string[] {
   let op = connectorOpName(toolName).toLowerCase();
   const sep = toolName.indexOf("__");
   if (sep > 0) {
     const conn = toolName.slice(0, sep).toLowerCase();
     if (op.startsWith(`${conn}-`) || op.startsWith(`${conn}_`)) op = op.slice(conn.length + 1);
   }
-  return op.split(/[_-]/, 1)[0] ?? op;
+  return op.split(/[_-]/);
 }
 
 export function classifyConnectorOpTier(toolName: string): ConnectorOpTier {
-  const verb = connectorOpVerb(toolName);
-  if (CONNECTOR_READ_VERBS.includes(verb)) return "read";
-  if (CONNECTOR_DESTRUCTIVE_VERBS.includes(verb)) return "destructive";
-  if (CONNECTOR_WRITE_VERBS.includes(verb)) return "write";
-  return "destructive";
+  let best: ConnectorOpTier | undefined;
+  for (const token of connectorOpVerbTokens(toolName)) {
+    if (CONNECTOR_DESTRUCTIVE_VERBS.includes(token)) return "destructive";
+    if (CONNECTOR_WRITE_VERBS.includes(token)) best = "write";
+    else if (best === undefined && CONNECTOR_READ_VERBS.includes(token)) best = "read";
+  }
+  return best ?? "destructive";
 }
 
 export function restMethodTier(method: string): ConnectorOpTier {
