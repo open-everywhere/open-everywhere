@@ -28,6 +28,8 @@ import { DM_SEAT_CARVE_IN, LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPo
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
+import { registerIdentityMapper } from "../agent/identity/binding.js";
+import { registerWakeOriginCodec } from "../agent/channels/wake-origin-codec.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
 let n = 0;
@@ -68,6 +70,69 @@ function seatCtx(opts: { channelId: string; channelType?: string; token?: string
 
 const DM_SURFACE_KEY = "slack/T1/D_ASKER";
 const DM_TOKEN = "slack:D_ASKER:oe-dm:g2";
+
+const TARGETY_PLATFORM = "oe-test-targety";
+const ARMLESS_PLATFORM = "oe-test-armless";
+const NOCODEC_PLATFORM = "oe-test-nocodec";
+
+interface StubRaw {
+  readonly surface: string;
+  readonly mode: "dm" | "mpim" | "channel";
+  readonly target?: Record<string, unknown>;
+  readonly threadTs?: string;
+  readonly workspace?: string;
+}
+
+function stubCtx(platform: string, raw: StubRaw, token = ""): BindableContext {
+  return {
+    channel: { kind: platform, continuationToken: token },
+    session: {
+      id: `sess-${raw.surface}`,
+      auth: { current: { principalId: "U_STUB", attributes: { oe_platform: platform, oe_grain: "standing", stub_raw: JSON.stringify(raw) } } },
+    },
+  } as unknown as BindableContext;
+}
+
+for (const platform of [TARGETY_PLATFORM, ARMLESS_PLATFORM, NOCODEC_PLATFORM]) {
+  registerIdentityMapper(platform, (c) => {
+    const a = (c.session?.auth?.current?.attributes ?? {}) as Record<string, string>;
+    const raw = JSON.parse(a["stub_raw"] ?? "{}") as StubRaw;
+    return {
+      workspace: raw.workspace ?? "W1",
+      surface: raw.surface,
+      mode: raw.mode,
+      visibility: "private",
+      trust: "internal",
+      trustVerified: true,
+      principalId: "U_STUB",
+      target: raw.target,
+      threadTs: raw.threadTs,
+    };
+  });
+}
+
+const registerStubCodec = (platform: string, codec: Record<string, unknown>): void =>
+  registerWakeOriginCodec(platform as "slack", codec as never);
+
+const stubDerivations = {
+  validate: () => true,
+  threadRef: (o: { channelId?: string; conversationId?: string }) => ({ channelKey: `stub/${o.channelId ?? o.conversationId}`, threadKey: `${o.channelId ?? o.conversationId}` }),
+  isThreadScoped: () => false,
+  containerId: (o: { channelId?: string; conversationId?: string }) => `${o.channelId ?? o.conversationId}`,
+};
+
+registerStubCodec(TARGETY_PLATFORM, {
+  ...stubDerivations,
+  dmOrigin: (b: { target?: Record<string, unknown> }) => {
+    const serviceUrl = b.target?.["serviceUrl"];
+    const conversationId = b.target?.["conversationId"];
+    return typeof serviceUrl === "string" && serviceUrl.length > 0 && typeof conversationId === "string" && conversationId.length > 0
+      ? { platform: TARGETY_PLATFORM, serviceUrl, conversationId }
+      : undefined;
+  },
+});
+
+registerStubCodec(ARMLESS_PLATFORM, { ...stubDerivations });
 
 console.log("1. token grammar (dm anchor pseudo-domain):");
 {
@@ -152,10 +217,25 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
   );
   eq(resolveDmDelegationAnchor({} as BindableContext), undefined, "an unreadable ctx resolves nothing (fail-closed — a mount predicate may not invent a seat)");
   eq(
-    resolveDmDelegationAnchor({ channel: { kind: "teams", continuationToken: "x" }, session: { auth: { current: { attributes: { oe_platform: "teams" } } } } } as unknown as BindableContext),
+    resolveDmDelegationAnchor(stubCtx(ARMLESS_PLATFORM, { surface: "D_ARMLESS", mode: "dm" })),
     undefined,
-    "a platform with no dmOrigin codec arm (Teams/Discord — their origin arms need guildId/serviceUrl a binding cannot supply) resolves nothing: omission is the fail-closed default",
+    "a DM on a platform whose codec has NO dmOrigin arm resolves nothing: omission is the fail-closed default",
   );
+  eq(
+    resolveDmDelegationAnchor(stubCtx(NOCODEC_PLATFORM, { surface: "D_NONE", mode: "dm" })),
+    undefined,
+    "…and so does a platform with no registered codec AT ALL (the registry miss is the same fail-closed answer)",
+  );
+
+  {
+    const RAW_CONV = "19:1on1-frank@thread.v2;messageid=99";
+    const ctx = stubCtx(TARGETY_PLATFORM, { surface: RAW_CONV, mode: "dm", target: { serviceUrl: "https://svc.example/", conversationId: RAW_CONV } });
+    const anchor = resolveDmDelegationAnchor(ctx);
+    ok(anchor !== undefined, "a conversation-reference platform's DM root resolves an anchor (the OPE-315 parity landing)");
+    eq(anchor?.origin, { platform: TARGETY_PLATFORM, serviceUrl: "https://svc.example/", conversationId: RAW_CONV }, "…with the RAW conversation id off `target` — the address the reply actually needs");
+    ok(anchor?.surfaceKey.includes(RAW_CONV) === false, "…and the surfaceKey is the SANITISED one, which is exactly why the origin could not have come from it");
+    eq(resolveDmDelegationAnchor(stubCtx(TARGETY_PLATFORM, { surface: RAW_CONV, mode: "dm" })), undefined, "…and WITHOUT a target the same DM resolves nothing — the plumbing is load-bearing, not decorative");
+  }
 
   eq(memoryRecallRouteFor("standing", ["task"], true, canDelegateFromSeat(dm)), "agent", "the memory index now names a REAL route on a DM seat (it said \"none\" before — the honest dead end OPE-299 wrote)");
   eq(memoryRecallRouteFor("standing", ["task"], true, false), "none", "…and still says \"none\" for a seat with no route at all");

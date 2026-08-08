@@ -36,7 +36,7 @@ export function resolveDmDelegationAnchor(ctx: BindableContext): DmDelegationAnc
     if (resolveOwnWindowToken(ctx)) return undefined;
     const b = bindFrom(ctx);
     if (b.mode !== "dm" && b.mode !== "mpim") return undefined;
-    const origin = wakeOriginCodec(b.platform)?.dmOrigin?.({ surface: b.surface, threadTs: b.threadTs, mode: b.mode });
+    const origin = wakeOriginCodec(b.platform)?.dmOrigin?.({ surface: b.surface, threadTs: b.threadTs, mode: b.mode, target: b.target });
     if (!origin) return undefined;
     const surfaceKey = `${b.platform}/${b.workspace}/${b.domainSurface ?? b.surface}`;
     return { key: dmAnchorWindowKey(surfaceKey), origin, surfaceKey };

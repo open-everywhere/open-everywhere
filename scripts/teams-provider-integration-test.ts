@@ -44,7 +44,7 @@ const ok = (cond: boolean, label: string) => {
   n++;
 };
 
-const TEAMS_SERVICE_URL = "https://smba.test.local";
+const TEAMS_SERVICE_URL = "https://smba.trafficmanager.net/uk/";
 interface FetchCall {
   readonly url: string;
   readonly method: string;
@@ -60,7 +60,7 @@ function fakeHttp(): void {
     const u = String(url);
     calls.push({ url: u, method: init?.method ?? "GET", body: String(init?.body ?? "") });
     if (u.includes("login.microsoftonline.com")) return resp(200, { token_type: "Bearer", expires_in: 3600, access_token: "teams-connector-token" });
-    if (u.includes("smba.test.local")) return resp(teamsResponse.status, teamsResponse.body);
+    if (u.includes("smba.trafficmanager.net")) return resp(teamsResponse.status, teamsResponse.body);
     return resp(500, { error: "unexpected host" });
   }) as typeof fetch;
 }
@@ -126,13 +126,25 @@ await inSession(async () => {
   const armed = armReply(reply, teamsCtx("conv-1"))!;
   const res = await armed.execute({ text: "teams answer" }, teamsCtx("conv-1"));
   ok(res.posted === true && res.id === "teams-activity-1", "reply: on Teams returns the sent activity id");
-  const activityCall = calls.find((c) => c.url.includes("smba.test.local") && c.url.includes("/v3/conversations/") && c.url.includes("/activities"));
+  const activityCall = calls.find((c) => c.url.includes("smba.trafficmanager.net") && c.url.includes("/v3/conversations/") && c.url.includes("/activities"));
   ok(activityCall !== undefined && activityCall.method === "POST", "reply: on Teams POSTs a message activity to the captured conversation reference");
   ok(activityCall!.url.includes("conv-1"), "reply: on Teams posts into the SAME conversation it was woken on");
   const payload = JSON.parse(activityCall!.body) as { type?: string; text?: string };
   ok(payload.type === "message" && payload.text === "teams answer", "reply: on Teams sends a message activity carrying the model text");
   const audit = await readAudit({ org: "default", action: "reply.post" });
   ok(audit.some((r) => r.detail?.platform === "teams" && r.detail?.id === "teams-activity-1"), "reply: audits a reply.post row stamped platform=teams");
+
+  const before = calls.length;
+  let refusal = "";
+  try {
+    const evil = armReply(reply, teamsCtx("conv-evil", "https://evil.example/api"))!;
+    await evil.execute({ text: "leak me" }, teamsCtx("conv-evil", "https://evil.example/api"));
+  } catch (e) {
+    refusal = String((e as Error).message);
+  }
+  ok(refusal.includes("not a Bot Framework host"), "reply/T4: an un-allowlisted serviceUrl is REFUSED before the Connector token is minted");
+  ok(!refusal.includes("evil.example"), "reply/T4: …with a host-free error (never echo the attacker-supplied endpoint)");
+  ok(calls.length === before, "reply/T4: …and NOTHING was sent — not even the token mint (the check runs before the transport)");
 });
 restoreHttp();
 
@@ -150,7 +162,7 @@ restoreHttp();
   };
   const completed = (message: string | null, ctx: unknown) => inChatSession(() => teamsChannel.adapter["message.completed"]!({ finishReason: "stop", message }, ctx));
   const auditCtx = {
-    state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.test.local", replyToActivityId: "act-root-1" },
+    state: { conversationId: "19:conv1", tenantId: "TEN1", channelId: "19:chan1", teamId: "TEAM1", conversationType: "channel", serviceUrl: "https://smba.trafficmanager.net", replyToActivityId: "act-root-1" },
     thread: { post: async () => undefined },
   };
   const terminalReplyPosts = async (): Promise<Array<{ detail?: Record<string, unknown> }>> =>

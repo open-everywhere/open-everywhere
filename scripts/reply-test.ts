@@ -43,7 +43,7 @@ interface FetchCall {
   readonly method: string;
   readonly body: string;
 }
-const TEAMS_SERVICE_URL = "https://smba.test.local";
+const TEAMS_SERVICE_URL = "https://smba.trafficmanager.net/uk/";
 let calls: FetchCall[] = [];
 let slackResponse: Record<string, unknown> = { ok: true, ts: "9999.0001" };
 let discordResponse: { status: number; body: Record<string, unknown> } = { status: 200, body: { id: "d-9001" } };
@@ -59,7 +59,7 @@ function fakeHttp(): void {
     calls.push({ url: u, method: init?.method ?? "GET", body });
     if (u.includes("discord.com")) return resp(discordResponse.status, discordResponse.body);
     if (u.includes("login.microsoftonline.com")) return resp(200, { token_type: "Bearer", expires_in: 3600, access_token: "teams-connector-token" });
-    if (u.includes("smba.test.local")) return resp(teamsResponse.status, teamsResponse.body);
+    if (u.includes("smba.trafficmanager.net")) return resp(teamsResponse.status, teamsResponse.body);
     if (u.includes("api.linear.app")) return resp(linearResponse.status, linearResponse.body);
     return resp(200, slackResponse);
   }) as typeof fetch;

@@ -42,4 +42,15 @@ export const teamsWakeOriginCodec: WakeOriginCodec<TeamsOrigin> = {
   threadRef: (origin) => ({ channelKey: noColon(`teams/${origin.conversationId}`), threadKey: noColon(origin.replyToActivityId ?? origin.conversationId) }),
   isThreadScoped: (origin) => typeof origin.replyToActivityId === "string" && origin.replyToActivityId.length > 0,
   containerId: (origin) => origin.conversationId,
+  dmOrigin: (binding) => {
+    if (binding.mode !== "dm" && binding.mode !== "mpim") return undefined;
+    const t = binding.target;
+    if (!t) return undefined;
+    const serviceUrl = t["serviceUrl"];
+    const conversationId = t["conversationId"];
+    if (typeof conversationId !== "string" || conversationId.length === 0) return undefined;
+    if (typeof serviceUrl !== "string" || serviceUrl.length === 0) return undefined;
+    if (!isTrustedTeamsServiceUrl(serviceUrl)) return undefined;
+    return { platform: "teams", serviceUrl, conversationId };
+  },
 };

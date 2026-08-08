@@ -9,6 +9,9 @@ async function dispatchTeamsReply(target: TeamsTarget, text: string): Promise<st
   if (!process.env.MICROSOFT_APP_ID && !process.env.TEAMS_APP_ID) {
     throw new Error("reply couldn't post to Teams — MICROSOFT_APP_ID is not set.");
   }
+  if (!isTrustedTeamsServiceUrl(target.serviceUrl)) {
+    throw new Error(`reply couldn't post to Teams — serviceUrl is not a Bot Framework host (conversation ${target.conversationId})`);
+  }
   const res = target.replyToActivityId
     ? await replyToTeamsActivity({
         serviceUrl: target.serviceUrl,

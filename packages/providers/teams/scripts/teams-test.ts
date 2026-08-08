@@ -9,6 +9,8 @@ import {
   type TeamsIdentityInput,
 } from "../agent/channels/teams-identity.js";
 import { registerTeamsProvider } from "../agent/register.js";
+import { teamsWakeOriginCodec, isTrustedTeamsServiceUrl } from "../agent/channels/teams-origin-codec.js";
+import { teamsPostArm } from "../agent/channels/teams-post-arm.js";
 import {
   bindFrom,
   resolvePartition,
@@ -239,4 +241,72 @@ const memCfg: MemoryResolveConfig = {
   ok(unknown.binding.trust === "internal", "E: UNAVAILABLE signal -> channel verdict stands (internal), matching Slack's channel path");
 }
 
-console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust)`);
+{
+  const arm = teamsWakeOriginCodec.dmOrigin;
+  ok(typeof arm === "function", "F: the teams codec REGISTERS a dmOrigin arm (the OPE-315 parity landing)");
+
+  const RAW_CONV = "19:1on1-frank@thread.v2;messageid=99";
+  const GOOD_URL = "https://smba.trafficmanager.net/uk/";
+  const { binding: dmBinding } = dispatch({
+    userId: "29:user-frank",
+    tenantId: "TENANT_ACME",
+    conversationId: RAW_CONV,
+    serviceUrl: GOOD_URL,
+    scope: "personal",
+  });
+  ok(dmBinding.mode === "dm", "F: the fixture really is a dm-mode binding");
+  ok(dmBinding.target?.["conversationId"] === RAW_CONV, "F: the binding's TARGET carries the RAW conversation id (unsanitised through bindFrom)");
+  ok(dmBinding.surface !== RAW_CONV, "F: …while `surface` is seg()-sanitised — which is exactly why the arm may not read it");
+
+  const slice = { surface: dmBinding.surface, threadTs: dmBinding.threadTs, mode: "dm" as const, target: dmBinding.target };
+  const minted = arm?.(slice);
+  ok(
+    JSON.stringify(minted) === JSON.stringify({ platform: "teams", serviceUrl: GOOD_URL, conversationId: RAW_CONV }),
+    "F: the arm mints {platform, serviceUrl, conversationId} straight off the target — no replyToActivityId (a personal chat has no reply chain), no tenantId (audit-only)",
+  );
+  ok(minted !== undefined && teamsWakeOriginCodec.validate(minted as unknown as Record<string, unknown>), "F: the minted origin passes the STORED-ROW validator unchanged (one shape, one contract)");
+
+  const diverged = arm?.({ surface: "some-other-sanitised-surface", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: RAW_CONV } });
+  ok(diverged?.conversationId === RAW_CONV, "F: the arm reads the TARGET, never the surface (pinned by diverging the two)");
+
+  const groupMint = arm?.({ surface: "19-groupchat-thread.v2", mode: "mpim", target: { serviceUrl: GOOD_URL, conversationId: "19:groupchat@thread.v2" } });
+  ok(groupMint?.conversationId === "19:groupchat@thread.v2", "F: a GROUP chat (mpim) resolves an anchor too");
+
+  ok(arm?.({ surface: "s", mode: "dm" }) === undefined, "F: NO target at all ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL } }) === undefined, "F: missing conversationId ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: "" } }) === undefined, "F: BLANK conversationId ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { conversationId: RAW_CONV } }) === undefined, "F: missing serviceUrl ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "", conversationId: RAW_CONV } }) === undefined, "F: BLANK serviceUrl ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: 5, conversationId: RAW_CONV } }) === undefined, "F: non-string serviceUrl ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: GOOD_URL, conversationId: 5 } }) === undefined, "F: non-string conversationId ⇒ undefined");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "https://evil.example/api", conversationId: RAW_CONV } }) === undefined, "F/T1: an UN-ALLOWLISTED https host ⇒ no anchor (fail closed at MINT, not at reply)");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "http://smba.trafficmanager.net/uk/", conversationId: RAW_CONV } }) === undefined, "F/T1: plain http ⇒ no anchor");
+  ok(arm?.({ surface: "s", mode: "dm", target: { serviceUrl: "https://smba.trafficmanager.net.evil.example/", conversationId: RAW_CONV } }) === undefined, "F/T1: a lookalike-SUFFIX host ⇒ no anchor");
+  ok(arm?.({ surface: "s", mode: "channel" as unknown as "dm", target: { serviceUrl: GOOD_URL, conversationId: RAW_CONV } }) === undefined, "F: a CHANNEL mode ⇒ no anchor (the arm refuses on its own account)");
+}
+
+{
+  const prevAppId = process.env.MICROSOFT_APP_ID;
+  process.env.MICROSOFT_APP_ID = "app-id-for-the-test";
+  try {
+    const EVIL = "https://evil.example/api";
+    const dispatchReply = teamsPostArm.dispatchReply;
+    ok(typeof dispatchReply === "function", "G/T4: the teams post arm HAS a mid-turn dispatch path (the one this check guards)");
+    let message = "";
+    try {
+      await dispatchReply?.({ platform: "teams", serviceUrl: EVIL, conversationId: "19:conv@thread.v2" }, "leak me");
+      ok(false, "G/T4: dispatchTeamsReply must REFUSE an un-allowlisted serviceUrl");
+    } catch (e) {
+      message = String((e as Error).message);
+    }
+    ok(message.includes("not a Bot Framework host"), "G/T4: …and it refuses for the RIGHT reason (the host allowlist, not a transport failure)");
+    ok(!message.includes(EVIL), "G/T4: the error is host-free (never echo the attacker-supplied endpoint back)");
+    ok(!/password|secret|token|bearer/i.test(message), "G/T4: …and token-free, mirroring liveTeamsPost's defensive parity");
+    ok(isTrustedTeamsServiceUrl("https://smba.trafficmanager.net/uk/"), "G/T4: the same predicate ADMITS a real Bot Connector host (the refusal is host-specific)");
+  } finally {
+    if (prevAppId === undefined) delete process.env.MICROSOFT_APP_ID;
+    else process.env.MICROSOFT_APP_ID = prevAppId;
+  }
+}
+
+console.log(`✓ teams: ${passed} assertions passed (activity → REAL bindFrom/partition/memory; fail-closed visibility + trust; DM delegation anchor + the mid-turn host allowlist)`);
