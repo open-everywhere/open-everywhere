@@ -41,7 +41,7 @@ export function requireOrgAdmin(ctx: BindableContext): Role {
     throw new Error(
       `this action requires an org admin.${
         role.principalId ? ` Your id ("${role.principalId}") isn't listed.` : " No verified sender id on this turn."
-      } Add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to the "org" pseudo-domain's admins (Domain.admins, agent/memory/domains.ts) to grant org-admin.`,
+      } Add the QUALIFIED principal key ("<platform>/<id>", or "<platform>/<tenant-id>/<id>" on Slack) to the "org" pseudo-domain's admins (Domain.admins, agent/memory/domains.ts) to grant org-admin.`,
     );
   }
   return role;
@@ -52,8 +52,8 @@ export function requireDomainAdminOrOrg(ctx: BindableContext): Role {
   if (!role.isDomainAdmin) {
     const hint = role.principalId ? `Your id ("${role.principalId}") isn't listed.` : "No verified sender id on this turn.";
     const fix = role.domain
-      ? `Add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to domain "${role.domain}"'s admins (Domain.admins, agent/memory/domains.ts).`
-      : `This channel isn't in an explicit domain, so only an org admin can do this — add the PLATFORM-QUALIFIED principal key ("<platform>/<id>") to the "org" pseudo-domain's admins.`;
+      ? `Add the QUALIFIED principal key ("<platform>/<id>", or "<platform>/<tenant-id>/<id>" on Slack) to domain "${role.domain}"'s admins (Domain.admins, agent/memory/domains.ts).`
+      : `This channel isn't in an explicit domain, so only an org admin can do this — add the QUALIFIED principal key ("<platform>/<id>", or "<platform>/<tenant-id>/<id>" on Slack) to the "org" pseudo-domain's admins.`;
     throw new Error(`this action requires a domain admin (or an org admin). ${hint} ${fix}`);
   }
   return role;
