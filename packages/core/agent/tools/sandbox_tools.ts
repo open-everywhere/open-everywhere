@@ -25,6 +25,7 @@ export default windowGatedKit("sandbox_tools", {
       const o = output as WebFetchOutput;
       return ingestUntrustedModelOutput(o.content, {
         source: `web_fetch ${o.url}${o.truncated ? " (truncated)" : ""}`,
+        ingestion: { kind: "web", label: "web_fetch" },
       });
     },
   }),

@@ -1,4 +1,6 @@
 import { ingestUntrusted } from "../access/untrusted.js";
+import { noteIngestionDryRun } from "../access/taint-dryrun.js";
+import { taintMarkLands } from "../access/taint-signal.js";
 
 export type WakeReason =
   | "channel-activity"
@@ -123,6 +125,7 @@ function renderMessage(m: WakeMessageInput, sourcePlatform: string): string {
     attr("thread", m.threadRoot) +
     attr("thread-session-id", m.ownerToken);
 
+  noteIngestionDryRun({ kind: "chat-message", label: `wake-envelope:${sourcePlatform}` }, taintMarkLands());
   const body = ingestUntrusted(escapeXml(m.body), { source: `${sourcePlatform}-message` });
   const previousBody = m.previousBody
     ? `\n<previous-body>\n${indent(ingestUntrusted(escapeXml(m.previousBody), { source: `${sourcePlatform}-message-previous` }), 2)}\n</previous-body>`

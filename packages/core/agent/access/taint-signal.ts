@@ -57,6 +57,15 @@ export function untrustedIngestedThisTurn(): boolean {
   }
 }
 
+export function taintMarkLands(): boolean {
+  try {
+    slot.get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function taintKindsThisTurn(): readonly string[] {
   try {
     return readState(slot.get()).kinds ?? [];

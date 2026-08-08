@@ -63,6 +63,7 @@ const entry = defineTool({
       `${output.firesAvailable} run(s) on record here; ${output.eventCount} events${output.complete ? "" : ", truncated"})`;
     return ingestUntrustedModelOutput(`${header}\n\n${output.transcript}`, {
       source: `routine ${output.routineId} run transcript`,
+      ingestion: { kind: "routine-event", label: "read_routine_transcript" },
     });
   },
 });

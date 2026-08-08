@@ -14,9 +14,13 @@ import {
   currentTaintDryRunSink,
   type TaintDryRunRow,
 } from "../agent/access/taint-dryrun.js";
-import { ingestUntrusted } from "../agent/access/untrusted.js";
+import { ingestUntrusted, UNTRUSTED_OPEN } from "../agent/access/untrusted.js";
 import { untrustedIngestedThisTurn } from "../agent/access/taint-signal.js";
 import { openTaintTurn } from "../agent/hooks/spawn-taint.js";
+import { renderWakeEnvelope } from "../agent/channels/wake-envelope.js";
+import { renderContext } from "../agent/channels/context-render.js";
+import { formatTaskResultDelta } from "../agent/access/task-result-delta.js";
+import { subscribePrPrompt } from "../agent/tools/subscribe_pr.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -220,6 +224,79 @@ await eveContextStorage().run(new FakeSession(), async () => {
 
 beginTaintDryRunTurn("no-context");
 ok(true, "beginTaintDryRunTurn outside a session context is a silent no-op, never a throw");
+
+console.log("4. the declared sites:");
+
+registerTaintDryRunSink((r) => rows.push(r));
+
+const wakeFixture = {
+  reason: "mention",
+  currentTime: "2026-08-08T10:00:00Z",
+  sourcePlatform: "slack",
+  channel: { id: "C1", type: "channel" },
+  messages: [
+    { from: "human", author: "Ada", id: "1", sentAt: "2026-08-08T09:59:00Z", trust: "peer", body: "earlier chatter" },
+    { from: "human", author: "Ada", id: "2", sentAt: "2026-08-08T10:00:00Z", trust: "peer", trigger: true, body: "hey agent" },
+  ],
+} as const satisfies Parameters<typeof renderWakeEnvelope>[0];
+
+{
+  rows.length = 0;
+  const envelope = renderWakeEnvelope(wakeFixture);
+  ok(envelope.includes("hey agent"), "the wake envelope still renders its message bodies");
+  ok(envelope.includes(UNTRUSTED_OPEN), "…still inside the untrusted fence (the wrap half is untouched)");
+  const ctxBlock = renderContext([{ senderType: "user", senderId: "U1", ts: "1", text: "what's the status?" }], "slack");
+  ok(ctxBlock !== null && ctxBlock.includes("what's the status?"), "renderContext still renders + fences the backscroll");
+  eq(rows.length, 0, "🔴 a render with NO session context (the ingress shape) writes NO rows — the taint mark does not land, so the site agrees with the trusted chat-message row");
+}
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  renderWakeEnvelope(wakeFixture);
+  ok(untrustedIngestedThisTurn() === true, "given a session context, the render's taint half DOES land — the 'ingress only' comment is a claim about the caller, not a property of the code");
+  eq(rows.length, 1, "…and the declaration REPORTS it rather than restating the comment");
+  eq(rows[0].divergence, "over-taint", "…as an over-taint row: the site tainted, the table calls chat-message trusted");
+  eq(rows[0].label, "wake-envelope:slack", "…labelled by site");
+});
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  const block = formatTaskResultDelta([{ taskId: "t-1", resultJson: JSON.stringify({ summary: "worker prose" }), createdAt: "2026-08-08T09:00:00Z" }], 0);
+  ok(block !== null && block.includes("worker prose"), "the recovery reminder still carries the worker's snippet");
+  ok(block !== null && block.includes(UNTRUSTED_OPEN), "…still fenced");
+  eq(rows.length, 0, "delegation-result agrees with the table (both untrusted) ⇒ silent");
+});
+
+await eveContextStorage().run(new FakeSession(), async () => {
+  rows.length = 0;
+  const prompt = subscribePrPrompt({
+    repo: "org/repo",
+    number: 7,
+    url: "https://github.com/org/repo/pull/7",
+    baseline: "open",
+    title: "fix: a title",
+    fingerprint: "fp",
+    intervalMinutes: 15,
+    checksRemaining: 3,
+  });
+  ok(prompt.includes("fix: a title"), "the armed prompt still carries the fenced title");
+  ok(prompt.includes(UNTRUSTED_OPEN), "…still fenced (wrapUntrusted, unchanged)");
+  eq(rows.length, 1, "subscribe_pr's title logs ONE row");
+  eq(rows[0].divergence, "under-taint", "…an UNDER-TAINT: the site fences without tainting and the table says untrusted — a real gap, not quiet agreement like the render sites");
+  ok(rows[0].assumed, "…reached via the fail-closed default, because no `repoPrivate` is available at this pure prompt-builder seam");
+  eq(rows[0].label, "subscribe_pr:title", "…labelled by SITE, not by repo — the row is names only");
+  ok(untrustedIngestedThisTurn() === false, "🔴 …and noting it did NOT start tainting the arming turn");
+});
+
+{
+  eq(tier({ kind: "web", label: "web_fetch" }), "untrusted", "web_fetch declares `web` — untrusted, agreeing with what the tool already does");
+  eq(classifyIngestion({ kind: "web" }).assumed, false, "…and NOT assumed: the open web needs no metadata to decide");
+  eq(tier({ kind: "webhook", label: "list_recent_events" }), "untrusted", "list_recent_events declares `webhook` — a stored delivery is still a delivery");
+  eq(tier({ kind: "webhook", label: "read_webhook_history" }), "untrusted", "read_webhook_history declares `webhook` — same kind as the live dispatch path");
+  eq(tier({ kind: "routine-event", label: "read_routine_transcript" }), "untrusted", "read_routine_transcript declares `routine-event` — the loosest fit in the sweep, and every candidate kind agrees on the verdict");
+  eq(tier({ kind: "delegation-result", label: "task_result" }), "untrusted", "task_result declares `delegation-result` — the row that was dead code before this");
+  eq(tier({ kind: "chat-message", label: "wake-envelope:slack" }), "trusted", "the render-time chat sites declare `chat-message` — TRUSTED, which is why `taintsToday: false` is silence and not a divergence");
+}
 
 registerTaintDryRunSink(restore);
 ok(currentTaintDryRunSink() === restore, "the sink is restorable (test seam behaves)");

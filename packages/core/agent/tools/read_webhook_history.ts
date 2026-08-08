@@ -25,6 +25,9 @@ export default defineTool({
   },
   toModelOutput(output) {
     if (!output.ok) return { type: "text" as const, value: output.message };
-    return ingestUntrustedModelOutput(output.history, { source: "webhook delivery history" });
+    return ingestUntrustedModelOutput(output.history, {
+      source: "webhook delivery history",
+      ingestion: { kind: "webhook", label: "read_webhook_history" },
+    });
   },
 });
