@@ -466,11 +466,15 @@ registerOperationalStore(makeOperationalPostgresStore(client));
 {
   const evidence = { kind: "directory-sync", provider: "okta", grade: "attested" } as const;
   await ensureLinkSet({ org: ORG, linkSetId: "set-rowan", handle: "rowan" });
-  for (const acct of [{ platform: "slack", nativeId: "U1" }, { platform: "discord", nativeId: "D1" }]) {
+  const tenantOf = (platform: string): string => (platform === "slack" ? "W" : "");
+  for (const acct of [
+    { platform: "slack", tenant: tenantOf("slack"), nativeId: "U1" },
+    { platform: "discord", tenant: tenantOf("discord"), nativeId: "D1" },
+  ]) {
     await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: acct, evidence });
     await confirmLinkedId({ org: ORG, account: acct, evidence });
   }
-  await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: { platform: "teams", nativeId: "T1" }, evidence });
+  await suggestLinkedId({ org: ORG, linkSetId: "set-rowan", account: { platform: "teams", tenant: tenantOf("teams"), nativeId: "T1" }, evidence });
 
   const expanded = await expandLinkSet(ORG, "set-rowan");
   ok(expanded.length === 2, "expandLinkSet returns the CONFIRMED accounts only — the suggested one is invisible");
@@ -500,7 +504,7 @@ registerOperationalStore(makeOperationalPostgresStore(client));
         if (members.some((m) => principalKey(m.platform, m.nativeId) === "slack/U1")) viaExpand.push(g.name);
       }
     }
-    const viaResolve = groupsForPrincipal(groups, "slack/U1", await callerLinkSets(ORG, "slack", "U1"));
+    const viaResolve = groupsForPrincipal(groups, "slack/U1", await callerLinkSets(ORG, "slack", "U1", tenantOf("slack")));
     assert.deepEqual([...new Set(viaExpand)].sort(), [...viaResolve]);
     passed++;
     ok(true, "resolveLinkSet-at-the-edge is EQUIVALENT to expandLinkSet-per-group (the account→set map is a function, by the store's PK)");

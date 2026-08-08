@@ -34,6 +34,19 @@ export function admittedTenantsFromConfig(platform: string): ReadonlySet<string>
   }
 }
 
+export function soleAdmittedTenant(platform: string, domains: readonly Domain[]): string | undefined {
+  const tenants = admittedTenants(platform, domains);
+  return tenants.size === 1 ? [...tenants][0] : undefined;
+}
+
+export function soleAdmittedTenantFromConfig(platform: string): string | undefined {
+  try {
+    return soleAdmittedTenant(platform, getConfig().loadDomains());
+  } catch {
+    return undefined;
+  }
+}
+
 export function assertSingleTenantPerTenantScopedPlatform(domains: readonly Domain[]): void {
   if (multiTenantPrincipalsAllowed()) return;
   const platforms = new Set<string>();

@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { appendAudit, readAudit } from "../audit/audit.js";
 import { directoryProvider, type DirectoryGrade, type DirectoryPerson, type DirectoryProvider } from "./directory.js";
 import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, suggestLinkedId, type LinkEvidence } from "./link-store.js";
-import { principalKey } from "./principal-key.js";
+import { isTenantScopedPlatform, principalKey } from "./principal-key.js";
+import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from "./link-tenant.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
 import { directoryLinkSetVaultArmed, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
@@ -54,6 +55,7 @@ export type DirectorySyncStep =
       readonly kind: "suggest";
       readonly externalId: string;
       readonly platform: string;
+      readonly tenant: string;
       readonly nativeId: string;
       readonly grade: DirectoryGrade;
       readonly linkSetId: string;
@@ -65,6 +67,7 @@ export type DirectorySyncStep =
       readonly kind: "confirm";
       readonly externalId: string;
       readonly platform: string;
+      readonly tenant: string;
       readonly nativeId: string;
       readonly grade: DirectoryGrade;
       readonly linkSetId: string;
@@ -98,6 +101,15 @@ export function planIsNoop(plan: DirectorySyncPlan): boolean {
 
 export type DirectoryLinkState = readonly { readonly set: LinkSetRow; readonly ids: readonly LinkedIdRow[] }[];
 
+function accountKey(platform: string, tenant: string, nativeId: string): string {
+  return `${platform}\u0000${tenant}\u0000${nativeId}`;
+}
+
+function describeAccount(acct: { readonly platform: string; readonly tenant: string; readonly nativeId: string }): string {
+  const key = principalKey(acct.platform, acct.nativeId);
+  return acct.tenant === LINK_TENANT_NONE ? key : `${key} (workspace ${acct.tenant})`;
+}
+
 const GRADE_ORDER: readonly DirectoryGrade[] = ["attested", "asserted", "email-match"];
 
 function gradeRank(g: DirectoryGrade): number {
@@ -129,7 +141,9 @@ export function planDirectorySync(input: {
   readonly autoConfirm: DirectoryAutoConfirm;
   readonly accessReferencedSets?: ReadonlySet<string>;
   readonly linkSetVaultArmed?: boolean;
+  readonly resolveTenant?: (platform: string) => string | undefined;
 }): DirectorySyncPlan {
+  const resolveTenant = input.resolveTenant ?? ((platform: string) => (isTenantScopedPlatform(platform) ? undefined : LINK_TENANT_NONE));
   const steps: DirectorySyncStep[] = [];
   const warnings: string[] = [];
 
@@ -148,13 +162,15 @@ export function planDirectorySync(input: {
   for (const { set, ids } of input.current) {
     setById.set(set.id, set);
     idsBySetId.set(set.id, ids);
-    for (const row of ids) rowByKey.set(principalKey(row.platform, row.nativeId), { row, set });
+    for (const row of ids) rowByKey.set(accountKey(row.platform, row.tenant, row.nativeId), { row, set });
   }
 
   const claimedBy = new Map<string, string>();
   for (const person of input.people) {
     for (const acct of person.accounts) {
-      const key = principalKey(acct.platform, acct.nativeId);
+      const tenant = resolveTenant(acct.platform);
+      if (tenant === undefined) continue;
+      const key = accountKey(acct.platform, tenant, acct.nativeId);
       const first = claimedBy.get(key);
       if (first === undefined) claimedBy.set(key, person.externalId);
       else if (first !== person.externalId) claimedBy.set(key, "\u0000conflict");
@@ -162,18 +178,24 @@ export function planDirectorySync(input: {
   }
 
   for (const person of input.people) {
-    const accounts = new Map<string, { platform: string; nativeId: string; grade: DirectoryGrade }>();
+    const accounts = new Map<string, { platform: string; tenant: string; nativeId: string; grade: DirectoryGrade }>();
     for (const acct of person.accounts) {
-      const key = principalKey(acct.platform, acct.nativeId);
+      const tenant = resolveTenant(acct.platform);
+      if (tenant === undefined) {
+        steps.push({ kind: "noop", externalId: person.externalId, platform: acct.platform, nativeId: acct.nativeId, why: `cannot name the ${acct.platform} workspace for this account` });
+        warnings.push(`directory person "${person.externalId}": ${linkTenantUnresolvableMessage(acct.platform)}`);
+        continue;
+      }
+      const key = accountKey(acct.platform, tenant, acct.nativeId);
       const seen = accounts.get(key);
-      accounts.set(key, seen ? { ...seen, grade: strongerGrade(seen.grade, acct.grade) } : { ...acct });
+      accounts.set(key, seen ? { ...seen, grade: strongerGrade(seen.grade, acct.grade) } : { ...acct, tenant });
     }
 
     for (const [key, acct] of [...accounts]) {
       if (claimedBy.get(key) === "\u0000conflict") {
         accounts.delete(key);
         steps.push({ kind: "noop", externalId: person.externalId, platform: acct.platform, nativeId: acct.nativeId, why: "two directory records claim this account" });
-        warnings.push(`${key} is claimed by more than one directory person — refusing to link it to any of them. Fix the duplicate in the IdP.`);
+        warnings.push(`${describeAccount(acct)} is claimed by more than one directory person — refusing to link it to any of them. Fix the duplicate in the IdP.`);
       }
     }
 
@@ -247,6 +269,7 @@ export function planDirectorySync(input: {
           kind: "suggest",
           externalId: person.externalId,
           platform: acct.platform,
+          tenant: acct.tenant,
           nativeId: acct.nativeId,
           grade: acct.grade,
           linkSetId: targetId,
@@ -257,7 +280,7 @@ export function planDirectorySync(input: {
         continue;
       }
       if (found.set.id !== targetId) {
-        warnings.push(`${key} belongs to link-set ${found.set.id}, not ${targetId} — refusing to move it.`);
+        warnings.push(`${describeAccount(acct)} belongs to link-set ${found.set.id}, not ${targetId} — refusing to move it.`);
         steps.push({ kind: "noop", externalId: person.externalId, platform: acct.platform, nativeId: acct.nativeId, why: "belongs to another link-set" });
         continue;
       }
@@ -270,7 +293,7 @@ export function planDirectorySync(input: {
         continue;
       }
       if (mayAutoConfirm) {
-        steps.push({ kind: "confirm", externalId: person.externalId, platform: acct.platform, nativeId: acct.nativeId, grade: acct.grade, linkSetId: targetId });
+        steps.push({ kind: "confirm", externalId: person.externalId, platform: acct.platform, tenant: acct.tenant, nativeId: acct.nativeId, grade: acct.grade, linkSetId: targetId });
       } else {
         steps.push({
           kind: "noop",
@@ -325,7 +348,15 @@ export async function syncDirectoryOrg(input: {
 
   const people = await provider.listPeople();
   const current = await listLinkSetsWithIds(input.org);
-  const plan = planDirectorySync({ provider: provider.id, people, current, autoConfirm: policy, accessReferencedSets, linkSetVaultArmed: vaultArmed });
+  const plan = planDirectorySync({
+    provider: provider.id,
+    people,
+    current,
+    autoConfirm: policy,
+    accessReferencedSets,
+    linkSetVaultArmed: vaultArmed,
+    resolveTenant: (platform) => tryLinkTenantOf(platform, undefined),
+  });
 
   const refusals: string[] = [];
   let setsCreated = 0;
@@ -353,7 +384,7 @@ export async function syncDirectoryOrg(input: {
       const res = await suggestLinkedId({
         org: input.org,
         linkSetId: step.linkSetId,
-        account: { platform: step.platform, nativeId: step.nativeId },
+        account: { platform: step.platform, tenant: step.tenant, nativeId: step.nativeId },
         evidence,
         ...(now ? { now } : {}),
       });
@@ -364,7 +395,7 @@ export async function syncDirectoryOrg(input: {
       suggested++;
       if (!step.autoConfirm) continue;
     }
-    const res = await confirmLinkedId({ org: input.org, account: { platform: step.platform, nativeId: step.nativeId }, evidence, ...(now ? { now } : {}) });
+    const res = await confirmLinkedId({ org: input.org, account: { platform: step.platform, tenant: step.tenant, nativeId: step.nativeId }, evidence, ...(now ? { now } : {}) });
     if (res.ok) confirmed++;
     else refusals.push(`confirm ${principalKey(step.platform, step.nativeId)}: ${res.reason}`);
   }
@@ -444,25 +475,26 @@ export async function lastDirectorySync(org: string): Promise<{ readonly ts: str
 export interface PendingDirectorySuggestion {
   readonly linkSetId: string;
   readonly platform: string;
+  readonly tenant: string;
   readonly nativeId: string;
   readonly principal: string;
   readonly grade: string;
   readonly provider: string;
 }
 
-export async function pendingDirectorySuggestionsFor(org: string, platform: string, nativeId: string): Promise<readonly PendingDirectorySuggestion[]> {
+export async function pendingDirectorySuggestionsFor(org: string, platform: string, tenant: string, nativeId: string): Promise<readonly PendingDirectorySuggestion[]> {
   const sets = await listLinkSetsWithIds(org);
-  const me = principalKey(platform, nativeId);
+  const isMe = (r: { platform: string; tenant: string; nativeId: string }): boolean => r.platform === platform && r.tenant === tenant && r.nativeId === nativeId;
   for (const { set, ids } of sets) {
     if (set.status !== "active") continue;
-    const mine = ids.find((r) => principalKey(r.platform, r.nativeId) === me);
+    const mine = ids.find(isMe);
     if (!mine || (mine.status !== "confirmed" && mine.status !== "suggested")) continue;
     const bootstrapOnly = mine.status !== "confirmed";
     const out: PendingDirectorySuggestion[] = [];
     for (const row of ids) {
       if (row.status !== "suggested") continue;
       if (!row.establishedBy.startsWith("directory-sync:")) continue;
-      const isOwn = principalKey(row.platform, row.nativeId) === me;
+      const isOwn = isMe(row);
       if (bootstrapOnly && !isOwn) continue;
       let grade = "unknown";
       try {
@@ -474,6 +506,7 @@ export async function pendingDirectorySuggestionsFor(org: string, platform: stri
       out.push({
         linkSetId: set.id,
         platform: row.platform,
+        tenant: row.tenant,
         nativeId: row.nativeId,
         principal: principalKey(row.platform, row.nativeId),
         grade,

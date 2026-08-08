@@ -295,6 +295,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS identity_linked_ids (
      org_id         text NOT NULL,
      platform       text NOT NULL,
+     tenant         text NOT NULL DEFAULT '',  -- '' = vendor-global platform, or not yet backfilled
      native_id      text NOT NULL,
      link_set_id    text NOT NULL,
      status         text NOT NULL,      -- "suggested" | "confirmed" | "revoked" ("revoked" is terminal)
@@ -302,7 +303,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      evidence       text,               -- the structured evidence record as JSON; opaque here
      created_at     text NOT NULL,
      updated_at     text NOT NULL,
-     PRIMARY KEY (org_id, platform, native_id)
+     PRIMARY KEY (org_id, platform, tenant, native_id)
    )`,
   `CREATE INDEX IF NOT EXISTS identity_linked_ids_org_set ON identity_linked_ids (org_id, link_set_id)`,
   `CREATE TABLE IF NOT EXISTS identity_link_challenges (
@@ -310,9 +311,11 @@ const SCHEMA_STATEMENTS: readonly string[] = [
      id                     text NOT NULL,
      nonce_hash             text NOT NULL,   -- sha-256 hex of the uppercased code; NEVER the code
      initiating_platform    text NOT NULL,
+     initiating_tenant      text NOT NULL DEFAULT '',  -- OPE-309 phase 2; '' off a tenant-scoped platform
      initiating_native_id   text NOT NULL,
      initiating_surface_key text NOT NULL,   -- the DM the ratification must come back to
      claimed_platform       text,            -- stamped from the WAKE's own captured author
+     claimed_tenant         text,            -- …in the same CAS, so a claimed row names a whole account
      claimed_native_id      text,
      claimed_at             text,
      status                 text NOT NULL,   -- pending | claimed | ratified | denied | expired
@@ -350,6 +353,25 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE stored_credential ADD COLUMN IF NOT EXISTS claimed_at text`,
   `ALTER TABLE audit_entry ADD COLUMN IF NOT EXISTS prev_sha text`,
   `ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS routine_id text`,
+  `ALTER TABLE identity_linked_ids ADD COLUMN IF NOT EXISTS tenant text NOT NULL DEFAULT ''`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS initiating_tenant text NOT NULL DEFAULT ''`,
+  `ALTER TABLE identity_link_challenges ADD COLUMN IF NOT EXISTS claimed_tenant text`,
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'identity_linked_ids' AND relkind = 'r')
+        AND NOT EXISTS (
+          SELECT 1
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indrelid
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+           WHERE c.relname = 'identity_linked_ids' AND i.indisprimary AND a.attname = 'tenant'
+        )
+     THEN
+       ALTER TABLE identity_linked_ids DROP CONSTRAINT IF EXISTS identity_linked_ids_pkey;
+       ALTER TABLE identity_linked_ids ADD CONSTRAINT identity_linked_ids_pkey PRIMARY KEY (org_id, platform, tenant, native_id);
+     END IF;
+   END
+   $$`,
   `ALTER TABLE spend_ledger ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE routine ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE audit_entry ENABLE ROW LEVEL SECURITY`,
@@ -902,6 +924,7 @@ function linkSetFromPgRow(org: string, r: LinkSetPgRow): LinkSetRow {
 
 type LinkedIdPgRow = {
   platform: string;
+  tenant: string;
   native_id: string;
   link_set_id: string;
   status: string;
@@ -916,6 +939,7 @@ function linkedIdFromPgRow(org: string, r: LinkedIdPgRow): LinkedIdRow {
     org,
     linkSetId: r.link_set_id,
     platform: r.platform,
+    tenant: r.tenant,
     nativeId: r.native_id,
     status: r.status as LinkedIdStatus,
     establishedBy: r.established_by,
@@ -926,17 +950,19 @@ function linkedIdFromPgRow(org: string, r: LinkedIdPgRow): LinkedIdRow {
 }
 
 const LINK_CHALLENGE_SELECT =
-  `SELECT org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
-          claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+  `SELECT org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+          claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
    FROM identity_link_challenges`;
 
 type LinkChallengePgRow = {
   id: string;
   nonce_hash: string;
   initiating_platform: string;
+  initiating_tenant: string;
   initiating_native_id: string;
   initiating_surface_key: string;
   claimed_platform: string | null;
+  claimed_tenant: string | null;
   claimed_native_id: string | null;
   claimed_at: string | null;
   status: string;
@@ -951,9 +977,11 @@ function linkChallengeFromPgRow(org: string, r: LinkChallengePgRow): LinkChallen
     id: r.id,
     nonceHash: r.nonce_hash,
     initiatingPlatform: r.initiating_platform,
+    initiatingTenant: r.initiating_tenant,
     initiatingNativeId: r.initiating_native_id,
     initiatingSurfaceKey: r.initiating_surface_key,
     ...(r.claimed_platform === null ? {} : { claimedPlatform: r.claimed_platform }),
+    ...(r.claimed_tenant === null ? {} : { claimedTenant: r.claimed_tenant }),
     ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
     ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
     status: r.status as LinkChallengeStatus,
@@ -2164,19 +2192,19 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async insertLinkedId(org: string, row: LinkedIdRow) {
       const { rows } = await client.query(
-        `INSERT INTO identity_linked_ids (org_id, platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           ON CONFLICT (org_id, platform, native_id) DO NOTHING RETURNING native_id`,
-        [org, row.platform, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt],
+        `INSERT INTO identity_linked_ids (org_id, platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (org_id, platform, tenant, native_id) DO NOTHING RETURNING native_id`,
+        [org, row.platform, row.tenant, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt],
       );
       return (rows as unknown[]).length > 0;
     },
 
-    async getLinkedId(org, platform, nativeId) {
+    async getLinkedId(org, platform, tenant, nativeId) {
       const { rows } = await client.query(
-        `SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
-         FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND native_id = $3`,
-        [org, platform, nativeId],
+        `SELECT platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
+         FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND tenant = $3 AND native_id = $4`,
+        [org, platform, tenant, nativeId],
       );
       const r = (rows as LinkedIdPgRow[])[0];
       return r ? linkedIdFromPgRow(org, r) : null;
@@ -2184,25 +2212,25 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
 
     async listLinkedIds(org, linkSetId) {
       const { rows } = await client.query(
-        `SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
+        `SELECT platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at
          FROM identity_linked_ids WHERE org_id = $1${linkSetId === undefined ? "" : " AND link_set_id = $2"}
-         ORDER BY platform ASC, native_id ASC`,
+         ORDER BY platform ASC, tenant ASC, native_id ASC`,
         linkSetId === undefined ? [org] : [org, linkSetId],
       );
       return (rows as LinkedIdPgRow[]).map((r) => linkedIdFromPgRow(org, r));
     },
 
-    async updateLinkedIdStatus(org, platform, nativeId, from, to, establishedBy, evidenceJson, at) {
+    async updateLinkedIdStatus(org, platform, tenant, nativeId, from, to, establishedBy, evidenceJson, at) {
       const { rows } = await client.query(
         `UPDATE identity_linked_ids SET status = $1, established_by = $2, evidence = $3, updated_at = $4
-         WHERE org_id = $5 AND platform = $6 AND native_id = $7 AND status = ANY($8) RETURNING native_id`,
-        [to, establishedBy, evidenceJson ?? null, at, org, platform, nativeId, [...from]],
+         WHERE org_id = $5 AND platform = $6 AND tenant = $7 AND native_id = $8 AND status = ANY($9) RETURNING native_id`,
+        [to, establishedBy, evidenceJson ?? null, at, org, platform, tenant, nativeId, [...from]],
       );
       return (rows as unknown[]).length > 0;
     },
 
-    async deleteLinkedId(org, platform, nativeId) {
-      const { rows } = await client.query("DELETE FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND native_id = $3 RETURNING native_id", [org, platform, nativeId]);
+    async deleteLinkedId(org, platform, tenant, nativeId) {
+      const { rows } = await client.query("DELETE FROM identity_linked_ids WHERE org_id = $1 AND platform = $2 AND tenant = $3 AND native_id = $4 RETURNING native_id", [org, platform, tenant, nativeId]);
       return (rows as unknown[]).length > 0;
     },
 
@@ -2215,20 +2243,35 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as unknown[]).length;
     },
 
+    async unbackfilledLinkedIdPlatforms() {
+      const { rows } = await client.query("SELECT DISTINCT platform FROM identity_linked_ids WHERE tenant = '' ORDER BY platform ASC");
+      return (rows as { platform: string }[]).map((r) => r.platform);
+    },
+
+    async backfillLinkedIdTenant(platform, tenant, at) {
+      const { rows } = await client.query(
+        "UPDATE identity_linked_ids SET tenant = $1, updated_at = $2 WHERE platform = $3 AND tenant = '' RETURNING native_id",
+        [tenant, at, platform],
+      );
+      return (rows as unknown[]).length;
+    },
+
     async addLinkChallenge(org: string, row: LinkChallengeRow) {
       await client.query(
         `INSERT INTO identity_link_challenges
-           (org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
-            claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+           (org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+            claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           org,
           row.id,
           row.nonceHash,
           row.initiatingPlatform,
+          row.initiatingTenant,
           row.initiatingNativeId,
           row.initiatingSurfaceKey,
           row.claimedPlatform ?? null,
+          row.claimedTenant ?? null,
           row.claimedNativeId ?? null,
           row.claimedAt ?? null,
           row.status,
@@ -2252,6 +2295,10 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
         params.push(filter.initiatingPlatform);
         conjuncts.push(`initiating_platform = $${params.length}`);
       }
+      if (filter?.initiatingTenant !== undefined) {
+        params.push(filter.initiatingTenant);
+        conjuncts.push(`initiating_tenant = $${params.length}`);
+      }
       if (filter?.initiatingNativeId !== undefined) {
         params.push(filter.initiatingNativeId);
         conjuncts.push(`initiating_native_id = $${params.length}`);
@@ -2264,15 +2311,15 @@ export function makeOperationalPostgresStore(client: PgClient): OperationalStore
       return (rows as LinkChallengePgRow[]).map((r) => linkChallengeFromPgRow(org, r));
     },
 
-    async claimLinkChallenge(org, nonceHash, platform, nativeId, at) {
+    async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at) {
       const { rows } = await client.query(
         `UPDATE identity_link_challenges
-           SET claimed_platform = $1, claimed_native_id = $2, claimed_at = $3, status = 'claimed'
-         WHERE org_id = $4 AND nonce_hash = $5 AND status = 'pending' AND expires_at > $6
-           AND NOT (initiating_platform = $1 AND initiating_native_id = $2)
-         RETURNING org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
-                   claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at`,
-        [platform, nativeId, at, org, nonceHash, at],
+           SET claimed_platform = $1, claimed_tenant = $2, claimed_native_id = $3, claimed_at = $4, status = 'claimed'
+         WHERE org_id = $5 AND nonce_hash = $6 AND status = 'pending' AND expires_at > $7
+           AND NOT (initiating_platform = $1 AND initiating_tenant = $2 AND initiating_native_id = $3)
+         RETURNING org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+                   claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at`,
+        [platform, tenant, nativeId, at, org, nonceHash, at],
       );
       const r = (rows as LinkChallengePgRow[])[0];
       return r ? linkChallengeFromPgRow(org, r) : null;

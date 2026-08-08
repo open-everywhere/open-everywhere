@@ -225,7 +225,7 @@ await eveContextStorage().run(new FakeSession(), async () => {
   const at = new Date().toISOString();
   const SET = "S_caller";
   await store.putLinkSet(org, { org, id: SET, handle: "the caller", status: "active", createdAt: at, updatedAt: at });
-  await store.insertLinkedId(org, { org, platform: "slack", nativeId: "U_caller", linkSetId: SET, status: "confirmed", establishedBy: "test", evidenceJson: undefined, createdAt: at, updatedAt: at });
+  await store.insertLinkedId(org, { org, platform: "slack", tenant: "T_TEAM", nativeId: "U_caller", linkSetId: SET, status: "confirmed", establishedBy: "test", evidenceJson: undefined, createdAt: at, updatedAt: at });
   const shared = sharedVaultSubject(org, SET);
 
   {

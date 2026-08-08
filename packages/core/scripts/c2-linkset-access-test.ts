@@ -101,12 +101,17 @@ const bind = (over: Partial<SurfaceBinding> = {}): SurfaceBinding => ({
   ...over,
 });
 
+const tenantOf = (platform: string): string => (platform === "slack" ? "T1" : "");
+
 await ensureLinkSet({ org: ORG, linkSetId: "set-human", handle: "rowan" });
-for (const acct of [{ platform: "slack", nativeId: "U1" }, { platform: "discord", nativeId: "D1" }]) {
+for (const acct of [
+  { platform: "slack", tenant: tenantOf("slack"), nativeId: "U1" },
+  { platform: "discord", tenant: tenantOf("discord"), nativeId: "D1" },
+]) {
   await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: acct, evidence });
   await confirmLinkedId({ org: ORG, account: acct, evidence });
 }
-await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "teams", nativeId: "T1" }, evidence });
+await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "teams", tenant: tenantOf("teams"), nativeId: "T1" }, evidence });
 
 {
   const EXACT_DOMAINS: Domain[] = [
@@ -130,7 +135,7 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
     workspace: "W",
     channel: "D",
     principalId: id,
-    principalLinkSets: await callerLinkSets(ORG, platform, id),
+    principalLinkSets: await callerLinkSets(ORG, platform, id, tenantOf(platform)),
   });
   ok(resolveAccess(await dm("slack", "U1"), bundles, bindings).repos.includes("acme/personal"), "a link-set principal binding grants in a confirmed member's DM");
   ok(resolveAccess(await dm("discord", "D1"), bundles, bindings).repos.includes("acme/personal"), "…in EVERY confirmed account's DM");
@@ -150,7 +155,7 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
   const bundles: Bundle[] = [{ name: "team", repos: ["acme/team"] }];
   const bindings: Binding[] = [{ bundle: "team", scope: { level: "group", group: "payments" } }];
   const dmGroups = async (platform: string, id: string): Promise<ResolveRequest> => {
-    const sets = await callerLinkSets(ORG, platform, id);
+    const sets = await callerLinkSets(ORG, platform, id, tenantOf(platform));
     return { mode: "dm", platform, workspace: "W", channel: "D", principalId: id, groups: groupsForPrincipal(groups, principalKey(platform, id), sets) };
   };
   ok(resolveAccess(await dmGroups("slack", "U1"), bundles, bindings).repos.includes("acme/team"), "a { linkSet } group member RECEIVES the group bundle in their DM (F4 live)");
@@ -168,7 +173,7 @@ await suggestLinkedId({ org: ORG, linkSetId: "set-human", account: { platform: "
   }) as unknown as ReturnType<typeof makeOperationalPostgresStore>;
   registerOperationalStore(throwingStore);
   resetOperationalStore();
-  const sets = await callerLinkSets(ORG, "slack", "U1");
+  const sets = await callerLinkSets(ORG, "slack", "U1", tenantOf("slack"));
   ok(sets.length === 0, "🔴 a store outage yields [] — callerLinkSets is try/caught, never throws up the turn");
   const bundles: Bundle[] = [{ name: "personal", repos: ["acme/personal"] }];
   const bindings: Binding[] = [{ bundle: "personal", scope: { level: "principal", principal: "linkSet:set-human" } }];
@@ -192,10 +197,12 @@ await db.close();
     deprovisioned: false,
   };
 
-  const open = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested" });
+  const resolveTenant = (platform: string): string | undefined => tenantOf(platform);
+
+  const open = planDirectorySync({ provider: PROVIDER, resolveTenant, people: [carol], current: [], autoConfirm: "attested" });
   ok(open.steps.some((s) => s.kind === "suggest" && s.autoConfirm === true), "planner (attested, unreferenced): the attested mapping is auto-confirmable");
 
-  const guarded = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested", accessReferencedSets: new Set([carolSet]) });
+  const guarded = planDirectorySync({ provider: PROVIDER, resolveTenant, people: [carol], current: [], autoConfirm: "attested", accessReferencedSets: new Set([carolSet]) });
   ok(guarded.steps.every((s) => s.kind !== "suggest" || s.autoConfirm === false), "🔴 an attested auto-confirm into an ACCESS-REFERENCED set is SUPPRESSED — it lands as a plain suggestion awaiting the person's DM tap");
   ok(guarded.steps.every((s) => s.kind !== "confirm"), "…and no confirm step is emitted for the referenced set");
   ok(guarded.warnings.some((w) => w.includes("SUPPRESSED") && w.includes(carolSet)), "…with a loud warning naming the set and why (C2.4)");
@@ -205,7 +212,7 @@ await db.close();
 
   ok(accessReferencedLinkSets({ bindings: [], groups: [] }).size === 0, "setup: with no binding and no group, NO set is access-REFERENCED — the id-keyed guard has nothing to suppress on");
 
-  const vaulted = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: true });
+  const vaulted = planDirectorySync({ provider: PROVIDER, resolveTenant, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: true });
   ok(
     vaulted.steps.every((s) => s.kind !== "suggest" || s.autoConfirm === false),
     "🔴 C.3 (k): with the shared OAuth vault ARMED, an attested auto-confirm is SUPPRESSED even for a set NO config names — membership alone mints that set's shared token, so an IdP edit must not confirm a stranger into it",
@@ -220,11 +227,11 @@ await db.close();
     "…exactly one — the blanket reason is warned once per run, never once per person, or it would be buried",
   );
 
-  const vaultOff = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: false });
+  const vaultOff = planDirectorySync({ provider: PROVIDER, resolveTenant, people: [carol], current: [], autoConfirm: "attested", linkSetVaultArmed: false });
   assert.deepEqual(vaultOff, open, "🔴 vault OFF ⇒ the plan is IDENTICAL to the pre-C.3 baseline — the guard adds nothing when the vault is not armed");
   passed++;
 
-  const vaultedOffPolicy = planDirectorySync({ provider: PROVIDER, people: [carol], current: [], autoConfirm: "off", linkSetVaultArmed: true });
+  const vaultedOffPolicy = planDirectorySync({ provider: PROVIDER, resolveTenant, people: [carol], current: [], autoConfirm: "off", linkSetVaultArmed: true });
   ok(vaultedOffPolicy.warnings.length === 0, "vault armed + autoconfirm OFF ⇒ no warning — the guard reports the escape it CLOSED, not one that was never open");
 }
 

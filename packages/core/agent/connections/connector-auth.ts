@@ -166,12 +166,12 @@ export function connectorAuthRequiredUserMessage(connector: string, authorizeCla
 
 export async function resolveDmPrincipal(
   auth: import("eve/context").SessionAuth,
-): Promise<{ mode?: string; principalId?: string; platform?: string; org?: string }> {
+): Promise<{ mode?: string; principalId?: string; platform?: string; workspace?: string; org?: string }> {
   const bindCtx = await surfaceContextFromAuth(auth);
   if (!bindCtx) return {};
   try {
     const b = bindFrom(bindCtx);
-    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, org: resolvePartition(bindCtx).org };
+    return { mode: b.mode, principalId: actingPrincipalId(b), platform: b.platform, workspace: b.workspace, org: resolvePartition(bindCtx).org };
   } catch {
     return {};
   }
@@ -181,6 +181,7 @@ async function effectiveUserVaultSubject(
   connector: string,
   org: string | undefined,
   platform: string | undefined,
+  workspace: string | undefined,
   principalId: string,
 ): Promise<string> {
   if (!org || !platform) {
@@ -191,7 +192,7 @@ async function effectiveUserVaultSubject(
   }
   const raw = rawVaultSubject(org, platform, principalId);
   if (!connectorLinkSetVaultEnabled()) return raw;
-  return (await sharedVaultSubjectFor(org, connector, platform, principalId)) ?? raw;
+  return (await sharedVaultSubjectFor(org, connector, platform, principalId, workspace)) ?? raw;
 }
 
 function classifyUserAuthRequired(e: unknown): boolean {
@@ -209,9 +210,9 @@ async function memoSelfHealsUserGrant(
   if (cred?.type !== "user-oauth") return false;
   const providerRef = vercelConnectorOf(cred);
   if (!providerRef) return false;
-  const { mode, principalId, platform, org } = await resolveDmPrincipal(auth);
+  const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(auth);
   if (mode !== "dm" || !principalId || !org || !platform) return false;
-  const subjectId = await effectiveUserVaultSubject(connector, org, platform, principalId);
+  const subjectId = await effectiveUserVaultSubject(connector, org, platform, workspace, principalId);
   const probe = flow.hasFreshGrant.bind(flow);
   if (!(await freshGrantConfirmed(() => probe(providerRef, { type: "user", id: subjectId })))) return false;
   clearConnectorAuthRequired(connector);
@@ -234,7 +235,7 @@ export function userAwareProviderToken(
       const cred = await boundConnectorCredential(opts.connector, ctx.session.auth);
 
       if (cred?.type === "user-oauth") {
-        const { mode, principalId, platform, org } = await resolveDmPrincipal(ctx.session.auth);
+        const { mode, principalId, platform, workspace, org } = await resolveDmPrincipal(ctx.session.auth);
         if (mode !== "dm") {
           throw new Error(
             `connection "${opts.connector}": a per-user credential resolved on a non-DM surface ` +
@@ -250,7 +251,7 @@ export function userAwareProviderToken(
         const connector = vercelConnectorOf(cred);
         if (!connector)
           throw new Error(`connection "${opts.connector}": user-oauth credential has no vercel-connect home`);
-        const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, principalId);
+        const subjectId = await effectiveUserVaultSubject(opts.connector, org, platform, workspace, principalId);
         try {
           const minted = await mintUser(connector, { subject: { type: "user", id: subjectId } });
           await auditMintOutcome(opts.connector, {

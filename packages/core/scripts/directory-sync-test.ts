@@ -37,6 +37,9 @@ import confirmLinkTool from "../agent/tools/confirm_link.js";
 import linkIdentityTool from "../agent/tools/link_identity.js";
 import { observeLinkClaim } from "../agent/hooks/link-claim.js";
 import { registerSlackFixtureMapper } from "./_slack-test-stubs.js";
+import { registerConfig } from "../agent/access/config.js";
+import { tryLinkTenantOf } from "../agent/identity/link-tenant.js";
+import { defineDomain } from "../agent/memory/domain.js";
 
 registerSlackFixtureMapper();
 
@@ -56,6 +59,17 @@ async function refuses(fn: () => Promise<unknown>, needle: string, label: string
 }
 
 const ORG = "default";
+const T1 = "T1";
+registerConfig({
+  loadBundles: () => [],
+  loadBindings: () => [],
+  pluginRegistry: {},
+  skillContent: {},
+  loadSilos: () => [],
+  domainsForSurface: () => [],
+  loadDomains: () => [defineDomain({ name: "eng", channels: [`slack/${T1}/C_ENG`] })],
+});
+const RESOLVE_TENANT = (platform: string): string | undefined => tryLinkTenantOf(platform, undefined);
 const db = new PGlite();
 const client: PgClient = { query: (text, params) => db.query(text, params ? [...params] : undefined) };
 await initOperationalSchema(client);
@@ -125,7 +139,7 @@ const setId = directoryLinkSetId("okta", "00u-rowan");
     "…and the structured evidence records the IdP user id AND the grade, so \"why does the system believe this\" is a column",
   );
 
-  ok((await resolveLinkSet(ORG, "github", "gh-rowan")) === null, "🔴 a suggestion resolves to NOTHING — the IdP has not linked anybody");
+  ok((await resolveLinkSet(ORG, "github", "gh-rowan", "")) === null, "🔴 a suggestion resolves to NOTHING — the IdP has not linked anybody");
   ok((await expandLinkSet(ORG, setId)).length === 0, "🔴 …and expands to nothing");
   ok((await confirmedLinkSetPrincipals(ORG)).length === 0, "🔴 …and contributes nothing to the attribution union");
 
@@ -173,26 +187,26 @@ const dmStranger = ctxFor({ channelId: "D-NOPE", channelType: "im", principalId:
 const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
 {
-  const bootstrap = await pendingDirectorySuggestionsFor(ORG, "slack", "U-ROWAN");
+  const bootstrap = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-ROWAN");
   ok(bootstrap.length === 1 && bootstrap[0]!.principal === "slack/U-ROWAN", "F2(b): a bootstrap caller (own row merely suggested) sees ONLY their own account");
   ok(bootstrap[0]!.provider === "okta" && bootstrap[0]!.grade === "attested", "read: it carries the proposing provider and its grade");
-  ok((await pendingDirectorySuggestionsFor(ORG, "slack", "U-STRANGER")).length === 0, "🔴 read: a stranger's query finds NOTHING — somebody else's suggestions are structurally unavailable, not merely refused");
+  ok((await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-STRANGER")).length === 0, "🔴 read: a stranger's query finds NOTHING — somebody else's suggestions are structurally unavailable, not merely refused");
 
   await refuses(() => confirmLink.execute({ decision: "confirm" }, channelRowan), "DM-only", "confirm_link still refuses outside a DM on the directory path");
   await refuses(() => confirmLink.execute({ decision: "confirm" }, dmStranger), "nothing of yours", "🔴 a stranger cannot confirm somebody else's directory suggestions");
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/gh-rowan"] }, dmRowan), "none of those accounts", "🔴 F2(b): a bootstrap caller cannot confirm the set's OTHER accounts by naming them");
-  ok((await resolveLinkSet(ORG, "github", "gh-rowan")) === null, "🔴 F2(b): …and gh-rowan was not linked");
+  ok((await resolveLinkSet(ORG, "github", "gh-rowan", "")) === null, "🔴 F2(b): …and gh-rowan was not linked");
 
   const denied = await confirmLink.execute({ decision: "deny" }, dmRowan);
   ok(denied.decided === "denied" && denied.accounts.join() === "slack/U-ROWAN", "deny works on the directory path (the bootstrap's own account)");
-  ok((await resolveLinkSet(ORG, "slack", "U-ROWAN")) === null, "🔴 …and a deny writes NOTHING — the account still has no standing");
+  ok((await resolveLinkSet(ORG, "slack", "U-ROWAN", T1)) === null, "🔴 …and a deny writes NOTHING — the account still has no standing");
   ok(denied.note.includes("unlink_identity"), "…and names the verb that actually removes an account, so \"I said no\" and \"make it go away\" stay distinct acts");
 
   const boot = await confirmLink.execute({ decision: "confirm" }, dmRowan);
   ok(boot.decided === "confirmed" && boot.accounts.join() === "slack/U-ROWAN", "F2(b): the bootstrap one-tap confirms ONLY the caller's own account");
-  ok((await resolveLinkSet(ORG, "slack", "U-ROWAN"))?.id === setId, "…and it now resolves to their link-set");
+  ok((await resolveLinkSet(ORG, "slack", "U-ROWAN", T1))?.id === setId, "…and it now resolves to their link-set");
 
-  const standing = await pendingDirectorySuggestionsFor(ORG, "slack", "U-ROWAN");
+  const standing = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-ROWAN");
   ok(standing.map((s) => s.principal).sort().join() === "github/gh-rowan,linear/lin-rowan", "F2(a): once CONFIRMED, standing exposes the set's other attested suggestions");
 
   let blanket = "";
@@ -206,7 +220,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     blanket.includes("github/gh-rowan") && blanket.includes("linear/lin-rowan"),
     "🔴 OPE-291: …and the refusal NAMES every account waiting, so the person can answer about ones they were shown",
   );
-  ok((await resolveLinkSet(ORG, "github", "gh-rowan")) === null, "🔴 OPE-291: …and the refusal is a REFUSAL — nothing was linked");
+  ok((await resolveLinkSet(ORG, "github", "gh-rowan", "")) === null, "🔴 OPE-291: …and the refusal is a REFUSAL — nothing was linked");
   ok((await expandLinkSet(ORG, setId)).length === 1, "🔴 OPE-291: …the set still holds only the bootstrap account");
 
   const denyMany = await confirmLink.execute({ decision: "deny" }, dmRowan);
@@ -233,22 +247,22 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 {
   const evilSet = "dir-evil";
   await pg.putLinkSet(ORG, { org: ORG, id: evilSet, handle: "evil", status: "active", createdAt: "2026-01-10T12:20:00Z", updatedAt: "2026-01-10T12:20:00Z" });
-  await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "slack", nativeId: "ATTACKER" }, evidence: { kind: "directory-sync", provider: "okta", grade: "attested" } });
-  await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "github", nativeId: "VICTIM_GH" }, evidence: { kind: "directory-sync", provider: "okta", grade: "email-match" } });
+  await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "slack", tenant: T1, nativeId: "ATTACKER" }, evidence: { kind: "directory-sync", provider: "okta", grade: "attested" } });
+  await suggestLinkedId({ org: ORG, linkSetId: evilSet, account: { platform: "github", tenant: "", nativeId: "VICTIM_GH" }, evidence: { kind: "directory-sync", provider: "okta", grade: "email-match" } });
   const dmAttacker = ctxFor({ channelId: "D-EVIL", channelType: "im", principalId: "ATTACKER" });
 
-  const attackerPending = await pendingDirectorySuggestionsFor(ORG, "slack", "ATTACKER");
+  const attackerPending = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "ATTACKER");
   ok(attackerPending.length === 1 && attackerPending[0]!.principal === "slack/ATTACKER", "🔴 F2: the attacker (bootstrap) sees ONLY their own account — the victim's is invisible");
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/VICTIM_GH"] }, dmAttacker), "none of those accounts", "🔴 F2: the attacker cannot confirm the victim's github account");
-  ok((await resolveLinkSet(ORG, "github", "VICTIM_GH")) === null, "🔴 F2: the victim's account was NOT linked into the attacker's set");
+  ok((await resolveLinkSet(ORG, "github", "VICTIM_GH", "")) === null, "🔴 F2: the victim's account was NOT linked into the attacker's set");
 
   await confirmLink.execute({ decision: "confirm" }, dmAttacker);
-  const afterStanding = await pendingDirectorySuggestionsFor(ORG, "slack", "ATTACKER");
+  const afterStanding = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "ATTACKER");
   ok(!afterStanding.some((s) => s.principal === "github/VICTIM_GH"), "🔴 F2(c): a confirmed member still cannot see an EMAIL-MATCH account that isn't theirs");
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/VICTIM_GH"] }, dmAttacker), "nothing of yours", "🔴 F2(c): …and naming it explicitly still refuses");
-  ok((await resolveLinkSet(ORG, "github", "VICTIM_GH")) === null, "🔴 F2(c): the victim's account is still unlinked");
+  ok((await resolveLinkSet(ORG, "github", "VICTIM_GH", "")) === null, "🔴 F2(c): the victim's account is still unlinked");
 
-  ok((await pendingDirectorySuggestionsFor(ORG, "github", "VICTIM_GH")).some((s) => s.principal === "github/VICTIM_GH"), "F2(c): the account ITSELF sees its own email-match suggestion to ratify from its own DM");
+  ok((await pendingDirectorySuggestionsFor(ORG, "github", "", "VICTIM_GH")).some((s) => s.principal === "github/VICTIM_GH"), "F2(c): the account ITSELF sees its own email-match suggestion to ratify from its own DM");
 }
 
 {
@@ -303,7 +317,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   registerDirectoryProvider(fakeDirectory(() => shrunk));
   const run2 = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(!run2.plan.steps.some((s) => s.kind !== "noop" && "nativeId" in s && s.nativeId === "gh-ada"), "🔴 an account the directory STOPPED mentioning is not touched");
-  ok((await resolveLinkSet(ORG, "github", "gh-ada"))?.id === adaSet, "🔴 …it still resolves — absence from the IdP is not evidence of non-ownership");
+  ok((await resolveLinkSet(ORG, "github", "gh-ada", ""))?.id === adaSet, "🔴 …it still resolves — absence from the IdP is not evidence of non-ownership");
   ok((await expandLinkSet(ORG, adaSet)).some((a) => a.platform === "github"), "🔴 …and it is still a member of her set");
   ok(!run2.plan.steps.some((s) => (s.kind as string) === "unlink" || (s.kind as string) === "revoke"), "the plan has no unlink/revoke step KIND at all — the guarantee is structural");
 }
@@ -321,11 +335,11 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   };
   const carolSet = directoryLinkSetId("okta", "00u-carol");
 
-  const off = planDirectorySync({ provider: "okta", people: [carol], current: [], autoConfirm: "off" });
+  const off = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [carol], current: [], autoConfirm: "off" });
   ok(off.counts.suggest === 2 && off.counts.confirm === 0, "planner (off): both accounts suggested, neither confirmed");
   ok(off.steps.every((s) => s.kind !== "suggest" || !s.autoConfirm), "planner (off): no suggestion is marked auto-confirmable");
 
-  const armed = planDirectorySync({ provider: "okta", people: [carol], current: [], autoConfirm: "attested" });
+  const armed = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [carol], current: [], autoConfirm: "attested" });
   const armedSuggests = armed.steps.filter((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest");
   ok(armedSuggests.find((s) => s.nativeId === "U-CAROL")!.autoConfirm === true, "planner (attested): an ATTESTED mapping may skip the DM tap");
   ok(armedSuggests.find((s) => s.nativeId === "lin-carol")!.autoConfirm === false, "🔴 planner (attested): an EMAIL-MATCH mapping never may — the escape is narrowed to provisioning facts");
@@ -333,8 +347,8 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   registerDirectoryProvider(fakeDirectory(() => [carol]));
   const run = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(run.applied.suggested === 2 && run.applied.confirmed === 1, "runner (attested): both rows written, exactly one confirmed");
-  ok((await resolveLinkSet(ORG, "slack", "U-CAROL"))?.id === carolSet, "runner (attested): the attested account resolves immediately");
-  ok((await resolveLinkSet(ORG, "linear", "lin-carol")) === null, "🔴 runner (attested): the email-match account still waits for Carol");
+  ok((await resolveLinkSet(ORG, "slack", "U-CAROL", T1))?.id === carolSet, "runner (attested): the attested account resolves immediately");
+  ok((await resolveLinkSet(ORG, "linear", "lin-carol", "")) === null, "🔴 runner (attested): the email-match account still waits for Carol");
   const confirmedRow = (await listLinkSetsWithIds(ORG)).find((r) => r.set.id === carolSet)!.ids.find((r) => r.platform === "slack")!;
   ok(
     confirmedRow.establishedBy === "directory-sync:okta" && JSON.parse(confirmedRow.evidenceJson ?? "{}").grade === "attested",
@@ -344,7 +358,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
   const dmCarol = ctxFor({ channelId: "D-CAROL", channelType: "im", principalId: "U-CAROL" });
   await refuses(() => confirmLink.execute({ decision: "confirm" }, dmCarol), "nothing of yours", "🔴 F2(c): an email-match suggestion is NOT confirmable from another of the person's accounts (proof of control must come from that account itself)");
-  ok((await pendingDirectorySuggestionsFor(ORG, "linear", "lin-carol")).some((s) => s.principal === "linear/lin-carol"), "F2(c): …the account ITSELF sees its own email-match suggestion, to ratify from its own DM");
+  ok((await pendingDirectorySuggestionsFor(ORG, "linear", "", "lin-carol")).some((s) => s.principal === "linear/lin-carol"), "F2(c): …the account ITSELF sees its own email-match suggestion, to ratify from its own DM");
 }
 
 {
@@ -361,7 +375,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const run = (await syncDirectoryOrg({ org: ORG, autoConfirm: "off" }))!;
   ok(run.applied.suspended === 1, "🔴 deprovision applies EAGERLY at the most conservative policy — narrowing is safe to automate");
   ok((await listLinkSetsWithIds(ORG)).find((r) => r.set.id === carolSet)!.set.status === "suspended", "…the link-set is suspended");
-  ok((await resolveLinkSet(ORG, "slack", "U-CAROL")) === null, "…so attribution degrades to per-surface identity immediately");
+  ok((await resolveLinkSet(ORG, "slack", "U-CAROL", T1)) === null, "…so attribution degrades to per-surface identity immediately");
   ok((await listLinkSetsWithIds(ORG)).find((r) => r.set.id === carolSet)!.ids.every((r) => r.status !== "revoked"), "🔴 …and NOTHING was revoked — terminal decisions stay human");
 
   const run2 = (await syncDirectoryOrg({ org: ORG, autoConfirm: "off" }))!;
@@ -383,13 +397,13 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     {
       set: { org: ORG, id: "ls-challenge", handle: "real-person", status: "active", createdAt: "z", updatedAt: "z" },
       ids: [
-        { org: ORG, linkSetId: "ls-challenge", platform: "slack", nativeId: "U-MIXED", status: "confirmed", establishedBy: "directory-sync:okta", createdAt: "z", updatedAt: "z" },
-        { org: ORG, linkSetId: "ls-challenge", platform: "github", nativeId: "gh-proven", status: "confirmed", establishedBy: "challenge:c-real", createdAt: "z", updatedAt: "z" },
+        { org: ORG, linkSetId: "ls-challenge", platform: "slack", tenant: T1, nativeId: "U-MIXED", status: "confirmed", establishedBy: "directory-sync:okta", createdAt: "z", updatedAt: "z" },
+        { org: ORG, linkSetId: "ls-challenge", platform: "github", tenant: "", nativeId: "gh-proven", status: "confirmed", establishedBy: "challenge:c-real", createdAt: "z", updatedAt: "z" },
       ],
     },
   ];
   const anchor: DirectoryPerson = { externalId: "00u-mixed", displayName: "Mixed", accounts: [{ platform: "slack", nativeId: "U-MIXED", grade: "attested" }], groups: [], deprovisioned: true };
-  const plan = planDirectorySync({ provider: "okta", people: [anchor], current: challengeState, autoConfirm: "off" });
+  const plan = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [anchor], current: challengeState, autoConfirm: "off" });
   ok(!plan.steps.some((s) => s.kind === "suspend"), "🔴 F5: a deprovision does NOT suspend a set that holds challenge-proven members");
   ok(stepsFor(plan, "noop").some((s) => (s as { why: string }).why.includes("challenge-proven")), "F5: …it is a no-op naming the reason");
   ok(plan.warnings.some((w) => w.includes("ls-challenge") && w.toLowerCase().includes("challenge")), "F5: …and a LOUD warning points the admin at the manual suspend/revoke lever");
@@ -397,11 +411,11 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const dirOnlyState: DirectoryLinkState = [
     {
       set: { org: ORG, id: "ls-dironly", handle: "dir-person", status: "active", createdAt: "z", updatedAt: "z" },
-      ids: [{ org: ORG, linkSetId: "ls-dironly", platform: "slack", nativeId: "U-DIRONLY", status: "confirmed", establishedBy: "directory-sync:okta", createdAt: "z", updatedAt: "z" }],
+      ids: [{ org: ORG, linkSetId: "ls-dironly", platform: "slack", tenant: T1, nativeId: "U-DIRONLY", status: "confirmed", establishedBy: "directory-sync:okta", createdAt: "z", updatedAt: "z" }],
     },
   ];
   const dirAnchor: DirectoryPerson = { externalId: "00u-dir", displayName: "Dir", accounts: [{ platform: "slack", nativeId: "U-DIRONLY", grade: "attested" }], groups: [], deprovisioned: true };
-  const plan2 = planDirectorySync({ provider: "okta", people: [dirAnchor], current: dirOnlyState, autoConfirm: "off" });
+  const plan2 = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [dirAnchor], current: dirOnlyState, autoConfirm: "off" });
   ok(plan2.steps.some((s) => s.kind === "suspend" && s.linkSetId === "ls-dironly"), "F5: a genuinely directory-built set STILL suspends on deprovision");
 }
 
@@ -429,7 +443,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
     groups: [],
     deprovisioned: false,
   };
-  const plan = planDirectorySync({ provider: "okta", people: [greedy], current: state, autoConfirm: "attested" });
+  const plan = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [greedy], current: state, autoConfirm: "attested" });
   ok(planIsNoop(plan), "🔴 conflict: a directory person spanning TWO link-sets is a whole-person NO-OP — the merge is refused, not guessed at");
   ok(plan.warnings.some((w) => w.includes(rowanSet.set.id) && w.includes(adaSet.set.id)), "…and the warning NAMES both sets so an admin can decide");
   ok(plan.warnings.some((w) => w.includes("An account is exactly one person")), "…and states the invariant it is protecting");
@@ -441,6 +455,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok((await lastDirectorySync(ORG))!.detail.warnings !== undefined, "…while the summary row carries the warnings for directory_sync_status to surface");
 
   const twin = planDirectorySync({
+    resolveTenant: RESOLVE_TENANT,
     provider: "okta",
     people: [
       { externalId: "00u-a", displayName: "A", accounts: [{ platform: "slack", nativeId: "U-SHARED", grade: "attested" }], groups: [], deprovisioned: false },
@@ -456,6 +471,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
 
 {
   const none = planDirectorySync({
+    resolveTenant: RESOLVE_TENANT,
     provider: "okta",
     people: [{ externalId: "00u-empty", displayName: "No Apps", accounts: [], groups: ["Everyone"], deprovisioned: false }],
     current: [],
@@ -464,6 +480,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok(planIsNoop(none), "a person the directory maps no accounts for is a no-op — no empty set is minted for them");
 
   const goneUnknown = planDirectorySync({
+    resolveTenant: RESOLVE_TENANT,
     provider: "okta",
     people: [{ externalId: "00u-ghost", displayName: "Ghost", accounts: [{ platform: "slack", nativeId: "U-GHOST", grade: "attested" }], groups: [], deprovisioned: true }],
     current: [],
@@ -472,6 +489,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok(planIsNoop(goneUnknown), "🔴 a DEPROVISIONED person we hold no link-set for gets NO set created — a sync never onboards somebody the IdP already deactivated");
 
   const dup = planDirectorySync({
+    resolveTenant: RESOLVE_TENANT,
     provider: "okta",
     people: [
       {
@@ -529,7 +547,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const fresh = (await expandLinkSet(ORG, freshSet)).map((a) => `${a.platform}/${a.nativeId}`).sort();
   assert.deepEqual(fresh, ["github/gh-dan", "slack/U-DAN"], "F3: the initiator and the challenge-proven account are linked TOGETHER in the fresh set");
   n++;
-  ok((await pendingDirectorySuggestionsFor(ORG, "slack", "U-DAN")).length === 0, "F3: from slack/U-DAN (now confirmed in the fresh set) there is nothing left to confirm there");
+  ok((await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-DAN")).length === 0, "F3: from slack/U-DAN (now confirmed in the fresh set) there is nothing left to confirm there");
 
   const next = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(next.applied.confirmed === 0, "F3: the next sync confirms nothing — Dan's accounts now span two sets");
@@ -563,7 +581,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   process.env[OE_CONNECTOR_LINKSET_VAULT_ENV] = "1";
   const armedRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(armedRun.applied.suggested === 1 && armedRun.applied.confirmed === 0, "🔴 runner (vault armed): the attested mapping lands as a SUGGESTION and nothing is confirmed");
-  ok((await resolveLinkSet(ORG, "slack", "U-ERIN")) === null, "🔴 …so the new account is in no set yet — it cannot reach the set's shared OAuth token");
+  ok((await resolveLinkSet(ORG, "slack", "U-ERIN", T1)) === null, "🔴 …so the new account is in no set yet — it cannot reach the set's shared OAuth token");
   ok(
     armedRun.plan.warnings.some((w) => w.includes(OE_CONNECTOR_LINKSET_VAULT_ENV) && w.includes("SUPPRESSED")),
     "…and the run says LOUDLY why an operator's armed auto-confirm stopped confirming",
@@ -576,7 +594,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   delete process.env[OE_CONNECTOR_LINKSET_VAULT_ENV];
   const offRun = (await syncDirectoryOrg({ org: ORG, autoConfirm: "attested" }))!;
   ok(offRun.applied.confirmed === 1, "🔴 runner (vault OFF): the SAME fixture auto-confirms exactly as before C.3 — the guard adds nothing when the vault is not armed");
-  ok((await resolveLinkSet(ORG, "slack", "U-ERIN"))?.id === erinSet, "…the account resolves to its directory-derived set");
+  ok((await resolveLinkSet(ORG, "slack", "U-ERIN", T1))?.id === erinSet, "…the account resolves to its directory-derived set");
   ok(offRun.plan.warnings.length === 0, "…and no suppression warning is emitted");
 }
 
@@ -592,7 +610,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
       groups: [],
       deprovisioned: false,
     };
-    const plan = planDirectorySync({ provider: "okta", people: [person], current: [], autoConfirm: "off" });
+    const plan = planDirectorySync({ resolveTenant: RESOLVE_TENANT, provider: "okta", people: [person], current: [], autoConfirm: "off" });
     const step = plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest")!;
     return step.grade;
   };
@@ -617,7 +635,7 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   ok(directoryAutoConfirm() === "attested", "asserted: the escape really is armed for this block (read from the env, not passed in)");
 
   const daveRun1 = (await syncDirectoryOrg({ org: ORG }))!;
-  ok(daveRun1.applied.confirmed === 1 && (await resolveLinkSet(ORG, "slack", "U-DAVE"))?.id === daveSet, "asserted: (setup) Dave's ATTESTED slack account auto-confirms under the armed escape, making him a confirmed member");
+  ok(daveRun1.applied.confirmed === 1 && (await resolveLinkSet(ORG, "slack", "U-DAVE", T1))?.id === daveSet, "asserted: (setup) Dave's ATTESTED slack account auto-confirms under the armed escape, making him a confirmed member");
 
   daveNow = {
     ...dave,
@@ -631,20 +649,20 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const assertedSuggest = daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "gh-dave")!;
   ok(assertedSuggest.grade === "asserted" && assertedSuggest.autoConfirm === false, "🔴 asserted: an ASSERTED mapping is NOT marked auto-confirmable even with OE_DIRECTORY_AUTOCONFIRM=attested — the escape is narrowed to downstream-confirmed facts");
   ok(daveRun2.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest" && s.nativeId === "lin-dave")!.autoConfirm === true, "asserted: …while the sibling ATTESTED mapping in the very same run still confirms — the narrowing is per-grade, not a blanket off-switch");
-  ok((await resolveLinkSet(ORG, "github", "gh-dave")) === null, "🔴 asserted: end-to-end, the asserted account resolves to NOTHING — it is waiting for a human");
-  ok((await resolveLinkSet(ORG, "linear", "lin-dave"))?.id === daveSet, "asserted: …and the attested one resolved immediately");
+  ok((await resolveLinkSet(ORG, "github", "gh-dave", "")) === null, "🔴 asserted: end-to-end, the asserted account resolves to NOTHING — it is waiting for a human");
+  ok((await resolveLinkSet(ORG, "linear", "lin-dave", ""))?.id === daveSet, "asserted: …and the attested one resolved immediately");
 
   const daveRun3 = (await syncDirectoryOrg({ org: ORG }))!;
   const why = daveRun3.plan.steps.find((s) => s.kind === "noop" && s.nativeId === "gh-dave") as Extract<DirectorySyncPlan["steps"][number], { kind: "noop" }>;
   ok(why.why.includes("asserted") && why.why.includes("platform never confirmed"), "asserted: the noop `why` names the grade AND the reason (grade-keyed, not the old binary attested/email-match ternary)");
 
-  const daveStanding = await pendingDirectorySuggestionsFor(ORG, "slack", "U-DAVE");
+  const daveStanding = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-DAVE");
   ok(!daveStanding.some((s) => s.principal === "github/gh-dave"), "🔴 asserted: a CONFIRMED member of the set cannot ratify somebody's asserted account — an editable IdP field is not proof of control");
-  const ownStanding = await pendingDirectorySuggestionsFor(ORG, "github", "gh-dave");
+  const ownStanding = await pendingDirectorySuggestionsFor(ORG, "github", "", "gh-dave");
   ok(ownStanding.some((s) => s.principal === "github/gh-dave" && s.grade === "asserted"), "asserted: …the account ITSELF sees its own asserted suggestion, to ratify from its own DM (never returned to anyone else)");
   const dmDave = ctxFor({ channelId: "D-DAVE", channelType: "im", principalId: "U-DAVE" });
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/gh-dave"] }, dmDave), "nothing of yours", "🔴 asserted: …and confirm_link refuses it by name from Dave's own DM — the read's narrowness is what the tool enforces");
-  ok((await resolveLinkSet(ORG, "github", "gh-dave")) === null, "🔴 asserted: …and nothing was linked by the attempt");
+  ok((await resolveLinkSet(ORG, "github", "gh-dave", "")) === null, "🔴 asserted: …and nothing was linked by the attempt");
 
   if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
   else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;

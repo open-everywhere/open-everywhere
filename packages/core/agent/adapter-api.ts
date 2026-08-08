@@ -152,6 +152,7 @@ export { auditToolAction } from "./audit/tool-action.js";
 export { registerAuditDropCounter, appendAudit } from "./audit/audit.js";
 export type { AuditInput } from "./audit/audit.js";
 export { bootVerifyAuditChainTail } from "./audit/chain.js";
+export { bootBackfillLinkTenants } from "./identity/link-tenant-backfill.js";
 
 export { registerGovernanceMemberSupplier, _resetGovernanceMemberSupplierForTest } from "./access/audience-floor.js";
 export type { RoomRoster, GovernanceMemberSupplier } from "./access/audience-floor.js";

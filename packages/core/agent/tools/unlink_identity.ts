@@ -2,6 +2,7 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
+import { linkTenantOf } from "../identity/link-tenant.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { normalizePlatform } from "../identity/platform.js";
 import { principalKey } from "../identity/principal-key.js";
@@ -33,22 +34,24 @@ export default defineTool({
     if ((input.platform === undefined) !== (input.nativeId === undefined)) {
       throw new Error("unlink_identity needs BOTH platform and nativeId, or neither (which unlinks the account you are speaking from).");
     }
-    const target = input.platform !== undefined && input.nativeId !== undefined ? { platform: normalizePlatform(input.platform) ?? input.platform, nativeId: input.nativeId } : undefined;
+    const targetPlatform = input.platform !== undefined ? (normalizePlatform(input.platform) ?? input.platform) : undefined;
+    const target =
+      targetPlatform !== undefined && input.nativeId !== undefined ? { platform: targetPlatform, tenant: targetTenant(targetPlatform), nativeId: input.nativeId } : undefined;
     const result = await unlinkOwnId({
       org: binding.org,
-      actor: { platform: binding.platform, nativeId: actor },
+      actor: { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor },
       ...(target ? { target } : {}),
     });
     if (!result.ok) throw new Error(result.reason);
     const removed = target ? principalKey(target.platform, target.nativeId) : principalKey(binding.platform, actor);
-    const caller = { platform: binding.platform, nativeId: actor };
+    const caller = { platform: binding.platform, tenant: linkTenantOf(binding.platform, binding.workspace), nativeId: actor };
     const notice =
       `**${removed}** was just removed from your linked identity. It no longer speaks as you, and ` +
       `it no longer reaches anything this identity reaches.\n\nIf that was you, nothing to do. If ` +
       `it was not, tell whoever runs this workspace — someone with access to one of your accounts ` +
       `changed who you are here.`;
     const n = await notifyLinkSetMembers(binding.org, result.linkSetId, notice, { except: [caller] });
-    if (target && !(target.platform === caller.platform && target.nativeId === caller.nativeId) && canDeliverDirectMessage(target.platform)) {
+    if (target && !(target.platform === caller.platform && target.tenant === caller.tenant && target.nativeId === caller.nativeId) && canDeliverDirectMessage(target.platform)) {
       try {
         await dispatchDirectMessage(target.platform, { principalId: target.nativeId, text: notice });
       } catch (err) {
@@ -59,3 +62,15 @@ export default defineTool({
     return { unlinked: removed, linkSetId: result.linkSetId, note: result.note };
   },
 });
+
+function targetTenant(platform: string): string {
+  try {
+    return linkTenantOf(platform);
+  } catch (err) {
+    throw new Error(
+      `I can't unlink a ${platform} account from here — I can't tell which ${platform} workspace it belongs to, and ` +
+        `guessing would risk detaching somebody else's account. Nothing was changed. Whoever runs this deployment can fix it: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}

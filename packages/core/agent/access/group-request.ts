@@ -8,9 +8,9 @@ import { getConfig } from "./config.js";
 import { buildResolveRequest } from "./request.js";
 import { resolveAccess, type EffectiveAccess, type ResolveRequest } from "./resolver.js";
 
-export async function callerLinkSets(org: string, platform: string, nativeId: string): Promise<readonly string[]> {
+export async function callerLinkSets(org: string, platform: string, nativeId: string, tenant?: string): Promise<readonly string[]> {
   try {
-    const set = await resolveLinkSet(org, platform, nativeId);
+    const set = await resolveLinkSet(org, platform, nativeId, tenant);
     return set ? [set.id] : [];
   } catch {
     return [];
@@ -22,10 +22,11 @@ export async function sharedVaultSubjectFor(
   connector: string,
   platform: string,
   nativeId: string,
+  tenant?: string,
 ): Promise<string | undefined> {
   void connector;
   try {
-    const sets = await callerLinkSets(org, platform, nativeId);
+    const sets = await callerLinkSets(org, platform, nativeId, tenant);
     const linkSetId = sets[0];
     if (linkSetId === undefined) return undefined;
     return sharedVaultSubject(org, linkSetId);
@@ -40,7 +41,7 @@ export async function withLinkSetGroups(
   groups: readonly Group[] = getConfig().loadGroups?.() ?? [],
 ): Promise<ResolveRequest> {
   if (req.mode !== "dm" || req.principalId === undefined) return req;
-  const sets = await callerLinkSets(org, req.platform, req.principalId);
+  const sets = await callerLinkSets(org, req.platform, req.principalId, req.workspace);
   if (sets.length === 0) return req;
   let out: ResolveRequest = { ...req, principalLinkSets: [...new Set([...(req.principalLinkSets ?? []), ...sets])].sort() };
   if (groups.length > 0) {

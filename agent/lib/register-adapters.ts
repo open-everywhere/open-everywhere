@@ -17,6 +17,7 @@ import {
   emitTelemetry,
   getOperationalStore,
   bootVerifyAuditChainTail,
+  bootBackfillLinkTenants,
   registerOperationalPglite,
   onVercel,
   declareProviderSelection,
@@ -87,5 +88,10 @@ setBlobPutter(vercelBlobPutter);
 
 try {
   await bootVerifyAuditChainTail(getOperationalStore());
+} catch {
+}
+
+try {
+  await bootBackfillLinkTenants();
 } catch {
 }

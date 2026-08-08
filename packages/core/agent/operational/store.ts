@@ -465,6 +465,7 @@ export interface LinkedIdRow {
   readonly org: string;
   readonly linkSetId: string;
   readonly platform: string;
+  readonly tenant: string;
   readonly nativeId: string;
   readonly status: LinkedIdStatus;
   readonly establishedBy: string;
@@ -478,9 +479,11 @@ export interface LinkChallengeRow {
   readonly id: string;
   readonly nonceHash: string;
   readonly initiatingPlatform: string;
+  readonly initiatingTenant: string;
   readonly initiatingNativeId: string;
   readonly initiatingSurfaceKey: string;
   readonly claimedPlatform?: string;
+  readonly claimedTenant?: string;
   readonly claimedNativeId?: string;
   readonly claimedAt?: string;
   readonly status: LinkChallengeStatus;
@@ -491,6 +494,7 @@ export interface LinkChallengeRow {
 
 export interface LinkChallengeFilter {
   readonly initiatingPlatform?: string;
+  readonly initiatingTenant?: string;
   readonly initiatingNativeId?: string;
   readonly status?: LinkChallengeStatus;
 }
@@ -630,11 +634,12 @@ export interface OperationalStore {
   updateLinkSetStatus(org: string, id: string, from: readonly LinkSetStatus[], to: LinkSetStatus, at: string): Promise<boolean>;
 
   insertLinkedId(org: string, row: LinkedIdRow): Promise<boolean>;
-  getLinkedId(org: string, platform: string, nativeId: string): Promise<LinkedIdRow | null>;
+  getLinkedId(org: string, platform: string, tenant: string, nativeId: string): Promise<LinkedIdRow | null>;
   listLinkedIds(org: string, linkSetId?: string): Promise<readonly LinkedIdRow[]>;
   updateLinkedIdStatus(
     org: string,
     platform: string,
+    tenant: string,
     nativeId: string,
     from: readonly LinkedIdStatus[],
     to: LinkedIdStatus,
@@ -642,13 +647,16 @@ export interface OperationalStore {
     evidenceJson: string | undefined,
     at: string,
   ): Promise<boolean>;
-  deleteLinkedId(org: string, platform: string, nativeId: string): Promise<boolean>;
+  deleteLinkedId(org: string, platform: string, tenant: string, nativeId: string): Promise<boolean>;
   revokeLinkedIdsForSet(org: string, linkSetId: string, at: string): Promise<number>;
+
+  unbackfilledLinkedIdPlatforms(): Promise<readonly string[]>;
+  backfillLinkedIdTenant(platform: string, tenant: string, at: string): Promise<number>;
 
   addLinkChallenge(org: string, row: LinkChallengeRow): Promise<void>;
   getLinkChallenge(org: string, id: string): Promise<LinkChallengeRow | null>;
   listLinkChallenges(org: string, filter?: LinkChallengeFilter): Promise<readonly LinkChallengeRow[]>;
-  claimLinkChallenge(org: string, nonceHash: string, platform: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
+  claimLinkChallenge(org: string, nonceHash: string, platform: string, tenant: string, nativeId: string, at: string): Promise<LinkChallengeRow | null>;
   decideLinkChallenge(org: string, id: string, from: readonly LinkChallengeStatus[], to: LinkChallengeStatus, at: string): Promise<boolean>;
   expireLinkChallenges(org: string, nowIso: string): Promise<number>;
 

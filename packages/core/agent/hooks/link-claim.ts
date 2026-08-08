@@ -4,6 +4,7 @@ import { actingPrincipalId, currentTurnAddressed, currentTurnBotName } from "../
 import { detectLinkClaim, detectAddressedLinkClaim } from "../identity/link-challenge.js";
 import { agentNameTokens } from "../identity/bot-name.js";
 import { claimLinkChallenge } from "../identity/link-store.js";
+import { linkTenantOf } from "../identity/link-tenant.js";
 import { canDeliverDirectMessage, dispatchDirectMessage } from "../channels/post-arms.js";
 import { postReply, resolveReplyTarget } from "../channels/reply-post.js";
 import { BINDING_TRUSTED_PLATFORMS } from "../memory/domain.js";
@@ -32,6 +33,7 @@ async function notify(arm: ((text: string) => Promise<void> | void) | undefined,
 export async function observeLinkClaim(input: {
   readonly org: string;
   readonly platform: string;
+  readonly tenant?: string;
   readonly authorId: string | undefined;
   readonly text: string | undefined;
   readonly addressed?: boolean;
@@ -70,7 +72,7 @@ export async function observeLinkClaim(input: {
   const claimed = await claimLinkChallenge({
     org: input.org,
     code,
-    claimant: { platform: input.platform, nativeId: input.authorId },
+    claimant: { platform: input.platform, tenant: linkTenantOf(input.platform, input.tenant), nativeId: input.authorId },
     ...(input.now ? { now: input.now } : {}),
   });
   if (!claimed) {
@@ -118,6 +120,7 @@ export default defineHook({
         await observeLinkClaim({
           org: binding.org,
           platform: binding.platform,
+          tenant: binding.workspace,
           authorId,
           text: raw,
           addressed,

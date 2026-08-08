@@ -36,6 +36,7 @@ export default defineTool({
     const issued = await issueLinkChallenge({
       org: binding.org,
       platform: binding.platform,
+      tenant: binding.workspace,
       nativeId: actor,
       surfaceKey: surfaceKeyOf({ platform: p.platform, workspace: p.workspace, channel: p.surface }),
     });

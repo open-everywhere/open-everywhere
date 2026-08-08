@@ -45,13 +45,22 @@ const ok = (cond: boolean, label: string) => {
 
 ok(!(OPERATIONAL_TABLES as readonly string[]).includes("identity_oauth_vault_grants"), "registry: the per-connector grant table is GONE — consent collapsed to link-level, no ratification machinery");
 
-async function mkSet(store: OperationalStore, org: string, id: string, accounts: readonly { platform: string; nativeId: string; status?: "confirmed" | "suggested" }[]): Promise<void> {
+const WS = "T_C3";
+const tenantOf = (platform: string): string => (platform === "slack" ? WS : "");
+
+async function mkSet(
+  store: OperationalStore,
+  org: string,
+  id: string,
+  accounts: readonly { platform: string; tenant?: string; nativeId: string; status?: "confirmed" | "suggested" }[],
+): Promise<void> {
   const at = new Date().toISOString();
   await store.putLinkSet(org, { org, id, handle: id, status: "active", createdAt: at, updatedAt: at });
   for (const a of accounts) {
     await store.insertLinkedId(org, {
       org,
       platform: a.platform,
+      tenant: a.tenant ?? tenantOf(a.platform),
       nativeId: a.nativeId,
       linkSetId: id,
       status: a.status ?? "confirmed",
@@ -69,39 +78,39 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   const label = (s: string) => `[${engine}] ${s}`;
 
   await mkSet(store, ORG, "S1", [
-    { platform: "slack", nativeId: "U1" },
-    { platform: "discord", nativeId: "D1" },
-    { platform: "slack", nativeId: "U_SUG", status: "suggested" },
+    { platform: "slack", tenant: tenantOf("slack"), nativeId: "U1" },
+    { platform: "discord", tenant: tenantOf("discord"), nativeId: "D1" },
+    { platform: "slack", tenant: tenantOf("slack"), nativeId: "U_SUG", status: "suggested" },
   ]);
 
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === sharedVaultSubject(ORG, "S1"), label("confirmed member → the org-scoped SHARED subject ls:<org>/<set>, no ratify step"));
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1"))!.startsWith("ls:"), label("the shared subject is namespaced apart from a raw principal id"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS)) === sharedVaultSubject(ORG, "S1"), label("confirmed member → the org-scoped SHARED subject ls:<org>/<set>, no ratify step"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS))!.startsWith("ls:"), label("the shared subject is namespaced apart from a raw principal id"));
 
-  ok((await sharedVaultSubjectFor(ORG, "other", "slack", "U1")) === sharedVaultSubject(ORG, "S1"), label("a SECOND connector resolves shared immediately — adding an MCP does not prompt (per-connector re-ratification removed)"));
+  ok((await sharedVaultSubjectFor(ORG, "other", "slack", "U1", WS)) === sharedVaultSubject(ORG, "S1"), label("a SECOND connector resolves shared immediately — adding an MCP does not prompt (per-connector re-ratification removed)"));
 
-  const sub1 = await sharedVaultSubjectFor(ORG, C, "slack", "U1");
+  const sub1 = await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS);
   const sub2 = await sharedVaultSubjectFor(ORG, C, "discord", "D1");
   ok(sub1 !== undefined && sub1 === sub2, label("CONSENT-ONCE WIN: both confirmed accounts of one set resolve the SAME subject across platforms"));
 
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U_SUG")) === undefined, label("suggested member → RAW subject (a proposal is not a proven link)"));
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "NOBODY")) === undefined, label("an account in no set → RAW subject (unlinked, byte-identical to today)"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U_SUG", WS)) === undefined, label("suggested member → RAW subject (a proposal is not a proven link)"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "NOBODY", WS)) === undefined, label("an account in no set → RAW subject (unlinked, byte-identical to today)"));
 
   await setLinkSetHold({ org: ORG, linkSetId: "S1", hold: "suspended", actor: "admin" });
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === undefined, label("suspended set → RAW subject (membership resolves to nothing — the SOLE REACHABILITY-severance mechanism; credential DEATH is §PURGE)"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS)) === undefined, label("suspended set → RAW subject (membership resolves to nothing — the SOLE REACHABILITY-severance mechanism; credential DEATH is §PURGE)"));
   await setLinkSetHold({ org: ORG, linkSetId: "S1", hold: "active", actor: "admin" });
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === sharedVaultSubject(ORG, "S1"), label("reactivate → sharing restored from the surviving membership"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS)) === sharedVaultSubject(ORG, "S1"), label("reactivate → sharing restored from the surviving membership"));
 
-  const un = await unlinkOwnId({ org: ORG, actor: { platform: "slack", nativeId: "U1" }, target: { platform: "discord", nativeId: "D1" } });
+  const un = await unlinkOwnId({ org: ORG, actor: { platform: "slack", tenant: tenantOf("slack"), nativeId: "U1" }, target: { platform: "discord", tenant: tenantOf("discord"), nativeId: "D1" } });
   ok(un.ok, label("unlink: U1 severs discord/D1 from their own set"));
   ok((await sharedVaultSubjectFor(ORG, C, "discord", "D1")) === undefined, label("unlink SEVERS reach → the unlinked account re-derives its RAW subject (no grant survives to re-inherit — threat h N/A by design)"));
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === sharedVaultSubject(ORG, "S1"), label("unlink of one account leaves the OTHER account's reach intact"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS)) === sharedVaultSubject(ORG, "S1"), label("unlink of one account leaves the OTHER account's reach intact"));
 
   await revokeLinkSet({ org: ORG, linkSetId: "S1", actor: "admin" });
-  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1")) === undefined, label("revoke → RAW subject (offboarded account loses shared-token reach, terminally)"));
+  ok((await sharedVaultSubjectFor(ORG, C, "slack", "U1", WS)) === undefined, label("revoke → RAW subject (offboarded account loses shared-token reach, terminally)"));
 
-  await mkSet(store, "orgA", "SHARED_ID", [{ platform: "slack", nativeId: "P" }]);
-  ok((await sharedVaultSubjectFor("orgA", C, "slack", "P")) === "ls:orgA/SHARED_ID", label("org isolation: orgA resolves ls:orgA/SHARED_ID"));
-  ok((await sharedVaultSubjectFor("orgB", C, "slack", "P")) === undefined, label("org isolation: orgB (same id string, no membership of its own) → RAW — never sees orgA's set"));
+  await mkSet(store, "orgA", "SHARED_ID", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "P" }]);
+  ok((await sharedVaultSubjectFor("orgA", C, "slack", "P", WS)) === "ls:orgA/SHARED_ID", label("org isolation: orgA resolves ls:orgA/SHARED_ID"));
+  ok((await sharedVaultSubjectFor("orgB", C, "slack", "P", WS)) === undefined, label("org isolation: orgB (same id string, no membership of its own) → RAW — never sees orgA's set"));
   ok(sharedVaultSubject("orgA", "SHARED_ID") !== sharedVaultSubject("orgB", "SHARED_ID"), label("org isolation: the subject shape itself org-qualifies (no cross-org vault-key alias)"));
 }
 
@@ -147,14 +156,14 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     registerCredentialPurgeHook("oe-oauth", {
       purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0),
     });
-    await mkSet(store, ORG, "P1", [{ platform: "slack", nativeId: "PU1" }]);
+    await mkSet(store, ORG, "P1", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU1" }]);
     const subject = sharedVaultSubject(ORG, "P1");
     await seed(subject);
     ok((await rowOf(subject)) !== null, "purge setup: the shared subject's credential row exists before the revoke");
 
     const res = await revokeLinkSet({ org: ORG, linkSetId: "P1", actor: "admin" });
     ok(res.ok, "purge: revoke succeeded");
-    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU1")) === undefined, "purge: reachability is still severed (the pre-existing property is intact)");
+    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU1", WS)) === undefined, "purge: reachability is still severed (the pre-existing property is intact)");
     ok((await rowOf(subject)) === null, "🔴 purge: the stored_credential ROW IS GONE — revoke is credential DEATH, not merely unreachability");
     const detail = await lastRevokeDetail("P1");
     ok(detail.credentialsPurged === 1, "purge: the identity.link.revoked audit row states how many credentials were purged");
@@ -167,13 +176,13 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
         throw new Error("vault backing unavailable");
       },
     });
-    await mkSet(store, ORG, "P2", [{ platform: "slack", nativeId: "PU2" }]);
+    await mkSet(store, ORG, "P2", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU2" }]);
     const subject = sharedVaultSubject(ORG, "P2");
     await seed(subject);
 
     const res = await revokeLinkSet({ org: ORG, linkSetId: "P2", actor: "admin" });
     ok(res.ok, "🔴 purge failure: the REVOKE still succeeds — a vault outage never blocks an offboarding");
-    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU2")) === undefined, "purge failure: the tombstone landed regardless (reachability severed)");
+    ok((await sharedVaultSubjectFor(ORG, "notion", "slack", "PU2", WS)) === undefined, "purge failure: the tombstone landed regardless (reachability severed)");
     const detail = await lastRevokeDetail("P2");
     ok(detail.purgeFailed === true && detail.credentialsPurged === 0, "🔴 purge failure: the audit row records purgeFailed — the residue is VISIBLE, never silent");
     ok(res.ok && res.note.includes("purge_link_set_credentials"), "purge failure: the operator is told the exact repair verb to re-run");
@@ -189,7 +198,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
 
   {
     registerCredentialPurgeHook("oe-oauth", { purgeSubject: async (subjectId: string) => ((await vault.delete(tokRef(subjectId))) ? 1 : 0) });
-    await mkSet(store, ORG, "P3", [{ platform: "slack", nativeId: "PU3" }]);
+    await mkSet(store, ORG, "P3", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU3" }]);
     const subject = sharedVaultSubject(ORG, "P3");
     await seed(subject);
 
@@ -217,7 +226,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
 
   {
     resetCredentialPurgeHook();
-    await mkSet(store, ORG, "P4", [{ platform: "slack", nativeId: "PU4" }]);
+    await mkSet(store, ORG, "P4", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU4" }]);
     const res = await revokeLinkSet({ org: ORG, linkSetId: "P4", actor: "admin" });
     const detail = await lastRevokeDetail("P4");
     ok(res.ok && detail.credentialsPurged === 0 && detail.purgeFailed === undefined, "no purge hook registered: revoke reports 0 purged and NO failure (nothing to destroy is not an outage)");
@@ -230,13 +239,13 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     registerCredentialPurgeHook("aws-sso", { purgeSubject: async (subjectId: string) => ((await vault.delete(ssoRef(subjectId))) ? 1 : 0) });
 
     await mkSet(store, ORG, "P5", [
-      { platform: "slack", nativeId: "PU5" },
-      { platform: "github", nativeId: "gh-PU5" },
+      { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU5" },
+      { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU5" },
     ]);
     const shared = sharedVaultSubject(ORG, "P5");
     const rawSlack = rawVaultSubject(ORG, "slack", "PU5");
     const rawGithub = rawVaultSubject(ORG, "github", "gh-PU5");
-    await mkSet(store, ORG, "P6", [{ platform: "slack", nativeId: "PU6" }]);
+    await mkSet(store, ORG, "P6", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU6" }]);
     const strangerRaw = rawVaultSubject(ORG, "slack", "PU6");
 
     await seed(shared);
@@ -257,7 +266,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
         throw new Error("holder down");
       },
     });
-    await mkSet(store, ORG, "P7", [{ platform: "slack", nativeId: "PU7" }]);
+    await mkSet(store, ORG, "P7", [{ platform: "slack", tenant: tenantOf("slack"), nativeId: "PU7" }]);
     await vault.write(ssoRef(rawVaultSubject(ORG, "slack", "PU7")), "sso-token-blob", { provider: "aws-sso" });
     const res7 = await revokeLinkSet({ org: ORG, linkSetId: "P7", actor: "admin" });
     ok(res7.ok, "G3: a failing holder still never blocks the offboarding (the one deliberate fail-open, unchanged)");
@@ -267,14 +276,14 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
     registerCredentialPurgeHook("broken", { purgeSubject: async () => 0 });
 
     await mkSet(store, ORG, "P8", [
-      { platform: "slack", nativeId: "PU8" },
-      { platform: "github", nativeId: "gh-PU8" },
+      { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU8" },
+      { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU8" },
     ]);
     const keptRaw = rawVaultSubject(ORG, "slack", "PU8");
     const goneRaw = rawVaultSubject(ORG, "github", "gh-PU8");
     await vault.write(ssoRef(keptRaw), "kept-sso", { provider: "aws-sso" });
     await vault.write(ssoRef(goneRaw), "severed-sso", { provider: "aws-sso" });
-    const unlinked = await unlinkOwnId({ org: ORG, actor: { platform: "slack", nativeId: "PU8" }, target: { platform: "github", nativeId: "gh-PU8" } });
+    const unlinked = await unlinkOwnId({ org: ORG, actor: { platform: "slack", tenant: tenantOf("slack"), nativeId: "PU8" }, target: { platform: "github", tenant: tenantOf("github"), nativeId: "gh-PU8" } });
     ok(unlinked.ok, "G3: the unlink succeeded");
     ok((await store.getStoredCredential(ORG, ssoRef(goneRaw))) === null, "🔴 G3: unlinking an account DESTROYS its own stored credentials — a severed account must not keep minting on a token it earned while it had standing");
     ok((await store.getStoredCredential(ORG, ssoRef(keptRaw))) !== null, "G3: the accounts still on the set are untouched by an unlink");
@@ -292,7 +301,7 @@ async function runInvariants(store: OperationalStore, engine: string): Promise<v
   process.env.OE_OPERATIONAL_PROVIDER = "throwing";
   registerOperationalStore(throwing);
   resetOperationalStore();
-  ok((await sharedVaultSubjectFor("default", "notion", "slack", "U1")) === undefined, "fail-closed: a throwing store → RAW subject (never a stranger's shared token — threat c)");
+  ok((await sharedVaultSubjectFor("default", "notion", "slack", "U1", WS)) === undefined, "fail-closed: a throwing store → RAW subject (never a stranger's shared token — threat c)");
 }
 
 console.log(`✓ c3-oauth-vault-share: ${n} assertions passed`);

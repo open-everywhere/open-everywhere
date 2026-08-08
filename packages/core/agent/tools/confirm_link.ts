@@ -2,6 +2,8 @@ import { defineTool } from "eve/tools";
 import { never } from "eve/tools/approval";
 import { z } from "zod";
 import { bindFrom } from "../identity/binding.js";
+import { linkTenantOf } from "../identity/link-tenant.js";
+import type { LinkedAccount } from "../identity/link-store.js";
 import { actingPrincipalIdOf } from "../access/request.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { principalKey } from "../identity/principal-key.js";
@@ -48,13 +50,15 @@ export default defineTool({
 
     const store = getOperationalStore();
     await store.expireLinkChallenges(binding.org, new Date().toISOString());
+    const tenant = linkTenantOf(binding.platform, binding.workspace);
     const waiting = await store.listLinkChallenges(binding.org, {
       initiatingPlatform: binding.platform,
+      initiatingTenant: tenant,
       initiatingNativeId: actor,
       status: "claimed",
     });
     if (waiting.length === 0) {
-      return await decideDirectorySuggestions({ org: binding.org, platform: binding.platform, actor, decision: input.decision, only: input.accounts });
+      return await decideDirectorySuggestions({ org: binding.org, platform: binding.platform, tenant, actor, decision: input.decision, only: input.accounts });
     }
 
     let challenge = waiting[0]!;
@@ -67,7 +71,7 @@ export default defineTool({
       throw new Error(`you have ${waiting.length} link requests awaiting a decision — say which one (challengeId):\n${list}`);
     }
 
-    if (challenge.initiatingPlatform !== binding.platform || challenge.initiatingNativeId !== actor) {
+    if (challenge.initiatingPlatform !== binding.platform || challenge.initiatingTenant !== tenant || challenge.initiatingNativeId !== actor) {
       throw new Error("that link request was not started by you — only its initiator can decide it.");
     }
     const claimant = principalKey(challenge.claimedPlatform ?? "?", challenge.claimedNativeId ?? "?");
@@ -84,12 +88,12 @@ export default defineTool({
       handle: principalKey(binding.platform, actor),
     });
     if (!result.ok) throw new Error(result.reason);
-    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, nativeId: actor });
+    await announceLinkSetGrowth(binding.org, result.linkSetId, claimant, { platform: binding.platform, tenant, nativeId: actor });
     return { decided: "confirmed", claimant, linkSetId: result.linkSetId, note: result.note };
   },
 });
 
-async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, initiator: { platform: string; nativeId: string }): Promise<void> {
+async function announceLinkSetGrowth(org: string, linkSetId: string, joined: string, initiator: LinkedAccount): Promise<void> {
   const n = await notifyLinkSetMembers(
     org,
     linkSetId,
@@ -104,11 +108,12 @@ async function announceLinkSetGrowth(org: string, linkSetId: string, joined: str
 async function decideDirectorySuggestions(input: {
   readonly org: string;
   readonly platform: string;
+  readonly tenant: string;
   readonly actor: string;
   readonly decision: "confirm" | "deny";
   readonly only?: readonly string[];
 }): Promise<{ decided: string; accounts?: string[]; linkSetId?: string; note: string }> {
-  const pending = await pendingDirectorySuggestionsFor(input.org, input.platform, input.actor);
+  const pending = await pendingDirectorySuggestionsFor(input.org, input.platform, input.tenant, input.actor);
   if (pending.length === 0) {
     throw new Error(
       "nothing of yours is waiting for a decision — no link code has been claimed (codes last ~10 minutes) and no identity-directory sync has suggested an account for you. Start a link yourself with link_identity.",
@@ -144,7 +149,7 @@ async function decideDirectorySuggestions(input: {
   for (const p of chosen) {
     const res = await confirmLinkedId({
       org: input.org,
-      account: { platform: p.platform, nativeId: p.nativeId },
+      account: { platform: p.platform, tenant: p.tenant, nativeId: p.nativeId },
       evidence: { kind: "challenge", challengeId: `dm-confirm:${principalKey(input.platform, input.actor)}` },
     });
     if (res.ok) confirmed.push(p.principal);
@@ -153,7 +158,7 @@ async function decideDirectorySuggestions(input: {
   if (confirmed.length === 0) {
     throw new Error(`could not confirm ${failed.join("; ")}`);
   }
-  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), { platform: input.platform, nativeId: input.actor });
+  await announceLinkSetGrowth(input.org, chosen[0]!.linkSetId, confirmed.join(", "), { platform: input.platform, tenant: input.tenant, nativeId: input.actor });
   return {
     decided: "confirmed",
     accounts: confirmed,

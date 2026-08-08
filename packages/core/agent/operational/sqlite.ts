@@ -29,6 +29,11 @@ function getDb(): DatabaseSync {
   handle.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   const spendCols = handle.prepare("SELECT name FROM pragma_table_info('spend_ledger')").all() as { name: string }[];
   if (spendCols.length > 0 && !spendCols.some((c) => c.name === "usd_micros")) handle.exec("DROP TABLE spend_ledger");
+  const linkedIdCols = handle.prepare("SELECT name FROM pragma_table_info('identity_linked_ids')").all() as { name: string }[];
+  const needsLinkedIdTenantRebuild = linkedIdCols.length > 0 && !linkedIdCols.some((c) => c.name === "tenant");
+  if (needsLinkedIdTenantRebuild) {
+    handle.exec("DROP INDEX IF EXISTS identity_linked_ids_org_set; ALTER TABLE identity_linked_ids RENAME TO identity_linked_ids__pre_tenant;");
+  }
   handle.exec(`
     CREATE TABLE IF NOT EXISTS spend_ledger (
       org_id             TEXT NOT NULL,
@@ -345,11 +350,16 @@ function getDb(): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (org_id, id)
     );
-    -- PRIMARY KEY (org_id, platform, native_id) IS the "an account is exactly one person"
-    -- invariant -- assertPrincipalsValid's rule, moved from config load to write time.
+    -- PRIMARY KEY (org_id, platform, tenant, native_id) IS the "an account is exactly one person"
+    -- invariant -- assertPrincipalsValid's rule, moved from config load to write time. tenant joined
+    -- the key in OPE-309 phase 2: on a tenant-scoped platform a person id is issued PER WORKSPACE, so
+    -- the 3-column key made two workspaces' members one row -- i.e. one person. See the postgres twin
+    -- and identity/link-tenant.ts. SQLite cannot ALTER a PRIMARY KEY, so an existing table crosses over
+    -- by the rename-and-copy rebuild either side of this exec (needsLinkedIdTenantRebuild).
     CREATE TABLE IF NOT EXISTS identity_linked_ids (
       org_id         TEXT NOT NULL,
       platform       TEXT NOT NULL,
+      tenant         TEXT NOT NULL DEFAULT '', -- OPE-309: '' = vendor-global platform, or not yet backfilled
       native_id      TEXT NOT NULL,
       link_set_id    TEXT NOT NULL,
       status         TEXT NOT NULL,           -- suggested | confirmed | revoked ("revoked" terminal)
@@ -357,7 +367,7 @@ function getDb(): DatabaseSync {
       evidence       TEXT,                    -- structured evidence record as JSON; opaque here
       created_at     TEXT NOT NULL,
       updated_at     TEXT NOT NULL,
-      PRIMARY KEY (org_id, platform, native_id)
+      PRIMARY KEY (org_id, platform, tenant, native_id)
     );
     CREATE INDEX IF NOT EXISTS identity_linked_ids_org_set ON identity_linked_ids (org_id, link_set_id);
     -- The proof-of-control nonce ledger. nonce_hash is a sha-256 -- the RAW code is NEVER stored,
@@ -367,9 +377,11 @@ function getDb(): DatabaseSync {
       id                     TEXT NOT NULL,
       nonce_hash             TEXT NOT NULL,   -- sha-256 hex of the uppercased code; NEVER the code
       initiating_platform    TEXT NOT NULL,
+      initiating_tenant      TEXT NOT NULL DEFAULT '', -- OPE-309; '' off a tenant-scoped platform
       initiating_native_id   TEXT NOT NULL,
       initiating_surface_key TEXT NOT NULL,   -- the DM the ratification must come back to
       claimed_platform       TEXT,            -- stamped from the WAKE's own captured author
+      claimed_tenant         TEXT,            -- ...in the same CAS, so a claimed row names a whole account
       claimed_native_id      TEXT,
       claimed_at             TEXT,
       status                 TEXT NOT NULL,   -- pending | claimed | ratified | denied | expired
@@ -384,6 +396,14 @@ function getDb(): DatabaseSync {
       value TEXT NOT NULL
     );
   `);
+  if (needsLinkedIdTenantRebuild) {
+    handle.exec(`
+      INSERT INTO identity_linked_ids (org_id, platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
+        SELECT org_id, platform, '', native_id, link_set_id, status, established_by, evidence, created_at, updated_at
+          FROM identity_linked_ids__pre_tenant;
+      DROP TABLE identity_linked_ids__pre_tenant;
+    `);
+  }
   for (const ddl of [
     "ALTER TABLE spend_limit ADD COLUMN expires_at INTEGER",
     "ALTER TABLE spend_limit ADD COLUMN reason TEXT",
@@ -420,6 +440,9 @@ function getDb(): DatabaseSync {
     "ALTER TABLE audit_entry ADD COLUMN prev_sha TEXT",
 
     "ALTER TABLE usage_events ADD COLUMN routine_id TEXT",
+
+    "ALTER TABLE identity_link_challenges ADD COLUMN initiating_tenant TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE identity_link_challenges ADD COLUMN claimed_tenant TEXT",
   ]) {
     try {
       handle.exec(ddl);
@@ -562,10 +585,11 @@ function linkSetFromSqliteRow(org: string, r: LinkSetSqliteRow): LinkSetRow {
   return { org, id: r.id, handle: r.handle, status: r.status as LinkSetStatus, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
-const LINKED_ID_SQLITE_SELECT = "SELECT platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at FROM identity_linked_ids";
+const LINKED_ID_SQLITE_SELECT = "SELECT platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at FROM identity_linked_ids";
 
 type LinkedIdSqliteRow = {
   platform: string;
+  tenant: string;
   native_id: string;
   link_set_id: string;
   status: string;
@@ -580,6 +604,7 @@ function linkedIdFromSqliteRow(org: string, r: LinkedIdSqliteRow): LinkedIdRow {
     org,
     linkSetId: r.link_set_id,
     platform: r.platform,
+    tenant: r.tenant,
     nativeId: r.native_id,
     status: r.status as LinkedIdStatus,
     establishedBy: r.established_by,
@@ -590,17 +615,19 @@ function linkedIdFromSqliteRow(org: string, r: LinkedIdSqliteRow): LinkedIdRow {
 }
 
 const LINK_CHALLENGE_SQLITE_SELECT =
-  `SELECT id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
-          claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
+  `SELECT id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+          claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at
    FROM identity_link_challenges`;
 
 type LinkChallengeSqliteRow = {
   id: string;
   nonce_hash: string;
   initiating_platform: string;
+  initiating_tenant: string;
   initiating_native_id: string;
   initiating_surface_key: string;
   claimed_platform: string | null;
+  claimed_tenant: string | null;
   claimed_native_id: string | null;
   claimed_at: string | null;
   status: string;
@@ -615,9 +642,11 @@ function linkChallengeFromSqliteRow(org: string, r: LinkChallengeSqliteRow): Lin
     id: r.id,
     nonceHash: r.nonce_hash,
     initiatingPlatform: r.initiating_platform,
+    initiatingTenant: r.initiating_tenant,
     initiatingNativeId: r.initiating_native_id,
     initiatingSurfaceKey: r.initiating_surface_key,
     ...(r.claimed_platform === null ? {} : { claimedPlatform: r.claimed_platform }),
+    ...(r.claimed_tenant === null ? {} : { claimedTenant: r.claimed_tenant }),
     ...(r.claimed_native_id === null ? {} : { claimedNativeId: r.claimed_native_id }),
     ...(r.claimed_at === null ? {} : { claimedAt: r.claimed_at }),
     status: r.status as LinkChallengeStatus,
@@ -1787,39 +1816,39 @@ export const sqliteOperationalStore: OperationalStore = {
   async insertLinkedId(org, row) {
     const changes = getDb()
       .prepare(
-        `INSERT INTO identity_linked_ids (org_id, platform, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(org_id, platform, native_id) DO NOTHING`,
+        `INSERT INTO identity_linked_ids (org_id, platform, tenant, native_id, link_set_id, status, established_by, evidence, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(org_id, platform, tenant, native_id) DO NOTHING`,
       )
-      .run(org, row.platform, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt).changes;
+      .run(org, row.platform, row.tenant, row.nativeId, row.linkSetId, row.status, row.establishedBy, row.evidenceJson ?? null, row.createdAt, row.updatedAt).changes;
     return Number(changes) > 0;
   },
 
-  async getLinkedId(org, platform, nativeId) {
+  async getLinkedId(org, platform, tenant, nativeId) {
     const row = getDb()
-      .prepare(`${LINKED_ID_SQLITE_SELECT} WHERE org_id = ? AND platform = ? AND native_id = ?`)
-      .get(org, platform, nativeId) as LinkedIdSqliteRow | undefined;
+      .prepare(`${LINKED_ID_SQLITE_SELECT} WHERE org_id = ? AND platform = ? AND tenant = ? AND native_id = ?`)
+      .get(org, platform, tenant, nativeId) as LinkedIdSqliteRow | undefined;
     return row ? linkedIdFromSqliteRow(org, row) : null;
   },
 
   async listLinkedIds(org, linkSetId) {
-    const sql = `${LINKED_ID_SQLITE_SELECT} WHERE org_id = ?${linkSetId === undefined ? "" : " AND link_set_id = ?"} ORDER BY platform ASC, native_id ASC`;
+    const sql = `${LINKED_ID_SQLITE_SELECT} WHERE org_id = ?${linkSetId === undefined ? "" : " AND link_set_id = ?"} ORDER BY platform ASC, tenant ASC, native_id ASC`;
     const rows = (linkSetId === undefined ? getDb().prepare(sql).all(org) : getDb().prepare(sql).all(org, linkSetId)) as LinkedIdSqliteRow[];
     return rows.map((r) => linkedIdFromSqliteRow(org, r));
   },
 
-  async updateLinkedIdStatus(org, platform, nativeId, from, to, establishedBy, evidenceJson, at) {
+  async updateLinkedIdStatus(org, platform, tenant, nativeId, from, to, establishedBy, evidenceJson, at) {
     const changes = getDb()
       .prepare(
         `UPDATE identity_linked_ids SET status = ?, established_by = ?, evidence = ?, updated_at = ?
-         WHERE org_id = ? AND platform = ? AND native_id = ? AND status IN (${placeholders(from.length)})`,
+         WHERE org_id = ? AND platform = ? AND tenant = ? AND native_id = ? AND status IN (${placeholders(from.length)})`,
       )
-      .run(to, establishedBy, evidenceJson ?? null, at, org, platform, nativeId, ...from).changes;
+      .run(to, establishedBy, evidenceJson ?? null, at, org, platform, tenant, nativeId, ...from).changes;
     return Number(changes) > 0;
   },
 
-  async deleteLinkedId(org, platform, nativeId) {
-    return Number(getDb().prepare("DELETE FROM identity_linked_ids WHERE org_id = ? AND platform = ? AND native_id = ?").run(org, platform, nativeId).changes) > 0;
+  async deleteLinkedId(org, platform, tenant, nativeId) {
+    return Number(getDb().prepare("DELETE FROM identity_linked_ids WHERE org_id = ? AND platform = ? AND tenant = ? AND native_id = ?").run(org, platform, tenant, nativeId).changes) > 0;
   },
 
   async revokeLinkedIdsForSet(org, linkSetId, at) {
@@ -1828,22 +1857,33 @@ export const sqliteOperationalStore: OperationalStore = {
     );
   },
 
+  async unbackfilledLinkedIdPlatforms() {
+    const rows = getDb().prepare("SELECT DISTINCT platform FROM identity_linked_ids WHERE tenant = '' ORDER BY platform ASC").all() as { platform: string }[];
+    return rows.map((r) => r.platform);
+  },
+
+  async backfillLinkedIdTenant(platform, tenant, at) {
+    return Number(getDb().prepare("UPDATE identity_linked_ids SET tenant = ?, updated_at = ? WHERE platform = ? AND tenant = ''").run(tenant, at, platform).changes);
+  },
+
   async addLinkChallenge(org, row) {
     getDb()
       .prepare(
         `INSERT INTO identity_link_challenges
-           (org_id, id, nonce_hash, initiating_platform, initiating_native_id, initiating_surface_key,
-            claimed_platform, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (org_id, id, nonce_hash, initiating_platform, initiating_tenant, initiating_native_id, initiating_surface_key,
+            claimed_platform, claimed_tenant, claimed_native_id, claimed_at, status, created_at, expires_at, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         org,
         row.id,
         row.nonceHash,
         row.initiatingPlatform,
+        row.initiatingTenant,
         row.initiatingNativeId,
         row.initiatingSurfaceKey,
         row.claimedPlatform ?? null,
+        row.claimedTenant ?? null,
         row.claimedNativeId ?? null,
         row.claimedAt ?? null,
         row.status,
@@ -1865,6 +1905,10 @@ export const sqliteOperationalStore: OperationalStore = {
       conjuncts.push("initiating_platform = ?");
       params.push(filter.initiatingPlatform);
     }
+    if (filter?.initiatingTenant !== undefined) {
+      conjuncts.push("initiating_tenant = ?");
+      params.push(filter.initiatingTenant);
+    }
     if (filter?.initiatingNativeId !== undefined) {
       conjuncts.push("initiating_native_id = ?");
       params.push(filter.initiatingNativeId);
@@ -1879,15 +1923,15 @@ export const sqliteOperationalStore: OperationalStore = {
     return rows.map((r) => linkChallengeFromSqliteRow(org, r));
   },
 
-  async claimLinkChallenge(org, nonceHash, platform, nativeId, at) {
+  async claimLinkChallenge(org, nonceHash, platform, tenant, nativeId, at) {
     const db = getDb();
     const changes = db
       .prepare(
-        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_native_id = ?, claimed_at = ?, status = 'claimed'
+        `UPDATE identity_link_challenges SET claimed_platform = ?, claimed_tenant = ?, claimed_native_id = ?, claimed_at = ?, status = 'claimed'
          WHERE org_id = ? AND nonce_hash = ? AND status = 'pending' AND expires_at > ?
-           AND NOT (initiating_platform = ? AND initiating_native_id = ?)`,
+           AND NOT (initiating_platform = ? AND initiating_tenant = ? AND initiating_native_id = ?)`,
       )
-      .run(platform, nativeId, at, org, nonceHash, at, platform, nativeId).changes;
+      .run(platform, tenant, nativeId, at, org, nonceHash, at, platform, tenant, nativeId).changes;
     if (Number(changes) === 0) return null;
     const row = db.prepare(`${LINK_CHALLENGE_SQLITE_SELECT} WHERE org_id = ? AND nonce_hash = ? AND claimed_at = ?`).get(org, nonceHash, at) as LinkChallengeSqliteRow | undefined;
     return row ? linkChallengeFromSqliteRow(org, row) : null;
