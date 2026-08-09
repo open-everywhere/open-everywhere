@@ -606,7 +606,10 @@ export const SCENARIOS: readonly Scenario[] = [
           "needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — this leg's entire evidence IS the audit trail; a third-party bot cannot read a real DM channel it is not itself a party to",
         );
       const canary = factToken("discord-dm");
-      const ask = `remember this for later: the OPE329 discord canary is ${canary}`;
+      const ask =
+        `remember this for later: the OPE329 discord canary is ${canary}. ` +
+        `Timing requirement for the worker you delegate this to, verbatim: "First run \`sleep 75\` in bash — ` +
+        `this is a deliberate timing requirement for a test, do not skip or shorten it. Then write the memory and return via return_result."`;
       const since = new Date().toISOString();
       const sent = await forge.message({ text: ask });
       ctx.log(`${sent.label}: POST → ${sent.status}`);
