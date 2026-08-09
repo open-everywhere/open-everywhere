@@ -5,6 +5,7 @@ import {
   linearSupervisorSentinel,
   extractLinearCommentSignal,
   classifyLinearAmbientComment,
+  isLinearDirectSelfAuthored,
   buildLinearSupervisorWake,
   linearAgentSessionSignal,
   routeLinearAgentSession,
@@ -54,6 +55,12 @@ ok(classifyLinearAmbientComment({ ...plain, parentAuthorId: VIEWER.id }, VIEWER)
 ok(classifyLinearAmbientComment({ ...plain, parentAuthorId: "human-2" }, VIEWER).addressing === "channel-watch", "reply inside a HUMAN thread stays judged");
 ok(classifyLinearAmbientComment({ ...plain, body: `@${VIEWER.name} can you take this?` }, VIEWER).addressing === "drop", "app @mention -> DROP (owned by the agent-session path)");
 ok(classifyLinearAmbientComment({ ...plain, body: "email me@openeverywherefans.dev" }, { id: VIEWER.id, name: "Open" }).addressing === "channel-watch", "an @name with a trailing word-char is NOT a mention -> judged");
+
+ok(isLinearDirectSelfAuthored(VIEWER.id, VIEWER) === true, "self-authored direct trigger (author === viewer id) -> TRUE (drop before any dispatch row)");
+ok(isLinearDirectSelfAuthored("human-1", VIEWER) === false, "other-authored direct trigger -> FALSE (dispatches as before)");
+ok(isLinearDirectSelfAuthored(undefined, VIEWER) === false, "author-less trigger -> FALSE (nothing to compare — not this guard's job; enrichment/other checks own that)");
+ok(isLinearDirectSelfAuthored(VIEWER.id, {}) === false, "UNRESOLVED viewer id -> FALSE, never TRUE (fail-closed the same direction as classifyLinearAmbientComment: can't assert self-authorship without a resolved identity, so this guard stays byte-identical to having no check at all rather than dropping a legitimate trigger)");
+ok(isLinearDirectSelfAuthored(VIEWER.id, { name: VIEWER.name }) === false, "viewer id absent (name-only) -> FALSE, same fail-closed reasoning");
 
 const trigger = { id: "c-trig", authorId: "human-1", authorName: "Priya", sentAt: "2026-03-24T18:51:00Z", text: "can we ship the migration tomorrow?" };
 {

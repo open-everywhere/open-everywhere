@@ -82,6 +82,10 @@ export function classifyLinearAmbientComment(c: LinearAmbientComment, viewer: Li
   return { addressing: "channel-watch", reason: "ambient comment — judged by the team supervisor" };
 }
 
+export function isLinearDirectSelfAuthored(authorId: string | undefined, viewer: LinearViewerIdentity): boolean {
+  return viewer.id !== undefined && authorId === viewer.id;
+}
+
 export interface LinearSupervisorWakeInput {
   readonly teamId: string;
   readonly issueId: string;

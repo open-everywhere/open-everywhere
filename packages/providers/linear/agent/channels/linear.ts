@@ -23,6 +23,7 @@ import {
   routeLinearAgentSession,
   handleLinearSupervisorDispatch,
   shouldRotate,
+  isLinearDirectSelfAuthored,
   type LinearSupervisorDeps,
 } from "./linear-supervisor.js";
 import {
@@ -510,6 +511,11 @@ async function mentionSessionDelivery(body: string, headers: Headers, send: Line
     if (!triggerCommentId) throw new Error("suppress-and-divert with no trigger comment id (unreachable — the router requires one)");
     const c = await enrichComment(triggerCommentId);
     if (!c || !c.teamId || !c.issueId) throw new Error("mention-comment enrichment failed (no issue/team anchor)");
+    const viewer = await resolveViewer();
+    if (isLinearDirectSelfAuthored(c.authorId, viewer)) {
+      slog(`@mention on linear/${organizationId}/${c.teamId} (${c.issueIdentifier ?? c.issueId}) dropped: self-authored comment (our own reply) — session ${agentSessionId}`);
+      return;
+    }
     const grain = linearGrainFor(`linear/${organizationId}/${c.teamId}`);
     if (!grainUsesUnifiedWindow(grain)) throw new Error("no single-context window (crossSurface/solo) holds for the enriched team (config raced or team mismatch)");
     const vouched = linearTeamVouched(organizationId, c.teamId);
