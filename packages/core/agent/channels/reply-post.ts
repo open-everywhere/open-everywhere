@@ -95,7 +95,14 @@ export const REPLY_DEDUPE_SKIPPED_ID = "deduped:reply";
 
 export async function postReply(target: ReplyTarget, text: string, audit?: ReplyAudit): Promise<string> {
   const locus = replyDedupeLocus(target);
-  const key = outboundKey({ surface: target.platform, channel: locus.channel, threadTs: locus.threadTs, action: "reply.dispatch", payload: text });
+  const key = outboundKey({
+    surface: target.platform,
+    channel: locus.channel,
+    threadTs: locus.threadTs,
+    action: "reply.dispatch",
+    stableId: audit?.wakeId,
+    payload: text,
+  });
   const id = await postOnce({
     org: audit?.org,
     key,

@@ -42,7 +42,14 @@ function unifiedDedupeLocus(origin: UnifiedWakeOrigin): { channel: string; threa
 
 export async function postUnifiedReply(origin: UnifiedWakeOrigin, text: string, deps: UnifiedReplyDeps = {}, audit?: ReplyAudit): Promise<string> {
   const locus = unifiedDedupeLocus(origin);
-  const key = outboundKey({ surface: origin.platform, channel: locus.channel, threadTs: locus.threadTs, action: "reply.dispatch.unified", payload: text });
+  const key = outboundKey({
+    surface: origin.platform,
+    channel: locus.channel,
+    threadTs: locus.threadTs,
+    action: "reply.dispatch.unified",
+    stableId: audit?.wakeId,
+    payload: text,
+  });
   const id = await postOnce({
     org: audit?.org,
     key,

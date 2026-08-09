@@ -629,16 +629,21 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
 
+      const returned = await pollUntil(
+        async () => {
+          const rows = await auditRead!({ sinceIso: since, actions: ["task.returned"] });
+          return rows.find((r) => (r.detail as { taskId?: unknown } | undefined)?.taskId === (spawn.detail as { taskId?: unknown } | undefined)?.taskId);
+        },
+        { timeoutMs: FILE_REPLY_WAIT, what: "the spawn's own task.returned row (the delegated worker finishing)" },
+      );
+      ctx.gate(returned.workspace === spawn.workspace, `worker returned on the SAME pseudo-domain it spawned on (${spawn.workspace})`);
+      const workerSession = (returned.detail as { sessionId?: unknown } | undefined)?.sessionId;
       const answered = await pollUntil(
         async () => {
           const rows = await auditRead!({ sinceIso: since, actions: ["reply.post"] });
-          return rows.find((r) => r.platform === "discord" && r.workspace.startsWith("oe-dm/discord/"));
+          return rows.find((r) => r.platform === "discord" && (r.detail as { sessionId?: unknown } | undefined)?.sessionId === workerSession);
         },
-        { timeoutMs: FILE_REPLY_WAIT, what: "a reply.post row (platform:discord) on the oe-dm/discord/… pseudo-domain — the delegated worker's answer landing back in the DM" },
-      );
-      ctx.gate(
-        answered.workspace === spawn.workspace,
-        `answer landed in the SAME DM the task spawned from (spawn workspace=${spawn.workspace}, reply workspace=${answered.workspace})`,
+        { timeoutMs: FILE_REPLY_WAIT, what: `a reply.post row (platform:discord) from the worker's own session — the delegated answer landing back in the DM` },
       );
       ctx.log(`answer landed: reply.post id=${String((answered.detail as { id?: unknown } | undefined)?.id ?? "?")} chars=${String((answered.detail as { chars?: unknown } | undefined)?.chars ?? "?")}`);
     },
@@ -1072,9 +1077,10 @@ export const SCENARIOS: readonly Scenario[] = [
       try {
         const EXTRA_METHODS = ["PUT", "PATCH", "DELETE"] as const;
         const extraMethod = EXTRA_METHODS[Date.now() % EXTRA_METHODS.length];
+        const runNonce = `req-${Date.now().toString(36)}`;
         const { ts: askTs } = await slack.post(
           slack.mention(
-            `this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST and ${extraMethod} (both methods, one widen-connection request)`,
+            `this channel has an e2e-fixture connection to raw.githubusercontent.com that's currently GET-only — please request access to widen it to also allow POST and ${extraMethod} (both methods, one widen-connection request; internal ref ${runNonce})`,
           ),
         );
         const card = await awaitCard(slack, askTs, FILE_REPLY_WAIT);
@@ -1143,9 +1149,10 @@ export const SCENARIOS: readonly Scenario[] = [
 
       const DM_METHODS = ["POST", "PUT", "PATCH"] as const;
       const dmMethod = DM_METHODS[Date.now() % DM_METHODS.length];
+      const dmNonce = `req-${Date.now().toString(36)}`;
       const dmAsk =
         "request access for THIS CHANNEL — a channel-scope access request (target=channel) to widen the e2e-fixture " +
-        `connection so it also allows ${dmMethod}. I do not mean my own personal DM access and I do not mean a group grant: ` +
+        `connection so it also allows ${dmMethod} (internal ref ${dmNonce}). I do not mean my own personal DM access and I do not mean a group grant: ` +
         "I mean the channel's own access.";
       const { ts: dmTs } = await dm.post(dmAsk);
       const sentDm = await forge.message({ text: dmAsk, userId, teamId, ts: dmTs });
