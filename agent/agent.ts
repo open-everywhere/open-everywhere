@@ -27,6 +27,8 @@ const UTILITY_GATEWAY_DEFAULTS = {
 
 const SESSION_INPUT_TOKEN_BUDGET = Number(process.env.OE_SESSION_INPUT_TOKEN_BUDGET) || 30_000_000;
 
+const COMPACTION_THRESHOLD_PERCENT = Number(process.env.OE_COMPACTION_THRESHOLD_PERCENT) || 0.5;
+
 registerGatewayDreamJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
 
 registerGatewayFailureFacetJudge({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS });
@@ -74,7 +76,7 @@ export default defineAgent({
   compaction: {
     model: gatewayRoutedCompactionModel({ id: UTILITY_MODEL, gateway: UTILITY_GATEWAY_DEFAULTS }),
     modelContextWindowTokens: UTILITY_MODEL_CONTEXT_WINDOW_TOKENS,
-    thresholdPercent: 0.5,
+    thresholdPercent: COMPACTION_THRESHOLD_PERCENT,
   },
   modelOptions: {
     providerOptions: {

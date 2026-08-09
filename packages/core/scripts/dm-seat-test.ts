@@ -1,6 +1,10 @@
+process.env.OE_SQLITE_PATH = ":memory:";
+
 import assert from "node:assert/strict";
-import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET } from "../agent/channels/dm-seat.js";
-import { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TOKEN_BUDGET, SUPERVISOR_ROTATE_TURN_BUDGET } from "../agent/channels/turn-delivery.js";
+import { readAudit } from "../agent/audit/audit.js";
+import { HANDOFF_NOTE_LOSS_AUDIT_ACTION } from "../agent/model/rotation-handoff.js";
+import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_EXPIRY_MS } from "../agent/channels/dm-seat.js";
+import { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TOKEN_BUDGET, SUPERVISOR_ROTATE_TURN_BUDGET, SUPERVISOR_ROTATE_EXPIRY_MS } from "../agent/channels/turn-delivery.js";
 import {
   classifySessionId,
   parseWindowToken,
@@ -258,14 +262,17 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
 }
 
 {
-  eq(dmSeatThresholds().quietGapMs, Number.POSITIVE_INFINITY, "DM quiet-gap DISABLED (∞) by default — a DM retires on SIZE, never on idleness");
-  eq(DM_SEAT_ROTATE_TURN_BUDGET, 50, "DM turn budget is 50 (the practical primary trigger)");
-  eq(DM_SEAT_ROTATE_TOKEN_BUDGET, 5_000_000, "DM input-token budget is 5M (live-calibrated, OPE-92)");
-  eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "dmSeatThresholds() reports the DM turn budget (this is the object getOrCreateDmSeat actually passes to shouldRotate)");
-  eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token budget");
+  eq(dmSeatThresholds().quietGapMs, Number.POSITIVE_INFINITY, "DM quiet-gap DISABLED (∞) by default — a DM never retires on idleness alone");
+  eq(DM_SEAT_ROTATE_EXPIRY_MS, 30 * 86_400_000, "DM expiry clock is 30 days (the PRIMARY trigger since OPE-345)");
+  eq(DM_SEAT_ROTATE_TURN_BUDGET, 50, "DM turn BACKSTOP is 50");
+  eq(DM_SEAT_ROTATE_TOKEN_BUDGET, 5_000_000, "DM input-token BACKSTOP is 5M (live-calibrated, OPE-92)");
+  eq(dmSeatThresholds().expiryMs, DM_SEAT_ROTATE_EXPIRY_MS, "dmSeatThresholds() reports the DM expiry clock (this is the object getOrCreateDmSeat actually passes to shouldRotate — an omission here would silently give every DM the unified window's 7d clock)");
+  eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "…and the DM turn backstop");
+  eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token backstop");
   ok(dmSeatThresholds().quietGapMs !== SUPERVISOR_ROTATE_QUIET_GAP_MS, "🔴 the DM quiet-gap is NOT the channel supervisor's 24h — the mechanism unified, the policy did not");
-  ok(DM_SEAT_ROTATE_TURN_BUDGET !== SUPERVISOR_ROTATE_TURN_BUDGET, "🔴 the DM turn budget is NOT the supervisor's");
-  ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== SUPERVISOR_ROTATE_TOKEN_BUDGET, "🔴 the DM token budget is NOT the supervisor's");
+  ok(DM_SEAT_ROTATE_EXPIRY_MS !== SUPERVISOR_ROTATE_EXPIRY_MS, "🔴 the DM expiry clock is NOT the unified window's");
+  ok(DM_SEAT_ROTATE_TURN_BUDGET !== SUPERVISOR_ROTATE_TURN_BUDGET, "🔴 the DM turn backstop is NOT the supervisor's");
+  ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== SUPERVISOR_ROTATE_TOKEN_BUDGET, "🔴 the DM token backstop is NOT the supervisor's");
   const store = makeStore({
     surfaceKey: REG,
     token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g7-ddd444",
@@ -278,6 +285,67 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   ok(DM_SEAT_ROTATE_TURN_BUDGET + 1 <= SUPERVISOR_ROTATE_TURN_BUDGET, "…and that turn count is still WITHIN the supervisor's budget (so the next assertion is about the DM policy, not about any policy)");
   const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store });
   eq(seat.generation, 8, "a seat over the DM turn budget but under the supervisor's ROTATES — the DM thresholds are the ones that bind");
+}
+
+{
+  const CREATED = "2026-06-01T00:00:00.000Z";
+  const seed = {
+    surfaceKey: REG,
+    token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g2-eee555",
+    generation: 2,
+    createdAt: CREATED,
+    turnCount: 3,
+    inputTokensTotal: 1_000,
+    firstWakeAt: CREATED,
+    lastWakeAt: CREATED,
+  };
+  const resumed = await getOrCreateDmSeat(ORG, DM, "2026-06-11T00:00:00.000Z", { store: makeStore(seed) });
+  eq(resumed.generation, 2, "🔴 a 10-day-old DM generation RESUMES — it is past the unified window's clock and nowhere near the DM's, and the DM's is the one that binds");
+  eq(resumed.token, seed.token, "…on the very same continuation token (no silent fork)");
+
+  const rotated = await getOrCreateDmSeat(ORG, DM, "2026-07-02T00:00:00.000Z", { store: makeStore(seed) });
+  eq(rotated.generation, 3, "…and at 31 days the DM's OWN clock retires it, with no turn or token pressure whatsoever");
+  ok(rotated.freshGeneration, "an expiry rotation is a fresh generation like any other (its first wake carries the handoff)");
+}
+
+{
+  const before = (await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION })).length;
+
+  const rotating = makeStore({
+    surfaceKey: REG,
+    token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g4-fff666",
+    generation: 4,
+    turnCount: DM_SEAT_ROTATE_TURN_BUDGET + 1,
+    firstWakeAt: "2026-07-21T00:00:00.000Z",
+    lastWakeAt: "2026-07-21T00:00:00.000Z",
+  });
+  const rotated = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", {
+    store: rotating,
+    distillHandoff: async () => {
+      throw new Error("utility model down");
+    },
+  });
+  eq(rotated.generation, 5, "a distiller throw still rotates (fail-quiet is unchanged)");
+  eq(rotated.handoffNote, null, "…note-less");
+  let rows = await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION });
+  eq(rows.length, before + 1, "…and leaves ONE loss row behind");
+  eq(rows[0]!.detail?.reason, "distiller-error", "…naming the seam");
+  eq(rows[0]!.detail?.outgoingGeneration, 4, "…and the generation whose continuity was lost");
+
+  const adopting = makeStore();
+  const failingProbe = {
+    ...adopting,
+    getChannelSession: async (org: string, surfaceKey: string) => {
+      if (surfaceKey === LEGACY_REG) throw new Error("store blip");
+      return adopting.rows.get(`${org}:${surfaceKey}`) ?? null;
+    },
+  } as unknown as OperationalStore;
+  const adopted = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store: failingProbe });
+  eq(adopted.generation, 1, "🔴 a failing legacy probe still MINTS the seat — the migration read is best-effort, and a store blip must cost the note, never the seat");
+  eq(adopted.handoffNote, null, "…note-less");
+  rows = await readAudit({ org: ORG, action: HANDOFF_NOTE_LOSS_AUDIT_ACTION });
+  eq(rows.length, before + 2, "…and the dropped continuity is now on the record");
+  eq(rows[0]!.detail?.reason, "legacy-note-read-error", "…under its own reason, distinct from a distiller failure");
 }
 
 console.log(`dm-seat-test: ${n} assertions passed`);

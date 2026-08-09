@@ -403,7 +403,18 @@ export { consumeReactedThisTurn } from "./channels/react-signal.js";
 
 export { MAX_MESSAGES } from "./channels/context-render.js";
 
-export { generateHandoffNote, handoffPrompt, clampHandoffNote, HANDOFF_NOTE_MAX_CHARS } from "./model/rotation-handoff.js";
+export {
+  generateHandoffNote,
+  handoffPrompt,
+  clampHandoffNote,
+  HANDOFF_NOTE_MAX_CHARS,
+  recordHandoffNoteLoss,
+  missingHandoffHeadings,
+  HANDOFF_NOTE_HEADINGS,
+  HANDOFF_NOTE_LOSS_AUDIT_ACTION,
+  HANDOFF_NOTE_DEGRADED_AUDIT_ACTION,
+  type HandoffNoteLossReason,
+} from "./model/rotation-handoff.js";
 
 export type { WakeAttachment, WakeParticipant } from "./channels/wake-envelope.js";
 export { PREFER_NO_REPLY_TOOL } from "./channels/normalized-wake.js";
@@ -456,7 +467,16 @@ export { resolveAccess } from "./access/resolver.js";
 export type { EffectiveAccess } from "./access/resolver.js";
 export { defineBundle, defineBinding } from "./access/bundle.js";
 
-export { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TURN_BUDGET, SUPERVISOR_ROTATE_TOKEN_BUDGET } from "./channels/turn-delivery.js";
+export {
+  SUPERVISOR_ROTATE_QUIET_GAP_MS,
+  SUPERVISOR_ROTATE_EXPIRY_MS,
+  SUPERVISOR_ROTATE_TURN_BUDGET,
+  SUPERVISOR_ROTATE_TOKEN_BUDGET,
+  rotationTrigger,
+  rotationClockMsFromDays,
+  type RotationTrigger,
+  type RotationThresholds,
+} from "./channels/turn-delivery.js";
 
 export { bindBridged } from "./identity/binding.js";
 export { bridgedContext } from "./identity/binding-bridge.js";

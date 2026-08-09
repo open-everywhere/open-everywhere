@@ -186,8 +186,9 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window (its wiring diverts into the unified channel + registers the reply-target map)");
 }
 
-ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
-ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: a stale (quiet-gap) generation rotates");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: a stale (quiet-gap) generation rotates");
+ok(shouldRotate({ createdAt: "2026-05-01T00:00:00Z", lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: an AGED generation rotates even when just woken (OPE-345 expiry)");
 
 for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],

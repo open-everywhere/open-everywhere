@@ -178,14 +178,15 @@ console.log(`session-park: pinning against installed eve ${eveVersion}`);
   ok(parkRotateDelta() >= SUPERVISOR_ROTATE_TOKEN_BUDGET, "the park delta reaches the supervisor rotation budget");
   ok(parkRotateDelta() >= DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the (larger) DM-seat rotation budget");
   const at = "2026-03-30T11:30:00.000Z";
+  const neutralised = { quietGapMs: Number.POSITIVE_INFINITY, turnBudget: 1_000_000, expiryMs: Number.POSITIVE_INFINITY };
   for (const prior of [0, 1, 3_999_999, 4_000_001]) {
     for (const tokenBudget of [SUPERVISOR_ROTATE_TOKEN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET]) {
       ok(
-        shouldRotate({ lastWakeAt: at, turnCount: 1, inputTokensTotal: prior + parkRotateDelta() }, at, { quietGapMs: Number.POSITIVE_INFINITY, turnBudget: 1_000_000, tokenBudget }),
+        shouldRotate({ createdAt: at, lastWakeAt: at, turnCount: 1, inputTokensTotal: prior + parkRotateDelta() }, at, { ...neutralised, tokenBudget }),
         `a seat at ${prior} + the park delta rotates under a ${tokenBudget}-token budget`,
       );
       ok(
-        !shouldRotate({ lastWakeAt: at, turnCount: 1, inputTokensTotal: prior }, at, { quietGapMs: Number.POSITIVE_INFINITY, turnBudget: 1_000_000, tokenBudget }) || prior >= tokenBudget,
+        !shouldRotate({ createdAt: at, lastWakeAt: at, turnCount: 1, inputTokensTotal: prior }, at, { ...neutralised, tokenBudget }) || prior >= tokenBudget,
         `…and ${prior} alone would not have (unless it already crossed ${tokenBudget})`,
       );
     }

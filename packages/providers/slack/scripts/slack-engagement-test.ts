@@ -1264,42 +1264,53 @@ registerConfig({
 }
 
 {
-  const base = { lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: 1_000 };
-  ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, low turn count, low token count → no rotate");
+  const base = { createdAt: "2026-07-08T12:00:00Z", lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: 1_000 };
+  ok(!shouldRotate(base, "2026-07-08T12:00:01Z"), "fresh wake, young generation, low turn count, low token count → no rotate");
   ok(shouldRotate(base, "2026-03-25T21:52:00Z"), "quiet gap over the default 24h → rotate");
   ok(!shouldRotate(base, "2026-07-09T11:00:00Z"), "quiet gap just under 24h → no rotate");
 
   ok(
-    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET }, "2026-07-08T12:00:01Z"),
-    "inputTokensTotal AT the token budget → rotate (primary trigger, >=)",
+    shouldRotate({ createdAt: "2026-07-01T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-11T12:00:00Z"),
+    "a generation older than the 7d expiry rotates even though it was woken one second ago (expiry is the primary)",
   );
   ok(
-    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 5, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET - 1 }, "2026-07-08T12:00:01Z"),
-    "inputTokensTotal just under the token budget → no rotate",
+    !shouldRotate({ createdAt: "2026-07-03T12:00:00Z", lastWakeAt: "2026-07-09T11:59:59Z", turnCount: 5, inputTokensTotal: 1_000 }, "2026-07-11T12:00:00Z"),
+    "…and a generation just under the expiry does not",
   );
 
   ok(
-    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: 0, inputTokensTotal: null }, "2026-07-08T12:00:01Z"),
+    shouldRotate({ ...base, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET }, "2026-07-08T12:00:01Z"),
+    "inputTokensTotal AT the token backstop → rotate (>=)",
+  );
+  ok(
+    !shouldRotate({ ...base, inputTokensTotal: SUPERVISOR_ROTATE_TOKEN_BUDGET - 1 }, "2026-07-08T12:00:01Z"),
+    "inputTokensTotal just under the token backstop → no rotate",
+  );
+
+  ok(
+    shouldRotate({ ...base, turnCount: 0, inputTokensTotal: null }, "2026-07-08T12:00:01Z"),
     "NULL inputTokensTotal (pre-migration) → fail-safe rotate",
   );
 
   ok(
-    shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    shouldRotate({ ...base, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET + 1, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
     "turnCount OVER the backstop → rotate even with a zero token counter + fresh wake",
   );
   ok(
-    !shouldRotate({ lastWakeAt: "2026-07-08T12:00:00Z", turnCount: SUPERVISOR_ROTATE_TURN_BUDGET, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
+    !shouldRotate({ ...base, turnCount: SUPERVISOR_ROTATE_TURN_BUDGET, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"),
     "turnCount AT (not over) the backstop → no rotate",
   );
 
   ok(shouldRotate(base, "not-a-real-timestamp"), "unparseable `now` → fail-safe rotate");
-  ok(shouldRotate({ lastWakeAt: "not-a-real-timestamp", turnCount: 0, inputTokensTotal: 0 }, "2026-07-08T12:00:01Z"), "unparseable lastWakeAt → fail-safe rotate");
+  ok(shouldRotate({ ...base, lastWakeAt: "not-a-real-timestamp" }, "2026-07-08T12:00:01Z"), "unparseable lastWakeAt → fail-safe rotate");
+  ok(shouldRotate({ ...base, createdAt: "not-a-real-timestamp" }, "2026-07-08T12:00:01Z"), "unparseable createdAt → fail-safe rotate (an age we can't prove is one we don't trust)");
   ok(shouldRotate(base, "2026-07-08T12:00:01Z", { turnBudget: 4 }), "a custom turnBudget below the current turnCount → rotate");
   ok(shouldRotate(base, "2026-07-08T12:00:01Z", { tokenBudget: 500 }), "a custom tokenBudget below the current token count → rotate");
   ok(shouldRotate(base, "2026-07-08T13:00:00Z", { quietGapMs: 1000 }), "a custom quietGapMs smaller than the elapsed gap → rotate");
+  ok(shouldRotate(base, "2026-07-08T12:00:02Z", { expiryMs: 1000 }), "a custom expiryMs smaller than the generation's age → rotate");
   ok(SUPERVISOR_ROTATE_QUIET_GAP_MS === 24 * 3_600_000, "default quiet-gap threshold is 24h");
-  ok(SUPERVISOR_ROTATE_TOKEN_BUDGET === 4_000_000, "default token-budget threshold is 4M");
-  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 150, "default turn-budget backstop is 150 (was 1500)");
+  ok(SUPERVISOR_ROTATE_TOKEN_BUDGET === 4_000_000, "default token BACKSTOP is 4M (OPE-345 demoted it from primary; the number did not move)");
+  ok(SUPERVISOR_ROTATE_TURN_BUDGET === 60, "default turn BACKSTOP is 60 (OPE-345: down from 150, which sat ABOVE the ~85-turn workflow event wall it was meant to guard)");
 }
 
 {

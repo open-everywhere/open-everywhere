@@ -45,23 +45,58 @@ export function nameDropPattern(name: string): RegExp {
 export const SUPERVISOR_ROTATE_QUIET_GAP_MS =
   (Number(process.env.OE_SUPERVISOR_ROTATE_QUIET_GAP_HOURS) || 24) * 3_600_000;
 
+export function rotationClockMsFromDays(raw: string | undefined, defaultDays: number): number {
+  const fallback = defaultDays * 86_400_000;
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const days = Number(raw);
+  if (!Number.isFinite(days)) return fallback;
+  return days > 0 ? days * 86_400_000 : Number.POSITIVE_INFINITY;
+}
+
+export const SUPERVISOR_ROTATE_EXPIRY_MS = rotationClockMsFromDays(process.env.OE_SUPERVISOR_ROTATE_EXPIRY_DAYS, 7);
+
 export const SUPERVISOR_ROTATE_TOKEN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TOKEN_BUDGET) || 4_000_000;
 
-export const SUPERVISOR_ROTATE_TURN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TURN_BUDGET) || 150;
+export const SUPERVISOR_ROTATE_TURN_BUDGET = Number(process.env.OE_SUPERVISOR_ROTATE_TURN_BUDGET) || 60;
+
+export type RotationTrigger =
+  | "unknown-accumulation"
+  | "unparseable-timestamp"
+  | "expiry"
+  | "quiet-gap"
+  | "turn-backstop"
+  | "token-backstop";
+
+export interface RotationThresholds {
+  readonly quietGapMs?: number;
+  readonly turnBudget?: number;
+  readonly tokenBudget?: number;
+  readonly expiryMs?: number;
+}
+
+export function rotationTrigger(
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal">,
+  now: string,
+  opts: RotationThresholds = {},
+): RotationTrigger | null {
+  if (row.inputTokensTotal == null) return "unknown-accumulation";
+  const nowMs = Date.parse(now);
+  const createdAtMs = Date.parse(row.createdAt);
+  const lastWakeAtMs = Date.parse(row.lastWakeAt);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(createdAtMs) || !Number.isFinite(lastWakeAtMs)) return "unparseable-timestamp";
+  if (nowMs - createdAtMs > (opts.expiryMs ?? SUPERVISOR_ROTATE_EXPIRY_MS)) return "expiry";
+  if (nowMs - lastWakeAtMs > (opts.quietGapMs ?? SUPERVISOR_ROTATE_QUIET_GAP_MS)) return "quiet-gap";
+  if (row.turnCount > (opts.turnBudget ?? SUPERVISOR_ROTATE_TURN_BUDGET)) return "turn-backstop";
+  if (row.inputTokensTotal >= (opts.tokenBudget ?? SUPERVISOR_ROTATE_TOKEN_BUDGET)) return "token-backstop";
+  return null;
+}
 
 export function shouldRotate(
-  row: Pick<ChannelSessionRow, "lastWakeAt" | "turnCount" | "inputTokensTotal">,
+  row: Pick<ChannelSessionRow, "createdAt" | "lastWakeAt" | "turnCount" | "inputTokensTotal">,
   now: string,
-  opts: { readonly quietGapMs?: number; readonly turnBudget?: number; readonly tokenBudget?: number } = {},
+  opts: RotationThresholds = {},
 ): boolean {
-  if (row.inputTokensTotal == null) return true;
-  if (row.inputTokensTotal >= (opts.tokenBudget ?? SUPERVISOR_ROTATE_TOKEN_BUDGET)) return true;
-  if (row.turnCount > (opts.turnBudget ?? SUPERVISOR_ROTATE_TURN_BUDGET)) return true;
-  const quietGapMs = opts.quietGapMs ?? SUPERVISOR_ROTATE_QUIET_GAP_MS;
-  const lastWakeAtMs = Date.parse(row.lastWakeAt);
-  const nowMs = Date.parse(now);
-  if (!Number.isFinite(lastWakeAtMs) || !Number.isFinite(nowMs)) return true;
-  return nowMs - lastWakeAtMs > quietGapMs;
+  return rotationTrigger(row, now, opts) !== null;
 }
 
 export interface SupervisorTextDelivery {

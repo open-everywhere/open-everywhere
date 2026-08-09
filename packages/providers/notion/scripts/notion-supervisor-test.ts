@@ -260,9 +260,10 @@ function captureDeps(session: NotionSupervisorSession, over: Partial<NotionSuper
   ok(wakes[0].message.includes(`from-generation="1"`), "handoff note is attributed to the outgoing generation");
 }
 
-ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
-ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: null }, NOW()) === true, "shouldRotate: a NULL token counter fails safe -> rotate (the infix keeps it non-null in practice)");
-ok(shouldRotate({ lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: a stale (quiet-gap) generation rotates");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young, low-token generation is NOT rotated");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: null }, NOW()) === true, "shouldRotate: a NULL token counter fails safe -> rotate (the infix keeps it non-null in practice)");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: "2026-07-01T00:00:00Z", turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: a stale (quiet-gap) generation rotates");
+ok(shouldRotate({ createdAt: "2026-05-01T00:00:00Z", lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: an AGED generation rotates even though it was woken a moment ago (OPE-345 expiry)");
 
 for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],

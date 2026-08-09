@@ -190,7 +190,8 @@ interface WakeCapture { token: string; message: string; context: readonly string
   ok(JSON.stringify(captured!.window) === JSON.stringify(window), "deps.wake receives the window WITH addressing (its wiring stamps oe_addressing for the prose-delivery bridge)");
 }
 
-ok(shouldRotate({ lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young generation is NOT rotated");
+ok(shouldRotate({ createdAt: NOW(), lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === false, "shouldRotate: a young generation is NOT rotated");
+ok(shouldRotate({ createdAt: "2026-05-01T00:00:00Z", lastWakeAt: NOW(), turnCount: 5, inputTokensTotal: 1000 }, NOW()) === true, "shouldRotate: an AGED generation rotates even when just woken (OPE-345 expiry)");
 
 for (const [label, err] of [
   ["a gateway blip", new Error("transient network blip")],

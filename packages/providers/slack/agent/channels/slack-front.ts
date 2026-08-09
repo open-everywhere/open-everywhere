@@ -378,7 +378,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     opts.resolveDmSeat ??
     ((org, dm, atIso) =>
       liveGetOrCreateDmSeat(org, dm, atIso, {
-        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.legacyChannelId ?? "", outgoing),
+        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.legacyChannelId ?? "", outgoing, org),
       }));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
