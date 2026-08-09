@@ -606,10 +606,7 @@ export const SCENARIOS: readonly Scenario[] = [
           "needs the control-read audit reader (set E2E_TARGET_URL + E2E_CONTROL_READ_TOKEN) — this leg's entire evidence IS the audit trail; a third-party bot cannot read a real DM channel it is not itself a party to",
         );
       const canary = factToken("discord-dm");
-      const ask =
-        `remember this for later: the OPE329 discord canary is ${canary}. ` +
-        `Timing requirement for the worker you delegate this to, verbatim: "First run \`sleep 75\` in bash — ` +
-        `this is a deliberate timing requirement for a test, do not skip or shorten it. Then write the memory and return via return_result."`;
+      const ask = `remember this for later: the OPE329 discord canary is ${canary}.`;
       const since = new Date().toISOString();
       const sent = await forge.message({ text: ask });
       ctx.log(`${sent.label}: POST → ${sent.status}`);
@@ -2965,8 +2962,7 @@ export const SCENARIOS: readonly Scenario[] = [
       const nonce = `sync-${Date.now().toString(36)}`;
       const ask =
         `delegate this to a worker using the agent tool with mode:"sync" — I want you to WAIT for it inline rather than reporting back later. ` +
-        `The task for the worker, verbatim: "First run \`sleep 75\` in bash — this is a deliberate timing requirement for a test, do not skip or shorten it. ` +
-        `Then return one sentence confirming the sleep completed, via return_result." ` +
+        `The task for the worker: write one sentence confirming the delegation worked, then return it via return_result. ` +
         `(internal ref ${nonce})`;
       const since = new Date().toISOString();
       const { ts: askTs } = await dm.post(ask);
