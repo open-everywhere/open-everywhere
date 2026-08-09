@@ -2888,7 +2888,8 @@ export const SCENARIOS: readonly Scenario[] = [
       const nonce = `sync-${Date.now().toString(36)}`;
       const ask =
         `delegate this to a worker using the agent tool with mode:"sync" — I want you to WAIT for it inline rather than reporting back later. ` +
-        `The task: write a short paragraph explaining what a one-shot delegated worker is and how it differs from this standing seat, then return it. ` +
+        `The task for the worker, verbatim: "First run \`sleep 75\` in bash — this is a deliberate timing requirement for a test, do not skip or shorten it. ` +
+        `Then return one sentence confirming the sleep completed, via return_result." ` +
         `(internal ref ${nonce})`;
       const since = new Date().toISOString();
       const { ts: askTs } = await dm.post(ask);
