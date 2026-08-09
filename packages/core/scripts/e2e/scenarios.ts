@@ -1,5 +1,6 @@
 import { auditSilencesExpected, ENV, type Capability, type SlackUser2Config } from "./env.js";
 import { wireNeonOperationalStore, rotateUnifiedWindow, rotateDmSeat } from "./rotate-window-lib.js";
+import type { OperationalStore } from "../../agent/operational/store.js";
 import type { SlackDriver, SlackMessage } from "./slack-driver.js";
 import type { DiscordDriver } from "./discord-driver.js";
 import type { TeamsDriver } from "./teams-driver.js";
@@ -1049,10 +1050,12 @@ export const SCENARIOS: readonly Scenario[] = [
       const forge = ctx.syntheticDm!;
       const { userId, teamId } = await slack.identity();
 
+      let opStore: OperationalStore | undefined;
       const rotateDbUrl = process.env.DATABASE_URL;
       if (rotateDbUrl) {
         try {
           const store = await wireNeonOperationalStore(rotateDbUrl);
+          opStore = store;
           const org = process.env[ENV.org]?.trim() || "default";
           const domain = process.env[ENV.unifiedDomain]?.trim() || "e2e-unified";
           const rot = await rotateUnifiedWindow(store, org, domain);
@@ -1073,7 +1076,7 @@ export const SCENARIOS: readonly Scenario[] = [
         ctx.log("J4: no DATABASE_URL — skipping the OPE-344 rotate-at-start; this run rides the standing e2e-unified window's current generation as-is");
       }
 
-      const pendingCleanup: Array<{ pendingId: string; org: string; messageTs: string; channelId: string }> = [];
+      const pendingCleanup: Array<{ pendingId: string; org: string; where: string }> = [];
       try {
         const EXTRA_METHODS = ["PUT", "PATCH", "DELETE"] as const;
         const extraMethod = EXTRA_METHODS[Date.now() % EXTRA_METHODS.length];
@@ -1087,7 +1090,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const btn = approveButton(card)!;
         ctx.gate(btn.pendingId.length > 0, "S17: access-request card carries a real pending id");
         ctx.gate(btn.org.length > 0, "S17: access-request card carries the org in its button value");
-        pendingCleanup.push({ pendingId: btn.pendingId, org: btn.org, messageTs: card.ts, channelId: slack.channelId });
+        pendingCleanup.push({ pendingId: btn.pendingId, org: btn.org, where: `channel card ${card.ts}` });
         await ctx.judgePass(
           closedQA("Does the card describe widening a connection to add POST access, naming the e2e-fixture connection?", {
             mustMatch: [/post/i],
@@ -1182,9 +1185,10 @@ export const SCENARIOS: readonly Scenario[] = [
         "S18: out-of-vocabulary refusal quality",
       );
 
+      const personalNonce = `req-${Date.now().toString(36)}`;
       const personalAsk =
         "now something different: widen MY OWN personal access — a target=personal request, for me, in this DM only " +
-        "(not this or any channel's access, and not a group). Add POST to a connection I have here.";
+        `(not this or any channel's access, and not a group). Add POST to a connection I have here (internal ref ${personalNonce}).`;
       const { ts: personalTs } = await dm.post(personalAsk);
       const sentPersonal = await forge.message({ text: personalAsk, userId, teamId, ts: personalTs });
       ctx.gate(sentPersonal.status === 200, "personal: synthetic DM target=personal ask acked 200");
@@ -1204,7 +1208,7 @@ export const SCENARIOS: readonly Scenario[] = [
         const personalBtn = approveButton(personalCard)!;
         ctx.gate(personalBtn.pendingId.length > 0, "personal: the target=personal card carries a real pending id in its action_id");
         ctx.gate(personalBtn.org.length > 0, "personal: the target=personal card carries the org in its button value");
-        pendingCleanup.push({ pendingId: personalBtn.pendingId, org: personalBtn.org, messageTs: personalCard.ts, channelId: dm.channelId });
+        pendingCleanup.push({ pendingId: personalBtn.pendingId, org: personalBtn.org, where: `DM card ${personalCard.ts}` });
         ctx.log(
           `personal: card ${personalCard.ts} proposed in the DM (pending ${personalBtn.pendingId}) — NOT tapped, torn down at scenario end` +
             (/dry-run/i.test(personalCard.text) ? " (deployment is in OE_ACCESS_DRY_RUN)" : ""),
@@ -1226,18 +1230,24 @@ export const SCENARIOS: readonly Scenario[] = [
         );
       }
       } finally {
-        if (!ctx.synthetic) {
+        if (!opStore) {
           if (pendingCleanup.length > 0) {
-            ctx.log(`J4 teardown: ${pendingCleanup.length} pending(s) minted but no synthetic capability configured — left for TTL expiry`);
+            ctx.log(
+              `J4 teardown: ${pendingCleanup.length} pending(s) minted but no DATABASE_URL wiring — left for the real TTL sweep to expire ` +
+                "(harmless; the run-unique nonce is what keeps the NEXT run's ask from being deduped against them)",
+            );
           }
         } else {
-          const synthetic = ctx.synthetic;
+          const store = opStore;
+          const nowIso = new Date().toISOString();
           for (const p of pendingCleanup) {
             try {
-              const res = await synthetic.click({ pendingId: p.pendingId, org: p.org, decision: "reject", messageTs: p.messageTs, channelId: p.channelId, teamId });
-              ctx.log(`J4 teardown: reject ${p.pendingId} → ${res.status} (best-effort, idempotent on an already-decided row)`);
+              const won = await store.decidePendingAction(p.org, p.pendingId, "expired", "system", nowIso);
+              ctx.log(
+                `J4 teardown: ${p.pendingId} (${p.where}) → ${won ? "expired out-of-band (no channel bytes)" : "already terminal — CAS lost, nothing written"}`,
+              );
             } catch (err) {
-              ctx.log(`J4 teardown: reject ${p.pendingId} failed (best-effort, not gated): ${String(err instanceof Error ? err.message : err)}`);
+              ctx.log(`J4 teardown: expiring ${p.pendingId} failed (best-effort, not gated): ${String(err instanceof Error ? err.message : err)}`);
             }
           }
         }
