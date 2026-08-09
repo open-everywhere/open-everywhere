@@ -241,8 +241,8 @@ export function stampUnifiedWindowAuth<A extends { attributes?: Record<string, u
   };
 }
 
-export function shouldBridgeAddressedProse(addressing: string | undefined, alreadyReplied: boolean): boolean {
-  return addressing === "direct-mention" && !alreadyReplied;
+export function shouldBridgeAddressedProse(addressing: string | undefined, alreadyReplied: boolean, capturedInline = false): boolean {
+  return addressing === "direct-mention" && !alreadyReplied && !capturedInline;
 }
 
 export interface SingleWindowMentionPolicy {

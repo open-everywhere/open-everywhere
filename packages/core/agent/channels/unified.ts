@@ -15,6 +15,7 @@ import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
 import { finalMessageActionForTurn } from "./turn-delivery.js";
 import { consumeRepliedThisTurn } from "./reply-signal.js";
+import { consumeResultCapturedInlineThisTurn } from "./oneshot-result-signal.js";
 import { redriveEnabled, maybeRedrive, type RedriveReinject } from "./unified-redrive.js";
 import { collectTaskResultDelta, markRecoveredDelivered } from "../access/task-result-delta.js";
 import { resultTaintedAttrs } from "../access/taint-signal.js";
@@ -166,6 +167,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
       const action = finalMessageActionForTurn(data.finishReason, data.message);
       if (action.kind === "buffer-tool-status") return;
       const replied = consumeRepliedThisTurn();
+      const capturedInline = consumeResultCapturedInlineThisTurn();
       const org = deploymentOrg();
       const { workspace, surface } = auditLabels(channel.continuation?.token);
       if (action.kind === "silent") {
@@ -197,7 +199,7 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         return;
       }
       const bind = { session: ctx.session } as unknown as BindableContext;
-      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied)) {
+      if (shouldBridgeAddressedProse(currentTurnAddressing(bind), replied, capturedInline)) {
         const wakeId = currentWakeId(bind);
         const origin = wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null;
         if (!origin) {
@@ -243,17 +245,17 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
           return;
         }
       }
-      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}) — replies must come from the reply tool`);
+      ulog(`message-tool-only: DROPPED terminal prose (${action.text.length} chars; replied=${replied}; capturedInline=${capturedInline}) — replies must come from the reply tool`);
       await appendAudit({
         org,
         platform: "unified",
         workspace,
         surface,
         action: "turn.supervisor_prose_dropped",
-        detail: { chars: action.text.length, replied, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
+        detail: { chars: action.text.length, replied, capturedInline, wakeId: currentWakeId(bind) ?? null, ...(sessionId ? { sessionId } : {}) },
       }).catch(() => undefined);
 
-      if (redriveEnabled() && !replied && channel.continuation?.token !== undefined) {
+      if (redriveEnabled() && !replied && !capturedInline && channel.continuation?.token !== undefined) {
         const wakeId = currentWakeId(bind);
         const rawToken = channel.continuation.token;
         const domain = unifiedDomainFromToken(rawToken);
