@@ -141,8 +141,23 @@ export function dmAnchorWindowKey(dmSurfaceKey: string): WindowKey {
 }
 
 export function isDmAnchoredTaskToken(token: unknown): boolean {
-  const key = parseWindowToken(typeof token === "string" && token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token);
+  const key = parseWindowToken(stripUnifiedPrefix(token));
   return key !== undefined && isTaskWindowId(key.windowId) && isDmAnchorDomain(key.domain);
+}
+
+export function dmWindowKey(dmSurfaceKey: string, generation: number): WindowKey {
+  const domain = dmAnchorDomain(dmSurfaceKey);
+  return { domain, windowId: domain, generation };
+}
+
+export function isDmAnchorWindowToken(token: unknown): boolean {
+  const key = parseWindowToken(stripUnifiedPrefix(token));
+  return key !== undefined && isDmAnchorDomain(key.domain) && !isTaskWindowId(key.windowId) && !isThreadSeatWindowId(key.windowId);
+}
+
+export function dmAnchorSurfaceForToken(token: unknown): string | undefined {
+  const key = parseWindowToken(stripUnifiedPrefix(token));
+  return key ? dmSurfaceKeyFromAnchorDomain(key.domain) : undefined;
 }
 
 const SUBAGENT_TOKEN_RE = /^subagent:(.+):([^:]+)$/;
@@ -161,6 +176,10 @@ export function isSubagentSessionToken(token: unknown): token is string {
 const SUPERVISOR_SUFFIX_RE = /(?:^|:)oe-sup:g(\d+)(?:-[0-9a-f]+)?$/;
 
 const UNIFIED_SEND_PREFIX = "unified:";
+
+function stripUnifiedPrefix(token: unknown): unknown {
+  return typeof token === "string" && token.startsWith(UNIFIED_SEND_PREFIX) ? token.slice(UNIFIED_SEND_PREFIX.length) : token;
+}
 
 export function mintGenerationSalt(): string {
   return randomBytes(3).toString("hex");

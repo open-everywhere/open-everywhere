@@ -13,6 +13,13 @@ import {
   mintGenerationSalt,
   saltSupervisorGeneration,
   sessionGrantKeyFromToken,
+  dmAnchorDomain,
+  dmAnchorSurfaceForToken,
+  dmAnchorWindowKey,
+  dmWindowKey,
+  isDmAnchorWindowToken,
+  isDmAnchoredTaskToken,
+  DM_ANCHOR_GENERATION,
   type WindowKey,
 } from "../agent/channels/window-key.js";
 
@@ -174,5 +181,51 @@ eq(
 );
 eq(sessionGrantKeyFromToken("C123:oe-sup:g1"), "C123:oe-sup:g1", "non-window supervisor token keys as itself");
 eq(sessionGrantKeyFromToken("1234.5678"), "1234.5678", "a thread-ts native token keys as itself");
+
+{
+  const DM_SURFACE = "slack/T1/D999";
+  const dmKey = dmWindowKey(DM_SURFACE, 4);
+  eq(dmKey, { domain: dmAnchorDomain(DM_SURFACE), windowId: dmAnchorDomain(DM_SURFACE), generation: 4 }, "dmWindowKey is DEGENERATE — windowId === domain === the oe-dm/ pseudo-domain");
+
+  const dmToken = formatWindowToken(dmKey);
+  eq(dmToken, "oe-dom:oe-dm/slack/T1/D999:oe-sup:g4", "a DM window serialises to the LEGACY/degenerate token shape — no :win: segment, no new grammar");
+  eq(parseWindowToken(dmToken), dmKey, "a DM window token round-trips through format+parse");
+  ok(dmToken.endsWith(":oe-sup:g4"), "a DM window token keeps the :oe-sup:g suffix (suffix detectors untouched)");
+  ok(isWindowToken(dmToken), "isWindowToken true for a DM window token");
+
+  ok(isDmAnchorWindowToken(dmToken), "isDmAnchorWindowToken true for a DM window token");
+  ok(isDmAnchorWindowToken(`unified:${dmToken}`), "…including through eve's `unified:` send prefix");
+  ok(isDmAnchorWindowToken(saltSupervisorGeneration(dmToken)), "…and for the salted (rotated) form");
+  const dmWorker = formatWindowToken({ domain: dmAnchorDomain(DM_SURFACE), windowId: taskWindowId("slack/T1/D999", "D999", "n1"), generation: DM_ANCHOR_GENERATION });
+  ok(!isDmAnchorWindowToken(dmWorker), "isDmAnchorWindowToken FALSE for a TASK window in a dm domain — a DM's worker is never mistaken for its seat");
+  const dmThreadSeat = formatWindowToken({ domain: dmAnchorDomain(DM_SURFACE), windowId: threadSeatWindowId("slack/T1/D999", "1720000000.001"), generation: 2 });
+  ok(!isDmAnchorWindowToken(dmThreadSeat), "isDmAnchorWindowToken FALSE for a THREAD-SEAT window in a dm domain (standing-grain only)");
+  ok(!isDmAnchorWindowToken(LEGACY), "isDmAnchorWindowToken FALSE for a regular channel/domain window token");
+  ok(!isDmAnchorWindowToken("oe-dom:payments:win:slack/T1/C_HR:oe-sup:g9"), "isDmAnchorWindowToken FALSE for a SOLO channel window token");
+  ok(!isDmAnchorWindowToken("C_PAY:oe-sup:g3"), "isDmAnchorWindowToken FALSE for a per-container (non-window) token");
+  ok(!isDmAnchorWindowToken("D999:oe-dm:g2"), "isDmAnchorWindowToken FALSE for an OPE-90 dm-seat token (a different grammar entirely)");
+  ok(!isDmAnchorWindowToken(undefined), "isDmAnchorWindowToken fails soft on undefined");
+
+  ok(isDmAnchoredTaskToken(dmWorker), "isDmAnchoredTaskToken still true for a DM-anchored worker (unchanged)");
+  ok(!isDmAnchoredTaskToken(dmToken), "isDmAnchoredTaskToken FALSE for a DM SEAT window — the two predicates are disjoint");
+
+  eq(dmAnchorSurfaceForToken(dmToken), DM_SURFACE, "dmAnchorSurfaceForToken recovers the surface key from a DM SEAT window token");
+  eq(dmAnchorSurfaceForToken(dmWorker), DM_SURFACE, "…and from a DM-anchored WORKER token (grain-agnostic)");
+  eq(dmAnchorSurfaceForToken(dmThreadSeat), DM_SURFACE, "…and from a DM-anchored thread-seat token");
+  eq(dmAnchorSurfaceForToken(`unified:${dmToken}`), DM_SURFACE, "…through eve's `unified:` send prefix");
+  eq(dmAnchorSurfaceForToken(LEGACY), undefined, "dmAnchorSurfaceForToken is undefined for a real config domain — the gates then fall through to the config arm");
+  eq(dmAnchorSurfaceForToken("oe-dom:payments:win:t/slack/T1/C1/n:oe-sup:g3"), undefined, "…and for a NAMED-domain worker token");
+  eq(dmAnchorSurfaceForToken("C_PAY:oe-sup:g3"), undefined, "…and for a per-container token");
+  eq(dmAnchorSurfaceForToken(undefined), undefined, "…fail-soft on a non-string");
+
+  eq(dmAnchorWindowKey(DM_SURFACE).domain, dmKey.domain, "the OPE-306 worker anchor and the OPE-351 seat window share ONE pseudo-domain (one memory/access/audit anchor)");
+  ok(dmAnchorWindowKey(DM_SURFACE).generation === 0 && dmKey.generation > 0, "…but the anchor is pinned g0 while a seat window carries a rotation generation >= 1 — so they can never be the same token");
+  eq(dmWindowKey(DM_SURFACE, 0), dmAnchorWindowKey(DM_SURFACE), "dmWindowKey at the g0 constant IS the anchor key — the two mints agree where they overlap");
+
+  assert.throws(() => dmWindowKey("slack/T1/D:1", 1), /colon-free/, "dmWindowKey throws on a colon-bearing surface key");
+  n++;
+  assert.throws(() => dmWindowKey("", 1), /non-empty/, "dmWindowKey throws on an empty surface key");
+  n++;
+}
 
 console.log(`window-key-test: ${n} assertions passed`);

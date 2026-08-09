@@ -12,8 +12,11 @@ import {
   parseWindowToken,
   mintGenerationSalt,
   saltSupervisorGeneration,
+  dmAnchorDomain,
+  dmWindowKey,
   type SessionId,
 } from "../agent/channels/window-key.js";
+import { dmWindowRegistryKey, standingSeatRegistryKey } from "../agent/channels/unified-supervisor.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -319,6 +322,31 @@ expectKind("x:oe-sup:g", "native", "native", "no-digit suffix");
   const wt = formatWindowToken({ domain: "payments", windowId: "payments", generation: 9 });
   eq(wt, "oe-dom:payments:oe-sup:g9", "formatWindowToken stays unsalted (pure function of the key)");
   eq(formatWindowToken({ domain: "payments", windowId: "payments", generation: 9 }), wt, "formatWindowToken is deterministic — no accidental salt leaking in");
+}
+
+{
+  const DM_SURFACE = "slack/T1/D999";
+  const dmWindow = formatWindowToken(dmWindowKey(DM_SURFACE, 4));
+  eq(dmWindow, "oe-dom:oe-dm/slack/T1/D999:oe-sup:g4", "a DM window token is an ORDINARY degenerate window token — no :win: segment, no new field");
+
+  expectKind(dmWindow, "window", "standing", "DM seat window (OPE-351)");
+  expectKind(`unified:${dmWindow}`, "window", "standing", "unified-prefixed DM seat window");
+  const sid = classifySessionId(dmWindow);
+  ok(sid.kind === "window" && sid.key.domain === dmAnchorDomain(DM_SURFACE), "a DM window anchors the PSEUDO-DOMAIN as its domain (memory/access/audit anchor, exactly like a real domain does)");
+  ok(sid.kind === "window" && sid.key.windowId === sid.key.domain, "…degenerately (windowId === domain)");
+
+  ok(isSupervisorShapedToken(dmWindow), "a DM window token IS supervisor-shaped — the spend counter and rotation machinery keep the broad predicate");
+  ok(oldIsSupervisorSession(dmWindow), "…and the OLD anchored routing oracle agrees (no differential introduced by the new namespace)");
+  eq(oldClassifyTokenGrain(dmWindow), "standing", "…and the OLD grain oracle agrees it is standing — the reserved namespace lives INSIDE the domain field, invisible to every shape detector");
+
+  eq(standingSeatRegistryKey(dmWindow, "ignored-fallback"), "oe-domain::oe-dm/slack/T1/D999", "a DM window token keys the ORDINARY synthetic window row (oe-domain::<windowId>)");
+  eq(dmWindowRegistryKey(DM_SURFACE), standingSeatRegistryKey(dmWindow, "ignored-fallback"), "dmWindowRegistryKey (surface-key side) agrees with standingSeatRegistryKey (token side) — one row, two derivations that cannot drift");
+  ok(dmWindowRegistryKey(DM_SURFACE) !== dmSeatRegistryKey("D999"), "…and it is DISTINCT from the OPE-90 dm-seat row (`oe-dm-seat::<channelId>`) — two different seats, two different rows");
+
+  eq(parseWindowToken(dmWindow), dmWindowKey(DM_SURFACE, 4), "a DM window token round-trips through parse");
+  const rotated = saltSupervisorGeneration(formatWindowToken(dmWindowKey(DM_SURFACE, 5)));
+  expectKind(rotated, "window", "standing", "ROTATED (salted) DM seat window");
+  eq(parseWindowToken(rotated)?.generation, 5, "a salted DM window token still recovers its numeric generation");
 }
 
 console.log(`session-id-codec-test: ${n} assertions passed (corpus size ${CORPUS.length})`);

@@ -7,6 +7,7 @@ import {
   saltSupervisorGeneration,
   parseDmSeatToken,
   dmSeatRegistryKey,
+  dmAnchorDomain,
 } from "./window-key.js";
 
 export const UNIFIED_CHANNEL_NAME = "unified";
@@ -43,6 +44,10 @@ const UNIFIED_DOMAIN_KEY_PREFIX = "oe-domain::";
 
 export function unifiedDomainSessionKey(windowId: string): string {
   return `${UNIFIED_DOMAIN_KEY_PREFIX}${windowId}`;
+}
+
+export function dmWindowRegistryKey(dmSurfaceKey: string): string {
+  return unifiedDomainSessionKey(dmAnchorDomain(dmSurfaceKey));
 }
 
 export function domainFromSessionKey(key: string): string | undefined {

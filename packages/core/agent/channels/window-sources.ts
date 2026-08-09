@@ -1,4 +1,4 @@
-import { isTaskWindowId } from "./window-key.js";
+import { dmSurfaceKeyFromAnchorDomain, isTaskWindowId } from "./window-key.js";
 import type { Domain } from "../memory/domain.js";
 
 function platformOf(surfaceKey: string): string {
@@ -21,6 +21,11 @@ function distinctPlatforms(channels: readonly string[]): readonly string[] {
 export function sourcesForWindow(windowId: string, domain: string, domains: readonly Domain[]): readonly string[] {
   if (isTaskWindowId(windowId)) {
     const p = platformOf(windowId.slice("t/".length));
+    return p.length > 0 ? [p] : [];
+  }
+  const dmSurface = dmSurfaceKeyFromAnchorDomain(domain);
+  if (dmSurface !== undefined) {
+    const p = platformOf(dmSurface);
     return p.length > 0 ? [p] : [];
   }
   if (windowId === domain) {

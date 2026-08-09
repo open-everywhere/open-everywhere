@@ -176,7 +176,7 @@ console.log("1. token grammar (dm anchor pseudo-domain):");
   const domainWorker = formatWindowToken({ domain: "payments", windowId: taskWindowId("slack/C1", "17.5", "n"), generation: 3 });
   ok(!isDmAnchoredTaskToken(domainWorker), "a NAMED-domain worker token is not DM-anchored");
   const anchorStanding = formatWindowToken(key);
-  ok(!isDmAnchoredTaskToken(anchorStanding), "a STANDING window on an anchor domain is NOT admitted — only a `t/` windowId qualifies, and nothing mints a standing anchor window");
+  ok(!isDmAnchoredTaskToken(anchorStanding), "a STANDING window on an anchor domain is NOT a DM-anchored TASK token — the predicate is grain-specific, so a DM's seat can never be mistaken for one of its workers");
   ok(!isDmAnchoredTaskToken("D_ASKER:oe-dm:g2"), "a DM-SEAT token is not a DM-anchored worker token");
   ok(!isDmAnchoredTaskToken(undefined), "fail-soft on a non-string");
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { sourcesForWindow, encodeSources, decodeSources } from "../agent/channels/window-sources.js";
-import { taskWindowId } from "../agent/channels/window-key.js";
+import { dmAnchorDomain, taskWindowId } from "../agent/channels/window-key.js";
 import { defineDomain } from "../agent/memory/domain.js";
 
 let n = 0;
@@ -46,6 +46,16 @@ const ghTask = taskWindowId("github/acme/payments-api", "42");
 eq(sourcesForWindow(ghTask, "payments", []), ["github"], "task child on a GitHub thread inherits ['github']");
 const discordTask = taskWindowId("discord/G_ACME/CH_PAY", "990");
 eq(sourcesForWindow(discordTask, "payments", []), ["discord"], "task child on a Discord thread inherits ['discord'] (channelKey's FIRST segment is the platform)");
+
+const DM_SURFACE = "slack/T_ENG/D999";
+const dmDomain = dmAnchorDomain(DM_SURFACE);
+eq(sourcesForWindow(dmDomain, dmDomain, []), ["slack"], "DM SEAT window (degenerate on the pseudo-domain) → the DM's own platform, with NO config load");
+eq(sourcesForWindow(dmDomain, dmDomain, domains), ["slack"], "…and the answer does not depend on the domain roster (a DM surface is in none of them)");
+const teamsDm = dmAnchorDomain("teams/TEN_ACME/19-dm.tacv2");
+eq(sourcesForWindow(teamsDm, teamsDm, []), ["teams"], "the arm is platform-agnostic — a Teams DM window resolves ['teams']");
+const dmTask = taskWindowId("slack/T_ENG/D999", "D999", "nonce1");
+eq(sourcesForWindow(dmTask, dmDomain, []), ["slack"], "a DM-ANCHORED WORKER still resolves through the TASK arm (windowId's channelKey), untouched by the new anchor arm");
+eq(sourcesForWindow("s/slack/T_ENG/D999/1720000000.001", dmDomain, []), ["slack"], "a DM-anchored thread seat resolves the DM's platform (not the 's' grain marker)");
 
 eq(encodeSources(["slack", "github"]), "slack,github", "encodeSources comma-joins the vector");
 eq(decodeSources("slack,github"), ["slack", "github"], "decodeSources splits the stamp back to a vector");
