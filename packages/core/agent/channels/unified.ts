@@ -8,6 +8,7 @@ import { windowedSupervisorEnabled } from "../memory/domain.js";
 import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
+import { detectBridgeableInputRequest, bridgeQuestionToSurface } from "./question-bridge.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
 import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
@@ -271,6 +272,34 @@ const channel = defineChannel<undefined, void, UnifiedReceiveTarget>({
         } else if (outcome.status !== "disabled" && outcome.status !== "skip-replied") {
           ulog(`auto-redrive: NOT fired (${outcome.status}) for wake ${outcome.originalWakeId ?? "none"} — drop is final`);
         }
+      }
+    },
+    async "input.requested"(data, channel, ctx) {
+      try {
+        const question = detectBridgeableInputRequest((data as { requests?: unknown } | undefined)?.requests);
+        if (!question) return;
+        const org = deploymentOrg();
+        const { workspace, surface } = auditLabels(channel.continuation?.token);
+        const bind = { session: ctx?.session } as unknown as BindableContext;
+        const wakeId = currentWakeId(bind);
+        const sessionId = typeof ctx?.session?.id === "string" && ctx.session.id.length > 0 ? ctx.session.id : undefined;
+        const outcome = await bridgeQuestionToSurface(
+          { org, platform: "unified", workspace, surface, ...(sessionId ? { sessionId } : {}), ...(wakeId ? { wakeId } : {}) },
+          question,
+          {
+            resolveOrigin: async () => (wakeId ? await resolveUnifiedWakeTarget(getOperationalStore(), org, wakeId).catch(() => null) : null),
+            post: async (origin, text) => postUnifiedReply(origin, text),
+          },
+        );
+        if (outcome.status === "bridged") {
+          ulog(`question bridge: posted ${question.toolName} (${question.kind}) to ${outcome.platform} for wake ${wakeId ?? "none"} — id ${outcome.id}`);
+        } else {
+          console.warn(
+            `[open-everywhere:unified] question bridge: DROPPED ${question.toolName} (${outcome.reason}) for wake ${wakeId ?? "none"} — the session is parked on a question the room cannot see (audited)`,
+          );
+        }
+      } catch (err) {
+        console.warn(`[open-everywhere:unified] question bridge skipped: ${String(err)}`);
       }
     },
     async "turn.failed"(data, channel) {

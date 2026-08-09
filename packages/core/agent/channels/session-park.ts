@@ -28,12 +28,16 @@ function numberOrUndefined(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+export function isSessionLimitContinuationRequest(request: unknown): boolean {
+  if (request === null || typeof request !== "object") return false;
+  return (request as { action?: { toolName?: unknown } }).action?.toolName === SESSION_LIMIT_CONTINUATION_TOOL_NAME;
+}
+
 export function detectSessionLimitPark(requests: unknown): SessionLimitPark | undefined {
   if (!Array.isArray(requests)) return undefined;
   for (const r of requests as readonly unknown[]) {
-    if (r === null || typeof r !== "object") continue;
+    if (!isSessionLimitContinuationRequest(r)) continue;
     const req = r as { requestId?: unknown; action?: { toolName?: unknown; input?: unknown } };
-    if (req.action?.toolName !== SESSION_LIMIT_CONTINUATION_TOOL_NAME) continue;
     const requestId = typeof req.requestId === "string" ? req.requestId : "";
     const input = (req.action?.input ?? {}) as { kind?: unknown; limit?: unknown; usedTokens?: unknown };
     const kind = input.kind === "input" || input.kind === "output" ? input.kind : "unknown";
