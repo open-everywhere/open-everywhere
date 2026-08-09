@@ -8,6 +8,7 @@ export type OktaAppIdField = "externalId" | "userName";
 
 export interface OktaAppMapping {
   readonly platform: string;
+  readonly tenant?: string;
   readonly appId: string;
   readonly field: OktaAppIdField;
 }
@@ -25,19 +26,38 @@ export function oktaDirectoryEnabled(env: NodeJS.ProcessEnv = process.env): bool
 
 export function parseOktaAppMap(raw: string | undefined): readonly OktaAppMapping[] {
   const out: OktaAppMapping[] = [];
+  const seen = new Set<string>();
   for (const entry of (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
     const parts = entry.split(":").map((s) => s.trim());
-    const [platform, appId, field] = parts;
-    if (parts.length < 2 || parts.length > 3 || !platform || !appId) {
+    const [head, appId, field] = parts;
+    if (parts.length < 2 || parts.length > 3 || !head || !appId) {
       throw new Error(
-        `${OE_DIRECTORY_OKTA_APPS_ENV} entry "${entry}" is malformed — expected "<platform>:<oktaAppId>" ` +
-          `with an optional ":externalId"/":userName" suffix, e.g. "slack:0oa1a2b3c4d5".`,
+        `${OE_DIRECTORY_OKTA_APPS_ENV} entry "${entry}" is malformed — expected "<platform>[/<tenant>]:<oktaAppId>" ` +
+          `with an optional ":externalId"/":userName" suffix, e.g. "slack:0oa1a2b3c4d5" or "slack/T0AB1CD2E:0oa1a2b3c4d5".`,
       );
     }
     if (field !== undefined && field !== "externalId" && field !== "userName") {
       throw new Error(`${OE_DIRECTORY_OKTA_APPS_ENV} entry "${entry}" names field "${field}" — only "externalId" (default) or "userName" are valid.`);
     }
-    out.push({ platform: platform.toLowerCase(), appId, field: field ?? "externalId" });
+    const slash = head.indexOf("/");
+    const platform = (slash < 0 ? head : head.slice(0, slash)).toLowerCase();
+    const tenant = slash < 0 ? undefined : head.slice(slash + 1).trim();
+    if (!platform || (tenant !== undefined && (tenant.length === 0 || tenant.includes("/")))) {
+      throw new Error(
+        `${OE_DIRECTORY_OKTA_APPS_ENV} entry "${entry}" has an unusable platform/workspace half ("${head}") — write "<platform>" ` +
+          `or "<platform>/<workspace-id>" with exactly one slash, e.g. "slack/T0AB1CD2E".`,
+      );
+    }
+    const key = `${platform}/${tenant ?? ""}`;
+    if (seen.has(key)) {
+      throw new Error(
+        `${OE_DIRECTORY_OKTA_APPS_ENV} maps two apps to the same target "${key.replace(/\/$/u, "")}" — an app map entry names WHERE ` +
+          "the ids land, so two entries for one place cannot both be right. Give each workspace its own rung " +
+          '("slack/T0AB1CD2E:…,slack/T9ZYX8W7V:…"), or remove the duplicate.',
+      );
+    }
+    seen.add(key);
+    out.push({ platform, ...(tenant !== undefined ? { tenant } : {}), appId, field: field ?? "externalId" });
   }
   return out;
 }

@@ -1304,12 +1304,15 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   );
 
   const human = definePrincipal({ name: "E2E Human", handle: "e2e", ids: { slack: "U_E2E", github: "e2e-human" } });
-  ok(resolvePrincipal("github", "e2e-human", [human]) === human && resolvePrincipal("slack", "U_E2E", [human]) === human, "principals: explicit (platform, id) joins resolve the same human across surfaces");
   ok(
-    resolvePrincipal("github", "E2E Human", [human]) === undefined && resolvePrincipal("github", "e2e", [human]) === undefined,
+    resolvePrincipal("github", undefined, "e2e-human", [human]) === human && resolvePrincipal("slack", "T_E2E", "U_E2E", [human]) === human,
+    "principals: explicit account joins resolve the same human across surfaces (an UNQUALIFIED slack entry still answers for this deployment’s workspace — OPE-350)",
+  );
+  ok(
+    resolvePrincipal("github", undefined, "E2E Human", [human]) === undefined && resolvePrincipal("github", undefined, "e2e", [human]) === undefined,
     "principals: a display-name or handle match NEVER resolves (fail-closed on merge — an attacker-named account inherits nothing)",
   );
-  ok(resolvePrincipal("slack", "U_SOMEONE_ELSE", [human]) === undefined, "principals: an unmapped id stays a distinct per-surface identity");
+  ok(resolvePrincipal("slack", "T_E2E", "U_SOMEONE_ELSE", [human]) === undefined, "principals: an unmapped id stays a distinct per-surface identity");
   ok(
     throws(() => assertPrincipalsValid([human, definePrincipal({ name: "Impostor", ids: { slack: "U_E2E" } })])),
     "principals: a double-claimed (platform, id) fails LOUD at config load (an account is exactly one person)",

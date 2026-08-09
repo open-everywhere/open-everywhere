@@ -4,6 +4,7 @@ import { directoryProvider, type DirectoryGrade, type DirectoryPerson, type Dire
 import { ensureLinkSet, confirmLinkedId, listLinkSetsWithIds, setLinkSetHold, suggestLinkedId, type LinkEvidence } from "./link-store.js";
 import { isTenantScopedPlatform, tryPrincipalKey } from "./principal-key.js";
 import { LINK_TENANT_NONE, linkTenantUnresolvableMessage, tryLinkTenantOf } from "./link-tenant.js";
+import { admittedTenantsFromConfig } from "../access/tenant-admission.js";
 import { accessReferencedLinkSets } from "../access/access-referenced-link-sets.js";
 import { getConfig } from "../access/config.js";
 import { directoryLinkSetVaultArmed, OE_CONNECTOR_LINKSET_VAULT_ENV } from "../connections/connector-flags.js";
@@ -26,6 +27,12 @@ function accessReferencedSetsFromConfig(): Set<string> {
 }
 
 export { directoryLinkSetVaultArmed };
+
+function admittedDirectoryTenant(platform: string, claimed?: string): string | undefined {
+  const named = claimed?.trim() ?? "";
+  if (named.length === 0 || !isTenantScopedPlatform(platform)) return tryLinkTenantOf(platform, undefined);
+  return admittedTenantsFromConfig(platform).has(named) ? named : undefined;
+}
 
 export type DirectoryAutoConfirm = "off" | "attested";
 
@@ -142,9 +149,10 @@ export function planDirectorySync(input: {
   readonly autoConfirm: DirectoryAutoConfirm;
   readonly accessReferencedSets?: ReadonlySet<string>;
   readonly linkSetVaultArmed?: boolean;
-  readonly resolveTenant?: (platform: string) => string | undefined;
+  readonly resolveTenant?: (platform: string, claimed?: string) => string | undefined;
 }): DirectorySyncPlan {
-  const resolveTenant = input.resolveTenant ?? ((platform: string) => (isTenantScopedPlatform(platform) ? undefined : LINK_TENANT_NONE));
+  const resolveTenant =
+    input.resolveTenant ?? ((platform: string, claimed?: string) => (isTenantScopedPlatform(platform) ? (claimed?.trim() || undefined) : LINK_TENANT_NONE));
   const steps: DirectorySyncStep[] = [];
   const warnings: string[] = [];
 
@@ -169,7 +177,7 @@ export function planDirectorySync(input: {
   const claimedBy = new Map<string, string>();
   for (const person of input.people) {
     for (const acct of person.accounts) {
-      const tenant = resolveTenant(acct.platform);
+      const tenant = resolveTenant(acct.platform, acct.tenant);
       if (tenant === undefined) continue;
       const key = accountKey(acct.platform, tenant, acct.nativeId);
       const first = claimedBy.get(key);
@@ -181,7 +189,7 @@ export function planDirectorySync(input: {
   for (const person of input.people) {
     const accounts = new Map<string, { platform: string; tenant: string; nativeId: string; grade: DirectoryGrade }>();
     for (const acct of person.accounts) {
-      const tenant = resolveTenant(acct.platform);
+      const tenant = resolveTenant(acct.platform, acct.tenant);
       if (tenant === undefined) {
         steps.push({ kind: "noop", externalId: person.externalId, platform: acct.platform, nativeId: acct.nativeId, why: `cannot name the ${acct.platform} workspace for this account` });
         warnings.push(`directory person "${person.externalId}": ${linkTenantUnresolvableMessage(acct.platform)}`);
@@ -356,7 +364,7 @@ export async function syncDirectoryOrg(input: {
     autoConfirm: policy,
     accessReferencedSets,
     linkSetVaultArmed: vaultArmed,
-    resolveTenant: (platform) => tryLinkTenantOf(platform, undefined),
+    resolveTenant: (platform, claimed) => admittedDirectoryTenant(platform, claimed),
   });
 
   const refusals: string[] = [];

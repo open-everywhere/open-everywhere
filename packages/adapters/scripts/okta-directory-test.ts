@@ -231,6 +231,17 @@ const APP_USERS_P2 = `${ORG_URL}/api/v1/apps/0oaSLACK/users?after=a2`;
   throws("slack:0oa1:email", "app map: FAIL-LOUD on an unknown field name");
   throws("slack:0oa1:externalId:extra", "app map: FAIL-LOUD on too many segments");
 
+  const twoWorkspaces = parseOktaAppMap("slack/T0AB1CD2E:0oa1,slack/T9ZYX8W7V:0oa2,github:0oa3");
+  ok(twoWorkspaces.length === 3, "app map (OPE-350): two apps for ONE platform are both kept — a second same-platform workspace is expressible");
+  ok(twoWorkspaces[0]!.platform === "slack" && twoWorkspaces[0]!.tenant === "T0AB1CD2E", "app map (OPE-350): the `<platform>/<tenant>` half parses into platform + workspace");
+  ok(twoWorkspaces[1]!.tenant === "T9ZYX8W7V" && twoWorkspaces[1]!.appId === "0oa2", "app map (OPE-350): …and the second app carries the OTHER workspace");
+  ok(twoWorkspaces[2]!.tenant === undefined, "app map (OPE-350): an entry with no rung carries NO tenant — the pre-350 meaning (this deployment's sole workspace), unchanged");
+  ok(parseOktaAppMap("SLACK/T0AB1CD2E:0oa1:userName")[0]!.field === "userName", "app map (OPE-350): the rung composes with the :field suffix and still lower-cases the platform");
+  throws("slack/:0oa1", "app map (OPE-350): FAIL-LOUD on a blank workspace rung");
+  throws("slack/T1/T2:0oa1", "app map (OPE-350): FAIL-LOUD on more than one slash — the key grammar has exactly one workspace rung");
+  throws("slack/T1:0oa1,slack/T1:0oa2", "app map (OPE-350): FAIL-LOUD on two apps mapped to the SAME (platform, workspace)");
+  throws("github:0oa1,github:0oa2", "app map (OPE-350): …and the same for a vendor-global platform mapped twice");
+
   ok(!oktaDirectoryEnabled({}), "selector: unset ⇒ the directory plane is OFF (silently — a deployment with no IdP is normal)");
   ok(!oktaDirectoryEnabled({ OE_DIRECTORY_PROVIDER: "oktaa" }), "selector: a typo leaves it OFF rather than half-arming");
   ok(oktaDirectoryEnabled({ OE_DIRECTORY_PROVIDER: " Okta " }), "selector: trimmed + case-insensitive exact match arms it");

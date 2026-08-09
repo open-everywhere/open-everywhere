@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getOperationalStore } from "../operational/provider.js";
 import { appendAudit } from "../audit/audit.js";
 import { tryPrincipalKey } from "./principal-key.js";
+import { surfaceIdsFromAccounts, type PrincipalAccountRef } from "./principals.js";
 import { linkTenantOf } from "./link-tenant.js";
 import { hashLinkCode, mintLinkCode, LINK_CHALLENGE_TTL_MS } from "./link-challenge.js";
 import { rawVaultSubject, sharedVaultSubject } from "./oauth-vault-share.js";
@@ -76,13 +77,13 @@ export async function confirmedLinkSetPrincipals(org: string): Promise<readonly 
   const out: LinkSetPrincipal[] = [];
   for (const set of sets) {
     if (set.status !== "active") continue;
-    const ids: Record<string, string> = {};
+    const accounts: PrincipalAccountRef[] = [];
     for (const r of rows) {
       if (r.linkSetId !== set.id || r.status !== "confirmed") continue;
-      if (ids[r.platform] === undefined) ids[r.platform] = r.nativeId;
+      accounts.push(r.tenant ? { platform: r.platform, tenant: r.tenant, id: r.nativeId } : { platform: r.platform, id: r.nativeId });
     }
-    if (Object.keys(ids).length === 0) continue;
-    out.push({ linkSetId: set.id, handle: set.handle, ids });
+    if (accounts.length === 0) continue;
+    out.push({ linkSetId: set.id, handle: set.handle, ids: surfaceIdsFromAccounts(accounts) });
   }
   return out;
 }

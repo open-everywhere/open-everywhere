@@ -410,7 +410,10 @@ const mpimU1 = ctxFor({ channelId: "G1", channelType: "mpim", principalId: "U1" 
 
   const conflict = unionPrincipals([rowan, sarah], [{ linkSetId: "ls4", handle: "someone-else", ids: { github: "example-owner", linear: "lin-uuid-1" } }]);
   ok(conflict.warnings.length > 0, "union: a (platform, id) claimed by two different people produces a LOUD warning");
-  ok(conflict.warnings.some((w) => w.key === `github account "example-owner"`), "union: the warning names the disputed account in PROSE — PrincipalSurfaceIds carries no tenant, so a principal key cannot be composed here (OPE-309, flagged out of scope)");
+  ok(
+    conflict.warnings.some((w) => w.key === "github/example-owner"),
+    "union: the warning names the disputed account by its COMPOSED PRINCIPAL KEY (OPE-350 — PrincipalSurfaceIds now carries the workspace, so there is a real key to quote instead of prose)",
+  );
   ok(conflict.warnings.every((w) => w.message.includes("NO merge")), "union: the warning says plainly that no merge was applied");
   const rowanOut = conflict.principals.find((p) => p.name === "Rowan Hale")!;
   ok(rowanOut.ids.github === undefined, "union: the disputed account is DROPPED from the config entry (fail-closed on merge)");

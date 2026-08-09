@@ -32,10 +32,14 @@ import { renderWake, type NormalizedWake } from "../agent/channels/normalized-wa
 import {
   definePrincipal,
   resolvePrincipal,
+  principalAccounts,
+  principalKeys,
   principalLabel,
   principalSurfaces,
+  surfaceIdsFromAccounts,
   assertPrincipalsValid,
 } from "../agent/identity/principals.js";
+import { unionPrincipals } from "../agent/identity/link-resolve.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -238,11 +242,11 @@ ok(escaped.includes("&quot;&gt;&lt;inject"), "label special chars are escaped");
 const rowan = definePrincipal({ name: "Rowan Hale", handle: "rowan", ids: { slack: "U0EXOWNER", github: "example-owner" }, email: "t@example.com" });
 const sarah = definePrincipal({ name: "Sarah Kim", ids: { slack: "U_SARAH", linear: "lin-uuid-1" } });
 const roster = [rowan, sarah];
-ok(resolvePrincipal("slack", "U0EXOWNER", roster) === rowan, "resolve by slack id");
-ok(resolvePrincipal("github", "example-owner", roster) === rowan, "same human resolves across surfaces");
-ok(resolvePrincipal("linear", "lin-uuid-1", roster) === sarah, "resolve sarah by linear id");
-ok(resolvePrincipal("slack", "U_UNKNOWN", roster) === undefined, "unknown id ⇒ undefined (stays per-surface)");
-ok(resolvePrincipal("github", "Rowan Hale", roster) === undefined, "NEVER matches on display name — a github account named 'Rowan Hale' is not Rowan");
+ok(resolvePrincipal("slack", "T_ONE", "U0EXOWNER", roster) === rowan, "resolve by slack id");
+ok(resolvePrincipal("github", undefined, "example-owner", roster) === rowan, "same human resolves across surfaces");
+ok(resolvePrincipal("linear", undefined, "lin-uuid-1", roster) === sarah, "resolve sarah by linear id");
+ok(resolvePrincipal("slack", "T_ONE", "U_UNKNOWN", roster) === undefined, "unknown id ⇒ undefined (stays per-surface)");
+ok(resolvePrincipal("github", undefined, "Rowan Hale", roster) === undefined, "NEVER matches on display name — a github account named 'Rowan Hale' is not Rowan");
 ok(principalLabel(rowan) === "Rowan Hale (@rowan)", "label with handle");
 ok(principalLabel(sarah) === "Sarah Kim", "label without handle");
 assert.deepEqual(principalSurfaces(rowan), ["github", "slack"], "principalSurfaces lists mapped platforms sorted");
@@ -267,6 +271,116 @@ throws(
   () => assertPrincipalsValid([rowan, definePrincipal({ name: "Other", ids: { github: "other" }, email: "T@Example.com" })]),
   "duplicate email (case-insensitive) ⇒ fail loud",
 );
+
+const twoWorkspaces = definePrincipal({
+  name: "Rowan Hale",
+  handle: "rowan",
+  ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }, { tenant: "T9ZYX8W7V", id: "U_B" }], github: "example-owner" },
+});
+assert.deepEqual(
+  principalKeys(twoWorkspaces),
+  ["github/example-owner", "slack/T0AB1CD2E/U_A", "slack/T9ZYX8W7V/U_B"],
+  "OPE-350: two same-platform accounts compose two DISTINCT, fully-qualified principal keys",
+);
+n++;
+assert.deepEqual(principalSurfaces(twoWorkspaces), ["github", "slack"], "OPE-350: principalSurfaces still reports PLATFORMS, deduped");
+n++;
+ok(resolvePrincipal("slack", "T0AB1CD2E", "U_A", [twoWorkspaces]) === twoWorkspaces, "OPE-350: the workspace-A account resolves the human");
+ok(resolvePrincipal("slack", "T9ZYX8W7V", "U_B", [twoWorkspaces]) === twoWorkspaces, "OPE-350: …and so does the workspace-B account");
+ok(resolvePrincipal("slack", "T9ZYX8W7V", "U_A", [twoWorkspaces]) === undefined, "OPE-350: workspace A's id does NOT resolve in workspace B (no cross-tenant aliasing)");
+ok(resolvePrincipal("slack", undefined, "U_A", [twoWorkspaces]) === undefined, "OPE-350: a caller that cannot name its workspace matches no QUALIFIED entry (fail closed)");
+noThrow(() => assertPrincipalsValid([twoWorkspaces]), "OPE-350: a fully-qualified two-workspace entry is valid");
+
+const legacy = definePrincipal({ name: "Sarah Kim", ids: { slack: "U_SARAH", linear: "lin-uuid-1" } });
+ok(resolvePrincipal("slack", "T0AB1CD2E", "U_SARAH", [legacy]) === legacy, "OPE-350: a BARE slack id still answers for this deployment's workspace (pre-350 meaning preserved)");
+ok(resolvePrincipal("slack", "T9ZYX8W7V", "U_SARAH", [legacy]) === legacy, "OPE-350: …and for any workspace, because bare means 'whichever one this deployment serves'");
+assert.deepEqual(principalSurfaces(legacy), ["linear", "slack"], "OPE-350: an untouched map reports the same surfaces it always did");
+n++;
+assert.deepEqual(
+  surfaceIdsFromAccounts(principalAccounts(legacy)),
+  { linear: "lin-uuid-1", slack: "U_SARAH" },
+  "OPE-350: a single unqualified account round-trips to the BARE STRING spelling — byte-identical output for an unmigrated map",
+);
+n++;
+
+throws(
+  () => assertPrincipalsValid([twoWorkspaces, definePrincipal({ name: "Sarah Kim", ids: { slack: "U_SARAH" } })]),
+  "OPE-350: mixing a workspace-qualified and a bare slack entry in ONE map ⇒ fail loud (the half-migrated state)",
+);
+noThrow(
+  () => assertPrincipalsValid([legacy, definePrincipal({ name: "Ada", ids: { slack: "U_ADA" } })]),
+  "OPE-350: …but an ALL-BARE map (every deployment today) is untouched and still valid",
+);
+throws(
+  () => assertPrincipalsValid([definePrincipal({ name: "Ada", ids: { github: [{ tenant: "a", id: "ada" }, { tenant: "b", id: "ada" }] } })]),
+  "OPE-350: a tenant on a vendor-global platform ⇒ fail loud (the grammar has no rung there; it would collapse to one key)",
+);
+throws(
+  () => assertPrincipalsValid([definePrincipal({ name: "Ada", ids: { slack: [{ tenant: "dev", id: "U_ADA" }] } })]),
+  "OPE-350: the 'dev' unnamed-tenant literal is refused as a workspace rung (it means 'nobody said')",
+);
+throws(
+  () => assertPrincipalsValid([definePrincipal({ name: "Ada", ids: { slack: [{ tenant: "T1/T2", id: "U_ADA" }] } })]),
+  "OPE-350: a slash-bearing tenant is refused (it would make the key parse ambiguous)",
+);
+
+throws(
+  () => assertPrincipalsValid([twoWorkspaces, definePrincipal({ name: "Impostor", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }] } })]),
+  "OPE-350: the SAME (platform, tenant, id) claimed by two entries ⇒ fail loud (an account is exactly one person)",
+);
+noThrow(
+  () => assertPrincipalsValid([twoWorkspaces, definePrincipal({ name: "Someone Else", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_OTHER" }] } })]),
+  "OPE-350: two people in the SAME workspace with different ids are not a conflict",
+);
+noThrow(
+  () => assertPrincipalsValid([definePrincipal({ name: "Ada", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_SAME" }] } }), definePrincipal({ name: "Grace", ids: { slack: [{ tenant: "T9ZYX8W7V", id: "U_SAME" }] } })]),
+  "OPE-350: one id string issued by TWO workspaces is two people, and the map can now say so",
+);
+
+const bothWorkspaces = unionPrincipals(
+  [],
+  [{ linkSetId: "set-1", handle: "rowan", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }, { tenant: "T9ZYX8W7V", id: "U_B" }] } }],
+);
+assert.deepEqual(
+  principalKeys(bothWorkspaces.principals[0]!),
+  ["slack/T0AB1CD2E/U_A", "slack/T9ZYX8W7V/U_B"],
+  "OPE-350: unionPrincipals carries BOTH same-platform accounts through (the projection is no longer lossy)",
+);
+n++;
+const conflict = unionPrincipals(
+  [definePrincipal({ name: "Rowan Hale", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }], github: "example-owner" } })],
+  [
+    { linkSetId: "set-a", handle: "someone", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }] } },
+    { linkSetId: "set-b", handle: "other", ids: { github: "example-owner" } },
+  ],
+);
+ok(
+  conflict.warnings.some((w) => w.key === "slack/T0AB1CD2E/U_A"),
+  "OPE-350: the union's conflict warning names the COMPOSED per-tenant principal key, not prose",
+);
+ok(
+  conflict.warnings.every((w) => !w.key.includes("account \"")),
+  "OPE-350: …and no warning falls back to the prose form when a tenant is available",
+);
+ok(
+  principalKeys(conflict.principals[0]!).length === 0,
+  "OPE-350: a conflicted account is dropped from the config entry too (fail-closed on merge, both sides)",
+);
+const unqualifiedConflict = unionPrincipals(
+  [definePrincipal({ name: "A", ids: { slack: "U_X" } }), definePrincipal({ name: "B", ids: { slack: "U_Y" } })],
+  [{ linkSetId: "set-1", handle: "one", ids: { slack: ["U_X", "U_Y"] } }],
+);
+ok(
+  unqualifiedConflict.warnings.length > 0 && unqualifiedConflict.warnings.every((w) => w.key.includes("workspace unnamed")),
+  "OPE-350: an UNQUALIFIED account still warns in honest prose — never a key-shaped string that addresses nobody",
+);
+const healed = unionPrincipals(
+  [definePrincipal({ name: "Rowan Hale", handle: "rowan", ids: { slack: "U_A" } })],
+  [{ linkSetId: "set-1", handle: "rowan", ids: { slack: [{ tenant: "T0AB1CD2E", id: "U_A" }] } }],
+);
+ok(healed.principals.length === 1 && healed.principals[0]!.name === "Rowan Hale", "OPE-350: a bare config entry still JOINS its own workspace-qualified link-set (no split)");
+assert.deepEqual(principalKeys(healed.principals[0]!), ["slack/T0AB1CD2E/U_A"], "OPE-350: …and the merged entry keeps the QUALIFIED spelling, so it composes a key");
+n++;
 
 const cw = (unifiedDisclosure?: boolean): NormalizedWake => ({
   platform: "slack",

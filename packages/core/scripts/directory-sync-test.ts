@@ -174,7 +174,11 @@ const confirmLink = confirmLinkTool as unknown as ExecTool;
 const linkIdentity = linkIdentityTool as unknown as ExecTool;
 
 function ctxFor(opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
-  const attributes: Record<string, string> = { team_id: "T1", channel_id: opts.channelId, trust_checked: "true" };
+  return ctxForTenant(T1, opts);
+}
+
+function ctxForTenant(teamId: string, opts: { channelId: string; channelType?: string; principalId?: string }): BindableContext {
+  const attributes: Record<string, string> = { team_id: teamId, channel_id: opts.channelId, trust_checked: "true" };
   if (opts.channelType) attributes.channel_type = opts.channelType;
   if (opts.channelType === "im") attributes.dm_partner_trust = "internal";
   return {
@@ -663,6 +667,123 @@ const channelRowan = ctxFor({ channelId: "C1", principalId: "U-ROWAN" });
   const dmDave = ctxFor({ channelId: "D-DAVE", channelType: "im", principalId: "U-DAVE" });
   await refuses(() => confirmLink.execute({ decision: "confirm", accounts: ["github/gh-dave"] }, dmDave), "nothing of yours", "🔴 asserted: …and confirm_link refuses it by name from Dave's own DM — the read's narrowness is what the tool enforces");
   ok((await resolveLinkSet(ORG, "github", "gh-dave", "")) === null, "🔴 asserted: …and nothing was linked by the attempt");
+
+  if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+  else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;
+}
+
+{
+  const T2 = "T2";
+  registerConfig({
+    loadBundles: () => [],
+    loadBindings: () => [],
+    pluginRegistry: {},
+    skillContent: {},
+    loadSilos: () => [],
+    domainsForSurface: () => [],
+    loadDomains: () => [defineDomain({ name: "eng", channels: [`slack/${T1}/C_ENG`, `slack/${T2}/C_ENG2`] })],
+  });
+
+  const priorPolicy = process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+  delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
+
+  const twin: DirectoryPerson = {
+    externalId: "00u-twin",
+    displayName: "Twin Worker",
+    accounts: [
+      { platform: "slack", tenant: T1, nativeId: "U-TWIN", grade: "attested" },
+      { platform: "slack", tenant: T2, nativeId: "U-TWIN", grade: "attested" },
+    ],
+    groups: [],
+    deprovisioned: false,
+  };
+  registerDirectoryProvider(fakeDirectory(() => [twin]));
+  const twinRun = (await syncDirectoryOrg({ org: ORG }))!;
+  const suggests = twinRun.plan.steps.filter((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest");
+  ok(suggests.length === 2, "🔴 OPE-350(a): ONE human with the SAME native id in TWO workspaces produces TWO suggestions — the second is no longer swallowed");
+  ok(
+    suggests.map((s) => `${s.platform}/${s.tenant}/${s.nativeId}`).sort().join() === `slack/${T1}/U-TWIN,slack/${T2}/U-TWIN`,
+    "🔴 OPE-350(a): …and each carries ITS OWN workspace, so the two rows compose two distinct principal keys",
+  );
+  const twinSet = suggests[0]!.linkSetId;
+  ok(suggests.every((s) => s.linkSetId === twinSet), "OPE-350(a): both land in the SAME link-set — it is one human, two accounts, which is the whole point");
+
+  const foreign: DirectoryPerson = {
+    externalId: "00u-foreign",
+    displayName: "Foreign Worker",
+    accounts: [{ platform: "slack", tenant: "T_NEVER_DECLARED", nativeId: "U-FOREIGN", grade: "attested" }],
+    groups: [],
+    deprovisioned: false,
+  };
+  registerDirectoryProvider(fakeDirectory(() => [foreign]));
+  const foreignRun = (await syncDirectoryOrg({ org: ORG }))!;
+  ok(
+    foreignRun.plan.steps.every((s) => s.kind === "noop") && foreignRun.applied.suggested === 0,
+    "🔴 OPE-350(b): an account claiming an UNADMITTED workspace writes NOTHING — a claim is admission-checked, never believed on the adapter's say-so",
+  );
+  ok(
+    foreignRun.plan.warnings.some((w) => w.includes("cannot name the slack tenant")),
+    "🔴 OPE-350(b): …and it is skipped LOUDLY, with the standard unresolvable-workspace sentence an operator can act on",
+  );
+
+  const dmTwinT1 = ctxFor({ channelId: "D-TWIN", channelType: "im", principalId: "U-TWIN" });
+  const pendingT1 = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-TWIN");
+  ok(
+    pendingT1.length === 1 && pendingT1[0]!.principal === `slack/${T1}/U-TWIN`,
+    "🔴 OPE-350(c): the T1 caller's pending set holds ONLY the T1 account — the T2 account is a different account, not a sibling to ratify",
+  );
+  const confirmedT1 = await confirmLink.execute({ decision: "confirm" }, dmTwinT1);
+  ok(confirmedT1.accounts.join() === `slack/${T1}/U-TWIN`, "🔴 OPE-350(c): the tap confirms the T1 account…");
+  ok((await resolveLinkSet(ORG, "slack", "U-TWIN", T1))?.id === twinSet, "🔴 OPE-350(c): …which now resolves in T1…");
+  ok((await resolveLinkSet(ORG, "slack", "U-TWIN", T2)) === null, "🔴🔴 OPE-350(c): …and the T2 account is STILL UNPROVEN — one challenge proves ONE account, never the platform");
+  ok((await expandLinkSet(ORG, twinSet)).length === 1, "🔴 OPE-350(c): …so the set holds exactly one confirmed member, not both");
+
+  const bothPending = await pendingDirectorySuggestionsFor(ORG, "slack", T2, "U-TWIN");
+  ok(
+    bothPending.length === 1 && bothPending[0]!.principal === `slack/${T2}/U-TWIN`,
+    "OPE-350(c): the T2 caller sees the T2 account (its own), and the already-confirmed T1 one is not re-offered",
+  );
+  const dmTwinT2 = ctxForTenant(T2, { channelId: "D-TWIN2", channelType: "im", principalId: "U-TWIN" });
+  const confirmedT2 = await confirmLink.execute({ decision: "confirm" }, dmTwinT2);
+  ok(confirmedT2.accounts.join() === `slack/${T2}/U-TWIN`, "🔴 OPE-350(c): the SECOND account needs its own tap, from its own workspace's DM");
+  ok((await expandLinkSet(ORG, twinSet)).length === 2, "🔴 OPE-350(c): …and only now does one human hold two same-platform accounts — two proofs, two accounts");
+
+  const pair: DirectoryPerson = {
+    externalId: "00u-pair",
+    displayName: "Pair Worker",
+    accounts: [
+      { platform: "slack", tenant: T1, nativeId: "U-PAIR", grade: "attested" },
+      { platform: "slack", tenant: T2, nativeId: "U-PAIR", grade: "attested" },
+      { platform: "github", nativeId: "gh-pair", grade: "attested" },
+    ],
+    groups: [],
+    deprovisioned: false,
+  };
+  registerDirectoryProvider(fakeDirectory(() => [pair]));
+  const pairRun = (await syncDirectoryOrg({ org: ORG }))!;
+  const pairSet = pairRun.plan.steps.find((s): s is Extract<typeof s, { kind: "suggest" }> => s.kind === "suggest")!.linkSetId;
+  const dmPairT1 = ctxFor({ channelId: "D-PAIR", channelType: "im", principalId: "U-PAIR" });
+  await confirmLink.execute({ decision: "confirm" }, dmPairT1);
+  const pairStanding = await pendingDirectorySuggestionsFor(ORG, "slack", T1, "U-PAIR");
+  ok(
+    pairStanding.map((s) => s.principal).sort().join() === `github/gh-pair,slack/${T2}/U-PAIR`,
+    "OPE-350(c): a CONFIRMED T1 member's standing exposes the set's other attested suggestions — including the SAME-PLATFORM T2 one",
+  );
+  let blanketTwin = "";
+  try {
+    await confirmLink.execute({ decision: "confirm" }, dmPairT1);
+  } catch (e) {
+    blanketTwin = e instanceof Error ? e.message : String(e);
+  }
+  ok(
+    blanketTwin.includes("2 accounts are waiting") && blanketTwin.includes(`slack/${T2}/U-PAIR`),
+    `🔴 OPE-350(c)/OPE-291: with a SAME-PLATFORM account pending, a bare confirm is still REFUSED and still names it (got: ${blanketTwin || "no error"})`,
+  );
+  ok((await resolveLinkSet(ORG, "slack", "U-PAIR", T2)) === null, "🔴 OPE-350(c)/OPE-291: …and the refusal is a REFUSAL — the second workspace's account was not batch-confirmed");
+  ok((await expandLinkSet(ORG, pairSet)).length === 1, "🔴 OPE-350(c)/OPE-291: …the set still holds only the bootstrap account");
+  const namedBoth = await confirmLink.execute({ decision: "confirm", accounts: [`slack/${T2}/U-PAIR`, "github/gh-pair"] }, dmPairT1);
+  ok(namedBoth.accounts.length === 2, "OPE-350(c): NAMING both accounts confirms both — the fence is on the blanket yes, not on the count");
+  ok((await resolveLinkSet(ORG, "slack", "U-PAIR", T2))?.id === pairSet, "OPE-350(c): …and the T2 account is keyed by ITS OWN workspace, not the confirmer's");
 
   if (priorPolicy === undefined) delete process.env[OE_DIRECTORY_AUTOCONFIRM_ENV];
   else process.env[OE_DIRECTORY_AUTOCONFIRM_ENV] = priorPolicy;

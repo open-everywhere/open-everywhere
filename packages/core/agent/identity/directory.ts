@@ -2,6 +2,7 @@ export type DirectoryGrade = "attested" | "asserted" | "email-match";
 
 export interface DirectoryAccount {
   readonly platform: string;
+  readonly tenant?: string;
   readonly nativeId: string;
   readonly grade: DirectoryGrade;
 }
