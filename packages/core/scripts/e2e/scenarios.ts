@@ -1064,8 +1064,9 @@ export const SCENARIOS: readonly Scenario[] = [
           );
           const dmChannelId = ctx.syntheticDm?.dmChannel;
           if (dmChannelId) {
-            const dmRot = await rotateDmSeat(store, org, dmChannelId);
-            ctx.log(`J4: rotated the DM seat for ${dmChannelId} → generation ${dmRot.mintedGeneration} (fresh seat for leg 2's DM ask)`);
+            const dmSurfaceKey = `slack/${teamId}/${dmChannelId}`;
+            const dmRot = await rotateDmSeat(store, org, dmSurfaceKey);
+            ctx.log(`J4: rotated the DM seat for ${dmSurfaceKey} → generation ${dmRot.mintedGeneration} (fresh seat for leg 2's DM ask)`);
           }
         } catch (e) {
           ctx.log(

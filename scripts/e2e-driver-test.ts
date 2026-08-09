@@ -940,7 +940,7 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
   ok(typeof envelope.event_id === "string" && (envelope.event_id as string).length > 0, "envelope carries an event_id (eve dedupes on it)");
 
   const decision = classifyEnvelope(JSON.stringify(envelope), "application/json");
-  ok(decision.kind === "forward" && decision.reason.includes("message.im"), "classifyEnvelope forwards the forged DM to slackChannel's DM path");
+  ok(decision.kind === "dm-wake" && decision.reason.includes("message.im"), "classifyEnvelope routes the forged DM to the DM window seat (`dm-wake`)");
 
   type EveEnvelope = Parameters<typeof parseDirectMessageEvent>[0];
   const parsed = parseDirectMessageEvent(envelope as unknown as EveEnvelope);

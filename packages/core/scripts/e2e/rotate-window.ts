@@ -6,7 +6,13 @@ async function main() {
   if (dmFlag !== -1) {
     const dmChannelId = argv[dmFlag + 1];
     if (!dmChannelId || dmChannelId.startsWith("--")) {
-      console.error("--dm requires a DM channel id (e.g. --dm D0EXDMCH001)");
+      console.error("--dm requires a DM SURFACE KEY, `platform/workspace/channel` (e.g. --dm slack/T0AB12CD/D0EXDMCH001)");
+      process.exit(1);
+    }
+    if (dmChannelId.split("/").length < 3) {
+      console.error(
+        `--dm takes a SURFACE KEY, not a bare channel id — got "${dmChannelId}". Since OPE-351 stage 2 a DM seat is a window on \`oe-dm/<platform>/<workspace>/<surface>\`; try --dm slack/<teamId>/${dmChannelId}`,
+      );
       process.exit(1);
     }
     argv.splice(dmFlag, 2);
@@ -20,7 +26,7 @@ async function main() {
     const r = await rotateDmSeat(store, org, dmChannelId);
     console.log("=== rotate-window (DM seat) ===");
     console.log(`org:            ${org}`);
-    console.log(`dm channel:     ${dmChannelId}`);
+    console.log(`dm surface:     ${dmChannelId}`);
     console.log(`registry key:   ${r.registryKey}`);
     console.log(`old generation: ${r.oldGeneration ?? "none (no prior row — first seat)"}`);
     console.log(`old token:      ${r.oldToken ?? "none"}`);

@@ -131,6 +131,24 @@ process.env.OE_CONTROL_READ_TOKENS = `e2e-harness:${SHA}`;
   ok(rows.some((r) => (r.detail as { view?: string })?.view === "unified_domain_audit"), "every authenticated call is self-audited (control.service_call, view=unified_domain_audit)");
 }
 
+{
+  const { platformWorkspaceForWindowDomain } = await import("../agent/channels/unified.js");
+  const { dmWindowKey, formatWindowToken, parseWindowToken } = await import("../agent/channels/window-key.js");
+
+  const dmToken = formatWindowToken(dmWindowKey("slack/T1/D999", 4));
+  const dmDomain = parseWindowToken(dmToken)!.domain;
+  ok(dmDomain === "oe-dm/slack/T1/D999", "a DM seat's token domain IS the reserved pseudo-domain (the thing that must not be stamped)");
+  ok(
+    platformWorkspaceForWindowDomain(dmDomain) === "T1",
+    "🔴 R3: a DM window's audit workspace is the PLATFORM workspace (T1) recovered from the surface key inside the pseudo-domain — never `oe-dm/…`",
+  );
+  ok(!platformWorkspaceForWindowDomain(dmDomain).includes("oe-dm"), "…and carries no trace of the pseudo-domain prefix at all");
+
+  ok(platformWorkspaceForWindowDomain("payments") === "payments", "a real config domain still labels as itself (byte-identical to before)");
+  ok(platformWorkspaceForWindowDomain("oe-dm/") === "oe-dm/", "a malformed anchor fails SOFT to the domain string — an odd label beats a thrown audit row");
+  ok(platformWorkspaceForWindowDomain("oe-dm/slack") === "oe-dm/slack", "…same for an anchor with no workspace segment");
+}
+
 void appendAudit;
 
 console.log(`✓ unified-audit: ${passed} assertions passed (composition view: containers/reach-union/wideners/humans-read-across/controllers/notes + route: 404/401/400/200/self-audit)`);

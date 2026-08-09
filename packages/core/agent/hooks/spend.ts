@@ -110,8 +110,8 @@ export default defineHook({
       }
 
       const dmSeat = parseDmSeatToken(token);
-      if (!dmSeat && turnKind(ctx, token) === "dm") {
-        console.warn(`[open-everywhere:spend] dm turn carried a non-seat token (token=${JSON.stringify(token)}) — dm-seat counter not bumped`);
+      if (!dmSeat && !isSupervisorToken(token) && turnKind(ctx, token) === "dm") {
+        console.warn(`[open-everywhere:spend] dm turn carried a token with no rotation lever (token=${JSON.stringify(token)}) — no seat counter bumped`);
       }
       if (dmSeat) {
         try {

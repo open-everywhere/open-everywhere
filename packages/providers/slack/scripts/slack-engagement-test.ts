@@ -499,7 +499,11 @@ registerConfig({
     const d = classifyEnvelope(ev({ type: "app_mention", channel: "C", ts: "1.1", text: "<@B> hi" }), JSON_CT);
     ok(d.kind === "mention" && d.env !== undefined, "app_mention → mention kind (carries env; handler decides forward vs single-window suppress)");
   }
-  ok(classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT).kind === "forward", "message.im (DM) → forward");
+  {
+    const d = classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT);
+    ok(d.kind === "dm-wake" && d.env !== undefined, "message.im (DM) → dm-wake kind (carries env; the DM window seat owns it, never the native DM door)");
+  }
+  ok(classifyEnvelope(ev({ type: "message", channel: "G", ts: "1.1", channel_type: "mpim", text: "hi" }), JSON_CT).kind === "wake", "message.mpim (group DM) → wake (UNCHANGED — mpim is not first-classed yet)");
   ok(classifyEnvelope("payload=%7B%7D", "application/x-www-form-urlencoded").kind === "forward", "urlencoded interaction → forward");
   ok(classifyEnvelope("not json", JSON_CT).kind === "forward", "unparseable → forward (fail-safe)");
   ok(classifyEnvelope(ev({ type: "reaction_added", item: { type: "message", channel: "C", ts: "1.1" } }), JSON_CT).kind === "reaction", "reaction_added → reaction (ingestion)");

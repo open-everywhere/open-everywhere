@@ -163,11 +163,15 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
   );
 }
 
-function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean): string {
+function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean, isDm = false): string {
+  const opening = isDm
+    ? "[direct] This is a direct message to you — everything said here is addressed to you, so answer it."
+    : `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
+      "you and is asking for a response, so answer it.";
+  const silence = isDm ? "the message" : "the mention";
   return (
-    `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
-    `you and is asking for a response, so answer it. ${SINGLE_WINDOW_REPLY_MANDATE} Stay silent only ` +
-    `if the mention turns out to be purely social or needs nothing from you — then output exactly ` +
+    `${opening} ${SINGLE_WINDOW_REPLY_MANDATE} Stay silent only ` +
+    `if ${silence} turns out to be purely social or needs nothing from you — then output exactly ` +
     `${NO_REPLY_SENTINEL} and nothing else. ${PREFER_NO_REPLY_TOOL}` +
     unifiedDisclosureLine(unifiedDisclosure) +
     handoffLine(hasHandoff)
@@ -207,7 +211,7 @@ function judgedPreamble(nw: NormalizedWake): string {
   const base = ((): string => {
     switch (nw.addressing) {
       case "direct-mention":
-        return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure);
+        return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure, nw.reason === "dm");
       case "thread-follow":
         return threadFollowPreamble(isEdit, hasHandoff);
       case "channel-watch":

@@ -75,7 +75,16 @@ export function windowEnabledFor(surfaceKey: string, token: string): boolean {
 
 function auditLabels(rawToken: string | undefined): { workspace: string; surface: string | undefined } {
   const key = parseWindowToken(rawToken);
-  return { workspace: key?.domain ?? "unknown", surface: key ? unifiedDomainSessionKey(key.windowId) : undefined };
+  return {
+    workspace: key ? platformWorkspaceForWindowDomain(key.domain) : "unknown",
+    surface: key ? unifiedDomainSessionKey(key.windowId) : undefined,
+  };
+}
+
+export function platformWorkspaceForWindowDomain(domain: string): string {
+  const surfaceKey = dmSurfaceKeyFromAnchorDomain(domain);
+  if (surfaceKey === undefined) return domain;
+  return surfaceKey.split("/")[1] || domain;
 }
 
 function failureDiag(code: string | undefined, details: Record<string, unknown> | undefined): Record<string, string> {

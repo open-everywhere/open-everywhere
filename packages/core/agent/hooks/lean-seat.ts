@@ -2,11 +2,11 @@ import { defineHook, type HookContext } from "eve/hooks";
 import { resolveLeanSeatPosture, withheldFromLeanSeat } from "../access/lean-seat.js";
 import { setLeanSeatWake } from "../access/lean-seat-state.js";
 import { jobFireStamped } from "../access/job-posture.js";
-import { canDelegateFromSeat, resolveDmDelegationAnchor } from "../access/delegation-mount.js";
+import { canDelegateFromSeat } from "../access/delegation-mount.js";
 import { domainLabelOf } from "../access/window-gated.js";
 import { WINDOW_GATED_TOOLS, WINDOW_UNGATED_TOOLS } from "../access/window-gate-manifest.js";
 import { auditWindowToolGate } from "../audit/window-tool-gate.js";
-import { currentWakeId, deploymentOrg, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
+import { bindFrom, currentWakeId, deploymentOrg, windowGrainOf, FIRE_UNATTENDED_ATTR, type BindableContext, type WindowGrain } from "../identity/binding.js";
 import { routineMarker } from "../routines/routine.js";
 
 type Attrs = Readonly<Record<string, string | readonly string[]>> | undefined;
@@ -69,7 +69,8 @@ async function classifyWake(ctx: HookContext): Promise<void> {
   if (posture !== "lean") return;
   let dmSeat = false;
   try {
-    dmSeat = resolveDmDelegationAnchor(c) !== undefined;
+    const mode = bindFrom(c).mode;
+    dmSeat = mode === "dm" || mode === "mpim";
   } catch {
     dmSeat = false;
   }

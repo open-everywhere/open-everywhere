@@ -51,6 +51,7 @@ import {
   type WakeMessageInput,
   type WakeParticipant,
   type WakeTrust,
+  type WakeReason,
   type NormalizedWake,
   type WakeEngagementTier,
 } from "@open-everywhere/core/agent/adapter-api.js";
@@ -242,7 +243,7 @@ export function renderWakeMessage(
   now: () => string = () => new Date().toISOString(),
   opts?: SlackWakeOpts,
 ): string {
-  const nw = opts?.mode === "supervisor" ? slackChannelWatchWake(ev, opts) : slackThreadFollowWake(ev, opts);
+  const nw = opts?.dm === true ? slackDmWake(ev, opts) : opts?.mode === "supervisor" ? slackChannelWatchWake(ev, opts) : slackThreadFollowWake(ev, opts);
   return renderWake(nw, now).message;
 }
 
@@ -261,15 +262,21 @@ export interface SlackWakeOpts {
   readonly platformLabel?: string;
   readonly wakeId?: string;
   readonly directMention?: boolean;
+  readonly dm?: boolean;
 }
 
-function slackJudgedWake(ev: ParsedMessageEvent, addressing: "thread-follow" | "channel-watch" | "direct-mention", opts?: SlackWakeOpts): NormalizedWake {
+function slackJudgedWake(
+  ev: ParsedMessageEvent,
+  addressing: "thread-follow" | "channel-watch" | "direct-mention",
+  opts?: SlackWakeOpts,
+  reasonOverride?: WakeReason,
+): NormalizedWake {
   const isEdit = ev.subtype === "message_changed";
   const directMention = addressing === "direct-mention";
   const hasHandoff = typeof opts?.handoffNote === "string" && opts.handoffNote.length > 0;
   return {
     platform: "slack",
-    reason: isEdit ? "message-edited" : directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity",
+    reason: isEdit ? "message-edited" : (reasonOverride ?? (directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity")),
     addressing,
     locus: {
       channel: {
@@ -304,6 +311,10 @@ export function slackThreadFollowWake(ev: ParsedMessageEvent, opts?: SlackWakeOp
 
 export function slackChannelWatchWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
   return slackJudgedWake(ev, opts?.directMention === true ? "direct-mention" : "channel-watch", opts);
+}
+
+export function slackDmWake(ev: ParsedMessageEvent, opts?: SlackWakeOpts): NormalizedWake {
+  return slackJudgedWake(ev, "direct-mention", opts, "dm");
 }
 
 export type TurnEffects =

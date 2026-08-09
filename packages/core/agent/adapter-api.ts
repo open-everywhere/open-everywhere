@@ -230,7 +230,7 @@ export { registerReactionSurface, isRegisteredReactionSurface } from "./channels
 
 export { renderWake, mkMessageTrigger } from "./channels/normalized-wake.js";
 export type { NormalizedWake, WakeEngagementTier } from "./channels/normalized-wake.js";
-export type { WakeMessageInput, WakeTrust } from "./channels/wake-envelope.js";
+export type { WakeMessageInput, WakeTrust, WakeReason } from "./channels/wake-envelope.js";
 
 export { divertToUnifiedWindow } from "./channels/unified.js";
 

@@ -1,7 +1,8 @@
 import { getOperationalStore } from "../operational/provider.js";
 import type { ChannelSessionRow, OperationalStore } from "../operational/store.js";
 import { shouldRotate } from "./turn-delivery.js";
-import { dmSeatRegistryKey, formatDmSeatToken } from "./window-key.js";
+import { dmSeatRegistryKey, dmWindowKey, formatWindowToken, saltSupervisorGeneration } from "./window-key.js";
+import { dmWindowRegistryKey } from "./unified-supervisor.js";
 
 export function dmSeatRotationEnabled(): boolean {
   return (process.env.OE_DM_SEAT_ROTATION ?? "1") !== "0";
@@ -31,25 +32,31 @@ export interface DmSeat {
 
 export interface DmSeatDeps {
   readonly store?: OperationalStore;
-  readonly now?: () => string;
   readonly thresholds?: { quietGapMs?: number; turnBudget?: number; tokenBudget?: number };
-  readonly distillHandoff?: (dmChannelId: string, outgoing: ChannelSessionRow) => Promise<string | undefined>;
+  readonly distillHandoff?: (scope: string, outgoing: ChannelSessionRow) => Promise<string | undefined>;
 }
 
-export async function getOrCreateDmSeat(org: string, dmChannelId: string, atIso: string, deps: DmSeatDeps = {}): Promise<DmSeat> {
+export interface DmSeatRef {
+  readonly surfaceKey: string;
+  readonly legacyChannelId?: string;
+}
+
+export async function getOrCreateDmSeat(org: string, dm: DmSeatRef, atIso: string, deps: DmSeatDeps = {}): Promise<DmSeat> {
   const store = deps.store ?? getOperationalStore();
-  const key = dmSeatRegistryKey(dmChannelId);
+  const key = dmWindowRegistryKey(dm.surfaceKey);
   const thresholds = deps.thresholds ?? dmSeatThresholds();
+  const mint = (generation: number): string => saltSupervisorGeneration(formatWindowToken(dmWindowKey(dm.surfaceKey, generation)));
   const existing = await store.getChannelSession(org, key);
   if (!existing) {
-    const token = formatDmSeatToken(dmChannelId, 1);
-    const row = await store.rotateChannelSession(org, key, token, atIso);
+    const legacy = dm.legacyChannelId
+      ? await store.getChannelSession(org, dmSeatRegistryKey(dm.legacyChannelId)).catch(() => null)
+      : null;
+    const row = await store.rotateChannelSession(org, key, mint(1), atIso, legacy?.handoffNote ?? undefined);
     return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
   }
   if (shouldRotate(existing, atIso, thresholds)) {
-    const note = deps.distillHandoff ? await deps.distillHandoff(dmChannelId, existing).catch(() => undefined) : undefined;
-    const token = formatDmSeatToken(dmChannelId, existing.generation + 1);
-    const row = await store.rotateChannelSession(org, key, token, atIso, note);
+    const note = deps.distillHandoff ? await deps.distillHandoff(dm.surfaceKey, existing).catch(() => undefined) : undefined;
+    const row = await store.rotateChannelSession(org, key, mint(existing.generation + 1), atIso, note);
     return { token: row.token, generation: row.generation, freshGeneration: true, handoffNote: row.handoffNote };
   }
   return {
@@ -60,6 +67,6 @@ export async function getOrCreateDmSeat(org: string, dmChannelId: string, atIso:
   };
 }
 
-export async function touchDmSeat(org: string, dmChannelId: string, atIso: string, store: OperationalStore = getOperationalStore()): Promise<void> {
-  await store.touchChannelSession(org, dmSeatRegistryKey(dmChannelId), atIso);
+export async function touchDmSeat(org: string, dmSurfaceKey: string, atIso: string, store: OperationalStore = getOperationalStore()): Promise<void> {
+  await store.touchChannelSession(org, dmWindowRegistryKey(dmSurfaceKey), atIso);
 }
