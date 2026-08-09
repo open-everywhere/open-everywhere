@@ -19,7 +19,7 @@ delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
 import { registerConfig } from "../agent/access/config.js";
 import { defineDomain } from "../agent/memory/domain.js";
 import { unifiedSupervisorToken } from "../agent/channels/unified-supervisor.js";
-import { formatWindowToken, taskWindowId, parseWindowToken, dmAnchorDomain, DM_ANCHOR_GENERATION } from "../agent/channels/window-key.js";
+import { formatWindowToken, taskWindowId, parseWindowToken, dmAnchorDomain, dmWindowKey, DM_ANCHOR_GENERATION } from "../agent/channels/window-key.js";
 import { verifyWebhookSignature } from "../agent/webhooks/gate.js";
 import { readAudit } from "../agent/audit/audit.js";
 import {
@@ -38,6 +38,7 @@ import {
 } from "../agent/channels/self-dispatch.js";
 import {
   divertToUnifiedWindow,
+  windowEnabledFor,
   dispatchTaskWindow,
   dispatchWindowWake,
   buildRedriveReinject,
@@ -239,6 +240,48 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   );
   eq(diverted.length, 2, "the DM dispatch diverted");
 
+  const dmWindowToken = formatWindowToken(dmWindowKey(DM_SURFACE, 3));
+  const dmWinBad = JSON.stringify(goodPayload({ token: dmWindowToken, surfaceKey: "slack/T1/C-OTHER", message: "dm window cross-surface probe" }));
+  eq(
+    (await handleSelfDispatch(mkReq(dmWinBad, signSelfDispatchBody(SECRET, dmWinBad)), fakeReceive, captureDivert, armed)).status,
+    400,
+    "DM WINDOW token to a DIFFERENT surface → 400 — the privacy invariant: a DM window is deliverable to its own DM and nowhere else",
+  );
+  eq(diverted.length, 2, "no divert for the cross-surface DM window dispatch");
+  const dmWinGood = JSON.stringify(goodPayload({ token: dmWindowToken, surfaceKey: DM_SURFACE, message: "dm window dispatch" }));
+  eq(
+    (await handleSelfDispatch(mkReq(dmWinGood, signSelfDispatchBody(SECRET, dmWinGood)), fakeReceive, captureDivert, armed)).status,
+    200,
+    "DM WINDOW token to ITS OWN surface → 200 (the widened arm; pre-OPE-351 this 400'd, since only a t/ windowId qualified)",
+  );
+  eq(diverted.length, 3, "the DM window dispatch diverted");
+
+  const namedStanding = JSON.stringify(goodPayload({ token: formatWindowToken({ domain: "payments", windowId: "payments", generation: 3 }), surfaceKey: "slack/T1/UNLISTED", message: "named-domain unlisted probe" }));
+  eq(
+    (await handleSelfDispatch(mkReq(namedStanding, signSelfDispatchBody(SECRET, namedStanding)), fakeReceive, captureDivert, armed)).status,
+    400,
+    "a NAMED-domain standing window to an unlisted surface still → 400 — the anchor arm is not a config bypass",
+  );
+  eq(diverted.length, 3, "no divert for the unlisted named-domain dispatch");
+
+  const parityRows: ReadonlyArray<{ readonly token: string; readonly surfaceKey: string; readonly admit: boolean; readonly note: string }> = [
+    { token: standingToken, surfaceKey: SURFACE, admit: true, note: "named-domain standing window on a configured surface" },
+    { token: standingToken, surfaceKey: "slack/T1/UNLISTED", admit: false, note: "named-domain standing window on an unlisted surface" },
+    { token: taskToken, surfaceKey: SURFACE, admit: true, note: "named-domain task worker on a configured surface" },
+    { token: dmToken, surfaceKey: DM_SURFACE, admit: true, note: "DM-anchored WORKER to its own DM (OPE-306)" },
+    { token: dmToken, surfaceKey: "slack/T1/C-OTHER", admit: false, note: "DM-anchored worker to another surface" },
+    { token: dmWindowToken, surfaceKey: DM_SURFACE, admit: true, note: "DM SEAT WINDOW to its own DM (OPE-351 widening)" },
+    { token: dmWindowToken, surfaceKey: "slack/T1/C-OTHER", admit: false, note: "DM seat window to another surface" },
+    { token: dmWindowToken, surfaceKey: SURFACE, admit: false, note: "DM seat window to a CONFIGURED channel — config never rescues an anchor token" },
+    { token: formatWindowToken(dmWindowKey("slack/T1/D-OTHER", 1)), surfaceKey: DM_SURFACE, admit: false, note: "one DM's seat window aimed at ANOTHER DM (the privacy invariant)" },
+  ];
+  for (const row of parityRows) {
+    eq(windowEnabledFor(row.surfaceKey, row.token), row.admit, `receive gate: ${row.note} → ${row.admit ? "admit" : "refuse"}`);
+    const b = JSON.stringify(goodPayload({ token: row.token, surfaceKey: row.surfaceKey, message: `parity probe: ${row.note}` }));
+    const status = (await handleSelfDispatch(mkReq(b, signSelfDispatchBody(SECRET, b)), fakeReceive, captureDivert, armed)).status;
+    eq(status === 200, row.admit, `HTTP gate 3 AGREES with the receive gate: ${row.note} → ${row.admit ? 200 : 400}`);
+  }
+
   const boom = async (): Promise<void> => {
     throw new Error("receive refused");
   };
@@ -418,6 +461,7 @@ process.env.OE_PUBLIC_BASE_URL = "https://self.test";
   delete process.env.OE_PUBLIC_BASE_URL;
   eq(await dispatchWindowWake(wakeInput), true, "warm dispatchWindowWake works with NO self-dispatch config at all (in-process path)");
   ok(buildRedriveReinject(DOMAIN, standingToken, {}) !== null, "warm reinject available with no self-dispatch config");
+
 }
 
 globalThis.fetch = realFetch;

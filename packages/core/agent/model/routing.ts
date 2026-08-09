@@ -8,7 +8,7 @@ import { stampUtilityRoute, readStampedUtilityRoute } from "./utility-route-stam
 import type { ModelPolicy } from "./policy.js";
 import { applyModelPolicyToRoute } from "./policy.js";
 import { getOperationalStore } from "../operational/provider.js";
-import { isSupervisorShapedToken } from "../channels/window-key.js";
+import { isDmAnchorWindowToken, isSupervisorShapedToken } from "../channels/window-key.js";
 
 const loggedOnce = new Set<string>();
 function logOnce(kind: "warn" | "log", reason: string): void {
@@ -185,7 +185,9 @@ function routeUnset(route: ModelRoute): boolean {
 }
 
 export function isSupervisorSession(ctx: BindableContext): boolean {
-  return isSupervisorShapedToken(ctx.channel?.continuationToken);
+  const token = ctx.channel?.continuationToken;
+  if (isDmAnchorWindowToken(token)) return false;
+  return isSupervisorShapedToken(token);
 }
 
 export function makeRoutedModel<TModel extends RoutableModel>(

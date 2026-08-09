@@ -12,7 +12,7 @@ import { supervisorGrainFor } from "../agent/channels/unified-supervisor.js";
 import { singleWindowMentionPolicy } from "../agent/channels/unified-window.js";
 import { isVouchedInternal, registerSurfaces, defineSurface, _resetSurfacesForTest } from "../agent/identity/trust.js";
 import { windowGrainOf, type BindableContext } from "../agent/identity/binding.js";
-import { formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
+import { dmWindowKey, formatWindowToken, taskWindowId } from "../agent/channels/window-key.js";
 
 let n = 0;
 const ok = (cond: boolean, label: string) => {
@@ -134,6 +134,13 @@ console.log("P0-a(1b) — spawn_task token-aware mount (DM dead-affordance fix):
   ok((await resolveWindowGated(spawnMod, windowStanding)) !== null, "[P0-a(1b)] spawn_task IS mounted on a window-token standing seat (delegation is the seat's job — the fix must not over-remove)");
   ok((await resolveWindowGated(spawnMod, blankStanding)) !== null, "[P0-a(1b)] spawn_task fails OPEN on a blank-token standing seat (a degraded window-seat token is never wrongly stripped; the execute guard is the wall)");
   eq(await resolveWindowGated(spawnMod, perContainerStanding), null, "[P0-a(1b)] spawn_task is ABSENT on a per-container standing seat (its token is not a window token, so it too can't mint a child)");
+
+  const dmWindowStanding = {
+    channel: { kind: "unified", continuationToken: `unified:${formatWindowToken(dmWindowKey("slack/T1/D999", 3))}` },
+    session: { id: "cap-dm-window-standing", auth: { current: { attributes: standingAttrs } } },
+  } as BindableContext;
+  eq(windowGrainOf(dmWindowStanding), "standing", "[P0-a(1b)] a DM WINDOW seat is grain STANDING, exactly like the native-token DM seat it replaces");
+  eq(await resolveWindowGated(spawnMod, dmWindowStanding), null, "[P0-a(1b)/OPE-351] spawn_task is ABSENT on a DM WINDOW seat — excluded POSITIVELY (by what the token is), so the re-seat cannot silently mount a thread-owning spawn in a DM");
 }
 
 withWindowEnv(() => {

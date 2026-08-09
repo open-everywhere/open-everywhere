@@ -13,7 +13,10 @@ import {
   classifySessionId,
   dmAnchorDomain,
   dmAnchorWindowKey,
+  dmAnchorSurfaceForToken,
   dmSurfaceKeyFromAnchorDomain,
+  dmWindowKey,
+  isDmAnchorWindowToken,
   formatWindowToken,
   isDmAnchorDomain,
   isDmAnchoredTaskToken,
@@ -320,4 +323,22 @@ console.log("5. lean-seat interplay:");
   ok(workerOnly.includes("remember") && workerOnly.includes("connection_search"), "…while everything that genuinely DOES relocate is still listed (the index stays a complete routing table)");
 }
 
-console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · anchor resolution · inherit-never-escalate · lean-seat interplay)`);
+console.log("6. OPE-351 fences (capacity only — nothing mints a DM window token yet):");
+{
+  const dmWindow = formatWindowToken(dmWindowKey(DM_SURFACE_KEY, 3));
+
+  ok(isDmAnchorWindowToken(dmWindow), "the DM SEAT window is recognised as such");
+  ok(!isDmAnchoredTaskToken(dmWindow), "…and is NOT a DM-anchored worker (so ownership/recursion routing can't confuse the two)");
+  const dmWorker = formatWindowToken({ domain: dmAnchorDomain(DM_SURFACE_KEY), windowId: taskWindowId("slack/D_ASKER", "D_ASKER", "n1"), generation: DM_ANCHOR_GENERATION });
+  ok(isDmAnchoredTaskToken(dmWorker) && !isDmAnchorWindowToken(dmWorker), "…and the reverse holds for a worker — the two predicates partition the pseudo-domain");
+  eq(dmAnchorSurfaceForToken(dmWindow), dmAnchorSurfaceForToken(dmWorker), "both resolve the SAME admission surface — a DM's seat and its workers are deliverable to exactly one place, that DM");
+
+  const named = [defineDomain({ name: "payments", channels: ["slack/T1/C_PAY"], mode: "unified" })];
+  eq(domainForChannel(parseWindowToken(dmWindow)!.domain, named), undefined, "a DM SEAT window's domain matches no configured domain — the seat inherits the DM's partition, never a named domain's grants");
+  eq(domainForChannel(DM_SURFACE_KEY, named), undefined, "…and the DM surface it names is in no roster either (both halves of the fence)");
+
+  ok(sessionGrantKeyFromToken(dmWorker).startsWith(`oe-dom:${dmAnchorDomain(DM_SURFACE_KEY)}:`), "a DM worker's session-grant key still collapses onto the DM's own pseudo-domain");
+  eq(sessionGrantKeyFromToken(dmWindow), dmWindow, "…and a DM SEAT window keys as itself, so its grants rotate with its generation like any standing seat's");
+}
+
+console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · anchor resolution · inherit-never-escalate · lean-seat interplay · OPE-351 fences)`);

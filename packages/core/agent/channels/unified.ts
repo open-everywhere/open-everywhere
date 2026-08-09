@@ -9,7 +9,7 @@ import { getOperationalStore } from "../operational/provider.js";
 import { registerUnifiedWakeTarget, resolveUnifiedWakeTarget, isUnifiedWakeOrigin, stampUnifiedWindowAuth, shouldBridgeAddressedProse, unifiedThreadRef, isThreadScopedWakeOrigin, OE_ADDRESSING_ATTR, OE_GRAIN_ATTR, type UnifiedWakeOrigin, type UnifiedWindowWake } from "./unified-window.js";
 import { postUnifiedReply, completeUnifiedSessionSilently } from "./unified-reply.js";
 import { unifiedDomainFromToken, unifiedDomainSessionKey, isUnifiedSupervisorToken } from "./unified-supervisor.js";
-import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, isDmAnchoredTaskToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
+import { parseWindowToken, isTaskWindowId, isThreadSeatWindowId, isThreadSeatWindowToken, dmAnchorSurfaceForToken, dmSurfaceKeyFromAnchorDomain } from "./window-key.js";
 import { resolveThreadOwner, clearThreadOwner, routeThreadMessage } from "./thread-ownership.js";
 import { oneshotAgentEnabled } from "../access/delegation-flag.js";
 import { sourcesForWindow } from "./window-sources.js";
@@ -62,8 +62,8 @@ export interface UnifiedReceiveTarget {
   readonly context?: readonly string[];
 }
 
-function windowEnabledFor(surfaceKey: string, token: string): boolean {
-  const dmAnchorSurface = isDmAnchoredTaskToken(token) ? dmSurfaceKeyFromAnchorDomain(parseWindowToken(token)?.domain) : undefined;
+export function windowEnabledFor(surfaceKey: string, token: string): boolean {
+  const dmAnchorSurface = dmAnchorSurfaceForToken(token);
   if (dmAnchorSurface !== undefined) return dmAnchorSurface === surfaceKey;
   try {
     const domains = getConfig().loadDomains();

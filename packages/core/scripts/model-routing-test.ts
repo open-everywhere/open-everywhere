@@ -15,6 +15,14 @@ import {
   type RoutedCallOptions,
   type RoutingDeps,
 } from "../agent/model/routing.js";
+import {
+  dmAnchorDomain,
+  dmWindowKey,
+  formatWindowToken,
+  isSupervisorShapedToken,
+  saltSupervisorGeneration,
+  taskWindowId,
+} from "../agent/channels/window-key.js";
 import { stampModelCall, readModelStamp } from "../agent/model/model-stamp.js";
 import { readStampedUtilityRoute } from "../agent/model/utility-route-stamp.js";
 import { renderSupervisorPersona } from "../agent/instructions/access.js";
@@ -315,6 +323,21 @@ ok(!isSupervisorSession(slackChannelCtx("T1", "C_TXN")), "isSupervisorSession: a
 ok(!isSupervisorSession(slackDmCtx("T1", "D_PARTNER")), "isSupervisorSession: a DM ctx is NOT a supervisor session");
 ok(isSupervisorSession({ channel: { kind: "slack", continuationToken: "oe-sup:g12" } } as BindableContext), "isSupervisorSession: the bare sentinel form also matches");
 ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: "C_TXN:1720000000.0001" } } as BindableContext), "isSupervisorSession: a real thread continuation token does NOT match");
+
+{
+  const DM_SURFACE = "slack/T1/D999";
+  const dmWindowTok = formatWindowToken(dmWindowKey(DM_SURFACE, 4));
+  const dmWindowCtx = { channel: { kind: "slack", continuationToken: dmWindowTok } } as BindableContext;
+  ok(!isSupervisorSession(dmWindowCtx), "isSupervisorSession: a DM WINDOW token does NOT resolve the supervisor role — a DM routes to the primary model");
+  ok(!isSupervisorSession({ channel: { kind: "unified", continuationToken: `unified:${dmWindowTok}` } } as BindableContext), "…including through eve's `unified:` send prefix (the strip happens inside the codec)");
+  ok(!isSupervisorSession({ channel: { kind: "slack", continuationToken: saltSupervisorGeneration(dmWindowTok) } } as BindableContext), "…and for a ROTATED (salted) DM window token");
+  ok(isSupervisorShapedToken(dmWindowTok), "…but the DM window token IS still supervisor-SHAPED — the fix lives in isSupervisorSession, NOT in the codec (spend + rotation keep the broad predicate)");
+  const dmWorkerTok = formatWindowToken({ domain: dmAnchorDomain(DM_SURFACE), windowId: taskWindowId("slack/T1/D999", "D999", "n1"), generation: 0 });
+  ok(isSupervisorSession({ channel: { kind: "unified", continuationToken: dmWorkerTok } } as BindableContext), "a DM-ANCHORED WORKER (t/ grain, OPE-306) still IS a supervisor session — behaviour-neutral, the exclusion is standing-grain-only");
+  ok(isSupervisorSession({ channel: { kind: "unified", continuationToken: formatWindowToken({ domain: "payments", windowId: "payments", generation: 4 }) } } as BindableContext), "a NAMED-domain standing window is still a supervisor session");
+
+  ok(renderSupervisorPersona(dmWindowCtx) === "", "renderSupervisorPersona renders NOTHING on a DM window — the re-seat preserves the DM's current posture rather than changing it");
+}
 
 {
   const persona = renderSupervisorPersona(slackSupervisorCtx("T1", "C_TXN", 3));

@@ -16,7 +16,7 @@ import {
   type UnifiedWakeOrigin,
 } from "../agent/channels/unified-window.js";
 import { divertToUnifiedWindow, dispatchTaskWindow, OE_SPAWN_TAINTED_ATTR, type UnifiedReceiveTarget } from "../agent/channels/unified.js";
-import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken } from "../agent/channels/window-key.js";
+import { parseWindowToken, isTaskWindowToken, taskWindowId, formatWindowToken, dmAnchorDomain, dmWindowKey } from "../agent/channels/window-key.js";
 import spawnTask from "../agent/tools/spawn_task.js";
 import { resolveWindowGated } from "../agent/access/window-gated.js";
 import type { RouteHandlerArgs } from "eve/channels";
@@ -143,6 +143,29 @@ await assert.rejects(
   "a non-window (per-container/native) session is refused — spawning is a standing-window-seat verb",
 );
 n++;
+
+{
+  const dmWindowTok = formatWindowToken(dmWindowKey("slack/T1/D999", 3));
+  await assert.rejects(
+    () => tool.execute({ brief: "x" }, { channel: { kind: "unified", continuationToken: `unified:${dmWindowTok}` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } } } }),
+    /DM seat can't spawn a thread-owning worker/,
+    "a DM SEAT WINDOW is refused at execute — and by its OWN reason, not by the generic no-window one",
+  );
+  n++;
+  eq(
+    await resolveWindowGated(spawnTask, { channel: { kind: "unified", continuationToken: `unified:${dmWindowTok}` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } } } } as never),
+    null,
+    "spawn_task is ABSENT on a DM seat window — the mount predicate excludes it positively, matching the wall",
+  );
+  const dmWorkerTok = formatWindowToken({ domain: dmAnchorDomain("slack/T1/D999"), windowId: taskWindowId("slack/T1/D999", "D999", "n1"), generation: 0 });
+  await assert.rejects(
+    () => tool.execute({ brief: "x" }, { channel: { kind: "unified", continuationToken: `unified:${dmWorkerTok}` }, session: { auth: { current: { attributes: { oe_grain: "standing" } } } } }),
+    /cannot spawn further tasks/,
+    "a DM-ANCHORED WORKER is still refused by the RECURSION guard, not the new DM fence — the fence is standing-grain-only (behaviour-neutral for OPE-306)",
+  );
+  n++;
+  ok((await resolveWindowGated(spawnTask, standingCtx as never)) !== null, "spawn_task is still mounted on a NAMED-domain standing window seat (the fence must not over-remove)");
+}
 
 console.log("4. spawn_task on a RESUMED standing seat (OPE-121):");
 const resumedWindowToken = unifiedSupervisorToken("payments", 1);
