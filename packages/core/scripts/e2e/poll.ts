@@ -41,3 +41,27 @@ export async function pollUntil<T>(probe: () => Promise<T | undefined>, opts: Po
     await sleep(delay);
   }
 }
+
+export async function pollOptional<T>(probe: () => Promise<T | undefined>, opts: PollOpts): Promise<T | undefined> {
+  let lastError: unknown;
+  let lastAttemptThrew = false;
+  const tolerant = async (): Promise<T | undefined> => {
+    try {
+      const found = await probe();
+      lastAttemptThrew = false;
+      return found;
+    } catch (err) {
+      if (lastAttemptThrew) throw err;
+      lastAttemptThrew = true;
+      lastError = err;
+      return undefined;
+    }
+  };
+  try {
+    return await pollUntil(tolerant, opts);
+  } catch (err) {
+    if (!(err instanceof PollTimeout)) throw err;
+    if (lastAttemptThrew) throw lastError;
+    return undefined;
+  }
+}

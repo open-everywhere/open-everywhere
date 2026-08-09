@@ -19,6 +19,15 @@ interface PrApiFile {
   patch?: string;
 }
 
+export interface PrTaintShape {
+  readonly repoPrivate?: boolean;
+  readonly thirdPartyBodies: number;
+}
+
+interface PrApiBody {
+  body?: string;
+}
+
 export class PrApi {
   constructor(private readonly cfg: PrConfig) {}
 
@@ -50,6 +59,24 @@ export class PrApi {
     const pr = (await this.api("GET", `/repos/${this.cfg.repo}/pulls/${prNumber}`)) as PrApiPull;
     if (typeof pr.number !== "number") return undefined;
     return { number: pr.number, head: pr.head?.ref ?? "", base: pr.base?.ref ?? "", title: pr.title ?? "" };
+  }
+
+  async prTaintShape(prNumber: number): Promise<PrTaintShape> {
+    const pr = (await this.api("GET", `/repos/${this.cfg.repo}/pulls/${prNumber}`)) as { base?: { repo?: { private?: boolean } } };
+    const priv = pr.base?.repo?.private;
+    const nonEmpty = async (path: string): Promise<number> => {
+      const json = (await this.api("GET", path)) as PrApiBody[];
+      return (Array.isArray(json) ? json : []).filter((c) => typeof c.body === "string" && c.body.trim().length > 0).length;
+    };
+    const counts = await Promise.all([
+      nonEmpty(`/repos/${this.cfg.repo}/pulls/${prNumber}/reviews?per_page=100`),
+      nonEmpty(`/repos/${this.cfg.repo}/pulls/${prNumber}/comments?per_page=100`),
+      nonEmpty(`/repos/${this.cfg.repo}/issues/${prNumber}/comments?per_page=100`),
+    ]);
+    return {
+      ...(typeof priv === "boolean" ? { repoPrivate: priv } : {}),
+      thirdPartyBodies: counts.reduce((a, b) => a + b, 0),
+    };
   }
 
   async findOpenPrByHead(head: string): Promise<PrDetails | undefined> {

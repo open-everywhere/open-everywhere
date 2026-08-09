@@ -41,7 +41,7 @@ const {
   DEFAULT_TEAMS_REFRESH_SINK,
 } = await import("../packages/core/scripts/e2e/env.js");
 const { readRefreshSidecar, writeRefreshSidecar } = await import("../packages/core/scripts/e2e/teams-driver.js");
-const { backoffDelayMs, pollUntil, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
+const { backoffDelayMs, pollUntil, pollOptional, PollTimeout } = await import("../packages/core/scripts/e2e/poll.js");
 const {
   signSlackRequest,
   buildApprovalClickPayload,
@@ -1201,6 +1201,43 @@ ok(APPROVAL_PREFIX === OE_APPROVAL_PREFIX, "synthetic approval prefix matches fl
     timedOut = err instanceof PollTimeout && String(err).includes("never");
   }
   ok(timedOut, "pollUntil throws a legible PollTimeout when the budget elapses");
+}
+
+{
+  const opts = { timeoutMs: 2_000, initialDelayMs: 1, maxDelayMs: 2 } as const;
+
+  ok((await pollOptional(async () => "hit", { ...opts, what: "a value" })) === "hit", "pollOptional returns the probe's value");
+  ok(
+    (await pollOptional(async () => undefined, { timeoutMs: 20, initialDelayMs: 1, maxDelayMs: 2, what: "nothing" })) === undefined,
+    "pollOptional resolves undefined on a genuine ABSENCE (budget elapsed, every read fine)",
+  );
+
+  let attempts = 0;
+  const afterBlip = await pollOptional(
+    async () => {
+      attempts++;
+      if (attempts === 1) throw new Error("transient 503");
+      return "recovered";
+    },
+    { ...opts, what: "a value after one blip" },
+  );
+  ok(afterBlip === "recovered" && attempts === 2, "pollOptional tolerates ONE consecutive probe failure and retries on the next tick");
+
+  let twoInARow: unknown;
+  try {
+    await pollOptional(async () => { throw new Error("audit read is down"); }, { ...opts, what: "a row" });
+  } catch (err) {
+    twoInARow = err;
+  }
+  ok(twoInARow instanceof Error && String(twoInARow).includes("audit read is down"), "🔴 pollOptional THROWS the underlying error on two consecutive failures — a broken read is never reported as 'no row'");
+
+  let midFailure: unknown;
+  try {
+    await pollOptional(async () => { throw new Error("intermittent 500"); }, { timeoutMs: 0, initialDelayMs: 1, maxDelayMs: 1, what: "a row" });
+  } catch (err) {
+    midFailure = err;
+  }
+  ok(midFailure instanceof Error && String(midFailure).includes("intermittent 500"), "🔴 a budget that elapses with the most recent read FAILING throws that failure rather than reporting absence");
 }
 
 {

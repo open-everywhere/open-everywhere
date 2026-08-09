@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, createPublicKey } from "node:crypto";
 import { jwtVerify } from "jose";
-import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
+import { parsePrivateKey, signAppJwt, buildMintBody, mintInstallationToken, DEFAULT_PERMISSIONS, READ_PERMISSIONS, PR_READ_PERMISSIONS, normalizePrivateKeyPem, type FetchFn } from "../agent/scm/mint.js";
 import { authExtraHeader, cloneArgs, fetchArgs, pushArgs, botCommitter, identityArgs, checkoutCommand, isSafeCheckoutDir, isSafeBranchName, stagePushCommand, parseStagedSha, PENDING_REF_PREFIX, STAGED_SHA_MARKER, redactSecret, CHECKOUT_OK, conventionProbe, parseConventionProbe, CONV_MARKER, CONVENTION_FILES, skillsProbe, parseSkillsProbe, SKILL_MARKER, SKILL_TRUNC_MARKER, SKILL_ROOTS, MAX_REPO_SKILLS, MAX_SKILL_BYTES, agentsProbe, parseAgentsProbe, AGENT_MARKER, AGENT_TRUNC_MARKER, AGENT_ROOTS, MAX_REPO_AGENTS } from "../agent/scm/git.js";
 import { createOrUpdatePullRequest, type PrFetchFn } from "../agent/scm/pr.js";
 import {
@@ -10,6 +10,7 @@ import {
   fetchCheckRuns,
   summarizeChecks,
   describeChecks,
+  resolveReadToken,
   MAX_FAILING_CHECK_NAMES,
   type CheckRun,
 } from "../agent/scm/pr-status.js";
@@ -59,6 +60,19 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   const ro = buildMintBody(["web"], READ_PERMISSIONS);
   ok(ro.permissions.contents === "read" && ro.permissions.metadata === "read", "checkout read set is contents:read + metadata:read");
   ok(ro.permissions.pull_requests === undefined && ro.permissions.issues === undefined, "checkout read set requests NO write permissions");
+  const prro = buildMintBody(["web"], PR_READ_PERMISSIONS);
+  ok(
+    prro.permissions.contents === "read" && prro.permissions.pull_requests === "read" && prro.permissions.metadata === "read",
+    "PR-read set is contents:read + pull_requests:read + metadata:read (the mint narrows to the body, so `pull_requests` must be ASKED for)",
+  );
+  ok(
+    Object.values(PR_READ_PERMISSIONS).every((v) => v === "read"),
+    "PR-read set asks for READ everywhere — adding pull_requests must not smuggle in a write",
+  );
+  ok(
+    READ_PERMISSIONS.pull_requests === undefined,
+    "🔴 the PERSISTED checkout set still carries NO pull_requests — PR_READ_PERMISSIONS is a SEPARATE constant, never a widening of the credential that lands in a clone's git config",
+  );
 }
 
 {
@@ -138,6 +152,44 @@ const pubPem = publicKey.export({ type: "spki", format: "pem" }) as string;
   ok(calls[0].body.permissions.contents === "write" && calls[0].body.permissions.pull_requests === "write", "tokensForRepos default mint requests the write set (PR flow)");
   await app.tokensForRepos(["acme/web"], READ_PERMISSIONS);
   ok(calls[1].body.permissions.contents === "read" && calls[1].body.permissions.pull_requests === undefined, "tokensForRepos with READ_PERMISSIONS requests read-only (checkout mint)");
+}
+
+{
+  const calls: { body: { repositories: string[]; permissions: Record<string, string | undefined> } }[] = [];
+  const fetchFn: FetchFn = async (url, init) => {
+    const installationId = url.match(/installations\/([^/]+)\//)![1];
+    calls.push({ body: JSON.parse(init.body) });
+    return { ok: true, status: 201, text: async () => "", json: async () => ({ token: `tok_${installationId}`, expires_at: "2026-06-25T13:00:00Z", repositories: [] }) };
+  };
+  const app = new GitHubApp(
+    { appId: "111", privateKeyPem: pkcs1, appSlug: "open-everywhere", botUserId: "12345", installations: { acme: "4242" } },
+    { fetchFn, now: () => 1_750_000_000_000 },
+  );
+
+  const token = await resolveReadToken("acme/web", app);
+  ok(token === "tok_4242", "resolveReadToken returns the owner-scoped installation token");
+  ok(
+    calls[0].body.permissions.pull_requests === "read",
+    "🔴 the pr-status resolver's mint ASKS FOR pull_requests:read — the OPE-353 fix; without it GET /pulls/:n 403s whatever the installation grant says",
+  );
+  ok(
+    calls[0].body.permissions.contents === "read" && calls[0].body.permissions.metadata === "read",
+    "the PR-read mint keeps contents:read + metadata:read (a PR read still walks the repo)",
+  );
+  ok(
+    calls[0].body.permissions.issues === undefined && Object.values(calls[0].body.permissions).every((v) => v === "read"),
+    "the PR-read mint adds NOTHING beyond pull_requests, and nothing at write level",
+  );
+
+  await app.tokensForRepos(["acme/web"], READ_PERMISSIONS);
+  ok(
+    calls[1].body.permissions.pull_requests === undefined,
+    "🔴 the checkout mint still requests NO pull_requests — the credential written into the clone's git config was NOT widened by the PR-read fix",
+  );
+  ok(
+    calls[1].body.permissions.contents === "read" && calls[1].body.permissions.metadata === "read",
+    "the checkout mint is byte-for-byte the set it always was",
+  );
 }
 
 {

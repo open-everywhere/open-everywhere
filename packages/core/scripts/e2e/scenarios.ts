@@ -17,7 +17,7 @@ import type { TimingsRecord } from "./timings-record.js";
 import { type SyntheticDm, type SyntheticSlack } from "./synthetic.js";
 import { type SyntheticDiscordDm } from "./discord-synthetic.js";
 import type { WebhookDriver } from "./webhook.js";
-import { pollUntil, sleep } from "./poll.js";
+import { pollOptional, pollUntil, sleep } from "./poll.js";
 import type { ReplyJudge, Rubric } from "./judge.js";
 import {
   approveButton,
@@ -986,13 +986,13 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.log(`mint: parsed link code (${code!.length} symbols) from the DM reply; ${issuedRows.length} challenge_issued row(s) in the window`);
 
       await claimant.post(claimant.mention(`link ${code!}`));
-      const claimedRows = await pollUntil(
+      const claimedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.challenge_claimed"] });
           return r.length > 0 ? r : undefined;
         },
         { timeoutMs: REPLY_WAIT, what: "an identity.link.challenge_claimed audit row (the link-claim hook recording the second account's claim)" },
-      ).catch(() => undefined);
+      );
       if (!claimedRows) {
         const miss =
           `the code was minted but NO identity.link.challenge_claimed row appeared after slack/${secondaryId} posted "@… link <CODE>" ` +
@@ -1021,13 +1021,13 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(confirmSent.status === 200, "confirm: the synthetic DM confirmation acked 200");
       const confirmReply = await dm.awaitAnyReply(confirmTs, { timeoutMs: REPLY_WAIT });
       ctx.gate(confirmReply.text.trim().length > 0, "confirm: the agent replied to the confirmation turn");
-      const confirmedRows = await pollUntil(
+      const confirmedRows = await pollOptional(
         async () => {
           const r = await auditRead({ sinceIso: runStart, actions: ["identity.link.confirmed"] });
           return r.length > 0 ? r : undefined;
         },
         { timeoutMs: REPLY_WAIT, what: "an identity.link.confirmed audit row (the ratification actually committing the link)" },
-      ).catch(() => undefined);
+      );
       ctx.gate(
         confirmedRows !== undefined,
         "confirm: an identity.link.confirmed audit row exists — the ratification COMMITTED the link (the reply text alone is not evidence). " +
@@ -3081,14 +3081,14 @@ export const SCENARIOS: readonly Scenario[] = [
       ctx.gate(connectRes.status === 200, "forge: the oe_connect api-key click acked 200 by the deployment's Slack route");
 
       const intakeRows =
-        (await pollUntil(
+        (await pollOptional(
           async () => {
             const r = await auditRead!({ sinceIso: runStart, actions: ["credential.intake_requested"] });
             const mine = r.filter((e) => e.principalId === admin && (e.detail as { provider?: unknown } | undefined)?.provider === PROVIDER);
             return mine.length > 0 ? mine : undefined;
           },
           { timeoutMs: REPLY_WAIT, what: "a credential.intake_requested audit row for the forged admin oe_connect click" },
-        ).catch(() => undefined)) ??
+        )) ??
         ctx.skip(
           `no credential.intake_requested audit row appeared for provider "${PROVIDER}" — the forged admin clicker (${admin}) may not hold org/domain admin standing here, or the db broker isn't configured (OE_CREDENTIAL_ENCRYPTION_KEY unarmed). Provision E2E_SLACK_ADMIN_USER_ID as an admin and confirm the db broker is configured, then re-run.`,
         );
@@ -3106,14 +3106,14 @@ export const SCENARIOS: readonly Scenario[] = [
       const submitRes = await synthetic.setKeySubmit({ org, intakeId: intakeId!, channelId, value: FAKE_KEY, userId: admin, teamId });
       ctx.gate(submitRes.status === 200, "forge: the view_submission acked 200 (our front route owns the credential-intake modal-submit)");
 
-      const storedRows = await pollUntil(
+      const storedRows = await pollOptional(
         async () => {
           const r = await auditRead!({ sinceIso: runStart, actions: ["credential.stored"] });
           const mine = r.filter((e) => e.principalId === admin && (e.detail as { id?: unknown } | undefined)?.id === intakeId);
           return mine.length > 0 ? mine : undefined;
         },
         { timeoutMs: REPLY_WAIT, what: "a credential.stored audit row for the forged view_submission" },
-      ).catch(() => undefined);
+      );
       if (storedRows) {
         ctx.gate(true, "store: credential.stored audit row written for the intake (the host encrypt+store path ran end-to-end under the db broker)");
         ctx.log(`store: credential.stored id=${intakeId} ref=${intakeRef} — the value was stored ENCRYPTED and is NEVER read back here.`);
@@ -3126,14 +3126,14 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       if (storedRows) {
-        const bindingRows = await pollUntil(
+        const bindingRows = await pollOptional(
           async () => {
             const r = await auditRead!({ sinceIso: runStart, actions: ["credential.binding_proposed"] });
             const mine = r.filter((e) => (e.detail as { credentialAuditId?: unknown } | undefined)?.credentialAuditId === intakeId);
             return mine.length > 0 ? mine : undefined;
           },
           { timeoutMs: REPLY_WAIT, what: "a credential.binding_proposed audit row for the stored credential" },
-        ).catch(() => undefined);
+        );
         if (bindingRows) {
           const bd = bindingRows[0].detail as { dryRun?: unknown; credentialAuditId?: unknown; storedRef?: unknown; provider?: unknown; credential?: unknown };
           ctx.gate(bd.dryRun === true, "binding: the credential-binding PR ran DRY-RUN — nothing opened a real PR against the config repo");
@@ -3187,14 +3187,14 @@ export const SCENARIOS: readonly Scenario[] = [
         ...new Set(rows.map((e) => String((e.detail as { kind?: unknown } | undefined)?.kind ?? "?"))),
       ];
       const awaitRows = async (kind: string, what: string, timeoutMs = REPLY_WAIT) =>
-        await pollUntil(
+        await pollOptional(
           async () => {
             const r = await auditRead({ sinceIso: runStart, actions: ["taint.dryrun"] });
             const mine = r.filter((e) => (e.detail as { kind?: unknown } | undefined)?.kind === kind);
             return mine.length > 0 ? mine : undefined;
           },
           { timeoutMs, what },
-        ).catch(() => undefined);
+        );
 
       const marker = factToken("taintdr");
       const { ts: askTs } = await slack.post(`(e2e S-TAINT-DRYRUN) anchor ${marker} — a message for the agent to read back`);
@@ -3261,26 +3261,63 @@ export const SCENARIOS: readonly Scenario[] = [
       }
 
       const prNumber = Number(process.env.E2E_TAINT_PR_NUMBER ?? "");
-      if (ctx.prRepo && Number.isInteger(prNumber) && prNumber > 0) {
-        await slack.post(
-          slack.mention(
-            `look at pull request #${prNumber} in ${ctx.prRepo}: read the feedback on it (reviews, comments, checks) AND walk the change itself, then give me one line on where it stands.`,
-          ),
-        );
-        const ghRows = await awaitRows("github", 'a taint.dryrun row with kind "github" (get_pr_feedback over-tainting a private repo, or walk_pr under-tainting a public one)', 900_000);
-        ctx.gate(
-          ghRows !== undefined,
-          "ARM D: reading a PR produced a `taint.dryrun` row for kind `github` — get_pr_feedback and walk_pr disagree with the table in OPPOSITE directions, so exactly one of them logs whichever way the repo's visibility falls",
-        );
-        const gd = ghRows![0].detail as { divergence?: unknown; assumed?: unknown; label?: unknown };
-        ctx.log(`arm D: github row divergence=${String(gd.divergence)} assumed=${String(gd.assumed)} label=${String(gd.label)}`);
-        ctx.gate(
-          gd.assumed === false,
-          "ARM D: the github verdict is NOT `assumed` — OPE-331 plumbed `base.repo.private` off the PR object both seams already fetch, so an assumed row here means that plumbing regressed (or GitHub omitted the field)",
-        );
+      if (ctx.prRepo && ctx.prApi && Number.isInteger(prNumber) && prNumber > 0) {
+        const shape = await ctx.prApi.prTaintShape(prNumber).catch((err: unknown) => {
+          ctx.log(`arm D (github) SKIPPED — could not read the fixture ${ctx.prRepo}#${prNumber} over the driver PAT: ${String(err)}. The \`github\` row shape is unpopulated in this run's sample.`);
+          return undefined;
+        });
+        if (shape === undefined) {
+        } else if (shape.repoPrivate === undefined) {
+          ctx.log(
+            `arm D (github) SKIPPED — GitHub did not report \`base.repo.private\` for ${ctx.prRepo}#${prNumber} over the driver PAT, so the arm cannot predict which divergence the fixture owes. The \`github\` row shape is unpopulated in this run's sample.`,
+          );
+        } else {
+          const expected = shape.repoPrivate ? "over-taint" : "under-taint";
+          const owesRow = shape.repoPrivate ? shape.thirdPartyBodies > 0 : true;
+          ctx.log(
+            `arm D fixture: ${ctx.prRepo}#${prNumber} is ${shape.repoPrivate ? "PRIVATE" : "PUBLIC"} with ${shape.thirdPartyBodies} non-empty third-party body/bodies ⇒ ` +
+              (owesRow
+                ? `a \`github\` row is OWED, and it can only be an ${expected} (${shape.repoPrivate ? "get_pr_feedback over a trusted-by-table private repo" : "walk_pr fencing an untrusted-by-table public repo"})`
+                : "NO `github` row is owed — a private repo silences walk_pr, and a PR with no third-party body gives get_pr_feedback nothing to fence"),
+          );
+          await slack.post(
+            slack.mention(
+              `look at pull request #${prNumber} in ${ctx.prRepo}: read the feedback on it (reviews, comments, checks) AND walk the change itself, then give me one line on where it stands.`,
+            ),
+          );
+          const ghRows = await awaitRows(
+            "github",
+            `a taint.dryrun row with kind "github" (expected ${expected} for this fixture)`,
+            900_000,
+          );
+          if (owesRow) {
+            ctx.gate(
+              ghRows !== undefined,
+              `ARM D (hard): reading ${ctx.prRepo}#${prNumber} produced a \`taint.dryrun\` row for kind \`github\`. This fixture OWES one — it is ${shape.repoPrivate ? "private with third-party bodies, so get_pr_feedback must over-taint" : "public, so walk_pr must under-taint"} — so an absence is the seam failing to declare its source, not a fixture that had nothing to say`,
+            );
+          } else if (ghRows === undefined) {
+            ctx.log(
+              `arm D: NO \`github\` row, which is the CORRECT outcome for this fixture (private repo + no third-party body ⇒ both seams agree with the table and neither logs). The \`github\` row shape is unpopulated in this run's sample — point E2E_TAINT_PR_NUMBER at a PR carrying a review or comment (or at a public repo) to make this arm gateable.`,
+            );
+          } else {
+            ctx.log(`arm D: a \`github\` row appeared where the fixture owed none — get_pr_feedback found a body the harness's conservative count missed (a failing check's summary is the likely one). Gating it below.`);
+          }
+          if (ghRows !== undefined) {
+            const details = ghRows.map((r) => r.detail as { divergence?: unknown; assumed?: unknown; label?: unknown });
+            ctx.log(`arm D: ${ghRows.length} github row(s) — ${details.map((d) => `${String(d.divergence)}@${String(d.label)} assumed=${String(d.assumed)}`).join("; ")}`);
+            ctx.gate(
+              details.every((d) => d.divergence === expected),
+              `ARM D: EVERY \`github\` row carries the one direction this repo's visibility permits (${expected}). The opposite direction on a ${shape.repoPrivate ? "private" : "public"} repo would mean a seam read visibility differently from the table — the exact disagreement the dry run exists to surface before enforcement`,
+            );
+            ctx.gate(
+              details.every((d) => d.assumed === false),
+              "ARM D: no github verdict is `assumed` — OPE-331 plumbed `base.repo.private` off the PR object both seams already fetch, so an assumed row here means that plumbing regressed (or GitHub omitted the field for OE's credential where it did not for the driver's)",
+            );
+          }
+        }
       } else {
         ctx.log(
-          "arm D (github) SKIPPED — needs E2E_PR_REPO plus E2E_TAINT_PR_NUMBER naming an EXISTING pull request to read (deliberately not a PR this run opens: the scenario reads, it must not write). " +
+          "arm D (github) SKIPPED — needs E2E_PR_REPO (which also provides the prApi readback) plus E2E_TAINT_PR_NUMBER naming an EXISTING pull request to read (deliberately not a PR this run opens: the scenario reads, it must not write). " +
             "The `github` row shape is unpopulated in this run's sample.",
         );
       }
