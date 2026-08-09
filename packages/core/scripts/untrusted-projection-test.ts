@@ -339,7 +339,7 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
     });
   }
 
-  const { setConnectorTrust } = await import("../agent/access/connector-trust-state.js");
+  const { setConnectorContentOrigin } = await import("../agent/access/connector-content-origin-state.js");
   const { registerTaintVerdictSink, currentTaintVerdictSink } = await import("../agent/access/taint-enforcement.js");
   const dryRows: { kind: string; label?: string; tableTier: string; assumed: boolean }[] = [];
   const priorSink = currentTaintVerdictSink();
@@ -354,21 +354,38 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
   };
 
   await inTurn(async () => {
-    setConnectorTrust({ notion: "internal", "acme__forms": "public" });
+    setConnectorContentOrigin({ notion: "internal", "acme__forms": "external" });
     dryRows.length = 0;
     const out = await connectorTool("notion__search").toModelOutput!({ output: { results: ["hello"] }, toolCallId: "gt-1" });
     ok(String(out.value).startsWith(UNTRUSTED_OPEN), "a declared-internal connector's result is STILL fenced — the wrap half is unconditional; only the mark is the table's call");
-    ok(untrustedIngestedThisTurn() === false, "🔴 OPE-324: …and the turn is NOT marked. A `trust: internal` grant in reviewed bundle config is now the difference between a tainted turn and a clean one");
+    ok(untrustedIngestedThisTurn() === false, "🔴 OPE-324: …and the turn is NOT marked. A `contentOrigin: internal` grant in reviewed bundle config is now the difference between a tainted turn and a clean one");
     const row = dryRows.find((r) => r.label === "notion__search");
     ok(!!row && row.tableTier === "trusted" && row.assumed === false, "🔴 the row for a DECLARED-internal connector reads `trusted` and NOT `assumed` — the branch that config could never reach before");
   });
 
   await inTurn(async () => {
-    setConnectorTrust({ notion: "internal" });
+    setConnectorContentOrigin({ notion: "internal" });
     dryRows.length = 0;
     await connectorTool("linear__issues").toModelOutput!({ output: "x", toolCallId: "gt-2" });
     const row = dryRows.find((r) => r.label === "linear__issues");
     ok(!!row && row.tableTier === "untrusted" && row.assumed === true, "an UNDECLARED connector still logs the fail-closed default MARKED `assumed` — silence in config is not an assurance, and one bundle's vouch does not travel to another connector");
+  });
+
+  await inTurn(async () => {
+    setConnectorContentOrigin({ helpdesk: { default: "internal", except: { search_tickets: "external" } } });
+    dryRows.length = 0;
+    await connectorTool("helpdesk__list_queues").toModelOutput!({ output: "x", toolCallId: "gt-4" });
+    ok(untrustedIngestedThisTurn() === false, "a per-tool `default: internal` connector's ordinary tool leaves the turn CLEAN");
+    const row = dryRows.find((r) => r.label === "helpdesk__list_queues");
+    ok(!!row && row.tableTier === "trusted" && row.assumed === false, "…and logs an EXACT trusted verdict, not the fail-closed default");
+  });
+  await inTurn(async () => {
+    setConnectorContentOrigin({ helpdesk: { default: "internal", except: { search_tickets: "external" } } });
+    dryRows.length = 0;
+    const out = await connectorTool("helpdesk__search_tickets").toModelOutput!({ output: "ticket body", toolCallId: "gt-5" });
+    ok(String(out.value).startsWith(UNTRUSTED_OPEN), "the EXCEPTED tool is fenced like every other connector result");
+    ok(untrustedIngestedThisTurn() === true, "🔴 …and MARKS the turn — one tool out of a mostly-internal server, which is the whole reason the grain exists");
+    ok(!dryRows.some((r) => r.label === "helpdesk__search_tickets"), "…with NO divergence row: the site would have tainted anyway, so the declaration changed nothing here — which is what `external` is supposed to mean");
   });
 
   await inTurn(async () => {
@@ -381,4 +398,4 @@ function buildSet(defs: Array<Record<string, unknown>>): Record<string, BuiltToo
   registerTaintVerdictSink(priorSink);
 }
 
-console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve drop tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantTrust)\n`);
+console.log(`\n✓ untrusted-projection: ${n} assertions passed (eve drop tripwire, authored restore, connector fence + auth passthrough, provider skip, registration wiring, web_fetch envelope, browser family seam, connection_search status-only no-taint, OPE-339 declared grantContentOrigin + OPE-324 per-tool grain)\n`);

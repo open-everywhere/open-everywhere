@@ -9,7 +9,7 @@ import { resolveHeaders } from "../access/credentials.js";
 import { resolvePartition } from "../memory/partition.js";
 import { bindFrom } from "../identity/binding.js";
 import { narrowByConnectorOverride } from "../access/connector-scope.js";
-import { setConnectorTrust, type ConnectorTrustMap } from "../access/connector-trust-state.js";
+import { setConnectorContentOrigin, type ConnectorContentOriginMap } from "../access/connector-content-origin-state.js";
 import { appendAudit, type AuditInput } from "../audit/audit.js";
 import { stampEnforcement } from "../access/enforcement.js";
 import { useSelfHostEgress, pushEgressPolicy } from "../access/self-host-egress.js";
@@ -28,7 +28,7 @@ export interface ResolvedEgressPolicy {
   readonly policy: SandboxNetworkPolicy;
   readonly scopeKey: string;
   readonly connectors: readonly string[];
-  readonly connectorTrust: ConnectorTrustMap;
+  readonly connectorContentOrigin: ConnectorContentOriginMap;
   readonly compileError?: string;
 }
 
@@ -39,9 +39,9 @@ export async function computeEgressPolicy(
   try {
     const access = resolve();
     const policy = await compile(access);
-    return { policy, scopeKey: access.scopeKey, connectors: access.connectors, connectorTrust: access.connectorTrust };
+    return { policy, scopeKey: access.scopeKey, connectors: access.connectors, connectorContentOrigin: access.connectorContentOrigin };
   } catch (err) {
-    return { policy: "deny-all", scopeKey: "(unresolved)", connectors: [], connectorTrust: {}, compileError: String(err) };
+    return { policy: "deny-all", scopeKey: "(unresolved)", connectors: [], connectorContentOrigin: {}, compileError: String(err) };
   }
 }
 
@@ -109,7 +109,7 @@ export interface EgressEnforcementDeps {
   readonly stamp?: (enforced: boolean) => void;
   readonly publish?: (input: EgressStatusInput) => Promise<void>;
   readonly rememberScope?: (input: EgressAttribution) => void;
-  readonly stampConnectorTrust?: (declared: ConnectorTrustMap) => void;
+  readonly stampConnectorContentOrigin?: (declared: ConnectorContentOriginMap) => void;
 }
 
 export interface EgressEnforcementResult {
@@ -126,9 +126,9 @@ export interface EgressEnforcementResult {
 export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementDeps): Promise<EgressEnforcementResult> {
   const audit = deps.audit ?? appendAudit;
 
-  const { policy, scopeKey, connectors, connectorTrust, compileError } = await computeEgressPolicy(deps.resolve, deps.compile);
+  const { policy, scopeKey, connectors, connectorContentOrigin, compileError } = await computeEgressPolicy(deps.resolve, deps.compile);
 
-  (deps.stampConnectorTrust ?? setConnectorTrust)(connectorTrust);
+  (deps.stampConnectorContentOrigin ?? setConnectorContentOrigin)(connectorContentOrigin);
 
   if (compileError) {
     log(`compile FAILED — applying deny-all (fail-closed): ${compileError}`);
@@ -238,6 +238,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
     const connectorKey = connectors.join(",");
     if (phase === "session.started" || deps.lastConnectors() !== connectorKey) {
       deps.rememberConnectors(connectorKey);
+      const undeclared = connectors.filter((c) => connectorContentOrigin[c] === undefined);
       await audit({
         org: scope.org,
         platform: scope.platform,
@@ -245,7 +246,7 @@ export async function enforceEgress(phase: EgressPhase, deps: EgressEnforcementD
         surface: scope.surface,
         principalId: scope.principalId,
         action: "connector.grant",
-        detail: { connectors, scopeKey, phase },
+        detail: { connectors, scopeKey, phase, ...(undeclared.length > 0 ? { undeclaredContentOrigin: undeclared } : {}) },
       });
     }
   } catch (err) {

@@ -157,7 +157,7 @@ throws(
   "two entries for one connector in one bundle are rejected as ambiguous",
 );
 try {
-  assertBundlesValid([defineBundle({ name: "b", connectors: ["notion"], connectorOps: [{ connector: "notion", destructive: ["delete_page"], gated: ["*"] }] })]);
+  assertBundlesValid([defineBundle({ name: "b", connectors: [{ name: "notion", contentOrigin: "external" }], connectorOps: [{ connector: "notion", destructive: ["delete_page"], gated: ["*"] }] })]);
   ok(true, "a well-formed connectorOps declaration passes config-load validation");
 } catch (e) {
   ok(false, `a well-formed connectorOps declaration must pass validation (threw: ${String(e).slice(0, 200)})`);

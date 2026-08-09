@@ -43,23 +43,36 @@ export interface Connection {
   readonly authorizationDetails?: readonly CredentialAuthorizationDetail[];
 }
 
-export type ConnectorTrust = "internal" | "public";
+export type ConnectorContentOrigin = "internal" | "external";
+
+export interface ConnectorContentOriginOverrides {
+  readonly default: ConnectorContentOrigin;
+  readonly except: Readonly<Record<string, ConnectorContentOrigin>>;
+}
+
+export type ConnectorContentOriginSpec = ConnectorContentOrigin | ConnectorContentOriginOverrides;
 
 export interface ConnectorGrant {
   readonly name: string;
-  readonly trust: ConnectorTrust;
+  readonly contentOrigin: ConnectorContentOriginSpec;
 }
 
 export type ConnectorGrantSpec = string | ConnectorGrant;
 
-const KNOWN_CONNECTOR_TRUST: ReadonlySet<string> = new Set<ConnectorTrust>(["internal", "public"]);
+const KNOWN_CONTENT_ORIGINS: ReadonlySet<string> = new Set<ConnectorContentOrigin>(["internal", "external"]);
 
 export function connectorGrantName(grant: ConnectorGrantSpec): string {
   return typeof grant === "string" ? grant : grant.name;
 }
 
-export function connectorGrantTrust(grant: ConnectorGrantSpec): ConnectorTrust | undefined {
-  return typeof grant === "string" ? undefined : grant.trust;
+export function connectorGrantContentOrigin(grant: ConnectorGrantSpec): ConnectorContentOriginSpec | undefined {
+  return typeof grant === "string" ? undefined : grant.contentOrigin;
+}
+
+export function contentOriginForTool(spec: ConnectorContentOriginSpec, bareToolName: string): ConnectorContentOrigin {
+  if (typeof spec === "string") return spec;
+  const override = Object.hasOwn(spec.except, bareToolName) ? spec.except[bareToolName] : undefined;
+  return override === "internal" || override === "external" ? override : spec.default;
 }
 
 export function bundleConnectorNames(bundle: Pick<Bundle, "connectors">): readonly string[] {
@@ -139,6 +152,55 @@ function broadHostProblems(bundleName: string, field: string, hosts: readonly st
     );
 }
 
+function isMachineWrittenBundleName(name: string): boolean {
+  return name.startsWith("grants:") || name.startsWith("agent:");
+}
+
+function contentOriginProblems(bundleName: string, connector: string, spec: unknown): string[] {
+  const known = [...KNOWN_CONTENT_ORIGINS].map((t) => JSON.stringify(t)).join(", ");
+  const where = `bundle "${bundleName}" connector "${connector}"`;
+  if (spec === undefined) {
+    return [
+      `  ${where} has no \`contentOrigin\` — say who authors the bytes it returns: ` +
+        `contentOrigin: "internal" (only org members can write what it returns) or "external" (anyone can), ` +
+        `or contentOrigin: { default: "internal", except: { "<bare-tool-name>": "external" } } when only some of its tools reach outside content`,
+    ];
+  }
+  if (typeof spec === "string" || spec === null || typeof spec !== "object") {
+    if (KNOWN_CONTENT_ORIGINS.has(spec as string)) return [];
+    return [
+      `  ${where} declares unknown contentOrigin ${JSON.stringify(spec)} — known: ${known}, or { default, except } for per-tool grain (omit the field entirely to declare nothing)`,
+    ];
+  }
+  const obj = spec as { default?: unknown; except?: unknown };
+  const bad: string[] = [];
+  if (!KNOWN_CONTENT_ORIGINS.has(obj.default as string)) {
+    bad.push(`  ${where} declares contentOrigin.default ${JSON.stringify(obj.default)} — known: ${known}`);
+  }
+  if (obj.except === null || typeof obj.except !== "object" || Array.isArray(obj.except)) {
+    bad.push(`  ${where} declares a contentOrigin object whose \`except\` is not a { toolName: origin } map — got ${JSON.stringify(obj.except)}`);
+    return bad;
+  }
+  const except = obj.except as Record<string, unknown>;
+  const toolNames = Object.keys(except);
+  if (toolNames.length === 0) {
+    bad.push(`  ${where} declares contentOrigin \`except: {}\` — an empty exception map is just ${JSON.stringify(obj.default)}; write the scalar, or name the tools that differ`);
+  }
+  for (const tool of toolNames) {
+    if (tool.trim() === "") {
+      bad.push(`  ${where} declares a contentOrigin exception for an empty tool name — name the BARE tool the override applies to`);
+      continue;
+    }
+    if (tool.startsWith(`${connector}__`)) {
+      bad.push(`  ${where} declares a contentOrigin exception for "${tool}" — \`except\` keys are BARE tool names; drop the "${connector}__" prefix (write "${tool.slice(connector.length + 2)}")`);
+    }
+    if (!KNOWN_CONTENT_ORIGINS.has(except[tool] as string)) {
+      bad.push(`  ${where} declares contentOrigin exception "${tool}" as ${JSON.stringify(except[tool])} — known: ${known}`);
+    }
+  }
+  return bad;
+}
+
 export function assertBundlesValid(bundles: readonly Bundle[]): void {
   const bad: string[] = [];
   const seen = new Set<string>();
@@ -154,17 +216,19 @@ export function assertBundlesValid(bundles: readonly Bundle[]): void {
     bad.push(...broadHostProblems(b.name, "domains", b.domains ?? []));
     const connectors = new Set<string>();
     for (const grant of b.connectors ?? []) {
-      if (typeof grant !== "string") {
-        if (grant === null || typeof grant !== "object" || typeof (grant as ConnectorGrant).name !== "string" || (grant as ConnectorGrant).name.trim() === "") {
-          bad.push(`  bundle "${b.name}" has a connector grant that is neither a slug string nor { name, trust } — got ${JSON.stringify(grant)}`);
-          continue;
-        }
-        if (!KNOWN_CONNECTOR_TRUST.has((grant as ConnectorGrant).trust)) {
+      if (typeof grant === "string") {
+        if (!isMachineWrittenBundleName(b.name)) {
           bad.push(
-            `  bundle "${b.name}" connector "${(grant as ConnectorGrant).name}" declares unknown trust ${JSON.stringify((grant as ConnectorGrant).trust)} — known: ${[...KNOWN_CONNECTOR_TRUST].map((t) => JSON.stringify(t)).join(", ")} (omit the field entirely to declare nothing)`,
+            `  bundle "${b.name}" grants connector "${grant}" with no \`contentOrigin\` — say who authors the bytes it returns: ` +
+              `{ name: "${grant}", contentOrigin: "internal" } (only org members can write what it returns) or "external" (anyone can), ` +
+              `or { name: "${grant}", contentOrigin: { default: "internal", except: { "<bare-tool-name>": "external" } } } when only some of its tools reach outside content`,
           );
-          continue;
         }
+      } else if (grant === null || typeof grant !== "object" || typeof (grant as ConnectorGrant).name !== "string" || (grant as ConnectorGrant).name.trim() === "") {
+        bad.push(`  bundle "${b.name}" has a connector grant that is not a { name, contentOrigin } object — got ${JSON.stringify(grant)}`);
+        continue;
+      } else {
+        bad.push(...contentOriginProblems(b.name, (grant as ConnectorGrant).name, (grant as ConnectorGrant).contentOrigin));
       }
       const name = connectorGrantName(grant);
       if (connectors.has(name)) bad.push(`  bundle "${b.name}" grants connector "${name}" more than once — remove the duplicate`);

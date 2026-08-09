@@ -55,8 +55,8 @@ const notionRest: Connection = {
 
 const codeBundles: Bundle[] = [
   { name: "org-default", domains: ["raw.githubusercontent.com"] },
-  { name: "notion", connections: [notionRest], connectors: ["notion"] },
-  { name: "linear-basket", connectors: ["linear"] },
+  { name: "notion", connections: [notionRest], connectors: [{ name: "notion", contentOrigin: "external" }] },
+  { name: "linear-basket", connectors: [{ name: "linear", contentOrigin: "external" }] },
 ];
 const codeBindings: Binding[] = [
   { bundle: "org-default", scope: { level: "org" } },
@@ -446,7 +446,7 @@ const otherDm = { mode: "dm", platform: "slack", workspace: "T1", channel: "D_YO
     "apply(group): merged re-validation refuses a binding onto an undeclared group (the 3-arg call site)",
   );
 
-  const credentialed: Bundle[] = [{ name: "keys", connectors: ["linear"], connections: [notionRest] }];
+  const credentialed: Bundle[] = [{ name: "keys", connectors: [{ name: "linear", contentOrigin: "external" }], connections: [notionRest] }];
   const wideDelta: AccessDelta = { kind: "grant-connector", scope: { level: "group", group: "eng" }, connector: "linear", allowBroad: "eng shares the read-only Linear key" };
   const wide = applyDelta(emptyGrantsFile(), wideDelta);
   ok(wide.grants.bindings[0].allowBroad === "eng shares the read-only Linear key", "apply(group): the acknowledgement lands on the binding the codemod writes");

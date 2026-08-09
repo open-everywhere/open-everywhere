@@ -85,7 +85,7 @@ const codeDomains: Domain[] = [
   { name: "org", match: "org", memory: "org-brain" },
   { name: "eng", channels: ["slack/T1/C_ENG", "teams/W1/CONV_ENG"], memory: "org-brain" },
 ];
-const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: ["notion"] }];
+const codeBundles: Bundle[] = [{ name: "base" }, { name: "has-connector", connectors: [{ name: "notion", contentOrigin: "external" }] }];
 const codeBindings: Binding[] = [];
 
 function arConfig(over: Partial<AccessRequestsConfig> = {}): AccessRequestsConfig {

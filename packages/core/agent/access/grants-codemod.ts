@@ -70,7 +70,7 @@ export function parseGrantsFile(value: unknown): GrantsFile {
       }
     }
     if (b.connectors !== undefined && !isStringArray(b.connectors)) {
-      throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be a string array (a \`{ name, trust }\` declaration is an operator assertion — put it in a code bundle, not the machine-written overlay)`);
+      throw new GrantsCodemodError(`grants bundle "${b.name}" connectors must be a string array (a \`{ name, contentOrigin }\` declaration is an operator assertion — put it in a code bundle, not the machine-written overlay)`);
     }
     if (b.connections !== undefined) {
       if (!Array.isArray(b.connections)) throw new GrantsCodemodError(`grants bundle "${b.name}" connections must be an array`);

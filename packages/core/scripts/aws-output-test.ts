@@ -154,7 +154,7 @@ console.log("5. the tier row:");
   eq(v.tier, "untrusted", "aws: the CLI's own output is untrusted — an AWS account is a SUBSTRATE, not an authoring surface");
   eq(v.assumed, false, "🔴 aws: …as a POSITIVE ruling, not the fail-closed default wearing a row's clothes (nothing missing could have decided it otherwise)");
   ok(v.reason.includes("substrate") || v.reason.includes("SUBSTRATE"), "aws: the row's reasoning rides on the verdict, so a dry-run LOG ROW carries it without reading the table");
-  eq(classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantTrust: "internal" }).tier, "untrusted", "aws: NO metadata branch — no field declared for another row can flip it to trusted");
+  eq(classifyIngestion({ kind: "aws", workspaceTrust: "internal", repoPrivate: true, grantContentOrigin: "internal" }).tier, "untrusted", "aws: NO metadata branch — no field declared for another row can flip it to trusted");
 }
 
 console.log(`✓ aws-output: ${n} assertions passed`);

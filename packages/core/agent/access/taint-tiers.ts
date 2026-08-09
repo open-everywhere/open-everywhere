@@ -19,7 +19,7 @@ export interface IngestionSource {
   readonly kind: IngestionKind;
   readonly repoPrivate?: boolean;
   readonly workspaceTrust?: "internal" | "public";
-  readonly grantTrust?: "internal" | "public";
+  readonly grantContentOrigin?: "internal" | "external";
   readonly label?: string;
 }
 
@@ -53,9 +53,9 @@ export function classifyIngestion(src: IngestionSource): IngestionVerdict {
       return unknownInstance("the repository's `private` flag");
 
     case "connector":
-      if (src.grantTrust === "internal") return trusted("the connection's grant declares `trust: internal` in reviewed bundle config");
-      if (src.grantTrust === "public") return untrusted("the connection's grant declares `trust: public`");
-      return untrusted("the connection's grant declares no trust tier — the ruled DEFAULT is public/untrusted, because silence in config must never read as an assurance", true);
+      if (src.grantContentOrigin === "internal") return trusted("the connection's grant declares `contentOrigin: internal` for this tool in reviewed bundle config — org members author what it returns");
+      if (src.grantContentOrigin === "external") return untrusted("the connection's grant declares `contentOrigin: external` for this tool — the bytes it returns are authored outside the org");
+      return untrusted("the connection's grant declares no content origin — the ruled DEFAULT is external/untrusted, because silence in config must never read as an assurance", true);
 
     case "web":
       return untrusted("the open web — no bound instance, no membership, no configuration that could make it internal");

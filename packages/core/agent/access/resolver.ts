@@ -1,5 +1,5 @@
-import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorTrust, HttpMethod, Scope } from "./bundle.js";
-import { connectorGrantName, connectorGrantTrust } from "./bundle.js";
+import type { AwsRoleGrant, Binding, Bundle, Connection, ConnectorContentOriginSpec, HttpMethod, Scope } from "./bundle.js";
+import { connectorGrantName, connectorGrantContentOrigin } from "./bundle.js";
 import type { OperatorApprover } from "./approver-chain.js";
 import { tryPrincipalKey } from "../identity/principal-key.js";
 import { isLinkSetRef, parseLinkSetRef } from "../identity/link-set-ref.js";
@@ -46,7 +46,7 @@ export interface EffectiveAccess {
   readonly skills: readonly string[];
   readonly subagents: readonly string[];
   readonly connectors: readonly string[];
-  readonly connectorTrust: Readonly<Record<string, ConnectorTrust>>;
+  readonly connectorContentOrigin: Readonly<Record<string, ConnectorContentOriginSpec>>;
   readonly connectorCredentials: Readonly<Record<string, ResolvedConnectorCredential>>;
   readonly instructionStack: readonly InstructionLayer[];
   readonly warnings: readonly string[];
@@ -100,6 +100,15 @@ function scopeMatches(s: Scope, req: ResolveRequest): boolean {
 
 function normHost(h: string): string {
   return h.trim().toLowerCase();
+}
+
+function contentOriginKey(spec: ConnectorContentOriginSpec): string {
+  if (typeof spec === "string") return spec;
+  const except = Object.keys(spec.except)
+    .sort()
+    .map((tool) => `${tool}=${spec.except[tool]}`)
+    .join(",");
+  return `${spec.default}{${except}}`;
 }
 
 export function resolveAccess(
@@ -245,27 +254,27 @@ export function resolveAccess(
     ]),
   ].sort();
 
-  const declaredByName = new Map<string, Set<ConnectorTrust>>();
+  const declaredByName = new Map<string, Map<string, ConnectorContentOriginSpec>>();
   for (const { bundle } of ordered) {
     for (const grant of bundle.connectors ?? []) {
-      const declared = connectorGrantTrust(grant);
+      const declared = connectorGrantContentOrigin(grant);
       if (declared === undefined) continue;
       const name = connectorGrantName(grant);
-      const set = declaredByName.get(name) ?? new Set<ConnectorTrust>();
-      set.add(declared);
-      declaredByName.set(name, set);
+      const byShape = declaredByName.get(name) ?? new Map<string, ConnectorContentOriginSpec>();
+      byShape.set(contentOriginKey(declared), declared);
+      declaredByName.set(name, byShape);
     }
   }
-  const connectorTrust: Record<string, ConnectorTrust> = {};
+  const connectorContentOrigin: Record<string, ConnectorContentOriginSpec> = {};
   for (const [name, declared] of [...declaredByName.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (declared.size > 1) {
       warnings.push(
-        `connector "${name}" is declared BOTH \`trust: "internal"\` and \`trust: "public"\` by bundles bound to this scope — an Eve connection is one global instance, so these are contradictory claims about the same thing; resolving to "public" (fail-closed). Make the declarations agree.`,
+        `connector "${name}" is declared with DIFFERENT \`contentOrigin\` values (${[...declared.keys()].sort().join(" vs ")}) by bundles bound to this scope — an Eve connection is one global instance, so these are contradictory claims about the same thing; resolving to "external" (fail-closed). Make the declarations agree.`,
       );
-      connectorTrust[name] = "public";
+      connectorContentOrigin[name] = "external";
       continue;
     }
-    connectorTrust[name] = [...declared][0]!;
+    connectorContentOrigin[name] = [...declared.values()][0]!;
   }
 
   const instructionStack: InstructionLayer[] = ordered
@@ -327,7 +336,7 @@ export function resolveAccess(
     skills,
     subagents,
     connectors,
-    connectorTrust,
+    connectorContentOrigin,
     connectorCredentials,
     instructionStack,
     warnings,
