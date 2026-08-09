@@ -156,6 +156,28 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
 }
 
 {
+  const MPIM_SURFACE = "slack/T1/G7Q2MPIM";
+  const MPIM_REG = "oe-domain::oe-dm/slack/T1/G7Q2MPIM";
+  const store = makeStore(
+    { surfaceKey: LEGACY_REG, token: "D0EXDMCH001:oe-dm:g9", generation: 9, handoffNote: "alice's 1:1 continuity" },
+    { surfaceKey: "oe-dm-seat::G7Q2MPIM", token: "G7Q2MPIM:oe-dm:g4", generation: 4, handoffNote: "a row that must never exist" },
+  );
+  const seat = await getOrCreateDmSeat(ORG, { surfaceKey: MPIM_SURFACE, channelId: "G7Q2MPIM" }, "2026-07-22T10:00:00.000Z", { store });
+
+  ok(isDmAnchorWindowToken(seat.token), "a GROUP DM mints the same first-class standing window — no new arm, the mint is surface-keyed");
+  eq(
+    dmAnchorSurfaceForToken(seat.token),
+    MPIM_SURFACE,
+    "🔴 the admission seam recovers EXACTLY the group DM's own surface key — the byte-exact privacy fence holds on an mpim, which is the surface where a leak would expose several people's conversation at once",
+  );
+  ok(dmAnchorSurfaceForToken(seat.token) !== SURFACE, "…and it is NOT the 1:1's surface, whose seat lives in the same workspace under the same pseudo-domain prefix");
+  ok(store.rows.has(`${ORG}:${MPIM_REG}`), "the seat is held in the group DM's OWN window row");
+  eq(seat.handoffNote, null, "🔴 NO legacy adopt for a group DM: it passes no `legacyChannelId`, so neither the 1:1's row nor a same-id row is read — a group DM's first generation is honestly note-less");
+  ok(store.rows.get(`${ORG}:${LEGACY_REG}`)!.handoffNote === "alice's 1:1 continuity", "…and the 1:1's legacy row is untouched (nothing crossed between the two seats)");
+  eq(classifySessionId(seat.token).grain, "standing", "the group-DM seat is standing grain, like every other seat");
+}
+
+{
   const store = makeStore({
     surfaceKey: REG,
     token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g3-abc123",

@@ -44,6 +44,7 @@ export interface NormalizedWake {
   readonly reason: WakeReason;
   readonly addressing: WakeAddressing;
   readonly containerNoun?: string;
+  readonly groupDm?: boolean;
   readonly engagementTier?: WakeEngagementTier;
   readonly unifiedDisclosure?: boolean;
   readonly wakeId?: string;
@@ -163,12 +164,22 @@ function channelWatchPreamble(isEdit: boolean, hasHandoff: boolean, containerNou
   );
 }
 
-function directMentionPreamble(containerNoun = "channel", hasHandoff = false, unifiedDisclosure?: boolean, isDm = false): string {
-  const opening = isDm
-    ? "[direct] This is a direct message to you — everything said here is addressed to you, so answer it."
-    : `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
-      "you and is asking for a response, so answer it.";
-  const silence = isDm ? "the message" : "the mention";
+function directMentionPreamble(
+  containerNoun = "channel",
+  hasHandoff = false,
+  unifiedDisclosure?: boolean,
+  dmKind: "none" | "direct" | "group" = "none",
+): string {
+  const opening =
+    dmKind === "group"
+      ? "[direct] This is a group direct message you are part of — a small closed room that also holds " +
+        "other people, who talk to each other as well as to you. Answer what is asked of you, and stay " +
+        "out of the rest."
+      : dmKind === "direct"
+        ? "[direct] This is a direct message to you — everything said here is addressed to you, so answer it."
+        : `[direct] You were @mentioned by name in this ${containerNoun} — this message is addressed to ` +
+          "you and is asking for a response, so answer it.";
+  const silence = dmKind === "none" ? "the mention" : "the message";
   return (
     `${opening} ${SINGLE_WINDOW_REPLY_MANDATE} Stay silent only ` +
     `if ${silence} turns out to be purely social or needs nothing from you — then output exactly ` +
@@ -211,7 +222,12 @@ function judgedPreamble(nw: NormalizedWake): string {
   const base = ((): string => {
     switch (nw.addressing) {
       case "direct-mention":
-        return directMentionPreamble(nw.containerNoun, hasHandoff, nw.unifiedDisclosure, nw.reason === "dm");
+        return directMentionPreamble(
+          nw.containerNoun,
+          hasHandoff,
+          nw.unifiedDisclosure,
+          nw.reason === "dm" ? (nw.groupDm === true ? "group" : "direct") : "none",
+        );
       case "thread-follow":
         return threadFollowPreamble(isEdit, hasHandoff);
       case "channel-watch":

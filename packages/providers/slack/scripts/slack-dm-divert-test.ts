@@ -21,8 +21,11 @@ const DM_CHANNEL = "D_ALICE";
 const TEAM = "T1";
 const USER = "U_ALICE";
 const SURFACE = `slack/${TEAM}/${DM_CHANNEL}`;
+const MPIM_CHANNEL = "G_TRIAGE";
+const MPIM_SURFACE = `slack/${TEAM}/${MPIM_CHANNEL}`;
 
 const SEAT_TOKEN = `oe-dom:oe-dm/${SURFACE}:oe-sup:g3-abc123`;
+const MPIM_SEAT_TOKEN = `oe-dom:oe-dm/${MPIM_SURFACE}:oe-sup:g2-def456`;
 
 function dmEnvelope(eventId: string, over: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -30,6 +33,24 @@ function dmEnvelope(eventId: string, over: Record<string, unknown> = {}): string
     event_id: eventId,
     team_id: TEAM,
     event: { type: "message", channel_type: "im", channel: DM_CHANNEL, user: USER, ts: "1768686402.916000", text: "what's the refund status?", ...over },
+  });
+}
+
+function mpimEnvelope(eventId: string, over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    type: "event_callback",
+    event_id: eventId,
+    team_id: TEAM,
+    event: { type: "message", channel_type: "mpim", channel: MPIM_CHANNEL, user: USER, ts: "1768686403.100200", text: "can one of you chase order 4417?", ...over },
+  });
+}
+
+function mentionEnvelope(eventId: string, channel: string, over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    type: "event_callback",
+    event_id: eventId,
+    team_id: TEAM,
+    event: { type: "app_mention", channel, user: USER, ts: "1768686404.300400", text: "<@UBOT> chase order 4417", ...over },
   });
 }
 
@@ -70,6 +91,7 @@ async function runFront(
     partnerTrust?: "internal" | "external";
     dedupe?: EventDedupe;
     fifo?: SpyFifo;
+    channelFacts?: { internal: boolean; channelType?: string } | null;
   } = {},
 ) {
   const dispatched: Dispatched[] = [];
@@ -102,28 +124,45 @@ async function runFront(
       fifo,
       ...(opts.dedupe ? { dedupe: opts.dedupe } : {}),
       ...(opts.dmSeatEnabled === false ? { dmSeatEnabled: () => false } : {}),
-      dmPartnerTrustFor: async () => opts.partnerTrust,
+      dmPartnerTrustFor: async () => {
+        partnerLookups++;
+        return opts.partnerTrust;
+      },
+      channelFactsFor: async (channelId) => {
+        factsLookups.push(channelId);
+        if (opts.channelFacts === null) return { internal: false };
+        if (opts.channelFacts) return opts.channelFacts;
+        return channelId === MPIM_CHANNEL ? { internal: true, channelType: "mpim" } : { internal: true, channelType: "channel" };
+      },
       resolveDmSeat: async (_org, dm, _at) => {
         if (opts.seatThrows) throw new Error("registry down");
         seatCalls.push(dm);
-        return (opts.seat ?? { token: SEAT_TOKEN, generation: 3, freshGeneration: false, handoffNote: null }) as never;
+        const fallback = dm.surfaceKey === MPIM_SURFACE
+          ? { token: MPIM_SEAT_TOKEN, generation: 2, freshGeneration: false, handoffNote: null }
+          : { token: SEAT_TOKEN, generation: 3, freshGeneration: false, handoffNote: null };
+        return (opts.seat ?? fallback) as never;
       },
       touchDmSeatFn: async (org, surfaceKey) => {
         touched.push({ org, surfaceKey });
       },
     },
   );
-  const seatCalls: Array<{ surfaceKey: string; legacyChannelId?: string }> = [];
+  const seatCalls: Array<{ surfaceKey: string; channelId?: string; legacyChannelId?: string }> = [];
+  const factsLookups: string[] = [];
+  let partnerLookups = 0;
   const res = await handler(mkReq(body), fakeArgs as unknown as Parameters<typeof handler>[1]);
   const settled = await Promise.allSettled(waits);
-  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled };
+  return { dispatched, touched, seatCalls, innerCalled, res, fifo, settled, factsLookups, partnerLookups };
 }
 
 {
   const d = classifyEnvelope(dmEnvelope("Ev1"), "application/json");
   eq(d.kind, "dm-wake", "🔴 a `message.im` classifies `dm-wake` — the DM window seat owns it (it used to classify `forward`, to eve's native onDirectMessage)");
   eq(classifyEnvelope(JSON.stringify({ type: "event_callback", event: { type: "message", channel_type: "channel", channel: "C1", ts: "1" } }), "application/json").kind, "wake", "a channel message still takes the engagement wake path");
-  eq(classifyEnvelope(JSON.stringify({ type: "event_callback", event: { type: "message", channel_type: "mpim", channel: "G1", ts: "1" } }), "application/json").kind, "wake", "🔴 an MPIM (group DM) is UNTOUCHED — it keeps the OPE-306 anchor route until the parity stage");
+  const mp = classifyEnvelope(JSON.stringify({ type: "event_callback", event: { type: "message", channel_type: "mpim", channel: "G1", ts: "1" } }), "application/json");
+  eq(mp.kind, "dm-wake", "🔴 an MPIM (group DM) now classifies `dm-wake` TOO (OPE-351 stage 4) — it used to fall to the engagement path, where shouldNameDropWake refused it on channel_type, so a non-mention message in a group DM woke NOTHING");
+  eq(mp.kind === "dm-wake" ? mp.dmKind : undefined, "mpim", "…and the branch carries WHICH family member it is, so the handler needn't re-read channel_type");
+  eq(classifyEnvelope(dmEnvelope("EvK"), "application/json").kind === "dm-wake" ? (classifyEnvelope(dmEnvelope("EvK"), "application/json") as { dmKind: string }).dmKind : undefined, "im", "…while a 1:1 still says `im` (the two families are never conflated)");
   eq(classifyEnvelope(JSON.stringify({ type: "url_verification" }), "application/json").kind, "forward", "the challenge handshake still forwards");
 }
 
@@ -275,4 +314,107 @@ async function runFront(
   eq(await r.res.text(), "inner", "…the native handler's response is returned verbatim");
 }
 
-console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed/escape-hatch)`);
+{
+  const r = await runFront(mpimEnvelope("Ev11"));
+
+  ok(!r.innerCalled, "a group DM is never forwarded — the mpim window seat owns it");
+  eq(r.dispatched.length, 1, "exactly one dispatch into the group DM's own window");
+  const d = r.dispatched[0]!;
+
+  eq(d.target.token, MPIM_SEAT_TOKEN, "the wake goes to the mpim's OWN seat token");
+  eq(d.target.surfaceKey, MPIM_SURFACE, "🔴 the divert's surfaceKey is the GROUP DM's — matching the surface named inside the token, which is what admits it at both gates and fences it out of every other DM");
+  eq(r.fifo.keys, [dmFifoKey(MPIM_CHANNEL)], "the group DM serializes on its own FIFO key");
+  eq(r.touched[0]?.surfaceKey, MPIM_SURFACE, "the wake touch lands on the mpim's window row");
+
+  eq(r.seatCalls[0]?.surfaceKey, MPIM_SURFACE, "the seat is resolved by the mpim's surface key");
+  eq(r.seatCalls[0]?.channelId, MPIM_CHANNEL, "…carrying the raw channel id, which is what the ROTATION distiller fetches history with");
+  eq(
+    r.seatCalls[0]?.legacyChannelId,
+    undefined,
+    "🔴 …and NO legacyChannelId: OPE-90 never minted an `oe-dm-seat::` row for a group DM, so a probe here could only ever miss — and a miss indistinguishable from a store outage would poison the OPE-346 note-loss audit row, which exists to tell those two apart",
+  );
+
+  const a = d.auth.attributes ?? {};
+  eq(a["channel_type"], "mpim", "🔴 auth carries channel_type=mpim, so `bindSlack` binds mode `mpim` — that is what keeps every mode-keyed carve-out (the lean-seat identity trio, the memory route, the skills refusal) seeing the same mode it saw on the native token");
+  eq(a["is_private"], "true", "a group DM has no public form");
+  eq(a["oe_grain"], "standing", "the rootDmGrainAttrs stamp rides through — window-tool-gating §D-DM already covered mpim, so the group seat's hands narrow exactly like a 1:1's");
+  eq(
+    a["dm_partner_trust"],
+    undefined,
+    "🔴 NO dm_partner_trust on a group DM — it is a singular fact about 'the other person in this DM', a question an mpim has no answer to, and `bindSlack` ignores the attribute for mode `mpim` anyway. Stamping one would be inventing a fact.",
+  );
+  eq(r.partnerLookups, 0, "…and the users.info lookup is not even attempted (there is no single partner to look up)");
+  eq(a["oe_addressing"], "direct-mention", "addressing is still `direct-mention` — the MECHANICAL half (the addressed-prose bridge, the wake-id reply mandate) is identical to a 1:1's");
+
+  ok(d.message.includes('reason="dm"'), "a group DM is a direct-message-EQUIVALENT surface, so it keeps `reason=\"dm\"` rather than minting a new vocabulary value");
+  ok(
+    d.message.startsWith("[direct] This is a group direct message you are part of"),
+    "🔴 the GROUP opening — the 1:1's 'everything said here is addressed to you' is false in a room with other people in it, and would instruct the seat to answer their chatter on every turn",
+  );
+  ok(d.message.includes("stay out of the rest"), "…and the opening carries the stay-out clause that makes unconditional WAKING compatible with conditional REPLYING");
+  ok(d.message.includes('trust="peer"'), "the author renders `peer` off the SURFACE's confirmed-internal verdict, which is what stands in for the partner check a group DM cannot make");
+  ok(d.message.includes("<untrusted_external_data source=\"slack-message\">"), "the body is fenced like every other surface's");
+
+  eq(d.target.origin.replyAnchorTs, undefined, "🔴 no replyAnchorTs — one seat, one room, one reply placement; splitting it on whether the human typed `<@bot>` would put two geometries in one conversation");
+  eq(d.target.origin.threadTs, undefined, "…so a top-level group-DM answer posts flat");
+}
+
+{
+  const r = await runFront(mpimEnvelope("Ev11b"), { channelFacts: null });
+  ok(
+    r.dispatched[0]!.message.includes('trust="unauth"'),
+    "🔴 an unconfirmable mpim (a workspace without `mpim:read`) renders `unauth`, not `peer` — fail-closed DOWN, and the wake still FIRES rather than being dropped, so the room degrades instead of going deaf",
+  );
+}
+
+{
+  const r = await runFront(mentionEnvelope("Ev12", MPIM_CHANNEL));
+  ok(!r.innerCalled, "🔴 the group DM's app_mention is NOT forwarded to eve's native mention path");
+  eq(r.dispatched.length, 1, "…it is diverted");
+  eq(r.dispatched[0]!.target.token, MPIM_SEAT_TOKEN, "…into the SAME mpim seat the plain-message leg uses — one room, one session");
+  eq(r.dispatched[0]!.target.surfaceKey, MPIM_SURFACE, "…on the group DM's own surface");
+  eq((r.dispatched[0]!.auth.attributes ?? {})["channel_type"], "mpim", "🔴 the divert is TOLD it is an mpim — an app_mention envelope carries no channel_type, so re-reading the field would have bound mode `channel` and quietly lost every mpim carve-out");
+  eq(r.factsLookups[0], MPIM_CHANNEL, "…the channel-type read that made the decision happened, on this channel");
+  eq(r.fifo.keys, [dmFifoKey(MPIM_CHANNEL)], "🔴 the mention leg enqueues on the SAME FIFO key as the message leg — a group DM's two entrances can never run concurrently on one seat");
+  ok(r.dispatched[0]!.message.startsWith("[direct] This is a group direct message you are part of"), "…and it renders the group opening, like every other wake in that room");
+}
+
+{
+  const r = await runFront(mentionEnvelope("Ev12b", "C_PUBLIC"));
+  ok(r.innerCalled, "a channel app_mention still forwards to the native mention path — the divert is scoped to mpim, not to 'anything the lookup answers'");
+  eq(r.dispatched.length, 0, "…and nothing is diverted");
+}
+
+{
+  const r = await runFront(mentionEnvelope("Ev12c", MPIM_CHANNEL), { channelFacts: null });
+  ok(
+    r.innerCalled,
+    "🔴 an app_mention whose channel type cannot be resolved forwards to the native path — precisely pre-stage-4 behaviour. A workspace that never granted `mpim:read` degrades (its group-DM mentions run on an un-wakeable native session) rather than going silent.",
+  );
+  eq(r.dispatched.length, 0, "…nothing is diverted on the unresolved read");
+}
+
+{
+  const r = await runFront(mentionEnvelope("Ev12d", MPIM_CHANNEL), { dmSeatEnabled: false });
+  ok(r.innerCalled, "with DM-seat rotation disabled the group DM's mention forwards natively, like every other pre-OPE-351 path");
+  eq(r.factsLookups.length, 0, "…and the Slack lookup is skipped entirely — the escape hatch costs nothing");
+}
+
+{
+  const grouped = await runFront(mpimEnvelope("Ev13a", { text: "<@UBOT> chase order 4417" }));
+  eq(
+    grouped.dispatched.length,
+    0,
+    "🔴 a `message.mpim` whose text @mentions the bot is DROPPED — its app_mention sibling owns it (leg 12), and without this drop the room would answer twice",
+  );
+  ok(!grouped.innerCalled, "…dropped, not forwarded (forwarding would hand eve's native door the very turn the window seat owns)");
+
+  const oneToOne = await runFront(dmEnvelope("Ev13b", { text: "<@UBOT> are you there?" }), { partnerTrust: "internal" });
+  eq(
+    oneToOne.dispatched.length,
+    1,
+    "🔴 …and a 1:1 with the SAME text still wakes. The mention branch does not divert an `im`, so nothing else owns a DM's mention-bearing message; suppressing it would turn '@bot are you there?' in a DM into total silence — and whether Slack even fires app_mention inside an `im` is unmeasured here, which is not a bet to take when the failure mode is a deaf DM.",
+  );
+}
+
+console.log(`✓ slack-dm-divert: ${n} assertions passed (classification, window token + fence, addressing, DM auth attrs, dm envelope, handoff context, bot/dedupe/fail-closed/escape-hatch, group-DM divert + mention leg + sibling suppression)`);

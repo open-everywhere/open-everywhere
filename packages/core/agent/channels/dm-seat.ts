@@ -42,6 +42,7 @@ export interface DmSeatDeps {
 
 export interface DmSeatRef {
   readonly surfaceKey: string;
+  readonly channelId?: string;
   readonly legacyChannelId?: string;
 }
 

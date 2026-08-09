@@ -264,6 +264,7 @@ export interface SlackWakeOpts {
   readonly wakeId?: string;
   readonly directMention?: boolean;
   readonly dm?: boolean;
+  readonly groupDm?: boolean;
 }
 
 function slackJudgedWake(
@@ -279,6 +280,7 @@ function slackJudgedWake(
     platform: "slack",
     reason: isEdit ? "message-edited" : (reasonOverride ?? (directMention ? "mention" : ev.threadTs ? "thread-activity" : "channel-activity")),
     addressing,
+    ...(opts?.groupDm === true ? { groupDm: true as const } : {}),
     locus: {
       channel: {
         id: ev.channelId,
@@ -838,6 +840,11 @@ export async function slackSingleWindowMentionPolicy(channelId: string, surfaceK
   const { internal, meta } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined }));
   const privacyOk = internal && (meta?.channelType === "channel" || meta?.channelType === "group");
   return singleWindowMentionPolicy(true, true, privacyOk);
+}
+
+export async function slackChannelFactsFor(channelId: string): Promise<{ internal: boolean; channelType?: string }> {
+  const { internal, meta } = await channelInternalAndMeta(channelId).catch(() => ({ internal: false, meta: undefined }));
+  return { internal, ...(meta?.channelType ? { channelType: meta.channelType } : {}) };
 }
 
 export function slackDomainUsesUnifiedWindow(surfaceKey: string): boolean {

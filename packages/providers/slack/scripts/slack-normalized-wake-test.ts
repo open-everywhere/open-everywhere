@@ -185,6 +185,30 @@ const G_SLACK_DM = `[direct] This is a direct message to you — everything said
     "the `dm` opt is what produces the DM render — unset, the same event renders as an ordinary judged wake (proving the flag, not the channelType, is the switch)",
   );
 }
+{
+  const gev: ParsedMessageEvent = { channelId: "G_TEAM", ts: "500.0", teamId: "T1", userId: "U1", channelType: "mpim", text: "can one of you chase order 4417?", isAppMention: false };
+  const group = renderWakeMessage(gev, NOW, { dm: true, groupDm: true, trust: "peer", wakeId: "wk_dm_2", triggerAuthorName: "Rowan Hale", triggerAuthorHandle: "rowan" });
+  ok(
+    group.startsWith(
+      "[direct] This is a group direct message you are part of — a small closed room that also holds other people, who talk to each other as well as to you. Answer what is asked of you, and stay out of the rest.",
+    ),
+    "🔴 the group-DM opening names the room honestly — it does NOT claim everything said there is addressed to the agent, which is the 1:1 sentence and is false here on most turns",
+  );
+  ok(!group.includes("everything said here is addressed to you"), "…and the 1:1 clause is nowhere in it");
+  ok(group.includes('reason="dm"'), "a group DM keeps `reason=\"dm\"` — WakeReason's own definition is a direct-message-EQUIVALENT surface, so a group DM needs no fourth value");
+  ok(group.includes('<channel id="G_TEAM" type="mpim">'), "…and the envelope carries the mpim channel type");
+  const tailFrom = "You are a cross-surface session, so you MUST deliver";
+  ok(group.includes(tailFrom), "the cross-surface reply MANDATE is present (a group DM seat lives on the unified channel too — terminal prose reaches nobody)");
+  eq(
+    group.slice(group.indexOf(tailFrom), group.indexOf("\n\n<wake")),
+    G_SLACK_DM.slice(G_SLACK_DM.indexOf(tailFrom), G_SLACK_DM.indexOf("\n\n<wake")),
+    "🔴 everything after the opening clause is BYTE-IDENTICAL to the 1:1 DM preamble — only the orientation sentence differs, never the mandate or the silence escape",
+  );
+  ok(
+    renderWakeMessage(gev, NOW, { dm: true, trust: "peer", wakeId: "wk_dm_2" }).startsWith("[direct] This is a direct message to you"),
+    "`groupDm` unset ⇒ the 1:1 opening even on an mpim event — the render never infers the room shape from channelType (byte-identical to stage 2 for every existing caller)",
+  );
+}
 
 const G_SLACK_NAMEDROP_BACKSCROLL_MSG = `[name-drop] A top-level channel message said your name ("Open Everywhere") without @mentioning you. You were NOT invited into this conversation — reply only if the message is clearly asking for you or requesting something you can directly do. When in doubt, stay out: output exactly NO_REPLY and nothing else — nothing will be posted. If you have a \`no_reply\` tool, prefer calling it (with a reason) over the bare NO_REPLY text — it's audited and unambiguous; the text sentinel still works if you don't. If you do reply, you will be following the thread from then on, so make it count.
 

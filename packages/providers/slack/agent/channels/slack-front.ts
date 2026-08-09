@@ -56,7 +56,7 @@ import {
   type DmSeat,
   type SetKeyViewResult,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { slackForm, renderWakeMessage, distillSlackRotationHandoff } from "./slack-events.js";
+import { slackForm, renderWakeMessage, distillSlackRotationHandoff, slackChannelFactsFor } from "./slack-events.js";
 import { buildSlackAuth, partnerFactsFromInfo } from "./slack-identity.js";
 import { persistSlackAttachment } from "./slack-attachments.js";
 
@@ -75,7 +75,7 @@ export type FrontDecision =
   | { readonly kind: "setkey-submit"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "connect-click"; readonly reason: string; readonly payload: unknown }
   | { readonly kind: "mention"; readonly reason: string; readonly env: SlackEventEnvelope }
-  | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope };
+  | { readonly kind: "dm-wake"; readonly reason: string; readonly env: SlackEventEnvelope; readonly dmKind: "im" | "mpim" };
 
 function parseOeApprovalPayload(rawBody: string): unknown | undefined {
   const raw = new URLSearchParams(rawBody).get("payload");
@@ -193,7 +193,10 @@ export function classifyEnvelope(rawBody: string, contentType: string): FrontDec
     ? ((env.event as Record<string, unknown>).channel_type as string)
     : undefined;
   if (channelType === "im") {
-    return { kind: "dm-wake", reason: "message.im (DM) — the DM window seat owns it", env };
+    return { kind: "dm-wake", reason: "message.im (DM) — the DM window seat owns it", env, dmKind: "im" };
+  }
+  if (channelType === "mpim") {
+    return { kind: "dm-wake", reason: "message.mpim (group DM) — the DM window seat owns it", env, dmKind: "mpim" };
   }
   return { kind: "wake", reason: `message.${channelType ?? "?"} — engagement wake candidate`, env };
 }
@@ -258,9 +261,10 @@ export interface FrontOptions {
   readonly handleConnectClick?: (payload: unknown) => Promise<boolean>;
   readonly mentionPolicyFor?: (channelId: string, surfaceKey: string) => Promise<SingleWindowMentionPolicy>;
   readonly dmSeatEnabled?: () => boolean;
-  readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
+  readonly resolveDmSeat?: (org: string, dm: { surfaceKey: string; channelId?: string; legacyChannelId?: string }, atIso: string) => Promise<DmSeat>;
   readonly touchDmSeatFn?: (org: string, dmSurfaceKey: string, atIso: string) => Promise<void>;
   readonly dmPartnerTrustFor?: (userId: string, teamId: string | undefined) => Promise<"internal" | "external" | undefined>;
+  readonly channelFactsFor?: (channelId: string) => Promise<{ internal: boolean; channelType?: string }>;
 }
 
 const OK = () => new Response("ok");
@@ -378,10 +382,11 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     opts.resolveDmSeat ??
     ((org, dm, atIso) =>
       liveGetOrCreateDmSeat(org, dm, atIso, {
-        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.legacyChannelId ?? "", outgoing, org),
+        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.channelId ?? "", outgoing, org),
       }));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;
+  const channelFactsFor = opts.channelFactsFor ?? slackChannelFactsFor;
 
   const singleWindowOwnsMention = async (channelId: string, surfaceKey: string): Promise<boolean> => {
     if (!ambientEnabledFor(surfaceKey)) return false;
@@ -443,15 +448,21 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       args.waitUntil(routeNameDropEvent(ev, liveNameDropDeps(send)).then(logOutcome(label, ev.channelId, ev.ts)));
     };
 
-    const scheduleDmWake = async (ev: ParsedMessageEvent): Promise<void> => {
+    const scheduleDmWake = async (ev: ParsedMessageEvent, dmKind: "im" | "mpim"): Promise<void> => {
       const p = resolvePartition(bindableFor(ev));
       const atIso = new Date(now()).toISOString();
-      const seat = await resolveDmSeat(p.org, { surfaceKey: p.surfaceKey, legacyChannelId: ev.channelId }, atIso);
-      const partnerTrust = ev.userId ? await dmPartnerTrustFor(ev.userId, ev.teamId) : undefined;
+      const isGroup = dmKind === "mpim";
+      const seat = await resolveDmSeat(
+        p.org,
+        { surfaceKey: p.surfaceKey, channelId: ev.channelId, ...(isGroup ? {} : { legacyChannelId: ev.channelId }) },
+        atIso,
+      );
+      const partnerTrust = !isGroup && ev.userId ? await dmPartnerTrustFor(ev.userId, ev.teamId) : undefined;
+      const surfaceInternal = isGroup ? (await channelFactsFor(ev.channelId)).internal : partnerTrust === "internal";
       const wakeTrust = resolveWakeTrust({
         authorIsBot: Boolean(ev.botId),
         authorId: ev.userId,
-        surfaceInternal: partnerTrust === "internal",
+        surfaceInternal,
         channelKey: p.surfaceKey,
       });
       const wakeId = mintWakeId();
@@ -460,11 +471,11 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         teamId: ev.teamId,
         channelId: ev.channelId,
         threadTs: ev.threadTs,
-        channelType: "im",
+        channelType: dmKind,
         isPrivate: true,
         ...(partnerTrust ? { dmPartnerTrust: partnerTrust } : {}),
       });
-      const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId });
+      const message = renderWakeMessage(ev, () => atIso, { dm: true, trust: wakeTrust, wakeId, ...(isGroup ? { groupDm: true } : {}) });
       const handoff =
         seat.freshGeneration && seat.handoffNote && seat.handoffNote.length > 0
           ? [`<handoff-from-previous-session>\n${seat.handoffNote}\n</handoff-from-previous-session>`]
@@ -509,12 +520,16 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
       }
       const dev = parseMessageEvent(decision.env);
       if (!dev || dev.botId) return OK();
+      if (decision.dmKind === "mpim") {
+        const { userId: dmBotUserId } = await getBotIdentity();
+        if (dmBotUserId && dev.text.includes(`<@${dmBotUserId}>`)) return OK();
+      }
       persistAttachments(dev);
       if (!(await notYetSeen(decision.env, dev))) return OK();
       args.waitUntil(
         fifo.enqueue(dmFifoKey(dev.channelId), async () => {
-          await scheduleDmWake(dev);
-          console.log(`[open-everywhere:slack-front] dm ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
+          await scheduleDmWake(dev, decision.dmKind);
+          console.log(`[open-everywhere:slack-front] ${decision.dmKind} ${dev.channelId}/${dev.ts}: woke — diverted to the DM window seat`);
         }),
       );
       return OK();
@@ -538,6 +553,28 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
         );
         scheduleUnownedWake(mev, "single-window-mention", true);
         return OK();
+      }
+      if (mev && dmSeatEnabled()) {
+        const mentionChannelType = await channelFactsFor(mev.channelId)
+          .then((f) => f.channelType)
+          .catch(() => undefined);
+        if (mentionChannelType === "mpim") {
+          if (!(await notYetSeen(decision.env, mev))) return OK();
+          console.log(
+            `[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: group DM — diverting to the mpim window seat (native forward suppressed)`,
+          );
+          args.waitUntil(
+            fifo.enqueue(dmFifoKey(mev.channelId), async () => {
+              await scheduleDmWake({ ...mev, channelType: "mpim" }, "mpim");
+            }),
+          );
+          return OK();
+        }
+        if (mentionChannelType === undefined) {
+          console.log(
+            `[open-everywhere:slack-front] app_mention ${mev.channelId}/${mev.ts}: channel type unresolved (conversations.info unavailable; a group-DM mention needs the mpim:read scope) — forwarding to the native mention path`,
+          );
+        }
       }
       const forwarded = new Request(req.url, { method: "POST", headers: req.headers, body: rawBody });
       return innerHandler(forwarded, args);

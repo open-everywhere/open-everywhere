@@ -220,6 +220,7 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
   eq(diverted[0].payload, (parseSelfDispatchPayload(goodPayload()) as { payload: UnifiedDispatchPayload }).payload, "divert payload round-trips byte-for-byte");
 
   const DM_SURFACE = "slack/T1/D999";
+  const MPIM_SURFACE = "slack/T1/G777";
   const dmToken = formatWindowToken({
     domain: dmAnchorDomain(DM_SURFACE),
     windowId: taskWindowId("slack_T1_D999", "D999", "n-dm-1"),
@@ -274,6 +275,10 @@ const armed = { OE_SPAWN_DISPATCH_SECRET: SECRET } as NodeJS.ProcessEnv;
     { token: dmWindowToken, surfaceKey: "slack/T1/C-OTHER", admit: false, note: "DM seat window to another surface" },
     { token: dmWindowToken, surfaceKey: SURFACE, admit: false, note: "DM seat window to a CONFIGURED channel — config never rescues an anchor token" },
     { token: formatWindowToken(dmWindowKey("slack/T1/D-OTHER", 1)), surfaceKey: DM_SURFACE, admit: false, note: "one DM's seat window aimed at ANOTHER DM (the privacy invariant)" },
+    { token: formatWindowToken(dmWindowKey(MPIM_SURFACE, 2)), surfaceKey: MPIM_SURFACE, admit: true, note: "GROUP-DM seat window to its own mpim (stage 4 — same widened arm, no new carve-in)" },
+    { token: formatWindowToken(dmWindowKey(MPIM_SURFACE, 2)), surfaceKey: DM_SURFACE, admit: false, note: "a GROUP DM's seat window aimed at a 1:1 DM in the same workspace" },
+    { token: dmWindowToken, surfaceKey: MPIM_SURFACE, admit: false, note: "a 1:1 DM's seat window aimed at a GROUP DM in the same workspace" },
+    { token: formatWindowToken(dmWindowKey(MPIM_SURFACE, 2)), surfaceKey: SURFACE, admit: false, note: "a GROUP DM's seat window aimed at a CONFIGURED channel" },
   ];
   for (const row of parityRows) {
     eq(windowEnabledFor(row.surfaceKey, row.token), row.admit, `receive gate: ${row.note} → ${row.admit ? "admit" : "refuse"}`);

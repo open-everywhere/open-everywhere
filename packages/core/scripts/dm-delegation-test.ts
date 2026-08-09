@@ -31,7 +31,7 @@ import { DM_SEAT_CARVE_IN, LEAN_SEAT_TOOLS, allowedOnLeanSeat, resolveLeanSeatPo
 import { memoryRecallRouteFor } from "../agent/access/window-gate-manifest.js";
 import { workerOnlyTools } from "../agent/access/worker-capabilities.js";
 import { OE_ONESHOT_AGENT_ENV } from "../agent/access/delegation-flag.js";
-import { registerIdentityMapper } from "../agent/identity/binding.js";
+import { bindFrom, registerIdentityMapper } from "../agent/identity/binding.js";
 import { registerWakeOriginCodec } from "../agent/channels/wake-origin-codec.js";
 import type { BindableContext } from "../agent/identity/binding.js";
 
@@ -214,7 +214,7 @@ await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
 
   const groupDm = seatCtx({ channelId: "G_TEAM", channelType: "mpim", token: "slack:G_TEAM:oe-dm:g1", userId: "U_SENDER" });
   const groupAnchor = resolveDmDelegationAnchor(groupDm);
-  ok(groupAnchor !== undefined, "a GROUP DM (mpim) root resolves an anchor too — the same class of closed conversation");
+  ok(groupAnchor !== undefined, "a GROUP DM root on a NATIVE token resolves an anchor — the same class of closed conversation");
   eq(groupAnchor?.surfaceKey, "slack/T1/G_TEAM", "…on the group DM's own surface key");
   eq((groupDm.session?.auth?.current?.attributes as Record<string, string>)["user_id"], "U_SENDER", "a group-DM turn's acting principal is the VERIFIED SENDER (host-stamped), which is what the worker inherits — never the room");
 
@@ -341,4 +341,26 @@ console.log("6. OPE-351 fences (capacity only — nothing mints a DM window toke
   eq(sessionGrantKeyFromToken(dmWindow), dmWindow, "…and a DM SEAT window keys as itself, so its grants rotate with its generation like any standing seat's");
 }
 
-console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · anchor resolution · inherit-never-escalate · lean-seat interplay · OPE-351 fences)`);
+console.log("7. OPE-351 stage 4 — a group DM on a window token:");
+await withEnv(OE_ONESHOT_AGENT_ENV, "1", () => {
+  const MPIM_SURFACE_KEY = "slack/T1/G_TEAM";
+  const mpimSeat = seatCtx({ channelId: "G_TEAM", channelType: "mpim", token: `unified:${formatWindowToken(dmWindowKey(MPIM_SURFACE_KEY, 2))}`, userId: "U_SENDER" });
+
+  eq(bindFrom(mpimSeat).mode, "mpim", "🔴 a first-classed group DM still binds mode `mpim` — the divert stamps channel_type on the wake auth, so the mode is invariant across the re-seat even though the token is not");
+
+  eq(resolveDmDelegationAnchor(mpimSeat), undefined, "…and it is NO LONGER a delegation ANCHOR: the real window wins, so `resolveDmDelegationAnchor` is not a 'is this a DM?' predicate for it either");
+  ok(canDelegateFromSeat(mpimSeat), "…while it CAN still delegate — through the window arm now, not the anchor arm (the affordance moved, it did not disappear)");
+
+  const dmSeatBit = bindFrom(mpimSeat).mode === "dm" || bindFrom(mpimSeat).mode === "mpim";
+  ok(dmSeatBit, "the hooks/lean-seat.ts DM bit (mode-keyed) is TRUE for the group-DM window seat");
+  for (const name of DM_SEAT_CARVE_IN) {
+    ok(allowedOnLeanSeat(name, dmSeatBit), `…so a narrowed group-DM window seat still holds ${name} — the interactive trio no worker can carry`);
+  }
+
+  eq(memoryRecallRouteFor("standing"), "agent", "a standing seat's recall route is delegation (unchanged) — the group DM's own memory verdict is mode-keyed and stays NONE (scripts/memory-resolve-test.ts)");
+
+  eq(dmAnchorSurfaceForToken(mpimSeat.channel!.continuationToken), MPIM_SURFACE_KEY, "the admission seam strips eve's `unified:` prefix and recovers the group DM's OWN surface — byte-exact, on the live spelling");
+  ok(dmAnchorSurfaceForToken(mpimSeat.channel!.continuationToken) !== DM_SURFACE_KEY, "…never a 1:1 DM's surface in the same workspace");
+});
+
+console.log(`\n✓ dm-delegation: ${n} assertions passed (OPE-306 token grammar · namespace exclusivity · anchor resolution · inherit-never-escalate · lean-seat interplay · OPE-351 fences · stage-4 group-DM window composition)`);

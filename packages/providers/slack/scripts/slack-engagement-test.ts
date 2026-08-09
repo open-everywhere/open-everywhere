@@ -503,13 +503,13 @@ registerConfig({
     const d = classifyEnvelope(ev({ type: "message", channel: "D", ts: "1.1", channel_type: "im", text: "dm" }), JSON_CT);
     ok(d.kind === "dm-wake" && d.env !== undefined, "message.im (DM) → dm-wake kind (carries env; the DM window seat owns it, never the native DM door)");
   }
-  ok(classifyEnvelope(ev({ type: "message", channel: "G", ts: "1.1", channel_type: "mpim", text: "hi" }), JSON_CT).kind === "wake", "message.mpim (group DM) → wake (UNCHANGED — mpim is not first-classed yet)");
+  ok(classifyEnvelope(ev({ type: "message", channel: "G", ts: "1.1", channel_type: "mpim", text: "hi" }), JSON_CT).kind === "dm-wake", "message.mpim (group DM) → dm-wake (OPE-351 stage 4 — first-classed alongside the 1:1)");
   ok(classifyEnvelope("payload=%7B%7D", "application/x-www-form-urlencoded").kind === "forward", "urlencoded interaction → forward");
   ok(classifyEnvelope("not json", JSON_CT).kind === "forward", "unparseable → forward (fail-safe)");
   ok(classifyEnvelope(ev({ type: "reaction_added", item: { type: "message", channel: "C", ts: "1.1" } }), JSON_CT).kind === "reaction", "reaction_added → reaction (ingestion)");
   ok(classifyEnvelope(ev({ type: "tokens_revoked" }), JSON_CT).kind === "forward", "unhandled event type → forward");
 
-  for (const ct of ["channel", "group", "mpim"]) {
+  for (const ct of ["channel", "group"]) {
     const d = classifyEnvelope(ev({ type: "message", channel: "C", ts: "1.1", thread_ts: "1.0", channel_type: ct, user: "U1", text: "more" }), JSON_CT);
     ok(d.kind === "wake" && d.env !== undefined, `message.${ct} → wake (carries env)`);
   }
