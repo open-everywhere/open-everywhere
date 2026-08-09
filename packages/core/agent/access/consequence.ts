@@ -81,6 +81,7 @@ export interface ConsequenceEntry {
   readonly tier: ConsequenceTier;
   readonly via: GatingMechanism;
   readonly reason: string;
+  readonly judgeDefer?: true;
   readonly taint?: "refuse" | "disclose";
 }
 
@@ -94,6 +95,7 @@ const delegated = (helper: string, module: string, reason: string): ConsequenceE
 });
 const member = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:member", via: { kind: "action-kind", action }, taint, reason });
 const admin = (action: string, taint: TaintTolerance, reason: string): ConsequenceEntry => ({ tier: "gate:admin", via: { kind: "action-kind", action }, taint, reason });
+const deferToJudge = (entry: ConsequenceEntry): ConsequenceEntry => ({ ...entry, judgeDefer: true });
 
 export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   bash: open("sandbox execution; reach is bounded by the egress plane (L1), not by this table"),
@@ -276,15 +278,15 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
   ),
 
   create_skill: member("skill.create", "disclose", "self-modification: a skill is a procedure the agent will load and FOLLOW by name (persistent RCE-of-behaviour)"),
-  create_routine: member("routine.create", "disclose", "self-modification: a standing scheduled behaviour that outlives the turn"),
+  create_routine: deferToJudge(member("routine.create", "disclose", "self-modification: a standing scheduled behaviour that outlives the turn")),
   remember: member("memory.remember", "disclose",
     "self-modification, CONDITIONAL: a plain fact writes directly (not consequential); a standing RULE always freezes onto a card, because doctrine every future turn is told to follow must not land mid-injection. A fact from a TAINTED turn also writes directly (OPE-307) and carries a durable external-provenance mark on the bullet itself — the provenance travels with the entry and is visible on every later recall, which a one-time card was not",
   ),
-  forget: member("memory.forget", "disclose", "hard-to-reverse: destroys memory (and the frozen args carry only the bullet's hash — GDPR redaction)"),
-  open_pull_request: member("pr.open", "disclose",
+  forget: deferToJudge(member("memory.forget", "disclose", "hard-to-reverse: destroys memory (and the frozen args carry only the bullet's hash — GDPR redaction)")),
+  open_pull_request: deferToJudge(member("pr.open", "disclose",
     "audience-expanding: a PR reaches repo watchers, CI and reviewers beyond the asking room; commits stage on a hidden ref and publish only on the click",
-  ),
-  request_access: member("access.request", "disclose", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate"),
+  )),
+  request_access: deferToJudge(member("access.request", "disclose", "audience-expanding: sends a grant request (a bot PR + admin-channel note) beyond the asking room; the merge stays the privilege gate")),
   create_agent: member("agent.create", "disclose",
     "self-modification + audience: provisions a new channel-resident agent — a domain + memory silo + capability bundle — as one config PR; the card is the injection gate and the merge the privilege gate",
   ),
@@ -294,7 +296,7 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     "audience-expanding: a filed work item reaches every watcher of the repo/team, its triage automation and its subscribers — none of them in the asking room — and the model authors the title + body, so the card (which renders both in full) is the injection gate before that text is published",
   ),
 
-  set_spend_limit: admin("spend.set", "disclose", "self-modification + money: changes what the org will spend"),
+  set_spend_limit: deferToJudge(admin("spend.set", "disclose", "self-modification + money: changes what the org will spend")),
   clear_spend_limit: admin("spend.clear", "disclose", "reverts a spend control — same bar as setting one"),
   revoke_connector: admin("connector.revoke", "disclose", "kills a live capability for a scope — an org-level control change"),
   clear_connector_override: admin("connector.clear", "disclose", "re-arms a revoked capability — same bar as the revoke"),
@@ -311,6 +313,11 @@ export const TOOL_CONSEQUENCE: Readonly<Record<string, ConsequenceEntry>> = {
     reason: "audience-expanding read: pulls another room's silo contents into this one — role-scoped disclosure",
   },
 };
+
+export function judgeDeferredTool(tool: string): boolean {
+  if (isConnectorOpTool(tool)) return false;
+  return TOOL_CONSEQUENCE[tool]?.judgeDefer === true;
+}
 
 export interface ActionKindEntry {
   readonly tier: Exclude<ConsequenceTier, "open">;

@@ -1,9 +1,6 @@
 import {
-  registerAutoJudge,
-  resetAutoJudge,
   resolveApproverChain,
   type ApprovalChainRequest,
-  type ApproverVerdict,
   type ChainResolution,
   type OperatorApprover,
 } from "./approver-chain.js";
@@ -12,7 +9,6 @@ export interface ApprovalScenario {
   readonly name: string;
   readonly request: ApprovalChainRequest;
   readonly approvers?: readonly OperatorApprover[];
-  readonly judge?: Exclude<ApproverVerdict, undefined>;
   readonly expect: {
     readonly verdict: "allow" | "deny" | "ask";
     readonly resolvedBy?: string;
@@ -24,13 +20,7 @@ export interface ApprovalScenario {
 export async function runApprovalScenarios(scenarios: readonly ApprovalScenario[]): Promise<string[]> {
   const failures: string[] = [];
   for (const s of scenarios) {
-    let res: ChainResolution;
-    try {
-      if (s.judge !== undefined) registerAutoJudge(() => s.judge);
-      res = await resolveApproverChain(s.request, s.approvers !== undefined ? { approvers: s.approvers } : {});
-    } finally {
-      if (s.judge !== undefined) resetAutoJudge();
-    }
+    const res: ChainResolution = await resolveApproverChain(s.request, s.approvers !== undefined ? { approvers: s.approvers } : {});
     if (res.verdict !== s.expect.verdict) {
       failures.push(`scenario "${s.name}": expected verdict ${s.expect.verdict}, got ${res.verdict} (resolvedBy ${res.resolvedBy})`);
       continue;

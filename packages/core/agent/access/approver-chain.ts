@@ -1,6 +1,17 @@
-import { classifyConnectorOp, isConnectorOpTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
+import { classifyConnectorOp, isConnectorOpTool, judgeDeferredTool, TOOL_CONSEQUENCE, type ConsequenceEntry } from "./consequence.js";
 import { awsCommandVerdict, type AwsScreenInput } from "./aws-screen.js";
 import { untrustedIngestedThisTurn, taintKindsThisTurn } from "./taint-signal.js";
+import {
+  approvalJudgeBreakerTripped,
+  approvalJudgeMode,
+  judgeContextOf,
+  judgeVerdictCacheKey,
+  JUDGE_ENFORCE_TIMEOUT_MS,
+  runApprovalJudge,
+  APPROVAL_JUDGE_BREAKER_THRESHOLD,
+  APPROVAL_JUDGE_BREAKER_WINDOW_DAYS,
+  type ApprovalJudgeRun,
+} from "./approval-judge.js";
 import { getConfig } from "./config.js";
 import { resolveAccess } from "./resolver.js";
 
@@ -92,6 +103,7 @@ export interface ChainResolution {
   readonly elements: readonly ChainElementResult[];
   readonly transforms: readonly AppliedTransform[];
   readonly denyAbsolute?: true;
+  readonly judge?: ApprovalJudgeRun;
 }
 
 export function registryVerdictOf(tool: string): "allow" | "ask" {
@@ -109,30 +121,9 @@ export function taintToleranceOf(tool: string): "refuse" | "disclose" | undefine
   return row.tier === "open" ? undefined : "refuse";
 }
 
-export interface JudgeEligibilityRow {
-  readonly maxTier: "open" | "gate:member";
-  readonly maxOpTier: "read" | "write";
-}
+export type TransformStage = "mode" | "unattended" | "taint" | "floor";
 
-export const AUTO_JUDGE_ELIGIBILITY: Readonly<Record<string, JudgeEligibilityRow>> = {};
-
-let autoJudge: Approver | undefined;
-
-export function registerAutoJudge(judge: Approver): void {
-  autoJudge = judge;
-}
-
-export function resetAutoJudge(): void {
-  autoJudge = undefined;
-}
-
-export function autoJudgeEligible(tool: string): boolean {
-  return autoJudge !== undefined && AUTO_JUDGE_ELIGIBILITY[tool] !== undefined;
-}
-
-export type TransformStage = "mode" | "judge" | "unattended" | "taint" | "floor";
-
-export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "judge", "unattended", "taint", "floor"];
+export const TRANSFORM_STAGE_ORDER: readonly TransformStage[] = ["mode", "unattended", "taint", "floor"];
 
 export interface TransformRow {
   readonly name: string;
@@ -165,13 +156,6 @@ export const TRANSFORM_TABLE: readonly TransformRow[] = [
     reason: "mode-deny-all",
     fires: (req) => req.mode?.mode === "DENY_ALL",
     to: () => "deny",
-  },
-  {
-    name: "judge:AUTO",
-    stage: "judge",
-    from: ["ask"],
-    fires: (req) => autoJudgeEligible(req.tool),
-    to: () => "allow",
   },
   {
     name: "unattended",
@@ -265,6 +249,7 @@ function clampVerdict(
 
 export interface ResolveChainOptions {
   readonly approvers?: readonly OperatorApprover[];
+  readonly judge?: boolean;
 }
 
 export async function resolveApproverChain(
@@ -333,7 +318,47 @@ export async function resolveApproverChain(
   const positional = evaluated.filter((e) => e.verdict !== "defer").sort((a, b) => a.rank - b.rank || a.order - b.order);
   const first = positional[0];
   let verdict: "allow" | "ask" = first === undefined || first.verdict === "ask" ? "ask" : "allow";
-  const resolvedBy = first?.element ?? "registry";
+  let resolvedBy = first?.element ?? "registry";
+
+  let judgeRun: ApprovalJudgeRun | undefined;
+  if (
+    opts.judge === true &&
+    verdict === "ask" &&
+    (resolvedBy === "registry" || resolvedBy === "verb-classifier") &&
+    judgeDeferredTool(req.tool) &&
+    approvalJudgeMode() === "enforce"
+  ) {
+    if (await approvalJudgeBreakerTripped(req.domain)) {
+      judgeRun = {
+        verdict: "defer",
+        source: "breaker",
+        reasoning: `judge disarmed: ≥${APPROVAL_JUDGE_BREAKER_THRESHOLD} human-contradicted verdicts within ${APPROVAL_JUDGE_BREAKER_WINDOW_DAYS}d`,
+        cacheKey: judgeVerdictCacheKey(req.tool),
+        cacheHit: false,
+        passes: 0,
+      };
+    } else {
+      judgeRun = await runApprovalJudge(judgeContextOf(req, { registryVerdict: registryBaseline }), {
+        enforce: true,
+        timeoutMs: JUDGE_ENFORCE_TIMEOUT_MS,
+      });
+      if (judgeRun.verdict === "deny") {
+        return {
+          verdict: "deny",
+          resolvedBy: "judge",
+          registryVerdict: registryBaseline,
+          elements: results,
+          transforms: [],
+          denyAbsolute: true,
+          judge: judgeRun,
+        };
+      }
+      if (judgeRun.verdict === "allow") {
+        verdict = "allow";
+        resolvedBy = "judge";
+      }
+    }
+  }
 
   const transforms: AppliedTransform[] = [];
   for (const stage of TRANSFORM_STAGE_ORDER) {
@@ -361,6 +386,7 @@ export async function resolveApproverChain(
           registryVerdict: registryBaseline,
           elements: results,
           transforms,
+          ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
         };
       }
       verdict = next;
@@ -374,6 +400,7 @@ export async function resolveApproverChain(
     registryVerdict: registryBaseline,
     elements: results,
     transforms,
+    ...(judgeRun !== undefined ? { judge: judgeRun } : {}),
   };
 }
 
@@ -394,6 +421,17 @@ export function chainAuditDetail(req: ApprovalChainRequest, res: ChainResolution
     })),
     transforms: res.transforms.map((t) => ({ name: t.name, from: t.from, to: t.to, ...(t.reason !== undefined ? { reason: t.reason } : {}) })),
     ...(res.denyAbsolute !== undefined ? { denyAbsolute: true } : {}),
+    ...(res.judge !== undefined
+      ? {
+          judge: {
+            verdict: res.judge.verdict,
+            source: res.judge.source,
+            passes: res.judge.passes,
+            cacheHit: res.judge.cacheHit,
+            ...(res.judge.pass1 !== undefined ? { pass1: res.judge.pass1 } : {}),
+          },
+        }
+      : {}),
     unattended: req.unattended,
     tainted: taintedOf(req),
     ...(taintedOf(req) && chainTaintKinds().length > 0 ? { taintKinds: [...chainTaintKinds()] } : {}),
@@ -407,6 +445,9 @@ export function renderChainResolution(req: ApprovalChainRequest, res: ChainResol
   lines.push(`${req.tool}${req.action !== undefined ? ` (action ${req.action})` : ""} → ${res.verdict.toUpperCase()}${res.askVariant !== undefined ? ` (${res.askVariant})` : ""}`);
   lines.push(`resolved by: ${res.resolvedBy}${res.denyAbsolute !== undefined ? " — DENY IS ABSOLUTE (transforms skipped)" : ""}`);
   lines.push(`registry baseline: ${res.registryVerdict}${res.verdict !== res.registryVerdict ? "  ⚠ diverged — see elements/transforms" : ""}`);
+  if (res.judge !== undefined) {
+    lines.push(`judge consult: ${res.judge.verdict} (${res.judge.source}, ${res.judge.passes} pass${res.judge.passes === 1 ? "" : "es"}${res.judge.cacheHit ? ", cache hit" : ""}) — ${res.judge.reasoning}`);
+  }
   lines.push("elements (level order):");
   for (const e of res.elements) {
     const marks = [e.clamped !== undefined ? "clamped→defer" : undefined, e.error !== undefined ? "element-error→ask" : undefined]

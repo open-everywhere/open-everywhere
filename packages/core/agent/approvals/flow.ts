@@ -193,13 +193,38 @@ export async function requestApproval(
       ...(input.domain != null ? { mode: approvalModeForDomain(input.domain) } : {}),
       ...(kindDef.beneficiaryClicker === true ? { beneficiaryClicker: true } : {}),
     };
-    const resolution = await resolveApproverChain(chainReq, { approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined) });
+    const resolution = await resolveApproverChain(chainReq, { approvers: approversForScopeKey(input.scopeKey, input.domain ?? undefined), judge: true });
     await appendAudit({
       ...whereFromScope(input.org, input.scopeKey),
       principalId: input.requestedBy,
       action: "approval.chain",
       detail: chainAuditDetail(chainReq, resolution),
     }).catch(() => undefined);
+
+    if (resolution.judge !== undefined) {
+      await appendAudit({
+        ...whereFromScope(input.org, input.scopeKey),
+        principalId: input.requestedBy,
+        action: "approval.judge.verdict",
+        detail: {
+          tool: chainTool,
+          action: input.kind,
+          mode: "enforce",
+          verdict: resolution.judge.verdict,
+          enforcedVerdict: resolution.verdict,
+          resolvedBy: resolution.resolvedBy,
+          registryVerdict: resolution.registryVerdict,
+          source: resolution.judge.source,
+          passes: resolution.judge.passes,
+          ...(resolution.judge.pass1 !== undefined ? { pass1: resolution.judge.pass1 } : {}),
+          reasoning: resolution.judge.reasoning,
+          cacheKey: resolution.judge.cacheKey,
+          cacheHit: resolution.judge.cacheHit,
+          unattended: chainReq.unattended,
+          ...(input.domain != null ? { domain: input.domain } : {}),
+        },
+      }).catch(() => undefined);
+    }
 
     void shadowJudgeAuditDetail(chainReq, resolution)
       .then((shadowDetail) =>
@@ -217,6 +242,12 @@ export async function requestApproval(
     if (resolution.verdict === "deny") {
       emitTelemetry("oe.feature.used", { "oe.feature": "approval_requested", "oe.outcome": "denied" });
       const reason = resolution.transforms.find((t) => t.to === "deny")?.reason;
+      if (resolution.resolvedBy === "judge") {
+        throw new Error(
+          `"${input.kind}" was DENIED by the approval judge — nothing was proposed and no card was posted. ` +
+            `The judge's reasoning is recorded in the audit log (approval.judge.verdict); if this looks wrong, a person can propose the action themselves, and the operator can review this verb's defer flip.`,
+        );
+      }
       throw new Error(
         `"${input.kind}" was DENIED by the approver chain (${resolution.resolvedBy}${reason !== undefined ? `, ${reason}` : ""}) — ` +
           `nothing was proposed and no card was posted. ${

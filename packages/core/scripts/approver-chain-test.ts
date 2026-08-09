@@ -1,13 +1,10 @@
 import {
   APPROVER_LEVEL_ORDER,
-  AUTO_JUDGE_ELIGIBILITY,
   ELEMENT_CLAMPS,
   TRANSFORM_STAGE_ORDER,
   TRANSFORM_TABLE,
   chainAuditDetail,
-  registerAutoJudge,
   renderChainResolution,
-  resetAutoJudge,
   resolveApproverChain,
   registryVerdictOf,
   taintToleranceOf,
@@ -16,8 +13,12 @@ import {
   type ApproverVerdict,
   type OperatorApprover,
 } from "../agent/access/approver-chain.js";
+import {
+  registerApprovalJudgeCompletion,
+  resetApprovalJudgeCompletion,
+} from "../agent/access/approval-judge.js";
 import { runApprovalScenarios, type ApprovalScenario } from "../agent/access/approval-scenarios.js";
-import { TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
+import { judgeDeferredTool, TOOL_CONSEQUENCE } from "../agent/access/consequence.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -119,7 +120,7 @@ for (const [tool, entry] of Object.entries(TOOL_CONSEQUENCE)) {
   console.log(`  pin1: deny-invariant held over 3000 fuzzed resolutions (${denyIns} deny-in cases)`);
 }
 
-ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "unattended", "taint", "floor"]), "pin3: transform stage order is mode → judge → unattended → taint → floor (OPE-310 added floor)");
+ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "unattended", "taint", "floor"]), "pin3: transform stage order is mode → unattended → taint → floor (OPE-318 phase 2 removed the inert judge stage — the judge is a resolution step now)");
 {
   const names = TRANSFORM_TABLE.map((t) => t.name);
   ok(
@@ -127,13 +128,13 @@ ok(JSON.stringify(TRANSFORM_STAGE_ORDER) === JSON.stringify(["mode", "judge", "u
       "mode:DANGEROUSLY_BYPASS",
       "mode:APPROVE_ALL",
       "mode:DENY_ALL",
-      "judge:AUTO",
       "unattended",
       "taint:refuse",
       "beneficiary-clicker-floor",
     ]),
-    "pin3: the transform table declares exactly the seven known arrows (OPE-310 added the floor)",
+    "pin3: the transform table declares exactly the six known arrows (OPE-318 phase 2 removed judge:AUTO — a judge verdict is resolution, not a transform)",
   );
+  ok(!names.includes("judge:AUTO"), "pin3: there is NO judge arrow — the armed judge resolves before the pipeline, it does not ride it");
   ok(!names.includes("taint:card"), "pin3: there is NO taint:card arrow — a taint marking does not move a verdict (OPE-307)");
   ok(TRANSFORM_TABLE.filter((t) => t.stage === "taint").length === 1, "pin3: exactly ONE taint arrow survives, and it is the four-sink refusal");
   ok(TRANSFORM_TABLE.every((t) => !(t.from as readonly string[]).includes("deny")), "pin3: no arrow's `from` contains deny — deny never enters the pipeline");
@@ -208,17 +209,45 @@ ok(!ELEMENT_CLAMPS.registry.includes("defer"), "pin4: the registry may not defer
   ok(erroring.verdict === "ask" && erroring.resolvedBy === "custom:boom", "pin4: an erroring element fails CLOSED (its ask resolves, shadowing later allows)");
 }
 
-ok(Object.keys(AUTO_JUDGE_ELIGIBILITY).length === 0, "pin5: AUTO_JUDGE_ELIGIBILITY ships EMPTY — no verb is judge-eligible in v1");
 {
-  registerAutoJudge(() => "allow");
+  const saved = process.env.OE_APPROVAL_JUDGE;
+  let transportCalls = 0;
+  registerApprovalJudgeCompletion(async () => {
+    transportCalls++;
+    return "NO";
+  });
   try {
-    const res = await resolveApproverChain(req("create_ticket"));
-    ok(res.verdict === "ask" && res.transforms.length === 0, "pin5: a registered judge with an empty eligibility table moves nothing — ask stands");
+    const flipped = Object.entries(TOOL_CONSEQUENCE)
+      .filter(([, e]) => e.judgeDefer === true)
+      .map(([t]) => t)
+      .sort();
+    ok(
+      JSON.stringify(flipped) === JSON.stringify(["create_routine", "forget", "open_pull_request", "request_access", "set_spend_limit"]),
+      `pin5: exactly the five shadow-evidenced rows carry the defer flip (got ${flipped.join(", ")})`,
+    );
+    ok(judgeDeferredTool("open_pull_request") && !judgeDeferredTool("create_ticket"), "pin5: judgeDeferredTool reads the flip, and an unflipped gated row stays plain ask");
+    ok(!judgeDeferredTool("notion__create_page"), "pin5: connector ops carry NO flip — the class-policy half is a seam, not an implementation (no evidence yet)");
+
+    process.env.OE_APPROVAL_JUDGE = "enforce";
+    const noOptIn = await resolveApproverChain(req("open_pull_request"));
+    ok(noOptIn.verdict === "ask" && noOptIn.judge === undefined && noOptIn.transforms.length === 0, "pin5: without the caller's judge opt-in an armed deploy still resolves the plain ask (simulators stay judge-free)");
+
+    const unflipped = await resolveApproverChain(req("create_ticket"), { judge: true });
+    ok(unflipped.verdict === "ask" && unflipped.judge === undefined, "pin5: an unflipped gated row never reaches the judge, whatever the env and caller say");
+
+    process.env.OE_APPROVAL_JUDGE = "shadow";
+    const shadowMode = await resolveApproverChain(req("open_pull_request"), { judge: true });
+    ok(shadowMode.verdict === "ask" && shadowMode.judge === undefined, "pin5: under shadow a defer row resolves exactly as ask (shadow's own observation seam lives in the propose plane, not here)");
+    delete process.env.OE_APPROVAL_JUDGE;
+    const off = await resolveApproverChain(req("open_pull_request"), { judge: true });
+    ok(off.verdict === "ask" && off.judge === undefined && off.resolvedBy === "registry", "pin5: with the judge off a defer row is byte-identical to the pre-flip chain");
+
+    ok(transportCalls === 0, "pin5: across every gate-missing combination the transport was NEVER called");
   } finally {
-    resetAutoJudge();
+    resetApprovalJudgeCompletion();
+    if (saved === undefined) delete process.env.OE_APPROVAL_JUDGE;
+    else process.env.OE_APPROVAL_JUDGE = saved;
   }
-  const unregistered = await resolveApproverChain(req("create_ticket"));
-  ok(unregistered.verdict === "ask", "pin5: the registered-nothing slot is a no-op — ask stands");
 }
 
 {
@@ -358,4 +387,4 @@ ok(registryVerdictOf("session.checkpoint") === "ask", "kind map: the fallback na
   console.log(`  P0 latency: evaluate-all over a ${2 + 5}-element chain ≈ ${(perResolution * 1000).toFixed(1)}µs/resolution`);
 }
 
-console.log(`✓ approver-chain: ${passed} assertions — six pins held (deny-invariant fuzzed, level order pinned, transform table honoured, clamps fail closed, judge table empty, audit rows complete), registry parity exact, all eight worked examples green (incl. the OPE-310 beneficiary-clicker floor)`);
+console.log(`✓ approver-chain: ${passed} assertions — six pins held (deny-invariant fuzzed, level order pinned, transform table honoured, clamps fail closed, judge consult triple-gated, audit rows complete), registry parity exact, all eight worked examples green (incl. the OPE-310 beneficiary-clicker floor)`);

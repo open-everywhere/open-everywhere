@@ -9,17 +9,21 @@ delete process.env.OE_APPROVAL_JUDGE;
 
 const {
   approvalJudgeMode,
+  approvalJudgeBreakerTripped,
   clearApprovalJudgeVerdictCache,
   judgeContextOf,
   judgeExemption,
   judgeScrutinyPrompt,
   judgeVerdictCacheKey,
   judgeVerdictPrompt,
+  recordApprovalJudgeContradiction,
   registerApprovalJudgeCompletion,
   resetApprovalJudgeCompletion,
   runApprovalJudge,
+  setApprovalJudgeCacheStoreForTest,
   shadowJudgeAuditDetail,
   shadowJudgeEligible,
+  APPROVAL_JUDGE_BREAKER_THRESHOLD,
 } = await import("../agent/access/approval-judge.js");
 const { resolveApproverChain, toolForActionKind } = await import("../agent/access/approver-chain.js");
 const { registerConfig } = await import("../agent/access/config.js");
@@ -28,7 +32,7 @@ const { readAudit } = await import("../agent/audit/audit.js");
 const { getOperationalStore } = await import("../agent/operational/provider.js");
 
 import type { ApprovalChainRequest } from "../agent/access/approver-chain.js";
-import type { ApprovalJudgeContext } from "../agent/access/approval-judge.js";
+import type { ApprovalJudgeContext, JudgeCacheEntry } from "../agent/access/approval-judge.js";
 
 let passed = 0;
 function ok(cond: boolean, label: string): void {
@@ -62,7 +66,11 @@ ok(approvalJudgeMode() === "off", "arming: unset env ⇒ off (code default)");
 process.env.OE_APPROVAL_JUDGE = "shadow";
 ok(approvalJudgeMode() === "shadow", "arming: OE_APPROVAL_JUDGE=shadow arms shadow mode");
 process.env.OE_APPROVAL_JUDGE = "enforce";
-ok(approvalJudgeMode() === "off", "arming: an unknown value fails CLOSED to off (never a surprise arm)");
+ok(approvalJudgeMode() === "enforce", "arming: OE_APPROVAL_JUDGE=enforce arms ENFORCEMENT (phase 2)");
+process.env.OE_APPROVAL_JUDGE = "Enforce";
+ok(approvalJudgeMode() === "off", "arming: a case variant fails CLOSED to off (never a surprise arm)");
+process.env.OE_APPROVAL_JUDGE = "armed";
+ok(approvalJudgeMode() === "off", "arming: an unknown value fails CLOSED to off");
 process.env.OE_APPROVAL_JUDGE = "ON";
 ok(approvalJudgeMode() === "off", "arming: a typo fails closed to off");
 delete process.env.OE_APPROVAL_JUDGE;
@@ -238,7 +246,188 @@ async function shadowRows(expectAtLeast = 1): Promise<{ detail?: Record<string, 
   clearApprovalJudgeVerdictCache();
 }
 
+{
+  clearApprovalJudgeVerdictCache();
+  const contradicts = stubJudge({ scrutiny: "NO", verdict: "VERDICT: ask\nREASON: needs a human" });
+  const r = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  ok(r.verdict === "ask" && r.source === "pass2" && r.passes === 2, "enforce: a pass-1 would-allow NEVER enforces — pass 2 ran and its ask decided");
+  ok(r.pass1 === "no", "enforce: the pass-1 answer is still recorded (the comparative track record keeps accruing)");
+  ok(contradicts.calls.map((c) => c.pass).join(",") === "scrutiny,verdict", "enforce: both passes ran, in order");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "hmm", verdict: "VERDICT: allow\nREASON: routine internal read" });
+  const r2 = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  ok(r2.verdict === "allow" && r2.source === "pass2" && r2.pass1 === "unparseable", "enforce: an unparseable pass 1 does not defer — pass 2 decides (only pass-2 verdicts enforce)");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+{
+  clearApprovalJudgeVerdictCache();
+  const uncached = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine" });
+  await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  const again = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  ok(!again.cacheHit && uncached.calls.length === 4, "enforce: with no session slot there is NO cache — an enforced allow never rides a per-process store (both runs paid both passes)");
+
+  const entries = new Map<string, JudgeCacheEntry>();
+  setApprovalJudgeCacheStoreForTest({
+    get: (k) => entries.get(k),
+    set: (k, e) => void entries.set(k, e),
+    delete: (k) => void entries.delete(k),
+  });
+  const cachedStub = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: fine" });
+  const first = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  ok(first.verdict === "allow" && !first.cacheHit && first.passes === 2, "enforce: a session-scoped store caches the pass-2 allow");
+  const hit = await runApprovalJudge(ctxOf("open_pull_request"), { enforce: true });
+  ok(hit.cacheHit && hit.source === "cache" && hit.passes === 0 && cachedStub.calls.length === 2, "enforce: the second run is a zero-call cache hit");
+
+  entries.clear();
+  const shadowStub = stubJudge({ scrutiny: "NO", verdict: "VERDICT: ask\nREASON: needs a human" });
+  const shadowRun = await runApprovalJudge(ctxOf("create_routine"));
+  ok(shadowRun.verdict === "allow" && shadowRun.source === "pass1", "enforce-cache setup: a shadow pass-1 allow landed in the shared session store");
+  const enforceAfterShadow = await runApprovalJudge(ctxOf("create_routine"), { enforce: true });
+  ok(!enforceAfterShadow.cacheHit && enforceAfterShadow.verdict === "ask", "enforce: a pass-1-sourced cache entry NEVER enforces — the run re-judged and pass 2 decided");
+  ok(shadowStub.calls.length === 3, "enforce: …by really consulting the transport again (1 shadow + 2 enforce calls)");
+  setApprovalJudgeCacheStoreForTest(undefined);
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+{
+  clearApprovalJudgeVerdictCache();
+  const entries = new Map<string, JudgeCacheEntry>();
+  setApprovalJudgeCacheStoreForTest({
+    get: (k) => entries.get(k),
+    set: (k, e) => void entries.set(k, e),
+    delete: (k) => void entries.delete(k),
+  });
+  let releaseScrutiny: ((text: string) => void) | undefined;
+  registerApprovalJudgeCompletion(
+    (_prompt, pass) =>
+      pass === "scrutiny"
+        ? new Promise<string>((resolve) => {
+            releaseScrutiny = resolve;
+          })
+        : Promise.resolve("VERDICT: allow\nREASON: late"),
+  );
+  const timed = await runApprovalJudge(ctxOf("forget"), { enforce: true, timeoutMs: 40 });
+  ok(timed.verdict === "defer" && timed.source === "timeout", "timeout: a hung transport defers (⇒ the last-resort ask) instead of wedging the turn");
+  releaseScrutiny?.("YES");
+  await new Promise((r) => setTimeout(r, 20));
+  ok(entries.size === 0, "timeout: the late-resolving verdict did NOT back-fill the cache");
+  setApprovalJudgeCacheStoreForTest(undefined);
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+process.env.OE_APPROVAL_JUDGE = "enforce";
+const spendInput = {
+  org: "test-org",
+  kind: "spend.set",
+  channelId: "C_PLAIN",
+  requestedBy: "U_HUMAN",
+  threadTs: null,
+  scopeKey: "slack/T1/C_PLAIN",
+  domain: "plain",
+  args: { org: "test-org", scopeKey: "slack/T1/C_PLAIN", level: "surface", monthlyTokens: 500_000, currentCap: null },
+};
+
+async function judgeVerdictRows(): Promise<{ detail?: Record<string, unknown> }[]> {
+  return (await readAudit({})).filter((r) => r.action === "approval.judge.verdict") as { detail?: Record<string, unknown> }[];
+}
+
+{
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: modest cap, attended, clean turn" });
+  const allowed = await requestApproval(spendInput, { postCard });
+  ok(allowed.autoApproved !== undefined && allowed.autoApproved.resolvedBy === "judge", "enforce/allow: a judge allow auto-approves — no card, the frozen args ran");
+  const row = await getOperationalStore().getPendingAction("test-org", allowed.id);
+  ok(row != null && row.status === "approved" && row.decidedBy === "chain:judge", "enforce/allow: the wedge row is decided by chain:judge, never a human's id");
+  const vRows = await judgeVerdictRows();
+  ok(vRows.length === 1, "enforce/allow: exactly one approval.judge.verdict row was written");
+  const d = vRows[0]!.detail ?? {};
+  ok(d.verdict === "allow" && d.enforcedVerdict === "allow" && d.mode === "enforce", "enforce/allow: the row records the enforced verdict as enforced");
+  ok(d.registryVerdict === "ask" && d.tool === "set_spend_limit" && d.action === "spend.set", "enforce/allow: the displaced per-verb default and the verb are on the row");
+  ok(d.passes === 2 && typeof d.pass1 === "string" && typeof d.reasoning === "string", "enforce/allow: pass count, pass-1 answer and reasoning summary are on the row");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: large raise, wants a human" });
+  const asked = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 900_000 } }, { postCard });
+  ok(asked.autoApproved === undefined && typeof asked.id === "string", "enforce/ask: a judge ask cards exactly as before the flip");
+  const askedRow = (await getOperationalStore().listPendingActions("test-org")).find((r) => r.id === asked.id);
+  ok(askedRow !== undefined && askedRow.status === "pending", "enforce/ask: the pending row awaits a human click");
+  const askDetail = (await judgeVerdictRows())[0]!.detail ?? {};
+  ok(askDetail.verdict === "ask" && askDetail.enforcedVerdict === "ask", "enforce/ask: the consult row records ask beside ask");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: deny\nREASON: outside standing policy" });
+  let denied: Error | undefined;
+  try {
+    await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 999_999_999 } }, { postCard });
+  } catch (e) {
+    denied = e as Error;
+  }
+  ok(denied !== undefined && /DENIED by the approval judge/.test(denied.message), "enforce/deny: a judge deny refuses the propose with its own sentence (not the config-diff copy)");
+  const denyDetail = (await judgeVerdictRows())[0]!.detail ?? {};
+  ok(denyDetail.verdict === "deny" && denyDetail.enforcedVerdict === "deny", "enforce/deny: the consult row records the deny (the first live one gets individual review)");
+
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+  const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 750_000 } }, { postCard });
+  ok(degraded.autoApproved === undefined, "enforce/degraded: no transport ⇒ the card path, exactly the pre-flip behaviour");
+  const degradedDetail = (await judgeVerdictRows())[0]!.detail ?? {};
+  ok(degradedDetail.verdict === "defer" && degradedDetail.source === "unavailable" && degradedDetail.enforcedVerdict === "ask", "enforce/degraded: the consult row still lands — a consult that changed nothing is still evidence");
+
+  const before = (await judgeVerdictRows()).length;
+  const control = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
+  const unflipped = await requestApproval(baseInput, { postCard });
+  ok(unflipped.autoApproved === undefined, "enforce/control: an unflipped kind (skill.delete) still cards");
+  ok((await judgeVerdictRows()).length === before && control.calls.length === 0, "enforce/control: no consult, no row, transport untouched");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+{
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: routine's own standing work" });
+  const fireAllowed = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 100_000 }, chain: { unattended: true } }, { postCard });
+  ok(fireAllowed.autoApproved !== undefined && fireAllowed.autoApproved.resolvedBy === "judge", "enforce/unattended: a judge allow lets the fire proceed — no ask ever reached the unattended clamp");
+
+  clearApprovalJudgeVerdictCache();
+  stubJudge({ scrutiny: "YES", verdict: "VERDICT: ask\nREASON: wants a human" });
+  let fireDenied: Error | undefined;
+  try {
+    await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 800_000 }, chain: { unattended: true } }, { postCard });
+  } catch (e) {
+    fireDenied = e as Error;
+  }
+  ok(fireDenied !== undefined && /ask-unattended/.test(fireDenied.message), "enforce/unattended: a judge ask on a fire takes the ordinary ask→deny clamp (a card in an empty room is toxic)");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+{
+  ok((await approvalJudgeBreakerTripped("plain")) === false, "breaker: a clean ledger reads armed");
+  const where = { org: "test-org", platform: "domain", workspace: "plain" };
+  for (let i = 0; i < APPROVAL_JUDGE_BREAKER_THRESHOLD; i++) {
+    await recordApprovalJudgeContradiction(where, { domain: "plain", tool: "set_spend_limit", judgeVerdict: "allow", humanAction: "reject", note: `test contradiction ${i}` });
+  }
+  ok((await approvalJudgeBreakerTripped("plain")) === true, "breaker: N contradictions in the window trip it for the domain");
+  ok((await approvalJudgeBreakerTripped("otherdomain")) === false, "breaker: a sibling domain's judge stays armed (domain-scoped rows count only for their domain)");
+
+  const tripped = stubJudge({ scrutiny: "YES", verdict: "VERDICT: allow\nREASON: n/a" });
+  const degraded = await requestApproval({ ...spendInput, args: { ...spendInput.args, monthlyTokens: 250_000 } }, { postCard });
+  ok(degraded.autoApproved === undefined, "breaker: the propose cards — a tripped breaker means no lift, ever");
+  ok(tripped.calls.length === 0, "breaker: the transport was never consulted");
+  const breakerDetail = (await judgeVerdictRows())[0]!.detail ?? {};
+  ok(breakerDetail.source === "breaker" && breakerDetail.verdict === "defer" && breakerDetail.enforcedVerdict === "ask", "breaker: the consult row records the disarm (source: breaker) — the degrade is queryable");
+  resetApprovalJudgeCompletion();
+  clearApprovalJudgeVerdictCache();
+}
+
+delete process.env.OE_APPROVAL_JUDGE;
+
 console.log(
-  `✓ approval-judge: ${passed} assertions — default-off fail-closed arming, judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate (own open rows + attested vendor readonly, hint-contradiction refused), two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, and shadow rows beside real cards through the live propose plane`,
+  `✓ approval-judge: ${passed} assertions — fail-closed arming (off/shadow/enforce, exact strings only), judge-off ≡ today, per-verb-default shadow eligibility, exemption predicate, two-pass flow with fail-closed defers, taint-invalidated (op, connection) verdict cache, shadow rows beside real cards — and PHASE 2: pass-1 allow short disabled under enforcement, session-or-nothing enforce cache refusing pass-1 entries, bounded timeout with no late cache back-fill, judge allow/ask/deny/degraded/unattended through the live propose plane with per-consult approval.judge.verdict rows, and the contradiction breaker disarming per domain`,
 );
 rmSync(tmp, { recursive: true, force: true });
