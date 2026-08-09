@@ -1,17 +1,18 @@
-import { wireNeonOperationalStore, rotateUnifiedWindow, rotateDmSeat } from "./rotate-window-lib.js";
+import { wireNeonOperationalStore, rotateUnifiedWindow } from "./rotate-window-lib.js";
+import { dmAnchorDomain } from "../../agent/channels/window-key.js";
 
 async function main() {
   const argv = process.argv.slice(2);
   const dmFlag = argv.indexOf("--dm");
   if (dmFlag !== -1) {
-    const dmChannelId = argv[dmFlag + 1];
-    if (!dmChannelId || dmChannelId.startsWith("--")) {
+    const dmSurfaceKey = argv[dmFlag + 1];
+    if (!dmSurfaceKey || dmSurfaceKey.startsWith("--")) {
       console.error("--dm requires a DM SURFACE KEY, `platform/workspace/channel` (e.g. --dm slack/T0AB12CD/D0EXDMCH001)");
       process.exit(1);
     }
-    if (dmChannelId.split("/").length < 3) {
+    if (dmSurfaceKey.split("/").length < 3) {
       console.error(
-        `--dm takes a SURFACE KEY, not a bare channel id — got "${dmChannelId}". Since OPE-351 stage 2 a DM seat is a window on \`oe-dm/<platform>/<workspace>/<surface>\`; try --dm slack/<teamId>/${dmChannelId}`,
+        `--dm takes a SURFACE KEY, not a bare channel id — got "${dmSurfaceKey}". Since OPE-351 stage 2 a DM seat is a window on \`oe-dm/<platform>/<workspace>/<surface>\`; try --dm slack/<teamId>/${dmSurfaceKey}`,
       );
       process.exit(1);
     }
@@ -23,10 +24,10 @@ async function main() {
       process.exit(1);
     }
     const store = await wireNeonOperationalStore(dbUrl);
-    const r = await rotateDmSeat(store, org, dmChannelId);
+    const r = await rotateUnifiedWindow(store, org, dmAnchorDomain(dmSurfaceKey));
     console.log("=== rotate-window (DM seat) ===");
     console.log(`org:            ${org}`);
-    console.log(`dm surface:     ${dmChannelId}`);
+    console.log(`dm surface:     ${dmSurfaceKey}`);
     console.log(`registry key:   ${r.registryKey}`);
     console.log(`old generation: ${r.oldGeneration ?? "none (no prior row — first seat)"}`);
     console.log(`old token:      ${r.oldToken ?? "none"}`);

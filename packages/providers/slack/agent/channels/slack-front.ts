@@ -32,7 +32,6 @@ import {
   touchDmSeat as liveTouchDmSeat,
   dmSeatRotationEnabled,
   dmSeatThresholds,
-  generateHandoffNote,
   resolvePartition,
   isThreadEngaged,
   divertInboundToUnifiedWindow,
@@ -55,10 +54,9 @@ import {
   flushLogShip,
   type SingleWindowMentionPolicy,
   type DmSeat,
-  type ChannelSessionRow,
   type SetKeyViewResult,
 } from "@open-everywhere/core/agent/adapter-api.js";
-import { slackForm, transcriptFromHistory, renderWakeMessage } from "./slack-events.js";
+import { slackForm, renderWakeMessage, distillSlackRotationHandoff } from "./slack-events.js";
 import { buildSlackAuth, partnerFactsFromInfo } from "./slack-identity.js";
 import { persistSlackAttachment } from "./slack-attachments.js";
 
@@ -341,16 +339,6 @@ export function withSingleWindowDiversion(
   };
 }
 
-async function liveDmSeatHandoff(dmChannelId: string, scope: string, outgoing: ChannelSessionRow): Promise<string | undefined> {
-  try {
-    const history = transcriptFromHistory(await slackForm("conversations.history", `channel=${encodeURIComponent(dmChannelId)}&limit=50`)) ?? "";
-    const note = await generateHandoffNote(scope, outgoing.handoffNote ?? null, history);
-    return note ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 const DM_TRUST_TTL_MS = Number(process.env.OE_DM_TRUST_TTL_MS) || 5 * 60_000;
 const dmTrustCache = new Map<string, { trust: "internal" | "external"; at: number }>();
 
@@ -390,7 +378,7 @@ export function buildFrontHandler(innerHandler: RouteHandler, opts: FrontOptions
     opts.resolveDmSeat ??
     ((org, dm, atIso) =>
       liveGetOrCreateDmSeat(org, dm, atIso, {
-        distillHandoff: (scope, outgoing) => liveDmSeatHandoff(dm.legacyChannelId ?? "", scope, outgoing),
+        distillHandoff: (scope, outgoing) => distillSlackRotationHandoff(scope, dm.legacyChannelId ?? "", outgoing),
       }));
   const touchDmSeatFn = opts.touchDmSeatFn ?? liveTouchDmSeat;
   const dmPartnerTrustFor = opts.dmPartnerTrustFor ?? liveDmPartnerTrust;

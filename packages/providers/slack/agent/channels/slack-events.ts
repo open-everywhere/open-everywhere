@@ -1171,7 +1171,7 @@ export async function routeSupervisorEvent(
   return { ...decision, woke: true };
 }
 
-async function distillRotationHandoff(scope: string, channelId: string, outgoing: ChannelSessionRow | null): Promise<string | undefined> {
+export async function distillSlackRotationHandoff(scope: string, channelId: string, outgoing: ChannelSessionRow | null): Promise<string | undefined> {
   try {
     const history = transcriptFromHistory(await slackForm("conversations.history", `channel=${encodeURIComponent(channelId)}&limit=50`)) ?? "";
     const note = await generateHandoffNote(scope, outgoing?.handoffNote ?? null, history);
@@ -1186,7 +1186,7 @@ export function liveSupervisorDeps(send: WakeSend): SupervisorRouteDeps {
   const tokenFor = (grain: SupervisorGrain, channelId: string, gen: number): string =>
     mintRotationToken(grain, gen, () => supervisorToken(channelId, gen));
   const rotateWithHandoff = async (org: string, realSurfaceKey: string, channelId: string, atIso: string, outgoing: ChannelSessionRow | null, grain: SupervisorGrain) => {
-    const note = await distillRotationHandoff(realSurfaceKey, channelId, outgoing);
+    const note = await distillSlackRotationHandoff(realSurfaceKey, channelId, outgoing);
     const token = tokenFor(grain, channelId, (outgoing?.generation ?? 0) + 1);
     return getOperationalStore().rotateChannelSession(org, grain.registryKey, token, atIso, note);
   };

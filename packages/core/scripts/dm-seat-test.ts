@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET } from "../agent/channels/dm-seat.js";
+import { getOrCreateDmSeat, touchDmSeat, dmSeatThresholds, DM_SEAT_ROTATE_TURN_BUDGET, DM_SEAT_ROTATE_TOKEN_BUDGET } from "../agent/channels/dm-seat.js";
+import { SUPERVISOR_ROTATE_QUIET_GAP_MS, SUPERVISOR_ROTATE_TOKEN_BUDGET, SUPERVISOR_ROTATE_TURN_BUDGET } from "../agent/channels/turn-delivery.js";
 import {
   classifySessionId,
   parseWindowToken,
@@ -254,6 +255,29 @@ function makeStore(...seeds: (Partial<ChannelSessionRow> & { surfaceKey: string 
   ok(windowEnabledFor(SURFACE, `unified:${seat.token}`), "…and the check survives eve's `unified:` send-prefix, which is the form the gate actually sees at dispatch");
 
   ok(seat.token.includes("-") && windowEnabledFor(SURFACE, seat.token), "the OPE-58 rotation salt on a real mint does NOT defeat the gate's parse (mint and gate agree on the salted spelling)");
+}
+
+{
+  eq(dmSeatThresholds().quietGapMs, Number.POSITIVE_INFINITY, "DM quiet-gap DISABLED (∞) by default — a DM retires on SIZE, never on idleness");
+  eq(DM_SEAT_ROTATE_TURN_BUDGET, 50, "DM turn budget is 50 (the practical primary trigger)");
+  eq(DM_SEAT_ROTATE_TOKEN_BUDGET, 5_000_000, "DM input-token budget is 5M (live-calibrated, OPE-92)");
+  eq(dmSeatThresholds().turnBudget, DM_SEAT_ROTATE_TURN_BUDGET, "dmSeatThresholds() reports the DM turn budget (this is the object getOrCreateDmSeat actually passes to shouldRotate)");
+  eq(dmSeatThresholds().tokenBudget, DM_SEAT_ROTATE_TOKEN_BUDGET, "…and the DM token budget");
+  ok(dmSeatThresholds().quietGapMs !== SUPERVISOR_ROTATE_QUIET_GAP_MS, "🔴 the DM quiet-gap is NOT the channel supervisor's 24h — the mechanism unified, the policy did not");
+  ok(DM_SEAT_ROTATE_TURN_BUDGET !== SUPERVISOR_ROTATE_TURN_BUDGET, "🔴 the DM turn budget is NOT the supervisor's");
+  ok(DM_SEAT_ROTATE_TOKEN_BUDGET !== SUPERVISOR_ROTATE_TOKEN_BUDGET, "🔴 the DM token budget is NOT the supervisor's");
+  const store = makeStore({
+    surfaceKey: REG,
+    token: "oe-dom:oe-dm/slack/T1/D0EXDMCH001:oe-sup:g7-ddd444",
+    generation: 7,
+    turnCount: DM_SEAT_ROTATE_TURN_BUDGET + 1,
+    inputTokensTotal: 1_000,
+    firstWakeAt: "2026-07-21T00:00:00.000Z",
+    lastWakeAt: "2026-07-21T00:00:00.000Z",
+  });
+  ok(DM_SEAT_ROTATE_TURN_BUDGET + 1 <= SUPERVISOR_ROTATE_TURN_BUDGET, "…and that turn count is still WITHIN the supervisor's budget (so the next assertion is about the DM policy, not about any policy)");
+  const seat = await getOrCreateDmSeat(ORG, DM, "2026-07-22T10:00:00.000Z", { store });
+  eq(seat.generation, 8, "a seat over the DM turn budget but under the supervisor's ROTATES — the DM thresholds are the ones that bind");
 }
 
 console.log(`dm-seat-test: ${n} assertions passed`);
